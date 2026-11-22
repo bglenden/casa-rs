@@ -34,6 +34,14 @@ pub(super) struct Tsys {
     pub(super) temperatures: [f32; 2],
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum GainError {
+    #[error("{0}")]
+    Missing(&'static str),
+    #[error("{0}")]
+    Invalid(String),
+}
+
 impl Metadata {
     pub(super) fn new(ms: &MeasurementSet) -> Result<Self, String> {
         let ant = ms.antenna().map_err(message)?;
@@ -99,7 +107,7 @@ impl Metadata {
     }
 }
 
-pub(super) fn gains(input: &Antab<'_>, metadata: &Metadata) -> Result<Vec<Gain>, String> {
+pub(super) fn gains(input: &Antab<'_>, metadata: &Metadata) -> Result<Vec<Gain>, GainError> {
     let mut output = Vec::new();
     for header in &input.gains {
         let Some(antenna) = metadata.antenna(
@@ -119,7 +127,7 @@ pub(super) fn gains(input: &Antab<'_>, metadata: &Metadata) -> Result<Vec<Gain>,
         let sensitivities = match sensitivities.as_slice() {
             [single] => [*single; 2],
             [first, second, ..] => [*first, *second],
-            [] => return Err("ANTAB gain curve needs a DPFU value".into()),
+            [] => return Err(GainError::Missing("DPFU")),
         };
         let coefficients = numbers(header, "POLY")?;
         let frequencies = header
@@ -131,7 +139,8 @@ pub(super) fn gains(input: &Antab<'_>, metadata: &Metadata) -> Result<Vec<Gain>,
                     last.parse().map_err(message)?,
                 ])
             })
-            .transpose()?;
+            .transpose()
+            .map_err(GainError::Invalid)?;
         output.push(Gain {
             antenna,
             kind,
@@ -143,12 +152,15 @@ pub(super) fn gains(input: &Antab<'_>, metadata: &Metadata) -> Result<Vec<Gain>,
     Ok(output)
 }
 
-fn numbers(header: &Header, name: &str) -> Result<Vec<f32>, String> {
+fn numbers(header: &Header, name: &'static str) -> Result<Vec<f32>, GainError> {
     header
         .values(name)
-        .ok_or_else(|| format!("ANTAB gain curve needs {name}"))?
+        .ok_or(GainError::Missing(name))?
         .iter()
-        .map(|item| item.parse().map_err(message))
+        .map(|item| {
+            item.parse()
+                .map_err(|error| GainError::Invalid(message(error)))
+        })
         .collect()
 }
 
@@ -184,9 +196,9 @@ pub(super) fn temperatures(input: &Antab<'_>, metadata: &Metadata) -> Result<Vec
                 let temperatures = ['R', 'L'].map(|hand| {
                     map.get(&(hand, window))
                         .and_then(|&column| values.get(column))
-                        .and_then(|value| value.parse::<f32>().ok())
+                        .and_then(|value| value.parse::<f64>().ok())
                         .filter(|&value| value != 999.9)
-                        .unwrap_or(-999.9)
+                        .unwrap_or(-999.9) as f32
                 });
                 output.push(Tsys {
                     antenna,

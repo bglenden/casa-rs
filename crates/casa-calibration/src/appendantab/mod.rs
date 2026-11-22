@@ -2,6 +2,7 @@
 //! Append external ANTAB calibration to a staged copy of a MeasurementSet.
 
 mod compute;
+mod copy;
 mod parse;
 mod table;
 
@@ -10,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use casa_ms::MeasurementSet;
 use casa_provider_contracts::CasaValue;
-use casa_tables::publication::{copy_locked_table_tree, rename_without_replacing};
+use casa_tables::publication::rename_without_replacing;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use serde::Serialize;
 
@@ -74,32 +75,22 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         fs::read_to_string(&antab).map_err(|error| TaskFailure::execution(message(error)))?;
     let text = Antab::read(&text).map_err(TaskFailure::execution)?;
     let temps = compute::temperatures(&text, &metadata).map_err(TaskFailure::execution)?;
-    let gains = compute::gains(&text, &metadata).map_err(TaskFailure::execution)?;
+    let gains = compute::gains(&text, &metadata).map_err(|error| match error {
+        compute::GainError::Missing(key) => TaskFailure::execution(key).at("antab_header"),
+        compute::GainError::Invalid(message) => TaskFailure::execution(message),
+    })?;
     drop(preparation);
 
     let copy = crate::timing::Phase::start("appendantab_copy_ms");
-    #[cfg(unix)]
-    let _retained_gain = {
-        let path = input.join("GAIN_CURVE");
-        path.is_dir()
-            .then(|| {
-                use casa_tables::{LockMode, LockOptions, Table, TableOptions};
-                Table::open_with_lock(
-                    TableOptions::new(path),
-                    LockOptions::new(LockMode::AutoLocking),
-                )
-            })
-            .transpose()
-            .map_err(|error| TaskFailure::execution(message(error)))?
-    };
-    copy_locked_table_tree(&input, &copied)
-        .map_err(|error| TaskFailure::execution(message(error)))?;
+    let subtables = copy::stage(&ms, &input, &copied, append_gain || append_tsys)
+        .map_err(TaskFailure::execution)?;
     drop(ms);
     drop(copy);
 
     let publication = crate::timing::Phase::start("appendantab_write");
     table::write(
         &copied,
+        &subtables,
         &metadata,
         append_gain.then_some(gains.as_slice()),
         append_tsys.then_some(temps.as_slice()),

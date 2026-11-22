@@ -4,11 +4,14 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema, strip_directory};
-use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use casa_tables::{
+    ColumnSchema, Table, TableOptions, TableSchema, TableWriteLock, strip_directory,
+};
+use casa_types::{ArrayValue, PrimitiveType, RecordField, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::compute::{Gain, Metadata, Tsys, message};
+use super::copy::Subtables;
 use crate::solve::{get_f64, get_i32};
 use crate::writer::{set_fixed_unit_keyword, set_measinfo_keyword};
 
@@ -16,6 +19,7 @@ type Keys = HashMap<(i32, u64), Vec<(i32, usize)>>;
 
 pub(super) fn write(
     destination: &Path,
+    paths: &Subtables,
     metadata: &Metadata,
     gains: Option<&[Gain]>,
     temperatures: Option<&[Tsys]>,
@@ -24,10 +28,10 @@ pub(super) fn write(
     if gains.is_none() && temperatures.is_none() {
         return Ok(());
     }
-    let gain_path = destination.join("GAIN_CURVE");
-    let tsys_path = destination.join("SYSCAL");
+    let gain_path = &paths.gain;
+    let tsys_path = &paths.tsys;
     let mut gain_table = (gain_path.exists() || gains.is_some())
-        .then(|| open_or_create(&gain_path, "GAIN_CURVE"))
+        .then(|| open_or_create(gain_path, "GAIN_CURVE"))
         .transpose()?;
     let gain_keys = gain_table
         .as_ref()
@@ -35,7 +39,7 @@ pub(super) fn write(
         .transpose()?
         .unwrap_or_default();
     if let Some(temperatures) = temperatures {
-        let mut table = open_or_create(&tsys_path, "SYSCAL")?;
+        let mut table = open_or_create(tsys_path, "SYSCAL")?;
         if table
             .schema()
             .is_some_and(|schema| schema.column("TSYS").is_none())
@@ -49,29 +53,48 @@ pub(super) fn write(
             set_fixed_unit_keyword(&mut table, "TSYS", &["K"]);
         }
         write_temperatures(&mut table, temperatures, &gain_keys, overwrite)?;
-        table.save(TableOptions::new(&tsys_path)).map_err(message)?;
+        save_subtable(&table, tsys_path)?;
     }
     if let (Some(gains), Some(table)) = (gains, gain_table.as_mut()) {
         write_gains(table, metadata, gains, &gain_keys, overwrite)?;
-        table.save(TableOptions::new(&gain_path)).map_err(message)?;
+        save_subtable(table, gain_path)?;
     }
     if gains.is_some() || temperatures.is_some() {
+        let mut lock = TableWriteLock::acquire_to_reread(destination, 1).map_err(message)?;
         let mut main =
             Table::open_metadata_only(TableOptions::new(destination)).map_err(message)?;
-        if gains.is_some() {
+        if gain_path.is_dir() {
             main.keywords_mut().upsert(
                 "GAIN_CURVE",
-                Value::table_ref(strip_directory(&gain_path, destination)),
+                Value::table_ref(strip_directory(gain_path, destination)),
             );
         }
-        if temperatures.is_some() {
+        if tsys_path.is_dir() {
             main.keywords_mut().upsert(
                 "SYSCAL",
-                Value::table_ref(strip_directory(&tsys_path, destination)),
+                Value::table_ref(strip_directory(tsys_path, destination)),
             );
         }
+        lock.record_write();
         main.save_metadata_only(TableOptions::new(destination))
             .map_err(message)?;
+        lock.release().map_err(message)?;
+    }
+    Ok(())
+}
+
+fn save_subtable(table: &Table, path: &Path) -> Result<(), String> {
+    let mut lock = path
+        .is_dir()
+        .then(|| TableWriteLock::acquire_to_reread(path, 1))
+        .transpose()
+        .map_err(message)?;
+    if let Some(lock) = lock.as_mut() {
+        lock.record_write();
+    }
+    table.save(TableOptions::new(path)).map_err(message)?;
+    if let Some(lock) = lock {
+        lock.release().map_err(message)?;
     }
     Ok(())
 }
@@ -114,7 +137,7 @@ fn write_temperatures(
             .filter_map(|&(window, row_index)| (window == row.window).then_some(row_index))
             .collect::<Vec<_>>();
         if updates.is_empty() {
-            table.add_row(RecordValue::new(values)).map_err(message)?;
+            append_row(table, values)?;
         } else {
             for row in updates {
                 overwrite_row(table, row, &values)?;
@@ -131,17 +154,17 @@ fn write_gains(
     existing: &Keys,
     overwrite: bool,
 ) -> Result<(), String> {
-    for (index, gain) in gains.iter().enumerate() {
+    for gain in gains {
         if let Some(rows) = existing.get(&(gain.antenna, metadata.gain_time.to_bits())) {
             if overwrite && let Some([low, high]) = gain.frequencies {
                 for &(window, row) in rows {
-                    let channel = metadata
-                        .frequencies
-                        .get(window as usize)
-                        .and_then(|channel| channel.get(index))
-                        .copied()
-                        .map(|frequency| frequency * 1e-6);
-                    if channel.is_some_and(|frequency| (low..=high).contains(&frequency)) {
+                    let frequencies = metadata.frequencies.get(window as usize);
+                    if frequencies.is_some_and(|frequencies| {
+                        !frequencies.is_empty()
+                            && frequencies
+                                .iter()
+                                .all(|&frequency| (low..=high).contains(&(frequency * 1e-6)))
+                    }) {
                         overwrite_row(table, row, &gain_fields(metadata, gain, window))?;
                     }
                 }
@@ -149,9 +172,7 @@ fn write_gains(
             continue;
         }
         for &window in &metadata.spw_ids {
-            table
-                .add_row(RecordValue::new(gain_fields(metadata, gain, window)))
-                .map_err(message)?;
+            append_row(table, gain_fields(metadata, gain, window))?;
         }
     }
     Ok(())
@@ -187,6 +208,17 @@ fn overwrite_row(table: &mut Table, row: usize, fields: &[RecordField]) -> Resul
             .map_err(message)?;
     }
     Ok(())
+}
+
+fn append_row(table: &mut Table, fields: Vec<RecordField>) -> Result<(), String> {
+    let mut row = table
+        .schema()
+        .ok_or("ANTAB subtable has no schema")?
+        .default_row();
+    for field in fields {
+        row.upsert(field.name, field.value);
+    }
+    table.add_row(row).map_err(message)
 }
 
 fn open_or_create(path: &Path, name: &str) -> Result<Table, String> {

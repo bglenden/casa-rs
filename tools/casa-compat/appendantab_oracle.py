@@ -25,9 +25,9 @@ ANTAB_SHA256 = {
 }
 
 
-def source(root, label, stations, frequency='7GHz', *, two_windows=False, start=None):
+def source(root, label, stations, frequency='7GHz', *, two_windows=False, start=None, channels=16):
     vis = root / f'{label}.ms'
-    make_cal_ms(str(vis), channels=16, scan_seconds=120, integration_seconds=4, stokes='RR LL',
+    make_cal_ms(str(vis), channels=channels, scan_seconds=120, integration_seconds=4, stokes='RR LL',
                 frequency=frequency)
     with opened(vis / 'ANTENNA', True) as table:
         if len(stations) > table.nrows():
@@ -233,6 +233,7 @@ def check_analytic(root, tasks, consumers):
                 compare_product(products['casa'] / key, fresh / key)
     check_errors(root, vis, antab, tasks)
     check_consumers(root, products, consumers)
+    check_review_cases(root, vis, antab, tasks, products)
 
 
 def check_errors(root, vis, antab, tasks):
@@ -267,6 +268,124 @@ def check_errors(root, vis, antab, tasks):
         nested = root / f'nested-{engine}' / 'child' / 'copy.ms'
         assert task(str(vis), str(nested), str(antab), append_tsys=False, append_gc=False) is None
         assert nested.is_dir()
+
+
+def check_review_cases(root, vis, antab, tasks, products):
+    for engine, task in tasks.items():
+        optional = root / f'optional-source-{engine}.ms'
+        shutil.copytree(products[engine], optional)
+        with opened(optional / 'SYSCAL', True) as table:
+            table.addcols({'TSYS_FLAG': {'valueType': 'boolean'}})
+            table.putcol('TSYS_FLAG', np.ones(4, dtype=bool))
+        optional_out = root / f'optional-output-{engine}.ms'
+        assert task(str(optional), str(optional_out), str(antab), append_gc=False) is None
+        with opened(optional_out / 'SYSCAL') as table:
+            np.testing.assert_array_equal(table.getcol('TSYS_FLAG'), [True] * 4 + [False] * 4)
+        try:
+            task(str(vis), str(root / f'mixed-error-{engine}.ms'), None, overwrite=1)
+        except AssertionError as error:
+            assert str(error) == "{'antab': ['null value not allowed'], 'overwrite': ['must be of cBool type']}"
+        else:
+            raise AssertionError('ANTAB accepted null file and integer overwrite')
+    missing = root / 'missing-dpfu.antab'
+    missing.write_text('GAIN BR ALTAZ POLY=1 /\n')
+    for engine, task in tasks.items():
+        try:
+            task(str(vis), str(root / f'missing-dpfu-{engine}.ms'), str(missing))
+        except KeyError as error:
+            assert error.args == ('DPFU',)
+        else:
+            raise AssertionError('ANTAB accepted a known gain without DPFU')
+
+    borderline = root / 'temperature-rounding.antab'
+    borderline.write_text(antab.read_text().replace('100 110 120', '999.90001 110 120'))
+    outputs = imports(root, 'temperature-rounding', tasks, dict.fromkeys(tasks, vis), borderline)
+    compare_subtables(outputs)
+    for output in outputs.values():
+        with opened(output / 'SYSCAL') as table:
+            assert table.getcell('TSYS', 0)[0] == np.float32(999.90001)
+
+    reversed_dd = root / 'reversed-data-description.ms'
+    shutil.copytree(vis, reversed_dd)
+    with opened(reversed_dd / 'DATA_DESCRIPTION', True) as table:
+        table.putcol('SPECTRAL_WINDOW_ID', np.array([1, 0], np.int32))
+    outputs = imports(root, 'reordered-spw', tasks, dict.fromkeys(tasks, reversed_dd), antab)
+    for engine, output in outputs.items():
+        with opened(output / 'SYSCAL') as table:
+            np.testing.assert_array_equal(table.getcol('SPECTRAL_WINDOW_ID'), [1, 0, 1, 0])
+            expected = [110, 120] if engine == 'casa' else [120, 110]
+            np.testing.assert_array_equal(table.getcol('TSYS')[1, :2], expected)
+    unknown = root / 'consecutive-gains.antab'
+    unknown.write_text('GAIN ZZ ALTAZ DPFU=.1 POLY=1 /\n'
+                       'GAIN BR ALTAZ DPFU=.2 POLY=1 /\n'
+                       'GAIN FD ALTAZ DPFU=.3 POLY=1 /\n')
+    outputs = imports(root, 'unknown-station', tasks, dict.fromkeys(tasks, vis), unknown,
+                      append_tsys=False)
+    for engine, output in outputs.items():
+        with opened(output / 'GAIN_CURVE') as table:
+            np.testing.assert_array_equal(table.getcol('ANTENNA_ID'),
+                                          [1, 1] if engine == 'casa' else [0, 0, 1, 1])
+    check_single_channel_overwrite(root, tasks)
+    check_source_aliases(root, vis, antab, tasks, products)
+
+
+def check_single_channel_overwrite(root, tasks):
+    vis = source(root, 'one-channel', ['BR', 'FD', 'HN', 'KP', 'LA'], channels=1)
+    def write(name, first, second):
+        path = root / name
+        path.write_text(f'GAIN BR ALTAZ DPFU={first} FREQ=6000,8000 POLY=1 /\n'
+                        f'GAIN FD ALTAZ DPFU={second} FREQ=6000,8000 POLY=1 /\n')
+        return path
+    first = write('gain-before.antab', '.1,.2', '.16,.17')
+    changed = write('gain-change.antab', '.51,.52', '.92,.93')
+    originals = imports(root, 'one-channel-first', tasks, dict.fromkeys(tasks, vis), first,
+                        append_tsys=False)
+    for engine, task in tasks.items():
+        output = root / f'single-channel-overwrite-{engine}.ms'
+        params = (str(originals[engine]), str(output), str(changed))
+        if engine == 'casa':
+            try:
+                task(*params, append_tsys=False, overwrite=True)
+            except IndexError:
+                continue
+            raise AssertionError('CASA unexpectedly accepted the one-channel overwrite')
+        assert task(*params, append_tsys=False, overwrite=True) is None
+        with opened(output / 'GAIN_CURVE') as table:
+            np.testing.assert_allclose(table.getcol('SENSITIVITY'), [[.51, .92], [.52, .93]],
+                                       rtol=1e-7)
+
+
+def check_source_aliases(root, vis, antab, tasks, products):
+    if 'native' not in tasks:
+        return
+    task = tasks['native']
+    linked = root / 'linked-storage.ms'
+    shutil.copytree(vis, linked)
+    backing = root / 'linked-table.dat'
+    (linked / 'table.dat').rename(backing)
+    (linked / 'table.dat').symlink_to(backing)
+    original = backing.read_bytes()
+    independent = root / 'independent.ms'
+    assert task(str(linked), str(independent), str(antab)) is None
+    assert backing.read_bytes() == original
+    assert not (independent / 'table.dat').is_symlink()
+    check_inputs(linked, {'native': independent})
+
+    external_ms = root / 'external-subtable-input.ms'
+    shutil.copytree(products['native'], external_ms)
+    external = root / 'external-tsys.table'
+    (external_ms / 'SYSCAL').rename(external)
+    with opened(external, True) as table:
+        table.putcell('TSYS', 0, np.array([1234, 5678], dtype=np.float32))
+    with opened(external_ms, True) as table:
+        table.putkeyword('SYSCAL', f'Table: {external}')
+    destination = root / 'copied-external-subtable.ms'
+    assert task(str(external_ms), str(destination), str(antab), append_gc=False) is None
+    with opened(f'{destination}::SYSCAL') as table, opened(external) as source_table:
+        assert table.nrows() == 8
+        assert source_table.nrows() == 4
+        np.testing.assert_array_equal(table.getcell('TSYS', 0), [1234, 5678])
+        np.testing.assert_array_equal(source_table.getcell('TSYS', 0), [1234, 5678])
 
 
 def check_recorded(root, tasks, files):

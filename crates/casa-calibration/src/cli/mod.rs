@@ -74,17 +74,12 @@ pub fn task_front_end()
 
 /// Run one resolved calibration request and write its report.
 fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
-    if task.surface() == "appendantab" {
-        return crate::appendantab::run(task);
-    }
-    if task.surface() == "pccor" {
-        return crate::pccor::run(task);
-    }
-    if task.surface() == "sdcal" {
-        return crate::single_dish::sdcal(task);
-    }
-    if task.surface() == "sdgaincal" {
-        return crate::single_dish::gain::run(task);
+    match task.surface() {
+        "appendantab" => return crate::appendantab::run(task),
+        "pccor" => return crate::pccor::run(task),
+        "sdcal" => return crate::single_dish::sdcal(task),
+        "sdgaincal" => return crate::single_dish::gain::run(task),
+        _ => {}
     }
     if task.surface() == "sdsmooth" {
         return crate::single_dish::preparation::run_sdsmooth(task);
