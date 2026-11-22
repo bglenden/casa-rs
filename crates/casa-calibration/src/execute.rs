@@ -4986,6 +4986,15 @@ fn load_parameters(
                 path: table_plan.spec.path.display().to_string(),
                 source: MsError::from(source),
             })?;
+        let read_fparam = || {
+            table
+                .cell_accessor(row_index, COL_FPARAM)
+                .and_then(|cell| cell.array())
+                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                    path: table_plan.spec.path.display().to_string(),
+                    source: MsError::from(source),
+                })
+        };
         let grid = match table_plan.summary.parameter_family {
             CalibrationParameterFamily::Complex => load_complex_parameters(
                 &table,
@@ -5003,13 +5012,7 @@ fn load_parameters(
             CalibrationParameterFamily::Float
                 if real_parameters || table_plan.summary.table_subtype == "G EVLASWPOW" =>
             {
-                let values = table
-                    .cell_accessor(row_index, COL_FPARAM)
-                    .and_then(|cell| cell.array())
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: table_plan.spec.path.display().to_string(),
-                        source: MsError::from(source),
-                    })?;
+                let values = read_fparam()?;
                 let path = &table_plan.spec.path;
                 if (matches!(
                     table_plan.summary.table_subtype.as_str(),
@@ -5036,13 +5039,7 @@ fn load_parameters(
                     "K Jones" | "Kcross Jones"
                 ) =>
             {
-                let delays = table
-                    .cell_accessor(row_index, COL_FPARAM)
-                    .and_then(|cell| cell.array())
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: table_plan.spec.path.display().to_string(),
-                        source: MsError::from(source),
-                    })?;
+                let delays = read_fparam()?;
                 CalibrationGrid::Delay(DelayGrid::from_arrays(
                     &table_plan.spec.path,
                     delays,
@@ -5052,13 +5049,7 @@ fn load_parameters(
             CalibrationParameterFamily::Float
                 if table_plan.summary.table_subtype.as_str() == "KAntPos Jones" =>
             {
-                let offsets = table
-                    .cell_accessor(row_index, COL_FPARAM)
-                    .and_then(|cell| cell.array())
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: table_plan.spec.path.display().to_string(),
-                        source: MsError::from(source),
-                    })?;
+                let offsets = read_fparam()?;
                 CalibrationGrid::Antpos(AntposGrid::from_arrays(
                     &table_plan.spec.path,
                     offsets,
@@ -5071,13 +5062,7 @@ fn load_parameters(
                     "EGainCurve" | "EPowerCurve"
                 ) =>
             {
-                let coefficients = table
-                    .cell_accessor(row_index, COL_FPARAM)
-                    .and_then(|cell| cell.array())
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: table_plan.spec.path.display().to_string(),
-                        source: MsError::from(source),
-                    })?;
+                let coefficients = read_fparam()?;
                 CalibrationGrid::GainCurve(GainCurveGrid::from_arrays(
                     &table_plan.spec.path,
                     coefficients,
@@ -5091,13 +5076,7 @@ fn load_parameters(
                     "TOpac" | "TfOpac"
                 ) =>
             {
-                let tau = table
-                    .cell_accessor(row_index, COL_FPARAM)
-                    .and_then(|cell| cell.array())
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: table_plan.spec.path.display().to_string(),
-                        source: MsError::from(source),
-                    })?;
+                let tau = read_fparam()?;
                 let path = &table_plan.spec.path;
                 if table_plan.summary.table_subtype == "TfOpac" {
                     CalibrationGrid::SpectralOpacity(GainGrid::from_real_arrays(path, tau, flags)?)
