@@ -21,7 +21,7 @@ def compare(a, b, label):
         np.testing.assert_array_equal(a, b, err_msg=label)
 
 
-def compare_tables(reference, output):
+def compare_tables(reference, output, fixes=None):
     with opened(reference) as left, opened(output) as right:
         assert left.nrows() == right.nrows(), str(reference)
         assert sorted(left.colnames()) == sorted(right.colnames()), str(reference)
@@ -38,6 +38,19 @@ def compare_tables(reference, output):
                     compare(a, b, label + ':' + keyword)
             if not left.nrows():
                 continue
+            if fixes == 'asap' and reference.name == 'OBSERVATION' and name == 'TIME_RANGE':
+                np.testing.assert_array_equal(right.getcol(name), left.getcol(name) * 86400.)
+                continue
+            if fixes and reference.name == 'FEED' and name == 'NUM_RECEPTORS':
+                compare([len(left.getcell('POLARIZATION_TYPE', i)) for i in range(left.nrows())],
+                        right.getcol(name), label)
+                continue
+            if fixes and reference.name == 'POLARIZATION' and name == 'CORR_PRODUCT':
+                pairs = {6:(0, 1), 7:(1, 0), 8:(1, 1), 10:(0, 1), 11:(1, 0), 12:(1, 1)}
+                for i in range(left.nrows()):
+                    expected = np.array([pairs.get(code, (0, 0)) for code in left.getcell('CORR_TYPE', i)]).T
+                    compare(expected, right.getcell(name, i), label)
+                continue
             if not left.getcoldesc(name).get('ndim', 0):
                 compare(left.getcol(name), right.getcol(name), label)
                 continue
@@ -48,14 +61,14 @@ def compare_tables(reference, output):
                     compare(left.getcell(name, row), right.getcell(name, row), f'{label}[{row}]')
 
 
-def compare_products(reference, output):
-    compare_tables(reference, output)
+def compare_products(reference, output, fixes=None):
+    compare_tables(reference, output, fixes)
     subtables = sorted(entry.name for entry in reference.iterdir()
                        if entry.is_dir() and (entry / 'table.dat').is_file())
     assert subtables == sorted(entry.name for entry in output.iterdir()
                               if entry.is_dir() and (entry / 'table.dat').is_file())
     for name in subtables:
-        compare_tables(reference / name, output / name)
+        compare_tables(reference / name, output / name, fixes)
 
 
 def check_readers(paths):
@@ -98,22 +111,40 @@ def check_asap_rows(source, product):
             np.testing.assert_array_equal(result.getcell('FLAG', row), expected_flag)
 
 
+def copy_asap_rows(raw, scan, rows):
+    selection = raw.selectrows(rows)
+    try:
+        table = selection.copy(str(scan), deep=True, valuecopy=True)
+        table.close()
+    finally:
+        selection.close()
+
+
+def append_hand(table, index):
+    row = {name: table.getcell(name, index) for name in table.colnames()
+           if table.iscelldefined(name, index)}
+    end = table.nrows()
+    table.addrows(1)
+    for name, value in row.items():
+        table.putcell(name, end, value)
+
+
+def dual_hand_rows(raw):
+    keys = zip(*(raw.getcol(name) for name in ('TIME', 'BEAMNO', 'IFNO', 'FIELDNAME', 'SRCTYPE')))
+    groups = {}
+    for row, (key, hand) in enumerate(zip(keys, raw.getcol('POLNO'))):
+        groups.setdefault(key, {})[hand] = row
+    hands = next(hands for hands in groups.values() if set(hands) == {0, 1})
+    return [hands[0], hands[1]]
+
+
 def check_polarization_modes(root, source, factories):
     with opened(source) as raw:
-        keys = zip(*(raw.getcol(name) for name in ('TIME', 'BEAMNO', 'IFNO', 'FIELDNAME', 'SRCTYPE')))
-        groups = {}
-        for row, (key, hand) in enumerate(zip(keys, raw.getcol('POLNO'))):
-            groups.setdefault(key, {})[hand] = row
-        hands = next(hands for hands in groups.values() if set(hands) == {0, 1})
+        hands = dual_hand_rows(raw)
         for basis, codes in (('linear', [9, 10, 11, 12]), ('circular', [5, 6, 7, 8]),
                              ('stokes', [1, 2, 3, 4]), ('linpol', [29, 32])):
             scan = root / f'{basis}.asap'
-            selection = raw.selectrows([hands[0], hands[1]])
-            try:
-                table = selection.copy(str(scan), deep=True, valuecopy=True)
-                table.close()
-            finally:
-                selection.close()
+            copy_asap_rows(raw, scan, hands)
             with opened(scan, True) as table:
                 table.putkeyword('POLTYPE', basis)
                 channels = len(table.getcell('SPECTRA', 0))
@@ -155,7 +186,76 @@ def compare_polarization_mode(root, scan, basis, codes, inputs, channel_flags, f
             np.testing.assert_array_equal(table.getcell('FLAG', 0), flags.astype(bool))
         outputs.append(output)
     if len(outputs) == 2:
-        compare_products(*outputs)
+        compare_products(*outputs, fixes='asap')
+
+
+def check_temperature_axes(root, source, factories):
+    for channels in (1, 3):
+        scan = root / f'temperature-{channels}.asap'
+        with opened(source) as raw:
+            copy_asap_rows(raw, scan, dual_hand_rows(raw))
+        expected = np.array([list(range(80, 80 + channels)), [90] + [-1] * (channels - 1)])
+        with opened(scan / 'TCAL', True) as tcal:
+            ids = tcal.getcol('ID')[:2]
+            tcal.putcell('TCAL', 0, expected[0] + 100)
+            tcal.putcell('TCAL', 1, np.array([190.]))
+        with opened(scan, True) as table:
+            for row in (0, 1):
+                table.putcell('FLAGTRA', row, np.zeros(channels, dtype=np.uint8))
+                table.putcell('SPECTRA', row, np.ones(channels, dtype=np.float32))
+                table.putcell('WEATHER_ID', row, 99999)
+                table.putcell('TCAL_ID', row, int(ids[row]))
+            table.putcell('TSYS', 0, expected[0])
+            table.putcell('TSYS', 1, np.array([90.]))
+        results = []
+        for name, factory in factories.items():
+            path = root / f'temperature-{channels}-{name}.ms'
+            assert factory().importasap(str(scan), str(path))
+            with opened(path / 'SYSCAL') as syscal:
+                assert not syscal.iscelldefined('TSYS', 0)
+                np.testing.assert_array_equal(syscal.getcell('TSYS_SPECTRUM', 0), expected)
+                tcal_expected = np.where(expected == -1, -1, expected + 100)
+                np.testing.assert_array_equal(syscal.getcell('TCAL_SPECTRUM', 0), tcal_expected)
+            with opened(path / 'WEATHER') as weather:
+                assert weather.nrows() == 1
+                for column in ('TEMPERATURE', 'PRESSURE', 'REL_HUMIDITY', 'WIND_SPEED', 'WIND_DIRECTION'):
+                    assert weather.getcell(column, 0) == 0.
+            results.append(path)
+        if len(results) == 2:
+            compare_products(*results, fixes='asap')
+
+
+def check_duplicate_plane(root, source, factories):
+    scan = root / 'duplicate-plane.asap'
+    with opened(source) as raw:
+        copy_asap_rows(raw, scan, dual_hand_rows(raw))
+    for name, factory in factories.items():
+        path = root / f'duplicate-protected-{name}.ms'
+        assert factory().importasap(str(scan), str(path))
+    with opened(scan, True) as table:
+        append_hand(table, 0)
+        table.putcell('SPECTRA', 2, table.getcell('SPECTRA', 0) + 1.)
+    for name, factory in factories.items():
+        path = root / f'duplicate-protected-{name}.ms'
+        with opened(path) as table:
+            before = table.getcell('FLOAT_DATA', 0)
+        for parallel in (False,) if name == 'casa' else (False, True):
+            assert factory().importasap(str(scan), str(path), parallel) is False
+            with opened(path) as table:
+                np.testing.assert_array_equal(table.getcell('FLOAT_DATA', 0), before)
+
+
+def check_linked_input(root, source, factory):
+    scan = root / 'linked-weather.asap'
+    shutil.copytree(source, scan)
+    weather = root / 'shared-weather'
+    (scan / 'WEATHER').rename(weather)
+    (scan / 'WEATHER').symlink_to(weather, target_is_directory=True)
+    with opened(weather) as table:
+        temperatures = table.getcol('TEMPERATURE')
+    assert factory().importasap(str(scan), str(weather)) is False
+    with opened(weather) as table:
+        np.testing.assert_array_equal(table.getcol('TEMPERATURE'), temperatures)
 
 
 def run_imports(factory, name, kind, source, work):
@@ -227,12 +327,16 @@ def main():
         factories['native'] = native_singledishms
         native = run_imports(native_singledishms, 'native', args.kind, source, root)
         for a, b in zip(casa, native):
-            compare_products(a, b)
+            compare_products(a, b, fixes=args.kind)
         if args.kind == 'asap':
             check_asap_rows(source, native[0])
         check_readers(casa + native)
     if args.kind == 'asap':
         check_polarization_modes(root, source, factories)
+        check_temperature_axes(root, source, factories)
+        check_duplicate_plane(root, source, factories)
+        if 'native' in factories:
+            check_linked_input(root, source, factories['native'])
     print(f'{args.kind.upper()} import, serial/parallel equivalence and product checks passed.', flush=True)
 
 

@@ -40,7 +40,7 @@ pub(super) fn header(path: &Path, table: &Table) -> MsResult<ImportHeader> {
         telescope: observatory.into(),
         observer: string(keywords, "Observer")?.into(),
         project: string(keywords, "Project")?.into(),
-        range,
+        range: range.map(|time| time * super::DAY),
         data_unit: string(keywords, "FluxUnit")?.into(),
         windows: windows(path, table)?,
     })

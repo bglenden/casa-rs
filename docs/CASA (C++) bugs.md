@@ -9820,3 +9820,21 @@ factor. A scalar factor of `1e40` also exceeds the Float32 range of the
 corrected spectra. Both inputs write unflagged nonfinite samples.
 casa-rs rejects either result before publishing the output, preserving
 an existing product on overwrite.
+
+## ASAP import writes observation times in days to a seconds column
+
+CASA 6.7.6.14 copies the scan table's MJD day range into
+`OBSERVATION.TIME_RANGE`, whose unit is seconds. The same import converts
+the MAIN integration times to seconds. On the upstream ALMA ASAP test
+fixture, the observation range starts at `56839.91554` and the first
+integration is `4910968702.656` seconds from MJD zero. casa-rs converts
+both tables to MJD seconds and preserves the original observation bounds.
+
+## The single-dish filler can write inconsistent receptor metadata
+
+CASA 6.7.6.14 writes two receptor names to `FEED.POLARIZATION_TYPE` with
+`NUM_RECEPTORS=0`. It fills `POLARIZATION.CORR_PRODUCT` with zero pairs
+even for YY, LL and cross-hands. The imported spectra themselves are in
+the order indicated by `CORR_TYPE`. casa-rs writes the receptor count and
+maps directly measured linear and circular products to the corresponding
+ordered pairs. Derived Stokes products retain their placeholders.

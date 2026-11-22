@@ -7,9 +7,20 @@ mod polarization;
 mod writer;
 
 use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 
 pub use asap::read_asap;
 use polarization::Basis;
+
+use crate::{MeasurementSet, MsError, MsResult};
+
+/// A decoded single-dish scan and the casacore tables it depends on.
+pub struct ImportedScanTable {
+    /// Spectra and metadata in MeasurementSet v2 form.
+    pub measurement_set: MeasurementSet,
+    /// Backing and referenced input tables to protect during publication.
+    pub input_tables: Vec<PathBuf>,
+}
 
 struct Antenna {
     name: String,
@@ -76,7 +87,7 @@ struct Integration {
     basis: Basis,
     state: (&'static str, i32),
     direction: Direction,
-    weather: Weather,
+    weather: Option<Weather>,
 }
 
 struct Plane {
@@ -102,7 +113,7 @@ struct TimeGroups {
 }
 
 impl TimeGroups {
-    fn push(&mut self, input: RawIntegration) {
+    fn push(&mut self, input: RawIntegration) -> MsResult<()> {
         let RawIntegration { row, plane } = input;
         let key = (row.field, row.feed, row.window, row.basis, row.state.0);
         let next = self.order.len();
@@ -117,8 +128,14 @@ impl TimeGroups {
                 {
                     hand.insert(plane);
                     *coordinates = row;
+                } else {
+                    return Err(MsError::InvalidInput(format!(
+                        "Duplicate polarization plane {} at time {}, feed {}, window {}",
+                        plane.index, row.time, row.feed, row.window,
+                    )));
                 }
             }
         }
+        Ok(())
     }
 }

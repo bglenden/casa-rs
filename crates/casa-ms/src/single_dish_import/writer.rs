@@ -36,6 +36,7 @@ struct TimeSpan {
 
 #[derive(PartialEq)]
 struct Temperatures {
+    spectral: bool,
     width: usize,
     count: usize,
     values: Vec<f32>,
@@ -117,12 +118,24 @@ impl Writer {
             return Ok(id);
         }
         let n = codes.len();
+        let pairs = codes
+            .iter()
+            .map(|&code| match code {
+                6 | 10 => [0, 1], // RL and XY
+                7 | 11 => [1, 0], // LR and YX
+                8 | 12 => [1, 1], // LL and YY
+                _ => [0, 0],
+            })
+            .collect::<Vec<_>>();
+        let receptors = (0..2)
+            .flat_map(|receptor| pairs.iter().map(move |pair| pair[receptor]))
+            .collect::<Vec<_>>();
         let id = insert(
             &mut self.ms,
             SubtableId::Polarization,
             &[
                 ("CORR_TYPE", i32_array(codes, vec![n])),
-                ("CORR_PRODUCT", i32_array(&vec![0; n * 2], vec![2, n])),
+                ("CORR_PRODUCT", i32_array(&receptors, vec![2, n])),
                 ("NUM_CORR", i(n as i32)),
             ],
         )?;
@@ -159,6 +172,7 @@ impl Writer {
                 SubtableId::Feed,
                 &[
                     ("FEED_ID", i(row.feed)),
+                    ("NUM_RECEPTORS", i(2)),
                     ("SPECTRAL_WINDOW_ID", i(row.window)),
                     (
                         "BEAM_OFFSET",
@@ -211,7 +225,9 @@ impl Writer {
             time: row.time,
             interval: row.interval,
         };
-        update_unique(&mut self.weather, row.weather, time);
+        if let Some(weather) = row.weather {
+            update_unique(&mut self.weather, weather, time);
+        }
         if !row.basis.has_parallel_hands() {
             return;
         }
@@ -395,21 +411,35 @@ fn temperatures(
     extract: impl Fn(&Plane) -> &[f32],
 ) -> Option<Temperatures> {
     let inputs = hands.iter().map(|plane| extract(plane)).collect::<Vec<_>>();
-    let spectral = channels > 1
-        && inputs
+    if channels > 1
+        && !inputs
+            .iter()
+            .any(|values| values.iter().any(|&value| value > 0.))
+    {
+        return None;
+    }
+    let spectral = channels == 1
+        || inputs
             .iter()
             .any(|values| values.len() == channels && values[1..].iter().any(|&value| value > 0.));
     let width = if spectral { channels } else { 1 };
     let values = inputs
         .into_iter()
         .flat_map(|input| {
-            (0..width).map(move |channel| input.get(channel).copied().unwrap_or_default())
+            (0..width).map(move |channel| {
+                if channel == 0 || input.len() == channels {
+                    input.get(channel).copied().unwrap_or(-1.)
+                } else {
+                    -1.
+                }
+            })
         })
         .collect::<Vec<_>>();
     if values.iter().all(|&value| value == 0.) || values.iter().all(|&value| value == 1.) {
         return None;
     }
     Some(Temperatures {
+        spectral,
         width,
         count: hands.len(),
         values,
@@ -418,15 +448,16 @@ fn temperatures(
 
 impl Temperatures {
     fn add_cell(self, row: &mut RecordValue, scalar: &str, array: &str) {
-        if self.width == 1 {
-            row.upsert(scalar, f32_array(&self.values, vec![self.count]));
-        } else {
+        if self.spectral {
             row.upsert(array, f32_array(&self.values, vec![self.count, self.width]));
+        } else {
+            row.upsert(scalar, f32_array(&self.values, vec![self.count]));
         }
     }
 
     fn reduce_to_scalars(&mut self) {
         self.values = self.values.iter().step_by(self.width).copied().collect();
+        self.spectral = false;
         self.width = 1;
     }
 }

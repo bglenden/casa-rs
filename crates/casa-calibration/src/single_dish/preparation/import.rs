@@ -28,7 +28,7 @@ fn publish_import(
     input: &Path,
     output: &Path,
     parallel: bool,
-    decode: fn(&Path, bool) -> casa_ms::MsResult<casa_ms::MeasurementSet>,
+    decode: fn(&Path, bool) -> casa_ms::MsResult<casa_ms::single_dish_import::ImportedScanTable>,
 ) -> Result<(), String> {
     if input.as_os_str().is_empty() || output.as_os_str().is_empty() {
         return Err("Both infile and outfile are required.".into());
@@ -45,7 +45,18 @@ fn publish_import(
     }
     let target = CalibrationOutput::prepare_import(output).map_err(|error| error.to_string())?;
     let mut result = decode(input, parallel).map_err(|error| error.to_string())?;
+    for input_table in &result.input_tables {
+        if crate::paths::overlap(input_table, &target.destination)
+            .map_err(|error| error.to_string())?
+        {
+            return Err(format!(
+                "The output overlaps input table {}.",
+                input_table.display()
+            ));
+        }
+    }
     result
+        .measurement_set
         .save_as_standard(&target.staging)
         .map_err(|error| error.to_string())?;
     target.commit().map_err(|error| error.to_string())

@@ -10,14 +10,14 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use casa_tables::{Table, TableOptions};
-use casa_types::RecordValue;
+use casa_types::{RecordValue, Value};
 
 use self::asap_row::{doubles, flags, floats, integer, invalid, number, string, subtable};
 use super::{
-    Basis, Direction, Integration, Plane, RawIntegration, TimeGroups, Weather, metadata,
-    writer::Writer,
+    Basis, Direction, ImportedScanTable, Integration, Plane, RawIntegration, TimeGroups, Weather,
+    metadata, writer::Writer,
 };
-use crate::{MeasurementSet, MsResult, OptionalMainColumn};
+use crate::{MsResult, OptionalMainColumn};
 
 const DAY: f64 = 86400.0;
 
@@ -30,7 +30,7 @@ const DAY: f64 = 86400.0;
 /// # Errors
 /// Returns a format error if the scan table cannot be read or contains an
 /// unsupported polarization combination, missing cells or inconsistent axes.
-pub fn read_asap(path: &Path, parallel: bool) -> MsResult<MeasurementSet> {
+pub fn read_asap(path: &Path, parallel: bool) -> MsResult<ImportedScanTable> {
     let table = Table::open(TableOptions::new(path))?;
     if table.row_count() == 0 {
         return Err(invalid("nonempty scan table"));
@@ -39,10 +39,25 @@ pub fn read_asap(path: &Path, parallel: bool) -> MsResult<MeasurementSet> {
         .map(|index| table.row_accessor().row(index))
         .collect::<Result<Vec<_>, _>>()?;
     let keywords = table.keywords();
-    let setup = setup::header(path, &table)?;
-    let molecules = subtable(path, keywords, "MOLECULES")?;
-    let weather = subtable(path, keywords, "WEATHER")?;
-    let tcal = subtable(path, keywords, "TCAL")?;
+    let mut input_tables = if table.is_reference_table()? {
+        table.cache_plain_table_paths()?
+    } else {
+        vec![path.to_path_buf()]
+    };
+    let owner = input_tables.first().map_or(path, |path| path.as_path());
+    let setup = setup::header(owner, &table)?;
+    let molecules = subtable(owner, keywords, "MOLECULES")?;
+    let weather = subtable(owner, keywords, "WEATHER")?;
+    let tcal = subtable(owner, keywords, "TCAL")?;
+    let linked = keywords
+        .fields()
+        .iter()
+        .filter_map(|field| match &field.value {
+            Value::TableRef(reference) => Some(casa_tables::add_directory(reference, owner)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    input_tables.extend(linked);
     let (sources, names) = sources::split_sources(&rows, &molecules)?;
     let (fields, field_ids) = sources::fields(&rows, &names)?;
     let decoder = Decoder {
@@ -71,19 +86,25 @@ pub fn read_asap(path: &Path, parallel: bool) -> MsResult<MeasurementSet> {
     let mut writer = Writer::new(ms, column);
     let mut groups = TimeGroups::default();
     let mut time = None;
-    for sample in samples {
+    let mut weather = Weather([0.; 5]);
+    for mut sample in samples {
         if time != Some(sample.row.time) {
             for (row, planes) in std::mem::take(&mut groups.current).into_values() {
                 writer.write(&row, planes, setup.windows[&row.window].channels)?;
             }
             time = Some(sample.row.time);
         }
-        groups.push(sample);
+        weather = sample.row.weather.unwrap_or(weather);
+        sample.row.weather = Some(weather);
+        groups.push(sample)?;
     }
     for (row, planes) in groups.current.into_values() {
         writer.write(&row, planes, setup.windows[&row.window].channels)?;
     }
-    writer.finish()
+    Ok(ImportedScanTable {
+        measurement_set: writer.finish()?,
+        input_tables,
+    })
 }
 
 struct Decoder<'a> {
@@ -132,8 +153,7 @@ impl Decoder<'_> {
             .weather
             .get(&integer(row, "WEATHER_ID")?)
             .map(|record| read_weather(record))
-            .transpose()?
-            .unwrap_or(Weather([-1.; 5]));
+            .transpose()?;
         let tcal = self
             .tcal
             .get(&integer(row, "TCAL_ID")?)
