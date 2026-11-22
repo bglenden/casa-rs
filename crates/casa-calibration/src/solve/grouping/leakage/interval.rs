@@ -406,7 +406,6 @@ fn iterative(
                 &eligible,
                 request.min_snr,
                 algebra,
-                &request.robustness,
             ) {
                 Ok(result) => {
                     if let Some(stages) = &mut stages {

@@ -49,7 +49,6 @@ impl CalibraterLifecycle {
             normalization: standard
                 .normalize_average_amplitude
                 .then_some(standard.normalization_type),
-            robustness: standard.robustness,
             interval: standard.solve_interval,
             frequency_interval,
             combine: standard.combine,

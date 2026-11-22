@@ -10,7 +10,6 @@ mod joint;
 mod output;
 mod parallactic;
 mod parallactic_fit;
-mod robust;
 mod standard;
 
 use super::*;
@@ -141,7 +140,6 @@ pub(crate) struct LeakageSolveRequest {
     pub(crate) correlation_dependent_flags: bool,
     pub(crate) solve_mode: GainSolveMode,
     pub(crate) normalization: Option<crate::GainNormalization>,
-    pub(crate) robustness: crate::GainSolveRobustness,
     pub(crate) interval: GainSolveInterval,
     pub(crate) frequency_interval: Option<crate::BandpassFrequencyInterval>,
     pub(crate) combine: GainSolveCombine,

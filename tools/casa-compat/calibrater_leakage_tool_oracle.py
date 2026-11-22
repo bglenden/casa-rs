@@ -73,6 +73,7 @@ def case(work, engines, vis, name, kind, *, no_product=False, casa_modern=False,
         difference = compare(products['casa'], products['native'])
         compare_readers(products)
         print(name, 'CPARAM, parameter error and SNR normalized RMS', difference, flush=True)
+    return products
 
 
 def fixture(work, correlations):
@@ -143,9 +144,16 @@ def main():
             assert selected.size == 2
             data[1:3, :, selected] += .35 + .1j
             assert table.putcol('DATA', data)
+        baseline = case(work, engines, outliers, 'D-outliers-default', 'D')
         for mode, thresholds in [('L1', []), ('R', [3.2, 2.8]), ('L1R', [3.2, 2.8])]:
-            case(work, engines, outliers, f'D-robust-{mode}', 'D',
-                 options={'solmode': mode, 'rmsthresh': thresholds})
+            products = case(work, engines, outliers, f'D-solmode-{mode}', 'D',
+                            options={'solmode': mode, 'rmsthresh': thresholds})
+            # D's factory accepts these generic controls but does not install
+            # robust weights in the pinned solver.
+            for engine in engines:
+                with opened(products[engine]) as actual, opened(baseline[engine]) as default:
+                    for column in ('FLAG', 'CPARAM', 'SNR', 'PARAMERR'):
+                        np.testing.assert_array_equal(actual.getcol(column), default.getcol(column))
         refant_dropout = work/'refant-dropout.ms'
         copy_ms(vis, refant_dropout)
         with opened(refant_dropout, True) as table:
