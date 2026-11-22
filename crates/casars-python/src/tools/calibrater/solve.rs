@@ -161,6 +161,49 @@ impl StandardSolver {
     }
 }
 
+fn standard_request(
+    family: &str,
+    standard: StandardSolver,
+    frequency: Option<&str>,
+    fill_gaps: usize,
+    fringe: Option<(FringeControls, bool)>,
+) -> PyResult<CalibrationSolveRequest> {
+    Ok(match family {
+        "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
+        "T" | "T JONES" | "T NOISE" => CalibrationSolveRequest::Gain(standard.gain(GainType::T)),
+        "K" | "K JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::K)),
+        "KCROSS" | "KCROSS JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::KCross)),
+        "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
+            standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
+        ),
+        "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
+            let frequency_dependent = family.starts_with("MF");
+            CalibrationSolveRequest::Baseline {
+                gain: standard.gain(GainType::G),
+                frequency_dependent,
+                frequency_interval: if frequency_dependent {
+                    bandpass_frequency(frequency)?
+                } else {
+                    None
+                },
+            }
+        }
+        "ACCOR" | "ACCOR JONES" => CalibrationSolveRequest::Accor(standard.gain(GainType::G)),
+        "FRINGE" | "FRINGE JONES" => {
+            let (controls, active_phase) = fringe.expect("parsed fringe controls");
+            CalibrationSolveRequest::FringeTool {
+                gain: standard.gain(GainType::K),
+                controls,
+                active_phase,
+            }
+        }
+        _ if casa_calibration::CalibraterLifecycle::recognizes_calibration_type(family) => {
+            return crate::tools::not_yet_implemented_in("calibrater", "setsolve", 1528);
+        }
+        _ => return Err(setup_error()),
+    })
+}
+
 #[pymethods]
 #[allow(clippy::too_many_arguments, unused_variables)]
 impl super::PyCalibrater {
@@ -237,6 +280,7 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
+        let leakage = casa_calibration::CalibraterLifecycle::recognizes_leakage_solve_type(&family);
         let baseline = matches!(family.as_str(), "M" | "M MUELLER" | "MF" | "MF MUELLER");
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
         let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
@@ -283,7 +327,7 @@ impl super::PyCalibrater {
             )?;
         }
         self.with_lifecycle(py, move |state| {
-            if accor || fringe.is_some() {
+            if accor || fringe.is_some() || leakage {
                 state
                     .resolve_primary_tool_refant(reference.clone())
                     .map_err(super::runtime_error)?;
@@ -347,49 +391,19 @@ impl super::PyCalibrater {
                 robustness: GainSolveRobustness::from_casa(robust_mode(&solve_mode), thresholds)
                     .expect("recognized CASA robust mode"),
             };
-            let request = match family.as_str() {
-                "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
-                "T" | "T JONES" | "T NOISE" => {
-                    CalibrationSolveRequest::Gain(standard.gain(GainType::T))
-                }
-                "K" | "K JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::K)),
-                "KCROSS" | "KCROSS JONES" => {
-                    CalibrationSolveRequest::Gain(standard.gain(GainType::KCross))
-                }
-                "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
-                    standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
-                ),
-                "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
-                    let frequency_dependent = family.starts_with("MF");
-                    CalibrationSolveRequest::Baseline {
-                        gain: standard.gain(GainType::G),
-                        frequency_dependent,
-                        frequency_interval: if frequency_dependent {
-                            bandpass_frequency(frequency)?
-                        } else {
-                            None
-                        },
-                    }
-                }
-                "ACCOR" | "ACCOR JONES" => {
-                    CalibrationSolveRequest::Accor(standard.gain(GainType::G))
-                }
-                "FRINGE" | "FRINGE JONES" => {
-                    let (controls, active_phase) = fringe.expect("parsed fringe controls");
-                    CalibrationSolveRequest::FringeTool {
-                        gain: standard.gain(GainType::K),
-                        controls,
-                        active_phase,
-                    }
-                }
-                _ if casa_calibration::CalibraterLifecycle::recognizes_calibration_type(
-                    &family,
-                ) =>
-                {
-                    return crate::tools::not_yet_implemented_in("calibrater", "setsolve", 1528);
-                }
-                _ => return Err(setup_error()),
-            };
+            if leakage {
+                state
+                    .set_tool_leakage(
+                        &family,
+                        standard.gain(GainType::G),
+                        frequency,
+                        append,
+                        invalid_mode,
+                    )
+                    .map_err(|_| setup_error())?;
+                return Ok(true);
+            }
+            let request = standard_request(&family, standard, frequency, fill_gaps, fringe)?;
             state
                 .set_tool_solve(
                     request,

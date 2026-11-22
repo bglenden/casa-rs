@@ -2915,19 +2915,21 @@ fn apply_parallactic_step(
     profile: Option<&mut ApplyRowComputeProfile>,
 ) -> Result<(), ApplyExecutionError> {
     let started = profile.as_ref().map(|_| Instant::now());
-    let sign = if forward { -1.0 } else { 1.0 };
     let angle = |antenna, feed| {
-        state
-            .feed_parallactic_angle(
-                row.time_seconds,
-                row.field_id,
-                antenna,
-                feed,
-                row.data_spw_id,
-            )
-            .map(|angle| angle * sign)
+        state.feed_parallactic_angle(
+            row.time_seconds,
+            row.field_id,
+            antenna,
+            feed,
+            row.data_spw_id,
+        )
     };
-    parang::apply(
+    let apply = if forward {
+        parang::corrupt
+    } else {
+        parang::apply
+    };
+    apply(
         row.data_desc_id,
         output.correlation_types,
         angle(row.antenna1, row.feed1)?,

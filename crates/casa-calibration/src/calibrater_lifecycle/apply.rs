@@ -278,6 +278,7 @@ impl CalibraterLifecycle {
         let output = equation.solve.as_ref().map(|configured| {
             let path = match configured {
                 ConfiguredSolve::LegacyEp(ep) => ep.output_path(),
+                ConfiguredSolve::Leakage { request, .. } => &request.output,
                 ConfiguredSolve::Task { request, .. } => match request.as_ref() {
                     CalibrationSolveRequest::Gain(gain)
                     | CalibrationSolveRequest::GainSpline { gain, .. }

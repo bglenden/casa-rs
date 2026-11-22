@@ -26,11 +26,10 @@ pub(super) struct StandardSample {
 pub(super) fn solve_channel(
     samples: &[StandardSample],
     gains: &mut Vec<[Complex32; 2]>,
-    min_baselines: usize,
+    eligible: &[bool],
     min_snr: f32,
     algebra: LeakageAlgebra,
 ) -> Result<Vec<LeakageEstimate>, Vec<[bool; 2]>> {
-    let eligible = eligible_antennas(samples, gains.len(), min_baselines);
     let mut valid = eligible
         .iter()
         .map(|&eligible| [eligible; 2])
@@ -39,7 +38,7 @@ pub(super) fn solve_channel(
         .iter()
         .filter(|sample| sample.pair.iter().all(|&antenna| eligible[antenna]))
         .collect::<Vec<_>>();
-    for (gain, &eligible) in gains.iter_mut().zip(&eligible) {
+    for (gain, &eligible) in gains.iter_mut().zip(eligible) {
         if !eligible {
             *gain = [Complex32::ONE; 2];
         }
@@ -114,7 +113,11 @@ pub(super) fn solve_channel(
     Err(valid)
 }
 
-fn eligible_antennas(samples: &[StandardSample], antennas: usize, minimum: usize) -> Vec<bool> {
+pub(super) fn eligible_antennas(
+    samples: &[StandardSample],
+    antennas: usize,
+    minimum: usize,
+) -> Vec<bool> {
     let mut neighbors = vec![std::collections::BTreeSet::new(); antennas];
     for sample in samples
         .iter()
@@ -295,7 +298,7 @@ fn step_scale(
         high = mid;
         step *= 0.5;
         mid = evaluate(step);
-        while mid > loss && step > 0.125 {
+        while mid > loss && step > f32::MIN_POSITIVE {
             step *= 0.5;
             high = mid;
             mid = evaluate(step);

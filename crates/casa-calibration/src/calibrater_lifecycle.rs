@@ -25,6 +25,7 @@ use crate::{
 
 mod apply;
 pub(crate) mod ep_cache;
+mod leakage;
 pub(crate) mod legacy_ep;
 mod table_tools;
 mod traditional_apply;
@@ -59,6 +60,10 @@ enum ConfiguredSolve {
         spline_mode: Option<String>,
     },
     LegacyEp(Box<LegacyEpSolver>),
+    Leakage {
+        request: Box<crate::solve::grouping::leakage::LeakageSolveRequest>,
+        invalid_mode: bool,
+    },
 }
 
 #[derive(Default)]
@@ -111,6 +116,9 @@ pub enum CalibraterLifecycleError {
     /// Executing the full EP solve is owned by the solver-tool implementation.
     #[error("calibrater.solve with EP is pending in #1528")]
     EpSolvePending,
+    /// The polarization solve could not be configured or completed.
+    #[error("{0}")]
+    LeakageSolve(String),
     /// A point model must contain at most four finite CASA Stokes values.
     #[error("a point model requires up to four finite Stokes values")]
     InvalidPointModel,
@@ -744,7 +752,7 @@ impl CalibraterLifecycle {
             Some(ConfiguredSolve::LegacyEp(solver)) => {
                 solver.set_model(&equation.attachment, path)?
             }
-            Some(ConfiguredSolve::Task { .. }) => {
+            Some(ConfiguredSolve::Task { .. } | ConfiguredSolve::Leakage { .. }) => {
                 return Err(CalibraterLifecycleError::ImageNeedsEp);
             }
             None => return Err(CalibraterLifecycleError::ImageNeedsSolver),
@@ -809,6 +817,11 @@ impl CalibraterLifecycle {
                 }
                 Some(ConfiguredSolve::LegacyEp(_)) => {
                     return Err(CalibraterLifecycleError::EpSolvePending);
+                }
+                Some(ConfiguredSolve::Leakage { .. }) => {
+                    return Err(CalibraterLifecycleError::LeakageSolve(
+                        "execute a direct leakage configuration with solve_tool".into(),
+                    ));
                 }
                 None => return Err(CalibraterLifecycleError::NoSolver),
             };
@@ -878,6 +891,16 @@ impl CalibraterLifecycle {
     /// Returns an error if the current equation cannot be solved.
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
+        if matches!(equation.solve, Some(ConfiguredSolve::Leakage { .. })) {
+            self.last_solve_stats = None;
+            return match self.solve_leakage() {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    self.reset(true, true)?;
+                    Err(error)
+                }
+            };
+        }
         let generic = matches!(&equation.solve, Some(ConfiguredSolve::Task { request, invalid_mode, .. })
             if !invalid_mode || matches!(**request, CalibrationSolveRequest::Accor(_)));
         if generic {

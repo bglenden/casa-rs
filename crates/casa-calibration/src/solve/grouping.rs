@@ -69,7 +69,10 @@ pub(crate) enum PriorCalibrationMode {
         share_input_flags: bool,
         rotate_model: bool,
     },
-    Leakage,
+    Leakage {
+        share_input_flags: bool,
+        parang_terms: usize,
+    },
     CrossHand {
         share_input_flags: bool,
     },
@@ -136,9 +139,15 @@ pub(crate) fn load_preapplied_rows(
         PriorCalibrationMode::Delay {
             share_input_flags, ..
         } => evaluate_solve_priors(ms, plan, PriorSolveBoundary::Delay, share_input_flags),
-        PriorCalibrationMode::Leakage => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Leakage, true)
-        }
+        PriorCalibrationMode::Leakage {
+            share_input_flags,
+            parang_terms,
+        } => evaluate_solve_priors(
+            ms,
+            plan,
+            PriorSolveBoundary::Leakage { parang_terms },
+            share_input_flags,
+        ),
         PriorCalibrationMode::CrossHand { share_input_flags } => {
             evaluate_solve_priors(ms, plan, PriorSolveBoundary::CrossHand, share_input_flags)
         }
