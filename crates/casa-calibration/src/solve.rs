@@ -522,7 +522,7 @@ pub(crate) fn solve_gain(
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<GainSolveReport, GainSolveError> {
     if request.gain_type == GainType::GSpline {
-        return gspline::solve(ms, request, GainSplineControls::default(), mode);
+        return gspline::solve(ms, request, GainSplineControls::default(), mode, None);
     }
     let solved = solve_gain_rows(ms, request, activity)?;
     write_gain_caltable(ms, request, &solved, mode)

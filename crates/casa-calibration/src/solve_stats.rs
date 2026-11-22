@@ -118,6 +118,23 @@ pub(crate) struct ToolSolveActivity {
 }
 
 impl ToolSolveActivity {
+    pub(crate) fn initialize(&mut self, windows: usize) {
+        self.windows.resize(windows, IntervalActivity::default());
+    }
+
+    pub(crate) fn count_polynomial_interval(
+        &mut self,
+        input_window: i32,
+        output_window: i32,
+        attempted: bool,
+        succeeded: bool,
+    ) {
+        self.windows[input_window as usize].expected += 1;
+        let output = &mut self.windows[output_window as usize];
+        output.attempted += i64::from(attempted);
+        output.succeeded += i64::from(succeeded);
+    }
+
     pub(crate) fn record(&self) -> Option<CasaValue> {
         if self.windows.is_empty() {
             return None;

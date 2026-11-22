@@ -339,8 +339,8 @@ const METHODS: &[Method] = &[
             param("maskedge", K::Float, D::Float(5.0)),
             param("refant", K::Any, D::Empty),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Implemented,
     ),
     method(
         "setsolvegainspline",
@@ -354,8 +354,8 @@ const METHODS: &[Method] = &[
             param("phasewrap", K::Float, D::Float(250.0)),
             param("refant", K::Any, D::Empty),
         ],
-        R::Any,
-        S::NotYetImplemented,
+        R::Bool,
+        S::Implemented,
     ),
     method(
         "setvi",

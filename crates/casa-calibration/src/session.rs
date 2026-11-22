@@ -145,6 +145,7 @@ pub fn solve_calibration_with_output_mode(
         mode,
         None,
         BandpassSolveControls::default(),
+        None,
     )
 }
 
@@ -154,6 +155,7 @@ pub(crate) fn solve_calibration_with_activity(
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     bandpass: BandpassSolveControls,
+    spline_mode: Option<&str>,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     if let CalibrationSolveRequest::Fringe { gain, .. } = &request
         && gain.gain_type != GainType::K
@@ -173,11 +175,23 @@ pub(crate) fn solve_calibration_with_activity(
                 }
             })?;
             drop(open_phase);
-            solve_open_dataset(&measurement_set, request, mode, activity, bandpass)
+            solve_open_dataset(
+                &measurement_set,
+                request,
+                mode,
+                activity,
+                bandpass,
+                spline_mode,
+            )
         }
-        CalibrationDataset::Open(measurement_set) => {
-            solve_open_dataset(measurement_set, request, mode, activity, bandpass)
-        }
+        CalibrationDataset::Open(measurement_set) => solve_open_dataset(
+            measurement_set,
+            request,
+            mode,
+            activity,
+            bandpass,
+            spline_mode,
+        ),
     }
 }
 
@@ -187,6 +201,7 @@ fn solve_open_dataset(
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
     bandpass: BandpassSolveControls,
+    spline_mode: Option<&str>,
 ) -> Result<CalibrationSolveResult, CalibrationError> {
     match request {
         CalibrationSolveRequest::Gain(request) => {
@@ -195,7 +210,7 @@ fn solve_open_dataset(
                 .map_err(CalibrationError::from)
         }
         CalibrationSolveRequest::GainSpline { gain, controls } => {
-            gspline::solve(measurement_set, &gain, controls, mode)
+            gspline::solve(measurement_set, &gain, controls, mode, spline_mode)
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }

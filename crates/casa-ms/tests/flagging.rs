@@ -4,8 +4,9 @@ mod common;
 
 use casa_ms::selection::MsSelection;
 use casa_ms::{
-    FlagDataAction, FlagDataMode, FlagDataRequest, FlagMerge, MeasurementSet, QuackMode,
-    delete_flag_version, flagdata, flagdata_path, list_flag_versions, rename_flag_version,
+    FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataRequest, FlagMerge, FlaggingError,
+    MeasurementSet, QuackMode, SubtableId, append_flag_commands, delete_flag_version, flagdata,
+    flagdata_ms_program, flagdata_path, list_flag_versions, rename_flag_version,
     restore_flag_version, save_flag_version,
 };
 use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
@@ -780,4 +781,193 @@ fn set_flag_on_open_ms(ms: &mut MeasurementSet, row: usize, corr: usize, chan: u
         .expect("FLAG_ROW cell")
         .set(Value::Scalar(ScalarValue::Bool(flag_row)))
         .expect("set FLAG_ROW");
+}
+
+#[test]
+fn flagdata_ms_program_stages_skips_and_persists() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+
+    let requests = vec![
+        FlagDataRequest {
+            mode: FlagDataMode::Manual,
+            casa_row_selection: true,
+            selection: MsSelection {
+                spw: Some("0:0".to_owned()),
+                ..MsSelection::default()
+            },
+            spw: Some("0:0".to_owned()),
+            flagbackup: false,
+            ..FlagDataRequest::default()
+        },
+        FlagDataRequest {
+            mode: FlagDataMode::Clip,
+            casa_row_selection: true,
+            data_column: FlagDataColumn::CorrectedData,
+            clipminmax: Some([0.0, 1.0]),
+            flagbackup: false,
+            ..FlagDataRequest::default()
+        },
+        FlagDataRequest {
+            mode: FlagDataMode::Summary,
+            casa_row_selection: true,
+            flagbackup: false,
+            ..FlagDataRequest::default()
+        },
+        FlagDataRequest {
+            mode: FlagDataMode::Manual,
+            casa_row_selection: true,
+            selection: MsSelection {
+                field: Some("NO_SUCH_FIELD".to_owned()),
+                ..MsSelection::default()
+            },
+            flagbackup: false,
+            ..FlagDataRequest::default()
+        },
+    ];
+
+    // Preview run sees staged manual flags in summary while leaving disk untouched.
+    let ms = MeasurementSet::open(&ms_path).expect("open MS");
+    let calc_reports = flagdata_ms_program(ms, &requests, false, true, None).expect("calculate");
+    assert!(calc_reports[0].is_some());
+    assert!(
+        calc_reports[1].is_none(),
+        "missing CORRECTED_DATA skips clip"
+    );
+    let summary = calc_reports[2]
+        .as_ref()
+        .and_then(|r| r.summary.as_ref())
+        .expect("summary report");
+    assert_eq!(summary.overall.flagged as usize, 4 * NUM_CORR);
+    assert!(
+        calc_reports[3].is_none(),
+        "local selection error skips in multi-command"
+    );
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen MS");
+    assert_not_flag(&reopened, 0, 0, 0);
+
+    // Single-command selection failure (local_selection = false) propagates.
+    let ms = MeasurementSet::open(&ms_path).expect("open MS");
+    assert!(flagdata_ms_program(ms, &requests[3..4], false, false, None).is_err());
+
+    // Apply writes combined flags once.
+    let ms = MeasurementSet::open(&ms_path).expect("open MS");
+    let apply_reports = flagdata_ms_program(ms, &requests, true, true, None).expect("apply");
+    assert!(apply_reports[2].is_some());
+    let persisted = MeasurementSet::open(&ms_path).expect("reopen MS");
+    assert_flag(&persisted, 0, 0, 0);
+}
+
+#[test]
+fn append_flag_commands_writes_batches_and_handles_empty() {
+    let temp = tempdir().expect("tempdir");
+    let ms_path = create_msexplore_fixture_ms(temp.path());
+
+    append_flag_commands(&ms_path, &[], false).expect("empty batch succeeds");
+    append_flag_commands(
+        &ms_path,
+        &[
+            ("mode='manual' spw='0:0'".to_owned(), "r1".to_owned()),
+            ("mode='unflag'".to_owned(), "r2".to_owned()),
+        ],
+        true,
+    )
+    .expect("batch append");
+
+    let table = casa_tables::Table::open(casa_tables::TableOptions::new(
+        ms_path.join(SubtableId::FlagCmd.name()),
+    ))
+    .expect("open FLAG_CMD");
+    assert_eq!(table.row_count(), 2);
+    let cell = |row, col| {
+        table
+            .cell_accessor(row, col)
+            .expect(col)
+            .value()
+            .expect("value")
+            .expect("defined")
+            .clone()
+    };
+    assert_eq!(
+        cell(0, "COMMAND"),
+        Value::Scalar(ScalarValue::String("mode='manual' spw='0:0'".to_owned()))
+    );
+    assert_eq!(
+        cell(0, "REASON"),
+        Value::Scalar(ScalarValue::String("r1".to_owned()))
+    );
+    assert_eq!(cell(0, "APPLIED"), Value::Scalar(ScalarValue::Bool(true)));
+    assert_eq!(
+        cell(1, "COMMAND"),
+        Value::Scalar(ScalarValue::String("mode='unflag'".to_owned()))
+    );
+    assert_eq!(
+        cell(1, "REASON"),
+        Value::Scalar(ScalarValue::String("r2".to_owned()))
+    );
+    assert_eq!(cell(1, "APPLIED"), Value::Scalar(ScalarValue::Bool(true)));
+}
+
+#[test]
+fn rflag_and_tfcrop_missing_column_and_bogus_correlation_extension() {
+    let temp = tempdir().expect("tempdir");
+    let missing_col_ms = create_msexplore_fixture_ms(temp.path());
+    let mut ms = MeasurementSet::open(&missing_col_ms).expect("open MS");
+    let err = flagdata(
+        &mut ms,
+        &FlagDataRequest {
+            mode: FlagDataMode::Rflag,
+            casa_row_selection: true,
+            data_column: FlagDataColumn::CorrectedData,
+            correlation: Some("BOGUS".to_owned()),
+            flagbackup: false,
+            ..FlagDataRequest::default()
+        },
+    )
+    .expect_err("missing CORRECTED_DATA must fail before correlation skip");
+    assert!(matches!(err, FlaggingError::MissingRflagColumn), "{err:?}");
+
+    for mode in [FlagDataMode::Tfcrop, FlagDataMode::Rflag] {
+        let dir = temp.path().join(format!("{mode:?}"));
+        std::fs::create_dir_all(&dir).expect("create subdir");
+        let ms_path = create_msexplore_fixture_ms(&dir);
+        set_flag(&ms_path, 0, 0, 0, true);
+
+        let no_ext_req = [FlagDataRequest {
+            mode,
+            casa_row_selection: true,
+            correlation: Some("BOGUS".to_owned()),
+            extendflags: false,
+            extendpols: true,
+            flagbackup: false,
+            ..FlagDataRequest::default()
+        }];
+        let reports = flagdata_ms_program(
+            MeasurementSet::open(&ms_path).expect("open MS"),
+            &no_ext_req,
+            true,
+            false,
+            None,
+        )
+        .expect("unadmitted correlation without extendflags skips cleanly");
+        assert!(reports[0].is_none(), "{mode:?} without extendflags skipped");
+        let reopened = MeasurementSet::open(&ms_path).expect("reopen MS");
+        assert_not_flag(&reopened, 0, 1, 0);
+
+        let ext_req = [FlagDataRequest {
+            extendflags: true,
+            ..no_ext_req[0].clone()
+        }];
+        let reports = flagdata_ms_program(
+            MeasurementSet::open(&ms_path).expect("open MS"),
+            &ext_req,
+            true,
+            false,
+            None,
+        )
+        .expect("unadmitted correlation with extendflags still extends");
+        assert!(reports[0].is_some(), "{mode:?} extendflags survives");
+        let extended = MeasurementSet::open(&ms_path).expect("reopen extended MS");
+        assert_flag(&extended, 0, 1, 0);
+    }
 }

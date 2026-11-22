@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Execute task flag commands against a single calibration-table view.
+//! Execute task flag commands against one calibration-table or MeasurementSet view.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_ms::flagging::{
-    FlagDataColumn, FlagDataMode, flagdata_calibration_program, save_next_casa_flag_backup,
-    validate_calibration_flag_averaging,
+    FlagDataColumn, FlagDataMode, FlaggingError, flagdata_calibration_program, flagdata_ms_program,
+    save_next_casa_flag_backup, validate_calibration_flag_averaging,
 };
 use casa_ms::{
-    FlagDataReport, FlagDataRequest, MeasurementSet, flagdata_empty_record,
-    flagdata_named_summary_record, ms_task_success,
+    FlagDataReport, FlagDataRequest, MeasurementSet, append_flag_commands, append_task_history,
+    flagdata_empty_record, flagdata_named_summary_record, ms_task_success,
 };
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_task_runtime::{
@@ -19,19 +19,28 @@ use casa_task_runtime::{
 
 use super::{
     channel_bin_widths, command, command_values::Assignments, data_column,
-    flagdata_column_argument, is_calibration_table, not_yet, prepare_flagdata_request, rflag,
-    time_chunk_argument,
+    flagdata_column_argument, flagdata_history, is_calibration_table, prepare_flagdata_request,
+    rflag, shadow, time_chunk_argument, unknown,
 };
 
 #[path = "list_input.rs"]
 mod input;
 
+pub(crate) use input::tbuff_active;
+
 pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess, TaskFailure> {
-    let path = task.path("vis")?;
-    if !is_calibration_table(&path) {
-        return Err(not_yet("mode", "list"));
+    if !matches!(action, "apply" | "calculate" | "none" | "") {
+        return Err(unknown(
+            "action",
+            action,
+            "'apply', 'calculate', 'none' or ''",
+        ));
     }
+    let path = task.path("vis")?;
+    let calibration = is_calibration_table(&path);
     let write_flags = action == "apply";
+    let display_option = task.required_text("display")?;
+    let column_argument = flagdata_column_argument(task)?;
     let table = MeasurementSet::open(&path)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
     let backup = if write_flags && task.flag("flagbackup")? {
@@ -42,18 +51,32 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
     } else {
         None
     };
+    let top_time_chunk = time_chunk_argument(task)?;
     let commands = input::read(task)?;
     let save = task.flag("savepars")?;
     if matches!(action, "" | "none") {
         if save {
-            save_commands(task, &path, &commands, true)?;
+            save_commands(task, &path, &commands, false, true, calibration)?;
+        } else {
+            tracing::warn!("Parameter action='' is only meaningful with savepars=True.");
         }
         return ms_task_success(flagdata_empty_record(), &Vec::<FlagDataReport>::new());
+    }
+    if !calibration && !display_option.is_empty() && column_argument.is_none() {
+        return Err(
+            TaskFailure::execution("'list' object has no attribute 'upper'").at("datacolumn"),
+        );
+    }
+    if matches!(display_option.as_str(), "data" | "report" | "both") {
+        tracing::warn!(display = %display_option, "running flagdata with its headless provider");
+    }
+    if save && !display_option.is_empty() {
+        tracing::warn!("Disabling savepars for the display");
     }
     let mut requests = Vec::new();
     let mut agents = Vec::new();
     for (index, values) in commands.iter().enumerate() {
-        if let Some(request) = prepare(task, values, action)? {
+        if let Some(request) = prepare(task, values, action, calibration, top_time_chunk)? {
             requests.push(request);
             agents.push((index, values));
         }
@@ -62,18 +85,11 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
         .iter()
         .zip(&agents)
         .filter_map(|(request, &(_, values))| {
-            if matches!(request.mode, FlagDataMode::Elevation | FlagDataMode::Shadow)
-                || (matches!(
-                    request.mode,
-                    FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
-                ) && !(matches!(
-                    request.data_column,
-                    FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
-                ) && table
-                    .main_table()
-                    .schema()
-                    .is_some_and(|schema| schema.contains_column(request.data_column.name()))))
+            if calibration && matches!(request.mode, FlagDataMode::Elevation | FlagDataMode::Shadow)
             {
+                return None;
+            }
+            if !agent_column_available(&table, request, calibration) {
                 return None;
             }
             let mode = match values.get("mode") {
@@ -89,18 +105,18 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
         });
     validate_calibration_flag_averaging(configured)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
-    let mut reports =
-        flagdata_calibration_program(table, &requests, write_flags, commands.len() > 1).map_err(
-            |error| {
-                let parameter =
-                    if matches!(error, casa_ms::flagging::FlaggingError::CalibrationAntint) {
-                        "calibration-agent"
-                    } else {
-                        "flag-list-agent"
-                    };
-                TaskFailure::execution(error.to_string()).at(parameter)
-            },
-        )?;
+    let program = if calibration {
+        flagdata_calibration_program(table, &requests, write_flags, commands.len() > 1)
+    } else {
+        flagdata_ms_program(
+            table,
+            &requests,
+            write_flags,
+            commands.len() > 1,
+            Some(casa_calibration::flagdata_model),
+        )
+    };
+    let mut reports = program.map_err(|error| map_program_error(error, calibration))?;
     if let Some(report) = reports.iter_mut().flatten().next() {
         report.backup_version = backup;
     }
@@ -122,14 +138,79 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
             }
         }
     }
-    if save && task.required_text("display")?.is_empty() {
-        save_commands(task, &path, &commands, false)?;
+    if save && display_option.is_empty() {
+        save_commands(task, &path, &commands, write_flags, false, calibration)?;
+    }
+    // CASA's task_flagdata.py appends HISTORY on apply before checking
+    // summary_stats_list['nreport'], so all-skipped apply calls still log.
+    if !calibration
+        && write_flags
+        && let Err(error) =
+            append_task_history(&path, &flagdata_history(task, &path, &display_option))
+    {
+        tracing::error!(%error, "updating flagdata HISTORY");
     }
     if reports.iter().all(Option::is_none) {
         return Err(TaskFailure::execution("nreport").at("flag-list-no-report"));
     }
     let value = summary_value(&reports, &agents);
     ms_task_success(value, &reports.into_iter().flatten().collect::<Vec<_>>())
+}
+
+fn agent_column_available(
+    table: &MeasurementSet,
+    request: &FlagDataRequest,
+    calibration: bool,
+) -> bool {
+    if !matches!(
+        request.mode,
+        FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
+    ) {
+        return true;
+    }
+    let has_column = |name| {
+        table
+            .main_table()
+            .schema()
+            .is_some_and(|schema| schema.contains_column(name))
+    };
+    if calibration {
+        return matches!(
+            request.data_column,
+            FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
+        ) && has_column(request.data_column.name());
+    }
+    let has_model = || {
+        has_column("MODEL_DATA")
+            || !casa_ms::scratch_columns::virtual_model_fields(table).is_empty()
+    };
+    match request.data_column {
+        FlagDataColumn::Residual => has_column("CORRECTED_DATA") && has_model(),
+        FlagDataColumn::ResidualData => {
+            (has_column("DATA") || has_column("FLOAT_DATA")) && has_model()
+        }
+        FlagDataColumn::ModelData => has_column("MODEL_DATA"),
+        FlagDataColumn::Weight => true,
+        column => has_column(column.name()),
+    }
+}
+
+fn map_program_error(error: FlaggingError, calibration: bool) -> TaskFailure {
+    match error {
+        FlaggingError::CalibrationAntint => {
+            TaskFailure::execution(error.to_string()).at("calibration-agent")
+        }
+        FlaggingError::InvalidRFlagScale(parameter) if !calibration => {
+            TaskFailure::validation(error.to_string()).at(parameter)
+        }
+        FlaggingError::UnknownTfcropProduct(_) if !calibration => {
+            TaskFailure::execution(error.to_string()).at("correlation")
+        }
+        FlaggingError::InvalidClipChannelBins if !calibration => {
+            TaskFailure::execution(error.to_string()).at("chanbin")
+        }
+        error => TaskFailure::execution(error.to_string()).at("flag-list-agent"),
+    }
 }
 
 fn summary_value(
@@ -164,6 +245,8 @@ fn prepare(
     parent: &TaskInvocation<'_>,
     values: &Assignments,
     action: &str,
+    calibration: bool,
+    top_time_chunk: Option<f64>,
 ) -> Result<Option<FlagDataRequest>, TaskFailure> {
     let mode = match values.get("mode") {
         Some(ParameterValue::String(mode)) => mode.as_str(),
@@ -237,14 +320,23 @@ fn prepare(
     let task = TaskInvocation::new(&session, parent.workspace());
     let mode = task.required_text("mode")?;
     let column = flagdata_column_argument(&task)?.unwrap_or_default();
+    let cmd_time_chunk = time_chunk_argument(&task)?;
+    let effective_time_chunk = if !calibration && mode == "clip" {
+        top_time_chunk
+    } else {
+        match (top_time_chunk, cmd_time_chunk) {
+            (Some(top), Some(cmd)) => Some(top.max(cmd)),
+            (top, cmd) => cmd.or(top),
+        }
+    };
     let prepared = prepare_flagdata_request(
         &task,
         &mode,
         action,
         column,
         channel_bin_widths(&task)?,
-        true,
-        time_chunk_argument(&task)?,
+        calibration,
+        effective_time_chunk,
     );
     let (mut request, _) = match prepared {
         Err(error) if error.parameter.as_deref() == Some("datacolumn") => return Ok(None),
@@ -253,13 +345,17 @@ fn prepare(
     if mode == "quack" && request.quackmode == casa_ms::flagging::QuackMode::Disabled {
         return Ok(None);
     }
-    if mode == "antint" {
-        request.data_column = data_column(column, FlagDataMode::Clip, true).unwrap_or_default();
-    }
-    if mode == "tfcrop"
-        && matches!(task.session().given("correlation"), Some(ParameterValue::String(value)) if value.is_empty())
-    {
-        request.correlation = Some("SOL1".to_owned());
+    if calibration {
+        if mode == "antint" {
+            request.data_column = data_column(column, FlagDataMode::Clip, true).unwrap_or_default();
+        }
+        if mode == "tfcrop"
+            && matches!(task.session().given("correlation"), Some(ParameterValue::String(value)) if value.is_empty())
+        {
+            request.correlation = Some("SOL1".to_owned());
+        }
+    } else if mode == "shadow" {
+        request.shadow = shadow::parameters(&task)?.options;
     }
     request.summary_options.minrel = parent.number("minrel")?;
     request.summary_options.maxrel = parent.number("maxrel")?;
@@ -272,20 +368,48 @@ fn save_commands(
     task: &TaskInvocation<'_>,
     vis: &Path,
     commands: &[Assignments],
+    write_flags: bool,
     save_only: bool,
+    calibration: bool,
 ) -> Result<(), TaskFailure> {
     let outfile = task.required_text("outfile")?;
-    if outfile.is_empty() {
-        if save_only {
-            return Err(TaskFailure::execution(format!(
-                "Error opening FLAG_CMD table {}",
-                vis.join("FLAG_CMD").display(),
-            ))
-            .at("calibration-save-command"));
-        }
-        return Ok(());
-    }
     let reason = task.required_text("cmdreason")?;
+    if outfile.is_empty() {
+        if calibration {
+            if save_only {
+                return Err(TaskFailure::execution(format!(
+                    "Error opening FLAG_CMD table {}",
+                    vis.join("FLAG_CMD").display(),
+                ))
+                .at("calibration-save-command"));
+            }
+            return Ok(());
+        }
+        let mut entries = Vec::new();
+        for values in commands {
+            let mode = match values.get("mode") {
+                Some(ParameterValue::String(mode)) => mode.as_str(),
+                _ => "",
+            };
+            if mode == "summary" {
+                tracing::warn!(
+                    "Commands with mode='summary' are not allowed in the FLAG_CMD table"
+                );
+                continue;
+            }
+            let entry_reason = if !reason.is_empty() {
+                reason.clone()
+            } else {
+                match values.get("reason") {
+                    Some(ParameterValue::String(value)) => value.clone(),
+                    _ => String::new(),
+                }
+            };
+            entries.push((input::command_line_without_reason(values), entry_reason));
+        }
+        return append_flag_commands(vis, &entries, write_flags)
+            .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"));
+    }
     let lines = commands
         .iter()
         .map(|values| input::command_line(values, &reason))
@@ -296,4 +420,108 @@ fn save_commands(
         task.flag("overwrite")?,
         save_only,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use casa_task_runtime::{ParameterRuntime, TaskCommandLine};
+
+    use super::*;
+    use crate::command_values::parse_assignments;
+
+    fn invoke<T>(
+        args: &[&str],
+        f: impl FnOnce(&TaskInvocation<'_>) -> Result<T, TaskFailure>,
+    ) -> Result<T, TaskFailure> {
+        let args = args.iter().map(OsString::from).collect::<Vec<_>>();
+        let bundle = casa_provider_contracts::builtin_surface_bundle("flagdata").unwrap();
+        let line = TaskCommandLine::parse(&bundle, &args).unwrap();
+        let session = ParameterRuntime::default()
+            .open_session(line.open_session_request(bundle))
+            .unwrap();
+        f(&TaskInvocation::new(&session, Path::new(".")))
+    }
+
+    #[test]
+    fn command_line_renders_with_and_without_reason() {
+        let parsed = parse_assignments("mode='manual' spw='0:1' reason='science'").unwrap();
+        assert_eq!(
+            input::command_line(&parsed, ""),
+            "mode='manual' spw='0:1' reason='science'"
+        );
+        assert_eq!(
+            input::command_line(&parsed, "batch"),
+            "mode='manual' spw='0:1' reason='batch'"
+        );
+        assert_eq!(
+            input::command_line_without_reason(&parsed),
+            "mode='manual' spw='0:1'"
+        );
+    }
+
+    #[test]
+    fn list_history_preserves_tbuff_inpfile_wrapping() {
+        let plain = invoke(
+            &["--vis", "in.ms", "--mode", "list", "--inpfile", "cmds.txt"],
+            |task| Ok(flagdata_history(task, Path::new("in.ms"), "")),
+        )
+        .unwrap();
+        assert!(
+            plain
+                .parameters
+                .contains(&("inpfile".to_string(), "\"cmds.txt\"".to_string())),
+            "{:?}",
+            plain.parameters
+        );
+
+        let wrapped = invoke(
+            &[
+                "--vis",
+                "in.ms",
+                "--mode",
+                "list",
+                "--inpfile",
+                "cmds.txt",
+                "--tbuff",
+                "5",
+            ],
+            |task| Ok(flagdata_history(task, Path::new("in.ms"), "")),
+        )
+        .unwrap();
+        assert!(
+            wrapped
+                .parameters
+                .contains(&("inpfile".to_string(), "['cmds.txt']".to_string())),
+            "{:?}",
+            wrapped.parameters
+        );
+    }
+
+    #[test]
+    fn prepare_resolves_ms_shadow_and_ntime_precedence() {
+        let commands = [
+            parse_assignments("mode='clip' clipminmax=[0.0,1.0]").unwrap(),
+            parse_assignments("mode='extend' ntime=60.0").unwrap(),
+            parse_assignments("mode='shadow' tolerance=1.5").unwrap(),
+            parse_assignments("mode='tfcrop'").unwrap(),
+        ];
+        let mut prepared = Vec::new();
+        invoke(
+            &["--vis", "in.ms", "--mode", "list", "--ntime", "20"],
+            |task| {
+                let top = time_chunk_argument(task)?;
+                for cmd in &commands {
+                    prepared.push(prepare(task, cmd, "apply", false, top)?.unwrap());
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(prepared[0].time_chunk, Some(20.0));
+        assert_eq!(prepared[1].time_chunk, Some(60.0));
+        assert_eq!(prepared[2].shadow.tolerance_m, 1.5);
+        assert_eq!(prepared[3].correlation, None);
+    }
 }

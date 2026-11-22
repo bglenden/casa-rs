@@ -46,6 +46,7 @@ IMPLEMENTED["agentflagger"] = {
     "getflagversionlist", "saveflagversion", "restoreflagversion", "deleteflagversion",
 }
 IMPLEMENTED["calibrater"] = {
+    "setsolvebandpoly", "setsolvegainspline",
     "open", "close", "done", "setvi", "selectvis", "reset",
     "initcalset", "delmod", "setptmodel", "modelfit", "initweights",
     "accumulate", "createcaltable", "updatecaltable", "smooth", "rerefant", "listcal", "plotcal",
@@ -176,6 +177,8 @@ def test_calibrater_method_returns_before_open() -> None:
     assert instance.reset() is False
     assert instance.setcorrdepflags(True) is True
     assert instance.solve() is False
+    assert instance.setsolvebandpoly() is False
+    assert instance.setsolvegainspline() is False
     assert instance.initcalset() is False
     assert instance.delmod() is False
     assert instance.linpolcor() is False

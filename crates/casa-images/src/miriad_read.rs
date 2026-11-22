@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use casa_coordinates::{
-    CoordinateSystem, CoordinateType, FitsHeader, FitsValue, StokesCoordinate, StokesType,
-    fits::from_fits_header,
+    CoordinateModel, CoordinateSystem, CoordinateType, FitsHeader, FitsValue, Projection,
+    ProjectionType, StokesCoordinate, StokesType, fits::from_fits_header,
 };
 use casa_lattices::{Lattice, LatticeError};
 use casa_types::{
@@ -96,6 +96,22 @@ impl MiriadImage {
 
         let (wcs, stokes) = header.wcs(&shape)?;
         let mut coordinates = from_fits_header(&wcs, &shape)?;
+        if let Some(index) = coordinates.find_coordinate(CoordinateType::Direction)
+            && let CoordinateModel::Direction(direction) = coordinates.coordinate(index)
+        {
+            // Casacore represents NCP as slant SIN and retains both SIN
+            // parameters even when the projection has no slant.
+            let slant = match direction.projection().projection_type() {
+                ProjectionType::SIN => Some(0.),
+                ProjectionType::NCP => Some(direction.projection_reference()[1].tan().recip()),
+                _ => None,
+            };
+            if let Some(slant) = slant {
+                let projection = Projection::with_parameters(ProjectionType::SIN, vec![0., slant]);
+                let rebuilt = direction.with_rebuilt_projection(projection)?;
+                coordinates.replace_coordinate(index, rebuilt);
+            }
+        }
         if let Some(stokes) = stokes {
             let index = coordinates
                 .find_coordinate(CoordinateType::Stokes)
@@ -445,6 +461,12 @@ impl<'a> Items<'a> {
             if !kind.is_ascii() {
                 return Err(malformed(format!("CTYPE{axis} must be ASCII")));
             }
+            let direction_axis = ["RA---", "DEC--", "GLON-", "GLAT-"]
+                .iter()
+                .any(|prefix| kind.starts_with(prefix));
+            if direction_axis && kind[5..].trim_matches(['-', ' ']).is_empty() {
+                kind.clear();
+            }
             let mut pix = self.number(&format!("crpix{axis}"), 0.)?;
             let mut step = self.number(&format!("cdelt{axis}"), 0.)?;
             let mut value = self.number(&format!("crval{axis}"), 0.)?;
@@ -460,35 +482,12 @@ impl<'a> Items<'a> {
                     }
                 }
                 ""
-            } else if kind.starts_with("RA---")
-                || kind.starts_with("DEC--")
-                || kind.starts_with("GLON-")
-                || kind.starts_with("GLAT-")
-            {
-                if kind[5..].trim_matches(['-', ' ']).is_empty() {
-                    header.set(format!("CTYPE{axis}"), FitsValue::String(String::new()));
-                    continue;
-                }
+            } else if direction_axis && !kind.is_empty() {
                 if step == 0. && (pix - 1.).abs() <= 1e-13 {
                     step = 1.;
                 }
                 if step == 0. {
                     return Err(singular_wcs());
-                }
-                let projection = &kind[5..];
-                if matches!(projection, "SIN" | "NCP")
-                    && (kind.starts_with("DEC--") || kind.starts_with("GLAT-"))
-                {
-                    let slant = if projection == "NCP" {
-                        value.tan().recip()
-                    } else {
-                        0.
-                    };
-                    header.set(format!("PV{axis}_1"), FitsValue::Float(0.));
-                    header.set(format!("PV{axis}_2"), FitsValue::Float(slant));
-                }
-                if projection == "NCP" {
-                    kind.replace_range(5.., "SIN");
                 }
                 step = step.to_degrees();
                 value = value.to_degrees();

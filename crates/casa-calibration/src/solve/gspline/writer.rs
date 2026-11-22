@@ -17,7 +17,7 @@ use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, set_fixed_unit_keyword,
     set_measinfo_keyword,
 };
-use crate::{CalibrationOutputMode, GainSolveError, GainSolveMode, GainSolveRequest};
+use crate::{CalibrationOutputMode, GainSolveError, GainSolveRequest};
 
 pub(super) fn write(
     ms: &MeasurementSet,
@@ -26,6 +26,7 @@ pub(super) fn write(
     mode: CalibrationOutputMode,
     fields: &BTreeSet<i32>,
     (reference, antennas, frequency): (i32, &BTreeSet<usize>, f64),
+    poly_mode: &str,
 ) -> Result<usize, GainSolveError> {
     let mut columns = legacy_polynomial_columns(true);
     columns.retain(|column| column.name() != "SIDEBAND_REF");
@@ -70,11 +71,9 @@ pub(super) fn write(
         time: coefficients.knots.iter().sum::<f64>() / coefficients.knots.len() as f64,
         reference,
         frequency,
-        mode: match request.solve_mode {
-            GainSolveMode::Amplitude => "AMP",
-            GainSolveMode::Phase => "PHAS",
-            GainSolveMode::AmplitudePhase => "PHASAMP",
-        },
+        mode: poly_mode,
+        write_amplitude: poly_mode.contains("AMP") || poly_mode.contains("A&P"),
+        write_phase: poly_mode.contains("PHAS") || poly_mode.contains("A&P"),
     };
     for &field in fields {
         for &antenna in antennas {
@@ -107,7 +106,9 @@ struct SplineRow<'a> {
     time: f64,
     reference: i32,
     frequency: f64,
-    mode: &'static str,
+    mode: &'a str,
+    write_amplitude: bool,
+    write_phase: bool,
 }
 
 impl SplineRow<'_> {
@@ -125,10 +126,7 @@ impl SplineRow<'_> {
             int("CAL_DESC_ID", 0),
             text("POLY_TYPE", "SPLINE"),
             text("POLY_MODE", self.mode),
-            text(
-                "PHASE_UNITS",
-                if self.mode == "AMP" { "" } else { "RADIANS" },
-            ),
+            text("PHASE_UNITS", if self.write_phase { "RADIANS" } else { "" }),
             scalar(
                 "SCALE_FACTOR",
                 ScalarValue::Complex32(Complex32::new(1., 0.)),
@@ -178,11 +176,7 @@ impl SplineRow<'_> {
             f64_field(
                 "REF_FREQUENCY",
                 &[1, 1, 1],
-                vec![if self.mode == "AMP" {
-                    0.
-                } else {
-                    self.frequency
-                }],
+                vec![if self.write_phase { self.frequency } else { 0. }],
             ),
             f64_field(
                 "REF_DIRECTION",
@@ -210,16 +204,26 @@ impl SplineRow<'_> {
             ));
         }
         for (suffix, part) in [
-            ("AMP", &self.coefficients.log_amplitude),
-            ("PHASE", &self.coefficients.phase),
+            (
+                "AMP",
+                self.write_amplitude
+                    .then_some(self.coefficients.log_amplitude.as_ref())
+                    .flatten(),
+            ),
+            (
+                "PHASE",
+                self.write_phase
+                    .then_some(self.coefficients.phase.as_ref())
+                    .flatten(),
+            ),
         ] {
-            let count = part.as_ref().map_or(0, |_| self.coefficients.knots.len());
+            let count = part.map_or(0, |_| self.coefficients.knots.len());
             let knots = if count == 0 {
                 vec![0.]
             } else {
                 self.coefficients.knots.clone()
             };
-            let values = part.as_ref().map_or_else(
+            let values = part.map_or_else(
                 || vec![0.],
                 |hands| {
                     hands

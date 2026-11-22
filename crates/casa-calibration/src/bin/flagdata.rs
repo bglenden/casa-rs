@@ -581,6 +581,8 @@ fn selector_string_repr(text: &str) -> String {
 
 fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> TransformTaskHistory {
     let rflag = matches!(task.value("mode"), Some(ParameterValue::String(mode)) if mode == "rflag");
+    let wrap_list_inpfile = matches!(task.value("mode"), Some(ParameterValue::String(mode)) if mode == "list")
+        && list::tbuff_active(task);
     // CASA's display agent can change these locals before writing HISTORY.
     let float_display = !display.is_empty()
         && matches!(task.value("datacolumn"), Some(ParameterValue::String(column)) if column.eq_ignore_ascii_case("DATA"))
@@ -657,6 +659,20 @@ fn flagdata_history(task: &TaskInvocation<'_>, path: &Path, display: &str) -> Tr
                 ("mode", ParameterValue::String(value)) if value == "manualflag" => {
                     "\"manual\"".to_string()
                 }
+                ("inpfile", ParameterValue::String(value)) if wrap_list_inpfile => {
+                    format!("[{}]", selector_string_repr(value))
+                }
+                ("inpfile", ParameterValue::Array(items)) => format!(
+                    "[{}]",
+                    items
+                        .iter()
+                        .map(|item| match item {
+                            ParameterValue::String(text) => selector_string_repr(text),
+                            _ => python_repr(item),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
                 ("ntime", ParameterValue::String(value)) => {
                     format!("\"{}\"", value.split('\0').next().unwrap_or_default())
                 }
@@ -1423,10 +1439,7 @@ mod tests {
     }
 
     #[test]
-    fn casa_values_not_implemented_yet_name_978() {
-        let error = request_for(&["--vis", "in.ms", "--mode", "list"]).unwrap_err();
-        assert!(error.message.contains("#978"), "{error:?}");
-        assert_eq!(error.parameter.as_deref(), Some("mode"));
+    fn model_column_resolves_for_rflag() {
         let request =
             request_for(&["--vis", "in.ms", "--mode", "rflag", "--datacolumn", "MODEL"]).unwrap();
         assert_eq!(request.data_column, FlagDataColumn::ModelData);
