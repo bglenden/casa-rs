@@ -200,11 +200,6 @@ impl SavedExpressionDirectory {
         pixel_type: ImagePixelType,
         record: &RecordValue,
     ) -> PyResult<()> {
-        if self.link.is_some() {
-            return Err(raised(
-                "Saved image expression manifest must be a regular file",
-            ));
-        }
         let pixel_type = match pixel_type {
             ImagePixelType::Float32 => PrimitiveType::Float32,
             ImagePixelType::Float64 => PrimitiveType::Float64,

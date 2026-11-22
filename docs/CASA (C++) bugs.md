@@ -8390,6 +8390,23 @@ preserves the referent and restores the original directory entries if
 the move would switch to a different manifest with the same expression.
 See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
+### Linked saved-expression writes can follow a changed referent
+
+Open a saved expression whose `imageexpr.json` is a symbolic link. Replacing
+that link or the file it points to after attachment makes CASA 6.7.6.14
+write to the replacement on `setmiscinfo`, even when the live graph still
+uses the original expression. Casa-rs checks the captured link and file
+identities, rejects a stale update, and preserves the live metadata on
+failure. A successful update atomically replaces the file through its
+captured parent directory and leaves the link in place.
+
+On a move between two APFS filesystems, CASA copies the resolved file
+into a regular `imageexpr.json`. Casa-rs copies the link, verifies its
+referent at the final location, and keeps metadata writes directed to that
+referent. An internal relative link moves with its file. An external
+absolute link continues to share the existing file.
+See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values
