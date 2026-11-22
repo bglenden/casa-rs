@@ -156,6 +156,7 @@ def test_direct_miriad_file_factories(tmp_path, monkeypatch, backend, method, kw
         coordinates = image.coordsys()
         try:
             assert coordinates.setunits(["rad", "rad"])
+            np.testing.assert_array_equal(coordinates.projection()["parameters"], [0., 0.])
             np.testing.assert_allclose(coordinates.toworld([40, 8])["numeric"], _sin_pixel(40, 8), rtol=0, atol=1e-10)
         finally:
             coordinates.done()
@@ -799,3 +800,107 @@ def test_miriad_fits_export_round_trip(tmp_path, writer_backend, reader_backend,
     finally:
         reader.done()
         writer.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_miriad_north_celestial_pole_projection(tmp_path, backend):
+    path = tmp_path / "ncp.mir"
+    _sky(path)
+    header = path / "header"
+    data = header.read_bytes()
+    header.write_bytes(
+        data.replace(_text("RA---SIN"), _text("RA---NCP"))
+            .replace(_text("DEC--SIN"), _text("DEC--NCP"))
+    )
+    tool = _backend(backend).image()
+    try:
+        assert tool.open(str(path))
+        coords = tool.coordsys()
+        try:
+            assert coords.setunits(["rad", "rad"])
+            projection = coords.projection()
+            assert projection["type"] == "SIN"
+            np.testing.assert_allclose(
+                projection["parameters"], [0., 1. / math.tan(.25)], rtol=0, atol=1e-13
+            )
+            for x, y in ([1, 1], [40, 8], [126, 15]):
+                m, l = (y - 1) * .0001, -(x - 1) * .0001
+                denominator = math.cos(.25) - m * math.sin(.25)
+                right_ascension = 1. + math.atan2(l, denominator)
+                declination = math.acos(math.hypot(l, denominator))
+                np.testing.assert_allclose(
+                    coords.toworld([x, y])["numeric"], [right_ascension, declination],
+                    rtol=0, atol=1e-10,
+                )
+        finally:
+            coords.done()
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize(("qualifier", "frame"), [
+    ("", "BARY"), ("-HEL", "BARY"), ("-OBS", "TOPO"), ("-LSD", "LSRD"),
+    ("-GEO", "GEO"), ("-SOU", "REST"), ("-GAL", "GALACTO"), ("-LSRK", "LSRK"),
+    ("-MYS", "TOPO"),
+])
+def test_miriad_legacy_spectral_frame_qualifiers(tmp_path, backend, qualifier, frame):
+    path = tmp_path / "frequency.mir"
+    _sky(path, cube=f"FREQ{qualifier}")
+    tool = _backend(backend).image()
+    try:
+        assert tool.open(str(path))
+        coords = tool.coordsys()
+        try:
+            assert coords.referencecode("spectral")[0] == frame
+            np.testing.assert_allclose(coords.toworld([1, 1, 2, 0])["numeric"][2], 1.416e9)
+        finally:
+            coords.done()
+    finally:
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize(("case", "expected_axes"), [
+    ("linear", []),
+    ("unprojected", []),
+    ("extra-linear", ["Direction", "Direction", "Spectral"]),
+    ("duplicate-stokes", ["Direction", "Direction", "Spectral"]),
+    ("multiple-stokes", ["Direction", "Direction", "Stokes"]),
+])
+def test_miriad_retains_shape_when_header_has_fewer_decoded_axes(tmp_path, backend, case, expected_axes):
+    source = tmp_path / "incomplete-axes.mir"
+    cube = "FREQ-LSR" if expected_axes else None
+    pixels = _sky(source, cube=cube)
+    header = source / "header"
+    replacements = {
+        "linear": [("RA---SIN", "LINEAR11"), ("DEC--SIN", "LINEAR22")],
+        "unprojected": [("RA---SIN", "RA---   "), ("DEC--SIN", "DEC--   ")],
+        "extra-linear": [("STOKES", "LINPAR")],
+        "multiple-stokes": [("FREQ-LSR", "STOKES  ")],
+    }
+    if case == "duplicate-stokes":
+        _replace_cached_number(source, "crval4", 1., 5.)
+    else:
+        contents = header.read_bytes()
+        for matched, replacement in replacements[case]:
+            contents = contents.replace(_text(matched), _text(replacement))
+        header.write_bytes(contents)
+    image = _backend(backend).image()
+    output = tmp_path / "unpublished.im"
+    try:
+        assert image.open(str(source))
+        np.testing.assert_array_equal(image.shape(), pixels.shape)
+        coords = image.coordsys()
+        try:
+            assert coords.axiscoordinatetypes() == expected_axes
+            assert coords.naxes() == len(expected_axes)
+        finally:
+            coords.done()
+        with pytest.raises(RuntimeError, match="referencePixel and newLatticeShape"):
+            image.getchunk()
+        with pytest.raises(RuntimeError, match="Failed AlwaysAssert setCoordinateInfo"):
+            image.fromimage(outfile=str(output), infile=str(source))
+        assert output.exists() == (backend == "casa")
+    finally:
+        image.done()

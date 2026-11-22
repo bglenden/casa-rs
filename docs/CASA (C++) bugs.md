@@ -8244,6 +8244,16 @@ tree before publishing the copy. A directory with readable contents whose
 permissions prevent removal causes a refusal with both public names preserved.
 See [#1955](https://github.com/bglenden/casa-rs/issues/1955).
 
+### Copying a MIRIAD image with incomplete coordinates can leave a partial table
+
+Open a MIRIAD image whose header describes fewer coordinate axes than its
+stored shape, for example two Stokes planes whose MIRIAD codes both map to
+fractional linear polarization. CASA 6.7.6.14 reports the shape and decoded
+coordinates, but a named `fromimage` call creates a partial native table
+before raising `Failed AlwaysAssert setCoordinateInfo`. casa-rs reports
+the shape and decoded coordinates and rejects the copy before publication.
+See [#1955](https://github.com/bglenden/casa-rs/issues/1955).
+
 ## `calcmask` can crash on decisive Boolean validity
 
 In CASA 6.7.6.14, create `source.im` as a float image with values
