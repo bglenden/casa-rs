@@ -10159,3 +10159,7 @@ In CASA 6.7.6.14, use the [direct FRINGE fixture](../tools/casa-compat/calibrate
 ## Direct specifycal aborts for literal wildcard selectors
 
 With CASA 6.7.6.14, call `calibrater.specifycal(caltable='gain.cal', caltype='amp', parameter=[1.5], antenna='*')` on the [direct fixture](../tools/casa-compat/calibrater_specifycal_tool_oracle.py). CASA passes antenna index `-1` into a parameter-array slice and aborts. A literal `spw='*'` likewise reaches an invalid spectral-window index. Casa-rs broadcasts over the requested wildcard axes and verifies the resulting table against CASA's empty-selector form, which expresses the same prescription. [#2015](https://github.com/bglenden/casa-rs/pull/2015)
+
+## Direct fluxscale can terminate Python with an empty window map
+
+In CASA 6.7.6.14, use the [direct fluxscale fixture](../tools/casa-compat/calibrater_fluxscale_tool_oracle.py), attach the MS, and transfer from `FLUX` to `PHASE` with `refspwmap=[]`. The reference process can terminate with SIGSEGV. Casa-rs treats an empty map as no remapping and compares its returned record, caltable and HISTORY against CASA's default `refspwmap=[-1]`. [#2017](https://github.com/bglenden/casa-rs/pull/2017)
