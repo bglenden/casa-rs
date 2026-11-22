@@ -232,6 +232,7 @@ fn solve_open_dataset(
             frequency_dependent,
             frequency_interval,
             mode,
+            activity,
         )
         .map(CalibrationSolveResult::Gain)
         .map_err(|error| CalibrationError::Gain(Box::new(error))),

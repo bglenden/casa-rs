@@ -48,7 +48,9 @@ use weights::{SpectralWeights, solve_weights};
 
 pub(crate) enum PriorCalibrationMode {
     Data,
-    Baseline,
+    Baseline {
+        share_input_flags: bool,
+    },
     Accor {
         share_input_flags: bool,
     },
@@ -106,8 +108,8 @@ pub(crate) fn load_preapplied_rows(
     }
     let preapplied = match mode {
         PriorCalibrationMode::Data => evaluate_apply_rows(ms, &plan, false).map(Into::into),
-        PriorCalibrationMode::Baseline => {
-            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Baseline, true)
+        PriorCalibrationMode::Baseline { share_input_flags } => {
+            evaluate_solve_priors(ms, plan, PriorSolveBoundary::Baseline, share_input_flags)
         }
         PriorCalibrationMode::Accor { share_input_flags } => {
             evaluate_solve_priors(ms, plan, PriorSolveBoundary::Accor, share_input_flags)
@@ -160,7 +162,7 @@ pub(crate) fn build_solve_groups(
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
-    let baseline_solve = options.input_rows == SolveInputRows::Baselines;
+    let baseline_solve = options.input_rows.is_baseline();
     let fixed_autocorrelations = options.input_rows == SolveInputRows::GainTool;
     let seed_combined_g = !baseline_solve
         && !only_autocorrelations
@@ -267,7 +269,7 @@ pub(crate) fn build_solve_groups(
                 );
                 group.first_t_buffer = buffer.copied();
                 group.first_g_graphs = seed_combined_g.then(Box::default);
-                group.direct_gain = fixed_autocorrelations.then(Default::default);
+                group.direct_gain = options.input_rows.tracks_gather().then(Default::default);
                 group
             });
             if options.combine.fields {
@@ -776,7 +778,7 @@ impl SolveAccumulator {
         if layout.channel_count != channel_count || layout.selection != row.channel_selection {
             layout.select_channels(row, channel_count, options.polynomial_bandpass)?;
         }
-        if options.input_rows == SolveInputRows::Baselines {
+        if options.input_rows.is_baseline() {
             self.baseline_correlation_counts
                 .insert(layout.correlations.len());
         }
@@ -947,7 +949,7 @@ impl SolveAccumulator {
             self.solution_channels = self.solution_channels.max(channel_count);
         }
 
-        let baseline_solve = options.input_rows == SolveInputRows::Baselines;
+        let baseline_solve = options.input_rows.is_baseline();
         let scalar_bandpass = !baseline_solve
             && options.channelized
             && options.gain_type == GainType::G

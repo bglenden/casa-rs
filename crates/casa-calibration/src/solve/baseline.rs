@@ -17,6 +17,7 @@ use super::{
 };
 use crate::bandpass::solution_frequency_bin_widths;
 use crate::session::prepare_calibration_solve;
+use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 use crate::{ApplyPlanError, BandpassFrequencyInterval, CalibrationOutputMode, SelectedData};
 
 pub(crate) fn solve(
@@ -25,8 +26,11 @@ pub(crate) fn solve(
     frequency_dependent: bool,
     frequency_interval: Option<BandpassFrequencyInterval>,
     mode: CalibrationOutputMode,
+    activity: Option<&mut ToolSolveActivity>,
 ) -> Result<GainSolveReport, GainSolveError> {
     super::validate_solve_interval(request.solve_interval)?;
+    let direct = activity.is_some();
+    let corrdepflags = direct && request.correlation_dependent_flags;
     let input = crate::timing::Phase::start("blcal_select_read");
     let context = prepare_calibration_solve(
         ms,
@@ -35,7 +39,9 @@ pub(crate) fn solve(
         &request.prior_calibration_tables,
         request.parang,
         true,
-        PriorCalibrationMode::Baseline,
+        PriorCalibrationMode::Baseline {
+            share_input_flags: !corrdepflags,
+        },
     )
     .map_err(setup_error)?;
     let bin_widths = solution_frequency_bin_widths(ms, &context.rows, frequency_interval)
@@ -46,15 +52,17 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &bin_widths,
         SolveGroupOptions {
-            input_rows: SolveInputRows::Baselines,
+            input_rows: SolveInputRows::baseline(direct),
             gain_type: GainType::G,
             model_source: request.model_source,
             point_stokes: request.smodel,
             rotate_model: false,
             solve_interval: request.solve_interval,
             combine: request.combine,
-            preaverage_max_span: None,
-            correlation_dependent_flags: false,
+            preaverage_max_span: direct
+                .then(|| super::preaverage_span(request.solve_interval, request.preaverage_seconds))
+                .flatten(),
+            correlation_dependent_flags: corrdepflags,
             robust_seed: false,
             channelized: frequency_dependent,
             polynomial_bandpass: false,
@@ -78,7 +86,25 @@ pub(crate) fn solve(
         selected_data: SelectedData::of_rows(ms, context.rows.iter())?,
         solve_stats: Default::default(),
     };
-    for group in groups.into_values().filter(|group| group.attempted) {
+    let mut stats = if direct {
+        Some(SolveStatsBuilder::new(
+            2,
+            super::spectral_window_ids(ms)?,
+            &context.available_antennas,
+        ))
+    } else {
+        None
+    };
+    for group in groups.into_values() {
+        let attempted = if let Some(stats) = &mut stats {
+            stats.interval(&IntervalStages::of(&group, 0));
+            group.gather_attempted()
+        } else {
+            group.attempted
+        };
+        if !attempted {
+            continue;
+        }
         if group.baseline_correlation_counts.len() > 1 {
             return Err(GainSolveError::Baseline(
                 "Error in Calibrater::solve.".into(),
@@ -90,6 +116,13 @@ pub(crate) fn solve(
             &context.available_antennas,
             request.solve_mode,
         ));
+        if let Some(stats) = &mut stats {
+            stats.record_success(group.spw_id, true);
+        }
+    }
+    if let Some(stats) = stats {
+        stats.track_activity(activity);
+        solved.solve_stats = stats.finish();
     }
     if request.normalize_average_amplitude {
         normalize(&mut solved.rows, frequency_dependent);

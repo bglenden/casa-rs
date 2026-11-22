@@ -41,6 +41,8 @@ pub(crate) enum SolveInputRows {
     Autocorrelations,
     /// Retain all antenna pairs for a baseline Mueller solve.
     Baselines,
+    /// Retain all antenna pairs and the direct tool's baseline gather counts.
+    BaselineTool,
 }
 
 impl SolveInputRows {
@@ -52,17 +54,33 @@ impl SolveInputRows {
         }
     }
 
+    pub(crate) fn baseline(direct: bool) -> Self {
+        if direct {
+            Self::BaselineTool
+        } else {
+            Self::Baselines
+        }
+    }
+
+    pub(super) fn is_baseline(self) -> bool {
+        matches!(self, Self::Baselines | Self::BaselineTool)
+    }
+
+    pub(super) fn tracks_gather(self) -> bool {
+        matches!(self, Self::GainTool | Self::BaselineTool)
+    }
+
     pub(super) fn receptors(
         self,
         correlations: &[i32],
         index: usize,
         data_desc_id: i32,
     ) -> Result<(usize, usize), GainSolveError> {
-        if self == Self::Baselines && !(correlations.len() == 4 && matches!(index, 1 | 2)) {
+        if self.is_baseline() && !(correlations.len() == 4 && matches!(index, 1 | 2)) {
             let parameter = index % 2;
             return Ok((parameter, parameter));
         }
-        if !matches!(self, Self::Autocorrelations | Self::Baselines) {
+        if self != Self::Autocorrelations && !self.is_baseline() {
             return correlation_receptors(correlations[index]).ok_or_else(|| {
                 GainSolveError::UnsupportedCorrelationLayout {
                     data_desc_id,

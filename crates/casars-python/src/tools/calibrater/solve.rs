@@ -299,6 +299,18 @@ impl super::PyCalibrater {
                 "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
                     standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
                 ),
+                "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
+                    let frequency_dependent = family.starts_with("MF");
+                    CalibrationSolveRequest::Baseline {
+                        gain: standard.gain(GainType::G),
+                        frequency_dependent,
+                        frequency_interval: if frequency_dependent {
+                            bandpass_frequency(frequency)?
+                        } else {
+                            None
+                        },
+                    }
+                }
                 _ if casa_calibration::CalibraterLifecycle::recognizes_calibration_type(
                     &family,
                 ) =>
