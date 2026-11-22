@@ -25,7 +25,7 @@ pub(super) fn supports_calwt(
         && !matches!(subtype, "GlinXph Jones" | "GlinXphf Jones"))
         || matches!(
             subtype,
-            "TOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"
+            "TOpac" | "TfOpac" | "EGainCurve" | "EPowerCurve" | "B TSYS" | "G EVLASWPOW"
         )
         || crate::single_dish::is_sky_subtype(subtype)
 }
