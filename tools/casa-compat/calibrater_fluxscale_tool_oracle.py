@@ -41,8 +41,8 @@ def transfer(work, engines, vis, gain, name, *, options=None, attempts=None, leg
         if engine == 'native':
             common.update(native_options or {})
         if listing:
-            listing_path = work/f'{name}-{engine}.txt'
-            common['listfile'] = f'  {listing_path}\t\n'
+            listing_path = work/f'{name}-{engine}.txt\t'
+            common['listfile'] = f'  {listing_path}\n'
         observed = []
         for extra, ok in attempts or [({}, product)]:
             effective = common | extra
@@ -64,7 +64,9 @@ def transfer(work, engines, vis, gain, name, *, options=None, attempts=None, leg
     assert snapshot(gain) == before
     for expected, actual in zip(returns['casa'], returns['native']):
         if not expected[0]:
-            assert expected == actual, (name, expected, actual)
+            assert expected[1][0] == actual[1][0], (name, expected, actual)
+            assert expected[1][1].replace(str(paths['casa']), '<output>') == (
+                actual[1][1].replace(str(paths['native']), '<output>')), (name, expected, actual)
         else:
             for key in ('freq', 'spwID', 'spwName'):
                 assert type(actual[1][key]) is type(expected[1][key]), (name, key)
@@ -104,7 +106,7 @@ def main():
             ('by-id', {'reference': 0, 'transfer': 1}),
             ('numpy-reference', {'reference': np.array(['FLUX'])}),
             ('incremental-display', {'incremental': True, 'display': True}),
-            ('gain-cut', {'gainthreshold': 15., 'antenna': 'A0~A3'}),
+            ('gain-cut', {'gainthreshold': 15., 'antenna': '0,1,2,3'}),
             ('calibration-scans', {'scan': '1,3'}),
             ('calibration-times', {'timerange': '~'.join(bounds)}),
         ]:

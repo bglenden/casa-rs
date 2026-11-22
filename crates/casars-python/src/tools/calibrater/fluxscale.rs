@@ -48,7 +48,11 @@ impl PyCalibrater {
                 .collect())
         };
         let listfile = text(listfile, "listfile", "")?;
-        let listfile = listfile.trim_matches([' ', '\t', '\n', '\r']);
+        let whitespace = [' ', '\t', '\n', '\r'];
+        let listfile = whitespace
+            .into_iter()
+            .fold(listfile.as_str(), str::trim_start_matches);
+        let listfile = whitespace.into_iter().fold(listfile, str::trim_end_matches);
         let (refspwmap, pending_map) = window_map_with_status(refspwmap, &[-1])?;
         let gainthreshold = gainthreshold.map_or(Ok(-1.), |value| {
             value.extract::<f32>().map_err(|_| {
