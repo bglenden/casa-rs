@@ -8,13 +8,13 @@ use casa_types::Complex32;
 
 use super::grouping::{
     PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions, SolveInputRows,
-    build_solve_groups, selected_channels,
+    build_solve_groups, median_with_even_mean, selected_channels,
 };
 use super::kernel::SolutionRow;
 use super::writer::{GainChannelGrid, write_baseline_caltable};
 use super::{
-    GainSolveError, GainSolveMode, GainSolveReport, GainSolveRequest, GainType, RefAntSelector,
-    SolvedGains,
+    GainNormalization, GainSolveError, GainSolveMode, GainSolveReport, GainSolveRequest, GainType,
+    RefAntSelector, SolvedGains,
 };
 use crate::bandpass::solution_frequency_bin_widths;
 use crate::session::prepare_calibration_solve;
@@ -146,7 +146,11 @@ pub(crate) fn solve(
         solved.solve_stats = stats.finish();
     }
     if request.normalize_average_amplitude {
-        normalize(&mut solved.rows, frequency_dependent);
+        normalize(
+            &mut solved.rows,
+            frequency_dependent,
+            request.normalization_type,
+        );
     }
     drop(fitting);
     let channels = frequency_dependent.then_some(GainChannelGrid {
@@ -307,11 +311,11 @@ fn solve_group(
         .collect()
 }
 
-fn normalize(rows: &mut [SolutionRow], frequency_dependent: bool) {
+fn normalize(rows: &mut [SolutionRow], frequency_dependent: bool, method: GainNormalization) {
     if frequency_dependent {
         for row in rows {
             for receptor in 0..2 {
-                if let Some(factor) = mean_channel_response(row, receptor) {
+                if let Some(factor) = channel_normalization(row, receptor, method) {
                     row.gains
                         .iter_mut()
                         .skip(receptor)
@@ -321,33 +325,77 @@ fn normalize(rows: &mut [SolutionRow], frequency_dependent: bool) {
             }
         }
     } else {
-        let mut windows = BTreeMap::<i32, (f32, usize)>::new();
+        let mut windows = BTreeMap::<i32, ResponseNormalization>::new();
         for row in rows.iter() {
-            let (sum, count) = windows.entry(row.spw_id).or_default();
+            let normalization = windows
+                .entry(row.spw_id)
+                .or_insert_with(|| ResponseNormalization::new(method));
             for (value, flagged) in row.gains.iter().zip(&row.flags) {
                 if !flagged {
-                    *sum += value.norm();
-                    *count += 1;
+                    normalization.observe(value.norm());
                 }
             }
         }
+        let factors = windows
+            .into_iter()
+            .filter_map(|(spw, normalization)| Some((spw, normalization.factor()?)))
+            .collect::<BTreeMap<_, _>>();
         for row in rows {
-            let (sum, count) = windows[&row.spw_id];
-            if count > 1 && sum > 0. {
-                let factor = sum / count as f32;
+            if let Some(&factor) = factors.get(&row.spw_id) {
                 row.gains.iter_mut().for_each(|value| *value /= factor);
             }
         }
     }
 }
 
-/// Mf uses the mean amplitude and the unit-amplitude phase sum. With a
+struct ResponseNormalization {
+    count: usize,
+    sum: f32,
+    amplitudes: Option<Vec<f32>>,
+}
+
+impl ResponseNormalization {
+    fn new(method: GainNormalization) -> Self {
+        Self {
+            count: 0,
+            sum: 0.,
+            amplitudes: (method == GainNormalization::Median).then(Vec::new),
+        }
+    }
+
+    fn observe(&mut self, amplitude: f32) {
+        self.count += 1;
+        if let Some(amplitudes) = &mut self.amplitudes {
+            amplitudes.push(amplitude);
+        } else {
+            self.sum += amplitude;
+        }
+    }
+
+    fn factor(mut self) -> Option<f32> {
+        if self.count < 2 {
+            return None;
+        }
+        let factor = self
+            .amplitudes
+            .as_mut()
+            .map_or(self.sum / self.count as f32, |amplitudes| {
+                median_with_even_mean(amplitudes)
+            });
+        (factor > 0.).then_some(factor)
+    }
+}
+
+/// Mf uses the amplitude statistic and the unit-amplitude phase sum. With a
 /// defined zero channel CASA's phase factor is undefined and leaves the hand
 /// unnormalized.
-fn mean_channel_response(row: &SolutionRow, receptor: usize) -> Option<Complex32> {
-    let mut amplitude = 0.;
+fn channel_normalization(
+    row: &SolutionRow,
+    receptor: usize,
+    method: GainNormalization,
+) -> Option<Complex32> {
+    let mut normalization = ResponseNormalization::new(method);
     let mut phase = Complex32::ZERO;
-    let mut count = 0;
     for (value, flagged) in row.gains.iter().zip(&row.flags).skip(receptor).step_by(2) {
         if *flagged {
             continue;
@@ -356,10 +404,12 @@ fn mean_channel_response(row: &SolutionRow, receptor: usize) -> Option<Complex32
         if norm == 0. || !norm.is_finite() {
             return None;
         }
-        amplitude += norm;
+        normalization.observe(norm);
         phase += *value / norm;
-        count += 1;
     }
     let phase_norm = phase.norm();
-    (count > 1 && phase_norm > 0.).then(|| (phase / phase_norm) * (amplitude / count as f32))
+    normalization
+        .factor()
+        .filter(|_| phase_norm > 0.)
+        .map(|factor| (phase / phase_norm) * factor)
 }

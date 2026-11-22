@@ -85,6 +85,17 @@ def main():
                selection={'msselect': 'ANTENNA1 == ANTENNA2'})
     solve_case(work, tools, vis, 'm-amp', {'type': 'M', 'apmode': 'A', 'solnorm': True})
     solve_case(work, tools, vis, 'mf-phase', {'type': 'MF', 'apmode': 'P'})
+    outliers = work/'outliers.ms'
+    copy_ms(vis, outliers)
+    with opened(outliers, True) as table:
+        values = table.getcol('DATA')
+        values[:, 7, :] *= 7
+        rows = (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 1)
+        values[..., rows] *= 7
+        assert table.putcol('DATA', values)
+    for family in ('M', 'MF'):
+        solve_case(work, tools, outliers, f'{family.lower()}-median',
+                   {'type': family, 'solnorm': True, 'normtype': 'median'})
     solve_case(work, tools, vis, 'mf-append', {'type': 'MF'}, append=True)
     solve_case(work, tools, flagged, 'mf-flagged', {}, outcome='empty')
     solve_case(work, tools, vis, 'm-legacy', {'type': 'M'}, legacy=True)
