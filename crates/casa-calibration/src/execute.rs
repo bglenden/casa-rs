@@ -1110,12 +1110,27 @@ pub(crate) struct ToolCorrection {
     pub(crate) trial: bool,
     pub(crate) parang_terms: usize,
     pub(crate) parang_calwt: bool,
+    pub(crate) tableless_opacity: bool,
 }
 
 pub(crate) struct ToolActivityInput<'a> {
     pub(crate) names: &'a [String],
     pub(crate) libraries: &'a [LibraryApplyRegistration],
+    pub(crate) opacity: &'a [(&'static str, usize)],
     pub(crate) previous: ApplyTermCounts,
+}
+
+fn unresolved_opacity(ms: &MeasurementSet) -> ApplyExecutionError {
+    ApplyExecutionError::MutateMeasurementSet {
+        path: display_ms_path(ms),
+        source: MsError::InvalidInput("Error in TOpac::calcPar()".into()),
+    }
+}
+
+pub(crate) fn has_usable_apply_rows(plan: &ApplyPlan) -> bool {
+    plan.selected_rows
+        .iter()
+        .any(|row| availability::available(row, plan))
 }
 
 struct ToolApplyExecution<'a> {
@@ -1143,6 +1158,7 @@ pub(crate) fn execute_tool_apply(
         tracking.names,
         tracking.libraries,
         correction.parang_terms,
+        tracking.opacity,
         tracking.previous,
     );
     let mut run = ToolApplyExecution {
@@ -1157,6 +1173,9 @@ pub(crate) fn execute_tool_apply(
     if correction.strict && !all_calibrated {
         availability::execute_strict_tool(ms, plan, observed_column, lock, &mut run)?;
         return Ok((false, activity));
+    }
+    if correction.tableless_opacity && has_usable_apply_rows(&plan) {
+        return Err(unresolved_opacity(ms));
     }
     if plan.apply_mode == ApplyMode::Trial {
         for_each_apply_row(

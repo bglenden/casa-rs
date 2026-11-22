@@ -109,6 +109,8 @@ pub(super) fn execute_strict_tool(
         plan.selected_row_count = group.len();
         if !group[0].0 {
             flag_unavailable(ms, &plan, &plan.selected_rows, Some(lock))?;
+        } else if tool.correction.tableless_opacity {
+            return Err(unresolved_opacity(ms));
         } else if plan.apply_mode == ApplyMode::Trial {
             for_each_apply_row(
                 ms,

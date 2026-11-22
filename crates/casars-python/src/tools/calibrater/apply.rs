@@ -14,7 +14,7 @@ use casa_types::{RecordValue, Value};
 use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::{
     prelude::*,
-    types::{PyDict, PyTuple},
+    types::{PyDict, PyList, PyTuple},
 };
 
 use super::{
@@ -64,20 +64,50 @@ impl PyCalibrater {
         }
         let (windows, pending_windows) = window_map_with_status(spwmap, &[-1])?;
         spec.spwmap = windows;
+        let tableless_opacity = spec.path.as_os_str().is_empty()
+            && (kind.eq_ignore_ascii_case("TOpac") || kind.eq_ignore_ascii_case("TfOpac"));
         let mut opacity_values = Vec::new();
         let pending_opacity = opacity.is_some_and(|value| {
+            if tableless_opacity && let Ok(list) = value.cast::<PyList>() {
+                for item in list.iter() {
+                    let start = opacity_values.len();
+                    if append_double_vector(&item, &mut opacity_values, 1).is_err() {
+                        // CASA treats an unsupported list element as zero.
+                        opacity_values.truncate(start);
+                        opacity_values.push(0.0);
+                    }
+                }
+                return false;
+            }
             value.is_instance_of::<PyTuple>()
                 || append_double_vector(&value, &mut opacity_values, 0).is_err()
         });
+        let mut warn_about_opacity = false;
+        let warning = &mut warn_about_opacity;
         let configured = self.attached(py, move |state| {
-            if spec.path.as_os_str().is_empty()
-                && (kind.eq_ignore_ascii_case("TOpac") || kind.eq_ignore_ascii_case("TfOpac"))
-            {
-                state.set_tableless_opacity(&kind, opacity_values)
+            if tableless_opacity {
+                let result = state.set_tableless_opacity(&kind, opacity_values);
+                *warning = !matches!(result, Err(CalibraterLifecycleError::Unattached));
+                result
             } else {
                 state.set_traditional_apply(spec, &kind, &field, &interpolation)
             }
-        })?;
+        });
+        if warn_about_opacity {
+            emit(
+                py,
+                LOGGER,
+                &[
+                    LogLine::warning("Invoking opacity application without a caltable (e.g.,"),
+                    LogLine::warning(
+                        " via opacity=[...] in calibration tasks) will soon be disabled.",
+                    ),
+                    LogLine::warning(" Please begin using gencal to generate an opacity caltable,"),
+                    LogLine::warning(" and then supply that table in the standard manner."),
+                ],
+            )?;
+        }
+        let configured = configured?;
         // CASA's SWIG numerics can set an exception and still call C++ with a
         // fallback value. Registration is visible when Python reports it.
         if pending_time || pending_windows || pending_opacity {

@@ -47,8 +47,14 @@ impl CalibraterLifecycle {
         if opacity.iter().sum::<f64>().partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Err(invalid());
         }
-        let ms = MeasurementSet::open(equation.attachment.path()).map_err(|_| invalid())?;
-        let windows = ms.spectral_window().map_err(|_| invalid())?.row_count();
+        let windows = if let Some(count) = equation.opacity_spectral_windows {
+            count
+        } else {
+            let ms = MeasurementSet::open(equation.attachment.path()).map_err(|_| invalid())?;
+            let count = ms.spectral_window().map_err(|_| invalid())?.row_count();
+            equation.opacity_spectral_windows = Some(count);
+            count
+        };
         if opacity.len() < windows {
             opacity.resize(windows, last);
         }
