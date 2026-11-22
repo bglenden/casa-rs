@@ -454,12 +454,14 @@ fn format_callib_line(base_dir: &Path, spec: &ApplyCalibrationTableSpec) -> Stri
             if phase_delay {
                 time.push_str("PD");
             }
-            let mut frequency = format!("{frequency:?}").to_ascii_lowercase();
-            if relative_frequency {
-                frequency.push_str("rel");
-            }
             parts.push(format!("tinterp='{time}'"));
-            parts.push(format!("finterp='{frequency}'"));
+            if frequency != crate::FrequencyInterpolation::Default {
+                let mut frequency = format!("{frequency:?}").to_ascii_lowercase();
+                if relative_frequency {
+                    frequency.push_str("rel");
+                }
+                parts.push(format!("finterp='{frequency}'"));
+            }
         }
         ApplyInterpolationMode::Invalid => parts.push("tinterp='invalid'".to_string()),
     }

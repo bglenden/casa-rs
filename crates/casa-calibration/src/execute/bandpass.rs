@@ -95,7 +95,11 @@ pub(super) fn prepare(
         gain,
         input,
         &output.channel_frequencies_hz,
-        interpolation.frequency_mode(),
+        if matches!(table.time_parameter_family, Some(TimeParameterFamily::Sky)) {
+            interpolation.sky_frequency_mode()
+        } else {
+            interpolation.frequency_mode()
+        },
         matches!(
             interpolation,
             ApplyInterpolationMode::Casa {

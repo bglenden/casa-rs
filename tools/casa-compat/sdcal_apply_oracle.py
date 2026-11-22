@@ -11,6 +11,7 @@ import numpy as np
 
 from applycal_oracle import copy_ms
 from calibration_smoothcal_oracle import opened
+from record_casa_returns import make_cal_ms
 from sdcal_position_switch_oracle import make_position_switch
 
 
@@ -57,12 +58,14 @@ def inspect_outputs(ms, sky, interpolation, input_kind):
         exposure = main.getcell('EXPOSURE', row)
         alpha = (time - left) / (right - left)
         assert .1 < alpha < .4
-        if interpolation == 'nearest':
+        if interpolation.startswith('nearest'):
             assert alpha < .5
             off = spectra[..., 0]
-            expected_weight = .25 * left_exp / (exposure + left_exp)
         else:
             off = (1. - alpha) * spectra[..., 0] + alpha * spectra[..., 1]
+        if interpolation == 'nearest':
+            expected_weight = .25 * left_exp / (exposure + left_exp)
+        else:
             variance = (1. - alpha)**2 / left_exp + alpha**2 / right_exp
             expected_weight = .25 / (1. + exposure * variance)
         raw_name = 'FLOAT_DATA' if input_kind == 'float' else 'DATA'
@@ -137,6 +140,13 @@ def check_chain(root, source, engines, gencal):
             tables = [str(tsys), str(jyk), str(sky)] if writer == reader else [str(sky), str(tsys), str(jyk)]
             mapping = {1: [0]} if reader == 'casa' else [1, 1]
             assert task(str(ms), 'apply', applytable=tables, spwmap=mapping, interp='linear') is None
+            with opened(ms / 'HISTORY') as history:
+                messages = [message
+                            for origin, message in zip(history.getcol('ORIGIN'),
+                                                       history.getcol('MESSAGE'))
+                            if origin == 'sdcal']
+                assert len(messages) == 2
+                assert messages[0] == 'taskname=sdcal' and messages[1].startswith('version: ')
             with opened(ms) as output, opened(sky) as references:
                 corrected = output.getcell('CORRECTED_DATA', row)
                 times = references.getcol('TIME')
@@ -231,6 +241,28 @@ def check_zero_reference(root, vis, engines):
     print('Zero-reference protection preserves usable channels', flush=True)
 
 
+def check_flagged_reference(root, source, engines):
+    product = root / 'flagged-off.cal'
+    copy_ms(root / 'casa-data.cal', product)
+    with opened(product, True) as sky:
+        flags = np.zeros_like(sky.getcol('FLAG'))
+        flags[0, 1, :] = True
+        sky.putcol('FLAG', flags)
+        sky.putcol('FPARAM', np.full(sky.getcol('FPARAM').shape, 2., dtype=np.float32))
+    for reader, task in engines.items():
+        ms = root / f'{reader}-flagged-off.ms'
+        copy_ms(source, ms)
+        assert task(str(ms), 'apply', applytable=str(product), interp='linear,linearflag') is None
+        with opened(ms) as output:
+            raw = output.getcol('DATA')
+            np.testing.assert_allclose(output.getcol('CORRECTED_DATA'), (raw - 2.) / 2.,
+                                       atol=8e-7)
+            flags = np.zeros_like(raw, dtype=bool)
+            flags[0, 1, :] = True
+            np.testing.assert_array_equal(output.getcol('FLAG'), flags)
+    print('A flagged finite OFF spectrum still corrects the affected samples', flush=True)
+
+
 def check_errors(root, source, engines):
     for engine, task in engines.items():
         ms = root / f'{engine}-apply-errors.ms'
@@ -247,6 +279,12 @@ def check_errors(root, source, engines):
                 assert type(error) is Exception and str(error).startswith(expected)
             else:
                 raise AssertionError(arguments)
+        try:
+            task(str(ms), 'apply', applytable=str(root / 'casa-data.cal'), interp='sinusoid')
+        except RuntimeError as error:
+            assert str(error) == 'Error in Calibrater::setapply.'
+        else:
+            raise AssertionError('unknown time interpolator was accepted')
         if engine == 'native':
             with opened(ms) as original:
                 assert 'CORRECTED_DATA' not in original.colnames()
@@ -284,7 +322,7 @@ def check_spectral_weights(root, source, engines):
     print('Per-channel weight spectra agree and SIGMA_SPECTRUM is unchanged', flush=True)
 
 
-def check_frequency_interpolation(root, source, engines):
+def check_frequency_interpolation(root, source, engines, applycal):
     product = root / 'frequency-offset.cal'
     copy_ms(root / 'casa-data.cal', product)
     with opened(product / 'SPECTRAL_WINDOW', True) as spw:
@@ -329,6 +367,71 @@ def check_frequency_interpolation(root, source, engines):
             difference = expected['CORRECTED_DATA'] - linear['CORRECTED_DATA']
             assert np.max(np.abs(difference)) > .01
     print('Off-grid linear and cubic frequencies agree, including CASA fallback', flush=True)
+    with opened(product, True) as sky:
+        flags = sky.getcol('FLAG')
+        flags[0, 2, :] = True
+        sky.putcol('FLAG', flags)
+    for interpolation in ('linear', 'linear,linear'):
+        label = 'default' if interpolation == 'linear' else 'explicit'
+        expected = None
+        for reader, task in engines.items():
+            for name in ('sdcal', 'applycal'):
+                ms = root / f'flag-frequency-{label}-{reader}-{name}.ms'
+                copy_ms(source, ms)
+                if name == 'sdcal':
+                    assert task(str(ms), 'apply', applytable=str(product),
+                                interp=interpolation) is None
+                else:
+                    assert applycal[reader](str(ms), gaintable=[str(product)], interp=interpolation,
+                                            calwt=True, flagbackup=False) is None
+                with opened(ms) as table:
+                    result = {key: table.getcol(key) for key in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
+                assert np.all(result['FLAG'][0, 1] == (interpolation == 'linear'))
+                if expected is None:
+                    expected = result
+                else:
+                    compare_products(result, expected)
+    print('Both apply tasks honor the sky frequency flag default and explicit linear override',
+          flush=True)
+
+
+def check_observed_columns(root, applycal):
+    source = root / 'mixed-data-and-float.ms'
+    make_cal_ms(str(source))
+    gain = root / 'amplitude.cal'
+    assert casa.gencal(str(source), str(gain), 'amp', parameter=[2.]) is None
+    with opened(source, True) as ms:
+        antenna1 = ms.getcol('ANTENNA1')
+        antenna2 = ms.getcol('ANTENNA2')
+        row = int(np.flatnonzero(antenna1 == 0)[0])
+        other = int(np.flatnonzero((antenna1 != 0) & (antenna2 != 0))[0])
+        antenna2[row] = 0
+        ms.putcol('ANTENNA2', antenna2)
+        complex_data = np.full(ms.getcol('DATA').shape, 6.+4.j, dtype=np.complex64)
+        ms.putcol('DATA', complex_data)
+        description = ms.getcoldesc('DATA')
+        description.update(name='FLOAT_DATA', valueType='float', dataManagerType='StandardStMan',
+                           dataManagerGroup='DualColumnTest')
+        ms.addcols({'FLOAT_DATA': description})
+        ms.putcol('FLOAT_DATA', np.full(complex_data.shape, 12., dtype=np.float32))
+        if 'CORRECTED_DATA' in ms.colnames():
+            ms.removecols('CORRECTED_DATA')
+        ms.putcol('FLAG', np.zeros(complex_data.shape, dtype=bool))
+        ms.putcol('FLAG_ROW', np.zeros(complex_data.shape[-1], dtype=bool))
+    for antenna in ('A0&&&', ''):
+        for engine, task in applycal.items():
+            ms = root / f'{engine}-mixed-{"auto" if antenna else "all"}.ms'
+            copy_ms(source, ms)
+            for _ in range(2):
+                assert task(str(ms), gaintable=[str(gain)], antenna=antenna,
+                            calwt=False, flagbackup=False) is None
+                with opened(ms) as output:
+                    corrected = output.getcol('CORRECTED_DATA')
+                    np.testing.assert_allclose(corrected[..., row], 3.+0.j)
+                    expected = 12. if antenna else 3.
+                    np.testing.assert_allclose(corrected[..., other], expected)
+    print('Ordinary applycal prioritizes FLOAT_DATA consistently across selections',
+          flush=True)
 
 
 def run(root, engines):
@@ -360,6 +463,19 @@ def run(root, engines):
                         result = {key: completed.getcol(key) for key in expected}
                     compare_products(result, expected)
             print(f'{kind} {interpolation} sky application and weights agree', flush=True)
+        if kind == 'data':
+            expected = None
+            for reader, task in engines.items():
+                ms = root / f'nearestperobs-{reader}.ms'
+                copy_ms(vis, ms)
+                cal = products['casa']
+                assert task(str(ms), 'apply', applytable=str(cal), interp='nearestperobs') is None
+                result = inspect_outputs(ms, cal, 'nearestperobs', kind)
+                if expected is None:
+                    expected = result
+                else:
+                    compare_products(result, expected)
+            print('nearestperobs uses nearest signal with linear exposure weights', flush=True)
     return sources
 
 
@@ -373,16 +489,20 @@ def main():
     root.mkdir()
     engines = {'casa': casa.sdcal}
     generators = {'casa': casa.gencal}
+    applycal = {'casa': casa.applycal}
     if not args.reference_only:
-        from casars.tasks import sdcal, gencal
+        from casars.tasks import sdcal, gencal, applycal as applycal_native
         engines['native'] = sdcal
         generators['native'] = gencal
+        applycal['native'] = applycal_native
     sources = run(root, engines)
     check_chain(root, sources['data'], engines, generators)
     check_zero_reference(root, sources['data'], engines)
+    check_flagged_reference(root, sources['data'], engines)
     check_errors(root, sources['data'], engines)
     check_spectral_weights(root, sources['data'], engines)
-    check_frequency_interpolation(root, sources['data'], engines)
+    check_frequency_interpolation(root, sources['data'], engines, applycal)
+    check_observed_columns(root, applycal)
 
 
 if __name__ == '__main__':

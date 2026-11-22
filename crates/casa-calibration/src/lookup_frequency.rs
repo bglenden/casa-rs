@@ -23,6 +23,8 @@ pub(crate) fn relative_axis_at_center(axis: &[f64], center: f64) -> Vec<f64> {
     Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 pub enum FrequencyInterpolation {
+    /// Use the calibration term's frequency default.
+    Default,
     /// Nearest valid frequency sample, with nearest endpoint extrapolation.
     Nearest,
     /// Linear amplitude and unwrapped phase, skipping flagged inputs.
@@ -53,6 +55,7 @@ impl FrequencyInterpolation {
     }
     fn base(self) -> Self {
         match self {
+            Self::Default => Self::Linear,
             Self::NearestFlag => Self::Nearest,
             Self::LinearFlag => Self::Linear,
             Self::CubicFlag => Self::Cubic,
@@ -61,7 +64,10 @@ impl FrequencyInterpolation {
         }
     }
     fn retains_flags(self) -> bool {
-        self != self.base()
+        matches!(
+            self,
+            Self::NearestFlag | Self::LinearFlag | Self::CubicFlag | Self::SplineFlag
+        )
     }
 }
 

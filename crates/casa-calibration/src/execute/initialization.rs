@@ -3,9 +3,11 @@
 
 use super::*;
 
-pub(super) fn corrected_data(ms: &mut MeasurementSet) -> Result<(), ApplyExecutionError> {
+pub(super) fn corrected_data(
+    ms: &mut MeasurementSet,
+    observed: &str,
+) -> Result<(), ApplyExecutionError> {
     let path = display_ms_path(ms);
-    let observed = crate::model_columns::observed_column(ms);
     if !ensure_corrected_data_column(ms, observed)
         .map_err(|source| ApplyExecutionError::CreateCorrectedData {
             path: path.clone(),

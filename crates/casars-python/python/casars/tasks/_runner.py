@@ -301,6 +301,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 "Spwmap type must be list or dictionary.",
             ) or message.startswith("Table doesn't exist: "):
                 raise Exception(message) from error
+            if message == "Error in Calibrater::setapply.":
+                raise RuntimeError(message) from error
             raise
     if name == "initweights":
         return _call_initweights(values)

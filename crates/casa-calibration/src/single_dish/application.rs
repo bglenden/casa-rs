@@ -9,10 +9,10 @@ use casa_tables::{Table, TableOptions};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{ScalarValue, Value};
 
-use super::{generate_position_switch, is_sky_subtype, tsys};
+use super::{generate_position_switch, tsys};
 use crate::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
-    execute_apply_from_path,
+    execute::execute_single_dish_apply,
 };
 
 pub(super) fn run(
@@ -61,7 +61,7 @@ pub(super) fn run(
         );
     }
     drop(ms);
-    let report = execute_apply_from_path(
+    let report = execute_single_dish_apply(
         &infile,
         &ApplyPlanRequest {
             selection,
@@ -71,7 +71,7 @@ pub(super) fn run(
         },
     )
     .map_err(|error| TaskFailure::execution(error.to_string()))?;
-    crate::cli::history::record_task(task, &infile);
+    crate::cli::history::record_sdcal(task, &infile);
     TaskSuccess::new(CasaValue::None, &report)
 }
 
@@ -169,17 +169,10 @@ fn table_spec(
     else {
         return Err(invalid(&path));
     };
-    let sky_interp;
-    let interpolation = if is_sky_subtype(subtype) && !interpolation.contains(',') {
-        sky_interp = format!("{interpolation},linearflag");
-        &sky_interp
-    } else {
-        interpolation
-    };
     let mut spec = ApplyCalibrationTableSpec::new(path);
     spec.calwt = true;
     spec.interp = ApplyInterpolationMode::parse_casa(interpolation)
-        .map_err(|message| TaskFailure::execution(message).at("interp"))?;
+        .map_err(|_| TaskFailure::execution("Error in Calibrater::setapply.").at("interp"))?;
     if subtype == "B TSYS" {
         spec.spwmap = tsys_mapping.to_vec();
     }

@@ -594,6 +594,7 @@ fn evaluate_rows(
     for_each_apply_row(
         ms,
         plan,
+        apply_observed_column(ms, false),
         false,
         share_input_flags,
         weight_source,
@@ -609,6 +610,7 @@ fn evaluate_rows(
 fn for_each_apply_row(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
+    observed_column: &str,
     forward_model: bool,
     share_input_flags: bool,
     weight_source: PreviewWeightSource,
@@ -624,7 +626,6 @@ fn for_each_apply_row(
     let chain = ApplyChain::load(ms, plan, forward_model)?;
 
     let any_calwt = applies_preview_weights(plan, &chain);
-    let observed_column = apply_observed_column(ms, plan);
     let mut columns = vec!["FLAG"];
     if !forward_model {
         columns.push(observed_column);
@@ -857,7 +858,7 @@ pub fn execute_apply_from_path_with_options(
     request: &ApplyPlanRequest,
     options: ApplyExecutionOptions,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
-    execute_apply_with_preparation_error(path.as_ref(), request, options, None)
+    execute_apply_from_path_inner(path.as_ref(), request, options, None, false)
 }
 
 pub(crate) fn execute_apply_with_preparation_error(
@@ -865,6 +866,23 @@ pub(crate) fn execute_apply_with_preparation_error(
     request: &ApplyPlanRequest,
     options: ApplyExecutionOptions,
     preparation_error: Option<crate::plan::ApplyPreparationError<'_>>,
+) -> Result<ApplyExecutionReport, ApplyExecutionError> {
+    execute_apply_from_path_inner(path, request, options, preparation_error, true)
+}
+
+pub(crate) fn execute_single_dish_apply(
+    path: &Path,
+    request: &ApplyPlanRequest,
+) -> Result<ApplyExecutionReport, ApplyExecutionError> {
+    execute_apply_from_path_inner(path, request, ApplyExecutionOptions::default(), None, true)
+}
+
+fn execute_apply_from_path_inner(
+    path: &Path,
+    request: &ApplyPlanRequest,
+    options: ApplyExecutionOptions,
+    preparation_error: Option<crate::plan::ApplyPreparationError<'_>>,
+    prefer_float: bool,
 ) -> Result<ApplyExecutionReport, ApplyExecutionError> {
     let path = path.to_path_buf();
     let total_started_at = Instant::now();
@@ -877,6 +895,7 @@ pub(crate) fn execute_apply_with_preparation_error(
                 source,
             }
         })?;
+        let observed_column = apply_observed_column(&ms, prefer_float);
         let open_measurement_set_ns = open_started_at.elapsed().as_nanos() as u64;
         let flag_backup_version = save_apply_flag_backup(&ms, request.apply_mode, options)?;
         let planning_started_at = Instant::now();
@@ -888,7 +907,7 @@ pub(crate) fn execute_apply_with_preparation_error(
                     // successful application on the existing single-write path;
                     // reproduce that initialization if planning rejects a request.
                     if request.apply_mode.writes_corrected_data() {
-                        initialization::corrected_data(&mut ms)?;
+                        initialization::corrected_data(&mut ms, observed_column)?;
                     }
                     return Err(error.into());
                 }
@@ -900,6 +919,7 @@ pub(crate) fn execute_apply_with_preparation_error(
             for_each_apply_row(
                 &ms,
                 &plan,
+                observed_column,
                 false,
                 false,
                 PreviewWeightSource::UnitFactors,
@@ -928,7 +948,7 @@ pub(crate) fn execute_apply_with_preparation_error(
         }
 
         let (mut report, trace_summary) =
-            execute_apply_plan(&mut ms, plan, Some(&mut perf_tracer))?;
+            execute_apply_plan(&mut ms, plan, observed_column, Some(&mut perf_tracer))?;
         report.flag_backup_version = flag_backup_version;
         report.timings.planning_ns = planning_ns;
         report.timings.planning_selection_ns = plan_timings.selection_ns;
@@ -1004,6 +1024,7 @@ pub fn execute_apply(
         for_each_apply_row(
             ms,
             &plan,
+            apply_observed_column(ms, false),
             false,
             false,
             PreviewWeightSource::UnitFactors,
@@ -1030,7 +1051,9 @@ pub fn execute_apply(
         });
     }
     let ms_path = display_ms_path(ms);
-    let (mut report, trace_summary) = execute_apply_plan(ms, plan, Some(&mut perf_tracer))?;
+    let observed_column = apply_observed_column(ms, false);
+    let (mut report, trace_summary) =
+        execute_apply_plan(ms, plan, observed_column, Some(&mut perf_tracer))?;
     report.timings.planning_ns = planning_ns;
     report.timings.planning_selection_ns = plan_timings.selection_ns;
     report.timings.planning_selected_rows_ns = plan_timings.selected_rows_ns;
@@ -1049,11 +1072,11 @@ pub fn execute_apply(
 fn execute_apply_available(
     ms: &mut MeasurementSet,
     plan: ApplyPlan,
+    observed_column: &str,
     perf_tracer: Option<&mut CalibrationPerfTracer>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
     let execute_apply_plan_started_at = Instant::now();
-    let observed_column = apply_observed_column(ms, &plan);
     let calibration_load_started_at = Instant::now();
     let chain = ApplyChain::load(ms, &plan, false)?;
     let calibration_load_ns = calibration_load_started_at.elapsed().as_nanos() as u64;
@@ -2347,9 +2370,7 @@ fn apply_row_all_channels(
             )?;
             sky::apply_grid(&ant1, &loaded_table.path, &mut output, forward_model)?;
             if calibrate_weights && let Some(exposures) = &loaded_table.sky_exposures {
-                let nearest =
-                    loaded_table.interp.time_options(0).mode == crate::TimeInterpolation::Nearest;
-                let factor = exposures.weight_factor(row, cal_spw_id, nearest);
+                let factor = exposures.weight_factor(row, cal_spw_id, loaded_table.interp);
                 if let Some(spectrum) = &mut weight_spectrum {
                     *spectrum *= factor;
                 }
@@ -5213,13 +5234,8 @@ fn ensure_corrected_data_column(
     Ok(CorrectedDataCreation { created: true })
 }
 
-fn apply_observed_column(ms: &MeasurementSet, plan: &ApplyPlan) -> &'static str {
-    if !crate::model_columns::has_column(ms, VisibilityDataColumn::Data)
-        || plan
-            .selected_rows
-            .iter()
-            .all(|row| row.antenna1 == row.antenna2)
-    {
+fn apply_observed_column(ms: &MeasurementSet, prefer_float: bool) -> &'static str {
+    if prefer_float || !crate::model_columns::has_column(ms, VisibilityDataColumn::Data) {
         crate::model_columns::observed_column(ms)
     } else {
         VisibilityDataColumn::Data.name()

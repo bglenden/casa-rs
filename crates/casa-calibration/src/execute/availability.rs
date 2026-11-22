@@ -31,6 +31,7 @@ pub(super) fn available(row: &ApplyRowPlan, plan: &ApplyPlan) -> bool {
 pub(super) fn execute(
     ms: &mut MeasurementSet,
     plan: ApplyPlan,
+    observed_column: &str,
     tracer: Option<&mut CalibrationPerfTracer>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let start = Instant::now();
@@ -41,7 +42,7 @@ pub(super) fn execute(
         .cloned()
         .collect::<Vec<_>>();
     if unavailable.is_empty() {
-        return execute_apply_available(ms, plan, tracer);
+        return execute_apply_available(ms, plan, observed_column, tracer);
     }
     let mut usable = plan.clone();
     usable.selected_rows.retain(|row| available(row, &plan));
@@ -49,7 +50,7 @@ pub(super) fn execute(
     let usable_count = usable.selected_row_count;
     // An empty mutation still initializes a newly requested CORRECTED_DATA
     // from DATA, as CASA's open(addcorr=True) does before checking availability.
-    let (mut report, mut trace) = execute_apply_available(ms, usable, None)?;
+    let (mut report, mut trace) = execute_apply_available(ms, usable, observed_column, None)?;
     let flag_start = Instant::now();
     if plan.apply_mode.is_strict() {
         let (samples, rows) = flag_unavailable(ms, &plan, &unavailable)?;

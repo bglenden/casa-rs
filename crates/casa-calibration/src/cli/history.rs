@@ -13,8 +13,25 @@ pub(super) fn record_applycal(task: &TaskInvocation<'_>, vis: &Path) {
     record_task(task, vis);
 }
 
-pub(crate) fn record_task(task: &TaskInvocation<'_>, vis: &Path) {
-    if let Err(error) = append(vis, "ms", task.surface(), messages(task)) {
+pub(super) fn record_task(task: &TaskInvocation<'_>, vis: &Path) {
+    record_messages(task, vis, messages(task));
+}
+
+pub(crate) fn record_sdcal(task: &TaskInvocation<'_>, vis: &Path) {
+    // The pinned task inspects the decorated callable's code object, which
+    // exposes zero positional parameters to its HISTORY writer.
+    record_messages(
+        task,
+        vis,
+        vec![
+            "taskname=sdcal".into(),
+            format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
+        ],
+    );
+}
+
+fn record_messages(task: &TaskInvocation<'_>, vis: &Path, messages: Vec<String>) {
+    if let Err(error) = append(vis, "ms", task.surface(), messages) {
         tracing::warn!(task = task.surface(), "updating HISTORY: {error}");
     }
 }

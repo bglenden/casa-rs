@@ -57,7 +57,9 @@ impl ApplyInterpolationMode {
             "nearest,linear" => return Ok(Self::NearestLinear),
             _ => {}
         }
-        let frequency_curve = if frequency.contains("nearest") {
+        let frequency_curve = if !value.contains(',') {
+            F::Default
+        } else if frequency.contains("nearest") {
             F::Nearest
         } else if frequency.contains("cubic") && !frequency.contains("linear") {
             F::Cubic
@@ -77,20 +79,6 @@ impl ApplyInterpolationMode {
         } else {
             frequency_curve
         };
-        let contextual = time.contains("perobs") || time.contains("perscan") || time.contains("PD");
-        if !contextual && !frequency.contains("rel") && frequency_curve == F::Linear {
-            match curve {
-                T::Nearest => {
-                    return Ok(if frequency.is_empty() {
-                        Self::Nearest
-                    } else {
-                        Self::NearestLinear
-                    });
-                }
-                T::Linear => return Ok(Self::Linear),
-                _ => {}
-            }
-        }
         Ok(Self::Casa {
             time: curve,
             frequency: frequency_curve,
@@ -148,8 +136,23 @@ impl ApplyInterpolationMode {
     /// Frequency curve, defaulting to CASA's linear bandpass resampling.
     pub fn frequency_mode(self) -> crate::FrequencyInterpolation {
         match self {
-            Self::Casa { frequency, .. } => frequency,
+            Self::Casa { frequency, .. } if frequency != crate::FrequencyInterpolation::Default => {
+                frequency
+            }
             _ => crate::FrequencyInterpolation::Linear,
+        }
+    }
+
+    pub(crate) fn sky_frequency_mode(self) -> crate::FrequencyInterpolation {
+        use crate::FrequencyInterpolation as F;
+        match self {
+            Self::Nearest
+            | Self::Linear
+            | Self::Casa {
+                frequency: F::Default,
+                ..
+            } => F::LinearFlag,
+            _ => self.frequency_mode(),
         }
     }
 }

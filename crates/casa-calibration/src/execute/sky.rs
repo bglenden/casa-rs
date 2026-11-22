@@ -27,11 +27,15 @@ pub(super) fn apply_grid(
         for channel in 0..output.data_channels.frequencies_hz.len() {
             let source = output.data_channels.original_index(channel);
             let off = grid.value_at(correlation, source).re;
-            if grid.flag_at(correlation, source) || !off.is_finite() || off == 0. {
-                if output.apply_mode.writes_flags() && !output.flags[[correlation, channel]] {
-                    output.flags[[correlation, channel]] = true;
-                    *output.newly_flagged_samples += 1;
-                }
+            let invalid_off = !off.is_finite() || off == 0.;
+            if (grid.flag_at(correlation, source) || invalid_off)
+                && output.apply_mode.writes_flags()
+                && !output.flags[[correlation, channel]]
+            {
+                output.flags[[correlation, channel]] = true;
+                *output.newly_flagged_samples += 1;
+            }
+            if invalid_off {
                 continue;
             }
             let value = &mut output.corrected[[correlation, channel]];
@@ -121,13 +125,33 @@ impl SkyExposures {
         })
     }
 
-    pub(super) fn weight_factor(&self, row: &ApplyRowPlan, window: i32, nearest: bool) -> f32 {
+    pub(super) fn weight_factor(
+        &self,
+        row: &ApplyRowPlan,
+        window: i32,
+        interpolation: ApplyInterpolationMode,
+    ) -> f32 {
         let key = (row.calibration_observation_id, window, row.antenna1);
         let Some(off) = self.off_integrations.get(&key) else {
             return 1.;
         };
         let time = row.time_seconds;
         let on = self.on_exposures[row.row_index];
+        // The sky noise law uses nearest only for the unmodified time
+        // token. For example, nearestperobs samples spectra at nearest
+        // time but still uses both reference exposures for noise.
+        let nearest = matches!(
+            interpolation,
+            ApplyInterpolationMode::Nearest
+                | ApplyInterpolationMode::NearestLinear
+                | ApplyInterpolationMode::Casa {
+                    time: crate::TimeInterpolation::Nearest,
+                    per_observation: false,
+                    per_scan: false,
+                    phase_delay: false,
+                    ..
+                }
+        );
         let next = off.partition_point(|item| item.time < time);
         let factor = match (
             next.checked_sub(1).and_then(|index| off.get(index)),
