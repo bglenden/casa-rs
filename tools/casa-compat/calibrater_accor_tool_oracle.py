@@ -47,7 +47,7 @@ def solve_case(work, engines, vis, name, *, selection=None, options=None,
         assert list(records[engine]['solve_tables']) == ([] if outcome == 'error' else [str(path)])
         assert tool.close()
     same_record(activity['native'], activity['casa'])
-    if legacy:
+    if legacy or outcome == 'error':
         assert all('solvestats' not in record for record in records.values())
     else:
         same_record(records['native']['solvestats'], records['casa']['solvestats'])
