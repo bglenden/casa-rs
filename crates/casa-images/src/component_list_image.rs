@@ -565,11 +565,9 @@ impl ImageInterface<f32> for ComponentListImage {
         shape: &[usize],
         stride: &[usize],
     ) -> Result<Option<ArrayD<bool>>, ImageError> {
-        let name = self
-            .native
-            .as_ref()
-            .and_then(|table| table.mask_state().active().map(str::to_owned));
-        name.map(|name| self.get_named_mask_slice(&name, start, shape, stride))
-            .transpose()
+        match &self.native {
+            Some(table) => table.read_live_default_mask(start, shape, stride),
+            None => Ok(None),
+        }
     }
 }

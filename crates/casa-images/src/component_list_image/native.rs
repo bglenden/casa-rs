@@ -154,7 +154,7 @@ fn update_keywords(path: &Path, update: impl FnOnce(&mut RecordValue)) -> Result
     let mut lock = TableWriteLock::acquire_to_reread(path, 1)?;
     let mut table = Table::open_metadata_only(TableOptions::new(path))?;
     update(table.keywords_mut());
-    table.save_metadata_only(TableOptions::new(path))?;
+    table.save_keywords_atomically(path)?;
     lock.record_write();
     lock.release()?;
     Ok(())

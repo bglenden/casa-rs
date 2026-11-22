@@ -1,5 +1,7 @@
 """Persistent component-image masks and public expression consumers."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -225,3 +227,137 @@ def test_native_component_mask_writes_preserve_other_attachment_edits(tmp_path):
     finally:
         first.done()
         second.done()
+
+
+def test_fresh_component_masks_use_locked_destination_names(tmp_path):
+    api = _backend("casars")
+    path = tmp_path / "shared.im"
+    first, second = api.image(), api.image()
+    try:
+        assert first.fromcomplist(str(path), [6, 8], _component_record(api))
+        assert first.calcmask("T", "original", False)
+        assert second.open(str(path))
+        assert first.calcmask("F", "claimed")
+        with pytest.raises(RuntimeError, match="Mask claimed already exists"):
+            second.maskhandler("copy", ["original", "claimed"])
+        assert first.calcmask("F", asdefault=False)
+        assert second.calcmask("T", asdefault=False)
+        assert second.done()
+        assert first.done()
+        assert first.open(str(path))
+        assert list(first.maskhandler("get")) == ["original", "claimed", "mask0", "mask1"]
+        assert list(first.maskhandler("default")) == ["claimed"]
+        assert not np.any(first.getchunk(getmask=True))
+        assert list(first.maskhandler("set", ["mask0"])) == ["T"]
+        assert not np.any(first.getchunk(getmask=True))
+        assert list(first.maskhandler("set", ["mask1"])) == ["T"]
+        assert np.all(first.getchunk(getmask=True))
+    finally:
+        first.done()
+        second.done()
+
+
+def test_component_mask_update_only_writes_parent_keywords(tmp_path):
+    api = _backend("casars")
+    path = tmp_path / "component.im"
+    image = api.image()
+    try:
+        assert image.fromcomplist(str(path), [6, 8], _component_record(api))
+        info = path / "table.info"
+        content = info.read_bytes()
+        os.utime(info, (10_000, 10_000))
+        info.chmod(0o444)
+        assert image.calcmask("F", "selected")
+        assert info.stat().st_mtime == 10_000
+        assert info.read_bytes() == content
+        assert image.done()
+        assert image.open(str(path))
+        assert list(image.maskhandler("default")) == ["selected"]
+        assert not np.any(image.getchunk(getmask=True))
+    finally:
+        image.done()
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="requires unprivileged POSIX access checks")
+def test_failed_control_file_publish_restores_mask_after_reopen(tmp_path):
+    api = _backend("casars")
+    path = tmp_path / "component.im"
+    image = api.image()
+    try:
+        assert image.fromcomplist(str(path), [6, 8], _component_record(api))
+        assert image.calcmask("F", "selected")
+        control = path / "table.dat"
+        old_keywords = control.read_bytes()
+        control.chmod(0o444)
+        try:
+            with pytest.raises(RuntimeError):
+                image.maskhandler("rename", ["selected", "renamed"])
+        finally:
+            control.chmod(0o644)
+        assert control.read_bytes() == old_keywords
+        assert (path / "selected").is_dir()
+        assert not (path / "renamed").exists()
+        assert image.done()
+        assert image.open(str(path))
+        assert list(image.maskhandler("default")) == ["selected"]
+        assert not np.any(image.getchunk(getmask=True))
+    finally:
+        image.done()
+
+
+def test_component_mask_edits_protect_shared_backing_and_history_tables(tmp_path):
+    api = _backend("casars")
+    path = tmp_path / "component.im"
+    image, table = api.image(), api.table()
+    try:
+        assert image.fromcomplist(str(path), [6, 8], _component_record(api))
+        assert image.calcmask("F", "selected")
+        assert image.sethistory("origin", ["preserved history"])
+        assert image.done()
+        assert table.open(str(path), nomodify=False)
+        region = table.getkeyword("masks")["selected"]
+        masks = {
+            "selected": dict(region, mask="././selected"),
+            "alias": dict(region, mask="././selected"),
+            "logtable": dict(region, mask="././logtable"),
+        }
+        table.putkeyword("masks", masks)
+        assert table.done()
+        assert image.open(str(path))
+        for operation, names, diagnostic in [
+            ("delete", ["selected"], "shares its table"),
+            ("rename", ["selected", "moved"], "shares its table"),
+            ("delete", ["logtable"], "does not own a local mask table"),
+        ]:
+            with pytest.raises(RuntimeError, match=diagnostic):
+                image.maskhandler(operation, names)
+        assert (path / "selected").is_dir()
+        assert (path / "logtable").is_dir()
+        assert "preserved history" in image.history(list=False)
+        assert image.maskhandler("set", ["alias"])
+        assert not np.any(image.getchunk(getmask=True))
+    finally:
+        table.done()
+        image.done()
+
+
+def test_lazy_component_expression_mask_survives_rename_and_name_reuse(tmp_path):
+    api = _backend("casars")
+    path = tmp_path / "component.im"
+    source, peer = api.image(), api.image()
+    result = None
+    try:
+        assert source.fromcomplist(str(path), [6, 8], _component_record(api))
+        assert source.calcmask("F", "first")
+        result = source.imagecalc(pixels=f'"{path}" + 3')
+        assert peer.open(str(path))
+        assert list(peer.maskhandler("rename", ["first", "renamed"])) == ["T"]
+        assert peer.calcmask("T", "first", False)
+        assert list(peer.maskhandler("default")) == ["renamed"]
+        actual = result.getchunk([1, 0], [5, 7], [2, 2], getmask=True)
+        np.testing.assert_array_equal(actual, np.zeros((3, 4), dtype=bool))
+    finally:
+        if result is not None:
+            result.done()
+        peer.done()
+        source.done()

@@ -13,10 +13,26 @@
 //! relative form; once moved, it needs re-running (or, for CASA, a symlink at
 //! the old path).
 
+use std::path::Path;
+
+use casa_lattices::PagedArray;
+use casa_tables::{Table, TableOptions};
 use casa_types::{RecordValue, ScalarValue, Value};
 
 /// The field of a mask region record that names its mask table.
 const MASK_TABLE_FIELD: &str = "mask";
+
+pub(crate) fn is_paged_mask_table(path: &Path) -> bool {
+    Table::open_metadata_only(TableOptions::new(path))
+        .ok()
+        .and_then(|table| {
+            table
+                .schema()
+                .map(|schema| schema.columns().len() == 1 && schema.column("PagedArray").is_some())
+        })
+        .unwrap_or(false)
+        && PagedArray::<bool>::open(path).is_ok()
+}
 
 /// The stored reference to the subtable `name` inside the image: casacore's
 /// form for a table inside its owner, as `PagedImage` writes its `logtable`

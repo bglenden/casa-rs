@@ -4,14 +4,14 @@ use std::path::{Path, PathBuf};
 
 use casa_lattices::{Lattice, LatticeMut, PagedArray, TiledShape};
 use casa_tables::publication::{lock_table_tree_for_replacement, rename_without_replacing};
-use casa_tables::{Table, TableOptions, TableWriteLock, add_directory};
+use casa_tables::{Table, TableOptions, TableUseLock, TableWriteLock, add_directory};
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
 use super::native::{ComponentTable, keyword_record};
 use crate::ImageError;
 use crate::image::make_paged_mask_record;
-use crate::mask_reference::subtable_reference;
+use crate::mask_reference::{is_paged_mask_table, subtable_reference};
 
 pub(super) struct ComponentMasks {
     entries: RecordValue,
@@ -70,9 +70,28 @@ impl ComponentMasks {
     fn local_path(&self, root: &Path, name: &str) -> Result<PathBuf, ImageError> {
         validate_name(name)?;
         let path = self.path(root, name)?;
-        if path != root.join(name) || !path.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+        if path != root.join(name)
+            || !path.symlink_metadata().is_ok_and(|m| m.is_dir())
+            || !is_paged_mask_table(&path)
+        {
             return Err(ImageError::InvalidMetadata(format!(
                 "Mask {name} does not own a local mask table",
+            )));
+        }
+        Ok(path)
+    }
+
+    fn movable_path(&self, root: &Path, name: &str) -> Result<PathBuf, ImageError> {
+        let path = self.local_path(root, name)?;
+        let canonical = path.canonicalize().map_err(io)?;
+        if self.entries.fields().iter().any(|entry| {
+            entry.name != name
+                && self
+                    .path(root, &entry.name)
+                    .is_ok_and(|other| other.canonicalize().is_ok_and(|other| other == canonical))
+        }) {
+            return Err(ImageError::InvalidMetadata(format!(
+                "Mask {name} shares its table with another mask",
             )));
         }
         Ok(path)
@@ -109,13 +128,47 @@ impl ComponentTable {
             .map_err(Into::into)
     }
 
-    pub(crate) fn put_mask(
+    pub(super) fn read_live_default_mask(
         &self,
-        name: &str,
+        start: &[usize],
+        count: &[usize],
+        stride: &[usize],
+    ) -> Result<Option<ArrayD<bool>>, ImageError> {
+        let image = open_for_read(&self.path)?;
+        let masks = ComponentMasks::from_keywords(image.keywords());
+        let Some(name) = masks.active() else {
+            return Ok(None);
+        };
+        let path = masks.path(&self.path, name)?;
+        let binding = TableUseLock::acquire_readonly(&path)?;
+        let _read = open_for_read(&path)?;
+        let read = || -> Result<_, ImageError> {
+            let mask = PagedArray::<bool>::open(&path)?;
+            Ok(mask.get_slice(start, count, stride)?)
+        };
+        if binding.matches_directory(&path) {
+            let pixels = read()?;
+            if binding.matches_directory(&path) {
+                return Ok(Some(pixels));
+            }
+        }
+        Err(ImageError::Io(format!(
+            "Mask table {} changed while reading it",
+            path.display()
+        )))
+    }
+
+    pub(crate) fn define_mask(
+        &self,
+        requested_name: Option<&str>,
+        overwrite: bool,
+        set_default: bool,
         image_shape: &[usize],
         data: &ArrayD<bool>,
     ) -> Result<(), ImageError> {
-        validate_name(name)?;
+        if let Some(name) = requested_name {
+            validate_name(name)?;
+        }
         if data.shape() != image_shape {
             return Err(ImageError::ShapeMismatch {
                 expected: image_shape.to_vec(),
@@ -124,19 +177,45 @@ impl ComponentTable {
         }
         let start = vec![0; image_shape.len()];
         self.edit_masks(|masks| {
-            if masks.entries.get(name).is_some() {
+            let generated;
+            let name = if let Some(name) = requested_name {
+                name
+            } else {
+                generated = (0..)
+                    .map(|index| format!("mask{index}"))
+                    .find(|name| {
+                        masks.entries.get(name).is_none()
+                            && self.path.join(name).symlink_metadata().is_err()
+                    })
+                    .expect("an unused mask name");
+                &generated
+            };
+            let mut change = if masks.entries.get(name).is_some() {
+                if !overwrite {
+                    return Err(ImageError::InvalidMetadata(format!(
+                        "Mask {name} already exists",
+                    )));
+                }
                 let path = masks.local_path(&self.path, name)?;
                 let mut lock = TableWriteLock::acquire_to_reread(&path, 1)?;
                 let mut target = PagedArray::<bool>::open(&path)?;
+                lock.record_write();
                 target.put_slice(data, &start)?;
                 target.flush()?;
-                lock.record_write();
                 lock.release()?;
-                return Ok(MaskChange::Pixels);
+                MaskChange::Pixels
+            } else {
+                self.add_mask(masks, name, image_shape, |target| {
+                    target.put_slice(data, &start).map_err(Into::into)
+                })?
+            };
+            if set_default && masks.default.as_deref() != Some(name) {
+                masks.default = Some(name.into());
+                if matches!(change, MaskChange::Pixels) {
+                    change = MaskChange::Keywords;
+                }
             }
-            self.add_mask(masks, name, image_shape, |target| {
-                target.put_slice(data, &start).map_err(Into::into)
-            })
+            Ok(change)
         })
     }
 
@@ -204,7 +283,7 @@ impl ComponentTable {
     pub(crate) fn rename_mask(&self, from: &str, to: &str) -> Result<(), ImageError> {
         validate_name(to)?;
         self.edit_masks(|masks| {
-            let source = masks.local_path(&self.path, from)?;
+            let source = masks.movable_path(&self.path, from)?;
             if masks.entries.get(to).is_some() {
                 return Err(ImageError::InvalidMetadata(format!(
                     "Mask {to} already exists"
@@ -225,7 +304,7 @@ impl ComponentTable {
 
     pub(crate) fn remove_mask(&self, name: &str) -> Result<(), ImageError> {
         self.edit_masks(|masks| {
-            let source = masks.local_path(&self.path, name)?;
+            let source = masks.movable_path(&self.path, name)?;
             let locks = lock_table_tree_for_replacement(&source)?;
             let stage = tempfile::tempdir_in(&self.path).map_err(io)?;
             let staged = stage.path().join("mask");
@@ -243,13 +322,12 @@ impl ComponentTable {
         edit: impl FnOnce(&mut ComponentMasks) -> Result<MaskChange, ImageError>,
     ) -> Result<(), ImageError> {
         let mut lock = TableWriteLock::acquire_to_reread(&self.path, 1)?;
-        let options = TableOptions::new(&self.path);
-        let mut table = Table::open_metadata_only(options.clone())?;
+        let mut table = Table::open_metadata_only(TableOptions::new(&self.path))?;
         let mut masks = ComponentMasks::from_keywords(table.keywords());
         let change = edit(&mut masks)?;
         if !matches!(change, MaskChange::Pixels) {
             masks.save(table.keywords_mut());
-            if let Err(error) = table.save_metadata_only(options) {
+            if let Err(error) = table.save_keywords_atomically(&self.path) {
                 return Err(change.rollback(error.into()));
             }
             lock.record_write();
@@ -261,6 +339,15 @@ impl ComponentTable {
         lock.release()?;
         Ok(())
     }
+}
+
+fn open_for_read(path: &Path) -> Result<Table, ImageError> {
+    let options = TableOptions::new(path);
+    #[cfg(unix)]
+    return Table::open_with_lock_attempts(options, casa_tables::LockOptions::default(), 1)
+        .map_err(Into::into);
+    #[cfg(not(unix))]
+    Table::open_metadata_only(options).map_err(Into::into)
 }
 
 pub(super) fn validate_coverage(

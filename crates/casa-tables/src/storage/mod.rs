@@ -16,6 +16,7 @@ pub(crate) mod standard_stman;
 pub(crate) mod stman_aipsio;
 pub(crate) mod stman_array_file;
 pub(crate) mod table_control;
+pub(crate) mod table_keyword_write;
 mod tile_layout;
 pub(crate) mod tiled_stman;
 pub use tile_layout::{DEFAULT_TILE_IO_BYTES, TileLayoutError, TileLayoutPlan, TileLayoutPlanner};

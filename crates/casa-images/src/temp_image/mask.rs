@@ -144,7 +144,7 @@ impl<T: ImagePixel> TempImage<T> {
     /// Replaces a named mask.
     pub fn put_mask(&mut self, name: &str, data: &ArrayD<bool>) -> Result<(), ImageError> {
         if let Some(table) = self.native_component_table() {
-            return table.put_mask(name, self.shape(), data);
+            return table.define_mask(Some(name), true, false, self.shape(), data);
         }
         self.require_writable_pixels()?;
         if data.shape() != self.shape() {
@@ -167,6 +167,26 @@ impl<T: ImagePixel> TempImage<T> {
                 .push((name.to_owned(), TempMask::Dense(data.clone())));
         }
         Ok(())
+    }
+
+    /// Define a native component-image mask under the table's write lock.
+    /// A missing name selects the first unused generated name. Returns
+    /// `false` if this attachment uses another kind of image.
+    ///
+    /// # Errors
+    /// Returns an error for invalid data, conflicting names, or failed I/O.
+    pub fn define_component_mask(
+        &mut self,
+        name: Option<&str>,
+        overwrite: bool,
+        set_default: bool,
+        data: &ArrayD<bool>,
+    ) -> Result<bool, ImageError> {
+        let Some(table) = self.native_component_table() else {
+            return Ok(false);
+        };
+        table.define_mask(name, overwrite, set_default, self.shape(), data)?;
+        Ok(true)
     }
 
     /// Copies a rectangular block into a named mask, allocating an all-false

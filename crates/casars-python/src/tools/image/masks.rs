@@ -75,8 +75,13 @@ fn copy_mask(image: &mut ImageHandle, from: &str, to: &str) -> PyResult<()> {
     } else {
         named_mask(image, from)?
     };
-    with_pixels!(image, storage => with_storage!(storage, image => image.put_mask(to, &mask)))
-        .map_err(raised)
+    with_pixels!(image, storage => match storage {
+        Storage::Paged(image) => image.put_mask(to, &mask),
+        Storage::Temp { image, .. } => image
+            .define_component_mask(Some(to), false, false, &mask)
+            .and_then(|written| if written { Ok(()) } else { image.put_mask(to, &mask) }),
+    })
+    .map_err(raised)
 }
 
 fn apply_mask_operation(

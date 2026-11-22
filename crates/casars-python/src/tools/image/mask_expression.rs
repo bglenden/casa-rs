@@ -29,20 +29,29 @@ impl PyImageTool {
             }
             attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
             let values = evaluate_image_tool_mask(mask, image.shape()).map_err(raised)?;
-            let generated;
-            let mask_name = if name.is_empty() {
-                generated = (0..)
-                    .map(|index| format!("mask{index}"))
-                    .find(|name| !has_region(&image, name))
-                    .expect("a fresh mask name");
-                generated.as_str()
-            } else {
+            let explicit = (!name.is_empty()).then_some(name);
+            if let Some(name) = explicit {
                 validate_name(name)?;
-                name
-            };
-            with_pixels!(&mut *image, storage => with_storage!(storage, image => image.put_mask(mask_name, &values))).map_err(raised)?;
-            if asdefault {
-                with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_default_mask(mask_name))).map_err(raised)?;
+            }
+            let component_mask = with_pixels!(&mut *image, storage => match storage {
+                Storage::Temp { image, .. } => image.define_component_mask(explicit, true, asdefault, &values),
+                Storage::Paged(_) => Ok(false),
+            }).map_err(raised)?;
+            if !component_mask {
+                let generated;
+                let mask_name = if let Some(name) = explicit {
+                    name
+                } else {
+                    generated = (0..)
+                        .map(|index| format!("mask{index}"))
+                        .find(|name| !has_region(&image, name))
+                        .expect("a fresh mask name");
+                    &generated
+                };
+                with_pixels!(&mut *image, storage => with_storage!(storage, image => image.put_mask(mask_name, &values))).map_err(raised)?;
+                if asdefault {
+                    with_pixels!(&mut *image, storage => with_storage!(storage, image => image.set_default_mask(mask_name))).map_err(raised)?;
+                }
             }
             if state.history {
                 let mask = if mask.len() > 300 { "..." } else { mask };

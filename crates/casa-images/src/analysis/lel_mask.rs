@@ -827,7 +827,21 @@ fn open_component_mask_source(path: &Path) -> Result<MaskSource<f64>, ImageError
     let mask = has_mask.then(|| {
         let source = Arc::clone(&source);
         Arc::new(move |start: &[usize], count: &[usize], stride: &[usize]| {
-            source.0.get_mask_slice(start, count, stride)
+            let path = source.0.name().expect("native component image");
+            let changed = || {
+                ImageError::Io(format!(
+                    "Image {} changed while reading its mask",
+                    path.display()
+                ))
+            };
+            if !source.1.matches_directory(path) {
+                return Err(changed());
+            }
+            let mask = source.0.get_mask_slice(start, count, stride)?;
+            if !source.1.matches_directory(path) {
+                return Err(changed());
+            }
+            Ok(mask)
         }) as crate::image_expr::OwnedMaskReader
     });
     let expression = ImageExprBuilder::from_section_readers(

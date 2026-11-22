@@ -4,11 +4,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use casa_lattices::PagedArray;
 use casa_tables::{Table, TableOptions, TableWriteLock, add_directory};
 use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::ImageError;
+use crate::mask_reference::is_paged_mask_table;
 
 pub(super) fn remove(image: &Path, name: &str) -> Result<(), ImageError> {
     let image = image.canonicalize().map_err(image_io)?;
@@ -85,18 +85,6 @@ fn backing_table(image: &Path, value: &Value) -> Option<PathBuf> {
     // Casacore permits references elsewhere, but only a real subtable
     // contained in this image is owned by the image being edited.
     (resolved.parent() == Some(image) && resolved.is_dir()).then_some(resolved)
-}
-
-fn is_paged_mask_table(path: &Path) -> bool {
-    Table::open_metadata_only(TableOptions::new(path))
-        .ok()
-        .and_then(|table| {
-            table
-                .schema()
-                .map(|schema| schema.columns().len() == 1 && schema.column("PagedArray").is_some())
-        })
-        .unwrap_or(false)
-        && PagedArray::<bool>::open(path).is_ok()
 }
 
 fn missing_mask(name: &str) -> ImageError {
