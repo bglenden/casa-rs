@@ -153,6 +153,8 @@ def failures(root, archive):
     assert expected.is_dir()
     refuse(tasks, actual, "visibility file is empty", bandname="L")
     assert not actual.exists() and not Path(f"{actual}.flagversions").exists()
+    refuse(casatasks, root / "future-casa.ms", "visibility file is empty", starttime="50000")
+    refuse(tasks, root / "future-native.ms", "visibility file is empty", starttime="50000")
     refuse(casatasks, root / "project-casa.ms", "VLAProjectFilter", RuntimeError, project="TOOLONG")
     refuse(tasks, root / "project-native.ms", "project name", RuntimeError, project="TOOLONG")
     missing = root / "missing.arc"
@@ -212,6 +214,7 @@ def main():
         ("time", dict(starttime=mjd_seconds(4281838800), stoptime=mjd_seconds(4281838930))),
         ("boundary", dict(starttime=mjd_seconds(4281838905), stoptime=mjd_seconds(4281839005))),
         ("malformed-time", dict(starttime="junk", stoptime=mjd_seconds(4281838800))),
+        ("seconds-stop", dict(stoptime="4281838800s")),
         ("old-band", dict(bandname="X")),
         ("evla", dict(bandname="C", evlabands=True)),
         ("project", dict(project="at166", bandname="C")),

@@ -271,6 +271,7 @@ struct NormalizedAntenna {
 #[derive(Debug, Clone)]
 struct NormalizedGroup {
     descriptor: SpectralDescriptor,
+    cda_ids: Vec<CdaId>,
     baselines: Vec<NormalizedBaselineRow>,
 }
 
@@ -294,7 +295,6 @@ struct SpectralDescriptor {
     edge_frequency_hz: f64,
     observed_frequency_hz: f64,
     channel_width_hz: f64,
-    total_bandwidth_hz: f64,
     num_chan: usize,
     if_conv_chain: i32,
     rest_frequency_hz: f64,
@@ -326,6 +326,7 @@ struct DataDescriptionKey {
 #[derive(Debug, Clone)]
 struct SpectralWindowEntry {
     descriptor: SpectralDescriptor,
+    stored_bandwidth_hz: f64,
     row: i32,
     time_seconds: f64,
     source_direction: [f64; 2],
@@ -958,6 +959,7 @@ fn normalize_groups(
         }
         groups.push(NormalizedGroup {
             descriptor,
+            cda_ids,
             baselines,
         });
     }
@@ -1007,9 +1009,6 @@ fn collect_cda_groups(
             })?,
             channel_width_hz: sda.channel_width_hz(cda_id).map_err(|error| {
                 VlaError::import(format!("decode channel width for {:?}: {error}", cda_id))
-            })?,
-            total_bandwidth_hz: sda.correlated_bandwidth_hz(cda_id).map_err(|error| {
-                VlaError::import(format!("decode bandwidth for {:?}: {error}", cda_id))
             })?,
             num_chan: usize::try_from(sda.n_channels(cda_id).map_err(|error| {
                 VlaError::import(format!("decode channel count for {:?}: {error}", cda_id))
@@ -1275,7 +1274,7 @@ fn same_spectral_descriptor(
         (left.observed_frequency_hz - right.observed_frequency_hz).abs() <= tolerance_hz
     };
 
-    same_spectral_window_shape(left, right)
+    same_spectral_window_shape(left, left.channel_width_hz * left.num_chan as f64, right)
         && left.doppler_tracking == right.doppler_tracking
         && center_frequency_matches
         && (!left.doppler_tracking
@@ -1285,12 +1284,16 @@ fn same_spectral_descriptor(
                 && (left.doppler_velocity_mps - right.doppler_velocity_mps).abs() <= 1.0e-6))
 }
 
-fn same_spectral_window_shape(left: &SpectralDescriptor, right: &SpectralDescriptor) -> bool {
+fn same_spectral_window_shape(
+    left: &SpectralDescriptor,
+    stored_bandwidth: f64,
+    right: &SpectralDescriptor,
+) -> bool {
     // CASA tests bandwidth separately from the reference-frequency tolerance.
-    let bandwidth_tolerance_hz = right.total_bandwidth_hz.abs() / 4.0;
+    let requested_bandwidth = right.channel_width_hz * right.num_chan as f64;
     left.num_chan == right.num_chan
         && left.if_conv_chain == right.if_conv_chain
-        && (left.total_bandwidth_hz - right.total_bandwidth_hz).abs() <= bandwidth_tolerance_hz
+        && (stored_bandwidth - requested_bandwidth).abs() <= requested_bandwidth.abs() / 4.0
 }
 
 fn spectral_window_matches(
@@ -1302,7 +1305,11 @@ fn spectral_window_matches(
     tolerance_hz: f64,
     measures: Arc<dyn MeasuresProvider>,
 ) -> Result<bool, VlaError> {
-    if !same_spectral_window_shape(&existing.descriptor, descriptor) {
+    if !same_spectral_window_shape(
+        &existing.descriptor,
+        existing.stored_bandwidth_hz,
+        descriptor,
+    ) {
         return Ok(false);
     }
 
@@ -1544,6 +1551,7 @@ struct VlaImportState {
     archive_observation: Option<ArchiveObservation>,
     ms_direction_epoch: Option<DirectionEpoch>,
     spectral_windows: Vec<SpectralWindowEntry>,
+    last_spectral_windows: [Option<usize>; 4],
     current_freq_group: i32,
     pending_record_freq_group: Option<i32>,
     polarization_rows: HashMap<PolarizationKey, i32>,
@@ -1606,6 +1614,7 @@ impl VlaImportState {
             archive_observation: None,
             ms_direction_epoch: None,
             spectral_windows: Vec::new(),
+            last_spectral_windows: [None; 4],
             current_freq_group: 0,
             pending_record_freq_group: None,
             polarization_rows: HashMap::new(),
@@ -1726,20 +1735,30 @@ impl VlaImportState {
 
         let mut group_data_desc_ids = Vec::with_capacity(record.groups.len());
         let mut group_rows = Vec::with_capacity(record.groups.len());
+        let mut current_spectral_windows = [None; 4];
 
         for group in record.groups {
             let polarization_id = self.ensure_polarization(&group.baselines[0].corr_types)?;
+            let preferred = group
+                .cda_ids
+                .first()
+                .and_then(|id| self.last_spectral_windows[id.index()]);
             let spectral_window_id = self.ensure_spectral_window(
                 &group.descriptor,
                 source_id,
                 time_seconds,
                 source_direction,
                 ms_direction_epoch,
+                preferred,
             )?;
+            for id in group.cda_ids {
+                current_spectral_windows[id.index()] = Some(spectral_window_id as usize);
+            }
             let data_desc_id = self.ensure_data_description(spectral_window_id, polarization_id)?;
             group_data_desc_ids.push(data_desc_id);
             group_rows.push((group.baselines, data_desc_id));
         }
+        self.last_spectral_windows = current_spectral_windows;
 
         if self
             .last_data_desc_ids_by_array
@@ -1992,6 +2011,7 @@ impl VlaImportState {
         self.new_scan_pending = true;
         self.last_field_by_array.clear();
         self.last_data_desc_ids_by_array.clear();
+        self.last_spectral_windows = [None; 4];
         let Some(observation) = self.archive_observation.take() else {
             return Ok(());
         };
@@ -2277,9 +2297,16 @@ impl VlaImportState {
         time_seconds: f64,
         source_direction: [f64; 2],
         direction_epoch: DirectionEpoch,
+        preferred: Option<usize>,
     ) -> Result<i32, VlaError> {
         let measures: Arc<dyn MeasuresProvider> = self.measures.clone();
-        for entry in &self.spectral_windows {
+        let previous = preferred.and_then(|index| self.spectral_windows.get(index));
+        let newest = self
+            .spectral_windows
+            .iter()
+            .rev()
+            .filter(|entry| Some(entry.row as usize) != preferred);
+        for entry in previous.into_iter().chain(newest) {
             if spectral_window_matches(
                 entry,
                 descriptor,
@@ -2316,6 +2343,7 @@ impl VlaImportState {
             convert_topocentric_frequency(descriptor.channel_width_hz, meas_freq_ref, &frame)?
         };
         let widths = vec![converted_width; descriptor.num_chan];
+        let stored_bandwidth_hz = widths.iter().sum();
         let resolution = widths.clone();
         let chan_freq_array = ArrayValue::Float64(
             ArrayD::from_shape_vec(IxDyn(&[descriptor.num_chan]).f(), chan_freq).map_err(
@@ -2361,7 +2389,7 @@ impl VlaImportState {
                     ),
                     (
                         "TOTAL_BANDWIDTH",
-                        Value::Scalar(ScalarValue::Float64(widths.iter().sum())),
+                        Value::Scalar(ScalarValue::Float64(stored_bandwidth_hz)),
                     ),
                     ("CHAN_FREQ", Value::Array(chan_freq_array)),
                     (
@@ -2405,6 +2433,7 @@ impl VlaImportState {
         };
         self.spectral_windows.push(SpectralWindowEntry {
             descriptor: descriptor.clone(),
+            stored_bandwidth_hz,
             row,
             time_seconds,
             source_direction,
@@ -3593,11 +3622,11 @@ mod tests {
                     },
                 ],
                 groups: vec![NormalizedGroup {
+                    cda_ids: vec![CdaId::Cda0],
                     descriptor: SpectralDescriptor {
                         edge_frequency_hz: 1.4e9 - 0.5 * 5.0e7,
                         observed_frequency_hz: 1.4e9,
                         channel_width_hz: 5.0e7,
-                        total_bandwidth_hz: 5.0e7,
                         num_chan: 1,
                         if_conv_chain: 0,
                         rest_frequency_hz: 0.0,
@@ -3651,7 +3680,6 @@ mod tests {
             edge_frequency_hz: observed_frequency_hz - 0.5 * 5.0e7,
             observed_frequency_hz,
             channel_width_hz: 5.0e7,
-            total_bandwidth_hz: 5.0e7,
             num_chan: 1,
             if_conv_chain: 0,
             rest_frequency_hz: 0.0,
@@ -3737,6 +3765,7 @@ mod tests {
             direction_epoch: DirectionEpoch::J2000,
             antennas: test_antennas(),
             groups: vec![NormalizedGroup {
+                cda_ids: vec![CdaId::Cda0],
                 descriptor,
                 baselines: vec![test_baseline()],
             }],
@@ -3794,6 +3823,103 @@ mod tests {
             None => None,
             Some(other) => panic!("{column} had unexpected value {other:?}"),
         }
+    }
+
+    #[test]
+    fn spectral_window_lookup_tries_the_cda_then_the_newest_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("overlapping-spw.ms");
+        let builder = MeasurementSetBuilder::new()
+            .with_main_column(OptionalMainColumn::Data)
+            .with_main_column(OptionalMainColumn::CorrectedData)
+            .with_main_column(OptionalMainColumn::ModelData)
+            .with_optional_subtable(SubtableId::Source)
+            .with_optional_subtable(SubtableId::Doppler);
+        let ms = MeasurementSet::create(&path, builder).unwrap();
+        let options = ImportVlaOptions {
+            frequencytol_hz: 3.2e9,
+            ..Default::default()
+        };
+        let mut writer = VlaImportState::new(options, ms, 5, 1).unwrap();
+        for (index, (frequency, cda)) in [
+            (8.5149e9, CdaId::Cda0),
+            (4.8851e9, CdaId::Cda1),
+            (7.8149e9, CdaId::Cda0),
+            (8.5149e9, CdaId::Cda1),
+            (7.8149e9, CdaId::Cda1),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut record = test_record(
+                "AT166",
+                4_281_838_800.0 + index as f64,
+                test_descriptor(frequency),
+            );
+            record.groups[0].cda_ids[0] = cda;
+            writer.push_record(record).unwrap();
+        }
+        writer.finish().unwrap();
+        let reopened = MeasurementSet::open(&path).unwrap();
+        assert_eq!(reopened.spectral_window().unwrap().row_count(), 2);
+        for (row, expected) in [0, 1, 1, 0, 0].into_iter().enumerate() {
+            let row = reopened.main_table().row_accessor().row(row).unwrap();
+            assert_eq!(optional_i32_scalar(&row, "DATA_DESC_ID"), Some(expected));
+        }
+    }
+
+    #[test]
+    fn spectral_window_bandwidth_depends_on_the_channel_grid() {
+        let mut narrow = test_descriptor(1.4e9);
+        narrow.num_chan = 16;
+        narrow.channel_width_hz = 50_000.0;
+        let mut wide = narrow.clone();
+        wide.channel_width_hz *= 2.0;
+        assert!(!same_spectral_descriptor(&narrow, &wide, 1.0e9));
+        assert!(!same_spectral_descriptor(&wide, &narrow, 1.0e9));
+    }
+
+    #[test]
+    fn original_version_keeps_correlation_and_channel_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("flags.ms");
+        let mut ms = MeasurementSet::create(&path, MeasurementSetBuilder::new()).unwrap();
+        let flags = ArrayValue::Bool(
+            ArrayD::from_shape_vec(
+                IxDyn(&[2, 3]).f(),
+                vec![true, false, false, true, false, false],
+            )
+            .unwrap(),
+        );
+        ms.main_table_mut()
+            .add_row(
+                make_row_from_columns(
+                    casa_ms::schema::main_table::REQUIRED_COLUMNS,
+                    &[
+                        ("FLAG", Value::Array(flags.clone())),
+                        ("FLAG_ROW", Value::Scalar(ScalarValue::Bool(true))),
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        ms.save().unwrap();
+        let source = MeasurementSet::open(&path).unwrap();
+        casa_ms::flagging::save_initial_flag_version(
+            &source,
+            vec![MeasurementSetArrayShapePlan::visibility(2, 3, 1, "VLA")],
+        )
+        .unwrap();
+        let snapshot = Table::open(casa_tables::TableOptions::new(
+            dir.path().join("flags.ms.flagversions/flags.Original"),
+        ))
+        .unwrap();
+        let row = snapshot.row_accessor().row(0).unwrap();
+        assert_eq!(row.get("FLAG"), Some(&Value::Array(flags)));
+        assert_eq!(
+            row.get("FLAG_ROW"),
+            Some(&Value::Scalar(ScalarValue::Bool(true)))
+        );
     }
 
     #[test]
@@ -3890,7 +4016,6 @@ mod tests {
             edge_frequency_hz: 23_691_048_000.0 - 127.0 / 2.0 * 24_414.062_5,
             observed_frequency_hz: 23_691_048_000.0,
             channel_width_hz: 24_414.062_5,
-            total_bandwidth_hz: 3_125_000.0,
             num_chan: 127,
             if_conv_chain: 0,
             rest_frequency_hz: 0.0,
@@ -3918,7 +4043,6 @@ mod tests {
             edge_frequency_hz: topo_descriptor.edge_frequency_hz,
             observed_frequency_hz: topo_descriptor.observed_frequency_hz,
             channel_width_hz: topo_descriptor.channel_width_hz,
-            total_bandwidth_hz: topo_descriptor.total_bandwidth_hz,
             num_chan: topo_descriptor.num_chan,
             if_conv_chain: topo_descriptor.if_conv_chain,
             rest_frequency_hz: lsrk_frequency_hz,
@@ -4156,7 +4280,6 @@ mod tests {
                     edge_frequency_hz: 23_689_639_186.578_94,
                     observed_frequency_hz: 23_691_189_479.547_69,
                     channel_width_hz: 24_414.062_5,
-                    total_bandwidth_hz: 3_125_000.0,
                     num_chan: 127,
                     if_conv_chain: 0,
                     rest_frequency_hz: 23_694_044_992.921_69,
@@ -4205,7 +4328,6 @@ mod tests {
             edge_frequency_hz: 7.8149e9 - 0.5 * 50.0e6,
             observed_frequency_hz: 7.8149e9,
             channel_width_hz: 50.0e6,
-            total_bandwidth_hz: 50.0e6,
             num_chan: 1,
             if_conv_chain: 0,
             rest_frequency_hz: 0.0,
@@ -4410,7 +4532,6 @@ mod tests {
             edge_frequency_hz: 1.4e9 - 0.5 * 5.0e7,
             observed_frequency_hz: 1.4e9,
             channel_width_hz: 5.0e7,
-            total_bandwidth_hz: 5.0e7,
             num_chan: 1,
             if_conv_chain: 0,
             rest_frequency_hz: 0.0,
@@ -4460,6 +4581,7 @@ mod tests {
                 direction_epoch: DirectionEpoch::J2000,
                 antennas: antennas.clone(),
                 groups: vec![NormalizedGroup {
+                    cda_ids: vec![CdaId::Cda0],
                     descriptor: descriptor.clone(),
                     baselines: vec![baseline()],
                 }],
@@ -4478,6 +4600,7 @@ mod tests {
                 direction_epoch: DirectionEpoch::J2000,
                 antennas: antennas.clone(),
                 groups: vec![NormalizedGroup {
+                    cda_ids: vec![CdaId::Cda0],
                     descriptor: descriptor.clone(),
                     baselines: vec![baseline()],
                 }],
@@ -4496,6 +4619,7 @@ mod tests {
                 direction_epoch: DirectionEpoch::J2000,
                 antennas,
                 groups: vec![NormalizedGroup {
+                    cda_ids: vec![CdaId::Cda0],
                     descriptor: SpectralDescriptor {
                         edge_frequency_hz: 1.5e9 - 0.5 * 5.0e7,
                         observed_frequency_hz: 1.5e9,
@@ -4523,7 +4647,6 @@ mod tests {
             edge_frequency_hz: 23_691_189_479.547_69 - 127.0 / 2.0 * 24_414.062_5,
             observed_frequency_hz: 23_691_189_479.547_69,
             channel_width_hz: 24_414.062_5,
-            total_bandwidth_hz: 3_125_000.0,
             num_chan: 127,
             if_conv_chain: 0,
             rest_frequency_hz: 23_694_044_992.921_69,
@@ -4547,7 +4670,6 @@ mod tests {
             edge_frequency_hz: 23_691_189_479.547_69 - 127.0 / 2.0 * 24_414.062_5,
             observed_frequency_hz: 23_691_189_479.547_69,
             channel_width_hz: 24_414.062_5,
-            total_bandwidth_hz: 3_125_000.0,
             num_chan: 127,
             if_conv_chain: 0,
             rest_frequency_hz: 23_694_044_992.921_69,
@@ -4741,9 +4863,6 @@ mod tests {
                 })?,
                 channel_width_hz: sda.channel_width_hz(cda_id).map_err(|error| {
                     VlaError::import(format!("decode channel width for {:?}: {error}", cda_id))
-                })?,
-                total_bandwidth_hz: sda.correlated_bandwidth_hz(cda_id).map_err(|error| {
-                    VlaError::import(format!("decode bandwidth for {:?}: {error}", cda_id))
                 })?,
                 num_chan: usize::try_from(sda.n_channels(cda_id).map_err(|error| {
                     VlaError::import(format!("decode channel count for {:?}: {error}", cda_id))

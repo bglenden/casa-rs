@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's per-record project, epoch and receiver-band tests.
 
-use casa_types::quanta::Quantity;
+use casa_types::quanta::{Quantity, Unit};
 
 use crate::disk::LogicalRecord;
 use crate::record::CdaId;
@@ -104,7 +104,16 @@ impl ArchiveSelection {
 fn archive_date(value: Option<&str>, default: &str) -> Option<f64> {
     let value = value.filter(|value| !value.is_empty()).unwrap_or(default);
     let quantity = Quantity::read(value).ok()?;
-    (quantity.unit().name() == "d").then(|| quantity.value())
+    if quantity.unit().name().is_empty() {
+        return Some(quantity.value());
+    }
+    quantity
+        .get_value_in(&Unit::new("d").ok()?)
+        .ok()
+        .or_else(|| {
+            let radians = quantity.get_value_in(&Unit::new("rad").ok()?).ok()?;
+            Some(radians / std::f64::consts::TAU)
+        })
 }
 
 fn band_range(band: BandName, evla: bool) -> (f64, f64) {
