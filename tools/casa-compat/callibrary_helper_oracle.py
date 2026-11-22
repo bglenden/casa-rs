@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from copy import deepcopy
 import inspect
 from io import StringIO
-from pathlib import Path
+from pathlib import Path, PurePath
 
 import casatasks
 from casatools import calibrater as casa_calibrater
@@ -160,6 +160,29 @@ def literal_boundary():
     print('reader accepts record literals without evaluating expressions', flush=True)
 
 
+def mutated_records(work):
+    tools = [casa_callibrary(), native_callibrary()]
+    error, _ = compare_calls(tools, 'addrec', ['orphan.cal'], True)
+    assert error[1] == 'AttributeError' and all(not tool.cld for tool in tools)
+    compare_calls(tools, 'add', 'mutated.cal', field='0')
+    for tool in tools:
+        del tool.cld['mutated.cal']['0']['intent']
+    error, printed = compare_calls(tools, 'list')
+    assert error[1] == 'KeyError' and printed.endswith(" field='0' ")
+    for tool in tools:
+        del tool.cld['mutated.cal']['calwt']
+    files = [work/f'mutated-{index}.callib' for index in range(2)]
+    outcomes = [observe(tool.write, str(path)) for tool, path in zip(tools, files, strict=True)]
+    assert outcomes[0] == outcomes[1] and outcomes[0][0][1] == 'KeyError'
+    assert all(path.read_bytes() == b"caltable='mutated.cal' " for path in files)
+    compare_calls(tools, 'clear')
+    compare_calls(tools, 'add', PurePath('non-string.cal'))
+    outcomes = [observe(tool.write, str(path)) for tool, path in zip(tools, files, strict=True)]
+    assert outcomes[0] == outcomes[1] and outcomes[0][0][1] == 'TypeError'
+    assert all(path.read_bytes() == b'' for path in files)
+    print('malformed direct records and partial output match CASA', flush=True)
+
+
 def interoperability(work):
     from casars.tools import calibrater as native_calibrater
 
@@ -213,6 +236,7 @@ def main():
     files(work, tools)
     adapt_task_args(work)
     literal_boundary()
+    mutated_records(work)
     interoperability(work)
 
 

@@ -123,24 +123,28 @@ class callibrary:
 
     def addrec(self, crec, calwt):
         """Keep the supplied record live and append it to its first table."""
-        name = list(crec)[0]
+        name = list(crec.keys())[0]
         table = self.cld.setdefault(name, {'calwt': calwt})
         initial = table['calwt']
         if calwt != initial:
-            print(f"WARNING: For caltable='{name}' using already-set calwt={initial}.")
+            print("WARNING: For caltable='" + name + f"' using already-set calwt={initial}.")
         table[str(len(table) - 1)] = crec[name]
 
     def list(self):
         print(f'There are {len(self.cld)} caltables in the cal library:')
         for name in sorted(self.cld):
             table = self.cld[name]
-            print(f"{name}: calwt={table['calwt']} ({len(table) - 1} instance[s]):")
+            prefix = name + ':'
+            print(prefix + f" calwt={table['calwt']} ({len(table) - 1} instance[s]):")
             for entry in table.values():
                 if isinstance(entry, dict):
-                    print(' '.join(' ' + _quoted(key, entry[key]) for key in _SELECTIONS))
-                    print('  ' + _quoted('tinterp', entry['tinterp']) + '  '
-                          + _quoted('finterp', entry['finterp']))
-                    print('  ' + '  '.join(f'{key}={entry[key]}' for key in _MAPPINGS))
+                    for key in _SELECTIONS:
+                        print(' ' + _quoted(key, entry[key]), end='\n' if key == 'obs' else ' ')
+                    print('  ' + _quoted('tinterp', entry['tinterp']), end=' ')
+                    print(' ' + _quoted('finterp', entry['finterp']))
+                    for key in _MAPPINGS:
+                        prefix = '  ' if key == 'obsmap' else ' '
+                        print(prefix + f'{key}={entry[key]}', end='\n' if key == 'antmap' else ' ')
 
     def write(self, filename, append=False):
         """Write slices in CASA's lexical order with its legacy whitespace."""
@@ -155,8 +159,8 @@ class callibrary:
                     entry = table[key]
                     if not isinstance(entry, dict):
                         continue
-                    print(_quoted('caltable', name), f"calwt={table['calwt']}",
-                          end=' ', file=stream)
+                    print("caltable='" + name + "'", end=' ', file=stream)
+                    print(f"calwt={table['calwt']}", end=' ', file=stream)
                     for key in _SELECTIONS + _INTERPOLATION + _MAPPINGS:
                         value = entry[key]
                         if len(value) == 0:
