@@ -649,9 +649,10 @@ impl AttachedImage {
             return Ok(relocated);
         }
         if let Some(directory) = &self.image.miriad_directory {
-            let old_name = self.lock().path().map(Path::to_path_buf).ok_or_else(|| {
-                raised("Exception: The image to be renamed no longer exists.")
-            })?;
+            let old_name =
+                self.lock().path().map(Path::to_path_buf).ok_or_else(|| {
+                    raised("Exception: The image to be renamed no longer exists.")
+                })?;
             return directory.rename(&old_name, name, expanded?.as_ref(), overwrite, history);
         }
         let fits_path = {

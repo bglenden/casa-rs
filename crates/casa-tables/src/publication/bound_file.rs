@@ -16,6 +16,8 @@ fn entry_name(name: &OsStr) -> io::Result<CString> {
 }
 
 fn open_entry(directory: &File, entry: &CStr, flags: i32) -> io::Result<File> {
+    // The variadic mode argument uses the C integer promotion of mode_t.
+    let mode: libc::c_uint = 0o600;
     // SAFETY: the descriptor and entry name stay valid. The mode argument
     // is used only when creating a new private staging file.
     let fd = unsafe {
@@ -23,7 +25,7 @@ fn open_entry(directory: &File, entry: &CStr, flags: i32) -> io::Result<File> {
             directory.as_raw_fd(),
             entry.as_ptr(),
             flags | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
-            0o600 as libc::mode_t,
+            mode,
         )
     };
     if fd < 0 {
