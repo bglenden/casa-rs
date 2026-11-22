@@ -67,6 +67,7 @@ mod region_read;
 mod regrid;
 mod replace_masked;
 mod rotate;
+mod saved_expression;
 mod sepconvolve;
 mod serialization;
 mod slice;

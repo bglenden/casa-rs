@@ -117,6 +117,7 @@ impl<'a> ImageToolExpressionInputs<'a> {
     /// Returns an error if an operand is unreadable or the expression is invalid.
     pub fn compile(&self) -> Result<ImageToolPixelExpression, ImageError> {
         self.compile_with_source_locks(false)
+            .map(|(pixels, _)| pixels)
     }
 
     /// Compile an expression whose owning tool can release its source locks.
@@ -124,13 +125,21 @@ impl<'a> ImageToolExpressionInputs<'a> {
     /// # Errors
     /// Returns an error if an operand is unreadable or the expression is invalid.
     pub fn compile_lazy(&self) -> Result<ImageToolPixelExpression, ImageError> {
+        self.compile_lazy_inferred().map(|(pixels, _)| pixels)
+    }
+
+    /// Compile a lazy expression and return whether LEL inferred single precision.
+    ///
+    /// # Errors
+    /// Returns an error if an operand is unreadable or the expression is invalid.
+    pub fn compile_lazy_inferred(&self) -> Result<(ImageToolPixelExpression, bool), ImageError> {
         self.compile_with_source_locks(true)
     }
 
     fn compile_with_source_locks(
         &self,
         temporary_source_locks: bool,
-    ) -> Result<ImageToolPixelExpression, ImageError> {
+    ) -> Result<(ImageToolPixelExpression, bool), ImageError> {
         let opened = open_operands(&self.operands, temporary_source_locks)?;
         let (real, complex) = operand_resolvers(&opened);
         compile_image_tool_pixels(self.expression, &real, &complex, &|name| {

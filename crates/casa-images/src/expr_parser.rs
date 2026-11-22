@@ -2075,7 +2075,7 @@ pub(crate) fn compile_image_tool_pixels<'a, R>(
     real: &R,
     complex: &dyn ImageResolver<'a, Complex64>,
     single_precision: &dyn Fn(&str) -> bool,
-) -> Result<ImageToolPixelExpression, ImageError>
+) -> Result<(ImageToolPixelExpression, bool), ImageError>
 where
     R: ImageResolver<'a, f64>,
 {
@@ -2087,7 +2087,8 @@ where
         CasaExpressionMode::Fill,
     )
     .map_err(|error| ImageError::CasaSelection(crate::analysis::mask_error_wording(error)))?;
-    match parsed {
+    let single_precision = parsed.single_precision();
+    let expression = match parsed {
         ExprNode::Scalar(scalar) => ImageExprBuilder::scalar(scalar.value)
             .compile()
             .map(ImageToolPixelExpression::Real),
@@ -2099,7 +2100,8 @@ where
                 .map(ImageToolPixelExpression::Real)
         }
         ExprNode::Mask(mask) => Ok(ImageToolPixelExpression::Boolean(mask.shape().to_vec())),
-    }
+    }?;
+    Ok((expression, single_precision))
 }
 
 pub(crate) enum ReplacementPixels {

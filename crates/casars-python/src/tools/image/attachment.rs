@@ -150,11 +150,17 @@ impl AttachedImage {
             || !fs::read_to_string(key.join("table.info"))
                 .is_ok_and(|info| TableInfo::parse(&info).table_type == "Image")
         {
-            if MiriadImage::recognizes(probe)
+            let miriad = MiriadImage::recognizes(probe);
+            let expression = casa_images::expr_file::is_image_expr(probe);
+            if (miriad || expression)
                 && (!has_table_control
                     || Table::open_metadata_only(TableOptions::new(&key)).is_err())
             {
-                return Self::open_miriad(path);
+                return if miriad {
+                    Self::open_miriad(path)
+                } else {
+                    super::saved_expression::open(path)
+                };
             }
             return Err(unrecognized());
         }
@@ -437,6 +443,11 @@ impl AttachedImage {
             }
             let fits_path = {
                 let image = self.lock();
+                if image.is_saved_expression() {
+                    return Err(raised(
+                        "Saved image expression rename is not implemented yet (#1959)",
+                    ));
+                }
                 image
                     .fits()
                     .and_then(|_| image.path())

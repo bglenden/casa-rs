@@ -415,12 +415,7 @@ pub struct ExprFileInfo {
 
 /// Reads and parses the `imageexpr.json` from an expression image directory.
 pub fn read_info(path: impl AsRef<Path>) -> Result<ExprFileInfo, ImageError> {
-    let json_path = path.as_ref().join("imageexpr.json");
-    let content = fs::read_to_string(&json_path)
-        .map_err(|e| ImageError::InvalidMetadata(format!("cannot read {json_path:?}: {e}")))?;
-    let json: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| ImageError::InvalidMetadata(format!("invalid JSON in {json_path:?}: {e}")))?;
-
+    let json = read_manifest(path.as_ref())?;
     let version = json.get("Version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
 
     let data_type_s = json
@@ -429,11 +424,7 @@ pub fn read_info(path: impl AsRef<Path>) -> Result<ExprFileInfo, ImageError> {
         .ok_or_else(|| ImageError::InvalidMetadata("missing DataType in imageexpr.json".into()))?;
     let data_type = parse_data_type(data_type_s)?;
 
-    let expr_string = json
-        .get("ImageExpr")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| ImageError::InvalidMetadata("missing ImageExpr in imageexpr.json".into()))?
-        .to_string();
+    let expr_string = manifest_expression(&json)?.to_owned();
 
     let misc_info = json
         .get("MiscInfo")
@@ -446,6 +437,53 @@ pub fn read_info(path: impl AsRef<Path>) -> Result<ExprFileInfo, ImageError> {
         expr_string,
         misc_info,
     })
+}
+
+/// Saved expression metadata for the public image tool. LEL infers its type
+/// from the resolved operands. The optional record preserves an absent field.
+pub struct ToolExpressionManifest {
+    /// Original LEL text stored in the manifest.
+    pub expression: String,
+    /// A present record replaces metadata inherited from the expression.
+    pub misc_info: Option<RecordValue>,
+}
+
+/// Read a saved expression for public image-tool attachment.
+///
+/// # Errors
+/// Returns an error for invalid JSON, missing LEL text or non-record `MiscInfo`.
+pub fn read_tool_manifest(path: &Path) -> Result<ToolExpressionManifest, ImageError> {
+    let json = read_manifest(path)?;
+    let expression = manifest_expression(&json)?.to_owned();
+    let misc_info = json
+        .get("MiscInfo")
+        .map(|value| {
+            if !value.is_object() {
+                return Err(ImageError::CasaSelection(
+                    "Json error: JsonValue::getValueMap - invalid data type".into(),
+                ));
+            }
+            Ok(json_to_misc_info(value))
+        })
+        .transpose()?;
+    Ok(ToolExpressionManifest {
+        expression,
+        misc_info,
+    })
+}
+
+fn read_manifest(path: &Path) -> Result<serde_json::Value, ImageError> {
+    let json_path = path.join("imageexpr.json");
+    let content = fs::read_to_string(&json_path)
+        .map_err(|e| ImageError::InvalidMetadata(format!("cannot read {json_path:?}: {e}")))?;
+    serde_json::from_str(&content)
+        .map_err(|e| ImageError::InvalidMetadata(format!("invalid JSON in {json_path:?}: {e}")))
+}
+
+fn manifest_expression(json: &serde_json::Value) -> Result<&str, ImageError> {
+    json.get("ImageExpr")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| ImageError::InvalidMetadata("missing ImageExpr in imageexpr.json".into()))
 }
 
 // ---------------------------------------------------------------------------

@@ -139,7 +139,10 @@ fn path_identity(path: &Path) -> Option<PathBuf> {
     })
 }
 
-fn check_geometry(expression: &ImageToolPixelExpression, has_sources: bool) -> PyResult<()> {
+pub(super) fn check_geometry(
+    expression: &ImageToolPixelExpression,
+    has_sources: bool,
+) -> PyResult<()> {
     let (shape, has_coordinates) = match expression {
         ImageToolPixelExpression::Real(expression) => (
             expression.shape(),
