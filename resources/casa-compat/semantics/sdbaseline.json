@@ -2,7 +2,7 @@
   "schema_version": 1,
   "task": "sdbaseline",
   "casa_version": "6.7.6.14",
-  "audit_revision": "9988be830413ce58f7a05b46a413e8de21a0dc46",
+  "audit_revision": "d7ec4faf0aed4d239894396c4e164bcb8f67b689",
   "parameters": {
     "infile": {
       "scope": "Open a MeasurementSet through the public task.",
@@ -155,17 +155,19 @@
       ]
     },
     "blmode": {
-      "scope": "Fit or apply polynomial, Chebyshev and cubic-spline baselines.",
+      "scope": "Fit or apply polynomial, Chebyshev, cubic-spline and sinusoidal baselines.",
       "status": "Partial",
       "behaviors": [
         "fit-apply",
-        "cubic-spline"
+        "cubic-spline",
+        "sinusoidal"
       ],
       "evidence": [
         "paired",
-        "automatic-and-spline"
+        "automatic-and-spline",
+        "sinusoidal-wave-selection"
       ],
-      "gap": "Sinusoidal and variable baseline combinations remain open on #1532."
+      "gap": "Per-spectrum variable baseline combinations remain open on #1532."
     },
     "dosubtract": {
       "scope": "Write corrected spectra or publish only the requested fits.",
@@ -198,30 +200,34 @@
       ]
     },
     "bltable": {
-      "scope": "Apply polynomial, Chebyshev and cubic-spline coefficients from a CASA baseline table.",
+      "scope": "Apply polynomial, Chebyshev, cubic-spline and sinusoidal coefficients from a CASA baseline table.",
       "status": "Partial",
       "behaviors": [
         "fit-apply",
-        "cubic-spline"
+        "cubic-spline",
+        "sinusoidal"
       ],
       "evidence": [
         "paired",
-        "automatic-and-spline"
+        "automatic-and-spline",
+        "sinusoidal-wave-selection"
       ],
-      "gap": "Sinusoidal and variable baseline combinations remain open on #1532."
+      "gap": "Per-spectrum variable baseline combinations remain open on #1532."
     },
     "blfunc": {
-      "scope": "Fit polynomial, Chebyshev or cubic-spline models.",
+      "scope": "Fit polynomial, Chebyshev, cubic-spline or sinusoidal models.",
       "status": "Partial",
       "behaviors": [
         "fit-apply",
-        "cubic-spline"
+        "cubic-spline",
+        "sinusoidal"
       ],
       "evidence": [
         "paired",
-        "automatic-and-spline"
+        "automatic-and-spline",
+        "sinusoidal-wave-selection"
       ],
-      "gap": "Sinusoidal and variable baseline combinations remain open on #1532."
+      "gap": "Per-spectrum variable baseline combinations remain open on #1532."
     },
     "order": {
       "scope": "Set the degree of the polynomial or Chebyshev family.",
@@ -244,58 +250,53 @@
       ]
     },
     "applyfft": {
-      "scope": "Sinusoid fits use this switch to select FFT-derived wavenumbers.",
-      "status": "Not implemented",
+      "scope": "Include the wavenumbers selected from the FFT in the sinusoidal fit.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "sinusoidal"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "sinusoidal-wave-selection"
       ]
     },
     "fftmethod": {
-      "scope": "Sinusoid fits use this FFT selection method.",
-      "status": "Not implemented",
+      "scope": "Select the supported FFT method, fft.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "sinusoidal"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "sinusoidal-wave-selection"
       ]
     },
     "fftthresh": {
-      "scope": "Sinusoid fits use this FFT selection threshold.",
-      "status": "Not implemented",
+      "scope": "Choose FFT wavenumbers using a numeric or sigma threshold or a top count.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "sinusoidal"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "sinusoidal-wave-selection"
       ]
     },
     "addwn": {
-      "scope": "Sinusoid fits include these wavenumbers.",
-      "status": "Not implemented",
+      "scope": "Include explicit wavenumbers or resolve a range against the observed channel count.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "sinusoidal"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "sinusoidal-wave-selection"
       ]
     },
     "rejwn": {
-      "scope": "Sinusoid fits exclude these wavenumbers.",
-      "status": "Not implemented",
+      "scope": "Exclude wavenumbers from the explicit and FFT wave selection.",
+      "status": "Implemented",
       "behaviors": [
-        "future-fits"
+        "sinusoidal"
       ],
-      "gap": "Tracked by #1532.",
       "evidence": [
-        "pending"
+        "sinusoidal-wave-selection"
       ]
     },
     "clipthresh": {
@@ -411,7 +412,7 @@
       "title": "Polynomial and Chebyshev fitting and application",
       "scope": "Fit spectra and apply compatible baseline tables across implementations.",
       "status": "Partial",
-      "gap": "Sinusoidal and variable fitting remain tracked by #1532.",
+      "gap": "Per-spectrum variable fitting remains tracked by #1532.",
       "evidence": [
         "paired"
       ]
@@ -429,7 +430,7 @@
     {
       "id": "future-fits",
       "title": "Remaining fitting and mask families",
-      "scope": "Add sinusoidal and variable-parameter fits.",
+      "scope": "Fit per-spectrum baseline parameters from a variable baseline file.",
       "status": "Not implemented",
       "gap": "Tracked by #1532.",
       "evidence": [
@@ -454,6 +455,17 @@
       "gap": "Release-scale performance follows functionality under #979.",
       "evidence": [
         "automatic-and-spline"
+      ]
+    },
+    {
+      "id": "sinusoidal",
+      "title": "Sinusoidal fitting, FFT selections and table application",
+      "scope": "Fit explicit or Fourier-selected waves and exchange coefficients with CASA.",
+      "status": "Implemented",
+      "gap": "Release-scale performance follows functionality under #979.",
+      "evidence": [
+        "sinusoidal-wave-selection",
+        "sinusoidal-debug-performance"
       ]
     }
   ],
@@ -599,7 +611,8 @@
       "result": "The paired outputs, expected masks, knot boundaries, model coefficients and residual laws agree.",
       "links": [
         "tools/casa-compat/sdbaseline_mask_spline_oracle.py"
-      ]
+      ],
+      "source_revision": "9988be830413ce58f7a05b46a413e8de21a0dc46"
     },
     "spline-debug-performance": {
       "kind": "Matched compact runtime and native phase trace",
@@ -612,6 +625,33 @@
       "result": "Native debug wall times were 0.51–0.68 s versus CASA 0.22–0.52 s. One trace spent 0.434 s processing spectra and 0.017 s saving MAIN. Dataset-scale release profiling follows functionality under #979.",
       "links": [
         "tools/casa-compat/sdbaseline_mask_spline_oracle.py"
+      ],
+      "source_revision": "9988be830413ce58f7a05b46a413e8de21a0dc46"
+    },
+    "sinusoidal-wave-selection": {
+      "kind": "Public task/tool physics, diagnostics and table interchange",
+      "state": "passed",
+      "casa_version": "6.7.6.14",
+      "revision": "d7ec4faf0aed4d239894396c4e164bcb8f67b689",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1980",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_sinusoid_oracle.py <new-dir>",
+      "scope": "Explicit and FFT-derived modes, ordered ranges, exclusions, errors, clipping, per-polarization wave lists, reports and both table readers.",
+      "result": "Paired outputs and independently evaluated sine/cosine coefficients agree.",
+      "links": [
+        "tools/casa-compat/sdbaseline_sinusoid_oracle.py"
+      ]
+    },
+    "sinusoidal-debug-performance": {
+      "kind": "Matched compact runtime and native phase trace",
+      "state": "measured",
+      "casa_version": "6.7.6.14",
+      "revision": "d7ec4faf0aed4d239894396c4e164bcb8f67b689",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1980",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdbaseline_sinusoid_oracle.py <new-dir>",
+      "scope": "FFT-assisted sinusoidal fit on 240 selected rows and 96 channels with matching MeasurementSet and table outputs.",
+      "result": "Native debug was 0.78 s versus CASA 0.30 s in the reviewed paired run. The same-size native phase trace spent 0.532 s processing spectra and 0.036 s saving MAIN. Dataset-scale release profiling follows functionality under #979.",
+      "links": [
+        "tools/casa-compat/sdbaseline_sinusoid_oracle.py"
       ]
     }
   }
