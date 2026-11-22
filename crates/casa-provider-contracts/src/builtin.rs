@@ -357,6 +357,7 @@ mod tests {
             ("simalma", false),
             ("sdcal", false),
             ("sdgaincal", false),
+            ("sdsmooth", false),
             ("tsdimaging", false),
             ("simanalyze", true),
         ]);

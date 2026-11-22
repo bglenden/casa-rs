@@ -55,6 +55,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | setjy | setjy | yes | 23 | 23 | 0 | 0 | 0 | 0 |
 | simalma | simalma | yes | 31 | 31 | 0 | 0 | 0 | 0 |
 | simanalyze | simanalyze | yes | 32 | 32 | 0 | 1 | 0 | 0 |
@@ -2611,6 +2612,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdgaincal_oracle.py <new-dir>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1975`.
 
+### sdsmooth
+
+- CASA source: `casatasks/sdsmooth.py`, 14 parameters
+- Implementation: `casatasks/private/task_sdsmooth.py`, `sdsmooth` (line 16): 0 return statements, 2 raise statements
+- Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 14, in CASA's order: yes
+- Defaults that differ: none
+
 ### setjy
 
 - CASA source: `casatasks/setjy.py`, 23 parameters
@@ -4635,6 +4647,7 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | [quanta](#quanta) | `casars.tools` | 57 | yes | 57 | 0 | 0 | 0 | 0 | 0 |
 | [simulator](#simulator) | `casars.tools` | 33 | yes | 23 | 6 | 0 | 3 | 1 | 0 |
 | [simutil](#simutil) | `casars.simutil` | 57 | yes | 54 | 1 | 2 | 0 | 0 | 0 |
+| singledishms | `casars.tools` | 15 | no | | | | | | |
 | table | `casars.tools` | 83 | no | | | | | | |
 | [wvr](#wvr) | `casars.tools` | 1 | yes | 1 | 0 | 0 | 0 | 0 | 0 |
 

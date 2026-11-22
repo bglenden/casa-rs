@@ -30,6 +30,7 @@ pub(super) fn sort_selected_rows(
     request: &MsTransformRequest,
     rows: Vec<usize>,
     descriptions: Vec<i32>,
+    single_dish: bool,
 ) -> Result<OrderedMainRows, MsTransformError> {
     const GROUPS: [&str; 5] = [
         "OBSERVATION_ID",
@@ -38,6 +39,7 @@ pub(super) fn sort_selected_rows(
         "STATE_ID",
         "FIELD_ID",
     ];
+    const SINGLE_DISH_GROUPS: [&str; 4] = ["OBSERVATION_ID", "ARRAY_ID", "ANTENNA1", "FEED1"];
     let read = |name| {
         table
             .column_accessor(name)
@@ -48,7 +50,12 @@ pub(super) fn sort_selected_rows(
             })
     };
     let mut groups = vec![[0; GROUPS.len()]; rows.len()];
-    for (slot, name) in GROUPS.into_iter().enumerate() {
+    let columns: &[&str] = if single_dish {
+        &SINGLE_DISH_GROUPS
+    } else {
+        &GROUPS
+    };
+    for (slot, &name) in columns.iter().enumerate() {
         for ((group, value), &row) in groups.iter_mut().zip(read(name)?).zip(&rows) {
             group[slot] = scalar_i32(value.as_ref(), name, row)?;
         }
@@ -89,6 +96,7 @@ pub(super) fn sort_selected_rows(
     })
 }
 
+#[derive(Default)]
 pub(super) struct RowIdMaps {
     antenna: Option<BTreeMap<i32, i32>>,
     observation: Option<BTreeMap<i32, i32>>,

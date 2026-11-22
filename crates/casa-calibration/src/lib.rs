@@ -60,6 +60,7 @@ mod selected_data;
 mod session;
 mod simulated;
 mod single_dish;
+pub use single_dish::preparation::{SingleDishSession, SingleDishSmoothing};
 mod smooth;
 mod solution_edit;
 mod solve;

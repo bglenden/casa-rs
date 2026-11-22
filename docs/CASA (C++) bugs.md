@@ -9643,3 +9643,12 @@ The filter interpolates pointings in time order and applies the resulting
 selection mask in input order. This can shift the reference samples for
 physically shuffled input rows. Casa-rs follows that selection and emits
 solutions in the same spectral-window and time order as CASA.
+
+## Single-dish smoothing can publish an incomplete MeasurementSet
+
+CASA 6.7.6.14 creates the output of `sdsmooth` before it validates the
+convolution. A partial channel selection whose width has no configured
+convolver raises an error and can leave a MeasurementSet with zeroed spectra.
+Casa-rs stages the output, reports the convolution error, and preserves an
+existing MeasurementSet on a failed overwrite. A successful retry publishes
+the completed replacement.

@@ -623,6 +623,21 @@
     "outfile": "cStr",
     "overwrite": "cBool"
   },
+  "sdsmooth": {
+    "datacolumn": "cStr",
+    "antenna": "cStr",
+    "field": "cStr",
+    "spw": "cStr",
+    "timerange": "cStr",
+    "scan": "cStr",
+    "pol": "cStr",
+    "intent": "cStr",
+    "reindex": "cBool",
+    "kernel": "cStr",
+    "kwidth": "cInt",
+    "outfile": "cStr",
+    "overwrite": "cBool"
+  },
   "setjy": {
     "vis": "cStr",
     "field": "cStr",

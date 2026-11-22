@@ -325,6 +325,25 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if error.completion.parameter in ("interp", "spwmap"):
                 raise AssertionError() from error
             raise
+    if name == "sdsmooth":
+        _validate_required_path(values, "infile", arguments["infile"], search_data=True)
+        for parameter, allowed in (
+            ("datacolumn", ("data", "DATA", "float_data", "FLOAT_DATA", "corrected", "CORRECTED")),
+            ("kernel", ("gaussian", "boxcar")),
+        ):
+            value = arguments[parameter]
+            if value not in allowed:
+                message = "null value not allowed" if value is None else f"unallowed value {value}"
+                raise AssertionError(str({parameter: [message]}))
+        if not arguments["outfile"]:
+            raise ValueError("outfile is empty.")
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            message = error.completion.message or ""
+            if message.endswith(" exists."):
+                raise ValueError(message) from error
+            raise RuntimeError(message) from error
     if name == "initweights":
         return _call_initweights(values)
     if name == "plotbandpass":

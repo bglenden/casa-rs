@@ -6,6 +6,7 @@ mod edges;
 pub(crate) mod gain;
 mod map_geometry;
 mod position_switch;
+pub(crate) mod preparation;
 mod spectrum;
 
 use std::path::{Path, PathBuf};
