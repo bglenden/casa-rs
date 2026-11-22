@@ -164,22 +164,25 @@ pub(crate) fn build_solve_groups(
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
     let baseline_solve = options.input_rows.is_baseline();
-    let fixed_autocorrelations = options.input_rows == SolveInputRows::GainTool;
+    let keep_autocorrelations = matches!(
+        options.input_rows,
+        SolveInputRows::GainTool | SolveInputRows::AccorTool
+    );
     let seed_combined_g = !baseline_solve
-        && !only_autocorrelations
+        && !options.input_rows.is_accor()
         && options.gain_type == GainType::G
         && !options.channelized
         && !options.robust_seed
         && (options.combine.spectral_windows
             || options.combine.fields
             || options.combine.observations);
-    let needs_first_buffer = only_autocorrelations
+    let needs_first_buffer = options.input_rows.is_accor()
         || matches!(options.gain_type, GainType::T | GainType::KCross)
         || options.robust_seed
         || seed_combined_g;
     let legacy_spline = options.gain_type == GainType::GSpline;
     let include_autocorrelations = baseline_solve
-        || fixed_autocorrelations
+        || keep_autocorrelations
         || legacy_spline
         || needs_first_buffer
         || models.needs_buffers()
@@ -208,7 +211,7 @@ pub(crate) fn build_solve_groups(
     } else if include_autocorrelations
         && !legacy_spline
         && !baseline_solve
-        && !fixed_autocorrelations
+        && !keep_autocorrelations
     {
         ordered.retain(|(row, _, _)| row.antenna1 != row.antenna2);
     }
@@ -1092,7 +1095,7 @@ impl SolveAccumulator {
                     attempted: &mut self.attempted,
                     channelized: options.channelized,
                     keep_zero_data: baseline_solve
-                        || options.input_rows == SolveInputRows::Autocorrelations
+                        || options.input_rows.is_accor()
                         || self.direct_gain.is_some() && row.antenna1 == row.antenna2,
                     retain_zero_model: options.gain_type.is_delay()
                         || options.gain_type == GainType::T

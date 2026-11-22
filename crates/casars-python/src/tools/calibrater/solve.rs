@@ -224,6 +224,7 @@ impl super::PyCalibrater {
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
         let baseline = matches!(family.as_str(), "M" | "M MUELLER" | "MF" | "MF MUELLER");
+        let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
         let table = PathBuf::from(table.unwrap_or(""));
         if phase_only {
             emit(
@@ -236,6 +237,11 @@ impl super::PyCalibrater {
             )?;
         }
         self.with_lifecycle(py, move |state| {
+            if accor {
+                state
+                    .resolve_primary_tool_refant(reference.clone())
+                    .map_err(super::runtime_error)?;
+            }
             let reference = if baseline {
                 state
                     .resolve_primary_tool_refant(reference)
@@ -318,6 +324,9 @@ impl super::PyCalibrater {
                             None
                         },
                     }
+                }
+                "ACCOR" | "ACCOR JONES" => {
+                    CalibrationSolveRequest::Accor(standard.gain(GainType::G))
                 }
                 _ if casa_calibration::CalibraterLifecycle::recognizes_calibration_type(
                     &family,

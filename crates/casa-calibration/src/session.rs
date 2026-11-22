@@ -224,9 +224,11 @@ fn solve_open_dataset(
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }
-        CalibrationSolveRequest::Accor(gain) => accor::solve(measurement_set, &gain, mode)
-            .map(CalibrationSolveResult::Gain)
-            .map_err(CalibrationError::from),
+        CalibrationSolveRequest::Accor(gain) => {
+            accor::solve(measurement_set, &gain, mode, activity, legacy_iterator)
+                .map(CalibrationSolveResult::Gain)
+                .map_err(CalibrationError::from)
+        }
         CalibrationSolveRequest::Baseline {
             gain,
             frequency_dependent,

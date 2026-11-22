@@ -39,6 +39,8 @@ pub(crate) enum SolveInputRows {
     Fringe,
     /// Keep the individual antennas' autocorrelations for normalization.
     Autocorrelations,
+    /// Gather every selected row before fitting antenna autocorrelations.
+    AccorTool,
     /// Retain all antenna pairs for a baseline Mueller solve.
     Baselines,
     /// Retain all antenna pairs and the direct tool's baseline gather counts.
@@ -74,7 +76,11 @@ impl SolveInputRows {
     }
 
     pub(super) fn tracks_gather(self) -> bool {
-        matches!(self, Self::GainTool | Self::BaselineTool)
+        matches!(self, Self::GainTool | Self::BaselineTool | Self::AccorTool)
+    }
+
+    pub(super) fn is_accor(self) -> bool {
+        matches!(self, Self::Autocorrelations | Self::AccorTool)
     }
 
     pub(super) fn receptors(
@@ -87,7 +93,7 @@ impl SolveInputRows {
             let parameter = index % 2;
             return Ok((parameter, parameter));
         }
-        if self != Self::Autocorrelations && !self.is_baseline() {
+        if !self.is_accor() && !self.is_baseline() {
             return correlation_receptors(correlations[index]).ok_or_else(|| {
                 GainSolveError::UnsupportedCorrelationLayout {
                     data_desc_id,
@@ -168,7 +174,7 @@ impl SolveAccumulator {
     }
 
     pub(super) fn cross_hand_centroid_weight(&mut self, weight: f64, input: SolveInputRows) -> f64 {
-        if input == SolveInputRows::Autocorrelations {
+        if input.is_accor() {
             // CASA tests buffer viability before dropping cross-hand weights.
             self.attempted |= weight > 0.;
             return 0.;
