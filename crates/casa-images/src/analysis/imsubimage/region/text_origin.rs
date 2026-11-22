@@ -171,13 +171,14 @@ pub(super) fn parse_crtf_document<T: ImagePixel>(
             .filter(|_| copy_text)
             .map_or((*first, false), |shape| (shape.trim_start(), true));
         let spatial = parse_crtf_shape(origin, first, origin_plane, copy_text)?;
+        if !overlaps_image(&spatial, origin_shape.unwrap_or(full_shape), origin_plane) {
+            continue;
+        }
         let mut planes = defaults.clone();
         let row_tokens = &tokens[1..];
         if let Some(shape) = origin_shape {
             let effective = last_plane_qualifiers(&global_tokens, row_tokens, origin);
-            if !overlaps_image(&spatial, shape, origin_plane)
-                || !planes_overlap(&effective, origin, shape)?
-            {
+            if !planes_overlap(&effective, origin, shape)? {
                 continue;
             }
             parse_crtf_qualifiers(
@@ -188,13 +189,15 @@ pub(super) fn parse_crtf_document<T: ImagePixel>(
                 text_origin,
             )?;
         } else {
-            parse_crtf_qualifiers(
+            if !plane_qualifiers_overlap(parse_crtf_qualifiers(
                 row_tokens,
                 image.coordinates(),
                 full_shape,
                 &mut planes,
                 text_origin,
-            )?;
+            ))? {
+                continue;
+            }
         }
         let project = |shape| match &projection {
             Some(projection) => projection.project_shape(shape, copy_text),
@@ -220,15 +223,17 @@ pub(super) fn parse_crtf_document<T: ImagePixel>(
     }
 
     if shapes.is_empty() {
-        let message = if origin_shape.is_some() {
-            "Exception: No regions found.".into()
-        } else {
-            format!("No valid CRTF region definitions found in {text:?}")
-        };
-        return Err(ImageError::CasaSelection(message));
+        return Err(ImageError::CasaSelection(
+            "Exception: No regions found.".into(),
+        ));
     }
+    // CASA represents a spatial annotation with explicit plane selection
+    // as a WCExtension, even when the selected planes cover the entire axis.
+    let is_compound = shapes
+        .iter()
+        .any(|shape| shape.planes.channels.is_some() || shape.planes.stokes.is_some());
     Ok(ParsedRegion {
-        is_compound: false,
+        is_compound,
         is_crtf: true,
         shapes,
         saved_mask: None,
@@ -326,13 +331,17 @@ fn planes_overlap(
     origin: &CoordinateSystem,
     shape: &[usize],
 ) -> Result<bool, ImageError> {
-    match parse_crtf_qualifiers(
+    plane_qualifiers_overlap(parse_crtf_qualifiers(
         qualifiers,
         origin,
         shape,
         &mut PlaneSelection::default(),
         None,
-    ) {
+    ))
+}
+
+fn plane_qualifiers_overlap(result: Result<(), ImageError>) -> Result<bool, ImageError> {
+    match result {
         Ok(()) => Ok(true),
         Err(ImageError::CasaSelection(message))
             if message.starts_with("CRTF spectral range")

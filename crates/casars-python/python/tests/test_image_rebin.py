@@ -226,6 +226,43 @@ def test_rebin_sampled_frequencies_survive_native_reopen(casa, tmp_path, limits,
             assert reopened.done()
 
 
+@pytest.mark.parametrize("form", ["inline", "file"])
+@pytest.mark.parametrize("case", ["single", "off_image", "off_plane", "range", "corr"])
+def test_rebin_crtf_admission_classifies_regions_after_clipping(casa, tmp_path, form, case):
+    box = "box[[2pix,3pix],[5pix,6pix]]"
+    text = {
+        "single": box,
+        "off_image": box + "\nbox[[100pix,100pix],[110pix,111pix]]",
+        "off_plane": box + "\ncircle[[8pix,8pix], 3pix], range=[7pix,8pix]",
+        "range": box + ", range=[0pix,4pix]",
+        "corr": box + ", corr=[I]",
+    }[case]
+    if form == "file":
+        path = tmp_path / "section.crtf"
+        path.write_text(f"#CRTFv0\n{text}\n")
+        region = str(path)
+    else:
+        region = text
+    pixels = np.arange(15 * 17 * 5, dtype=np.float32).reshape(15, 17, 1, 5)
+    expected = pixels[2:6, 3:7].reshape(2, 2, 2, 2, 1, 5).mean(axis=(1, 3))
+    for api in (casa, tools):
+        image, product = api.image(), None
+        try:
+            assert image.fromarray(pixels=pixels)
+            if case in {"range", "corr"}:
+                with pytest.raises(RuntimeError, match="Only a single n-dimensional rectangular region"):
+                    image.rebin("", [2, 2, 1, 1], region=region)
+            else:
+                product = image.rebin("", [2, 2, 1, 1], region=region)
+                np.testing.assert_array_equal(product.getchunk(), expected)
+                np.testing.assert_array_equal(product.getchunk(getmask=True), True)
+            np.testing.assert_array_equal(image.getchunk(), pixels)
+        finally:
+            if product is not None:
+                product.done()
+            image.done()
+
+
 def test_rebin_selects_multiple_beams_and_rejects_spectral_rebin(casa):
     selection = casa.regionmanager().box([0, 0, 1, 1], [4, 3, 1, 3])
     for backend in (casa, tools):
