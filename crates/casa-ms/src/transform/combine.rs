@@ -530,10 +530,11 @@ pub(super) fn read_batch(
         &BTreeMap<i32, i32>,
         Option<&CorrelationSelection>,
     ),
-    (columns, spectra, input_view): (
+    (columns, spectra, input_view, continuum): (
         &VisibilityColumns,
         &[&str],
         Option<&dyn PreparedTransformInputView>,
+        Option<&super::ContinuumFit>,
     ),
     time: Option<(&mut TimeProjection<'_>, &[TimeGroup])>,
 ) -> Result<Batch, MsTransformError> {
@@ -550,7 +551,7 @@ pub(super) fn read_batch(
         .flat_map(|group| group.members.iter().map(|&(_, pos)| pos))
         .collect::<Vec<_>>();
     let averaging = time.is_some();
-    let (raw, times, exposures, row_flags) = if let Some((projection, time_groups)) = time {
+    let (mut raw, times, exposures, mut row_flags) = if let Some((projection, time_groups)) = time {
         let plans = sources
             .iter()
             .map(|&pos| {
@@ -609,6 +610,20 @@ pub(super) fn read_batch(
         }
         (block, Vec::new(), exposure, flags)
     };
+    if let Some(fit) = continuum {
+        fit.apply(
+            &mut raw,
+            columns,
+            sources
+                .iter()
+                .map(|&position| ddid_to_spw[&descriptions[position]]),
+            &STANDARD_SPECTRA,
+            true,
+        )?;
+        for (row, flags) in row_flags.iter_mut().zip(&raw.flags) {
+            *row = super::continuum::row_flag(flags.as_ref(), None);
+        }
+    }
     let mut output = MainArrayBlock::for_capacity(groups.len(), columns.copies().len(), 2);
     let mut coordinates = Vec::with_capacity(if averaging { groups.len() } else { 0 });
     let mut exposure_flags = Vec::with_capacity(if averaging { 0 } else { groups.len() });

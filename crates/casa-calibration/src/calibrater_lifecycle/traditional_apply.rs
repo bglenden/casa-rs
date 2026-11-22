@@ -116,6 +116,9 @@ impl CalibraterLifecycle {
             equation.apply.parang_calwt |= spec.calwt;
             return Ok(());
         }
+        if subtype == "X Mueller" {
+            spec.calwt = false;
+        }
 
         let legacy_polynomial = matches!(subtype, "BPOLY" | "GSPLINE");
         if !legacy_polynomial {

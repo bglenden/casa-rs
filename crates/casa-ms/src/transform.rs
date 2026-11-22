@@ -42,6 +42,7 @@ use crate::write_session::{
 mod baseline;
 mod channel_average;
 mod combine;
+mod continuum;
 mod convolution;
 mod correlation_metadata;
 mod flag_commands;
@@ -61,6 +62,8 @@ mod visibility_columns;
 
 pub use baseline::{SpectrumBaseline, SpectrumRow, SpectrumWeights};
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
+use continuum::ContinuumFit;
+pub use continuum::ContinuumFitOptions;
 use convolution::{SpectralOperation, SpectrumOperator};
 pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_spectra};
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
@@ -134,6 +137,8 @@ pub struct MsTransformTaskOptions {
     pub hanning: bool,
     /// Combine selected spectral windows for each simultaneous baseline sample.
     pub combine_spws: bool,
+    /// Fit and subtract a continuum, or produce just the fitted continuum.
+    pub continuum: Option<ContinuumFitOptions>,
     /// Transform the selected spectra onto a new frequency grid.
     pub regrid: Option<MsRegridOptions>,
     /// Active per-selected-SPW widths, or a single width broadcast to each SPW.
@@ -681,6 +686,11 @@ fn mstransform_staged(
     );
     let stage_started_at = Instant::now();
     let channel_selection = resolve_transform_channels(&input, &spw_selection, &request.spw)?;
+    let continuum = options
+        .continuum
+        .as_ref()
+        .map(|options| ContinuumFit::new(&input, &channel_selection, options))
+        .transpose()?;
     let task_average = grammar == RowGrammar::Transform
         && (normalized_width(request.width) > 1 || options.channel_widths.is_some());
     let widths = channel_widths_by_spw(
@@ -996,6 +1006,18 @@ fn mstransform_staged(
     if float_convolution && !averaging_time && polarization.is_none() {
         spectra.source.clear();
     }
+    if continuum.is_some() {
+        for name in STANDARD_SPECTRA {
+            if !spectra.source.contains(&name)
+                && input
+                    .main_table()
+                    .schema()
+                    .is_some_and(|schema| schema.contains_column(name))
+            {
+                spectra.source.push(name);
+            }
+        }
+    }
     if read_spectral_weights
         && !spectra.source.contains(&"WEIGHT_SPECTRUM")
         && input
@@ -1202,7 +1224,13 @@ fn mstransform_staged(
         (
             &visibility,
             &spectra,
-            view_factory.map_or(0, TransformInputView::additional_bytes_per_sample),
+            view_factory
+                .map_or(0, TransformInputView::additional_bytes_per_sample)
+                .saturating_add(
+                    continuum
+                        .as_ref()
+                        .map_or(0, ContinuumFit::working_bytes_per_sample),
+                ),
         ),
         write_resources,
     )?;
@@ -1242,7 +1270,7 @@ fn mstransform_staged(
         &row_id_maps,
         (
             averaging_time,
-            polarization.is_some(),
+            polarization.is_some() || continuum.is_some(),
             combination.is_some(),
         ),
     )?;
@@ -1291,7 +1319,7 @@ fn mstransform_staged(
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &output_input_rows[batch_start..batch_end];
         let mut combined_scalars = Vec::new();
-        let (mut input_block, group_times) =
+        let (mut input_block, mut group_times) =
             if let (Some(grid), Some(groups)) = (&combined_grid, &combination) {
                 let result = combine::read_batch(
                     grid,
@@ -1299,7 +1327,7 @@ fn mstransform_staged(
                     &input,
                     (&selected_rows, &selected_ddids),
                     (&channel_selection, &ddid_to_spw, correlations.as_ref()),
-                    (&visibility, &spectra.source, input_view),
+                    (&visibility, &spectra.source, input_view, continuum.as_ref()),
                     time_projection.as_mut().zip(time_groups.as_deref()),
                 )?;
                 combined_scalars = result.exposure_flags;
@@ -1335,6 +1363,33 @@ fn mstransform_staged(
                 (block, Vec::new())
             };
         let descriptions = &output_input_ddids[batch_start..batch_end];
+        if grammar == RowGrammar::Transform
+            && !averaging_time
+            && !read_spectral_weights
+            && combination.is_none()
+        {
+            input_block.resolve_buffer_spectra(
+                row_spectrum_names,
+                &mut spectrum_available,
+                &starts_visibility_buffer[batch_start..batch_end],
+                input_rows,
+                &request.input_ms,
+            )?;
+        }
+        if let Some(fit) = &continuum
+            && combination.is_none()
+        {
+            fit.apply(
+                &mut input_block,
+                &visibility,
+                descriptions.iter().map(|id| ddid_to_spw[id]),
+                row_spectrum_names,
+                averaging_time,
+            )?;
+            for (coordinates, flags) in group_times.iter_mut().zip(&input_block.flags) {
+                coordinates.flag_row = continuum::row_flag(flags.as_ref(), None);
+            }
+        }
         let mut input_row_flags = if let Some(projection) = &polarization {
             let row_flags = input
                 .main_table()
@@ -1453,6 +1508,15 @@ fn mstransform_staged(
                 reason: format!("selected row {row_index} maps to spectral window {spw_id}, but --spw does not include that SPW"),
             })?;
             let bins = combined_grid.as_ref().map_or(bins, |grid| &grid.bins);
+            if writes_rows && continuum.is_some() && !averaging_time && combination.is_none() {
+                let flagged =
+                    continuum::row_flag(Some(&flags), Some(&channel_selection[&spw_id].channels));
+                for _ in 0..copies_per_row {
+                    write_session
+                        .push_scalar_row("FLAG_ROW", Some(ScalarValue::Bool(flagged)))
+                        .map_err(write_error)?;
+                }
+            }
             let regrid = regrid
                 .as_mut()
                 .map(|plan| plan.row(spw_id, input.main_table(), input_rows[batch_offset]))
@@ -1476,35 +1540,10 @@ fn mstransform_staged(
                         select_correlations(sigma, "SIGMA")?,
                     ))
                 };
-            for (((name, values), output), available) in spectrum_values
-                .iter_mut()
-                .zip(&mut row_spectra)
-                .zip(&mut spectrum_available)
-            {
-                let cell = values.next().flatten();
-                if grammar == RowGrammar::Transform
-                    && !averaging_time
-                    && !read_spectral_weights
-                    && combination.is_none()
-                {
-                    if starts_visibility_buffer[row_index] {
-                        // CASA checks the first cell of this visibility
-                        // buffer before reading that buffer's spectra.
-                        *available = cell.is_some();
-                    }
-                    if !*available {
-                        *output = None;
-                        continue;
-                    }
-                    if cell.is_none() {
-                        return Err(MsTransformError::MissingSpectrumCell {
-                            path: request.input_ms.display().to_string(),
-                            row: selected_rows[row_index],
-                            column: name,
-                        });
-                    }
-                }
-                *output = cell
+            for ((name, values), output) in spectrum_values.iter_mut().zip(&mut row_spectra) {
+                *output = values
+                    .next()
+                    .flatten()
                     .filter(|value| !value.is_empty())
                     .map(|value| select_correlations(value, name))
                     .transpose()?;
@@ -1910,7 +1949,19 @@ fn mstransform_staged(
             } else {
                 (weight, sigma, None)
             };
-            if grammar == RowGrammar::Transform
+            if continuum.is_some()
+                && !task_average
+                && !convolving
+                && !hanning
+                && combination.is_none()
+                && regrid.is_none()
+            {
+                let channels =
+                    (!averaging_time).then_some(channel_selection[&spw_id].channels.as_slice());
+                continuum::mean_noise(&mut weight, spectra_cells.weight, &flags, channels);
+                continuum::mean_noise(&mut sigma, spectra_cells.sigma, &flags, channels);
+                visibility.align_scalar_weights(&mut weight, &mut sigma);
+            } else if grammar == RowGrammar::Transform
                 && !task_average
                 && !averaging_time
                 && !convolving

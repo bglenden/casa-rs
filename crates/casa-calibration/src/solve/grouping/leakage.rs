@@ -43,6 +43,7 @@ pub(crate) enum LeakageSolveKind {
     Dlls,
     Dflls,
     Xj,
+    XMueller,
     Xf,
     PosAng,
     Xparang,
@@ -61,6 +62,7 @@ impl LeakageSolveKind {
             Self::Dlls => "DLLS Jones",
             Self::Dflls => "DfLLS Jones",
             Self::Xj => "X Jones",
+            Self::XMueller => "X Mueller",
             Self::Xf => "Xf Jones",
             Self::PosAng => "PosAng Jones",
             Self::Xparang => "Xparang Jones",
@@ -92,7 +94,7 @@ impl LeakageSolveKind {
     }
 
     pub(crate) fn cross_hand(self) -> bool {
-        matches!(self, Self::Xj | Self::Xf | Self::PosAng) || self.parallactic()
+        matches!(self, Self::Xj | Self::XMueller | Self::Xf | Self::PosAng) || self.parallactic()
     }
 
     fn parameter_count(self) -> usize {
@@ -222,6 +224,9 @@ pub(crate) fn solve_polarization_with_activity(
     activity: Option<&mut ToolSolveActivity>,
     legacy: bool,
 ) -> Result<PolarizationSolveOutcome, String> {
+    if request.kind == LeakageSolveKind::XMueller && !legacy {
+        return Err("Can't do selfGatherAndSolve for X Mueller".into());
+    }
     let preparation = crate::timing::Phase::start("polarization_prepare");
     let error = |error: GainSolveError| error.to_string();
     let context = prepare_calibration_solve(
@@ -313,14 +318,7 @@ pub(crate) fn solve_polarization_with_activity(
         tool: activity.is_some(),
         legacy_cross_hand,
     };
-    let mut intervals = ordered
-        .chunk_by(|a, b| a.1 == b.1 && a.2 == b.2)
-        .collect::<Vec<_>>();
-    intervals.sort_by(|a, b| {
-        interval_window(a)
-            .cmp(&interval_window(b))
-            .then_with(|| a[0].0.time_seconds.total_cmp(&b[0].0.time_seconds))
-    });
+    let intervals = polarization_intervals(&ordered, request.kind);
     let mut references = Vec::new();
     if context.refant_id >= 0 && !request.kind.cross_hand() {
         references.extend([context.refant_id, context.refant_id]);
@@ -338,9 +336,9 @@ pub(crate) fn solve_polarization_with_activity(
             );
         }
     }
-    let mut previous: Option<usize> = None;
-    let mut solutions: Vec<LeakageSolution> = Vec::new();
-    let mut gain_stats = if request.kind.gain_phase() || setup.tool {
+    let mut gain_stats = if request.kind.gain_phase()
+        || (setup.tool && request.kind != LeakageSolveKind::XMueller)
+    {
         let windows = crate::solve::spectral_window_ids(ms).map_err(error)?;
         Some(SolveStatsBuilder::new(
             request.kind.parameter_count(),
@@ -352,31 +350,24 @@ pub(crate) fn solve_polarization_with_activity(
     };
     drop(preparation);
     let fitting = crate::timing::Phase::start("polarization_gather_and_fit");
-    for rows in intervals {
-        let previous_interval = previous
-            .and_then(|index| solutions.get(index))
-            .filter(|solution| solution.spectral_window == interval_window(rows));
-        if let Some(solution) = setup
-            .solve_interval(
-                rows,
-                context.available_antennas.len(),
-                &references,
-                previous_interval,
-                gain_stats.as_mut(),
-            )
-            .map_err(error)?
-        {
-            if solution.reference >= 0 {
-                references[1] = solution.reference;
-                previous = Some(solutions.len());
-            }
-            solutions.push(solution);
-        }
-    }
+    let mut solutions = fit_polarization_intervals(
+        &setup,
+        intervals,
+        context.available_antennas.len(),
+        &mut references,
+        gain_stats.as_mut(),
+    )
+    .map_err(error)?;
     if request.kind.iterative() {
         interval::reference_iterative_solutions(&mut solutions, &mut references);
     }
-    if setup.tool && request.kind != LeakageSolveKind::PosAng && !request.kind.parallactic() {
+    if setup.tool
+        && !matches!(
+            request.kind,
+            LeakageSolveKind::PosAng | LeakageSolveKind::XMueller
+        )
+        && !request.kind.parallactic()
+    {
         interval::finish_tool_parameters(&mut solutions, request.solve_mode, request.normalization);
     }
     if let Some(stats) = &mut gain_stats
@@ -393,13 +384,7 @@ pub(crate) fn solve_polarization_with_activity(
         .iter()
         .map(|(&id, window)| (id, window.bin_width))
         .collect();
-    let source = if request.kind == LeakageSolveKind::Xfparang
-        || (setup.tool && request.kind == LeakageSolveKind::Xparang)
-    {
-        source_polarization(ms, &solutions)?
-    } else {
-        BTreeMap::new()
-    };
+    let source = source_polarization(ms, request.kind, setup.tool, &solutions)?;
     drop(fitting);
     let _publication = crate::timing::Phase::start("polarization_write");
     let rows = output::write(ms, request, &context.rows, &solutions, bin_widths)?;
@@ -416,10 +401,102 @@ pub(crate) fn solve_polarization_with_activity(
     })
 }
 
+fn polarization_intervals<'a>(
+    ordered: &'a [BucketedRow<'a>],
+    kind: LeakageSolveKind,
+) -> Vec<(&'a [BucketedRow<'a>], i32)> {
+    let mut groups = ordered.chunk_by(|a, b| a.1 == b.1 && a.2 == b.2).peekable();
+    let mut intervals = Vec::new();
+    while let Some(rows) = groups.next() {
+        let scan = if kind == LeakageSolveKind::XMueller {
+            // The self-gather reads the legacy buffer's scan after advancing
+            // the iterator. Its final interval retains the last chunk's scan.
+            groups.peek().map_or_else(
+                || rows.last().expect("nonempty solve interval").0.scan_number,
+                |next| next[0].0.scan_number,
+            )
+        } else {
+            rows[0].0.scan_number
+        };
+        intervals.push((rows, scan));
+    }
+    if kind != LeakageSolveKind::XMueller {
+        intervals.sort_by(|(a, _), (b, _)| {
+            interval_window(a)
+                .cmp(&interval_window(b))
+                .then_with(|| a[0].0.time_seconds.total_cmp(&b[0].0.time_seconds))
+        });
+    }
+    intervals
+}
+
+fn fit_polarization_intervals(
+    setup: &LeakageInputs<'_>,
+    intervals: Vec<(&[BucketedRow<'_>], i32)>,
+    antennas: usize,
+    references: &mut [i32],
+    mut stats: Option<&mut SolveStatsBuilder>,
+) -> Result<Vec<LeakageSolution>, GainSolveError> {
+    let mueller = setup.request.kind == LeakageSolveKind::XMueller;
+    let mut previous = None;
+    let mut previous_mueller_time = None;
+    let mut solutions: Vec<LeakageSolution> = Vec::new();
+    for (rows, scan) in intervals {
+        let previous_interval = previous
+            .and_then(|index: usize| solutions.get(index))
+            .filter(|solution| solution.spectral_window == interval_window(rows));
+        let solution = setup.solve_interval(
+            rows,
+            scan,
+            antennas,
+            references,
+            previous_interval,
+            stats.as_deref_mut(),
+        )?;
+        if let Some(solution) = solution {
+            if solution.reference >= 0 {
+                references[1] = solution.reference;
+                previous = Some(solutions.len());
+            }
+            if mueller {
+                previous_mueller_time = Some(solution.time);
+            }
+            solutions.push(solution);
+        } else if mueller {
+            // A failed legacy sync keeps the previous TIME but publishes
+            // this interval's flagged unity baseline parameters.
+            let estimate = LeakageEstimate {
+                gain: [Complex32::ONE, Complex32::ZERO],
+                ..Default::default()
+            };
+            let first = rows[0].0;
+            solutions.push(LeakageSolution {
+                spectral_window: interval_window(rows),
+                field: first.field_id,
+                observation: first.observation_id,
+                scan,
+                time: previous_mueller_time.unwrap_or(0.0),
+                reference: -1,
+                polarization: None,
+                values: vec![vec![estimate; antennas]],
+            });
+        }
+    }
+    if mueller && previous_mueller_time.is_none() {
+        solutions.clear();
+    }
+    Ok(solutions)
+}
+
 fn source_polarization(
     ms: &MeasurementSet,
+    kind: LeakageSolveKind,
+    tool: bool,
     solutions: &[LeakageSolution],
 ) -> Result<BTreeMap<String, BTreeMap<i32, Complex32>>, String> {
+    if !(kind == LeakageSolveKind::Xfparang || (tool && kind == LeakageSolveKind::Xparang)) {
+        return Ok(BTreeMap::new());
+    }
     let fields = ms.field().map_err(|error| error.to_string())?;
     let mut source = BTreeMap::<String, BTreeMap<i32, Complex32>>::new();
     for interval in solutions {
@@ -608,6 +685,31 @@ fn interval_window(rows: &[BucketedRow<'_>]) -> i32 {
 }
 
 impl LeakageInputs<'_> {
+    fn read_interval_batch(
+        &self,
+        rows: &[BucketedRow<'_>],
+    ) -> Result<SolveInputBatch, GainSolveError> {
+        let indices = rows
+            .iter()
+            .map(|(row, _, _)| row.row_index)
+            .collect::<Vec<_>>();
+        read_input_batch(
+            self.ms,
+            &indices,
+            (
+                self.preapplied.is_none_or(|prior| prior.data.is_empty()),
+                rows.iter()
+                    .any(|(row, _, _)| self.models.uses_fourier(row.field_id)),
+            ),
+            rows.iter()
+                .any(|(row, _, _)| self.models.reads_column(row.field_id)),
+            rows.iter()
+                .map(|row| self.spectral_weights.contains(row))
+                .collect(),
+            false,
+        )
+    }
+
     fn preaverage_span(&self) -> Option<f64> {
         let requested = if self.request.preaverage_seconds < 0.0 {
             match self.request.kind {
@@ -641,6 +743,7 @@ impl LeakageInputs<'_> {
     fn solve_interval(
         &self,
         rows: &[BucketedRow<'_>],
+        scan: i32,
         antennas: usize,
         references: &[i32],
         previous: Option<&LeakageSolution>,
@@ -650,6 +753,7 @@ impl LeakageInputs<'_> {
         let spectral_window = interval_window(rows);
         let count = self.windows[&spectral_window].count();
         let kind = self.request.kind;
+        let mueller = kind == LeakageSolveKind::XMueller;
         let segment_centroid = !self.legacy_cross_hand
             && (kind.cross_hand()
                 || (self.tool && self.request.solve_mode == GainSolveMode::Phase));
@@ -671,35 +775,19 @@ impl LeakageInputs<'_> {
             .then(cross_hand::LegacyCrossHandAveraging::default);
         let mut gain_data = gain_stats.as_ref().map(|_| GainIntervalData::default());
         for batch in rows.chunks(256) {
-            let indices = batch
-                .iter()
-                .map(|(row, _, _)| row.row_index)
-                .collect::<Vec<_>>();
-            let input = read_input_batch(
-                self.ms,
-                &indices,
-                (
-                    self.preapplied.is_none_or(|prior| prior.data.is_empty()),
-                    batch
-                        .iter()
-                        .any(|(row, _, _)| self.models.uses_fourier(row.field_id)),
-                ),
-                batch
-                    .iter()
-                    .any(|(row, _, _)| self.models.reads_column(row.field_id)),
-                batch
-                    .iter()
-                    .map(|row| self.spectral_weights.contains(row))
-                    .collect(),
-                false,
-            )?;
+            let input = self.read_interval_batch(batch)?;
             for (index, &(row, _, _)) in batch.iter().enumerate() {
                 let pair = [row.antenna1, row.antenna2];
                 let start = legacy.as_mut().map_or(row.time_seconds, |legacy| {
-                    legacy.start(row, span.expect("VI1 time averaging interval"))
+                    legacy.start(row, span.expect("VI1 time averaging interval"), mueller)
                 });
+                let buffer = if mueller {
+                    (0, 0)
+                } else {
+                    (row.field_id, row.data_desc_id)
+                };
                 let active = averages
-                    .entry((row.field_id, row.data_desc_id, pair))
+                    .entry((buffer.0, buffer.1, pair))
                     .or_insert_with(|| BaselineAverages {
                         segment: BaselineSegment {
                             field: row.field_id,
@@ -730,7 +818,7 @@ impl LeakageInputs<'_> {
                         emission: row.time_seconds,
                         ..active.segment
                     };
-                    if legacy.as_ref().is_none_or(|legacy| legacy.fits(segment)) {
+                    if mueller || legacy.as_ref().is_none_or(|legacy| legacy.fits(segment)) {
                         fits.accumulate(
                             pair,
                             &mut active.bins,
@@ -787,9 +875,10 @@ impl LeakageInputs<'_> {
             if segment_centroid {
                 active.finish_time(&mut time, self.request.solve_mode);
             }
-            if legacy
-                .as_ref()
-                .is_none_or(|legacy| legacy.fits(active.segment))
+            if mueller
+                || legacy
+                    .as_ref()
+                    .is_none_or(|legacy| legacy.fits(active.segment))
             {
                 fits.accumulate(
                     pair,
@@ -835,7 +924,7 @@ impl LeakageInputs<'_> {
                     .and_then(|legacy| legacy.field())
                     .unwrap_or(first.field_id),
                 observation: first.observation_id,
-                scan: first.scan_number,
+                scan,
                 time: time.mean().unwrap_or(first.time_seconds),
                 reference,
                 values,
@@ -920,7 +1009,15 @@ impl LeakageInputs<'_> {
         // The X solve time combines baseline centroids using spectral
         // weights, while time averaging each baseline uses scalar weights.
         let mut legacy_weights = self.legacy_cross_hand.then(|| {
-            cross_hand::legacy_row_weights(&samples, flags, &model, order, &window.channels)
+            let normalize = self.request.kind != LeakageSolveKind::XMueller;
+            cross_hand::legacy_row_weights(
+                &samples,
+                flags,
+                &model,
+                order,
+                &window.channels,
+                normalize,
+            )
         });
         let legacy_xy = self.legacy_cross_hand && self.request.kind.gain_phase();
         let legacy_bin_counts =
@@ -1005,7 +1102,9 @@ impl LeakageInputs<'_> {
                     model = model.map(|value| value / scale);
                     weights = weights.map(|weight| weight * power);
                 }
-            } else if self.request.kind.cross_hand() {
+            } else if self.request.kind.cross_hand()
+                && self.request.kind != LeakageSolveKind::XMueller
+            {
                 for (corr, model) in model.into_iter().enumerate() {
                     let amplitude = model.norm();
                     if amplitude > 0.0 {
