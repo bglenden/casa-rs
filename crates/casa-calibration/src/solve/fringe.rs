@@ -667,7 +667,7 @@ fn make_row(
         antenna_id: antenna,
         scan_number: group.scan_number(),
         observation_id: group.observation_id,
-        refant_id: reference as i32,
+        refant_id: -1,
         gains: Vec::with_capacity(8),
         flags: Vec::with_capacity(8),
         param_errors: vec![1.; 8],

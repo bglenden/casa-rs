@@ -133,7 +133,10 @@ def main():
                            options={'t': '47s', 'refant': 'A0,A1', 'refantmode': mode})
         for path in paths.values():
             with opened(path) as table:
-                assert table.getcol('FLAG')[..., 5:15].all() == (mode == 'strict')
+                flagged = table.getcol('FLAG').reshape(8, 4, 5).all(axis=(0, 2))
+                np.testing.assert_array_equal(flagged, [False, mode == 'strict', False, False])
+                expected_references = [0, -1, 0, 0] if mode == 'strict' else [0, 1, 1, 0]
+                np.testing.assert_array_equal(table.getcol('ANTENNA2')[::5], expected_references)
     solve_case(work, engines, vis, 'append', append=True)
     windows = duplicate_spectral_window(work, vis, law[1])
     for concat in (False, True):
