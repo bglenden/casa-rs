@@ -45,7 +45,7 @@ fn load(path: &Path, active: &mut HashSet<PathBuf>) -> PyResult<ImageHandle> {
     let kind = manifest.pixel_type().map_err(raised)?;
     validate_types(&inputs, kind)?;
     let axis = i64::try_from(manifest.axis()).map_err(raised)?;
-    let plan = ConcatenationPlan::new(&geometry, axis, true, false).map_err(raised)?;
+    let plan = ConcatenationPlan::new(&geometry, axis, true, false).map_err(geometry_error)?;
     let output = assemble(
         &root,
         inputs,
@@ -88,7 +88,7 @@ pub(super) fn stage_nomove(
     validate_types(&inputs, kind)?;
     let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
     let plan = ConcatenationPlan::new(&geometry, request.axis, request.relax, request.reorder)
-        .map_err(raised)?;
+        .map_err(geometry_error)?;
     logs.extend(plan.warnings.iter().cloned().map(LogLine::warning));
 
     let mut misc = RecordValue::default();
@@ -141,6 +141,17 @@ fn validate_types(inputs: &[Input<'_>], kind: ImagePixelType) -> PyResult<()> {
         ));
     }
     Ok(())
+}
+
+fn geometry_error(error: ImageError) -> PyErr {
+    match error {
+        ImageError::CasaSelection(message)
+            if message == "Lattice shapes are not the same on non-concatenation axes" =>
+        {
+            raised("Lattice shapes inconsistent")
+        }
+        other => raised(other),
+    }
 }
 
 fn assemble(
