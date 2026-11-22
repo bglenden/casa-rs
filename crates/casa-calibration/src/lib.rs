@@ -147,7 +147,10 @@ pub use fluxscale::{
     FluxScaleError, FluxScaleFieldResult, FluxScaleOptions, FluxScaleReport, FluxScaleRequest,
     FluxScaleSpwResult, fluxscale,
 };
-pub use gencal::{AntposInputError, GencalError, GencalReport, GencalRequest, GencalType, gencal};
+pub use gencal::{
+    AntposInputError, CalibrationSpecification, GencalError, GencalReport, GencalRequest,
+    GencalType, gencal,
+};
 pub use legacy_spline::LegacySplineTable;
 pub use lookup::{
     CalibrationTableLayout, CalibrationTableLookup, ComplexSolution, FieldSelection,
