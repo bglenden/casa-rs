@@ -2,24 +2,11 @@
   "schema_version": 1,
   "task": "sdcal",
   "casa_version": "6.7.6.14",
-  "audit_revision": "68f4b4867d385fd45a455f07e2ae075a008a5dc9",
+  "audit_revision": "1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a",
   "parameters": {
     "infile": {
-      "scope": "Open the required MeasurementSet with complex DATA or float total-power input.",
-      "status": "Partial",
-      "behaviors": [
-        "ps",
-        "tsys",
-        "application"
-      ],
-      "evidence": [
-        "generation",
-        "application"
-      ]
-    },
-    "calmode": {
-      "scope": "Generate position-switch and spectral Tsys tables and support direct application and their composite application modes.",
-      "status": "Partial",
+      "scope": "Open the required MeasurementSet for sky and Tsys generation and application. Handle complex DATA or float total-power input.",
+      "status": "Implemented",
       "behaviors": [
         "ps",
         "tsys",
@@ -28,144 +15,178 @@
       ],
       "evidence": [
         "generation",
-        "application"
+        "application",
+        "edges"
+      ]
+    },
+    "calmode": {
+      "scope": "Generate PS, OTF, raster and spectral Tsys calibration and apply existing or composite tables.",
+      "status": "Implemented",
+      "behaviors": [
+        "ps",
+        "tsys",
+        "application",
+        "edges"
+      ],
+      "evidence": [
+        "generation",
+        "application",
+        "edges"
       ]
     },
     "fraction": {
-      "scope": "Match numeric and percent forms and validation in position-switch mode.",
-      "status": "Partial",
+      "scope": "Interpret numeric and percent forms and select raster strip or OTF map edges.",
+      "status": "Implemented",
       "behaviors": [
         "ps",
         "edges"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "edges"
       ]
     },
     "noff": {
-      "scope": "Use the explicit edge count when checking the fraction bound in position-switch mode.",
-      "status": "Partial",
+      "scope": "Select an explicit count at each raster strip end and retain CASA fraction validation.",
+      "status": "Implemented",
       "behaviors": [
         "ps",
         "edges"
       ],
       "evidence": [
-        "generation"
+        "generation",
+        "edges"
       ]
     },
     "width": {
-      "scope": "OTF edge-mode pixel width.",
-      "status": "Not implemented",
+      "scope": "Accept CASA width values. The pinned task selects OTF edges with its fixed projection scale.",
+      "status": "Implemented",
       "behaviors": [
         "edges"
       ],
       "evidence": [
-        "remaining"
+        "edges"
       ]
     },
     "elongated": {
-      "scope": "OTF elongated-map option.",
-      "status": "Not implemented",
+      "scope": "Accept the elongated flag. The pinned task uses the same OTF boundary algorithm for both values.",
+      "status": "Implemented",
       "behaviors": [
         "edges"
       ],
       "evidence": [
-        "remaining"
+        "edges"
       ]
     },
     "applytable": {
       "scope": "Read a path or path list with sky, spectral Tsys and Jy/K calibration and apply the terms in CASA calibration order.",
-      "status": "Partial",
+      "status": "Implemented",
       "behaviors": [
-        "application"
+        "application",
+        "edges"
       ],
       "evidence": [
-        "application"
+        "application",
+        "edges"
       ]
     },
     "interp": {
       "scope": "Interpolate reference spectra in time and frequency with distinct signal and exposure-weight laws.",
-      "status": "Partial",
+      "status": "Implemented",
       "behaviors": [
-        "application"
+        "application",
+        "edges"
       ],
       "evidence": [
-        "application"
+        "application",
+        "edges"
       ]
     },
     "spwmap": {
       "scope": "Map science windows to Tsys windows using a flat list or ordered source-to-target dictionary.",
-      "status": "Partial",
+      "status": "Implemented",
       "behaviors": [
-        "application"
+        "application",
+        "edges"
       ],
       "evidence": [
-        "application"
+        "application",
+        "edges"
       ]
     },
     "outfile": {
       "scope": "Publish standard CASA-readable generation products. Applications update CORRECTED_DATA in the input MeasurementSet.",
-      "status": "Partial",
+      "status": "Implemented",
       "behaviors": [
         "ps",
         "tsys",
-        "application"
+        "application",
+        "edges"
       ],
       "evidence": [
         "generation",
-        "application"
+        "application",
+        "edges"
       ]
     },
     "overwrite": {
       "scope": "Replace a generated table with explicit consent while protecting locked outputs and MeasurementSet subtables.",
-      "status": "Partial",
+      "status": "Implemented",
       "behaviors": [
         "ps",
         "tsys",
-        "application"
+        "application",
+        "edges"
       ],
       "evidence": [
         "generation",
-        "application"
+        "application",
+        "edges"
       ]
     },
     "field": {
-      "scope": "Apply field selection to position-switch reference rows and validate it for Tsys.",
-      "status": "Partial",
+      "scope": "Select reference and science fields. Tsys uses the whole observation when generating a composite prior.",
+      "status": "Implemented",
       "behaviors": [
         "ps",
         "tsys",
-        "application"
+        "application",
+        "edges"
       ],
       "evidence": [
         "generation",
-        "application"
+        "application",
+        "edges"
       ]
     },
     "spw": {
-      "scope": "Select position-switch windows and require the all-window form for Tsys.",
-      "status": "Partial",
+      "scope": "Select reference windows and science channels. Direct Tsys generation requires the all-window form.",
+      "status": "Implemented",
       "behaviors": [
         "ps",
         "tsys",
-        "application"
+        "application",
+        "edges"
       ],
       "evidence": [
         "generation",
-        "application"
+        "application",
+        "edges"
       ]
     },
     "scan": {
-      "scope": "Select position-switch scans and require the all-scan form for Tsys.",
-      "status": "Partial",
+      "scope": "Select scan rows for sky generation and application. Direct Tsys generation requires the all-scan form.",
+      "status": "Implemented",
       "behaviors": [
         "ps",
         "tsys",
-        "application"
+        "application",
+        "edges"
       ],
       "evidence": [
         "generation",
-        "application"
+        "application",
+        "edges"
       ]
     }
   },
@@ -193,21 +214,22 @@
     {
       "id": "application",
       "title": "Sky calibration application",
-      "status": "Partial",
-      "scope": "Apply sky, spectral Tsys and Jy/K tables from native and CASA writers to complex or float autocorrelation data, including PS/Tsys composites, exposure-based weights and ordered SPW maps.",
-      "gap": "OTF and raster composite generation and application are tracked in #1530.",
+      "status": "Implemented",
+      "scope": "Apply sky, spectral Tsys and Jy/K calibration, including PS, OTF and raster composites, exposure weights, ordered SPW maps and interpolation.",
+      "gap": "Dataset-scale performance validation follows functionality under #979.",
       "evidence": [
-        "application"
+        "application",
+        "edges"
       ]
     },
     {
       "id": "edges",
       "title": "OTF and raster sky calibration",
-      "status": "Not implemented",
-      "scope": "Select off-source scan edges for OTF and gapped raster observations.",
-      "gap": "Tracked in #1530.",
+      "status": "Implemented",
+      "scope": "Select time-separated raster strip edges or the spatial OTF map boundary with measured antenna pointings and moving-body offsets.",
+      "gap": "Dataset-scale performance validation follows functionality under #979.",
       "evidence": [
-        "remaining"
+        "edges"
       ]
     }
   ],
@@ -222,6 +244,18 @@
       "impact": "Adjacent channels with valid references still calibrate and downstream consumers can mask the invalid correction.",
       "evidence": [
         "application"
+      ]
+    },
+    {
+      "id": "include-raster-final-strip",
+      "state": "Proposed",
+      "inputs": "A gapped raster map with multiple strips and valid reference integrations at both ends of each strip.",
+      "casa": "Depending on uninitialized gap-array contents, can omit the two solutions from the last strip.",
+      "ours": "Always close the final range at the integration count and select both ends of the last strip.",
+      "rationale": "The last observed strip has the same edge eligibility as preceding strips. Including both boundaries produces stable calibration across repeat runs.",
+      "impact": "All 44 reference spectra from the 22-strip fixture are present.",
+      "evidence": [
+        "edges"
       ]
     }
   ],
@@ -239,14 +273,6 @@
         "tools/casa-compat/sdcal_position_switch_oracle.py"
       ]
     },
-    "remaining": {
-      "kind": "Remaining single-dish calibration comparisons",
-      "state": "planned",
-      "scope": "OTF and raster sky and composite calibration, observing geometry, and paired edge selection.",
-      "links": [
-        "https://github.com/bglenden/casa-rs/issues/1530"
-      ]
-    },
     "application": {
       "kind": "Paired public-Python CASA/native application plus 2x2 calibration-table interchange",
       "state": "passed",
@@ -258,6 +284,20 @@
       "receipt": "https://github.com/bglenden/casa-rs/pull/1973",
       "links": [
         "tools/casa-compat/sdcal_apply_oracle.py"
+      ]
+    },
+    "edges": {
+      "kind": "Public CASA/native OTF and raster edge comparisons, analytic raster counts and table interchange",
+      "state": "passed",
+      "scope": "Temporal raster strips, spatial OTF masks, pointing interpolation, flags, selected windows and scans, and moving Solar System targets.",
+      "result": "Native and CASA reference spectra, times, flags, application outputs and weights agree in the paired workflows. The upstream Mars fixture and a synthetic topocentric Moon map exercise moving-source offsets.",
+      "revision": "1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a",
+      "casa_version": "6.7.6.14",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/1974",
+      "links": [
+        "tools/casa-compat/sdcal_edges_oracle.py",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casatestdata/browse/measurementset/almasd/otf_ephem.ms?at=5e48637233019176f328ab4552e96395ab967581"
       ]
     }
   }

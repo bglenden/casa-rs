@@ -9613,3 +9613,13 @@ channel flag still clear. Casa-rs retains the value entering the sky step when t
 sky spectrum cannot provide a finite correction and flags the channel
 in modes that write flags. The paired sky-application oracle checks the
 zero reference alongside usable channels.
+
+## Raster sky calibration can skip the last strip
+
+CASA 6.7.6.14's raster gap detector tests the next element of an
+uninitialized boundary array before adding the final integration count.
+Repeated runs on the same 22-strip map can publish either 44 or 42
+solutions. In the 42-solution result both references from the last strip
+are missing. Casa-rs always includes the last strip and checks its
+solutions against the selected integrations and the complete CASA runs.
+[Pinned CASA raster source](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/synthesis/MeasurementComponents/SingleDishSkyCal.cc?at=refs%2Ftags%2F6.7.6.14)

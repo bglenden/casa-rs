@@ -4,8 +4,9 @@
 use std::collections::BTreeMap;
 
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::{EpochRef, MEpoch, MeasFrame};
 
-use crate::derived::engine::MsCalEngine;
+use crate::derived::engine::{MsCalEngine, detect_epoch_reference};
 
 use super::{MsPointing, MsResult};
 
@@ -24,6 +25,132 @@ struct AntennaPointings {
 }
 
 impl MsPointing<'_> {
+    /// Interpolate DIRECTION for map calibration at the requested antenna and
+    /// epoch in MAIN seconds. Use finite endpoints outside the sampled range.
+    /// CASA uses linear interpolation within three knots of a sampling gap.
+    ///
+    /// # Errors
+    /// A requested antenna has no usable pointing or its frame is invalid.
+    pub fn scan_directions(
+        &self,
+        requests: &[(i32, f64)],
+        engine: &MsCalEngine,
+    ) -> MsResult<Vec<MDirection>> {
+        let Some(&(first_antenna, first_time)) = requests.first() else {
+            return Ok(Vec::new());
+        };
+        let pointing_reference = detect_epoch_reference(self.table(), "TIME", EpochRef::UTC);
+        let mut antennas = requests
+            .iter()
+            .map(|&(id, _)| (id, Vec::new()))
+            .collect::<BTreeMap<_, _>>();
+        let mut shared = Vec::new();
+        let mut sample_counts = BTreeMap::<_, usize>::new();
+        for row in 0..self.row_count() {
+            let antenna = self.i32(row, "ANTENNA_ID")?;
+            *sample_counts.entry(antenna).or_default() += 1;
+            let samples = if antenna == -1 {
+                Some(&mut shared)
+            } else {
+                antennas.get_mut(&antenna)
+            };
+            if let Some(samples) = samples {
+                let time = self.f64(row, "TIME")?;
+                let time = if pointing_reference == EpochRef::UTC {
+                    time
+                } else {
+                    let antenna = if antenna == -1 {
+                        first_antenna
+                    } else {
+                        antenna
+                    };
+                    let frame = engine.antenna_frame(first_time, antenna as usize)?;
+                    utc_seconds(time, pointing_reference, &frame)?
+                };
+                let interval = self.f64(row, "INTERVAL")?;
+                let direction = self.read_direction(row, None)?;
+                samples.push((time, interval, direction));
+            }
+        }
+        for samples in antennas.values_mut().filter(|samples| samples.is_empty()) {
+            samples.clone_from(&shared);
+        }
+        let interpolate_spline = sample_counts.values().all(|&count| count >= 4);
+        let curves = antennas
+            .into_iter()
+            .map(|(antenna, mut samples)| {
+                samples.sort_by(|left, right| left.0.total_cmp(&right.0));
+                samples.dedup_by(|left, right| left.0 == right.0);
+                let knots = samples
+                    .iter()
+                    .map(|(time, _, dir)| {
+                        let (lon, lat) = dir.as_angles();
+                        // casacore presents the signed longitude to the spline.
+                        let lon = (lon + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
+                            - std::f64::consts::PI;
+                        (*time, [lon, lat])
+                    })
+                    .collect();
+                let curve = PointingCurve::new(knots);
+                let mut linear = vec![!interpolate_spline; samples.len()];
+                if samples.len() >= 7 {
+                    let rounded = |seconds: f64| (seconds * 10_000.).round();
+                    for (index, pair) in samples.windows(2).enumerate() {
+                        if rounded(pair[1].0 - pair[0].0) > rounded(pair[1].1) {
+                            let low = (index + 1).saturating_sub(3);
+                            let high = (index + 5).min(samples.len());
+                            linear[low..high].fill(true);
+                        }
+                    }
+                }
+                (antenna, (samples, curve, linear))
+            })
+            .collect::<BTreeMap<_, _>>();
+        requests
+            .iter()
+            .map(|&(antenna, time)| {
+                let (samples, curve, linear) = &curves[&antenna];
+                let frame = engine.antenna_frame(time, antenna as usize)?;
+                let time = utc_seconds(time, engine.time_reference(), &frame)?;
+                let index = samples.partition_point(|&(epoch, _, _)| epoch < time);
+                let direction = if let Some((_, _, direction)) = samples
+                    .get(index)
+                    .filter(|(epoch, _, _)| *epoch == time || index == 0)
+                    .or_else(|| samples.last().filter(|_| index == samples.len()))
+                {
+                    direction.clone()
+                } else if let (Some(left), Some(right)) =
+                    (samples.get(index.wrapping_sub(1)), samples.get(index))
+                {
+                    let (lon, lat) = if linear[index] || left.2.refer() != right.2.refer() {
+                        let frame = frame
+                            .clone()
+                            .with_epoch(MEpoch::from_mjd_seconds(right.0, EpochRef::UTC));
+                        let right_dir = right.2.convert_to(left.2.refer(), &frame)?;
+                        let to_signed = |value: f64| value.sin().atan2(value.cos());
+                        let (left_lon, left_lat) = left.2.as_angles();
+                        let (right_lon, right_lat) = right_dir.as_angles();
+                        let part = (time - left.0) / (right.0 - left.0);
+                        (
+                            to_signed(left_lon)
+                                + part * (to_signed(right_lon) - to_signed(left_lon)),
+                            left_lat + part * (right_lat - left_lat),
+                        )
+                    } else {
+                        let [lon, lat] = curve.at(time).expect("interior pointing sample");
+                        (lon, lat)
+                    };
+                    MDirection::from_angles(lon, lat, left.2.refer())
+                } else {
+                    return Err(crate::MsError::InvalidInput(format!(
+                        "No pointing for antenna {antenna}"
+                    )));
+                };
+                Ok(direction.convert_to(DirectionRef::J2000, &frame)?)
+            })
+            .collect()
+    }
+
     /// Resolve `SDGrid` pointings in visibility order. Each request gives the
     /// first antenna, MAIN time and MAIN interval in seconds. A nonempty
     /// POINTING table leaves unmatched samples blank. Faster visibility
@@ -85,6 +212,15 @@ impl MsPointing<'_> {
             })
             .collect()
     }
+}
+
+fn utc_seconds(seconds: f64, reference: EpochRef, frame: &MeasFrame) -> MsResult<f64> {
+    if reference == EpochRef::UTC {
+        return Ok(seconds);
+    }
+    let epoch = MEpoch::from_mjd_seconds(seconds, reference).convert_to(EpochRef::UTC, frame)?;
+    let time = epoch.value();
+    Ok(time.day() * 86_400. + time.frac_as_seconds())
 }
 
 impl AntennaPointings {

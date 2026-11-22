@@ -9,7 +9,7 @@ use casa_tables::{Table, TableOptions};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{ScalarValue, Value};
 
-use super::{generate_position_switch, tsys};
+use super::{generate_edges, generate_position_switch, tsys};
 use crate::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
     execute::execute_single_dish_apply,
@@ -35,6 +35,20 @@ pub(super) fn run(
         if mode.starts_with("ps,") {
             let output = staging.path().join("sky.cal");
             generate_position_switch(task, &ms, selected, &output, false)?;
+            paths.push(output);
+        } else if mode.starts_with("otf") {
+            let output = staging.path().join("sky.cal");
+            let sky_selection = if mode.contains("tsys,") {
+                let selection = MsSelection {
+                    intent: Some("OBSERVE_TARGET#ON_SOURCE".into()),
+                    ..selection.clone()
+                };
+                crate::session::resolve_casa_calibration_selection(&ms, &selection)
+                    .map_err(|error| TaskFailure::execution(error.to_string()))?
+            } else {
+                selected
+            };
+            generate_edges(task, &ms, sky_selection, &output, false)?;
             paths.push(output);
         }
         if mode.contains("tsys,") {
