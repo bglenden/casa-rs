@@ -145,6 +145,9 @@ pub enum CalibraterLifecycleError {
     /// Creating or updating the calibration table from supplied parameters failed.
     #[error("Error in Calibrater::specifycal.")]
     Specify(#[source] Box<crate::GencalError>),
+    /// Transferring a flux scale using the attached dataset failed.
+    #[error("{0}")]
+    FluxScale(String),
     /// Smoothing an attached calibration table failed.
     #[error("Error in Calibrater::smooth.")]
     Smooth(#[source] casa_ms::MsError),
@@ -163,6 +166,20 @@ pub enum CalibraterLifecycleError {
 }
 
 impl CalibraterLifecycle {
+    /// Transfer a flux scale and record the direct tool's HISTORY entries.
+    ///
+    /// # Errors
+    /// Returns an error without an attachment, valid selection or writable product.
+    pub fn fluxscale_tool(
+        &self,
+        mut request: crate::FluxScaleRequest,
+    ) -> Result<crate::FluxScaleReport, CalibraterLifecycleError> {
+        let path = self.equation()?.attachment.path();
+        request.options.measurement_set = Some(path.to_owned());
+        crate::fluxscale::fluxscale_tool(&request, path)
+            .map_err(CalibraterLifecycleError::FluxScale)
+    }
+
     /// Create or update a prior table using the attached dataset's axes.
     ///
     /// # Errors

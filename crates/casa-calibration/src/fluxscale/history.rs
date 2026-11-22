@@ -39,6 +39,13 @@ pub(super) fn record_failure(request: &FluxScaleRequest, caltype: &str) {
     }
 }
 
+pub(super) fn record_tool(request: &FluxScaleRequest) {
+    let _phase = crate::timing::Phase::start("fluxscale_history");
+    if let Err(error) = append_messages(request, tool_messages(request), 2) {
+        tracing::warn!("updating fluxscale HISTORY: {error}");
+    }
+}
+
 fn append_messages(
     request: &FluxScaleRequest,
     messages: Vec<String>,
@@ -92,12 +99,8 @@ fn append_messages(
     Ok(())
 }
 
-fn messages(
-    task: &TaskInvocation<'_>,
-    request: &FluxScaleRequest,
-    report: &FluxScaleReport,
-) -> Vec<String> {
-    let mut messages = vec![
+fn tool_messages(request: &FluxScaleRequest) -> Vec<String> {
+    vec![
         format!(
             "Table {} is of type: {}",
             request.input_table.display(),
@@ -115,9 +118,19 @@ fn messages(
             },
             request.output_table.display()
         ),
+    ]
+}
+
+fn messages(
+    task: &TaskInvocation<'_>,
+    request: &FluxScaleRequest,
+    report: &FluxScaleReport,
+) -> Vec<String> {
+    let mut messages = tool_messages(request);
+    messages.extend([
         "taskname=fluxscale".into(),
         format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
-    ];
+    ]);
     let mut bindings = task
         .session()
         .bundle()

@@ -270,9 +270,90 @@ pub fn fluxscale(request: &FluxScaleRequest) -> Result<FluxScaleReport, FluxScal
     )
 }
 
+pub(crate) fn fluxscale_tool(
+    request: &FluxScaleRequest,
+    dataset: &Path,
+) -> Result<FluxScaleReport, String> {
+    if request.output_table.as_os_str().is_empty() {
+        return Err("output fluxscaled caltable name must be specified!".into());
+    }
+    if request.output_table.exists() && !request.append {
+        return Err(format!(
+            "output caltable name, {} exists. Please specify a different caltable name",
+            request.output_table.display()
+        ));
+    }
+    if request.reference_fields.is_empty() {
+        return Err("A reference field must be specified!".into());
+    }
+    let failure = |error: FluxScaleError| {
+        tracing::error!(%error, "Direct fluxscale failed");
+        "Error in Calibrater::fluxscale.".to_owned()
+    };
+    let info = load_field_info(dataset).map_err(failure)?;
+    let reference = resolve_field_selectors(&request.reference_fields, &info)
+        .map_err(|error| tool_field_error(error, &request.reference_fields))?;
+    let transfer = (!request.transfer_fields.is_empty())
+        .then(|| resolve_field_selectors(&request.transfer_fields, &info))
+        .transpose()
+        .map_err(|error| tool_field_error(error, &request.transfer_fields))?;
+    let fields = FluxScaleFields {
+        info,
+        reference,
+        transfer,
+    };
+    let mode = if request.append {
+        crate::CalibrationOutputMode::Append
+    } else {
+        crate::CalibrationOutputMode::Create
+    };
+    let mut report = fluxscale_with_fields(request, mode, Some(fields)).map_err(failure)?;
+    let mut windows = load_spw_info(dataset)
+        .map_err(failure)?
+        .into_iter()
+        .collect::<Vec<_>>();
+    windows.sort_by_key(|(id, _)| *id);
+    report.spw_names = windows.into_iter().map(|(_, window)| window.name).collect();
+    history::record_tool(request);
+    Ok(report)
+}
+
+fn tool_field_error(error: FluxScaleError, selectors: &[String]) -> String {
+    let FluxScaleError::UnsupportedInput { reason, .. } = &error else {
+        return error.to_string();
+    };
+    let selector = selectors.join(",");
+    if let Some((_, text)) = reason.split_once("field selector name ")
+        && let Some(quoted) = text.strip_suffix(" did not match any FIELD rows")
+    {
+        let name = quoted.trim_matches('"');
+        let position = selector
+            .find(name)
+            .map_or(selector.len(), |start| start + name.len());
+        return format!(
+            "Field Expression: No match found for name {quoted}\n(near char. {position} in string {selector:?})"
+        );
+    }
+    format!("Field Expression: {reason}")
+}
+
 pub(crate) fn fluxscale_with_output_mode(
     request: &FluxScaleRequest,
     mode: crate::CalibrationOutputMode,
+) -> Result<FluxScaleReport, FluxScaleError> {
+    fluxscale_with_fields(request, mode, None)
+}
+
+struct FluxScaleFields {
+    info: HashMap<i32, FieldInfo>,
+    reference: BTreeSet<i32>,
+    transfer: Option<BTreeSet<i32>>,
+}
+
+fn fluxscale_with_fields(
+    request: &FluxScaleRequest,
+    mode: crate::CalibrationOutputMode,
+    fields: Option<FluxScaleFields>,
 ) -> Result<FluxScaleReport, FluxScaleError> {
     let input_phase = crate::timing::Phase::start("fluxscale_read");
     validate_request(request)?;
@@ -295,15 +376,23 @@ pub(crate) fn fluxscale_with_output_mode(
             }
         })?;
     }
-    let field_info = load_field_info(field_root)?;
-    let reference_field_ids = resolve_field_selectors(&request.reference_fields, &field_info)?;
-    let transfer_selection = if request.transfer_fields.is_empty() {
-        None
+    let FluxScaleFields {
+        info: field_info,
+        reference: reference_field_ids,
+        transfer: transfer_selection,
+    } = if let Some(fields) = fields {
+        fields
     } else {
-        Some(resolve_field_selectors(
-            &request.transfer_fields,
-            &field_info,
-        )?)
+        let info = load_field_info(field_root)?;
+        let reference = resolve_field_selectors(&request.reference_fields, &info)?;
+        let transfer = (!request.transfer_fields.is_empty())
+            .then(|| resolve_field_selectors(&request.transfer_fields, &info))
+            .transpose()?;
+        FluxScaleFields {
+            info,
+            reference,
+            transfer,
+        }
     };
     // CASA records its table/type entry after FIELD grammar validation, even
     // when later selection or estimation fails. Batch successful task history
