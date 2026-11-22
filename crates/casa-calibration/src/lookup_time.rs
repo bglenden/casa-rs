@@ -158,12 +158,18 @@ impl Registration {
     fn nearest(&self, rows: &[CalibrationSolution]) -> usize {
         if self.exact {
             self.upper.min(rows.len() - 1)
-        } else if relative(rows[self.upper].time_seconds, self.reference) - self.time
-            < self.time - relative(rows[self.upper - 1].time_seconds, self.reference)
-        {
-            self.upper
         } else {
-            self.upper - 1
+            // CTTimeInterp1 subtracts the registered Float epochs before
+            // comparing the distances. A rounded tie selects the earlier row.
+            let later =
+                (relative(rows[self.upper].time_seconds, self.reference) - self.time) as f32;
+            let earlier =
+                (self.time - relative(rows[self.upper - 1].time_seconds, self.reference)) as f32;
+            if later < earlier {
+                self.upper
+            } else {
+                self.upper - 1
+            }
         }
     }
 }
