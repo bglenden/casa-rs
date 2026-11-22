@@ -376,7 +376,7 @@ pub(crate) fn solve_bandpass(
         context.preapplied_rows.as_ref(),
         &channel_bin_widths,
         SolveGroupOptions {
-            retain_fringe_buffers: false,
+            input_rows: Default::default(),
             gain_type: GainType::G,
             model_source: request.model_source,
             point_stokes: request.smodel,

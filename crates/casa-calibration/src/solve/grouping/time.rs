@@ -4,9 +4,10 @@
 use std::collections::BTreeMap;
 
 use super::{
-    BucketedRow, GainSolveCombine, GainSolveInterval, SelectedSolveRow, SolveAccumulator,
-    SolveBaseKey, SolveBucketKey,
+    BucketedRow, GainSolveCombine, GainSolveError, GainSolveInterval, SelectedSolveRow,
+    SolveAccumulator, SolveBaseKey, SolveBucketKey, SolveSampleRow,
 };
+use crate::solve::{correlation_receptors, stokes_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct AveragedBaseline {
@@ -23,6 +24,46 @@ impl AveragedBaseline {
             antennas: if shared { (-1, -1) } else { self.antennas },
             ..self
         }
+    }
+}
+
+/// The visibility input used by one solve family.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SolveInputRows {
+    /// Use cross-correlations after reading solver metadata.
+    #[default]
+    Interferometry,
+    /// Also retain the input buffer axes for a fringe FFT.
+    Fringe,
+    /// Keep the individual antennas' autocorrelations for normalization.
+    Autocorrelations,
+}
+
+impl SolveInputRows {
+    pub(super) fn receptors(
+        self,
+        correlations: &[i32],
+        index: usize,
+        data_desc_id: i32,
+    ) -> Result<(usize, usize), GainSolveError> {
+        if self != Self::Autocorrelations {
+            return correlation_receptors(correlations[index]).ok_or_else(|| {
+                GainSolveError::UnsupportedCorrelationLayout {
+                    data_desc_id,
+                    correlation_types: correlations
+                        .iter()
+                        .map(|code| stokes_name(*code).to_string())
+                        .collect(),
+                }
+            });
+        }
+        // AccorJones reads the first and last elements of a four-correlation
+        // row and both elements of a two-correlation row in storage order.
+        Ok(match (correlations.len(), index) {
+            (_, 0) => (0, 0),
+            (2, 1) | (4, 3) => (1, 1),
+            _ => (0, 1),
+        })
     }
 }
 
@@ -70,6 +111,38 @@ impl WeightedTime {
 }
 
 impl SolveAccumulator {
+    pub(super) fn cross_hand_centroid_weight(&mut self, weight: f64, input: SolveInputRows) -> f64 {
+        if input == SolveInputRows::Autocorrelations {
+            // CASA tests buffer viability before dropping cross-hand weights.
+            self.attempted |= weight > 0.;
+            return 0.;
+        }
+        weight
+    }
+
+    pub(in crate::solve) fn first_input_buffer(&self) -> Option<(i32, i32)> {
+        self.first_t_buffer
+            .map(|buffer| (buffer.field, buffer.data_desc_id))
+    }
+
+    pub(super) fn observe_metadata(&mut self, row: &SolveSampleRow, retain_fringe_buffers: bool) {
+        if retain_fringe_buffers {
+            self.observe_fringe_buffer(row);
+        }
+        self.min_time = self.min_time.min(row.time_seconds);
+        self.max_time = self.max_time.max(row.time_seconds);
+        if self.unique_time_bits.insert(row.time_seconds.to_bits()) {
+            self.unique_time_sum += row.time_seconds;
+            self.unique_time_count += 1;
+        }
+        self.total_interval += row.interval_seconds;
+        self.sample_rows += 1;
+        self.field_ids.insert(row.field_id);
+        self.scan_numbers.insert(row.scan_number);
+        self.antenna_ids.insert(row.antenna1);
+        self.antenna_ids.insert(row.antenna2);
+    }
+
     pub(super) fn observe_fringe_buffer(&mut self, row: &super::SolveSampleRow) {
         self.fringe_buffers
             .insert((row.data_desc_id, row.field_id, row.time_seconds.to_bits()));

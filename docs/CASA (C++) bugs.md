@@ -9933,3 +9933,12 @@ terminated before publishing the table. Casa-rs derives the grid spacing
 from the separation of the selected frequencies and checks the FFT memory
 requirement before allocating the grid. Its two-band regression exercises
 both search modes.
+
+## `accor` rejects TaQL selections because the wrapper uses the ANTENNA table name
+
+CASA 6.7.6.14 adds `ANTENNA==ANTENNA2` when the caller supplies a nonempty
+`msselect`. A valid predicate such as `ANTENNA1<3` fails because `ANTENNA`
+is a subtable. The default task path already uses `ANTENNA1==ANTENNA2`.
+Casa-rs intersects the caller's predicate with `ANTENNA1==ANTENNA2` in both
+cases. Its test compares the result to CASA selecting those same antennas
+through `antenna`.

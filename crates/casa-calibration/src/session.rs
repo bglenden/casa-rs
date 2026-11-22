@@ -24,7 +24,7 @@ use crate::solve::grouping::{
 };
 use crate::solve::{
     GainSolveError, GainSolveReport, GainSolveRequest, GainSplineControls, GainType,
-    RefAntSelector, fringe, gspline, solve_gain,
+    RefAntSelector, accor, fringe, gspline, solve_gain,
 };
 
 /// Input ownership for one calibration solve.
@@ -66,6 +66,8 @@ pub enum CalibrationSolveRequest {
         /// Fringe search and global refinement controls.
         controls: fringe::FringeControls,
     },
+    /// Normalize the sampler response from antenna autocorrelations.
+    Accor(GainSolveRequest),
     /// Solve channelized or polynomial bandpass calibration.
     Bandpass(BandpassSolveRequest),
 }
@@ -172,6 +174,9 @@ fn solve_open_dataset(
                 .map(CalibrationSolveResult::Gain)
                 .map_err(CalibrationError::from)
         }
+        CalibrationSolveRequest::Accor(gain) => accor::solve(measurement_set, &gain, mode)
+            .map(CalibrationSolveResult::Gain)
+            .map_err(CalibrationError::from),
         CalibrationSolveRequest::Bandpass(request) => {
             solve_bandpass(measurement_set, &request, mode)
                 .map(CalibrationSolveResult::Bandpass)

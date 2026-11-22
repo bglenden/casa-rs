@@ -48,7 +48,7 @@ pub(crate) fn solve(
         0.1
     };
     let selection = SolveGroupOptions {
-        retain_fringe_buffers: false,
+        input_rows: Default::default(),
         gain_type: GainType::GSpline,
         model_source: request.model_source,
         point_stokes: if request.model_source == GainSolveModelSource::PointSource {

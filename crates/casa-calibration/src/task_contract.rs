@@ -30,11 +30,12 @@ pub const CALIBRATION_TASK_PROTOCOL_NAME: &str = "casa_calibration_task";
 pub const CALIBRATION_TASK_PROTOCOL_VERSION: u32 = 2;
 
 /// The surfaces `calibrate` hosts, with the default surface first.
-pub const CALIBRATION_SURFACES: [&str; 33] = [
+pub const CALIBRATION_SURFACES: [&str; 34] = [
     "calibrate",
     "applycal",
     "gaincal",
     "fringefit",
+    "accor",
     "bandpass",
     "fluxscale",
     "gencal",
@@ -473,6 +474,8 @@ pub enum CalibrationTaskRequest {
     ExportCorrectedData(ExportCorrectedDataTaskRequest),
     /// Solve antenna gains.
     SolveGain(SolveGainTaskRequest),
+    /// Normalize sampler amplitudes using antenna autocorrelations.
+    SolveAccor(SolveGainTaskRequest),
     /// Solve bandpass terms.
     SolveBandpass(SolveBandpassTaskRequest),
     /// Bootstrap flux density scaling.
@@ -543,7 +546,7 @@ impl CalibrationTaskRequest {
                 .map(CalibrationTaskResult::ExportCorrectedData)
                 .map_err(|error| error.to_string())
             }
-            Self::SolveGain(request) => {
+            Self::SolveGain(request) | Self::SolveAccor(request) => {
                 let gain = GainSolveRequest {
                     selection: request.selection.clone(),
                     output_table: request.output_table.clone(),
@@ -564,9 +567,12 @@ impl CalibrationTaskRequest {
                     min_baselines_per_antenna: request.min_baselines_per_antenna,
                     smodel: request.smodel,
                 };
-                let solve = match (request.spline_controls, request.fringe_controls) {
-                    (_, Some(controls)) => CalibrationSolveRequest::Fringe { gain, controls },
-                    (Some(controls), _) => CalibrationSolveRequest::GainSpline { gain, controls },
+                let solve = match (self, request.spline_controls, request.fringe_controls) {
+                    (Self::SolveAccor(_), _, _) => CalibrationSolveRequest::Accor(gain),
+                    (_, _, Some(controls)) => CalibrationSolveRequest::Fringe { gain, controls },
+                    (_, Some(controls), _) => {
+                        CalibrationSolveRequest::GainSpline { gain, controls }
+                    }
                     _ => CalibrationSolveRequest::Gain(gain),
                 };
                 crate::solve_calibration_with_output_mode(

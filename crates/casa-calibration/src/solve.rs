@@ -13,6 +13,7 @@
 //! should be CASA-compatible on disk and should yield corrected visibilities
 //! close to CASA's own `gaincal` when applied.
 
+pub(crate) mod accor;
 #[cfg(test)]
 mod batch_trial;
 mod delay;
@@ -533,7 +534,7 @@ pub(crate) fn solve_gain_rows(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            retain_fringe_buffers: false,
+            input_rows: Default::default(),
             gain_type: request.gain_type,
             model_source: request.model_source,
             point_stokes,
