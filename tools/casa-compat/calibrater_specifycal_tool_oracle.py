@@ -3,16 +3,21 @@
 """Compare direct calibrater.specifycal prescriptions with CASA 6.7.6.14."""
 
 import argparse
+import os
 from pathlib import Path
 
 import casatasks
 from casatools import calibrater as casa_calibrater
 import numpy as np
 
-from blcal_oracle import opened, source
+from blcal_oracle import copy_ms, nrms, opened, source
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_solve_tool_oracle import compare_readers
 from calibration_gencal_specify_oracle import compare_tables, with_second_window
+from calibration_gencal_tsys_oracle import attach_syscal
+from gencal_switched_power_oracle import MODES, compare_columns, read_calibration, seed
+from gencal_tecim_oracle import compare_tables as compare_tec, make_image
+from record_casa_returns import make_cal_ms
 
 
 ERROR = (False, ('RuntimeError', 'Error in Calibrater::specifycal.'))
@@ -20,7 +25,8 @@ TUPLE_ERROR = (False, ('SystemError', '<built-in function calibrater_specifycal>
                                     'returned a result with an exception set'))
 
 
-def prescribe(work, engines, vis, name, stages, *, legacy=False, product=True):
+def prescribe(work, engines, vis, name, stages, *, legacy=False, product=True,
+              compare=compare_tables):
     paths = {}
     for engine, make_tool in engines.items():
         tool = make_tool()
@@ -29,8 +35,8 @@ def prescribe(work, engines, vis, name, stages, *, legacy=False, product=True):
         assert tool.setvi(legacy, True)
         assert tool.specifycal() is False
         assert tool.open(str(vis), addcorr=False, addmodel=False)
-        assert tool.selectvis(baseline='A1&A2')
-        assert tool.setsolve(type='G', table=str(path.with_suffix('.solve')), refant='A1')
+        assert tool.selectvis(baseline='1&2')
+        assert tool.setsolve(type='G', table=str(path.with_suffix('.solve')), refant='1')
         before, activity = tool.returndict(), tool.activityrec()
         for parameters, expectation in stages:
             if isinstance(parameters, tuple):
@@ -43,7 +49,7 @@ def prescribe(work, engines, vis, name, stages, *, legacy=False, product=True):
         assert path.is_dir() == product, (name, engine)
         assert tool.close() and tool.specifycal() is False
     if product:
-        error = compare_tables(paths['native'], paths['casa'])
+        error = compare(paths['native'], paths['casa'])
         compare_readers(paths)
         print(name, 'parameter NRMS', error, flush=True)
     else:
@@ -51,10 +57,60 @@ def prescribe(work, engines, vis, name, stages, *, legacy=False, product=True):
     return paths
 
 
+def compare_switched_power(native, casa):
+    actual, expected = read_calibration(native), read_calibration(casa)
+    compare_columns(actual, expected)
+    return nrms(actual['FPARAM'], expected['FPARAM'])
+
+
+def derived_prescriptions(work, engines, vla_source, gaincurves):
+    ok = (True, True)
+    switched = work/'switched.ms'
+    seed(switched)
+    for index, kind in enumerate(MODES):
+        prescribe(work, engines, switched, f'switched-{index}', [(dict(caltype=kind), ok)],
+                   compare=compare_switched_power)
+    ionosphere_ms = work/'ionosphere.ms'
+    make_cal_ms(str(ionosphere_ms), channels=4, frequency='332MHz',
+                stokes='RR RL LR LL', telescope='VLA')
+    with opened(ionosphere_ms) as table:
+        epoch = table.getcol('TIME').min()
+    tec_image = work/'ionosphere.tec'
+    make_image(tec_image, epoch)
+    prescribe(work, engines, ionosphere_ms, 'ionosphere', [
+        (dict(caltype='TEC', parameter=[600.], infile=str(tec_image)), ok),
+    ], compare=lambda native, casa: compare_tec(native, casa)[0])
+    if vla_source is None:
+        return
+    vla = work/'vla.ms'
+    copy_ms(vla_source, vla)
+    for kind in ('gc', 'gceff', 'eff'):
+        prescribe(work, engines, vla, kind, [(dict(caltype=kind), ok)])
+        prescribe(work, engines, vla, f'{kind}-infile', [
+            (dict(caltype=kind, infile=str(gaincurves)), ok),
+        ])
+    prescribe(work, engines, vla, 'antposvla', [
+        (dict(caltype='antposvla', antenna='1', parameter=[.04, -.01, .02]), ok),
+    ])
+    attach_syscal(vla, work/'syscal.txt', spectrum=True)
+    for uniform in (False, True):
+        prescribe(work, engines, vla, f'tsys-uniform-{uniform}', [
+            (dict(caltype='TSYS', uniform=uniform), ok),
+        ])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
-    work = parser.parse_args().work.resolve()
+    parser.add_argument('--vla-source', type=Path, help='NGC 5921 VLA MeasurementSet')
+    parser.add_argument('--gaincurves', type=Path, help='Installed CASA VLA GainCurves table')
+    args = parser.parse_args()
+    if args.vla_source is not None and args.gaincurves is None:
+        parser.error('--vla-source requires --gaincurves')
+    if args.gaincurves is not None:
+        args.gaincurves = args.gaincurves.resolve()
+        os.environ['CASA_RS_MEASURESPATH'] = str(args.gaincurves.parents[2])
+    work = args.work.resolve()
     from casars.tools import calibrater as native_calibrater
 
     assert casatasks.version_string() == '6.7.6.14'
@@ -118,6 +174,7 @@ def main():
         ('tec-missing', {'caltype': 'TEC', 'infile': str(work/'absent')}, ERROR),
     ]:
         prescribe(work, engines, vis, name, [(dict(caltype='amp') | options, expectation)], product=False)
+    derived_prescriptions(work, engines, args.vla_source, args.gaincurves)
 
 
 if __name__ == '__main__':

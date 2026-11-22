@@ -1008,8 +1008,10 @@ fn write_prior_caltable(
             Value::Scalar(ScalarValue::Float64(tecim::height_km(&request.parameter))),
         );
     }
-    if request.caltype == GencalType::Eop {
-        // task_gencal appends directly in observation, scan and antenna order.
+    let specified_sky = crate::single_dish::is_sky_subtype(subtype);
+    if request.caltype == GencalType::Eop || specified_sky {
+        // EOP appends in observation order. Sky prescriptions retain the
+        // order of identical antenna pairs produced by the generic setter.
         writer.preserve_row_order();
     }
 
@@ -1041,9 +1043,16 @@ fn write_prior_caltable(
             ),
             RecordField::new(
                 COL_ANTENNA1,
-                Value::Scalar(ScalarValue::Int32(row.antenna_id)),
+                Value::Scalar(ScalarValue::Int32(if specified_sky {
+                    0
+                } else {
+                    row.antenna_id
+                })),
             ),
-            RecordField::new(COL_ANTENNA2, Value::Scalar(ScalarValue::Int32(-1))),
+            RecordField::new(
+                COL_ANTENNA2,
+                Value::Scalar(ScalarValue::Int32(if specified_sky { 0 } else { -1 })),
+            ),
             RecordField::new(
                 COL_INTERVAL,
                 Value::Scalar(ScalarValue::Float64(row.interval_seconds)),
@@ -1095,10 +1104,11 @@ fn write_prior_caltable(
         ])?;
     }
     if !eop {
-        write_spectral_axis(
+        write_prior_spectral_axis(
             &writer.output_path().join("SPECTRAL_WINDOW"),
             &present_windows,
             collapse_spw,
+            specified_sky,
         )?;
     }
     writer.save_main()?;
@@ -1177,6 +1187,15 @@ pub(crate) fn write_spectral_axis(
     present_windows: &BTreeSet<i32>,
     collapse: bool,
 ) -> Result<(), GencalError> {
+    write_prior_spectral_axis(path, present_windows, collapse, false)
+}
+
+fn write_prior_spectral_axis(
+    path: &Path,
+    present_windows: &BTreeSet<i32>,
+    collapse: bool,
+    first_channel: bool,
+) -> Result<(), GencalError> {
     let mut table = Table::open(TableOptions::new(path))
         .map_err(|error| GencalError::InvalidRequest(error.to_string()))?;
     for row in 0..table.row_count() {
@@ -1203,12 +1222,16 @@ pub(crate) fn write_spectral_axis(
                     "SPECTRAL_WINDOW row {row} has empty {column}"
                 )));
             }
-            let value = values.iter().sum::<f64>()
-                / if column == "CHAN_FREQ" {
-                    values.len() as f64
-                } else {
-                    1.
-                };
+            let value = if first_channel {
+                *values
+                    .iter()
+                    .next()
+                    .expect("checked for empty channel vectors")
+            } else if column == "CHAN_FREQ" {
+                values.iter().sum::<f64>() / values.len() as f64
+            } else {
+                values.iter().sum::<f64>()
+            };
             if column == "CHAN_WIDTH" {
                 table
                     .cell_accessor_mut(row, "TOTAL_BANDWIDTH")
