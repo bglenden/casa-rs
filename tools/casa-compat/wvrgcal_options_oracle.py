@@ -7,6 +7,9 @@ import inspect
 import os
 import re
 import shutil
+import signal
+import subprocess
+import sys
 from pathlib import Path
 import time
 
@@ -280,13 +283,130 @@ def metadata_controls(root, vis, native, native_wvr):
     print('WVR metadata, all-flagged inputs and sparse reversal controls passed.', flush=True)
 
 
+def recorded_failed_retrievals(root, vis, native):
+    """Keep each successful fit attached to the time segment it measured."""
+    raw = root / 'upstream-segmented.cal'
+    messages = root / 'upstream-segmented.log'
+    start = time.monotonic()
+    assert wvr().gcal(str(vis), str(raw), segsource=True, logfile=str(messages)) == 0
+    casa_seconds = time.monotonic() - start
+    actual = root / 'default-native.cal'
+    start = time.monotonic()
+    report = native.wvrgcal(str(vis), str(actual))
+    native_seconds = time.monotonic() - start
+    assert report['success'], report
+
+    retrievals, results = messages.read_text().split('Retrieved parameters', 1)
+    attempts = retrievals.split('Using random seed')[1:]
+    successful = [i for i, result in enumerate(attempts) if 'Bayesian evidence was zero' not in result]
+    assert successful == [1, 3], successful
+    numerical = results.split('dT4dL', 1)[1].strip().splitlines()[:len(successful)]
+    coefficients = np.array([list(map(float, row.split()))[-4:] for row in numerical]) * 1000
+
+    with opened(vis / 'FIELD') as fields:
+        source_for_field = fields.getcol('SOURCE_ID')
+    with opened(vis / 'DATA_DESCRIPTION') as descriptions:
+        window_for_description = descriptions.getcol('SPECTRAL_WINDOW_ID')
+    with opened(vis / 'SPECTRAL_WINDOW') as windows:
+        channel_count = windows.getcol('NUM_CHAN')
+    radiometer = np.flatnonzero(channel_count[window_for_description] == 4)
+    assert radiometer.size == 1
+    with opened(vis) as main:
+        times = main.getcol('TIME')
+        order = np.argsort(times, kind='stable')
+        sources = source_for_field[main.getcol('FIELD_ID')[order]]
+        ordered_time = times[order]
+        changes = np.flatnonzero(sources[1:] != sources[:-1]) + 1
+        boundaries = np.column_stack((ordered_time[np.r_[0, changes]],
+                                      ordered_time[np.r_[changes - 1, len(times) - 1]]))
+        assert len(boundaries) == len(attempts)
+        selected = main.query(f'DATA_DESC_ID == {radiometer[0]} AND ANTENNA1 == ANTENNA2')
+        try:
+            temperatures = selected.getcol('DATA').reshape(4, -1).T.real.astype('float64')
+            input_flags = selected.getcol('FLAG').reshape(4, -1).T.any(axis=1)
+            temperature_row = {
+                (stamp, antenna): row
+                for row, (stamp, antenna) in enumerate(
+                    zip(selected.getcol('TIME'), selected.getcol('ANTENNA1')))
+            }
+        finally:
+            selected.close()
+
+    with opened(raw / 'SPECTRAL_WINDOW') as windows:
+        frequencies = windows.getcol('CHAN_FREQ').ravel()
+    with opened(raw) as table:
+        gain = table.getcol('CPARAM')
+        flags = table.getcol('FLAG').ravel()
+        stamps = table.getcol('TIME')
+        antennas = table.getcol('ANTENNA1')
+        windows = table.getcol('SPECTRAL_WINDOW_ID')
+    use = np.flatnonzero(~flags)
+    rows = np.array([temperature_row[stamps[i], antennas[i]] for i in use])
+    assert not input_flags[rows].any()
+    noise = np.array([.10, .08, .08, .09])
+
+    def expected(segments):
+        knot_times = boundaries[segments].ravel()
+        knot_values = np.repeat(coefficients, 2, axis=0)
+        terms = np.array([np.interp(stamps[use], knot_times, values)
+                          for values in knot_values.T]).T
+        weights = (terms / noise**2) / np.sum((terms / noise)**2, axis=1)[:, None]
+        path = np.sum(temperatures[rows] * weights, axis=1)
+        gains = np.ones(flags.size, dtype=gain.dtype)
+        gains[use] = np.exp(-2j * np.pi * frequencies[windows[use]] * path / 3e8)
+        return gains.reshape(gain.shape)
+
+    # libair keeps the first N interval bounds when N fits survive, even
+    # when those fits measured later segments. Reproduce that mistake in the
+    # reference law, then use the successful segments for science validation.
+    legacy = expected(list(range(len(successful))))
+    corrected = expected(successful)
+    legacy_error = np.linalg.norm(gain - legacy) / np.linalg.norm(legacy)
+    assignment_error = np.linalg.norm(gain - corrected) / np.linalg.norm(corrected)
+    assert legacy_error < 1e-3 and assignment_error > .05, (legacy_error, assignment_error)
+    reference = root / 'default-casa.cal'
+    copy_ms(raw, reference)
+    with opened(reference, True) as table:
+        table.putcol('CPARAM', corrected)
+    error = compare_tables(reference, actual)
+    print(f'default recorded corrected gain normalized RMS {error:.6g}; upstream segment '
+          f'assignment error {assignment_error:.6g}. CASA {casa_seconds:.3f}s, '
+          f'casa-rs {native_seconds:.3f}s', flush=True)
+
+
+def recorded_empty_single_retrieval(root, vis, native):
+    """CASA dereferences an absent retrieval when the remaining sample is flagged."""
+    arguments = [str(vis), str(root / 'empty-casa.cal')]
+    program = (
+        "import resource,sys;resource.setrlimit(resource.RLIMIT_CORE,(0,0));"
+        "from casatasks import wvrgcal;"
+        "wvrgcal(sys.argv[1],sys.argv[2],segsource=False,toffset=-1.)"
+    )
+    child = subprocess.run([sys.executable, '-c', program, *arguments], cwd=root,
+                           capture_output=True, text=True, timeout=90)
+    assert child.returncode == -signal.SIGSEGV, (child.returncode, child.stderr)
+    product = root / 'empty-native.cal'
+    report = native.wvrgcal(str(vis), str(product), segsource=False, toffset=-1.)
+    assert report['rval'] == 1 and not report['success'] and not product.exists(), report
+    print('recorded empty single retrieval returns failure without publishing a table', flush=True)
+
+
 def recorded_cases(root, vis, native):
-    """Compare recorded retrievals and apply the default tables to science data."""
-    for name, args in (
-        ('default', {}),
-        ('time-offset', dict(segsource=False, toffset=-1.)),
-        ('fixed-fits', dict(segsource=False, nsol=5, rseed=27)),
-    ):
+    """Compare retrieval and application on a recorded ALMA observation."""
+    pinned = vis.name == 'uid___A002_X8ca70c_X5_shortened.ms'
+    if pinned:
+        recorded_failed_retrievals(root, vis, native)
+        cases = (
+            ('time-offset', dict(segsource=False, toffset=-1., nsol=2, refant='DA41')),
+            ('fixed-fits', dict(segsource=False, nsol=5, rseed=27, refant='DA41')),
+        )
+    else:
+        cases = (
+            ('default', {}),
+            ('time-offset', dict(segsource=False, toffset=-1.)),
+            ('fixed-fits', dict(segsource=False, nsol=5, rseed=27)),
+        )
+    for name, args in cases:
         results = []
         for name_api, api in (('casa', casatasks), ('native', native)):
             path = root / f'{name}-{name_api}.cal'
@@ -300,6 +420,8 @@ def recorded_cases(root, vis, native):
         error = compare_tables(path_casa, path_native)
         print(f'{name} recorded gain normalized RMS {error:.6g}, CASA {casa_seconds:.3f}s, '
               f'casa-rs {native_seconds:.3f}s', flush=True)
+    if pinned:
+        recorded_empty_single_retrieval(root, vis, native)
 
 
 def corrected_recorded_sample(root, vis, native):
