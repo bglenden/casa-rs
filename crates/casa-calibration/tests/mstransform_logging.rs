@@ -6,6 +6,7 @@ use casa_logging::validate_log_table;
 use casa_tables::{Table, TableOptions};
 use casa_types::ScalarValue;
 
+#[path = "../../casa-ms/tests/common/mod.rs"]
 mod common;
 
 #[test]

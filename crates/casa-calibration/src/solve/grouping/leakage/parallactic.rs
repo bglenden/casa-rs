@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::execute::ParallacticAngleState;
 
 use super::channel_samples::{ChannelSamples, ScratchSample};
+use super::cross_hand::LegacyCrossHandAveraging;
 use super::parallactic_fit::{Segment, SegmentChannel, solve, solve_sample};
 use super::{CoherencyMean, Complex32, GainSolveError, GainSolveMode, prior_error};
 
@@ -34,6 +35,7 @@ struct SegmentRows {
 pub(super) struct ParallacticAverages {
     circular: bool,
     gain_phase: bool,
+    legacy: bool,
     mode: GainSolveMode,
     segments: BTreeMap<(u64, i32, i32), SegmentRows>,
     rows: ChannelSamples<PhaseSample>,
@@ -45,10 +47,12 @@ impl ParallacticAverages {
         circular: bool,
         gain_phase: bool,
         mode: GainSolveMode,
+        legacy: bool,
     ) -> Self {
         Self {
             circular,
             gain_phase,
+            legacy,
             mode,
             segments: BTreeMap::new(),
             rows: ChannelSamples::new(channels),
@@ -62,9 +66,14 @@ impl ParallacticAverages {
         channels: &mut [CoherencyMean],
     ) -> Result<(), GainSolveError> {
         let id = self.segments.len();
+        let key_time = if self.legacy && self.gain_phase {
+            context.start
+        } else {
+            context.emission
+        };
         let segment = self
             .segments
-            .entry((context.emission.to_bits(), context.field, context.data_desc))
+            .entry((key_time.to_bits(), context.field, context.data_desc))
             .or_insert_with(|| SegmentRows {
                 id,
                 context,
@@ -72,23 +81,35 @@ impl ParallacticAverages {
                 usable: false,
             });
         let mut unflagged = vec![0; channels.len().div_ceil(64)];
+        let legacy_phase_normalization = (self.legacy && self.mode == GainSolveMode::Phase)
+            .then(|| super::cross_hand::legacy_phase_normalization(channels));
         for (channel, mean) in channels.iter_mut().enumerate() {
             let mean = std::mem::take(mean);
             if mean.unflagged != 0 {
                 unflagged[channel / 64] |= 1 << (channel % 64);
                 segment.usable = true;
             }
-            if let Some((data, model, weights)) = mean.finish(false)
+            if (!self.gain_phase || antennas[0] != antennas[1])
+                && let Some((data, model, weights)) = mean.finish(false)
                 && (weights[1] > 0.0 || weights[2] > 0.0)
             {
-                let [(xy, wx), (yx, wy)] =
-                    [1, 2].map(|corr| solve_sample(self.mode, data[corr], weights[corr]));
+                let [(xy, wx), (yx, wy)] = [1, 2].map(|corr| {
+                    let (value, weight) = solve_sample(self.mode, data[corr], weights[corr]);
+                    let weight = legacy_phase_normalization
+                        .map_or(weight, |normalization| normalization[corr] * weights[corr]);
+                    (value, weight)
+                });
                 let sample = PhaseSample {
                     segment: segment.id as u32,
                     antennas,
                     data: [xy, yx],
                     model: [model[1], model[2]],
-                    weights: [wx, wy],
+                    weights: if self.legacy && self.gain_phase {
+                        // VI1 weights both cross-hands by the sum of their weights.
+                        [0.5 * (wx + wy); 2]
+                    } else {
+                        [wx, wy]
+                    },
                 };
                 self.rows
                     .push(channel, sample)
@@ -105,6 +126,7 @@ impl ParallacticAverages {
     pub(super) fn finish(
         mut self,
         angles: &ParallacticAngleState,
+        legacy_times: Option<&LegacyCrossHandAveraging>,
     ) -> Result<(Vec<Option<Complex32>>, Complex32), GainSolveError> {
         let channels = self.rows.len();
         let mut positions = vec![None; self.segments.len()];
@@ -132,17 +154,14 @@ impl ParallacticAverages {
                 }
             }
             let context = segment.context;
+            let time = legacy_times
+                .and_then(|clock| clock.time(context))
+                .unwrap_or(context.start + 0.5 * (context.end - context.start));
             let angle = if self.circular {
                 0.0
             } else {
                 angles
-                    .feed_parallactic_angle(
-                        context.start + 0.5 * (context.end - context.start),
-                        context.field,
-                        0,
-                        0,
-                        context.spectral_window,
-                    )
+                    .feed_parallactic_angle(time, context.field, 0, 0, context.spectral_window)
                     .map_err(prior_error)? as f32
             };
             samples.push(Segment {
@@ -155,6 +174,9 @@ impl ParallacticAverages {
         } else {
             3
         };
+        if self.legacy && self.gain_phase && samples.len() < required {
+            return Ok((vec![None; channels], Complex32::ZERO));
+        }
         if samples.len() < required {
             if self.gain_phase {
                 return Err(GainSolveError::InsufficientGainPhaseSegments);
@@ -180,6 +202,15 @@ impl ParallacticAverages {
                     }
                 })
                 .map_err(GainSolveError::PolarizationScratch)?;
+        }
+        if self.legacy
+            && self.gain_phase
+            && !samples
+                .iter()
+                .flat_map(|segment| &segment.channels)
+                .any(SegmentChannel::has_weight)
+        {
+            return Ok((vec![None; channels], Complex32::ZERO));
         }
         solve(&samples, channels, self.circular, !self.gain_phase)
             .map_err(|_| GainSolveError::SingularSourcePolarization)

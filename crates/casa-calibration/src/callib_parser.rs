@@ -159,6 +159,7 @@ fn lex(contents: &str) -> Result<Vec<(usize, Token)>, (usize, String)> {
                 beginning = false;
                 let start_line = line;
                 index += 1;
+                let start = index;
                 let mut ids = Vec::new();
                 while index < chars.len() && chars[index] != ']' {
                     if chars[index].is_ascii_digit() {
@@ -181,7 +182,9 @@ fn lex(contents: &str) -> Result<Vec<(usize, Token)>, (usize, String)> {
                         index += 1;
                     }
                 }
-                if index == chars.len() || ids.is_empty() {
+                if index == chars.len()
+                    || (ids.is_empty() && chars[start..index].iter().any(|ch| !ch.is_whitespace()))
+                {
                     return Err((start_line, "empty or unterminated mapping array".into()));
                 }
                 index += 1;

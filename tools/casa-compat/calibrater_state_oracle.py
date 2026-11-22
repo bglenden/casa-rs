@@ -91,6 +91,8 @@ def collect(factory, capture, vis, leakage, gain, output, legacy):
             ('scientific-snr', 'G', 'inf', {'minsnr': 1.2345678e7}),
             ('leakage', 'Df', 'inf', {'append': True, 'apmode': 'unknown'}),
             ('cross-hand', 'Xf', '10s,2MHz', {'refant': 'A3'}),
+            ('scalar-xy', 'XY+QU', 'inf', {'refant': 'A3,A0', 'preavg': 300.}),
+            ('channelized-xy', 'XYf+QU', '10s,2ch', {'refant': 'A3,A0', 'preavg': 300.}),
         )
         for label, kind, interval, kwargs in options:
             assert tool.setsolve(kind, interval, str(output), **kwargs)

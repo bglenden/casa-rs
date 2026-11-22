@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::solve::kernel::complex32_to_64;
 
-use super::{BaselineSegment, CoherencyMean, SelectedSolveRow, SolveSamples};
+use super::{BaselineSegment, CoherencyMean, SelectedSolveRow, SolveSamples, WeightedTime};
 
 /// VisBuffGroupAcc uses one time origin per field/window and gives X Jones
 /// the first nonempty accumulated buffer for its phase fit.
@@ -15,6 +15,7 @@ use super::{BaselineSegment, CoherencyMean, SelectedSolveRow, SolveSamples};
 pub(super) struct LegacyCrossHandAveraging {
     starts: BTreeMap<(i32, i32), f64>,
     output: Option<(i32, i32)>,
+    times: BTreeMap<(i32, i32, u64), WeightedTime>,
 }
 
 impl LegacyCrossHandAveraging {
@@ -30,9 +31,9 @@ impl LegacyCrossHandAveraging {
         *start
     }
 
-    pub(super) fn observe(&mut self, segment: BaselineSegment) {
-        self.output
-            .get_or_insert((segment.field, segment.spectral_window));
+    pub(super) fn observe(&mut self, segment: BaselineSegment) -> bool {
+        let group = (segment.field, segment.spectral_window);
+        *self.output.get_or_insert(group) == group
     }
 
     pub(super) fn fits(&self, segment: BaselineSegment) -> bool {
@@ -42,6 +43,46 @@ impl LegacyCrossHandAveraging {
     pub(super) fn field(&self) -> Option<i32> {
         self.output.map(|(field, _)| field)
     }
+
+    pub(super) fn observe_time(&mut self, segment: BaselineSegment, time: f64, weight: f64) {
+        self.times
+            .entry(legacy_time_key(segment))
+            .or_default()
+            .observe(time, weight);
+    }
+
+    pub(super) fn time(&self, segment: BaselineSegment) -> Option<f64> {
+        self.times
+            .get(&legacy_time_key(segment))
+            .copied()
+            .and_then(WeightedTime::mean)
+    }
+}
+
+fn legacy_time_key(segment: BaselineSegment) -> (i32, i32, u64) {
+    (
+        segment.field,
+        segment.spectral_window,
+        segment.start.to_bits(),
+    )
+}
+
+pub(super) fn legacy_bin_counts(
+    flags: &ArrayD<bool>,
+    order: [usize; 4],
+    channels: &[usize],
+    width: usize,
+) -> Vec<usize> {
+    channels
+        .chunks(width)
+        .map(|bin| {
+            bin.iter()
+                .filter(|&&channel| {
+                    channel < flags.shape()[1] && order.iter().all(|&corr| !flags[[corr, channel]])
+                })
+                .count()
+        })
+        .collect()
 }
 
 /// VI1 normalizes each correlation's scalar weight by the square of its

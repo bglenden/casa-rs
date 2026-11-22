@@ -11,6 +11,8 @@
 //! any other value, naming #979.
 
 mod common;
+#[path = "../../casa-ms/tests/common/mod.rs"]
+mod ms_common;
 
 use std::io::Write;
 use std::path::Path;
@@ -23,7 +25,16 @@ use tempfile::TempDir;
 
 /// `calibrate SURFACE --json-run -` with `values`, in `workspace`.
 fn json_run(workspace: &Path, surface: &str, values: Value) -> (Output, Option<TaskReply>) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_calibrate"))
+    json_run_binary(env!("CARGO_BIN_EXE_calibrate"), workspace, surface, values)
+}
+
+fn json_run_binary(
+    binary: &str,
+    workspace: &Path,
+    surface: &str,
+    values: Value,
+) -> (Output, Option<TaskReply>) {
+    let mut child = Command::new(binary)
         .args([surface, "--json-run", "-"])
         .current_dir(workspace)
         .env_remove("CASA_RS_STATE_DIR")
@@ -779,4 +790,86 @@ fn gaincal_and_bandpass_use_the_unit_model_for_an_empty_virtual_record() {
             assert!(dir.path().join(caltable).is_dir());
         }
     }
+}
+
+const MSTRANSFORM: &str = env!("CARGO_BIN_EXE_mstransform");
+
+#[test]
+fn split_and_mstransform_return_none() {
+    let workspace = tempfile::tempdir().unwrap();
+    let vis = ms_common::create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
+    // The fixture has no CORRECTED_DATA, CASA's default column.
+    for (surface, extra) in [
+        ("split", json!({"width": 2})),
+        ("mstransform", json!({"chanaverage": true, "chanbin": 2})),
+    ] {
+        let outputvis = workspace.path().join(format!("{surface}.ms"));
+        let mut values = json!({"vis": vis, "outputvis": outputvis, "datacolumn": "data"});
+        values
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let (_, reply) = json_run_binary(MSTRANSFORM, workspace.path(), surface, values);
+        let Some(TaskReply::Succeeded { value, .. }) = reply else {
+            panic!("{surface} returned {reply:?}");
+        };
+        assert_eq!(describe(&value), casa(surface), "{surface}");
+        assert!(outputvis.exists(), "{surface}");
+    }
+}
+
+#[test]
+fn transform_values_not_implemented_yet_are_refused_naming_978() {
+    let workspace = tempfile::tempdir().unwrap();
+    let vis = ms_common::create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
+    let outputvis = workspace.path().join("out.ms");
+    // Regridding now runs through the native provider. Exercise the refusal
+    // with the task's still-unimplemented continuum subtraction operation.
+    for (binary, surface, values, parameter) in [(
+        MSTRANSFORM,
+        "mstransform",
+        json!({"outputvis": outputvis, "datacolumn": "data", "douvcontsub": true}),
+        "douvcontsub",
+    )] {
+        let mut values = values;
+        values["vis"] = json!(vis);
+        let Some(TaskReply::Failed {
+            message,
+            parameter: named,
+            ..
+        }) = json_run_binary(binary, workspace.path(), surface, values).1
+        else {
+            panic!("{surface} {parameter}: not refused");
+        };
+        assert_eq!(named.as_deref(), Some(parameter), "{message}");
+        assert!(message.contains("#978"), "{message}");
+    }
+    // CASA's mstransform refuses to average by one channel, as casa-rs now
+    // does, rather than copy the data unaveraged (Astra's #997 F8).
+    let values = json!({"vis": vis, "outputvis": outputvis, "datacolumn": "data",
+                        "chanaverage": true});
+    let Some(TaskReply::Failed {
+        message, parameter, ..
+    }) = json_run_binary(MSTRANSFORM, workspace.path(), "mstransform", values).1
+    else {
+        panic!("chanaverage with chanbin=1 was not refused");
+    };
+    assert_eq!(parameter.as_deref(), Some("chanbin"), "{message}");
+    assert!(message.contains("must be > 1"), "{message}");
+    assert!(!outputvis.exists());
+}
+
+#[test]
+fn ignored_transform_sub_parameters_do_not_refuse() {
+    let workspace = tempfile::tempdir().unwrap();
+    let vis = ms_common::create_msexplore_fixture_ms_with_flags(workspace.path(), &[]);
+    let outputvis = workspace.path().join("out.ms");
+    let values = json!({"vis": vis, "outputvis": outputvis, "datacolumn": "data",
+                        "nchan": 3, "outframe": "LSRK", "timebin": "10s", "fitorder": 2});
+    let (_, reply) = json_run_binary(MSTRANSFORM, workspace.path(), "mstransform", values);
+    assert!(
+        matches!(reply, Some(TaskReply::Succeeded { .. })),
+        "{reply:?}"
+    );
+    assert!(outputvis.exists());
 }

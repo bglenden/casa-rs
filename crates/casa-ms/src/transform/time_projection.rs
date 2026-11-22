@@ -17,8 +17,8 @@ use super::time_average::{
 };
 use super::visibility_columns::VisibilityColumns;
 use super::{
-    MsTransformError, STANDARD_SPECTRA, missing_column_error, scalar_f64, select_channels,
-    transform_flag_category_channels,
+    MsTransformError, PreparedTransformInputView, STANDARD_SPECTRA, missing_column_error,
+    scalar_f64, select_channels, transform_flag_category_channels,
 };
 use crate::schema::main_table::OptionalMainColumn;
 
@@ -33,6 +33,7 @@ pub(super) struct TimeProjection<'a> {
     visibility: &'a VisibilityColumns,
     available: BTreeMap<(usize, &'static str), bool>,
     rows_per_block: usize,
+    view: Option<&'a dyn PreparedTransformInputView>,
 }
 
 pub(super) struct TimeGroupRead<'a> {
@@ -62,6 +63,7 @@ impl<'a> TimeProjection<'a> {
         spectra: &'a [&'static str],
         visibility: &'a VisibilityColumns,
         rows_per_block: usize,
+        view: Option<&'a dyn PreparedTransformInputView>,
     ) -> Self {
         Self {
             table,
@@ -70,6 +72,7 @@ impl<'a> TimeProjection<'a> {
             visibility,
             available: BTreeMap::new(),
             rows_per_block,
+            view,
         }
     }
 
@@ -101,8 +104,9 @@ impl<'a> TimeProjection<'a> {
                 .iter()
                 .map(|(_, row)| row.physical)
                 .collect::<Vec<_>>();
-            let mut raw = MainArrayBlock::read(self.table, &rows, self.visibility, self.spectra)
-                .map_err(|source| self.table_error(source))?;
+            let mut raw =
+                MainArrayBlock::read(self.table, &rows, self.visibility, self.spectra, self.view)
+                    .map_err(|source| self.table_error(source))?;
             self.cache_spectrum_availability(&block, &raw)?;
             let scalars = TIME_INPUT_SCALARS.map(|name| {
                 self.table

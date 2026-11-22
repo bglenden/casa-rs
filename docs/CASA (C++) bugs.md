@@ -7376,6 +7376,15 @@ write an arbitrary unflagged phase and use it in both channel ambiguity
 tracking and the source fit. Casa-rs flags that channel and estimates the
 source polarization and phase continuity from the constrained channels.
 
+In the direct VI1 calibrater, default preaveraging can leave a single
+measurement for the XY phase fit. CASA writes unflagged phases from the
+underconstrained line fit, with zero Q and U. Casa-rs retains the table and
+flags its unconstrained channels. In the VI2 amplitude-only circular-feed
+case with constant cross-hand magnitudes, CASA's fitted phase depends on
+roundoff in the complex division used to remove the input phase. Casa-rs
+reports a neutral phase. The amplitude-only comparison with varying
+magnitudes agrees with CASA. [Direct tool oracle](../tools/casa-compat/calibrater_xy_tool_oracle.py)
+
 With broad angle coverage and a real polarized input, the shallow or steep
 line fit can also receive an exactly constant imaginary or real component.
 CASA's `Xfparang+QU` returns a phase 90 degrees away from the planted one

@@ -61,5 +61,9 @@ path = "src/bin/calibrate.rs"
 name = "flagdata"
 path = "src/bin/flagdata.rs"
 
+[[bin]]
+name = "mstransform"
+path = "src/bin/mstransform.rs"
+
 [lints]
 workspace = true

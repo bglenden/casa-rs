@@ -115,7 +115,7 @@
       "id": "mstransform",
       "launch": {
         "executable": "mstransform",
-        "cargo_package": "casa-ms",
+        "cargo_package": "casa-calibration",
         "override_env": "CASARS_MSTRANSFORM_BIN"
       },
       "dataset_kinds": [
@@ -127,7 +127,7 @@
       "id": "split",
       "launch": {
         "executable": "mstransform",
-        "cargo_package": "casa-ms",
+        "cargo_package": "casa-calibration",
         "override_env": "CASARS_MSTRANSFORM_BIN"
       },
       "dataset_kinds": [

@@ -237,7 +237,8 @@ impl<'a> SolveState<'a> {
                 interval: request.interval,
                 frequency_dependent: request.kind.channelized(),
                 append: request.append,
-                reference: (!request.kind.cross_hand()).then_some(&request.refant),
+                reference: (!request.kind.cross_hand() || request.kind.gain_phase())
+                    .then_some(&request.refant),
                 min_snr: request.min_snr,
                 normalization: request.normalization,
             },

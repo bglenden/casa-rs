@@ -9,7 +9,7 @@ use casa_types::ArrayValue;
 use crate::schema::main_table::OptionalMainColumn;
 
 use super::channel_average::{sigma_from_weight, weight_from_sigma};
-use super::{MsTransformError, TransformDataColumn};
+use super::{MsTransformError, TransformDataColumn, TransformInputView};
 
 #[derive(Clone, Copy)]
 pub(super) struct VisibilityCopy {
@@ -34,6 +34,7 @@ impl VisibilityColumns {
         table: &Table,
         selection: TransformDataColumn,
         path: &Path,
+        view: Option<&dyn TransformInputView>,
     ) -> Result<Self, MsTransformError> {
         use OptionalMainColumn::{CorrectedData, Data, FloatData, LagData, ModelData};
 
@@ -51,9 +52,10 @@ impl VisibilityColumns {
             }
         };
         let contains = |column: OptionalMainColumn| {
-            table
-                .schema()
-                .is_some_and(|schema| schema.contains_column(column.name()))
+            view.is_some_and(|view| view.provides(table, column.name()))
+                || table
+                    .schema()
+                    .is_some_and(|schema| schema.contains_column(column.name()))
         };
         let missing = |column: OptionalMainColumn| MsTransformError::MissingDataColumn {
             path: path.display().to_string(),

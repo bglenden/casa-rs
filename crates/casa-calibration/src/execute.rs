@@ -83,9 +83,11 @@ mod solve_priors;
 mod switched_power;
 mod tool_activity;
 mod tool_corrupt;
+mod transform;
 use tool_activity::ToolApplyActivity;
 pub(crate) use tool_activity::{ApplyTermCounts, LibraryApplyRegistration};
 pub(crate) use tool_corrupt::{ModelCorruption, execute_tool_corrupt};
+pub(crate) use transform::PreparedReadOnlyApply;
 pub(crate) mod tsys_weights;
 mod weights;
 use chain::{ApplyChain, ApplyStep};
@@ -772,6 +774,7 @@ fn for_each_apply_row(
                 preserved_weight_spectrum: None,
                 channel_grid: None,
                 forward_model,
+                skip_unavailable_terms: false,
                 trial: false,
                 parang_calwt: false,
             },
@@ -1728,6 +1731,7 @@ struct ExecutionRowInputs<'a> {
     preserved_weight_spectrum: Option<&'a ArrayValue>,
     channel_grid: Option<DataChannelGrid<'a>>,
     forward_model: bool,
+    skip_unavailable_terms: bool,
     trial: bool,
     parang_calwt: bool,
 }
@@ -2200,6 +2204,7 @@ fn apply_row_all_channels(
         has_weight_spectrum,
         channel_grid,
         forward_model,
+        skip_unavailable_terms,
         trial,
         parang_calwt,
         ..
@@ -2376,7 +2381,8 @@ fn apply_row_all_channels(
         let table_plan = &plan.calibration_tables[table_index];
         let loaded_table = &chain.tables[table_index];
         if !table_plan.applies_to(row)
-            || (forward_model && !availability::table_available(row, table_plan))
+            || ((forward_model || skip_unavailable_terms)
+                && !availability::table_available(row, table_plan))
         {
             continue;
         }
@@ -3644,6 +3650,7 @@ fn apply_row_prefetched(
             preserved_weight_spectrum: inputs.preserved_weight_spectrum.as_ref(),
             channel_grid: None,
             forward_model: false,
+            skip_unavailable_terms: false,
             trial: inputs.trial,
             parang_calwt: inputs.parang_calwt,
         },
