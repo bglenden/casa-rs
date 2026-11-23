@@ -521,9 +521,8 @@ fn calc_output_to_casavalue(out: CalcOutput) -> CasaValue {
     {
         return CasaValue::record(out.values.iter().enumerate().map(|(i, v)| {
             let val = match v {
-                ExprValue::Array(arr) | ExprValue::MaskedArray(arr, _) => {
-                    array_expr_to_casavalue(arr)
-                }
+                ExprValue::Array(arr) => array_expr_to_casavalue(arr),
+                ExprValue::MaskedArray(arr, _) => array_expr_to_casavalue(arr),
                 scalar => scalars_to_casavalue(std::slice::from_ref(scalar), vec![1]),
             };
             (i.to_string(), val)
