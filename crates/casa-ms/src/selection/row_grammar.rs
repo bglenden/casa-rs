@@ -228,12 +228,13 @@ pub(super) fn with_time(
     selection: CompiledMsSelection,
     text: &str,
     rows_per_block: Option<usize>,
+    agent_time: bool,
 ) -> MsResult<CompiledMsSelection> {
     if text.is_empty() {
         return Ok(selection);
     }
     let table = ms.main_table();
-    let first = if selection.where_clauses().is_empty() {
+    let first = if agent_time || selection.where_clauses().is_empty() {
         let mut first = 0;
         if has_column(table, "FLAG_ROW") {
             for row in 0..table.row_count() {
@@ -257,13 +258,18 @@ pub(super) fn with_time(
             },
         })
     };
-    let time = resolve_time_selector(
+    let mut time = resolve_time_selector(
         text,
         TimeSelectorDefaults {
             first_term: defaults(first)?,
             later_terms: defaults(0)?,
         },
     )?;
+    // A multi-command flagdata agent parses its time expression against the
+    // whole input MS, then uses only the closed endpoints of getTimeList().
+    if agent_time {
+        time.use_agent_intervals();
+    }
     let terms = time.terms().iter().map(|term| match term.condition {
         TimeCondition::Near { time_s, tolerance_s } =>
             format!("ABS(TIME - {time_s}) <= {tolerance_s}"),

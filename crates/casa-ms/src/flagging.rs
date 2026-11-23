@@ -785,17 +785,19 @@ fn report_after(
     changes: ChangeSet,
     backup_version: Option<String>,
     thresholds: Option<(f64, f64)>,
+    time_selection: FlagTimeSelection,
 ) -> Result<FlagDataReport, FlaggingError> {
     let summary = match changes.summary {
         Some(summary) => summary,
         None if request.casa_row_selection
-            && request.selection.timerange.is_none()
-            && request.selection.msselect.is_none() =>
+            && (time_selection != FlagTimeSelection::Global
+                || (request.selection.timerange.is_none()
+                    && request.selection.msselect.is_none())) =>
         {
             summarize_flags(ms, rows)?
         }
         None => {
-            let summary_rows = selected_rows(ms, request)?;
+            let summary_rows = selected_rows(ms, request, time_selection)?;
             summarize_flags(ms, &summary_rows.rows)?
         }
     };
@@ -846,34 +848,59 @@ fn flagging_channels(
     Ok(Some(ranges))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FlagTimeSelection {
+    Global,
+    GlobalAndAgent,
+    Agent,
+}
+
 fn selected_rows(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
+    time_selection: FlagTimeSelection,
 ) -> Result<SelectedFlagRows, FlaggingError> {
     let selection_error = |source| FlaggingError::MutateFlags {
         path: display_ms_path(ms),
         reason: format!("select rows: {source}"),
     };
-    let (rows, channel_ranges) = if request.casa_row_selection {
-        let resolved = resolve_flagdata_selection_with_system_budget(ms, &request.selection)
-            .map_err(selection_error)?;
+    let (rows, channel_ranges, global_empty) = if request.casa_row_selection {
+        let (resolved, time) = resolve_flagdata_selection_with_system_budget(
+            ms,
+            &request.selection,
+            time_selection == FlagTimeSelection::Agent,
+        )
+        .map_err(selection_error)?;
+        let global_empty = resolved.selected_rows.is_empty();
+        // A one-command list first makes the global selection, then the
+        // agent applies the closed endpoints to its rows.
+        let agent_time = time.filter(|_| time_selection == FlagTimeSelection::GlobalAndAgent);
         (
-            resolved.row_indices().collect::<Vec<_>>(),
+            resolved
+                .selected_rows
+                .into_iter()
+                .filter(|row| {
+                    agent_time
+                        .as_ref()
+                        .is_none_or(|time| time.holds_agent_time(row.time_mjd_seconds))
+                })
+                .map(|row| row.row_index)
+                .collect(),
             resolved.channel_selections,
+            global_empty,
         )
     } else {
-        (
-            resolve_row_indices_with_system_budget(ms, &request.selection)
-                .map_err(selection_error)?,
-            BTreeMap::new(),
-        )
+        let rows = resolve_row_indices_with_system_budget(ms, &request.selection)
+            .map_err(selection_error)?;
+        let global_empty = rows.is_empty();
+        (rows, BTreeMap::new(), global_empty)
     };
     let field = request
         .selection
         .field
         .as_deref()
         .filter(|text| !text.trim().is_empty());
-    let explicit_spw_filter = rows.is_empty()
+    let explicit_spw_filter = global_empty
         && request.casa_row_selection
         && request
             .selection
@@ -902,7 +929,7 @@ fn selected_rows(
             .into_iter()
             .flatten()
             .any(|text| !text.is_empty() && !text.starts_with('\0')));
-    if rows.is_empty() && request.selection.selectdata && explicit_row_filter {
+    if global_empty && request.selection.selectdata && explicit_row_filter {
         // An empty result can mean no matching FIELD metadata or simply no
         // selected MAIN rows. Keep separate diagnostics for the two cases.
         if let Some(field) = field {

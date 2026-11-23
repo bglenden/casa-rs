@@ -584,11 +584,61 @@ def check_skips_and_refusals(libraries):
     return len(skip_to_summary) + 5 + len(errors) + 1
 
 
+def check_agent_time_intervals(libraries):
+    make_list_fixture("agent-time.ms")
+    with table("agent-time.ms", ack=False, readonly=False) as main:
+        original = main.getcol("TIME")
+        unique, integrations = np.unique(original, return_inverse=True)
+        point = np.floor(unique[0] / 86400) * 86400
+        next_point = point + 43200
+        # Midnight and noon are exactly representable both in MJD days and
+        # seconds. Shift the midnight integration by one representable step.
+        times = np.where(integrations < 2, point - 10, next_point + 10 * (integrations - 2))
+        times[integrations == 1] = np.nextafter(point, -np.inf)
+        main.putcol("TIME", times)
+
+    def stamp(value):
+        return (datetime(1858, 11, 17) + timedelta(seconds=float(value))).strftime(
+            "%Y/%m/%d/%H:%M:%S.%f"
+        )[:-3]
+
+    shifted = times == np.nextafter(point, -np.inf)
+    empty = np.zeros_like(times, dtype=bool)
+    lower = point + (next_point - point) / 2
+    cases = (
+        ("global-point", stamp(point), None, shifted),
+        ("one-agent-point", stamp(point), False, empty),
+        ("two-agent-point", stamp(point), True, empty),
+        ("two-agent-range", f"0.0[{stamp(lower)}~{stamp(next_point)}]", True,
+         times == next_point),
+    )
+    for label, timerange, multi, expected in cases:
+        for name, task in libraries:
+            vis = f"{label}-{name}.ms"
+            copytree("agent-time.ms", vis)
+            if multi is None:
+                options = dict(mode="manual", timerange=timerange)
+            else:
+                commands = [f"mode='manual' timerange='{timerange}'"]
+                if multi:
+                    commands.append("mode='summary'")
+                options = dict(mode="list", inpfile=commands)
+            task(vis=vis, flagbackup=False, **options)
+            flagged, row_flags = flags(vis)
+            np.testing.assert_array_equal(
+                flagged, np.broadcast_to(expected[:, None, None], flagged.shape),
+                err_msg=f"{label} {name} FLAG",
+            )
+            np.testing.assert_array_equal(row_flags, expected, err_msg=f"{label} {name} FLAG_ROW")
+    return len(cases)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     libraries = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
     with TemporaryDirectory(prefix="flagdata-list-ms-") as root, chdir(root):
         c1 = check_inputs_and_selectors(libraries)
+        c1 += check_agent_time_intervals(libraries)
         c2 = check_sequential_all_modes(libraries)
         c3 = check_savepars_history_backup_display_cli(libraries)
         c4 = check_skips_and_refusals(libraries)

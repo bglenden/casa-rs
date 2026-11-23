@@ -11,9 +11,9 @@ use crate::selection::syntax::ChannelSelection;
 
 use super::{
     ChangeSet, CorrelationSelection, FlagDataAction, FlagDataMode, FlagDataModelFactory,
-    FlagDataReport, FlagDataRequest, FlaggingError, SelectedFlagRowPolicy, antint,
-    apply_clip_flags, apply_quack_flags, apply_rflag_flags, apply_tfcrop_flags, display_ms_path,
-    elevation, extend, flagging_channels, is_calibration_table, load_i32_cells,
+    FlagDataReport, FlagDataRequest, FlagTimeSelection, FlaggingError, SelectedFlagRowPolicy,
+    antint, apply_clip_flags, apply_quack_flags, apply_rflag_flags, apply_tfcrop_flags,
+    display_ms_path, elevation, extend, flagging_channels, is_calibration_table, load_i32_cells,
     persist_changed_flags, report_after, save_next_casa_flag_backup, save_next_flag_backup,
     selected_flag_row_policy, selected_rows, set_selected_flags, shadow, summary,
 };
@@ -97,7 +97,8 @@ pub(super) fn run_ms_single(
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
         .transpose()?;
-    let selection = selected_rows(ms, request)?;
+    let time_selection = FlagTimeSelection::Global;
+    let selection = selected_rows(ms, request, time_selection)?;
     let selected = selection.rows;
     if selected.is_empty() {
         tracing::warn!(path = %ms_path, mode = ?request.mode, "flagdata selected no rows");
@@ -132,7 +133,15 @@ pub(super) fn run_ms_single(
         persist_changed_flags(ms, &changes, &ms_path)?;
     }
     let thresholds = changes.thresholds;
-    let report = report_after(ms, request, &selected, changes, backup_version, thresholds)?;
+    let report = report_after(
+        ms,
+        request,
+        &selected,
+        changes,
+        backup_version,
+        thresholds,
+        time_selection,
+    )?;
     tracing::info!(
         path = %ms_path,
         mode = ?report.mode,
@@ -244,7 +253,7 @@ fn select_agent(
     request: &FlagDataRequest,
     local_selection: bool,
 ) -> Result<Option<AgentSelection>, FlaggingError> {
-    let selection = match selected_rows(ms, request) {
+    let selection = match selected_rows(ms, request, agent_time_selection(local_selection)) {
         Ok(selection) => selection,
         Err(_) if local_selection => return Ok(None),
         Err(error) => return Err(error),
@@ -263,6 +272,14 @@ fn select_agent(
         channels,
         correlations,
     }))
+}
+
+fn agent_time_selection(local_selection: bool) -> FlagTimeSelection {
+    if local_selection {
+        FlagTimeSelection::Agent
+    } else {
+        FlagTimeSelection::GlobalAndAgent
+    }
 }
 
 fn stage_ms_program_request(
@@ -325,7 +342,15 @@ fn stage_ms_program_request(
     let changed_rows = std::mem::take(&mut changes.changed_row_indices);
     let changed_flag_rows = changes.changed_flag_row_rows;
     let thresholds = changes.thresholds;
-    let report = report_after(ms, request, &selection.rows, changes, None, thresholds)?;
+    let report = report_after(
+        ms,
+        request,
+        &selection.rows,
+        changes,
+        None,
+        thresholds,
+        agent_time_selection(local_selection),
+    )?;
     Ok(Some((report, changed_rows, changed_flag_rows)))
 }
 

@@ -61,7 +61,7 @@ pub(crate) enum RowGrammar {
     Standard,
     Casa,
     Transform,
-    FlagData,
+    FlagData { agent_time: bool },
 }
 
 /// Builder for MS row selection criteria.
@@ -695,8 +695,9 @@ pub(crate) fn resolve_casa_row_indices(
 pub(crate) fn resolve_flagdata_selection_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,
-) -> MsResult<ResolvedMsSelection> {
-    resolve_selection_with_grammar(ms, request, RowGrammar::FlagData)
+    agent_time: bool,
+) -> MsResult<(ResolvedMsSelection, Option<TimeSelection>)> {
+    resolve_selection_with_grammar(ms, request, RowGrammar::FlagData { agent_time })
 }
 
 fn resolve_row_indices_with_grammar(
@@ -705,14 +706,14 @@ fn resolve_row_indices_with_grammar(
     grammar: RowGrammar,
 ) -> MsResult<Vec<usize>> {
     resolve_selection_with_grammar(ms, request, grammar)
-        .map(|resolved| resolved.row_indices().collect())
+        .map(|(resolved, _)| resolved.row_indices().collect())
 }
 
 fn resolve_selection_with_grammar(
     ms: &MeasurementSet,
     request: &MsSelection,
     grammar: RowGrammar,
-) -> MsResult<ResolvedMsSelection> {
+) -> MsResult<(ResolvedMsSelection, Option<TimeSelection>)> {
     let budget = MsSelectionIoBudget::from_system_memory(
         2,
         std::mem::size_of::<ResolvedMsSelectionRow>(),
@@ -720,7 +721,6 @@ fn resolve_selection_with_grammar(
     )
     .map_err(|error| MsError::InvalidInput(error.to_string()))?;
     ms.resolve_rows(request, budget, grammar)
-        .map(|(resolved, _)| resolved)
         .map_err(|error| match error {
             MsSelectionError::Domain(error) => error,
             other => MsError::InvalidInput(other.to_string()),

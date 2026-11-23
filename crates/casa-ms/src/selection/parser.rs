@@ -22,7 +22,7 @@ pub(crate) fn selection_from_options(
     use super::RowGrammar;
 
     let full_row_grammar = matches!(grammar, RowGrammar::Casa | RowGrammar::Transform);
-    let flagdata = grammar == RowGrammar::FlagData;
+    let flagdata = matches!(grammar, RowGrammar::FlagData { .. });
     let casa_time_grammar = full_row_grammar || flagdata;
     let mut selection = CompiledMsSelection::new();
 
@@ -87,7 +87,9 @@ pub(crate) fn selection_from_options(
         } else {
             timerange
         };
-        selection = super::row_grammar::with_time(ms, selection, timerange, rows_per_block)?;
+        let agent_time = grammar == RowGrammar::FlagData { agent_time: true };
+        selection =
+            super::row_grammar::with_time(ms, selection, timerange, rows_per_block, agent_time)?;
     }
 
     Ok(selection)
