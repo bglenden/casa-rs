@@ -312,17 +312,16 @@ impl ProfileProducts {
         let writes_solution = fit.products.iter().zip(staged).any(|(product, path)| {
             path.is_some() && matches!(product.kind, Kind::Line { .. } | Kind::Coefficient { .. })
         });
-        let solution_coordinates =
-            if converged && fit.options.multifit && shape[axis] > 1 && writes_solution {
-                collapsed_coordinate_record(
-                    &fit.selection.plan.coordinates,
-                    &shape,
-                    self.coordinates,
-                    &[axis],
-                )?
-            } else {
-                self.coordinates
-            };
+        let solution_coordinates = if converged && fit.options.multifit && writes_solution {
+            collapsed_coordinate_record(
+                &fit.selection.plan.coordinates,
+                &shape,
+                self.coordinates,
+                &[axis],
+            )?
+        } else {
+            self.coordinates
+        };
         shape[axis] = 1;
         for (product, path) in fit.products.iter().zip(staged) {
             let Some(path) = path else { continue };
