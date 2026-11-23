@@ -667,7 +667,8 @@ def check_averaged_agent_time(libraries):
     midpoint = first + (second - first) / 2
     assert not np.any(np.abs(times - midpoint) <= 1)
     timerange = f"{stamp(midpoint - 1)}~{stamp(midpoint + 1)}"
-    expected = np.broadcast_to(np.isin(times, [first, second])[:, None, None], data.shape)
+    expected_rows = np.isin(times, [first, second])
+    expected = np.broadcast_to(expected_rows[:, None, None], data.shape)
     assert np.count_nonzero(expected) == 1280
     for name, task in libraries:
         vis = f"averaged-agent-time-{name}.ms"
@@ -682,8 +683,9 @@ def check_averaged_agent_time(libraries):
         ) == {}
         samples, rows = flags(vis)
         np.testing.assert_array_equal(samples, expected, err_msg=f"{name} averaged FLAG")
-        np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{name} averaged FLAG_ROW")
+        np.testing.assert_array_equal(rows, expected_rows, err_msg=f"{name} averaged FLAG_ROW")
     return 1
+
 
 def check_agent_time_defaults(libraries):
     make_list_fixture("agent-default-date.ms")
