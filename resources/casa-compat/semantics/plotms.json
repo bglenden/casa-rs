@@ -1344,9 +1344,9 @@
       "kind": "Same-input ordinary MeasurementSet visibility plots",
       "state": "passed",
       "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on one MeasurementSet using default observed visibility columns, a named baseline, selected channels and correlation, and mixed flags.",
-      "result": "Amplitude/phase, amplitude/channel and amplitude/time matched across three text exports with 36 coordinate pairs and exact source metadata. Three 500 by 360 pixel PNGs matched the artist data and axis labels. Artist times matched CASA text to its 1 ms precision.",
+      "result": "Amplitude/phase, amplitude/channel and amplitude/time matched across three text exports with 36 coordinate pairs and exact source metadata. Three 500 by 360 pixel PNGs matched the artist data and axis labels. Exported and rendered times matched CASA text to its 1 ms precision.",
       "casa_version": "6.7.6.14",
-      "revision": "361ec76dda9819289c5dc640615f15edac68240d",
+      "revision": "f4cafb891082b56ab3fbd31d7387328a505a8894",
       "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
       "receipt": "resources/casa-compat/evidence/plotms-ms-ordinary-visibility-20261123.json",
       "links": [

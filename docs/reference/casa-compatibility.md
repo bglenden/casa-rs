@@ -2257,10 +2257,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-ordinary-visibility"></a>
 ##### ms-ordinary-visibility
 
-**Same-input ordinary MeasurementSet visibility plots — passed.** Amplitude/phase, amplitude/channel and amplitude/time matched across three text exports with 36 coordinate pairs and exact source metadata. Three 500 by 360 pixel PNGs matched the artist data and axis labels. Artist times matched CASA text to its 1 ms precision. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on one MeasurementSet using default observed visibility columns, a named baseline, selected channels and correlation, and mixed flags.
+**Same-input ordinary MeasurementSet visibility plots — passed.** Amplitude/phase, amplitude/channel and amplitude/time matched across three text exports with 36 coordinate pairs and exact source metadata. Three 500 by 360 pixel PNGs matched the artist data and axis labels. Exported and rendered times matched CASA text to its 1 ms precision. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on one MeasurementSet using default observed visibility columns, a named baseline, selected channels and correlation, and mixed flags.
 
 - [https://github.com/bglenden/casa-rs/pull/2137](https://github.com/bglenden/casa-rs/pull/2137)
-- Revision: `361ec76dda9819289c5dc640615f15edac68240d`; CASA: `6.7.6.14`.
+- Revision: `f4cafb891082b56ab3fbd31d7387328a505a8894`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-ordinary-visibility-20261123.json`.
 
