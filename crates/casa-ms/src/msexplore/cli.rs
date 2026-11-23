@@ -1265,12 +1265,12 @@ fn options_from_plotms(
             .map(|value| number::<usize>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&width| !residual_plot || width != 0),
+            .filter(|&width| !derived_column_plot || width != 0),
         avgtime: average_text("avgtime")?
             .map(|value| number::<f64>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&interval| !residual_plot || interval != 0.0),
+            .filter(|&interval| !derived_column_plot || interval != 0.0),
         avgscan: average("avgscan")?,
         avgfield: average("avgfield")?,
         avgbaseline: average("avgbaseline")?,
