@@ -10662,3 +10662,19 @@ When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 i
 ## A calibrater gain matrix can keep its correction direction during corruption
 
 In CASA 6.7.6.14, a VI2 session that calls `correct` and then `corrupt` with the same single-slot gain table can apply the inverse gain to both visibility columns. Casa-rs applies the inverse gain to `CORRECTED_DATA` and the forward gain to `MODEL_DATA`. The same planted session with VI1 terminates during its direct amplitude G fit in an isolated CASA process. The native VI1 session completes the fit and both visibility operations. [Paired session oracle](../tools/casa-compat/calibrater_session_oracle.py)
+
+## `calanalysis.get` can terminate on a restricted feed
+
+In CASA 6.7.6.14, open one of the two-feed, multi-window tables in the [selected-series oracle](../tools/casa-compat/calanalysis_get_oracle.py) and call `get(feed='1')`. On both complex and real tables, the reference process terminates with SIGSEGV after opening the table successfully. Casa-rs filters the selected feed by its table index and verifies that the returned records equal the same feed's series from the unrestricted query.
+
+## `calanalysis.fit` can terminate on an empty or singleton fit input
+
+In CASA 6.7.6.14, use the [fit oracle](../tools/casa-compat/calanalysis_fit_oracle.py) to fit a fully flagged channel with `type='ROBUST'`. Both AVERAGE and LINEAR terminate when the robust estimator asks for a median of an empty array. With one timestamp and `axis='F'`, a successful AVERAGE fit can also terminate while calculating the variance of one residual. Casa-rs returns the input series with an invalid fit when every sample is flagged and reports zero residual variance for a successful singleton fit.
+
+## `calanalysis.get` can invent phase wraps on descending frequencies
+
+In CASA 6.7.6.14, the [group-delay oracle](../tools/casa-compat/calanalysis_get_oracle.py) supplies eight descending channels with constant complex gains. Default group-delay unwrapping searches a signed interval away from zero and inserts wraps into a zero-delay solution. Casa-rs searches a symmetric interval using positive spacing between distinct frequencies. It removes the common carrier from the power calculation and refines peaks at the bandwidth scale, preserving the original channel order. The oracle checks ascending and descending zero-delay and planted-delay series, including 1 kHz channels at 100 GHz.
+
+## `calanalysis.fit` can overestimate a nearly exact fit's reduced chi-square
+
+In CASA 6.7.6.14, the [fit oracle](../tools/casa-compat/calanalysis_fit_oracle.py) supplies an almost exact linear series over eight channels near 100 GHz with uncertainty 0.001. CASA reports a reduced chi-square of about 0.0365. Its returned residuals and uncertainties imply about `2.33e-8`. The normal-equation calculation subtracts much larger quadratic terms. Casa-rs sums the squared, weighted residuals directly, after the existing flags and uncertainty exclusion, and uses that metric for reduced chi-square and unweighted covariance.

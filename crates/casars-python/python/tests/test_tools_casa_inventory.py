@@ -32,7 +32,7 @@ ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "m
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
 IMPLEMENTED["calanalysis"] = {
-    "antenna", "antenna1", "antenna2", "calname", "close", "feed", "field", "freq",
+    "antenna", "antenna1", "antenna2", "calname", "close", "feed", "field", "fit", "freq", "get",
     "msname", "numantenna", "numantenna1", "numantenna2", "numchannel", "numfeed",
     "numfield", "numspw", "numtime", "open", "partype", "polbasis", "spw", "time", "viscal",
 }

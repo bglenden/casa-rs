@@ -5,13 +5,14 @@ pub(crate) mod surface;
 
 use std::sync::{Mutex, PoisonError};
 
-use casa_calibration::{CalAnalysis, CalAnalysisIds::*};
+use casa_calibration::{CalAnalysis, CalAnalysisFit, CalAnalysisIds::*, CalAnalysisQuery};
 use numpy::PyArray1;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict};
 
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::convert::{Variant, reply_value::reply_value};
+use crate::tools::{LogLine, calibrater::selector, emit};
 
 const LOGGER: &str = "casars.tools.calanalysis";
 
@@ -203,35 +204,49 @@ impl PyCalAnalysis {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (field = None, antenna = None, timerange = None, spw = None, feed = None, axis = "TIME", ap = "AMPLITUDE", norm = false, unwrap = false, jumpmax = 0.), text_signature = "($self, field=[], antenna=[], timerange=[], spw=[], feed=[], axis='TIME', ap='AMPLITUDE', norm=False, unwrap=False, jumpmax=0.0)")]
+    #[pyo3(signature = (field = Variant::Empty, antenna = Variant::Empty, timerange = Variant::Empty, spw = Variant::Empty, feed = Variant::Empty, axis = "TIME", ap = "AMPLITUDE", norm = false, unwrap = false, jumpmax = 0.), text_signature = "($self, field=[], antenna=[], timerange=[], spw=[], feed=[], axis='TIME', ap='AMPLITUDE', norm=False, unwrap=False, jumpmax=0.0)")]
     fn get(
         &self,
-        field: Option<&Bound<'_, PyAny>>,
-        antenna: Option<&Bound<'_, PyAny>>,
-        timerange: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        feed: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        field: Variant,
+        antenna: Variant,
+        timerange: Variant,
+        spw: Variant,
+        feed: Variant,
         axis: &str,
         ap: &str,
         norm: bool,
         unwrap: bool,
         jumpmax: f64,
     ) -> PyResult<Py<PyAny>> {
-        let _ = (
-            field, antenna, timerange, spw, feed, axis, ap, norm, unwrap, jumpmax,
-        );
-        not_yet_implemented_in("calanalysis", "get", 1529)
+        self.records(
+            py,
+            QueryOptions {
+                field,
+                antenna,
+                timerange,
+                spw,
+                feed,
+                axis,
+                ap,
+                norm,
+                unwrap,
+                jumpmax,
+            },
+            None,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (field = None, antenna = None, timerange = None, spw = None, feed = None, axis = "TIME", ap = "AMPLITUDE", norm = false, unwrap = false, jumpmax = 0., order = "AVERAGE", r#type = "LSQ", weight = false), text_signature = "($self, field=[], antenna=[], timerange=[], spw=[], feed=[], axis='TIME', ap='AMPLITUDE', norm=False, unwrap=False, jumpmax=0.0, order='AVERAGE', type='LSQ', weight=False)")]
+    #[pyo3(signature = (field = Variant::Empty, antenna = Variant::Empty, timerange = Variant::Empty, spw = Variant::Empty, feed = Variant::Empty, axis = "TIME", ap = "AMPLITUDE", norm = false, unwrap = false, jumpmax = 0., order = "AVERAGE", r#type = "LSQ", weight = false), text_signature = "($self, field=[], antenna=[], timerange=[], spw=[], feed=[], axis='TIME', ap='AMPLITUDE', norm=False, unwrap=False, jumpmax=0.0, order='AVERAGE', type='LSQ', weight=False)")]
     fn fit(
         &self,
-        field: Option<&Bound<'_, PyAny>>,
-        antenna: Option<&Bound<'_, PyAny>>,
-        timerange: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        feed: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        field: Variant,
+        antenna: Variant,
+        timerange: Variant,
+        spw: Variant,
+        feed: Variant,
         axis: &str,
         ap: &str,
         norm: bool,
@@ -241,15 +256,112 @@ impl PyCalAnalysis {
         r#type: &str,
         weight: bool,
     ) -> PyResult<Py<PyAny>> {
-        let _ = (
-            field, antenna, timerange, spw, feed, axis, ap, norm, unwrap, jumpmax, order, r#type,
-            weight,
-        );
-        not_yet_implemented_in("calanalysis", "fit", 1529)
+        self.records(
+            py,
+            QueryOptions {
+                field,
+                antenna,
+                timerange,
+                spw,
+                feed,
+                axis,
+                ap,
+                norm,
+                unwrap,
+                jumpmax,
+            },
+            Some(CalAnalysisFit {
+                order,
+                method: r#type,
+                weighted: weight,
+            }),
+        )
+    }
+}
+
+struct QueryOptions<'a> {
+    field: Variant,
+    antenna: Variant,
+    timerange: Variant,
+    spw: Variant,
+    feed: Variant,
+    axis: &'a str,
+    ap: &'a str,
+    norm: bool,
+    unwrap: bool,
+    jumpmax: f64,
+}
+
+fn time_limits(value: &Variant) -> Result<Option<[f64; 2]>, String> {
+    let values = match value {
+        Variant::Empty => return Ok(None),
+        Variant::Text(value) if value.trim().is_empty() => return Ok(None),
+        Variant::Numbers(values) | Variant::Array { values, .. } => values,
+        Variant::Texts(values) => {
+            let [start, stop] = values.as_slice() else {
+                return Err("Invalid analysis time range".into());
+            };
+            let parse = |value: &str| {
+                value
+                    .trim()
+                    .parse()
+                    .map_err(|_| String::from("Invalid analysis time range"))
+            };
+            return Ok(Some([parse(start)?, parse(stop)?]));
+        }
+        _ => return Err("Invalid analysis time range".into()),
+    };
+    match values.as_slice() {
+        [start, stop] => Ok(Some([*start, *stop])),
+        _ => Err("Invalid analysis time range".into()),
     }
 }
 
 impl PyCalAnalysis {
+    fn records(
+        &self,
+        py: Python<'_>,
+        options: QueryOptions<'_>,
+        fit: Option<CalAnalysisFit<'_>>,
+    ) -> PyResult<Py<PyAny>> {
+        let result = py.detach(|| {
+            let attachment = self
+                .attachment
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let table = attachment
+                .as_ref()
+                .ok_or_else(|| String::from("Open calibration analysis tool first"))?;
+            let field = selector(&options.field).unwrap_or_default();
+            let antenna = selector(&options.antenna).unwrap_or_default();
+            let spw = selector(&options.spw).unwrap_or_default();
+            let feed = selector(&options.feed).unwrap_or_default();
+            let query = CalAnalysisQuery {
+                field: &field,
+                antenna: &antenna,
+                time_range: time_limits(&options.timerange)?,
+                spw: &spw,
+                feed: &feed,
+                axis: options.axis,
+                amplitude_or_phase: options.ap,
+                normalize: options.norm,
+                unwrap: options.unwrap,
+                jump_max: options.jumpmax,
+            };
+            match fit {
+                Some(fit) => table.fit(query, fit),
+                None => table.get(query),
+            }
+        });
+        match result {
+            Ok(result) => reply_value(py, &result),
+            Err(error) => {
+                emit(py, LOGGER, &[LogLine::warning(error)])?;
+                Ok(PyDict::new(py).into_any().unbind())
+            }
+        }
+    }
+
     fn metadata<T: Default + Send>(
         &self,
         py: Python<'_>,
