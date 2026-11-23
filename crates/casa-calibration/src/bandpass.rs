@@ -449,6 +449,7 @@ pub(crate) fn solve_bandpass(
                 observations: request.combine.observations,
                 spectral_windows: request.combine.spectral_windows,
             },
+            legacy_g_receptors: false,
             channelized: true,
             polynomial_bandpass,
             preaverage_max_span: crate::solve::preaverage_span(

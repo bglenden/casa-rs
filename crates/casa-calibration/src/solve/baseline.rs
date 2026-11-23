@@ -126,6 +126,7 @@ pub(crate) fn solve(
             preaverage_max_span: preaverage,
             correlation_dependent_flags: corrdepflags,
             robust_seed: false,
+            legacy_g_receptors: false,
             channelized: frequency_dependent,
             polynomial_bandpass: false,
         },
