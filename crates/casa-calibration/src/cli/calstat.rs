@@ -25,6 +25,36 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let mut lines = Vec::new();
     let stats = column_statistics(&table, None, &column, projection, |line| lines.push(line))
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
+    let values = [
+        ("npts", "number of points"),
+        ("min", "minimum value"),
+        ("max", "maximum value"),
+        ("sum", "Sum of values"),
+        ("sumsq", "Sum of squared values"),
+    ];
+    let statistics = [
+        ("mean", "Mean of the values"),
+        ("var", "Variance of the values"),
+        ("stddev", "Standard deviation of the values"),
+        ("rms", "Root mean square"),
+        ("median", "Median of the pixel values"),
+        ("medabsdevmed", "Median of the deviations"),
+        ("quartile", "Quartile"),
+    ];
+    for (column, record) in &stats {
+        for (heading, metrics) in [("values", values.as_slice()), ("statistics", &statistics)] {
+            lines.push(format!("{column} {heading} ---"));
+            for &(key, label) in metrics {
+                let value = record[key];
+                let value = if key == "npts" {
+                    format!("{value:.0}")
+                } else {
+                    format!("{value:?}")
+                };
+                lines.push(format!("         -- {label} [{key}]: {value}"));
+            }
+        }
+    }
     let value = CasaValue::dict(stats.iter().map(|(column, record)| {
         (
             column,
