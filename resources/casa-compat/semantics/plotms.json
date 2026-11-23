@@ -83,9 +83,10 @@
       "status": "Partial"
     },
     "xdatacolumn": {
-      "scope": "Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.",
+      "scope": "Use a stored MeasurementSet visibility column for X independently of Y. A blank selector defaults to DATA for a new plot. Additional column forms remain open.",
       "evidence": [
         "paired",
+        "ms-columns",
         "callibrary"
       ],
       "behaviors": [
@@ -122,9 +123,10 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios.",
+      "scope": "Use a stored MeasurementSet visibility column for Y independently of X. A blank selector defaults to DATA for a new plot. Per-ordinate lists and additional column forms remain open.",
       "evidence": [
         "paired",
+        "ms-columns",
         "callibrary"
       ],
       "behaviors": [
@@ -1057,14 +1059,15 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes with the shared sample mask.",
       "evidence": [
         "paired",
         "selectors",
+        "ms-columns",
         "callibrary",
         "legacy-calibration"
       ],
-      "gap": "Pointing-coordinate axes and advanced per-axis MS data columns are open."
+      "gap": "Pointing-coordinate axes, per-ordinate column lists and additional MS column forms are open."
     },
     {
       "id": "averaging",
@@ -1101,9 +1104,10 @@
       "id": "export",
       "title": "Save and publish selected plot products",
       "status": "Partial",
-      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.",
+      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export MeasurementSet text and figures for independent stored visibility columns, and calibrated MeasurementSet text and paginated figures, including atmospheric curves.",
       "evidence": [
         "paired",
+        "ms-columns",
         "callibrary",
         "legacy-calibration"
       ],
@@ -1253,6 +1257,19 @@
       "receipt": "resources/casa-compat/evidence/plotms-callibrary-20261119.json",
       "links": [
         "https://github.com/bglenden/casa-rs/blob/f9215c62670dfc19138bd9d65a949d22065f1c59/tools/casa-compat/plotms_callibrary_oracle.py"
+      ]
+    },
+    "ms-columns": {
+      "kind": "Same-input MeasurementSet visibility columns",
+      "state": "passed",
+      "scope": "Public Python tasks in CASA 6.7.6.14 with casaplotms 2.9.1 and casa-rs on one identical MeasurementSet with stored DATA, CORRECTED_DATA and MODEL_DATA.",
+      "result": "Four text exports matched 48 visible points with their source metadata, including independently defaulted axes. A 500 by 360 pixel PNG had 12 Matplotlib coordinates matching the CASA text export. The input data and flags remained unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "3dff59bd788187374b7b05c29fa615b2528da09f",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-columns-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2125"
       ]
     },
     "legacy-calibration": {
