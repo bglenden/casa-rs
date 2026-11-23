@@ -74,16 +74,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (intent = None, asnames = None), text_signature = "($self, intent='', asnames=False)")]
-    fn fieldsforintent(
-        &self,
-        intent: Option<&Bound<'_, PyAny>>,
-        asnames: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fieldsforintent")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (source = None, asnames = None), text_signature = "($self, source=-1, asnames=False)")]
     fn fieldsforsource(
         &self,
@@ -97,35 +87,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (asnames = None), text_signature = "($self, asnames=False)")]
     fn fieldsforsources(&self, asnames: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("fieldsforsources")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn intents(&self) -> PyResult<Py<PyAny>> {
-        stub("intents")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (field = None), text_signature = "($self, field=0)")]
-    fn intentsforfield(&self, field: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("intentsforfield")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (scan = None, obsid = None, arrayid = None), text_signature = "($self, scan=-1, obsid=-1, arrayid=-1)")]
-    fn intentsforscan(
-        &self,
-        scan: Option<&Bound<'_, PyAny>>,
-        obsid: Option<&Bound<'_, PyAny>>,
-        arrayid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("intentsforscan")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw = None), text_signature = "($self, spw=-1)")]
-    fn intentsforspw(&self, spw: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("intentsforspw")
     }
 
     /// Not yet implemented in casa-rs.
@@ -192,17 +153,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (intent = None, obsid = None, arrayid = None), text_signature = "($self, intent='', obsid=-1, arrayid=-1)")]
-    fn scansforintent(
-        &self,
-        intent: Option<&Bound<'_, PyAny>>,
-        obsid: Option<&Bound<'_, PyAny>>,
-        arrayid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("scansforintent")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (obsid = None), text_signature = "($self, obsid=-1)")]
     fn schedule(&self, obsid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("schedule")
@@ -221,12 +171,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (intent = None), text_signature = "($self, intent='')")]
-    fn spwsforintent(&self, intent: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("spwsforintent")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn summary(&self) -> PyResult<Py<PyAny>> {
         stub("summary")
@@ -236,12 +180,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (obsid = None), text_signature = "($self, obsid=-1)")]
     fn timerangeforobs(&self, obsid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("timerangeforobs")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (intent = None), text_signature = "($self, intent='')")]
-    fn timesforintent(&self, intent: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("timesforintent")
     }
 
     /// Not yet implemented in casa-rs.

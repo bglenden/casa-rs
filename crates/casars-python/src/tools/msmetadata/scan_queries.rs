@@ -155,7 +155,11 @@ pub(super) fn int_array(ids: impl IntoIterator<Item = i32>) -> CasaValue {
     }
 }
 
-fn fields_result(ms: &MeasurementSet, ids: BTreeSet<i32>, asnames: bool) -> MsResult<CasaValue> {
+pub(super) fn fields_result(
+    ms: &MeasurementSet,
+    ids: BTreeSet<i32>,
+    asnames: bool,
+) -> MsResult<CasaValue> {
     if asnames {
         let fields = ms.field()?;
         let values = ids

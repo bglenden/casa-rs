@@ -10797,3 +10797,14 @@ channel but lets the layer's `std::out_of_range` escape, terminating Python.
 casa-rs raises `RuntimeError` for an invalid layer and preserves the tool state.
 The paired atmosphere oracle isolates the CASA call and checks all nine native
 layer getters, including a valid query after each error.
+
+## Intent wildcards can lose literal punctuation
+
+In CASA 6.7.6.14, give a STATE row the intent
+`OBSERVE+TARGET#ON_SOURCE` and use that row in MAIN.
+`msmetadata.fieldsforintent("OBSERVE+*")` then returns no fields, although
+the exact intent and `"OBSERVE*"` match. The shared wildcard helper uses
+a replacement that refers to a nonexistent regex capture, dropping
+characters such as `+`. casa-rs treats `*` as the wildcard and matches
+all other characters literally in field, scan, and spectral-window
+intent selectors (#1029).

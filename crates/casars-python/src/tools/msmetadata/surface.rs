@@ -175,7 +175,7 @@ const METHODS: &[Method] = &[
             param("asnames", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fieldsforname",
@@ -239,12 +239,12 @@ const METHODS: &[Method] = &[
         R::Any,
         Yes,
     ),
-    method("intents", &[], R::Any, No),
+    method("intents", &[], R::Any, Yes),
     method(
         "intentsforfield",
         &[param("field", K::Int, Int(0))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "intentsforscan",
@@ -254,13 +254,13 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "intentsforspw",
         &[param("spw", K::Int, Int(-1))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "meanfreq",
@@ -424,7 +424,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "scansforspw",
@@ -504,7 +504,7 @@ const METHODS: &[Method] = &[
         "spwsforintent",
         &[param("intent", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "spwsfornames",
@@ -574,7 +574,7 @@ const METHODS: &[Method] = &[
         "timesforintent",
         &[param("intent", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "timesforscan",

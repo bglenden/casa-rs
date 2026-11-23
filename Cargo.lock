@@ -853,6 +853,7 @@ dependencies = [
  "numpy",
  "pyo3",
  "pythonize",
+ "regex",
  "schemars",
  "serde",
  "serde_json",
