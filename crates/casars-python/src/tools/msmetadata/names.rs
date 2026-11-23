@@ -10,7 +10,7 @@ use pyo3::types::{PyBool, PyList, PyString, PyTuple};
 use super::PyMsMetadata;
 use crate::convert::{nested_sequence_items, value::CasaValue};
 
-enum Indices {
+pub(super) enum Indices {
     Empty,
     EmptyString,
     BooleanVector,
@@ -20,7 +20,7 @@ enum Indices {
 }
 
 impl Indices {
-    fn capture(value: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+    pub(super) fn capture(value: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let Some(value) = value.filter(|value| !value.is_none()) else {
             return Ok(Self::Empty);
         };
@@ -38,6 +38,7 @@ impl Indices {
             match array.dtype().kind() {
                 b'b' if array.len() != 0 => return Ok(Self::BooleanVector),
                 b'b' => return Ok(Self::Empty),
+                b'i' | b'u' if array.len() == 0 => return Ok(Self::Vector(Vec::new())),
                 b'i' | b'u' => value
                     .call_method1("ravel", ("F",))?
                     .call_method0("tolist")?
@@ -72,9 +73,10 @@ impl Indices {
         }
     }
 
-    fn rows(self, count: usize, name: &str) -> MsResult<Vec<usize>> {
+    pub(super) fn rows(self, count: usize, name: &str) -> MsResult<Vec<usize>> {
         match self {
             Self::Empty => Ok((0..count).collect()),
+            Self::Vector(indices) if indices.is_empty() => Ok((0..count).collect()),
             Self::Scalar(index) => Ok(vec![checked_row(index, count, name)?]),
             Self::Vector(indices) => indices
                 .into_iter()
@@ -84,6 +86,14 @@ impl Indices {
                 "Unsupported type for {name}. It must be an integer or an integer array"
             ))),
         }
+    }
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for Indices {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Self::capture(Some(&value))
     }
 }
 

@@ -15,20 +15,6 @@ use super::{PyMsMetadata, stub};
 )]
 impl PyMsMetadata {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (chavg = None, fdm = None, sqld = None, tdm = None, wvr = None, complement = None), text_signature = "($self, chavg=False, fdm=False, sqld=False, tdm=False, wvr=False, complement=False)")]
-    fn almaspws(
-        &self,
-        chavg: Option<&Bound<'_, PyAny>>,
-        fdm: Option<&Bound<'_, PyAny>>,
-        sqld: Option<&Bound<'_, PyAny>>,
-        tdm: Option<&Bound<'_, PyAny>>,
-        wvr: Option<&Bound<'_, PyAny>>,
-        complement: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("almaspws")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (antenna = None), text_signature = "($self, antenna=-1)")]
     fn antennadiameter(&self, antenna: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("antennadiameter")
@@ -80,49 +66,9 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw), text_signature = "($self, spw)")]
-    fn baseband(&self, spw: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("baseband")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn baselines(&self) -> PyResult<Py<PyAny>> {
         stub("baselines")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn chanavgspws(&self) -> PyResult<Py<PyAny>> {
-        stub("chanavgspws")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw, unit = None, asvel = None), text_signature = "($self, spw, unit='', asvel=False)")]
-    fn chaneffbws(
-        &self,
-        spw: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-        asvel: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("chaneffbws")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw, unit = None, asvel = None), text_signature = "($self, spw, unit='', asvel=False)")]
-    fn chanres(
-        &self,
-        spw: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-        asvel: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("chanres")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw = None), text_signature = "($self, spw=-1)")]
-    fn corrbit(&self, spw: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("corrbit")
     }
 
     /// Not yet implemented in casa-rs.
@@ -142,12 +88,6 @@ impl PyMsMetadata {
         arrayid: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("exposuretime")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn fdmspws(&self) -> PyResult<Py<PyAny>> {
-        stub("fdmspws")
     }
 
     /// Not yet implemented in casa-rs.
@@ -338,12 +278,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spwids = None), text_signature = "($self, spwids='')")]
-    fn rxbands(&self, spwids: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("rxbands")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (obsid = None, arrayid = None), text_signature = "($self, obsid=-1, arrayid=-1)")]
     fn scannumbers(
         &self,
@@ -448,16 +382,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (baseband = None, sqldmode = None), text_signature = "($self, baseband=-1, sqldmode='include')")]
-    fn spwsforbaseband(
-        &self,
-        baseband: Option<&Bound<'_, PyAny>>,
-        sqldmode: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("spwsforbaseband")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (field = None), text_signature = "($self, field='')")]
     fn spwsforfield(&self, field: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("spwsforfield")
@@ -524,21 +448,9 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spwids = None), text_signature = "($self, spwids='')")]
-    fn subwindows(&self, spwids: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("subwindows")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn summary(&self) -> PyResult<Py<PyAny>> {
         stub("summary")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn tdmspws(&self) -> PyResult<Py<PyAny>> {
-        stub("tdmspws")
     }
 
     /// Not yet implemented in casa-rs.

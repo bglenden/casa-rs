@@ -34,7 +34,7 @@ const METHODS: &[Method] = &[
             param("complement", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "antennadiameter",
@@ -91,9 +91,9 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("bandwidths", &[param("spw", K::Int, Int(-1))], R::Any, Yes),
-    method("baseband", &[param("spw", K::Any, Required)], R::Any, No),
+    method("baseband", &[param("spw", K::Any, Required)], R::Any, Yes),
     method("baselines", &[], R::Any, No),
-    method("chanavgspws", &[], R::Any, No),
+    method("chanavgspws", &[], R::Any, Yes),
     method(
         "chaneffbws",
         &[
@@ -102,7 +102,7 @@ const METHODS: &[Method] = &[
             param("asvel", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "chanfreqs",
@@ -121,7 +121,7 @@ const METHODS: &[Method] = &[
             param("asvel", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "chanwidths",
@@ -133,7 +133,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("close", &[], R::Any, Yes),
-    method("corrbit", &[param("spw", K::Int, Int(-1))], R::Any, No),
+    method("corrbit", &[param("spw", K::Int, Int(-1))], R::Any, Yes),
     method(
         "corrprodsforpol",
         &[param("pol", K::Int, Int(-1))],
@@ -166,7 +166,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("fdmspws", &[], R::Any, No),
+    method("fdmspws", &[], R::Any, Yes),
     method("fieldnames", &[], R::Any, Yes),
     method(
         "fieldsforintent",
@@ -382,7 +382,12 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("rxbands", &[param("spwids", K::Text, Text(""))], R::Any, No),
+    method(
+        "rxbands",
+        &[param("spwids", K::Text, Text(""))],
+        R::Any,
+        Yes,
+    ),
     method(
         "scannumbers",
         &[
@@ -486,7 +491,7 @@ const METHODS: &[Method] = &[
             param("sqldmode", K::Text, Text("include")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "spwsforfield",
@@ -549,10 +554,10 @@ const METHODS: &[Method] = &[
         "subwindows",
         &[param("spwids", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method("summary", &[], R::Any, No),
-    method("tdmspws", &[], R::Any, No),
+    method("tdmspws", &[], R::Any, Yes),
     method(
         "timerangeforobs",
         &[param("obsid", K::Int, Int(-1))],

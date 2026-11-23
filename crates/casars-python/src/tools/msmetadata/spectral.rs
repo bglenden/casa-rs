@@ -3,7 +3,7 @@
 use casa_ms::columns::frequency_columns::ChanFreqColumn;
 use casa_ms::{MsError, MsResult, MsSpectralWindow, SubTable};
 use casa_types::measures::record::frequency_to_record;
-use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore};
+use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore, constants};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use numpy::IntoPyArray;
 use pyo3::prelude::*;
@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 use super::PyMsMetadata;
 use crate::convert::value::CasaValue;
 
-fn spw_row(spw: &MsSpectralWindow<'_>, id: i64) -> MsResult<usize> {
+pub(super) fn spw_row(spw: &MsSpectralWindow<'_>, id: i64) -> MsResult<usize> {
     let count = spw.row_count();
     usize::try_from(id)
         .ok()
@@ -23,7 +23,7 @@ fn spw_row(spw: &MsSpectralWindow<'_>, id: i64) -> MsResult<usize> {
         })
 }
 
-fn water_vapor_windows(spw: &MsSpectralWindow<'_>) -> MsResult<Vec<usize>> {
+pub(super) fn water_vapor_windows(spw: &MsSpectralWindow<'_>) -> MsResult<Vec<usize>> {
     let mut all = Vec::new();
     let mut nominal = Vec::new();
     for row in 0..spw.row_count() {
@@ -94,6 +94,51 @@ fn convert_units(
         }
     }
     Ok(())
+}
+
+fn mean_frequency(windows: &MsSpectralWindow<'_>, row: usize) -> MsResult<f64> {
+    let values = windows.chan_freq(row)?;
+    if values.is_empty() {
+        return Err(MsError::InvalidInput("No channel frequencies".into()));
+    }
+    Ok(values.iter().sum::<f64>() / values.len() as f64)
+}
+
+fn channel_resolution(
+    windows: &MsSpectralWindow<'_>,
+    row: usize,
+    column: &str,
+    mut values: Vec<f64>,
+    unit: &str,
+    as_velocity: bool,
+) -> MsResult<Vec<f64>> {
+    let mut source = column_unit(windows, column)?;
+    let hz =
+        casacore::casacore_unit("Hz").map_err(|error| MsError::InvalidInput(error.to_string()))?;
+    if as_velocity && source.val().dim == hz.val().dim {
+        let mut frequency = mean_frequency(windows, row)?;
+        if frequency > 0.0 {
+            convert_units(
+                std::slice::from_mut(&mut frequency),
+                column_unit(windows, "CHAN_FREQ")?,
+                "Hz",
+                false,
+            )?;
+            convert_units(&mut values, source, "Hz", true)?;
+            for value in &mut values {
+                *value = *value / frequency * (constants::c().value() / 1000.0);
+            }
+            source = casacore::casacore_unit("km/s")
+                .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        }
+    }
+    let unit = if unit.is_empty() {
+        if as_velocity { "km/s" } else { "Hz" }
+    } else {
+        unit
+    };
+    convert_units(&mut values, source, unit, true)?;
+    Ok(values)
 }
 
 #[pymethods]
@@ -170,15 +215,45 @@ impl PyMsMetadata {
         Ok(widths.into_pyarray(py).into_any().unbind())
     }
 
+    #[pyo3(signature = (spw, unit = "", asvel = false), text_signature = "($self, spw, unit='', asvel=False)")]
+    fn chaneffbws(&self, py: Python<'_>, spw: i64, unit: &str, asvel: bool) -> PyResult<Py<PyAny>> {
+        let values = self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let row = spw_row(&windows, spw)?;
+            channel_resolution(
+                &windows,
+                row,
+                "EFFECTIVE_BW",
+                windows.effective_bw(row)?,
+                unit,
+                asvel,
+            )
+        })?;
+        Ok(values.into_pyarray(py).into_any().unbind())
+    }
+
+    #[pyo3(signature = (spw, unit = "", asvel = false), text_signature = "($self, spw, unit='', asvel=False)")]
+    fn chanres(&self, py: Python<'_>, spw: i64, unit: &str, asvel: bool) -> PyResult<Py<PyAny>> {
+        let values = self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let row = spw_row(&windows, spw)?;
+            channel_resolution(
+                &windows,
+                row,
+                "RESOLUTION",
+                windows.resolution(row)?,
+                unit,
+                asvel,
+            )
+        })?;
+        Ok(values.into_pyarray(py).into_any().unbind())
+    }
+
     #[pyo3(signature = (spw, unit = "Hz"), text_signature = "($self, spw, unit='Hz')")]
     fn meanfreq(&self, py: Python<'_>, spw: i64, unit: &str) -> PyResult<f64> {
         self.with_ms(py, |ms| {
             let windows = ms.spectral_window()?;
-            let values = windows.chan_freq(spw_row(&windows, spw)?)?;
-            if values.is_empty() {
-                return Err(MsError::InvalidInput("No channel frequencies".into()));
-            }
-            let mut mean = values.iter().sum::<f64>() / values.len() as f64;
+            let mut mean = mean_frequency(&windows, spw_row(&windows, spw)?)?;
             convert_units(
                 std::slice::from_mut(&mut mean),
                 column_unit(&windows, "CHAN_FREQ")?,

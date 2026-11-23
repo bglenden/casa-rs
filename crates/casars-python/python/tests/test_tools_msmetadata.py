@@ -123,6 +123,56 @@ def test_msmetadata_water_vapor_windows(native_dataset):
             assert metadata.done()
 
 
+def test_msmetadata_classification_and_channel_velocity(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+    assert table.addcols({"BBC_NO": {"valueType": "int"}, "SDM_CORR_BIT": {"valueType": "string"}})
+    assert table.putcell("BBC_NO", 0, 4)
+    assert table.putcell("SDM_CORR_BIT", 0, "4x4")
+    assert table.putcell("NAME", 0, "RB_09#BB_4#SQLD#SW-02")
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        try:
+            assert metadata.open(str(native_dataset))
+            assert metadata.baseband(0) == 4
+            assert metadata.corrbit(0) == "4x4"
+            assert metadata.spwsforbaseband(sqldmode="exclude")["4"].size == 0
+            for result, values in (
+                (metadata.almaspws(fdm=True, sqld=True), [0]),
+                (metadata.almaspws(sqld=True, complement=True), []),
+                (metadata.fdmspws(), [0]),
+                (metadata.tdmspws(), []),
+                (metadata.spwsforbaseband(4, "Only"), [0]),
+                (metadata.rxbands([0, 0]), [9, 9]),
+                (metadata.subwindows(np.array(0)), [2]),
+            ):
+                np.testing.assert_array_equal(result, np.array(values, dtype=np.int64), strict=True)
+            np.testing.assert_array_equal(metadata.corrbit(), np.array(["4x4"]), strict=True)
+            np.testing.assert_array_equal(metadata.corrbit(np.array([], dtype=np.int64)),
+                                          np.array([], dtype="U5"), strict=True)
+            with pytest.raises(RuntimeError):
+                metadata.corrbit(None)
+            with pytest.raises(RuntimeError):
+                metadata.subwindows(-1)
+            with pytest.raises(RuntimeError):
+                metadata.spwsforbaseband(sqldmode="bad")
+            for query in (metadata.chaneffbws, metadata.chanres):
+                widths_hz = query(0)
+                for unit, scale in (("", 1e-3), ("m/s", 1)):
+                    velocity = query(0, unit, asvel=True)
+                    assert velocity.dtype == widths_hz.dtype == np.float64
+                    expected = 299_792_458 * scale * widths_hz / metadata.meanfreq(0)
+                    np.testing.assert_allclose(velocity, expected, rtol=1e-14, atol=0)
+                with pytest.raises(RuntimeError):
+                    query(0, "Hz", asvel=True)
+        finally:
+            assert metadata.done()
+
+
 def test_msmetadata_name_queries_preserve_selector_order_and_array_types(native_dataset):
     casatools = pytest.importorskip("casatools")
     assert casatools.version_string().replace("-", ".") == "6.7.6.14"
@@ -165,5 +215,7 @@ def test_msmetadata_empty_integer_arrays_select_all_without_aborting(native_data
         assert metadata.namesforfields(empty) == metadata.namesforfields()
         assert metadata.namesforspws(empty) == metadata.namesforspws()
         np.testing.assert_array_equal(metadata.bandwidths(empty), metadata.bandwidths(), strict=True)
+        np.testing.assert_array_equal(metadata.rxbands(empty), metadata.rxbands(), strict=True)
+        np.testing.assert_array_equal(metadata.subwindows(empty), metadata.subwindows(), strict=True)
     finally:
         assert metadata.done()
