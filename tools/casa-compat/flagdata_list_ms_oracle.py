@@ -669,6 +669,7 @@ def check_averaged_agent_time(libraries):
     assert not np.any(np.abs(times - midpoint) <= 1)
     cases = [
         ("midpoint", midpoint, np.zeros_like(data, dtype=bool), [first, second], 640),
+        ("inherited-midpoint", midpoint, np.zeros_like(data, dtype=bool), [first, second], 640),
         ("flagged-tail", first, np.broadcast_to((times == second)[:, None, None], data.shape),
          [first], 320),
     ]
@@ -681,13 +682,16 @@ def check_averaged_agent_time(libraries):
             copytree(source, vis)
             with table(vis, ack=False, readonly=False) as main:
                 main.putcol("FLAG", original.copy())
+            clip = f"mode='clip' datacolumn='DATA' timerange='{timerange}' clipminmax=[0,6]"
+            average = "timeavg=True timebin='20s'"
+            commands = (
+                [f"mode='clip' datacolumn='DATA' clipminmax=[0,100] {average}", clip]
+                if label == "inherited-midpoint"
+                else [f"{clip} {average}", "mode='extend' scan='999'"]
+            )
             assert task(
                 vis=vis, mode="list", flagbackup=False,
-                inpfile=[
-                    f"mode='clip' datacolumn='DATA' timerange='{timerange}' "
-                    "timeavg=True timebin='20s' clipminmax=[0,6]",
-                    "mode='extend' scan='999'",
-                ],
+                inpfile=commands,
             ) == {}
             samples, rows = flags(vis)
             np.testing.assert_array_equal(samples, expected, err_msg=f"{label} {name} FLAG")
@@ -721,6 +725,33 @@ def check_averaged_agent_time(libraries):
             np.testing.assert_array_equal(samples, expected, err_msg=f"{mode} {name} implicit Extend FLAG")
             np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{mode} {name} implicit Extend FLAG_ROW")
     return len(cases) + 2
+
+
+def check_averaged_extension(libraries):
+    source = "averaged-extension.ms"
+    make_list_fixture(source)
+    with table(source, ack=False, readonly=False) as main:
+        data = np.full_like(main.getcol("DATA"), 3)
+        data[:, :4, :] = 8
+        main.putcol("DATA", data)
+        main.putcol("FLAG", np.zeros_like(data, dtype=bool))
+        main.putcol("FLAG_ROW", np.zeros(data.shape[0], dtype=bool))
+    expected = np.zeros_like(data, dtype=bool)
+    expected[:, :8, :] = True
+    for name, task in libraries:
+        vis = f"averaged-extension-{name}.ms"
+        copytree(source, vis)
+        assert task(
+            vis=vis, mode="list", flagbackup=False,
+            inpfile=[
+                "mode='clip' datacolumn='DATA' clipminmax=[0,6] channelavg=True chanbin=4",
+                "mode='extend' flagnearfreq=True growfreq=0.0 growtime=0.0 extendpols=False",
+            ],
+        ) == {}
+        samples, rows = flags(vis)
+        np.testing.assert_array_equal(samples, expected, err_msg=f"{name} averaged Extend FLAG")
+        np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{name} averaged Extend FLAG_ROW")
+    return 1
 
 
 def check_agent_time_defaults(libraries):
@@ -772,6 +803,7 @@ def main():
         c1 += check_agent_time_defaults(libraries)
         c1 += check_averaged_agent_time(libraries)
         c2 = check_sequential_all_modes(libraries)
+        c2 += check_averaged_extension(libraries)
         c3 = check_savepars_history_backup_display_cli(libraries)
         c4 = check_skips_and_refusals(libraries)
         c4 += check_averaging_admission(libraries)
@@ -782,6 +814,16 @@ def main():
 def check_averaging_admission(libraries):
     make_list_fixture("averaging-admission.ms", with_corrected=False)
     make_list_fixture("averaging-shared.ms")
+    make_list_fixture("averaging-skipped-column.ms", with_corrected=False)
+    with table("averaging-skipped-column.ms", ack=False, readonly=False) as main:
+        data = main.getcol("DATA")
+        data[:, ::4, :] = 2
+        data[:, 1::4, :] = 2
+        data[:, 2::4, :] = 8
+        data[:, 3::4, :] = 8
+        main.putcol("DATA", data)
+        for column in ("FLAG", "FLAG_ROW"):
+            main.putcol(column, np.zeros_like(main.getcol(column)))
     with table("averaging-shared.ms", ack=False, readonly=False) as main:
         values = main.getcol("DATA")
         values[:, 0::2, :] = 2
@@ -823,7 +865,21 @@ def check_averaging_admission(libraries):
         assert result == ("OK", {}), result
         for original, current in zip(before, flags(shared), strict=True):
             np.testing.assert_array_equal(current, original)
-    return 3
+
+        missing = f"averaging-skipped-column-{name}.ms"
+        copytree("averaging-skipped-column.ms", missing)
+        assert task(
+            vis=missing, mode="list", flagbackup=False,
+            inpfile=[
+                "mode='clip' datacolumn='DATA' clipminmax=[0,100] channelavg=True chanbin=2",
+                "mode='clip' datacolumn='CORRECTED' clipminmax=[0,100] channelavg=True chanbin=4",
+                "mode='clip' datacolumn='DATA' clipminmax=[0,6]",
+            ],
+        ) == {}
+        samples, rows = flags(missing)
+        np.testing.assert_array_equal(samples, data.real > 6)
+        np.testing.assert_array_equal(rows, np.zeros_like(rows))
+    return 4
 
 
 if __name__ == "__main__":

@@ -33,10 +33,10 @@ impl<'a> SharedAveraging<'a> {
         }) {
             return None;
         }
-        let automatic = requests.filter(automatic);
-        if automatic.clone().take(2).count() < 2 {
+        if requests.clone().take(2).count() < 2 {
             return None;
         }
+        let automatic = requests.filter(automatic);
         // Each enabled agent sets the corresponding layer on the shared
         // handler. The last enabled agent determines that layer's bin size.
         let seconds = automatic
@@ -499,6 +499,30 @@ impl SharedFlagView {
         changed.changed_rows = touched.len();
         changed.changed_row_indices = touched.into_iter().collect();
         changed
+    }
+
+    pub(super) fn summarize(
+        &self,
+        selected: &[usize],
+        time: Option<&TimeSelection>,
+    ) -> FlagSummary {
+        let rows = self.rows.iter().filter(|row| {
+            selected.binary_search(&row.row()).is_ok()
+                && time.is_none_or(|filter| filter.holds_agent_time(row.time))
+        });
+        let mut counts = FlagSummary {
+            flagged_samples: 0,
+            total_samples: 0,
+        };
+        for member in rows.flat_map(|row| &row.members) {
+            let flags = self
+                .staged
+                .get(&member.row)
+                .unwrap_or(&self.flags[&member.row]);
+            counts.total_samples += flags.len();
+            counts.flagged_samples += flags.iter().filter(|&&flag| flag).count();
+        }
+        counts
     }
 
     pub(super) fn flush(self, ms: &mut MeasurementSet) -> Result<ChangeSet, FlaggingError> {

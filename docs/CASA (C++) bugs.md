@@ -8780,6 +8780,21 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## Mixed averaged flagdata can leave row flags clear
+
+On the public `Four_ants_3C286.ms` fixture, CASA 6.7.6.14's stock mixed
+Clip, TFCrop, RFlag, and antint list test starts from cleared flags. The
+shared iterator averages pairs of integrations and groups channels in
+bins of eight. The task flags 591,808 samples and leaves `FLAG_ROW` false
+for 26 of the 486 rows whose samples are all flagged in the repeated
+stock replay. The same 26 rows occur with the Clip, TFCrop, and RFlag
+prefix alone. An interleaved timing replay returned another row mask
+with identical sample flags. CASA's
+`AveragingTvi2::writeFlag` derives the row flag from the propagated
+sample mask. Casa-rs preserves that rule after projecting the final
+shared mask to the input rows. The stock test passes and every sample
+flag agrees with CASA.
+
 ## Calibration quack can flag the whole scan when times are out of order
 
 With CASA 6.7.6.14, two Tsys time blocks in the same scan stored in reverse

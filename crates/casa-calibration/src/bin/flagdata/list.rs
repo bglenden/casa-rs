@@ -106,7 +106,7 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
             {
                 configured.push(averaging);
             }
-            if request.mode == FlagDataMode::Antint && !available {
+            if !available && (!calibration || request.mode == FlagDataMode::Antint) {
                 continue;
             }
             requests.push(request);

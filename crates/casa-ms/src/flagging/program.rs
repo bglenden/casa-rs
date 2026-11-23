@@ -221,7 +221,10 @@ pub fn flagdata_ms_program(
         FlagTimeSelection::GlobalAndAgent
     };
     let mut shared = if let Some(config) = SharedAveraging::from_requests(requests.iter()) {
-        let time_chunk = requests.iter().find_map(|request| request.time_chunk);
+        let time_chunk = requests
+            .iter()
+            .filter_map(|request| request.time_chunk)
+            .max_by(f64::total_cmp);
         let combinescans = requests.iter().any(|request| request.combinescans);
         Some(SharedFlagView::new(
             &ms,
@@ -403,7 +406,7 @@ fn stage_ms_program_request(
     request: &FlagDataRequest,
     context: ProgramAgentContext,
     antint_plan: Option<Result<Option<AntintPlan>, FlaggingError>>,
-    shared: Option<&mut SharedFlagView>,
+    mut shared: Option<&mut SharedFlagView>,
 ) -> Result<Option<(FlagDataReport, Vec<usize>, usize)>, FlaggingError> {
     let ProgramAgentContext {
         local_selection,
@@ -454,10 +457,20 @@ fn stage_ms_program_request(
             selection.correlations.as_ref(),
         )?
     } else {
-        stage_selected_ms_request(ms, &selection, request, calculate, model_factory, shared)?
+        stage_selected_ms_request(
+            ms,
+            &selection,
+            request,
+            calculate,
+            model_factory,
+            shared.as_deref_mut(),
+        )?
     };
     if changes.agent_skipped {
         return Ok(None);
+    }
+    if let Some(view) = shared {
+        changes.summary = Some(view.summarize(&selection.rows, selection.averaged_time.as_ref()));
     }
     let changed_rows = std::mem::take(&mut changes.changed_row_indices);
     let changed_flag_rows = changes.changed_flag_row_rows;
