@@ -1867,6 +1867,7 @@ struct RowGeometryCache {
     elevations: HashMap<RowGeometryKey, f64>,
     projected_offsets: HashMap<ProjectedOffsetKey, [f64; 3]>,
     materialized_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
+    bandpass_power: bandpass::PowerCache,
     calibration_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
     transient_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
     transient_frequency_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
@@ -2651,9 +2652,20 @@ fn apply_row_all_channels(
             bounded_frequency_cache && ant2.interpolated,
         );
         let (ant1, ant2) = (ant1.grid, ant2.grid);
-        let bandpass_weights = (is_bandpass && !is_tsys && calibrate_weights)
-            .then(|| bandpass::weight_factors(&ant1, &ant2, correlation_types, None))
-            .flatten();
+        let bandpass_weights = if is_bandpass && !is_tsys && calibrate_weights {
+            let mut scratch = bandpass::PowerCache::default();
+            geometry_cache
+                .as_deref_mut()
+                .map_or(&mut scratch, |cache| &mut cache.bandpass_power)
+                .factors(
+                    table_index,
+                    (row.antenna1, &ant1),
+                    (row.antenna2, &ant2),
+                    correlation_types,
+                )
+        } else {
+            None
+        };
         let (ant1, ant2) = if resample_frequency {
             let ant1 = bandpass::prepare(
                 ant1,
@@ -2676,7 +2688,7 @@ fn apply_row_all_channels(
             (ant1, ant2)
         };
         let bandpass_weights = if is_tsys && calibrate_weights && !has_weight_spectrum {
-            bandpass::weight_factors(&ant1, &ant2, correlation_types, Some(data_channels))
+            bandpass::temperature_weight_factors(&ant1, &ant2, correlation_types, data_channels)
         } else {
             bandpass_weights
         };
