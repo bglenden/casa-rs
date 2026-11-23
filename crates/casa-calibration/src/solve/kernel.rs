@@ -1172,11 +1172,19 @@ fn chi_square_for_errors(graph: &SolveGraph, gains: &HashMap<i32, Complex32>) ->
             .get(&(antenna1, antenna2))
             .copied()
             .unwrap_or_default();
-        let weight = f64::from(graph.weight((antenna1, antenna2)));
+        let weight = graph.weight((antenna1, antenna2));
         let model = gain1 * gain2.conj();
-        let cross = (model.conj() * observed).re;
-        let contribution = stat.weighted_sample_power - 2.0 * f64::from(cross)
-            + weight * f64::from(model.norm_sqr());
+        let contribution = if stat.collapsed_count == 1 && weight > 0.0 {
+            // Recover the one averaged visibility and subtract before
+            // squaring, as CASA does. Expanding the square loses precision
+            // when the observed and fitted visibilities are nearly equal.
+            let residual = observed / weight - model;
+            f64::from(weight) * f64::from(residual.norm_sqr())
+        } else {
+            let cross = (model.conj() * observed).re;
+            stat.weighted_sample_power - 2.0 * f64::from(cross)
+                + f64::from(weight) * f64::from(model.norm_sqr())
+        };
         total += contribution.max(0.0);
     }
     total
