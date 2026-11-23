@@ -5,6 +5,7 @@ use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::{MsAxis, MsDataColumn};
+use crate::MeasurementSet;
 
 pub(super) fn ordinate_columns(
     task: &TaskInvocation<'_>,
@@ -55,4 +56,56 @@ fn canonical_column(name: &str) -> Result<&str, TaskFailure> {
             "invalid ydatacolumn value '{name}'"
         ))),
     }
+}
+
+pub(super) fn resolve_storage_columns(
+    ms: &MeasurementSet,
+    requested: [MsDataColumn; 3],
+    axes: [Option<MsAxis>; 3],
+    averaging: bool,
+) -> Result<([MsDataColumn; 3], bool), TaskFailure> {
+    use MsDataColumn::*;
+
+    let schema = ms.main_table().schema();
+    let has = |name| schema.is_some_and(|schema| schema.column(name).is_some());
+    let has_data = has("DATA");
+    let has_float = has("FLOAT_DATA");
+    let has_corrected = has("CORRECTED_DATA");
+    let observed = if !has_data && has_float { Float } else { Data };
+    let columns = requested.map(|column| match column {
+        Data => observed,
+        Corrected if !has_corrected && (has_data || has_float) => observed,
+        CorrectedMinusModel if !has_corrected && has_data => DataMinusModel,
+        CorrectedMinusModelScalar if !has_corrected && has_data => DataMinusModelScalar,
+        CorrectedDivModel if !has_corrected && has_data => DataDivModel,
+        CorrectedDivModelScalar if !has_corrected && has_data => DataDivModelScalar,
+        other => other,
+    });
+    for (axis, column) in axes.into_iter().zip(columns) {
+        if column != Float || !axis.is_some_and(MsAxis::is_visibility_math) {
+            continue;
+        }
+        if !has_float {
+            return Err(TaskFailure::validation(
+                "FLOAT_DATA is unavailable. Use DATA for PlotMS.",
+            ));
+        }
+        if axis != Some(MsAxis::Amplitude) {
+            return Err(TaskFailure::validation(
+                "PlotMS requires an amplitude axis for FLOAT_DATA.",
+            ));
+        }
+        if averaging {
+            return Err(TaskFailure::validation(
+                "averaging MeasurementSet FLOAT_DATA is pending #1032",
+            ));
+        }
+    }
+    if columns != requested {
+        tracing::warn!(
+            observed = observed.as_str(),
+            "Using available observed columns for PlotMS."
+        );
+    }
+    Ok((columns, has_float && !averaging))
 }

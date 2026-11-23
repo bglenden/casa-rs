@@ -447,6 +447,22 @@ def compare_float_columns(root, vis, source, native):
                 if name in table.colnames():
                     np.testing.assert_array_equal(table.getcol(name), expected, err_msg=name)
 
+    invalid = (
+        ("missing-float", vis, "amp", "FLOAT_DATA is unavailable"),
+        ("non-amplitude-float", float_only, "real", "requires an amplitude axis"),
+    )
+    for name, destination, axis, diagnostic in invalid:
+        controls = request(destination) | dict(xaxis="channel", yaxis=axis, xdatacolumn="", ydatacolumn="float")
+        for engine, task, message in (("casa", reference, "plot parameters failed"), ("native", native, diagnostic)):
+            output = root / f"{name}.{engine}.txt"
+            try:
+                task(**controls, plotfile=str(output), expformat="txt")
+            except Exception as error:
+                assert message in str(error), error
+            else:
+                raise AssertionError(f"{engine} accepted {name}")
+            assert not output.exists()
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

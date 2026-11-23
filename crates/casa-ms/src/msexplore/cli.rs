@@ -226,6 +226,15 @@ fn run_task(
                 "independent ordinate columns with a MeasurementSet callibrary are pending #1032",
             ));
         }
+        if calibration.is_some()
+            && options
+                .plotms_axis_columns()
+                .is_some_and(|columns| columns.contains(&MsDataColumn::Float))
+        {
+            return Err(TaskFailure::validation(
+                "MeasurementSet FLOAT_DATA with a callibrary is pending #1032",
+            ));
+        }
         if calibration.is_none()
             && let Some(columns) = options.plotms_axis_columns()
         {
@@ -274,19 +283,23 @@ impl CliOptions {
             self.secondary_y_data_column.unwrap_or(self.data_column),
         ])
     }
+
+    fn plotms_averaging_active(&self) -> bool {
+        self.avgchannel.is_some_and(|width| width > 1)
+            || self.avgtime.is_some()
+            || self.avgscan
+            || self.avgfield
+            || self.avgbaseline
+            || self.avgantenna
+            || self.avgspw
+    }
 }
 
 fn check_plotms_columns(
     options: &CliOptions,
     columns: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
-    let averaging = options.avgchannel.is_some_and(|width| width > 1)
-        || options.avgtime.is_some()
-        || options.avgscan
-        || options.avgfield
-        || options.avgbaseline
-        || options.avgantenna
-        || options.avgspw;
+    let averaging = options.plotms_averaging_active();
     if averaging && options.secondary_y_data_column.is_some() {
         return Err(TaskFailure::validation(
             "averaging independent MeasurementSet ordinate columns is pending #1032",
@@ -321,22 +334,19 @@ fn run_visibility_plot(
         ))
     })?;
     let mut axis_columns = options.plotms_axis_columns();
+    let mut prefer_float_data = false;
     if calibration.is_none()
         && let Some(columns) = &mut axis_columns
-        && ms.main_table().schema().is_some_and(|schema| {
-            schema.column("CORRECTED_DATA").is_none() && schema.column("DATA").is_some()
-        })
     {
-        let adjusted = columns.map(|column| match column {
-            MsDataColumn::Corrected => MsDataColumn::Data,
-            MsDataColumn::CorrectedMinusModel => MsDataColumn::DataMinusModel,
-            MsDataColumn::CorrectedMinusModelScalar => MsDataColumn::DataMinusModelScalar,
-            MsDataColumn::CorrectedDivModel => MsDataColumn::DataDivModel,
-            MsDataColumn::CorrectedDivModelScalar => MsDataColumn::DataDivModelScalar,
-            other => other,
-        });
+        let axes = [options.x_axis, options.y_axis, options.y_axis2];
+        let (adjusted, use_float) = super::plotms_columns::resolve_storage_columns(
+            &ms,
+            *columns,
+            axes,
+            options.plotms_averaging_active(),
+        )?;
+        prefer_float_data = use_float;
         if adjusted != *columns {
-            tracing::warn!("CORRECTED_DATA is unavailable. Using DATA for PlotMS.");
             let [x, y, secondary_y] = adjusted;
             options.data_column = y;
             options.x_data_column = (x != y).then_some(x);
@@ -380,6 +390,7 @@ fn run_visibility_plot(
                 &spec,
                 options.x_data_column,
                 options.secondary_y_data_column,
+                prefer_float_data,
             ),
         }
         .map_err(TaskFailure::execution)?;
