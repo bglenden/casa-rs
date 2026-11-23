@@ -150,7 +150,15 @@ impl TsysPlan {
         input: &SpectralWindowPlan,
         output: &SpectralWindowPlan,
     ) -> Result<Option<ComplexSolution>, ApplyExecutionError> {
-        let grid = fields::lookup(&self.table, field, input.spw_id, antenna, row, output, 0.)?;
+        let grid = fields::lookup(
+            &self.table,
+            field,
+            input.spw_id,
+            antenna,
+            (row, row.scan_number),
+            output,
+            0.,
+        )?;
         let Some(grid) = grid else { return Ok(None) };
         let CalibrationGrid::Complex(grid) = grid.grid.as_ref() else {
             return Ok(None);

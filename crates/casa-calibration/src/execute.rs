@@ -1155,8 +1155,9 @@ pub(crate) fn execute_tool_apply(
         selected,
         has_library_registration: correction.has_library_registration,
         legacy_corruption: false,
+        legacy_libraries: &[],
     };
-    let (mut plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
+    let (mut plan, _, _) = plan_with_selection(ms, request, None, Some(registration))?;
     if additive::in_plan(&plan) {
         plan.selected_rows =
             availability::rows_in_buffer_order(ms, std::mem::take(&mut plan.selected_rows))?;
@@ -2430,7 +2431,12 @@ fn apply_row_all_channels(
         };
         let table_plan = &plan.calibration_tables[table_index];
         let loaded_table = &chain.tables[table_index];
-        if !table_plan.applies_to(row)
+        let legacy_scan = chain
+            .legacy_scans
+            .get(&(table_index, row.row_index))
+            .copied();
+        let scan = legacy_scan.unwrap_or(row.scan_number);
+        if !table_plan.applies_to_scan(row, scan)
             || ((forward_model || skip_unavailable_terms)
                 && !availability::table_available(row, table_plan))
         {
@@ -2515,7 +2521,7 @@ fn apply_row_all_channels(
                 table_plan.interp,
             );
             key.observation_id = row.observation_id;
-            key.scan_number = row.scan_number;
+            key.scan_number = scan;
             key.data_spw_id = row.data_spw_id;
             let calculate = || {
                 fields::lookup(
@@ -2523,7 +2529,7 @@ fn apply_row_all_channels(
                     field_id,
                     cal_spw_id,
                     antenna,
-                    row,
+                    (row, scan),
                     data_spw,
                     evaluation_frequency_hz,
                 )
