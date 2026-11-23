@@ -11,12 +11,16 @@ pub(crate) mod surface;
 mod table_tools;
 mod weights;
 
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use casa_calibration::{
     CalibraterLifecycle, CalibraterLifecycleError, VisibilityFitRequest, VisibilityFitShape,
 };
-use casa_ms::MsSelection;
+use casa_ms::{MeasurementSet, MsError, MsSelection, SubtableId};
+use casa_tables::{Table, TableOptions};
 use casa_types::quanta::{Quantity, Unit};
 use numpy::{PyArray1, PyUntypedArray};
 use pyo3::{
@@ -33,19 +37,53 @@ const LOGGER: &str = "casars.tools.calibrater";
 /// CASA's calibration tool.
 #[pyclass(name = "calibrater", module = "casars.tools", frozen)]
 pub(crate) struct PyCalibrater {
-    lifecycle: Mutex<CalibraterLifecycle>,
+    state: Mutex<CalibrationToolState>,
+}
+
+#[derive(Default)]
+struct CalibrationToolState {
+    lifecycle: CalibraterLifecycle,
+    table_paths: Option<Arc<Vec<PathBuf>>>,
+}
+
+fn measurement_set_cache_paths(path: &Path) -> PyResult<Vec<PathBuf>> {
+    let main = Table::open(TableOptions::new(path)).map_err(runtime_error)?;
+    let mut paths = main.cache_plain_table_paths().map_err(runtime_error)?;
+    for &id in SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(SubtableId::ALL_OPTIONAL)
+    {
+        let linked = match MeasurementSet::linked_subtable_paths(&main, id) {
+            Ok(linked) => linked,
+            Err(MsError::MissingSubtable(_)) => continue,
+            Err(error) => return Err(runtime_error(error)),
+        };
+        for path in linked {
+            let subtable = Table::open(TableOptions::new(path)).map_err(runtime_error)?;
+            paths.extend(subtable.cache_plain_table_paths().map_err(runtime_error)?);
+        }
+    }
+    Ok(paths)
 }
 
 impl PyCalibrater {
+    fn with_state<T: Send>(
+        &self,
+        py: Python<'_>,
+        operation: impl FnOnce(&mut CalibrationToolState) -> PyResult<T> + Send,
+    ) -> PyResult<T> {
+        py.detach(|| {
+            let mut state = self.state.lock().map_err(runtime_error)?;
+            operation(&mut state)
+        })
+    }
+
     fn with_lifecycle<T: Send>(
         &self,
         py: Python<'_>,
         operation: impl FnOnce(&mut CalibraterLifecycle) -> PyResult<T> + Send,
     ) -> PyResult<T> {
-        py.detach(|| {
-            let mut lifecycle = self.lifecycle.lock().map_err(runtime_error)?;
-            operation(&mut lifecycle)
-        })
+        self.with_state(py, |state| operation(&mut state.lifecycle))
     }
 
     fn attached(
@@ -85,7 +123,7 @@ impl PyCalibrater {
     #[new]
     fn new() -> Self {
         Self {
-            lifecycle: Mutex::default(),
+            state: Mutex::default(),
         }
     }
 
@@ -98,17 +136,29 @@ impl PyCalibrater {
         addcorr: bool,
         addmodel: bool,
     ) -> PyResult<bool> {
-        self.with_lifecycle(py, |state| {
+        self.with_state(py, |state| {
+            state.table_paths = None;
             state
+                .lifecycle
                 .open_with_scratch(Path::new(filename), compress, addcorr, addmodel)
                 .map_err(runtime_error)?;
+            let path = state.lifecycle.dataset_path().expect("open MeasurementSet");
+            let paths = match measurement_set_cache_paths(path) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    state.lifecycle.close();
+                    return Err(error);
+                }
+            };
+            state.table_paths = Some(crate::tools::table::attach_table_paths(paths));
             Ok(true)
         })
     }
 
     fn close(&self, py: Python<'_>) -> PyResult<bool> {
-        self.with_lifecycle(py, |state| {
-            state.close();
+        self.with_state(py, |state| {
+            state.lifecycle.close();
+            state.table_paths = None;
             Ok(true)
         })
     }

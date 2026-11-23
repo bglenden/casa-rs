@@ -45,6 +45,7 @@ mod write_cells;
 mod write_structure;
 
 pub(crate) use cache::path_is_in_use;
+pub(crate) use registry::attach_table_paths;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
