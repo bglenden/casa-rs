@@ -219,6 +219,7 @@ struct DelayWindow {
     lowest_ghz: f64,
     highest_ghz: f64,
     channels: usize,
+    correlations: usize,
 }
 
 fn delay_windows(
@@ -233,7 +234,8 @@ fn delay_windows(
         else {
             continue;
         };
-        if cross_hand && correlation_types_for_ddid(ms, row.data_desc_id)?.len() != 4 {
+        let correlations = correlation_types_for_ddid(ms, row.data_desc_id)?.len();
+        if cross_hand && correlations != 4 {
             return Err(delay_error("KCROSS requires four correlations"));
         }
         let frequencies = spectral_windows
@@ -259,6 +261,7 @@ fn delay_windows(
             lowest_ghz: selected.iter().copied().fold(f64::INFINITY, f64::min) * 1e-9,
             highest_ghz: selected.iter().copied().fold(f64::NEG_INFINITY, f64::max) * 1e-9,
             channels: selected.len(),
+            correlations,
         });
     }
     Ok(windows)
@@ -284,6 +287,15 @@ fn group_delays(
         if request.gain_type == GainType::KAntPos {
             return Err(delay_error(
                 "the KAntPos fit cannot combine multiple buffers in a solution interval",
+            ));
+        }
+        if request.gain_type == GainType::KMbd
+            && buffers
+                .keys()
+                .any(|(dd, _, _)| windows[dd].correlations < 2)
+        {
+            return Err(delay_error(
+                "joint KMBD fits need two parallel hands in each visibility buffer",
             ));
         }
         return multiband::solve(

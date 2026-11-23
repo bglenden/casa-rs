@@ -10618,3 +10618,7 @@ CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type
 ## Direct EVLASWP can gather data and fail at fitting
 
 CASA 6.7.6.14 accepts direct `calibrater.setsolve(type='EVLASWP')` when the MeasurementSet links readable `SYSPOWER` and `CALDEVICE` tables. Both iterators record expected intervals and write no table for fully flagged input. Both terminate on the isolated usable visibility fit. Casa-rs retains the gather stage and returns a recoverable solve error for usable data. [Paired switched-power and KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+
+## Joint KMBD fitting can abort with single-correlation buffers
+
+When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 iterators refuse a mix of single- and dual-hand buffers. Two single-hand buffers instead terminate when the one-hand answer is assigned to the two-hand table array. Casa-rs reports a recoverable solve error in each case. [Paired KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
