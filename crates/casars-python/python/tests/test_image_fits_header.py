@@ -96,12 +96,20 @@ def test_primary_fits_beam_preserves_exact_angle_on_attach_and_import(casa, tmp_
     finally:
         source.done()
 
+    def check_beam(image):
+        beam = image.restoringbeam()
+        assert beam["positionangle"] == {"value": 6., "unit": "deg"}
+        # The CASA-written width cards round at the FITS serialization precision.
+        for component, expected in (("major", 5.), ("minor", 4.)):
+            assert beam[component]["unit"] == "arcsec"
+            assert beam[component]["value"] == pytest.approx(expected, rel=0, abs=1e-12)
+
     for writer in (casa, tools):
         product = str(tmp_path / f"{writer.__name__}-beam.im")
         image = writer.image()
         try:
             assert image.open(fits)
-            assert image.restoringbeam()["positionangle"] == {"value": 6., "unit": "deg"}
+            check_beam(image)
             assert image.done()
             assert image.fromfits(product, fits)
         finally:
@@ -110,9 +118,48 @@ def test_primary_fits_beam_preserves_exact_angle_on_attach_and_import(casa, tmp_
             image = reader.image()
             try:
                 assert image.open(product)
-                assert image.restoringbeam()["positionangle"] == {"value": 6., "unit": "deg"}
+                check_beam(image)
             finally:
                 image.done()
+
+
+@pytest.mark.parametrize("field", ["*0", "*0_0"])
+def test_fitsheader_uses_effective_singleton_beam_record(casa, tmp_path, field):
+    path = str(tmp_path / "singleton-beam.im")
+    image = casa.image()
+    assert image.fromshape(path, [5, 6])
+    assert image.setrestoringbeam("8arcsec", "2arcsec", "35deg")
+    assert image.done()
+
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    try:
+        info = table.getkeyword("imageinfo")
+        info["perplanebeams"] = {
+            "nChannels": 1,
+            "nStokes": 1,
+            field: {
+                "major": {"value": 5., "unit": "arcsec"},
+                "minor": {"value": 2., "unit": "arcsec"},
+                "positionangle": {"value": 6., "unit": "deg"},
+            },
+        }
+        table.putkeyword("imageinfo", info)
+    finally:
+        table.done()
+
+    # CASA only reads the canonical grid format. casa-rs also reads legacy keys.
+    for api in ((casa, tools) if field == "*0" else (tools,)):
+        image = api.image()
+        try:
+            assert image.open(path)
+            assert image.restoringbeam()["positionangle"] == {"value": 6., "unit": "deg"}
+            header = image.fitsheader()
+            assert header["BMAJ"] == pytest.approx(5. / 3600.)
+            assert header["BMIN"] == pytest.approx(2. / 3600.)
+            assert header["BPA"] == 6.0
+        finally:
+            image.done()
 
 
 def test_fitsheader_raw_cards_and_native_name(casa, tmp_path):

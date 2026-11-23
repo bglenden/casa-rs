@@ -249,8 +249,8 @@ impl ImageFitsHeader {
         if let Some(beam) = info.beam_set.single_beam().filter(|beam| !beam.is_null()) {
             self.add("BMAJ", FitsValue::Float(beam.major_in("deg")?), None);
             self.add("BMIN", FitsValue::Float(beam.minor_in("deg")?), None);
-            let angle = match beam_info.and_then(|record| record.get("restoringbeam")) {
-                Some(Value::Record(stored)) => {
+            let angle = match beam_info.and_then(ImageInfo::first_beam_record) {
+                Some(stored) => {
                     stored_position_angle_degrees(&StoredGaussianBeam::from_record(stored)?)?
                 }
                 _ => wrapped_beam_position_angle(beam.position_angle_in("deg")?),
