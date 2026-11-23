@@ -36,6 +36,11 @@
       "sha256": "975972380cb5098f3b1c0a008c84c08554a8ae5233b81c334a71a9fcf3e3bb66",
       "size": 14792
     },
+    "test_task_gaincal.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_gaincal.py",
+      "sha256": "28a3a81ff36f35716c6dcbefe9474b3500a23640344b26e83df0becc72b17c75",
+      "size": 58451
+    },
     "test_task_getantposalma.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_getantposalma.py",
       "sha256": "2a7a6c77e008aab411351e8a49eac96d93205c36d2f4da7a1f9a304719953177",
