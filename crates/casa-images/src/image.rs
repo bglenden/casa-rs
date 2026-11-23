@@ -29,7 +29,7 @@ use casa_types::{
     ArrayD, ArrayValue, Complex32, Complex64, PrimitiveType, RecordField, RecordValue, ScalarValue,
     Value,
 };
-use ndarray::{ArrayViewD, IxDyn, ShapeBuilder, Slice, SliceInfoElem};
+use ndarray::{ArrayViewD, IxDyn, Slice, SliceInfoElem};
 
 use crate::error::ImageError;
 use crate::image_expr::ImageExprBuilder;
@@ -3271,46 +3271,14 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
                     shape: self.shape.clone(),
                 });
             }
-            let output_count = shape
+            shape
                 .iter()
                 .try_fold(1_usize, |count, &n| count.checked_mul(n))
                 .ok_or_else(|| LatticeError::InvalidTraversal("slice size overflow".into()))?;
-            let bounding_count = bounding_shape
-                .iter()
-                .fold(1_usize, |count, &n| count.saturating_mul(n));
-            // Gather through the existing tile cache when most of the bounding
-            // box would be discarded. Nearby samples still reuse loaded tiles.
-            if bounding_count > output_count.saturating_mul(8) {
-                let mut io = tio.borrow_mut();
-                let mut values = Vec::with_capacity(output_count);
-                let mut position = start.to_vec();
-                for mut offset in 0..output_count {
-                    for axis in 0..ndim {
-                        position[axis] = start[axis] + (offset % shape[axis]) * stride[axis];
-                        offset /= shape[axis];
-                    }
-                    values.push(
-                        io.get_at::<T>(&position)
-                            .map_err(|error| LatticeError::Table(error.to_string()))?,
-                    );
-                }
-                return ArrayD::from_shape_vec(IxDyn(shape).f(), values)
-                    .map_err(|error| LatticeError::InvalidTraversal(error.to_string()));
-            }
-            let bounding = tio
+            return tio
                 .borrow_mut()
-                .get_slice::<T>(start, &bounding_shape)
-                .map_err(|e| LatticeError::Table(e.to_string()))?;
-            let local_slice: Vec<SliceInfoElem> = bounding_shape
-                .iter()
-                .zip(stride.iter())
-                .map(|(&extent, &step)| SliceInfoElem::Slice {
-                    start: 0,
-                    end: Some(extent as isize),
-                    step: step.min(extent.max(1)) as isize,
-                })
-                .collect();
-            return Ok(bounding.slice(local_slice.as_slice()).to_owned());
+                .get_strided_slice::<T>(start, shape, stride)
+                .map_err(|error| LatticeError::Table(error.to_string()));
         }
         let array = self
             .read_array()
@@ -4903,6 +4871,58 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(metrics.lru_read_tiles, selected_tiles.len());
         assert_eq!(metrics.flat_allocated_bytes, 0);
+    }
+
+    #[test]
+    fn a_strided_image_slice_gathers_all_samples_with_one_lookup_per_tile() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("strided.image");
+        let shape = vec![19, 11, 3, 12];
+        let tile_shape = vec![5, 4, 2, 2];
+        let coords = casa_coordinates::defaults::coordinate_system_for_shape(&shape, false);
+        let mut image = PagedImage::<f32>::create_with_tile_shape(
+            shape.clone(),
+            tile_shape.clone(),
+            coords,
+            &path,
+        )
+        .unwrap();
+        let value = |x: usize, y: usize, polarization: usize, channel: usize| {
+            (x + 20 * (y + 12 * (polarization + 3 * channel))) as f32
+        };
+        let pixels = ArrayD::from_shape_fn(IxDyn(&shape).f(), |index| {
+            value(index[0], index[1], index[2], index[3])
+        });
+        image.put_slice(&pixels, &[0; 4]).unwrap();
+        image.save().unwrap();
+        drop(image);
+
+        let mut image = PagedImage::<f32>::open(&path).unwrap();
+        image.reset_tiled_io_stats();
+        let start = [1, 1, 0, 1];
+        let step = [3, 2, 1, 4];
+        let size = [6, 5, 3, 3];
+        let samples = image.get_slice_with_stride(&start, &size, &step).unwrap();
+        let expected = ArrayD::from_shape_fn(IxDyn(&size).f(), |index| {
+            value(
+                1 + 3 * index[0],
+                1 + 2 * index[1],
+                index[2],
+                1 + 4 * index[3],
+            )
+        });
+        assert_eq!(samples, expected);
+        let selected_tiles = (0..shape.len())
+            .map(|axis| {
+                (0..size[axis])
+                    .map(|index| (start[axis] + index * step[axis]) / tile_shape[axis])
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+            })
+            .product::<usize>();
+        let stats = image.tiled_io_stats().unwrap();
+        assert_eq!(stats.lru_misses, selected_tiles);
+        assert_eq!(stats.lru_hits, 0);
     }
 
     #[test]

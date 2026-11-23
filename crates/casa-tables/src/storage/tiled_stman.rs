@@ -386,6 +386,7 @@ mod shape_cube;
 mod spec;
 #[cfg(test)]
 mod split_axis0_tests;
+mod strided_slice;
 pub(crate) use metadata_shapes::Packed2DSelection;
 use shape_cube::{DirectShapeCubeWriter, ShapeCubeWorkingSet};
 pub(crate) use spec::tiled_spec;
@@ -12681,6 +12682,22 @@ impl TiledArrayStorage {
     ) -> Result<ArrayD<T>, StorageError> {
         self.ensure_pixel_type::<T>()?;
         self.inner.get_slice(start, shape)
+    }
+
+    /// Read regularly sampled pixels in Fortran order by visiting only the tiles
+    /// containing selected pixels. `shape` is the number of samples per axis.
+    ///
+    /// # Errors
+    /// Returns an error for mismatched rank or pixel type, invalid bounds or
+    /// strides, or an unreadable tile.
+    pub fn get_strided_slice<T: TilePixel>(
+        &mut self,
+        start: &[usize],
+        shape: &[usize],
+        stride: &[usize],
+    ) -> Result<ArrayD<T>, StorageError> {
+        self.ensure_pixel_type::<T>()?;
+        self.inner.get_strided_slice(start, shape, stride)
     }
 
     pub fn get_slice_into<T: TilePixel>(
