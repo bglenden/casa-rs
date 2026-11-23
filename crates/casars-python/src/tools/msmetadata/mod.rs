@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's `msmetadata` tool (msmd): every method of CASA 6.7.6.14's binding,
-//! with its signature (ADR-0017, #1025). A method casa-rs does not implement
-//! yet raises `NotImplementedError` naming #1029 (`stubs.rs`).
+//! with its signature (ADR-0017, #1025).
 
 mod antenna_metadata;
 mod column_units;
 mod data_description;
 mod direction_metadata;
 mod intents;
+mod main_quantities;
+mod main_scalar_batches;
+mod main_summary;
 mod names;
 mod observation_metadata;
 mod scan_index;
@@ -16,7 +18,6 @@ mod source_metadata;
 mod spectral;
 mod spectral_classes;
 mod spw_membership;
-mod stubs;
 pub(crate) mod surface;
 mod time_state_queries;
 
@@ -28,16 +29,7 @@ use casa_tables::lexical_absolute;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
-use crate::tools::not_yet_implemented_in;
 use scan_index::ScanIndex;
-
-/// The issue that records the methods casa-rs refuses.
-const ISSUE: u32 = 1029;
-
-/// A method casa-rs does not implement yet.
-fn stub(method: &str) -> PyResult<Py<PyAny>> {
-    not_yet_implemented_in("msmetadata", method, ISSUE)
-}
 
 /// CASA's `msmetadata` tool.
 #[pyclass(name = "msmetadata", module = "casars.tools", frozen)]

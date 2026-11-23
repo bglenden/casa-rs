@@ -10840,3 +10840,43 @@ an omitted selector. casa-rs uses the unsigned antenna ID in the two
 methods that accept IDs and raises `RuntimeError` for unsupported selector
 types. An unsupported value cannot silently widen the selection or return
 the position of a different antenna (#1029).
+
+## A cached cross-correlation row count can underflow
+
+In CASA 6.7.6.14, call `msmetadata.summary()` and then
+`nrows(autoc=False, flagged=True)` on an attached MeasurementSet
+containing cross-correlations. CASA's cached row-statistics path subtracts
+the total row count from the autocorrelation count in an unsigned type.
+For example, a 30-row MeasurementSet with 18 cross-correlations can return
+a float equal to 2⁶⁴. casa-rs counts the actual MAIN rows whose antenna
+IDs differ, independently of which metadata method was called first (#1029).
+
+## MeasurementSet row counts and effective exposure can ignore FLAG_ROW
+
+In CASA 6.7.6.14, set `FLAG_ROW=True` on a MAIN cross-correlation row
+while leaving that row's `FLAG` array clear. `msmetadata.nrows(flagged=False)`
+counts the row and `effexposuretime()` includes its exposure. Setting the
+entire `FLAG` cell instead excludes both. casa-rs treats the row flag as
+marking all samples in the row bad, as the MeasurementSet defines it.
+This leaves total row counts and the effective-exposure bandwidth
+denominator unchanged (#1029).
+
+## Summarizing an empty MeasurementSet can abort CASA
+
+Open a valid zero-row MeasurementSet, for example a disk reference view
+made with CASA's `table.selectrows` and an empty integer array.
+In CASA 6.7.6.14, `msmetadata.summary()` computes minimum and maximum
+times on an empty array and aborts the Python process. casa-rs raises
+`RuntimeError` because the summary has no beginning or ending timestamp.
+The tool remains attached and reports zero rows (#1029).
+
+## Descending channels can produce negative unflagged counts and effective exposure
+
+CASA 6.7.6.14 weights usable samples by signed `CHAN_WIDTH` in
+`msmetadata.nrows(flagged=False)` and `effexposuretime()`. With four
+1 MHz channels stored in descending order, negative channel widths,
+positive `TOTAL_BANDWIDTH`, and one channel flagged in each correlation,
+CASA reports −13.5 unflagged cross-correlation rows and −22.5 s on an
+18-cross-row fixture. The ascending ordering gives +13.5 rows and +22.5 s.
+casa-rs uses channel-width magnitudes, so either ordering gives the same
+positive count and duration (#1029).
