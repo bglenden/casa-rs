@@ -10977,6 +10977,7 @@ explicit write lock with `table.lock(write=True)`. Calling
 table then reports `haslock(write=True) == False` even though its owner never
 released the lock.
 
+CASA also releases automatic locks on unrelated tables open in the same process.
 casa-rs yields automatic locks on the input MeasurementSet before its
 clearcal provider starts and keeps the caller's table attached. An explicit
 or active lock still held by the caller produces a `RuntimeError` before
