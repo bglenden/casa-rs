@@ -660,6 +660,7 @@ fn restore_rename<T>(
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
 
     use super::*;
 
@@ -779,16 +780,10 @@ mod tests {
             }
         }
     }
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
-    use super::*;
 
     #[test]
     fn late_cleanup_failure_names_and_preserves_the_recovery_entry() {
+        Python::initialize();
         let root = tempfile::tempdir().unwrap();
         let published = root.path().join("published");
         fs::write(&published, b"the published copy").unwrap();
