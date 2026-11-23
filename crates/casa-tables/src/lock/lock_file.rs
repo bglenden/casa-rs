@@ -168,6 +168,18 @@ struct ProcessLockState {
     blocked_readers: usize,
     /// Length of the in-use read lock at byte 1 (2 under permanent locking).
     in_use_len: i64,
+    /// Acquisitions that may still obtain the data lock, including kernel waits.
+    acquisitions: usize,
+    /// The Python caller is waiting for its provider to use the table.
+    delegated_write: bool,
+}
+
+struct Acquisition<'a>(&'a SharedLockFd);
+
+impl Drop for Acquisition<'_> {
+    fn drop(&mut self) {
+        self.0.state().acquisitions -= 1;
+    }
 }
 
 /// One registered lock file: its shared descriptor and the handles using it.
@@ -443,6 +455,18 @@ impl LockFile {
     /// Returns an I/O error when `fcntl` fails for a reason other than a held
     /// lock, a deadlock or missing lock support.
     pub fn acquire(&mut self, lock_type: LockType, nattempts: u32) -> io::Result<LockOutcome> {
+        let shared = Arc::clone(&self.shared);
+        let _acquisition = {
+            let mut state = shared.state();
+            if state.delegated_write {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "a task provider is using this table",
+                ));
+            }
+            state.acquisitions += 1;
+            Acquisition(&shared)
+        };
         let first = self.try_acquire(lock_type)?;
         let result = if first == LockOutcome::HeldByAnotherProcess && nattempts != 1 {
             let added = self.add_to_list && self.shared.writable && self.add_request_id().is_ok();
@@ -981,21 +1005,41 @@ pub fn table_holder(table_dir: &Path) -> io::Result<Option<TableHolder>> {
     Ok((!free).then_some(TableHolder::AnotherProcess))
 }
 
-/// Whether this process holds the data byte lock on `table_dir`.
-/// A table may remain open in this process with its data lock released.
-/// This does not inspect locks held by other processes.
-///
-/// # Errors
-/// The lock file metadata cannot be inspected.
-pub fn process_holds_table_lock(table_dir: &Path) -> io::Result<bool> {
-    let Some(key) = path_key(&table_dir.join(LOCK_FILE_NAME))? else {
-        return Ok(false);
-    };
-    let shared = registry().get(&key).map(|entry| Arc::clone(&entry.shared));
-    Ok(shared.is_some_and(|shared| {
-        let state = shared.state();
-        state.readers > 0 || state.writer.is_some()
-    }))
+/// Prevents local data-lock acquisition while a child process writes a table.
+/// It leaves kernel lock acquisition to the child and other processes.
+pub struct DelegatedTableWrite(LockFile);
+
+impl DelegatedTableWrite {
+    /// Reserve a table once this process has released its data locks. Open
+    /// handles can remain attached and synchronize when the reservation ends.
+    ///
+    /// # Errors
+    /// Returns an error if the lock file cannot be opened, or if a local
+    /// thread is acquiring, holding or delegating the lock.
+    pub fn acquire(table_dir: &Path) -> io::Result<Self> {
+        let lock = LockFile::create_or_open(table_dir, false, 0.0, false)?;
+        {
+            let mut state = lock.shared.state();
+            if state.delegated_write
+                || state.acquisitions > 0
+                || state.readers > 0
+                || state.writer.is_some()
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "table lock held by this Python process or a local task is already using the table",
+                ));
+            }
+            state.delegated_write = true;
+        }
+        Ok(Self(lock))
+    }
+}
+
+impl Drop for DelegatedTableWrite {
+    fn drop(&mut self) {
+        self.0.shared.state().delegated_write = false;
+    }
 }
 
 /// Read the sync data that follows the request list in an open lock file.

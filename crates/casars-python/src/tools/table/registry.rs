@@ -22,31 +22,26 @@ use super::state::{Fail, State};
 
 /// Yield a named table's automatic locks before the Python caller waits for
 /// its task provider subprocess to write the table.
-pub(crate) fn prepare_provider_write(path: &Path) -> Result<(), Fail> {
-    let target = match path.canonicalize() {
-        Ok(target) => target,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(Fail::Runtime(format!("{}: {error}", path.display()))),
-    };
+#[cfg(unix)]
+pub(crate) fn prepare_provider_write(
+    targets: &[PathBuf],
+) -> Result<Vec<casa_tables::DelegatedTableWrite>, Fail> {
     let mut result = Ok(());
     for_each_other(u64::MAX, |state| {
         if result.is_ok()
             && let Some(state) = state
         {
-            result = state.relinquish_auto_lock(Some(&target));
+            result = state.relinquish_auto_lock(Some(targets));
         }
     });
     result?;
-    #[cfg(unix)]
-    if casa_tables::process_holds_table_lock(&target)
-        .map_err(|error| Fail::Runtime(format!("{}: {error}", path.display())))?
-    {
-        return Err(Fail::Runtime(format!(
-            "{} has a table lock held by this Python process; release the lock before running the task",
-            path.display()
-        )));
-    }
-    Ok(())
+    targets
+        .iter()
+        .map(|path| {
+            casa_tables::DelegatedTableWrite::acquire(path)
+                .map_err(|error| Fail::Runtime(format!("{}: {error}", path.display())))
+        })
+        .collect()
 }
 
 /// Every tool made in this process that is still alive, with its
