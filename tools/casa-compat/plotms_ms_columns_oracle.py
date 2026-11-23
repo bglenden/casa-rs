@@ -505,6 +505,49 @@ def compare_float_columns(root, vis, source, native):
         assert compare_text(actual, expected) == 12
 
 
+def compare_default_model(root, native):
+    vis = root / "default-model.ms"
+    make_cal_ms(str(vis), stokes="XX XY YX YY")
+    with opened(vis, True) as table:
+        corr, channel, row = np.indices(table.getcol("DATA").shape)
+        observed = (1 + channel + row / 256 + 2 * corr).astype(np.complex64)
+        flags = (channel == 2)
+        table.putcol("DATA", observed)
+        table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", np.zeros(observed.shape[2], dtype=bool))
+        absent = {"MODEL_DATA", "CORRECTED_DATA"}
+        table.removecols(sorted(absent.intersection(table.colnames())))
+
+    cases = (
+        ("unit-model-parallel", dict(xdatacolumn="model", yaxis="amp", ydatacolumn="data"), (1, 2)),
+        ("unit-model-cross", dict(xdatacolumn="model", yaxis="amp", ydatacolumn="data",
+                                  correlation="XY"), (0, 4)),
+        ("unit-model-corrected-residual", dict(xaxis="channel", xdatacolumn="", yaxis="real",
+                                                ydatacolumn="corrected-model_vector"), (1, 1)),
+        ("unit-model-cross-residual", dict(xaxis="channel", xdatacolumn="", yaxis="real",
+                                            ydatacolumn="data-model_vector", correlation="XY"), (1, 4)),
+    )
+    for name, overrides, first in cases:
+        controls = request(vis) | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert len(selected) == 12
+        assert {sample[2] for sample in selected} == {"1", "3"}
+        np.testing.assert_allclose(np.array(selected[0][:2], dtype=float), first, rtol=1.2e-5, atol=1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: 12 matching points without MODEL_DATA", flush=True)
+
+    controls = request(vis) | cases[0][1]
+    compare_figure(root, native, controls, root / "unit-model-parallel.casa.txt",
+                   ("Amp vs. Amp:model", "Amp:model", "Amp"))
+    with opened(vis) as table:
+        assert absent.isdisjoint(table.colnames())
+        np.testing.assert_array_equal(table.getcol("DATA"), observed)
+        np.testing.assert_array_equal(table.getcol("FLAG"), flags)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -530,6 +573,7 @@ def main():
         compare_ratio_float_range(root, vis, source, native)
         compare_ordinate_columns(root, vis, native)
         compare_float_columns(root, vis, source, native)
+        compare_default_model(root, native)
 
 
 if __name__ == "__main__":
