@@ -657,6 +657,147 @@ def compare_averaged_columns(root, native):
             np.testing.assert_array_equal(table.getcol(name), data)
 
 
+def time_average_fixture(root):
+    vis, _ = fixture(root)
+    with opened(vis, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        shape = table.getcol("DATA").shape
+        base = np.where(integration % 2 == 0, 1, 3)
+        for factor, name in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            values = (10 ** factor * base).astype(np.complex64)[None, None, :]
+            table.putcol(name, np.broadcast_to(values, shape))
+        for name, later in (("WEIGHT", 9), ("SIGMA", 0.5)):
+            values = np.where(integration % 2 == 0, 1, later).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, (shape[0], shape[2])))
+    return vis, integration
+
+
+def compare_time_averaged_columns(root, native):
+    work = root / "time-averaged-columns"
+    work.mkdir()
+    vis, integration = time_average_fixture(work)
+    mixed_flags, spectra, zero_weights, zero_corrected, no_corrected = (
+        work / f"{name}.ms" for name in ("mixed-flags", "spectra", "zero-weight", "zero-corrected", "no-corrected")
+    )
+    for path in (mixed_flags, spectra, zero_weights, zero_corrected, no_corrected):
+        copy_ms(vis, path)
+    with opened(mixed_flags, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, :] = np.isin(integration, [0, 2, 3])
+        table.putcol("FLAG", flags)
+    with opened(spectra, True) as table:
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        for name, earlier, later in (("WEIGHT_SPECTRUM", 3, 1), ("SIGMA_SPECTRUM", 0.5, 1)):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            values = np.where(integration % 2 == 0, earlier, later).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, shape))
+    for path, columns in ((zero_weights, ("WEIGHT", "SIGMA")), (zero_corrected, ("WEIGHT",))):
+        with opened(path, True) as table:
+            for name in columns:
+                table.putcol(name, np.zeros_like(table.getcol(name)))
+    with opened(no_corrected, True) as table:
+        table.removecols(["CORRECTED_DATA"])
+    trailing, leading, row_flag_only, reversed_time, weighted_uvw = (
+        work / f"{name}.ms" for name in ("trailing", "leading", "row-flag-only", "reversed", "weighted-uvw")
+    )
+    odd = integration % 2 == 1
+    for path in (trailing, leading, row_flag_only, reversed_time, weighted_uvw):
+        copy_ms(vis, path)
+        with opened(path, True) as table:
+            if path == trailing:
+                flag = table.getcol("FLAG")
+                flag[0, 1, odd] = True
+                table.putcol("FLAG", flag)
+            elif path == leading:
+                flag = table.getcol("FLAG")
+                flag[:, :, ~odd] = True
+                table.putcol("FLAG", flag)
+                table.putcol("FLAG_ROW", ~odd)
+            elif path == row_flag_only:
+                table.putcol("FLAG_ROW", odd)
+            elif path == reversed_time:
+                times = np.unique(table.getcol("TIME"))
+                reversed_times = times[-1 - integration]
+                table.putcol("TIME", reversed_times)
+                table.putcol("TIME_CENTROID", reversed_times)
+                data = table.getcol("DATA")
+                data[:, :, odd] = -1
+                table.putcol("DATA", data)
+                table.putcol("SIGMA", np.ones_like(table.getcol("SIGMA")))
+            else:
+                uvw = np.zeros_like(table.getcol("UVW"))
+                uvw[0, odd] = 10
+                table.putcol("UVW", uvw)
+
+    base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
+                               ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
+                               spw="0:1", avgtime="20")
+    independent = [(2.6, 28)] * 3 + [(2.6, 280)] * 3
+    corrected = [(7 / 3, 290 / 11), (25 / 9, 550 / 19)]
+    model = [(7 / 3, 2900 / 11), (25 / 9, 5500 / 19)]
+    cases = (
+        ("time-independent", {}, independent, 20),
+        ("time-flagged-bins", dict(vis=str(mixed_flags)), [(3, 30), (2.6, 28), (3, 300), (2.6, 280)], 40),
+        ("time-spectral-weights", dict(vis=str(spectra)), [(1.4, 15)] * 3 + [(1.4, 150)] * 3, 20),
+        ("time-zero-weight", dict(vis=str(zero_weights)), [(0, 0)] * 6, 20),
+        ("time-zero-corrected", dict(vis=str(zero_corrected)), [(2.6, 0)] * 6, 20),
+        ("time-no-corrected", dict(vis=str(no_corrected), ydatacolumn=["data", "model"]),
+         [(2.6, 2.6)] * 3 + [(2.6, 260)] * 3, 20),
+        ("time-shared-abscissa", dict(xdatacolumn="corrected", yaxis=["real", "amp"],
+                                      ydatacolumn=["data", "corrected"]), [(28, 2.6)] * 3 + [(28, 28)] * 3, 20),
+        ("time-short-window", dict(avgtime="4"), [(1, 10), (3, 30)] * 3 + [(1, 100), (3, 300)] * 3, 10),
+        ("time-15-second-window", dict(avgtime="15"), independent, 20),
+        ("time-25-second-window", dict(avgtime="25"), corrected + model, 30),
+        ("time-scan-boundary", dict(avgtime="25", field=""), corrected * 2 + model * 2, 30),
+        ("time-trailing-cell-flag", dict(vis=str(trailing)), [(1, 10)] * 3 + [(1, 100)] * 3, 20),
+        ("time-leading-row-flag", dict(vis=str(leading)), [(3, 30)] * 3 + [(3, 300)] * 3, 20),
+        ("time-row-flag-only", dict(vis=str(row_flag_only)), independent, 20),
+        ("time-reversed-and-vector", dict(vis=str(reversed_time), xaxis="amp"),
+         [(0, 28)] * 3 + [(0, 280)] * 3, 20),
+    )
+    for name, overrides, coordinates, spacing in cases:
+        controls = base | overrides
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert len(selected) == len(coordinates)
+        assert {row[2] for row in selected} == {"1"}
+        assert {row[12] for row in selected} == {"XX"}
+        np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        times = [float(row[9]) for row in selected[:len(selected) // 2]]
+        np.testing.assert_allclose(np.diff(times), spacing, rtol=0, atol=0.001)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching time-averaged coordinates", flush=True)
+    for axis in ("time", "channel", "frequency"):
+        controls = base | dict(xaxis=axis, xdatacolumn="", expformat="txt")
+        expected, actual = (work / f"average-{axis}-axis.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 6
+        if axis == "time":
+            for path in (expected, actual):
+                assert all(float(row[0]) == float(row[9]) for row in rows(path))
+    from casars.tasks import TaskParameterError
+
+    controls = base | dict(vis=str(weighted_uvw), xaxis="u", xdatacolumn="", expformat="txt")
+    expected, actual = (work / f"time-weighted-u.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert len(rows(expected)) == 6
+    assert {float(row[0]) for row in rows(expected)} == {9}
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS admitted a request requiring weighted UVW coordinates")
+    assert not actual.exists()
+    compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
+
+
 def compare_float_columns(root, vis, source, native):
     float_only = root / "float-only.ms"
     mixed = root / "float-and-complex.ms"
@@ -926,6 +1067,30 @@ def compare_default_model(root, native):
         assert {float(point[1]) for point in rows(expected)} == {amplitude}
         assert native(**selected, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == count
+    average = controls | dict(vis=str(stored), xaxis="channel", xdatacolumn="",
+                              yaxis=["amp", "amp"], ydatacolumn=["data", "model"], avgtime="20")
+    for name, field, spw, amplitude in (
+        ("average-virtual-and-stored", "PHASE", "0:1", 7.25),
+        ("average-unmodeled-window-and-stored", "PHASE", "1:1", 1),
+        ("average-stored-only-field", "FLUX", "0:1", 19),
+    ):
+        selected = average | dict(field=field, spw=spw)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**selected, plotfile=str(expected)) is None
+        coordinates = rows(expected)
+        assert coordinates and len(coordinates) % 2 == 0
+        assert {float(point[1]) for point in coordinates[len(coordinates) // 2:]} == {amplitude}
+        if field == "FLUX":
+            assert native(**selected, plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == len(coordinates)
+        else:
+            try:
+                native(**selected, plotfile=str(actual))
+            except TaskExecutionError as error:
+                assert "virtual MeasurementSet models are pending #1032" in str(error), error
+            else:
+                raise AssertionError("PlotMS used the stored model for an averaged virtual-model field")
+            assert not actual.exists()
     with opened(stored) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
 
@@ -987,6 +1152,7 @@ def main():
         compare_ordinate_columns(root, vis, native)
         compare_multiple_ordinates(root, vis, native)
         compare_averaged_columns(root, native)
+        compare_time_averaged_columns(root, native)
         compare_float_columns(root, vis, source, native)
         compare_default_model(root, native)
         compare_virtual_fourier_model(root, native)

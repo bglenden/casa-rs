@@ -2059,17 +2059,19 @@ pub struct MsScatterSeries {
     pub points: Vec<(f64, f64)>,
     /// Provenance for each plotted point in `points`.
     pub provenance: Vec<MsScatterPointRef>,
-    /// Display metadata for calibrated PlotMS points, when available.
+    /// Display metadata for PlotMS points, when available.
     pub plotms_metadata: Vec<MsScatterPlotMsMetadata>,
 }
 
-/// Display metadata for one calibrated PlotMS export coordinate.
+/// Display metadata for one PlotMS export coordinate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MsScatterPlotMsMetadata {
     /// Channel identifier after any channel averaging.
     pub channel: usize,
     /// Timestamp after time averaging, when enabled.
     pub average_time: Option<f64>,
+    /// Position of the time-averaged buffer in the selected visibility iterator.
+    pub averaging_group: Option<usize>,
 }
 
 /// One plotted point's originating visibility sample range.
@@ -2502,6 +2504,7 @@ pub struct PlotMsCalibration {
 /// CASA row and channel selection, optionally with transient calibrated arrays.
 struct PlotMsInput<'a> {
     row_order: &'a [usize],
+    time_bins: Option<&'a HashMap<usize, usize>>,
     channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
     rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
     models: Option<&'a HashMap<usize, ArrayValue>>,
@@ -2725,6 +2728,7 @@ pub(crate) fn build_calibrated_plotms_payload(
 ) -> Result<MsPlotPayload, String> {
     let input = PlotMsInput {
         row_order: &calibration.row_order,
+        time_bins: None,
         channels: &calibration.channels,
         rows: Some(&calibration.rows),
         models: None,
@@ -2750,6 +2754,31 @@ fn build_uncalibrated_plotms_payload(
         .map(|load| load(ms, &selected.selected_rows))
         .transpose()?
         .flatten();
+    let time_bins = columns
+        .secondary_y
+        .and_then(|_| {
+            let plot = spec.plots.first()?;
+            Some((plot, plot.averaging.avgtime?))
+        })
+        .map(|(plot, seconds)| {
+            if plotms_columns::uses_model(
+                [
+                    Some(plot.x_axis),
+                    Some(plot.y_axis()),
+                    plot.secondary_y_axis(),
+                ],
+                [
+                    columns.x.unwrap_or(plot.data_column),
+                    plot.data_column,
+                    columns.secondary_y.unwrap_or(plot.data_column),
+                ],
+            ) {
+                plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
+            }
+            crate::transform::selected_plot_time_bins(ms, &selected.selected_rows, seconds)
+                .map_err(|error| error.to_string())
+        })
+        .transpose()?;
     let row_order = selected
         .selected_rows
         .into_iter()
@@ -2770,6 +2799,7 @@ fn build_uncalibrated_plotms_payload(
     }
     let input = PlotMsInput {
         row_order: &row_order,
+        time_bins: time_bins.as_ref(),
         channels: &channels,
         rows: None,
         models: models.as_ref(),
@@ -3573,10 +3603,20 @@ struct SharedTimeAverageScopeKey {
     spw_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum AveragingTimeKey {
     Exact(u64),
     Bucket(i64),
+    Group(usize),
+}
+
+impl AveragingTimeKey {
+    fn group(self) -> Option<usize> {
+        match self {
+            Self::Group(group) => Some(group),
+            Self::Exact(_) | Self::Bucket(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -3599,15 +3639,14 @@ struct AveragingPointKeyInputs<'a> {
     baseline: AveragingBaselineToken,
     corr_index: usize,
     row_time_value: f64,
+    time_group: Option<usize>,
     bin: &'a ChannelBin,
 }
 
 #[derive(Debug, Default)]
 struct AveragedPointAccumulator {
-    x_visibility_samples: Vec<Complex64>,
-    x_visibility_sample_weights: Vec<f64>,
-    visibility_samples: Vec<Complex64>,
-    visibility_sample_weights: Vec<f64>,
+    x_visibility: plotms_ordinates::AveragedVisibility,
+    y_visibility: plotms_ordinates::AveragedVisibility,
     numeric_axis_samples: Vec<(MsAxis, Vec<f64>)>,
     time_interval_samples: Vec<f64>,
     has_flag_samples: bool,
@@ -3623,6 +3662,7 @@ struct AveragedSeriesAccumulator {
     label: String,
     color_group: String,
     y_axis: MsAxis,
+    y_index: usize,
     points: std::collections::BTreeMap<AveragingPointKey, AveragedPointAccumulator>,
 }
 
@@ -3632,6 +3672,7 @@ impl Default for AveragedSeriesAccumulator {
             label: String::new(),
             color_group: String::new(),
             y_axis: MsAxis::Amplitude,
+            y_index: 0,
             points: std::collections::BTreeMap::new(),
         }
     }
@@ -3967,7 +4008,7 @@ fn build_generic_visibility_scatter(
                     .and_then(|column| column.find(0))
                     .is_some()
         })
-        .map(|input| plotms_columns::channel_weight_kinds(ms, spec, input));
+        .map(|input| plotms_columns::weight_kinds(ms, spec, input));
     let needs_observed_weights =
         channel_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Observed));
     let needs_calibrated_weights =
@@ -4230,32 +4271,8 @@ fn build_generic_visibility_scatter(
                 .copied()
                 .enumerate()
                 .map(|(y_index, y_axis)| {
-                    let (series_key, series_label, color_group) = scatter_series_identity(
-                        y_axis,
-                        spec.y_axes.len() > 1,
-                        &group_key,
-                        &group_label,
-                    );
-                    let (series_key, series_label, color_group) = if spec.y_axes.len() > 2
-                        || spec.secondary_y_axis() == Some(spec.y_axis())
-                    {
-                        let column = visibility_columns
-                            .column(y_index)
-                            .unwrap_or(spec.data_column);
-                        let label = plotms_figure::column_axis_name(y_axis, column);
-                        let label = if group_key == "all" {
-                            label
-                        } else {
-                            format!("{label} · {group_label}")
-                        };
-                        (
-                            format!("{y_index}::{series_key}"),
-                            label,
-                            format!("{y_index}::{color_group}"),
-                        )
-                    } else {
-                        (series_key, series_label, color_group)
-                    };
+                    let (series_key, series_label, color_group) =
+                        visibility_columns.series_identity(spec, y_index, &group_key, &group_label);
                     (y_index, y_axis, series_key, series_label, color_group)
                 })
                 .collect::<Vec<_>>();
@@ -4414,6 +4431,7 @@ fn build_generic_visibility_scatter(
                         series.plotms_metadata.push(MsScatterPlotMsMetadata {
                             channel: bin.display_channel(),
                             average_time: None,
+                            averaging_group: None,
                         });
                     }
                     if let Some(started) = push_started {
@@ -4675,7 +4693,9 @@ fn build_averaging_point_key(
     spec: &MsPlotSpec,
     time_scope_origins: &std::collections::BTreeMap<TimeAverageScopeKey, f64>,
 ) -> AveragingPointKey {
-    let time_key = if let Some(avgtime) = spec.averaging.avgtime {
+    let time_key = if let Some(group) = inputs.time_group {
+        AveragingTimeKey::Group(group)
+    } else if let Some(avgtime) = spec.averaging.avgtime {
         let scope = build_time_average_scope_key(
             inputs.field_id,
             inputs.scan_number,
@@ -4722,40 +4742,21 @@ fn push_time_interval_sample(accumulator: &mut AveragedPointAccumulator, interva
     accumulator.time_interval_samples.push(interval_seconds);
 }
 
-fn transform_visibility_samples_for_baseline_token(
-    samples: &[Complex64],
-    baseline_token: &AveragingBaselineToken,
-    antenna1: i32,
-    antenna2: i32,
-) -> Vec<Complex64> {
-    match baseline_token {
-        AveragingBaselineToken::Antenna(target) if antenna1 != antenna2 && *target == antenna2 => {
-            samples.iter().map(|value| value.conj()).collect()
-        }
-        _ => samples.to_vec(),
-    }
-}
-
 fn finalize_averaged_axis_value(
     axis: MsAxis,
     accumulator: &AveragedPointAccumulator,
     scalar_average: bool,
     avgtime_enabled: bool,
     use_x_samples: bool,
+    reference_time_average: bool,
 ) -> Option<f64> {
     if axis.is_visibility_math() {
-        let (samples, weights) = if use_x_samples {
-            (
-                &accumulator.x_visibility_samples,
-                &accumulator.x_visibility_sample_weights,
-            )
+        let samples = if use_x_samples {
+            &accumulator.x_visibility
         } else {
-            (
-                &accumulator.visibility_samples,
-                &accumulator.visibility_sample_weights,
-            )
+            &accumulator.y_visibility
         };
-        return compute_weighted_visibility_math(axis, samples, weights, scalar_average, false);
+        return samples.project(axis, scalar_average, reference_time_average);
     }
     match axis {
         MsAxis::Time => {
@@ -4821,21 +4822,16 @@ fn build_generic_visibility_scatter_with_averaging(
             .copied()
             .any(MsAxis::uses_spectral_coordinates);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
-    let x_data_source = calibration
-        .and_then(|input| input.x_data_column)
-        .filter(|_| spec.x_axis.is_visibility_math())
-        .map(|column| PreparedSelectedDataSource::new(ms, column, &row_numbers, calibration))
-        .transpose()?;
-    let data_source = if needs_visibility_grid {
-        Some(PreparedSelectedDataSource::new(
-            ms,
-            spec.data_column,
-            &row_numbers,
-            calibration,
-        )?)
-    } else {
-        None
-    };
+    let visibility_columns =
+        plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
+    let time_bins = calibration.and_then(|input| input.time_bins);
+    let time_weight_kinds = calibration
+        .filter(|_| time_bins.is_some())
+        .map(|input| plotms_columns::weight_kinds(ms, spec, input));
+    let needs_observed_weights =
+        time_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Observed));
+    let needs_calibrated_weights =
+        time_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Calibrated));
     let selected_flags =
         SelectedArrayColumn::load_for_plot(ms.main_table(), "FLAG", &row_numbers, calibration)?;
     let selected_weights =
@@ -4902,7 +4898,7 @@ fn build_generic_visibility_scatter_with_averaging(
     } else {
         None
     };
-    let selected_sigma_spectrum = if needs_sigma_spectrum {
+    let selected_sigma_spectrum = if needs_sigma_spectrum || needs_observed_weights {
         SigmaSpectrumColumn::new(ms.main_table())
             .ok()
             .map(|_| SelectedArrayColumn::load(ms.main_table(), "SIGMA_SPECTRUM", &row_numbers))
@@ -4916,7 +4912,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut time_scope_origins = std::collections::BTreeMap::<TimeAverageScopeKey, f64>::new();
     let mut shared_time_scope_bounds =
         std::collections::BTreeMap::<SharedTimeAverageScopeKey, (f64, f64)>::new();
-    if spec.averaging.avgtime.is_some() {
+    if spec.averaging.avgtime.is_some() && time_bins.is_none() {
         for (row_slot, _row) in row_numbers.iter().copied().enumerate() {
             let flag_row_value = selected_flag_rows[row_slot];
             if flag_row_value && !include_row_flagged_points {
@@ -4974,10 +4970,13 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut panel_order = Vec::<String>::new();
     let mut panels = std::collections::BTreeMap::<String, AveragedPanelAccumulator>::new();
     let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
+    let mut visibility_grids = Vec::new();
+    let mut bin_buffers = visibility_columns.buffers();
+    let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
-        if flag_row_value && !include_row_flagged_points {
+        if flag_row_value && !include_row_flagged_points && time_bins.is_none() {
             continue;
         }
 
@@ -5013,21 +5012,9 @@ fn build_generic_visibility_scatter_with_averaging(
                 ));
             }
         };
-        let grid = data_source
-            .as_ref()
-            .map(|source| source.row(row_slot, false))
-            .transpose()?;
-        let x_grid = x_data_source
-            .as_ref()
-            .map(|source| source.row(row_slot, false))
-            .transpose()?;
-        if let (Some(x), Some(y)) = (&x_grid, &grid)
-            && (x.corr_count, x.chan_count) != (y.corr_count, y.chan_count)
-        {
-            return Err("PlotMS X and Y data cells have different shapes".into());
-        }
-        let (corr_count, chan_count) = grid
-            .as_ref()
+        visibility_columns.read_row(row_slot, false, &mut visibility_grids)?;
+        let (corr_count, chan_count) = visibility_grids
+            .first()
             .map(|grid| (grid.corr_count, grid.chan_count))
             .unwrap_or((flags.nrows(), flags.ncols()));
         if flags.shape() != [corr_count, chan_count] {
@@ -5043,27 +5030,22 @@ fn build_generic_visibility_scatter_with_averaging(
         let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
         let weight_spectrum_grid = selected_weight_spectrum
             .as_ref()
-            .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
+            .and_then(|column| column.find(row_slot))
+            .map(|cell| float_grid_from_array(cell, "WEIGHT_SPECTRUM"))
             .transpose()?
             .or_else(|| {
-                needs_weight_spectrum.then(|| scalar_values_to_grid(&weight_values, chan_count))
+                (needs_weight_spectrum || needs_calibrated_weights)
+                    .then(|| scalar_values_to_grid(&weight_values, chan_count))
             });
-        let averaging_weight_grid = if use_spectral_weights {
-            weight_spectrum_grid.as_ref()
-        } else {
-            None
-        };
-        let sigma_spectrum_grid = if needs_sigma_spectrum {
-            Some(
-                selected_sigma_spectrum
-                    .as_ref()
-                    .map(|column| float_grid_from_array(column.get(row_slot)?, "SIGMA_SPECTRUM"))
-                    .transpose()?
-                    .unwrap_or_else(|| scalar_values_to_grid(&sigma_values, chan_count)),
-            )
-        } else {
-            None
-        };
+        let sigma_spectrum_grid = selected_sigma_spectrum
+            .as_ref()
+            .and_then(|column| column.find(row_slot))
+            .map(|cell| float_grid_from_array(cell, "SIGMA_SPECTRUM"))
+            .transpose()?
+            .or_else(|| {
+                (needs_sigma_spectrum || needs_observed_weights)
+                    .then(|| scalar_values_to_grid(&sigma_values, chan_count))
+            });
         for (column_name, grid) in [
             ("WEIGHT_SPECTRUM", weight_spectrum_grid.as_ref()),
             ("SIGMA_SPECTRUM", sigma_spectrum_grid.as_ref()),
@@ -5077,6 +5059,19 @@ fn build_generic_visibility_scatter_with_averaging(
                 ));
             }
         }
+        let observed_weights = sigma_spectrum_grid
+            .as_ref()
+            .filter(|_| needs_observed_weights)
+            .map(plotms_columns::inverse_variance);
+        let weight_grid = |kind| match kind {
+            WeightKind::Observed => observed_weights.as_ref(),
+            WeightKind::Calibrated if use_spectral_weights => weight_spectrum_grid.as_ref(),
+            _ => None,
+        };
+        let axis_weights = time_weight_kinds
+            .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
+            .map(weight_grid);
+        let column_weights = visibility_columns.column_weights(axis_weights);
 
         let selected_correlations =
             select_correlation_slots(corr_count, &corr_types, requested_corr_codes.as_deref());
@@ -5110,6 +5105,18 @@ fn build_generic_visibility_scatter_with_averaging(
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
         let row_time_value = selected_times[row_slot];
+        let time_group = time_bins.map(|bins| bins[&row]);
+        if let Some(group) = time_group {
+            let unflagged = selected_correlations.iter().any(|(corr, _)| {
+                channel_bins
+                    .iter()
+                    .any(|bin| bin.channels().any(|channel| !flags[(*corr, channel)]))
+            });
+            time_bounds
+                .entry(group)
+                .or_insert_with(|| plotms_ordinates::VisibilityTimeBounds::new(row_time_value))
+                .observe(row_time_value, unflagged);
+        }
         let row_uvw_value = selected_uvw[row_slot];
         let row_interval_value = selected_intervals[row_slot];
         let shared_time_scope_value = if use_shared_time_scope_midpoint {
@@ -5140,45 +5147,37 @@ fn build_generic_visibility_scatter_with_averaging(
         for (corr_index, corr_label) in &selected_correlations {
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
-            let mut x_samples = Vec::<Complex64>::new();
-            let mut x_visibility_weights = Vec::<f64>::new();
-            let mut samples = Vec::<Complex64>::new();
             let mut flag_samples = Vec::<bool>::new();
-            let mut visibility_weight_samples = Vec::<f64>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
+            let scalar_weight = time_weight_kinds.map_or(row_weight, |_| 1.0);
             for baseline_token in &baseline_tokens {
+                let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(target)
+                    if antenna1_value != antenna2_value && *target == antenna2_value);
                 for bin in channel_bins.iter() {
-                    visibility_weight_samples.clear();
-                    x_visibility_weights.clear();
-                    if let Some(grid) = grid.as_ref() {
-                        collect_bin_samples_into(
+                    for (index, (grid, buffer)) in
+                        visibility_grids.iter().zip(&mut bin_buffers).enumerate()
+                    {
+                        buffer.collect(
                             grid,
                             &flags,
+                            column_weights.get(index).copied().flatten(),
                             *corr_index,
                             bin,
-                            averaging_weight_grid
-                                .map(|grid| (grid, &mut visibility_weight_samples)),
-                            &mut samples,
                         );
-                    } else {
-                        samples.clear();
                     }
-                    if let Some(grid) = x_grid.as_ref() {
-                        collect_bin_samples_into(
-                            grid,
-                            &flags,
+                    let samples = |axis| {
+                        visibility_columns.samples(
+                            axis,
+                            &visibility_grids,
+                            &bin_buffers,
                             *corr_index,
                             bin,
-                            averaging_weight_grid.map(|grid| (grid, &mut x_visibility_weights)),
-                            &mut x_samples,
-                        );
-                    }
+                            false,
+                        )
+                    };
+                    let x_samples = samples(0);
                     collect_bin_flags_into(&flags, *corr_index, bin, &mut flag_samples);
-                    if averaging_weight_grid.is_none() {
-                        visibility_weight_samples.resize(samples.len(), row_weight);
-                        x_visibility_weights.resize(x_samples.len(), row_weight);
-                    }
                     if let Some(grid) = weight_spectrum_grid.as_ref() {
                         collect_bin_float_samples_into(
                             grid,
@@ -5239,6 +5238,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             baseline: baseline_token.clone(),
                             corr_index: *corr_index,
                             row_time_value,
+                            time_group,
                             bin,
                         },
                         spec,
@@ -5248,18 +5248,15 @@ fn build_generic_visibility_scatter_with_averaging(
                         .get_mut(&panel_key)
                         .expect("panel inserted before mutation");
                     let mut panel_used = false;
-                    for y_axis in spec.y_axes.iter().copied() {
-                        let (series_key, series_label, color_group) = scatter_series_identity(
-                            y_axis,
-                            spec.y_axes.len() > 1,
-                            &group_key,
-                            &group_label,
-                        );
+                    for (y_index, y_axis) in spec.y_axes.iter().copied().enumerate() {
+                        let (series_key, series_label, color_group) = visibility_columns
+                            .series_identity(spec, y_index, &group_key, &group_label);
                         let series = panel.series.entry(series_key).or_insert_with(|| {
                             AveragedSeriesAccumulator {
                                 label: series_label,
                                 color_group,
                                 y_axis,
+                                y_index,
                                 ..Default::default()
                             }
                         });
@@ -5274,37 +5271,19 @@ fn build_generic_visibility_scatter_with_averaging(
                             });
                         }
 
-                        let mut series_used = false;
-                        if (spec.x_axis.is_visibility_math() || y_axis.is_visibility_math())
-                            && !samples.is_empty()
+                        let y_samples = samples(y_index + 1);
+                        let mut series_used =
+                            !x_samples.values.is_empty() || !y_samples.values.is_empty();
+                        accumulator
+                            .x_visibility
+                            .add(x_samples, scalar_weight, conjugate);
+                        accumulator
+                            .y_visibility
+                            .add(y_samples, scalar_weight, conjugate);
+                        if calibration.is_some()
+                            && spec.averaging.avgtime.is_some()
+                            && time_group.is_none()
                         {
-                            let transformed_samples =
-                                transform_visibility_samples_for_baseline_token(
-                                    &samples,
-                                    baseline_token,
-                                    antenna1_value,
-                                    antenna2_value,
-                                );
-                            accumulator
-                                .visibility_sample_weights
-                                .extend(visibility_weight_samples.iter().copied());
-                            accumulator.visibility_samples.extend(transformed_samples);
-                            series_used = true;
-                        }
-                        if x_grid.is_some() {
-                            accumulator
-                                .x_visibility_sample_weights
-                                .extend(x_visibility_weights.iter().copied());
-                            accumulator.x_visibility_samples.extend(
-                                transform_visibility_samples_for_baseline_token(
-                                    &x_samples,
-                                    baseline_token,
-                                    antenna1_value,
-                                    antenna2_value,
-                                ),
-                            );
-                        }
-                        if calibration.is_some() && spec.averaging.avgtime.is_some() {
                             push_numeric_axis_sample(
                                 accumulator,
                                 MsAxis::Time,
@@ -5470,46 +5449,52 @@ fn build_generic_visibility_scatter_with_averaging(
                 label: series.label,
                 color_group: series.color_group,
                 y_axis: series.y_axis,
-                y_index: usize::from(spec.secondary_y_axis() == Some(series.y_axis)),
+                y_index: series.y_index,
                 points: Vec::new(),
                 provenance: Vec::new(),
                 plotms_metadata: Vec::new(),
             };
-            let mut points = series.points.into_values();
-            let mut corrected_order = calibration.map(|_| {
+            let mut points = series
+                .points
+                .into_iter()
+                .map(|(key, point)| (key.time_key.group(), point));
+            let mut plot_order = calibration.map(|_| {
                 let mut ordered = points.by_ref().collect::<Vec<_>>();
-                ordered.sort_by_key(|entry| {
-                    entry
-                        .representative
-                        .as_ref()
-                        .map(|point| (point.row, point.chan_start, point.corr))
+                ordered.sort_by_key(|(group, entry)| {
+                    entry.representative.as_ref().map(|point| {
+                        let (row, channel, correlation) = point.plotms_order();
+                        (group.unwrap_or(row), channel, correlation)
+                    })
                 });
                 ordered.into_iter()
             });
-            let ordered = std::iter::from_fn(|| match &mut corrected_order {
+            let ordered = std::iter::from_fn(|| match &mut plot_order {
                 Some(points) => points.next(),
                 None => points.next(),
             });
-            for accumulator in ordered {
+            for (group, accumulator) in ordered {
                 let Some(representative) = accumulator.representative.clone() else {
                     continue;
                 };
-                let Some(x_value) = finalize_averaged_axis_value(
-                    spec.x_axis,
-                    &accumulator,
-                    spec.averaging.scalar,
-                    spec.averaging.avgtime.is_some(),
-                    x_data_source.is_some(),
-                ) else {
+                let planned_time = group.and_then(|group| time_bounds[&group].midpoint());
+                let project = |axis, x_axis| {
+                    if axis == MsAxis::Time && group.is_some() {
+                        planned_time
+                    } else {
+                        finalize_averaged_axis_value(
+                            axis,
+                            &accumulator,
+                            spec.averaging.scalar,
+                            spec.averaging.avgtime.is_some(),
+                            x_axis,
+                            group.is_some(),
+                        )
+                    }
+                };
+                let Some(x_value) = project(spec.x_axis, true) else {
                     continue;
                 };
-                let Some(y_value) = finalize_averaged_axis_value(
-                    series.y_axis,
-                    &accumulator,
-                    spec.averaging.scalar,
-                    spec.averaging.avgtime.is_some(),
-                    false,
-                ) else {
+                let Some(y_value) = project(series.y_axis, false) else {
                     continue;
                 };
                 output.points.push((x_value, y_value));
@@ -5517,15 +5502,11 @@ fn build_generic_visibility_scatter_with_averaging(
                 if calibration.is_some() {
                     output.plotms_metadata.push(MsScatterPlotMsMetadata {
                         channel: accumulator.display_channel,
-                        average_time: spec.averaging.avgtime.and_then(|_| {
-                            finalize_averaged_axis_value(
-                                MsAxis::Time,
-                                &accumulator,
-                                false,
-                                true,
-                                false,
-                            )
-                        }),
+                        average_time: spec
+                            .averaging
+                            .avgtime
+                            .and_then(|_| project(MsAxis::Time, false)),
+                        averaging_group: group,
                     });
                 }
                 point_budget.record_points(
@@ -5543,6 +5524,9 @@ fn build_generic_visibility_scatter_with_averaging(
             if !output.points.is_empty() {
                 series_entries.push(output);
             }
+        }
+        if time_weight_kinds.is_some() {
+            series_entries.sort_by_key(|entry| entry.y_index);
         }
         if series_entries.is_empty() {
             continue;

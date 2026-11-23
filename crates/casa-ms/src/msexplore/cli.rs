@@ -272,7 +272,9 @@ fn run_task(
         {
             plotms_columns::check_averaging(
                 options.plotms_averaging_active(),
-                options.plotms_extended_averaging() && options.secondary_y_data_column.is_some(),
+                options.plotms_extended_averaging()
+                    && options.secondary_y_data_column.is_some()
+                    && !options.plotms_independent_vector_time_average(),
                 columns,
             )?;
             let symbols = task.value("customflaggedsymbol");

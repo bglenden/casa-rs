@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Baseline and visibility accumulation for MeasurementSet time averaging.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use casa_tables::TableError;
@@ -169,6 +169,31 @@ pub(super) fn uvw_coordinates(uvw: Option<&ArrayValue>) -> Option<[f64; 3]> {
         return None;
     }
     Some([uvw[0], uvw[1], uvw[2]])
+}
+
+/// Map each selected physical row to its shared vector time averaging group.
+pub(crate) fn selected_plot_time_bins(
+    ms: &MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+    interval_seconds: f64,
+) -> Result<HashMap<usize, usize>, MsTransformError> {
+    let groups = plan(
+        ms,
+        rows,
+        TimeAverageOptions {
+            interval_seconds,
+            span_scans: false,
+            span_states: true,
+            span_fields: false,
+            max_uvw_distance: 0.0,
+        },
+        MainRowOrder::Transform,
+    )?;
+    let mut bins = HashMap::with_capacity(rows.len());
+    for (index, group) in groups.into_iter().enumerate() {
+        bins.extend(group.rows.into_iter().map(|row| (row.physical, index)));
+    }
+    Ok(bins)
 }
 
 pub(super) fn group_baselines(
