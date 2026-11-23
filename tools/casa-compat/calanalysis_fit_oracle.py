@@ -126,6 +126,50 @@ def exercise(path, readers, complex_values):
         assert tool.close()
 
 
+def compare_narrow_band(native, reference):
+    assert list(native) == list(reference)
+    # A nearly singular 100 GHz normal equation affects these diagnostics.
+    # Apply the calibration science bound and check a stable law separately.
+    sensitive = {'vars', 'covars', 'res', 'resMean'}
+    for key in reference:
+        if key not in sensitive:
+            compare_records(native[key], reference[key])
+            continue
+        actual, expected = native[key], reference[key]
+        assert type(actual) is type(expected)
+        if isinstance(expected, np.ndarray):
+            assert actual.dtype == expected.dtype and actual.shape == expected.shape
+        np.testing.assert_allclose(actual, expected, rtol=1e-3, atol=1e-14)
+
+
+def check_narrow_band(record, weighted, *, native):
+    assert record['validFit']
+    use = ~record['flag']
+    x, y = record[record['abscissa']], record['value']
+    if weighted:
+        sigma = record['valueErr'][use]
+        centered = (x-x[0])/1e6
+        design = np.stack((np.ones(len(x)), centered), axis=-1)
+        params = np.linalg.lstsq(design[use]/sigma[:, None], y[use]/sigma, rcond=None)[0]
+        np.testing.assert_allclose(record['model'], design@params, rtol=1e-5, atol=1e-6)
+        return
+    x_scale = abs(x[use].min())+abs(x[use].max())
+    y_scale = abs(y[use].min())+abs(y[use].max())
+    basis = np.array([1., x[use].mean()/x_scale])
+    factor = basis@basis
+    update = (y[use].mean()/y_scale - basis.sum())/factor
+    coeff = (1.+update*basis)*np.array([y_scale, y_scale/x_scale])
+    np.testing.assert_allclose(record['pars'], coeff, rtol=1e-7, atol=1e-18)
+    if native:
+        model = np.polynomial.polynomial.polyval(x, coeff)
+        residuals = y[use]-model[use]
+        direction = basis*np.array([1.,1./x_scale])
+        covariance = np.outer(direction,direction)/(sum(use)*factor**2)
+        covariance *= (residuals@residuals)/(sum(use)-1)
+        np.testing.assert_allclose(record['vars'], np.diag(covariance), rtol=1e-7, atol=0.)
+        np.testing.assert_allclose(record['covars'], [covariance[0,1]], rtol=1e-7, atol=0.)
+
+
 def exercise_narrow_band(path, readers):
     frequencies = 1e11 + 1e6*np.arange(CHANNELS)
     with opened(path/'SPECTRAL_WINDOW', True) as spw:
@@ -139,24 +183,12 @@ def exercise_narrow_band(path, readers):
                    for label, tool in tools.items()}
         reference = outputs['casa']
         assert len(reference) == 2
-        if 'native' in outputs:
-            compare_records(outputs['native'], reference)
-        for record in reference.values():
-            assert record['validFit']
-            use = ~record['flag']
-            x, y = record[record['abscissa']], record['value']
-            if weighted:
-                sigma = record['valueErr'][use]
-                centered = (x-x[0])/1e6
-                a = np.stack((np.ones(len(x)), centered), axis=-1)
-                params = np.linalg.lstsq(a[use]/sigma[:, None], y[use]/sigma, rcond=None)[0]
-                np.testing.assert_allclose(record['model'], a@params, rtol=1e-5, atol=1e-6)
-            else:
-                x_scale, y_scale = abs(x[use].min())+abs(x[use].max()), abs(y[use].min())+abs(y[use].max())
-                basis = np.array([1., x[use].mean()/x_scale])
-                update = (y[use].mean()/y_scale - basis.sum())/(basis@basis)
-                coeff = (1.+update*basis)*np.array([y_scale, y_scale/x_scale])
-                np.testing.assert_allclose(record['pars'], coeff, rtol=1e-7, atol=1e-18)
+        for key, record in reference.items():
+            check_narrow_band(record, weighted, native=False)
+            if 'native' in outputs:
+                candidate = outputs['native'][key]
+                compare_narrow_band(candidate, record)
+                check_narrow_band(candidate, weighted, native=True)
         print(path.name, 'narrow frequency band', weighted, len(reference), flush=True)
     for tool in tools.values():
         assert tool.close()
