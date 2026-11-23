@@ -86,6 +86,35 @@ def test_fitsheader_preserves_stored_beam_angle_and_defaults_unset_epoch_to_utc(
             image.done()
 
 
+def test_primary_fits_beam_preserves_exact_angle_on_attach_and_import(casa, tmp_path):
+    fits = str(tmp_path / "beam.fits")
+    source = casa.image()
+    try:
+        assert source.fromshape(shape=[5, 6])
+        assert source.setrestoringbeam("5arcsec", "4arcsec", "6deg")
+        assert source.tofits(fits)
+    finally:
+        source.done()
+
+    for writer in (casa, tools):
+        product = str(tmp_path / f"{writer.__name__}-beam.im")
+        image = writer.image()
+        try:
+            assert image.open(fits)
+            assert image.restoringbeam()["positionangle"] == {"value": 6., "unit": "deg"}
+            assert image.done()
+            assert image.fromfits(product, fits)
+        finally:
+            image.done()
+        for reader in (casa, tools):
+            image = reader.image()
+            try:
+                assert image.open(product)
+                assert image.restoringbeam()["positionangle"] == {"value": 6., "unit": "deg"}
+            finally:
+                image.done()
+
+
 def test_fitsheader_raw_cards_and_native_name(casa, tmp_path):
     path = str(tmp_path / ("native-" + "x" * 75 + ".im"))
     creator = tools.image()
