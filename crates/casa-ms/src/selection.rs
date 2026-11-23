@@ -38,7 +38,9 @@ mod feed_expr;
 mod intent;
 pub(crate) mod parser;
 mod row_grammar;
-pub(crate) use row_grammar::flagdata_channel_ranges;
+pub(crate) use row_grammar::{
+    first_unflagged_time_row, flagdata_c_string, flagdata_channel_ranges,
+};
 pub mod spw_expr;
 pub mod syntax;
 pub mod time_expr;
@@ -61,7 +63,9 @@ pub(crate) enum RowGrammar {
     Standard,
     Casa,
     Transform,
-    FlagData { agent_time: bool },
+    FlagData {
+        agent_time_default_row: Option<usize>,
+    },
 }
 
 /// Builder for MS row selection criteria.
@@ -695,9 +699,15 @@ pub(crate) fn resolve_casa_row_indices(
 pub(crate) fn resolve_flagdata_selection_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,
-    agent_time: bool,
-) -> MsResult<(ResolvedMsSelection, Option<TimeSelection>)> {
-    resolve_selection_with_grammar(ms, request, RowGrammar::FlagData { agent_time })
+    agent_time_default_row: Option<usize>,
+) -> MsResult<ResolvedMsSelection> {
+    resolve_selection_with_grammar(
+        ms,
+        request,
+        RowGrammar::FlagData {
+            agent_time_default_row,
+        },
+    )
 }
 
 fn resolve_row_indices_with_grammar(
@@ -706,14 +716,14 @@ fn resolve_row_indices_with_grammar(
     grammar: RowGrammar,
 ) -> MsResult<Vec<usize>> {
     resolve_selection_with_grammar(ms, request, grammar)
-        .map(|(resolved, _)| resolved.row_indices().collect())
+        .map(|resolved| resolved.row_indices().collect())
 }
 
 fn resolve_selection_with_grammar(
     ms: &MeasurementSet,
     request: &MsSelection,
     grammar: RowGrammar,
-) -> MsResult<(ResolvedMsSelection, Option<TimeSelection>)> {
+) -> MsResult<ResolvedMsSelection> {
     let budget = MsSelectionIoBudget::from_system_memory(
         2,
         std::mem::size_of::<ResolvedMsSelectionRow>(),
@@ -721,6 +731,7 @@ fn resolve_selection_with_grammar(
     )
     .map_err(|error| MsError::InvalidInput(error.to_string()))?;
     ms.resolve_rows(request, budget, grammar)
+        .map(|(resolved, _)| resolved)
         .map_err(|error| match error {
             MsSelectionError::Domain(error) => error,
             other => MsError::InvalidInput(other.to_string()),

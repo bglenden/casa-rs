@@ -87,9 +87,19 @@ pub(crate) fn selection_from_options(
         } else {
             timerange
         };
-        let agent_time = grammar == RowGrammar::FlagData { agent_time: true };
-        selection =
-            super::row_grammar::with_time(ms, selection, timerange, rows_per_block, agent_time)?;
+        let agent_time_default_row = match grammar {
+            RowGrammar::FlagData {
+                agent_time_default_row,
+            } => agent_time_default_row,
+            _ => None,
+        };
+        selection = super::row_grammar::with_time(
+            ms,
+            selection,
+            timerange,
+            rows_per_block,
+            agent_time_default_row,
+        )?;
     }
 
     Ok(selection)

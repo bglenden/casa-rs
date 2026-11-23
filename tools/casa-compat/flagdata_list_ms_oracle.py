@@ -630,6 +630,60 @@ def check_agent_time_intervals(libraries):
                 err_msg=f"{label} {name} FLAG",
             )
             np.testing.assert_array_equal(row_flags, expected, err_msg=f"{label} {name} FLAG_ROW")
+    for name, task in libraries:
+        vis = f"empty-agent-time-{name}.ms"
+        copytree("agent-time.ms", vis)
+        result = task(
+            vis=vis, flagbackup=False, mode="list",
+            inpfile=[
+                f"mode='summary' name='empty' timerange='{stamp(point)}'",
+                "mode='summary' name='all'",
+            ],
+        )
+        assert [(report["name"], report["total"]) for report in result.values()] == [
+            ("empty", 0),
+            ("all", flags(vis)[0].size),
+        ], (name, result)
+    return len(cases) + 1
+
+
+def check_agent_time_defaults(libraries):
+    make_list_fixture("agent-default-date.ms")
+    with table("agent-default-date.ms", ack=False, readonly=False) as main:
+        unique, integration = np.unique(main.getcol("TIME"), return_inverse=True)
+        day = np.floor(unique[0] / 86400) * 86400
+        offsets = [21600, 21600, 86400, 129600] + [
+            151200 + 10 * i for i in range(len(unique) - 4)
+        ]
+        times = day + np.asarray(offsets)[integration]
+        first_scan = integration < 2
+        main.putcol("TIME", times)
+        main.putcol("FIELD_ID", np.where(first_scan, 0, 1).astype("int32"))
+        main.putcol("SCAN_NUMBER", np.where(first_scan, 1, 2).astype("int32"))
+
+    cases = (
+        ("single-agent-date", ["mode='manual' timerange='>12:00:00'"], times >= day + 129600),
+        ("field-agent-date", ["mode='manual' field='1' timerange='12:00:00'", "mode='summary'"],
+         integration == 3),
+        ("initial-agent-date", ["mode='manual' scan='1'", "mode='unflag' timerange='12:00:00'"],
+         integration == 0),
+    )
+    for label, commands, expected in cases:
+        for name, task in libraries:
+            vis = f"{label}-{name}.ms"
+            copytree("agent-default-date.ms", vis)
+            if label == "initial-agent-date":
+                with table(vis, ack=False, readonly=False) as main:
+                    times_with_noon = times.copy()
+                    times_with_noon[integration == 1] = day + 43200
+                    main.putcol("TIME", times_with_noon)
+            task(vis=vis, mode="list", inpfile=commands, flagbackup=False)
+            flagged, row_flags = flags(vis)
+            np.testing.assert_array_equal(
+                flagged, np.broadcast_to(expected[:, None, None], flagged.shape),
+                err_msg=f"{label} {name} FLAG",
+            )
+            np.testing.assert_array_equal(row_flags, expected, err_msg=f"{label} {name} FLAG_ROW")
     return len(cases)
 
 
@@ -639,6 +693,7 @@ def main():
     with TemporaryDirectory(prefix="flagdata-list-ms-") as root, chdir(root):
         c1 = check_inputs_and_selectors(libraries)
         c1 += check_agent_time_intervals(libraries)
+        c1 += check_agent_time_defaults(libraries)
         c2 = check_sequential_all_modes(libraries)
         c3 = check_savepars_history_backup_display_cli(libraries)
         c4 = check_skips_and_refusals(libraries)
