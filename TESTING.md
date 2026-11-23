@@ -222,6 +222,20 @@ Use `--help` to list suite names and `--only` to select individual tests.
 The casa-rs run replaces both `image` and `coordsys` so the upstream tests
 can check the interaction between tools as well as standalone calls.
 
+To compare the performance of the public tools, use the optimized native
+Python extension and run the matched workloads under CASA 6.7.6.14's Python:
+
+```bash
+RAYON_NUM_THREADS=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 \
+  CASA_PYTHON tools/casa-compat/benchmark_image_tools.py \
+  --casa-rs-revision BUILD_COMMIT --output target/image-tools-benchmark.json
+```
+
+The benchmark uses the same masked Float cube and coordinate vectors in
+both implementations. It checks the returned values, masks and coordinates
+outside the timed interval, then records wall and process CPU samples in
+alternating order. Use `--case` to repeat a specific workload.
+
 **Upstream CASA MeasurementSet task suites.** The same runner supports the
 imported MeasurementSet suites, with installed CASA 6.7.6.14 as the control.
 

@@ -150,22 +150,15 @@ fn transform(
     let scale = world_scale(coordinates)?;
     let converted = match output {
         Output::World => {
-            let mut converted = Vec::with_capacity(output_count * values.ncols());
-            let mut input = Vec::with_capacity(input_count);
-            for column in values.axis_iter(Axis(1)) {
-                input.clear();
-                input.extend(column.iter().copied());
-                let world = coordinates
-                    .to_world(&input)
-                    .map_err(|error| raised(error.to_string()))?;
-                converted.extend(
-                    world
-                        .into_iter()
-                        .zip(&scale)
-                        .map(|(value, scale)| value * scale),
-                );
+            let mut world = coordinates
+                .to_world_columns(values.view())
+                .map_err(|error| raised(error.to_string()))?;
+            for (mut row, scale) in world.axis_iter_mut(Axis(0)).zip(scale) {
+                if scale != 1.0 {
+                    row.mapv_inplace(|value| value * scale);
+                }
             }
-            converted
+            world.into_raw_vec_and_offset().0
         }
         Output::Pixel => {
             for (mut row, scale) in values.axis_iter_mut(Axis(0)).zip(scale) {

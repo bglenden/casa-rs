@@ -161,19 +161,34 @@ impl CoordinateSystem {
         if let Some(maps) = self.nonconsecutive_maps() {
             return maps.to_world(&self.coordinates, pixel);
         }
-
         let mut world = Vec::with_capacity(self.n_world_axes());
+        self.append_consecutive_world(pixel, &mut world)?;
+        Ok(world)
+    }
+
+    fn append_consecutive_world(
+        &self,
+        pixel: &[f64],
+        world: &mut Vec<f64>,
+    ) -> Result<(), CoordinateError> {
         let mut pix_offset = 0;
 
         for coord in &self.coordinates {
             let np = coord.n_pixel_axes();
             let pix_slice = &pixel[pix_offset..pix_offset + np];
-            let w = coord.to_world(pix_slice)?;
-            world.extend(w);
+            match coord {
+                CoordinateModel::Direction(direction) if np == 2 => {
+                    world.extend(direction.pixel_to_world([pix_slice[0], pix_slice[1]])?);
+                }
+                CoordinateModel::Spectral(spectral) => {
+                    world.push(spectral.world_at_pixel(pix_slice[0])?)
+                }
+                CoordinateModel::Stokes(stokes) => world.push(stokes.world_at_pixel(pix_slice[0])?),
+                _ => world.extend(coord.to_world(pix_slice)?),
+            }
             pix_offset += np;
         }
-
-        Ok(world)
+        Ok(())
     }
 
     /// Converts a full world coordinate vector to pixel coordinates.

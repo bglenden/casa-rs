@@ -819,22 +819,33 @@ impl CoordinateSystem {
     }
 
     /// Converts a matrix of pixel coordinates, one point per column.
+    /// The output rows follow the system's world axes, with columns contiguous.
     ///
     /// # Errors
-    /// The input has the wrong number of pixel rows or a point cannot be converted.
+    /// The input has the wrong number of pixel rows, the output cannot be
+    /// allocated, or a point cannot be converted.
     pub fn to_world_columns(
         &self,
         pixel: ArrayView2<'_, f64>,
     ) -> Result<Array2<f64>, CoordinateError> {
-        if pixel.nrows() != self.n_pixel_axes() {
+        let n_pixel = self.n_pixel_axes();
+        if pixel.nrows() != n_pixel {
             return Err(CoordinateError::DimensionMismatch {
-                expected: self.n_pixel_axes(),
+                expected: n_pixel,
                 got: pixel.nrows(),
             });
         }
-        let mut result = Array2::zeros((self.n_world_axes(), pixel.ncols()).f());
-        let mut buffer = Vec::with_capacity(pixel.nrows());
-        for (column, mut world) in pixel.axis_iter(Axis(1)).zip(result.axis_iter_mut(Axis(1))) {
+        let n_world = self.n_world_axes();
+        let size = n_world.checked_mul(pixel.ncols()).ok_or_else(|| {
+            CoordinateError::ConversionFailed("world coordinate matrix size overflow".into())
+        })?;
+        let mut result = Vec::new();
+        result
+            .try_reserve_exact(size)
+            .map_err(|error| CoordinateError::ConversionFailed(error.to_string()))?;
+        let mut buffer = Vec::new();
+        let maps = self.nonconsecutive_maps();
+        for column in pixel.axis_iter(Axis(1)) {
             let column = if let Some(data) = column.as_slice() {
                 data
             } else {
@@ -842,13 +853,14 @@ impl CoordinateSystem {
                 buffer.extend(column.iter().copied());
                 &buffer
             };
-            let values = self.to_world(column)?;
-            world
-                .iter_mut()
-                .zip(values)
-                .for_each(|(out, value)| *out = value);
+            if let Some(maps) = maps {
+                result.extend(maps.to_world(&self.coordinates, column)?);
+            } else {
+                self.append_consecutive_world(column, &mut result)?;
+            }
         }
-        Ok(result)
+        Array2::from_shape_vec((n_world, pixel.ncols()).f(), result)
+            .map_err(|error| CoordinateError::ConversionFailed(error.to_string()))
     }
 
     /// Reorders the world and pixel axes independently. Each entry names
@@ -1061,6 +1073,34 @@ mod tests {
             key,
             Value::Array(ArrayValue::from_f64_vec(replacements.to_vec())),
         );
+    }
+
+    #[test]
+    fn world_columns_preserve_layout_values_and_error_order() {
+        let system = crate::defaults::coordinate_system_for_shape(&[19, 13, 2, 6], false);
+        let pixels = array![
+            [9.0, 9.25, 7.5],
+            [6.0, 5.5, 7.0],
+            [0.0, 1.0, 1.0],
+            [0.0, 2.5, 4.0],
+        ];
+        let column_major = Array2::from_shape_fn(pixels.dim().f(), |index| pixels[index]);
+        for input in [pixels.view(), column_major.view()] {
+            let world = system.to_world_columns(input).unwrap();
+            assert!(world.view().reversed_axes().is_standard_layout());
+            for (pixel, transformed) in input.axis_iter(Axis(1)).zip(world.axis_iter(Axis(1))) {
+                let expected = system.to_world(&pixel.to_vec()).unwrap();
+                assert_eq!(transformed.as_slice().unwrap(), expected);
+            }
+            assert_eq!(world.row(2).to_vec(), vec![1.0, 2.0, 2.0]);
+        }
+        let mut invalid = pixels;
+        invalid[[2, 0]] = 12.0;
+        invalid[[0, 1]] = 2e6;
+        assert!(matches!(
+            system.to_world_columns(invalid.view()),
+            Err(CoordinateError::AxisOutOfRange { .. })
+        ));
     }
 
     #[test]
