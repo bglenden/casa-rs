@@ -16,6 +16,11 @@
       "sha256": "76c52418e3ecc5b38cd8dce3ed77bb10b6876d3eb2fd9176dfbb8986ff0a0fec",
       "size": 6297
     },
+    "test_task_calstat.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_calstat.py",
+      "sha256": "89afa7f26f3eeb1fe619728c06a3ade64aa95ffb1485b7b19e92151aa3bed9ee",
+      "size": 11457
+    },
     "test_task_delmod.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_delmod.py",
       "sha256": "5efce69fce4f3994a8d1a0f49ad120017d6ff3fd130115fd63c363648b7c484c",
