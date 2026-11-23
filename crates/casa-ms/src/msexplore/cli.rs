@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Schema-backed CLI support for `msexplore`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +10,7 @@ use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Deserialize;
 
+use super::plotms_columns;
 use super::task_contract::{
     MsExplorePlotArtifact, MsExploreRunTaskResult, msexplore_task_schema_bundle,
 };
@@ -21,7 +22,7 @@ use super::{
     build_calibrated_plotms_payload, build_msexplore_payload, build_uncalibrated_plotms_payload,
     export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 };
-use crate::{MeasurementSet, MsSelection};
+use crate::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
 #[derive(Debug)]
@@ -174,23 +175,31 @@ pub fn task_front_end()
 pub fn task_front_end_with_plot_payload(
     payload: Option<PathBuf>,
 ) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    task_front_end_with_calibration(payload, None)
+    task_front_end_with_plot_sources(payload, None, None)
 }
 
 /// Load transient PlotMS calibration from the user's callibrary entries.
 pub type PlotMsCalibrationLoader =
     fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
 
-/// Use the existing PlotMS front end with a caller-provided calibration engine.
-pub fn task_front_end_with_calibration(
+/// Compute MODEL_DATA on the exact selected MAIN rows. Return None when the
+/// ordinary physical or default model supplies all selected cells.
+pub type PlotMsModelLoader = fn(
+    &MeasurementSet,
+    &[ResolvedMsSelectionRow],
+) -> Result<Option<HashMap<usize, ArrayValue>>, String>;
+
+/// Use the existing PlotMS front end with caller-provided calibration and model sources.
+pub fn task_front_end_with_plot_sources(
     payload: Option<PathBuf>,
     load_calibration: Option<PlotMsCalibrationLoader>,
+    load_models: Option<PlotMsModelLoader>,
 ) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     TaskFrontEnd::new_with_deferred_schema(
         "msexplore",
         msexplore_task_schema_bundle(),
         &["msexplore", "plotms"],
-        move |task| run_task(task, payload.as_deref(), load_calibration),
+        move |task| run_task(task, payload.as_deref(), load_calibration, load_models),
     )
     .expect("the msexplore contract carries msexplore and plotms")
 }
@@ -201,6 +210,7 @@ fn run_task(
     task: &TaskInvocation<'_>,
     payload: Option<&Path>,
     load_calibration: Option<PlotMsCalibrationLoader>,
+    load_models: Option<PlotMsModelLoader>,
 ) -> Result<TaskSuccess, TaskFailure> {
     if task.surface() == "plotms"
         && let Some(path) = super::calibration::input(task)?
@@ -238,7 +248,11 @@ fn run_task(
         if calibration.is_none()
             && let Some(columns) = options.plotms_axis_columns()
         {
-            check_plotms_columns(&options, columns)?;
+            plotms_columns::check_averaging(
+                options.plotms_averaging_active(),
+                options.secondary_y_data_column.is_some(),
+                columns,
+            )?;
             let symbols = task.value("customflaggedsymbol");
             let ordinate_count = 1 + usize::from(options.y_axis2.is_some());
             if (0..ordinate_count)
@@ -251,7 +265,14 @@ fn run_task(
             }
         }
         if visibility_document {
-            return run_visibility_plot(task, options, payload, calibration, atmosphere);
+            return run_visibility_plot(
+                task,
+                options,
+                payload,
+                calibration,
+                atmosphere,
+                load_models,
+            );
         }
         options
     } else {
@@ -295,30 +316,13 @@ impl CliOptions {
     }
 }
 
-fn check_plotms_columns(
-    options: &CliOptions,
-    columns: [MsDataColumn; 3],
-) -> Result<(), TaskFailure> {
-    let averaging = options.plotms_averaging_active();
-    if averaging && options.secondary_y_data_column.is_some() {
-        return Err(TaskFailure::validation(
-            "averaging independent MeasurementSet ordinate columns is pending #1032",
-        ));
-    }
-    if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
-        return Err(TaskFailure::validation(
-            "averaging derived data columns in this MeasurementSet plot is pending #1032",
-        ));
-    }
-    Ok(())
-}
-
 fn run_visibility_plot(
     task: &TaskInvocation<'_>,
     mut options: CliOptions,
     array_payload: Option<&Path>,
     calibration: Option<(PlotMsCalibrationLoader, Vec<String>)>,
     atmosphere: Option<super::calibration::atmosphere::Options>,
+    load_models: Option<PlotMsModelLoader>,
 ) -> Result<TaskSuccess, TaskFailure> {
     let output = options.plot_output.as_deref();
     super::task_contract::refuse_unwritable_outputs(
@@ -339,7 +343,7 @@ fn run_visibility_plot(
         && let Some(columns) = &mut axis_columns
     {
         let axes = [options.x_axis, options.y_axis, options.y_axis2];
-        let (adjusted, use_float) = super::plotms_columns::resolve_storage_columns(
+        let (adjusted, use_float) = plotms_columns::resolve_storage_columns(
             &ms,
             *columns,
             axes,
@@ -359,6 +363,11 @@ fn run_visibility_plot(
     if !options.selection.selectdata {
         options.selection = MsSelection::default();
     }
+    let axes = [options.x_axis, options.y_axis, options.y_axis2];
+    let load_models = load_models.filter(|_| {
+        !options.plotms_averaging_active()
+            && axis_columns.is_some_and(|columns| plotms_columns::uses_model(axes, columns))
+    });
     let library = calibration
         .as_ref()
         .map_or(&[][..], |(_, entries)| entries.as_slice());
@@ -391,6 +400,7 @@ fn run_visibility_plot(
                 options.x_data_column,
                 options.secondary_y_data_column,
                 prefer_float_data,
+                load_models,
             ),
         }
         .map_err(TaskFailure::execution)?;
@@ -1227,7 +1237,7 @@ fn options_from_plotms(
             .map_err(TaskFailure::validation)
     };
     let x_column = data_column(text("xdatacolumn")?)?.unwrap_or(MsDataColumn::Data);
-    let [y_column, secondary_y] = super::plotms_columns::ordinate_columns(task, y_axis, y_axis2)?;
+    let [y_column, secondary_y] = plotms_columns::ordinate_columns(task, y_axis, y_axis2)?;
     let secondary_uses_data = y_axis2.is_some_and(MsAxis::is_visibility_math);
     let data_column = if y_axis.is_visibility_math() {
         y_column

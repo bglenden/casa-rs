@@ -615,6 +615,10 @@ pub enum MsDataColumn {
 }
 
 impl MsDataColumn {
+    fn needs_model(self) -> bool {
+        self == Self::Model || self.is_derived()
+    }
+
     fn is_derived(self) -> bool {
         matches!(
             self,
@@ -2492,6 +2496,7 @@ struct PlotMsInput<'a> {
     row_order: &'a [usize],
     channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
     rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
+    models: Option<&'a HashMap<usize, ArrayValue>>,
     x_data_column: Option<MsDataColumn>,
     secondary_y_data_column: Option<MsDataColumn>,
     prefer_float_data: bool,
@@ -2705,6 +2710,7 @@ pub(crate) fn build_calibrated_plotms_payload(
         row_order: &calibration.row_order,
         channels: &calibration.channels,
         rows: Some(&calibration.rows),
+        models: None,
         x_data_column: calibration.x_data_column,
         secondary_y_data_column: None,
         prefer_float_data: false,
@@ -2718,9 +2724,19 @@ fn build_uncalibrated_plotms_payload(
     x_data_column: Option<MsDataColumn>,
     secondary_y_data_column: Option<MsDataColumn>,
     prefer_float_data: bool,
+    load_models: Option<cli::PlotMsModelLoader>,
 ) -> Result<MsPlotPayload, String> {
-    let row_order = crate::selection::resolve_casa_row_indices(ms, &spec.selection)
+    let selected = crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
         .map_err(|error| error.to_string())?;
+    let models = load_models
+        .map(|load| load(ms, &selected.selected_rows))
+        .transpose()?
+        .flatten();
+    let row_order = selected
+        .selected_rows
+        .into_iter()
+        .map(|row| row.row_index)
+        .collect::<Vec<_>>();
     let spw = spec
         .selection
         .spw
@@ -2738,6 +2754,7 @@ fn build_uncalibrated_plotms_payload(
         row_order: &row_order,
         channels: &channels,
         rows: None,
+        models: models.as_ref(),
         x_data_column,
         secondary_y_data_column,
         prefer_float_data,
@@ -6913,7 +6930,7 @@ fn selected_plot_weight_spectrum<'a>(
 
 enum SelectedArrayValues<'a> {
     Stored(Vec<Option<ArrayValue>>),
-    Calibrated(Vec<Option<&'a ArrayValue>>),
+    Projected(Vec<Option<&'a ArrayValue>>),
     DefaultModel(Vec<Arc<ArrayValue>>),
 }
 
@@ -6941,6 +6958,16 @@ impl<'a> SelectedArrayColumn<'a> {
         rows: &[usize],
         calibration: Option<&PlotMsInput<'a>>,
     ) -> Result<Self, String> {
+        if column == "MODEL_DATA"
+            && let Some(models) = calibration.and_then(|input| input.models)
+        {
+            return Ok(Self {
+                column,
+                values: SelectedArrayValues::Projected(
+                    rows.iter().map(|row| models.get(row)).collect(),
+                ),
+            });
+        }
         let cell: fn(&PlotMsCalibratedRow) -> Option<&ArrayValue> = match column {
             "CORRECTED_DATA" => |row| Some(&row.corrected_data),
             "FLAG" => |row| Some(&row.flags),
@@ -6957,14 +6984,14 @@ impl<'a> SelectedArrayColumn<'a> {
             .collect();
         Ok(Self {
             column,
-            values: SelectedArrayValues::Calibrated(values),
+            values: SelectedArrayValues::Projected(values),
         })
     }
 
     fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
         let value = match &self.values {
             SelectedArrayValues::Stored(values) => values.get(row_slot).and_then(Option::as_ref),
-            SelectedArrayValues::Calibrated(values) => values.get(row_slot).copied().flatten(),
+            SelectedArrayValues::Projected(values) => values.get(row_slot).copied().flatten(),
             SelectedArrayValues::DefaultModel(values) => values.get(row_slot).map(Arc::as_ref),
         };
         value.ok_or_else(|| {
@@ -7008,7 +7035,7 @@ impl<'a> PreparedSelectedDataSource<'a> {
     ) -> Result<Self, String> {
         let load = |name| {
             if name == "MODEL_DATA"
-                && calibration.is_some_and(|input| input.rows.is_none())
+                && calibration.is_some_and(|input| input.rows.is_none() && input.models.is_none())
                 && ms.main_table().schema().is_some_and(|schema| {
                     schema.column("MODEL_DATA").is_none()
                         && schema.column("FLOAT_DATA").is_none()

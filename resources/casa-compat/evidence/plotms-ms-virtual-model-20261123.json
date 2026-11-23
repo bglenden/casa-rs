@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-23",
+  "revision": "efeb4fa6d125197d017a141f6a242fcc59cf4bbe",
+  "source_revision": "efeb4fa6d125197d017a141f6a242fcc59cf4bbe",
+  "baseline_revision": "b3a5caa20be7dbb1e918cbca03b5ad62132538e9",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Unaveraged MeasurementSet virtual component and Fourier model coordinates, stored column precedence, and residuals.",
+  "result": "passed",
+  "baseline_result": "CASA exported 7.25 Jy for the selected virtual component. Native PlotMS refused the selected virtual model.",
+  "text_exports": 6,
+  "points": 48,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}
