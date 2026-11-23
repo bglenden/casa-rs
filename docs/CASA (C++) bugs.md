@@ -10880,3 +10880,13 @@ CASA reports −13.5 unflagged cross-correlation rows and −22.5 s on an
 18-cross-row fixture. The ascending ordering gives +13.5 rows and +22.5 s.
 casa-rs uses channel-width magnitudes, so either ordering gives the same
 positive count and duration (#1029).
+
+## MS selection can reopen subtables through a retargeted symlink
+
+In CASA 6.7.6.14, open an MS through a directory symlink. Retarget the
+symlink to a reference view without a local `ANTENNA` subdirectory, then
+call `msselect` with a baseline present in the original MAIN. CASA tries
+to open `ANTENNA/table.f0` through the new target and returns `False`.
+casa-rs keeps the public link name and resolves reads and writes against
+the MS captured at open, so changing the link cannot redirect an
+attached operation (#1030).

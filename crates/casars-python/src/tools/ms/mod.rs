@@ -36,9 +36,11 @@ pub(crate) struct PyMsTool {
 }
 
 struct AttachedMs {
+    name: PathBuf,
     path: PathBuf,
     writable: bool,
     original_rows: usize,
+    plain_rows: Option<attachment_info::PlainRows>,
     part_names: Vec<PathBuf>,
     is_multi_ms: bool,
     sources: Vec<PathBuf>,
@@ -48,17 +50,26 @@ struct AttachedMs {
 }
 
 impl AttachedMs {
-    fn open(path: PathBuf, writable: bool, lock: bool, check: bool) -> PyResult<Self> {
+    fn open(name: PathBuf, writable: bool, lock: bool, check: bool) -> PyResult<Self> {
+        let path = name.canonicalize().map_err(runtime_error)?;
         let sources =
             casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?;
         let main = Table::open(TableOptions::new(&path)).map_err(runtime_error)?;
         let original_rows = main.row_count();
         let is_multi_ms = main.info().sub_type == "CONCATENATED";
-        let part_names = Table::immediate_part_names(&path).map_err(runtime_error)?;
+        let mut part_names = Table::immediate_part_names(&path).map_err(runtime_error)?;
+        let plain_rows = if part_names.as_slice() == std::slice::from_ref(&path) {
+            part_names[0] = name.clone();
+            Some(attachment_info::PlainRows::new(&path))
+        } else {
+            None
+        };
         let mut attached = Self {
+            name,
             path,
             writable,
             original_rows,
+            plain_rows,
             part_names,
             is_multi_ms,
             sources,

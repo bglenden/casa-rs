@@ -74,6 +74,30 @@ def test_ms_nrow_observes_rows_published_by_another_handle(native_dataset):
         assert ms.done()
 
 
+def test_ms_selection_stays_on_the_attached_symlink_target(native_dataset, tmp_path):
+    casa = pinned_casa()
+    replacement = tmp_path / "replacement.ms"
+    table = casa.table()
+    assert table.open(str(native_dataset))
+    excluded = "!(ANTENNA1 == 0 && ANTENNA2 == 1 || ANTENNA1 == 1 && ANTENNA2 == 0)"
+    view = table.query(excluded, name=str(replacement))
+    selected_rows = table.nrows() - view.nrows()
+    assert 0 < selected_rows < table.nrows()
+    assert view.done()
+    assert table.done()
+
+    alias = tmp_path / "linked.ms"
+    alias.symlink_to(native_dataset.name, target_is_directory=True)
+    ms = tools.ms()
+    assert ms.open(str(alias))
+    alias.unlink()
+    alias.symlink_to(replacement.name, target_is_directory=True)
+    assert ms.msselect({"baseline": "A1&A2"})
+    assert ms.nrow(selected=True) == selected_rows
+    assert ms.name() == str(alias)
+    assert ms.done()
+
+
 def test_ms_reports_casa_and_native_reference_tables(native_dataset, tmp_path):
     casa = pinned_casa()
     for name, maker in (("casa", casa), ("native", tools)):
