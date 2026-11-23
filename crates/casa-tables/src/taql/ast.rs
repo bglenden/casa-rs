@@ -414,6 +414,8 @@ pub enum JoinType {
 pub enum Expr {
     /// A literal value.
     Literal(Literal),
+    /// A constant value prepared from a table-specific expression.
+    PreparedConstant(Arc<ExprValue>),
     /// A column reference, possibly qualified (`table.column`).
     ColumnRef(ColumnRef),
     /// A unary operation.
@@ -1022,6 +1024,7 @@ impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Literal(l) => write!(f, "{l}"),
+            Self::PreparedConstant(value) => write!(f, "{value}"),
             Self::ColumnRef(c) => write!(f, "{c}"),
             Self::Unary { op, operand } => write!(f, "({op}{operand})"),
             Self::Binary { left, op, right } => write!(f, "({left} {op} {right})"),

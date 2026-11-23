@@ -30,6 +30,7 @@ use casa_types::quanta::{Quantity, Unit};
 
 use super::error::TaqlError;
 use super::eval::{ArrayValue, EvalContext, ExprValue};
+use super::masked_arrays;
 use num_complex::Complex64;
 
 /// Trait for user-defined TaQL functions.
@@ -139,6 +140,7 @@ pub fn call_function(
     }
 
     match lower.as_str() {
+        "mscal.help" | "derivedmscal.help" => super::mscal_help::help(name, args),
         // ── Math constants ─────────────────────────────────────────
         "pi" => {
             check_arity(name, args, 0)?;
@@ -273,26 +275,14 @@ pub fn call_function(
             }
             Ok(ExprValue::Int(args[0].to_int()?))
         }
-        "real" | "float" | "double" => {
-            check_arity(name, args, 1)?;
-            if args[0].is_null() {
-                return Ok(ExprValue::Null);
-            }
-            match &args[0] {
-                ExprValue::Complex(c) => Ok(ExprValue::Float(c.re)),
-                _ => Ok(ExprValue::Float(args[0].to_float()?)),
-            }
-        }
-        "imag" => {
-            check_arity(name, args, 1)?;
-            if args[0].is_null() {
-                return Ok(ExprValue::Null);
-            }
-            match &args[0] {
-                ExprValue::Complex(c) => Ok(ExprValue::Float(c.im)),
-                _ => Ok(ExprValue::Float(0.0)),
-            }
-        }
+        "real" | "float" | "double" => map_unary(name, args, |value| match value {
+            ExprValue::Complex(c) => Ok(ExprValue::Float(c.re)),
+            _ => Ok(ExprValue::Float(value.to_float()?)),
+        }),
+        "imag" => map_unary(name, args, |value| match value {
+            ExprValue::Complex(c) => Ok(ExprValue::Float(c.im)),
+            _ => Ok(ExprValue::Float(0.0)),
+        }),
         "string" | "str" => {
             check_arity(name, args, 1)?;
             if args[0].is_null() {
@@ -1063,37 +1053,9 @@ pub fn call_function(
         }
 
         // ── Boolean array reductions ─────────────────────────────────
-        "any" => {
+        "any" | "all" | "ntrue" | "nfalse" => {
             check_arity(name, args, 1)?;
-            let arr = require_array(name, &args[0])?;
-            let result = arr.data.iter().any(|v| matches!(v, ExprValue::Bool(true)));
-            Ok(ExprValue::Bool(result))
-        }
-        "all" => {
-            check_arity(name, args, 1)?;
-            let arr = require_array(name, &args[0])?;
-            let result = arr.data.iter().all(|v| matches!(v, ExprValue::Bool(true)));
-            Ok(ExprValue::Bool(result))
-        }
-        "ntrue" => {
-            check_arity(name, args, 1)?;
-            let arr = require_array(name, &args[0])?;
-            let count = arr
-                .data
-                .iter()
-                .filter(|v| matches!(v, ExprValue::Bool(true)))
-                .count();
-            Ok(ExprValue::Int(count as i64))
-        }
-        "nfalse" => {
-            check_arity(name, args, 1)?;
-            let arr = require_array(name, &args[0])?;
-            let count = arr
-                .data
-                .iter()
-                .filter(|v| matches!(v, ExprValue::Bool(false)))
-                .count();
-            Ok(ExprValue::Int(count as i64))
+            masked_arrays::reduce_bool(&lower, &args[0])
         }
 
         // ── Min/Max for arrays (1-arg forms) ─────────────────────────
@@ -1255,58 +1217,17 @@ pub fn call_function(
                 data,
             }))
         }
-        "arraydata" | "getarrdata" => {
-            // Return array data as-is (strip mask if any; we don't have masks)
+        "arraydata" | "getarrdata" | "arraymask" | "getarrmask" | "negatemask" => {
             check_arity(name, args, 1)?;
-            match &args[0] {
-                ExprValue::Array(_) => Ok(args[0].clone()),
-                _ => Err(TaqlError::TypeError {
-                    message: format!("arraydata() requires Array, got {}", args[0].type_name()),
-                }),
-            }
-        }
-        "negatemask" => {
-            // Negate mask (no-op since we don't support masks)
-            check_arity(name, args, 1)?;
-            match &args[0] {
-                ExprValue::Array(_) => Ok(args[0].clone()),
-                _ => Err(TaqlError::TypeError {
-                    message: format!("negatemask() requires Array, got {}", args[0].type_name()),
-                }),
-            }
+            masked_arrays::inspect(&lower, &args[0])
         }
         "marray" => {
-            // marray(data, mask) — create masked array. We just return data.
             check_arity(name, args, 2)?;
-            match &args[0] {
-                ExprValue::Array(_) => Ok(args[0].clone()),
-                _ => Err(TaqlError::TypeError {
-                    message: format!(
-                        "marray() requires Array as first arg, got {}",
-                        args[0].type_name()
-                    ),
-                }),
-            }
-        }
-        "arraymask" | "getarrmask" => {
-            // Return mask of array (all false since we don't support masks)
-            check_arity(name, args, 1)?;
-            let arr = require_array(name, &args[0])?;
-            let data = vec![ExprValue::Bool(false); arr.data.len()];
-            Ok(ExprValue::Array(super::eval::ArrayValue {
-                shape: arr.shape.clone(),
-                data,
-            }))
+            masked_arrays::create(&args[0], &args[1])
         }
         "replacemasked" | "replaceunmasked" => {
-            // Replace masked/unmasked values (no-op variants without mask support)
             check_arity(name, args, 2)?;
-            match &args[0] {
-                ExprValue::Array(_) => Ok(args[0].clone()),
-                _ => Err(TaqlError::TypeError {
-                    message: format!("{}() requires Array, got {}", name, args[0].type_name()),
-                }),
-            }
+            masked_arrays::replace(&lower, &args[0], &args[1])
         }
 
         // ── Array inspection (now functional) ────────────────────────
@@ -1522,13 +1443,18 @@ fn map_unary(
             apply(value)
         }
     };
-    match &args[0] {
-        ExprValue::Array(array) => Ok(ExprValue::Array(ArrayValue {
-            shape: array.shape.clone(),
-            data: array.data.iter().map(element).collect::<Result<_, _>>()?,
-        })),
-        value => element(value),
+    let value = &args[0];
+    if let Some((array, mask)) = value.array_with_mask() {
+        let data = array.data.iter().map(element).collect::<Result<_, _>>()?;
+        return Ok(ExprValue::from_array_with_mask(
+            ArrayValue {
+                shape: array.shape.clone(),
+                data,
+            },
+            mask.map(<[bool]>::to_vec),
+        ));
     }
+    element(value)
 }
 
 fn angle(value: &ExprValue) -> Result<f64, TaqlError> {
@@ -1724,12 +1650,11 @@ fn require_array<'a>(
     name: &str,
     val: &'a ExprValue,
 ) -> Result<&'a super::eval::ArrayValue, TaqlError> {
-    match val {
-        ExprValue::Array(arr) => Ok(arr),
-        _ => Err(TaqlError::TypeError {
+    val.array_with_mask()
+        .map(|(array, _)| array)
+        .ok_or_else(|| TaqlError::TypeError {
             message: format!("{}() requires Array, got {}", name, val.type_name()),
-        }),
-    }
+        })
 }
 
 /// Reduce an array to a single float using a fold operation.

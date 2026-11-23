@@ -184,6 +184,7 @@ pub(super) fn select_row_indices(
     let mut row_indices: Vec<usize> = if let Some(ref where_clause) = sel.where_clause {
         let mut where_clause = where_clause.clone();
         super::mscal_lookup::bind(&mut where_clause, table, style)?;
+        super::mscal_help::fold_filter(&mut where_clause, table, style)?;
         let mut indices = Vec::new();
         for i in 0..row_count {
             let row = table
@@ -1214,6 +1215,11 @@ impl std::hash::Hash for ExprValueKey {
                 arr.shape.hash(state);
                 arr.data.len().hash(state);
             }
+            ExprValue::MaskedArray(arr, mask) => {
+                arr.shape.hash(state);
+                arr.data.len().hash(state);
+                mask.hash(state);
+            }
             ExprValue::Regex { pattern, flags } => {
                 pattern.hash(state);
                 flags.hash(state);
@@ -1339,7 +1345,7 @@ fn expr_value_to_literal(val: &ExprValue) -> Literal {
         ExprValue::Complex(c) => Literal::Complex(*c),
         ExprValue::String(s) => Literal::String(s.clone()),
         ExprValue::DateTime(v) => Literal::Float(*v),
-        ExprValue::Array(_) => Literal::Null, // arrays don't have a literal form
+        ExprValue::Array(_) | ExprValue::MaskedArray(..) => Literal::Null, // arrays have no literal form
         ExprValue::Regex { pattern, flags } => Literal::Regex {
             pattern: pattern.clone(),
             flags: flags.clone(),
@@ -1627,6 +1633,7 @@ fn expr_value_to_value_untyped(val: &ExprValue) -> Value {
         ExprValue::String(s) => Value::Scalar(ScalarValue::String(s.clone())),
         ExprValue::DateTime(v) => Value::Scalar(ScalarValue::Float64(*v)),
         ExprValue::Array(arr) => expr_array_to_value(arr),
+        ExprValue::MaskedArray(arr, _) => expr_array_to_value(arr),
         ExprValue::Regex { pattern, .. } => Value::Scalar(ScalarValue::String(pattern.clone())),
         ExprValue::Null => Value::Scalar(ScalarValue::Bool(false)), // fallback
     }

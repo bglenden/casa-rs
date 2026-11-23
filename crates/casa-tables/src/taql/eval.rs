@@ -47,6 +47,8 @@ pub enum ExprValue {
     DateTime(f64),
     /// N-dimensional array with shape and flat data (row-major order).
     Array(ArrayValue),
+    /// Array data with a same-shaped mask. True entries are excluded from reductions.
+    MaskedArray(Box<ArrayValue>, Vec<bool>),
     /// A compiled regex pattern for matching.
     Regex {
         pattern: String,
@@ -88,6 +90,9 @@ impl PartialEq for ExprValue {
             (Self::String(a), Self::String(b)) => a == b,
             (Self::DateTime(a), Self::DateTime(b)) => a == b,
             (Self::Array(a), Self::Array(b)) => a.shape == b.shape && a.data == b.data,
+            (Self::MaskedArray(a, am), Self::MaskedArray(b, bm)) => {
+                a.shape == b.shape && a.data == b.data && am == bm
+            }
             (
                 Self::Regex {
                     pattern: a,
@@ -125,7 +130,8 @@ impl fmt::Display for ExprValue {
             Self::Complex(c) => write!(f, "({} + {}i)", c.re, c.im),
             Self::String(s) => write!(f, "{s}"),
             Self::DateTime(mjd) => write!(f, "MJD({mjd})"),
-            Self::Array(arr) => {
+            Self::Array(_) | Self::MaskedArray(..) => {
+                let (arr, _) = self.array_with_mask().expect("array value");
                 write!(f, "Array[")?;
                 for (i, v) in arr.data.iter().enumerate() {
                     if i > 0 {
@@ -152,9 +158,24 @@ impl ExprValue {
             Self::Complex(_) => "Complex",
             Self::String(_) => "String",
             Self::DateTime(_) => "DateTime",
-            Self::Array(_) => "Array",
+            Self::Array(_) | Self::MaskedArray(..) => "Array",
             Self::Regex { .. } => "Regex",
             Self::Null => "Null",
+        }
+    }
+
+    pub(super) fn array_with_mask(&self) -> Option<(&ArrayValue, Option<&[bool]>)> {
+        match self {
+            Self::Array(array) => Some((array, None)),
+            Self::MaskedArray(array, mask) => Some((array, Some(mask))),
+            _ => None,
+        }
+    }
+
+    pub(super) fn from_array_with_mask(array: ArrayValue, mask: Option<Vec<bool>>) -> Self {
+        match mask {
+            Some(mask) => Self::MaskedArray(Box::new(array), mask),
+            None => Self::Array(array),
         }
     }
 
@@ -464,28 +485,8 @@ pub fn eval_constant(
     }
 
     fn check(expr: &mut Expr, name: &str) -> Result<(), TaqlError> {
-        match expr {
-            Expr::ColumnRef(_)
-            | Expr::RowNumber
-            | Expr::Subquery(_)
-            | Expr::Aggregate { .. }
-            | Expr::BoundRowLookup { .. }
-            | Expr::BoundRowFunction(_) => return Err(error(name)),
-            Expr::FunctionCall { name: func, .. }
-                if [
-                    "rownumber",
-                    "rownr",
-                    "rowid",
-                    "iscolumn",
-                    "iskeyword",
-                    "rand",
-                ]
-                .iter()
-                .any(|key| func.eq_ignore_ascii_case(key)) =>
-            {
-                return Err(error(name));
-            }
-            _ => {}
+        if reads_current_row(expr) {
+            return Err(error(name));
         }
         expr.try_for_each_child_mut(&mut |child| check(child, name))
     }
@@ -500,10 +501,33 @@ pub fn eval_constant(
     eval_expr(expr, &ctx)
 }
 
+pub(super) fn reads_current_row(expr: &Expr) -> bool {
+    match expr {
+        Expr::ColumnRef(_)
+        | Expr::RowNumber
+        | Expr::Subquery(_)
+        | Expr::Aggregate { .. }
+        | Expr::BoundRowLookup { .. }
+        | Expr::BoundRowFunction(_) => true,
+        Expr::FunctionCall { name, .. } => [
+            "rownumber",
+            "rownr",
+            "rowid",
+            "iscolumn",
+            "iskeyword",
+            "rand",
+        ]
+        .iter()
+        .any(|key| name.eq_ignore_ascii_case(key)),
+        _ => false,
+    }
+}
+
 /// Evaluate an expression against a row context.
 pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlError> {
     match expr {
         Expr::Literal(lit) => Ok(eval_literal(lit)),
+        Expr::PreparedConstant(value) => Ok((**value).clone()),
         Expr::ArrayLiteral(values) => arrays::literal(values, ctx),
         Expr::ColumnRef(col_ref) => eval_column_ref(col_ref, ctx),
         Expr::BoundRowLookup {
@@ -670,7 +694,10 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
         Expr::ArrayIndex { array, indices } => {
             let arr_val = eval_expr(array, ctx)?;
             match arr_val {
-                ExprValue::Array(arr) => eval_array_index(&arr, indices, ctx),
+                ExprValue::Array(arr) => eval_array_index(&arr, None, indices, ctx),
+                ExprValue::MaskedArray(arr, mask) => {
+                    eval_array_index(&arr, Some(&mask), indices, ctx)
+                }
                 other => Err(TaqlError::TypeError {
                     message: format!("array indexing requires Array, got {}", other.type_name()),
                 }),
@@ -787,6 +814,20 @@ fn eval_column_ref(col_ref: &ColumnRef, ctx: &EvalContext<'_>) -> Result<ExprVal
 }
 
 pub(super) fn eval_unary(op: UnaryOp, val: ExprValue) -> Result<ExprValue, TaqlError> {
+    if let Some((array, mask)) = val.array_with_mask() {
+        let data = array
+            .data
+            .iter()
+            .map(|item| eval_unary(op, item.clone()))
+            .collect::<Result<_, _>>()?;
+        return Ok(ExprValue::from_array_with_mask(
+            ArrayValue {
+                shape: array.shape.clone(),
+                data,
+            },
+            mask.map(<[bool]>::to_vec),
+        ));
+    }
     if val.is_null() {
         return Ok(ExprValue::Null);
     }
@@ -1234,6 +1275,7 @@ fn resolve_slice(
 /// C++ reference: `TableExprNodeArrayPart`.
 pub(super) fn eval_array_index(
     arr: &ArrayValue,
+    mask: Option<&[bool]>,
     indices: &[ast::IndexElement],
     ctx: &EvalContext<'_>,
 ) -> Result<ExprValue, TaqlError> {
@@ -1308,6 +1350,7 @@ pub(super) fn eval_array_index(
     // Collect elements using column-major (Fortran) traversal of the index
     // combinations, matching C++ casacore array storage order.
     let mut result_data = Vec::new();
+    let mut result_mask = mask.map(|_| Vec::new());
     let mut combo = vec![0usize; ndim];
     loop {
         // Compute flat index from combo using column-major strides
@@ -1320,6 +1363,9 @@ pub(super) fn eval_array_index(
         }
         if flat < arr.data.len() {
             result_data.push(arr.data[flat].clone());
+            if let Some((mask, result)) = mask.zip(result_mask.as_mut()) {
+                result.push(mask[flat]);
+            }
         }
 
         // Advance combo (leftmost first = column-major traversal)
@@ -1347,10 +1393,13 @@ pub(super) fn eval_array_index(
         return Ok(ExprValue::Null);
     }
 
-    Ok(ExprValue::Array(ArrayValue {
-        shape: result_shape,
-        data: result_data,
-    }))
+    Ok(ExprValue::from_array_with_mask(
+        ArrayValue {
+            shape: result_shape,
+            data: result_data,
+        },
+        result_mask,
+    ))
 }
 
 #[cfg(test)]

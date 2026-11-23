@@ -254,6 +254,7 @@ fn validate_no_calc_aggregates(expr: &Expr) -> Result<(), TaqlError> {
         // Do not recurse into subqueries: aggregates inside a subquery belong to that SELECT.
         Expr::Subquery(_)
         | Expr::Literal(_)
+        | Expr::PreparedConstant(_)
         | Expr::ColumnRef(_)
         | Expr::Star
         | Expr::BoundRowFunction(_)
@@ -303,7 +304,11 @@ fn expr_has_column_ref(expr: &Expr) -> bool {
                     }
                 })
         }
-        Expr::Subquery(_) | Expr::Literal(_) | Expr::Star | Expr::RowNumber => false,
+        Expr::Subquery(_)
+        | Expr::Literal(_)
+        | Expr::PreparedConstant(_)
+        | Expr::Star
+        | Expr::RowNumber => false,
     }
 }
 
@@ -453,6 +458,7 @@ fn validate_calc_columns(expr: &Expr, table: &Table) -> Result<(), TaqlError> {
         }
         Expr::Subquery(_)
         | Expr::Literal(_)
+        | Expr::PreparedConstant(_)
         | Expr::Star
         | Expr::BoundRowFunction(_)
         | Expr::RowNumber => Ok(()),
@@ -499,7 +505,10 @@ fn eval_calc_expr(
                 .map(|el| resolve_index_subexprs(el, ctx, open_table))
                 .collect::<Result<Vec<_>, _>>()?;
             match arr_val {
-                ExprValue::Array(arr) => eval_array_index(&arr, &resolved_indices, ctx),
+                ExprValue::Array(arr) => eval_array_index(&arr, None, &resolved_indices, ctx),
+                ExprValue::MaskedArray(arr, mask) => {
+                    eval_array_index(&arr, Some(&mask), &resolved_indices, ctx)
+                }
                 other => Err(TaqlError::TypeError {
                     message: format!("array indexing requires Array, got {}", other.type_name()),
                 }),
@@ -592,6 +601,9 @@ fn expr_value_to_expr(val: ExprValue) -> Result<Expr, TaqlError> {
                 .map(expr_value_to_expr)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Expr::ArrayLiteral(items))
+        }
+        masked @ ExprValue::MaskedArray(..) => {
+            Ok(Expr::PreparedConstant(std::sync::Arc::new(masked)))
         }
         ExprValue::DateTime(v) => Ok(Expr::Literal(Literal::Float(v))),
     }
@@ -731,6 +743,7 @@ fn resolve_calc_subexprs(
                 .collect::<Result<Vec<_>, _>>()?,
         }),
         Expr::Literal(_)
+        | Expr::PreparedConstant(_)
         | Expr::ColumnRef(_)
         | Expr::Star
         | Expr::BoundRowFunction(_)
