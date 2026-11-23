@@ -669,30 +669,68 @@ def time_average_fixture(root):
         for name, later in (("WEIGHT", 9), ("SIGMA", 0.5)):
             values = np.where(integration % 2 == 0, 1, later).astype(np.float32)
             table.putcol(name, np.broadcast_to(values, (shape[0], shape[2])))
-    return vis
+    return vis, integration
 
 
 def compare_time_averaged_columns(root, native):
     work = root / "time-averaged-columns"
     work.mkdir()
-    vis = time_average_fixture(work)
-    controls = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
-                                   ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
-                                   spw="0:1", avgtime="20")
-    name = "time-average-independent"
-    expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
-    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
-    selected = rows(expected)
-    assert len(selected) == 6
-    assert {row[2] for row in selected} == {"1"}
-    assert {row[12] for row in selected} == {"XX"}
-    np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float),
-                               [(2.6, 28)] * 3 + [(2.6, 280)] * 3, rtol=1.2e-5)
-    np.testing.assert_allclose(np.diff([float(row[9]) for row in selected[:3]]), [20, 20], atol=0.001)
-    assert native(**controls, plotfile=str(actual), expformat="txt") is None
-    assert compare_text(actual, expected) == len(selected)
-    compare_ordinate_figure(work, name, native, controls, "Real", ["Real:corrected", "Real:model"])
-    print(f"{name}: {len(selected)} matching time-averaged coordinates and PNG artists", flush=True)
+    vis, integration = time_average_fixture(work)
+    mixed_flags, spectra, zero_weights, zero_corrected, no_corrected = (
+        work / f"{name}.ms" for name in ("mixed-flags", "spectra", "zero-weight", "zero-corrected", "no-corrected")
+    )
+    for path in (mixed_flags, spectra, zero_weights, zero_corrected, no_corrected):
+        copy_ms(vis, path)
+    with opened(mixed_flags, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, :] = np.isin(integration, [0, 2, 3])
+        table.putcol("FLAG", flags)
+    with opened(spectra, True) as table:
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        for name, earlier, later in (("WEIGHT_SPECTRUM", 3, 1), ("SIGMA_SPECTRUM", 0.5, 1)):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            values = np.where(integration % 2 == 0, earlier, later).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, shape))
+    for path, columns in ((zero_weights, ("WEIGHT", "SIGMA")), (zero_corrected, ("WEIGHT",))):
+        with opened(path, True) as table:
+            for name in columns:
+                table.putcol(name, np.zeros_like(table.getcol(name)))
+    with opened(no_corrected, True) as table:
+        table.removecols(["CORRECTED_DATA"])
+
+    base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
+                               ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
+                               spw="0:1", avgtime="20")
+    cases = (
+        ("time-independent", {}, [(2.6, 28)] * 3 + [(2.6, 280)] * 3),
+        ("time-flagged-bins", dict(vis=str(mixed_flags)), [(3, 30), (2.6, 28), (3, 300), (2.6, 280)]),
+        ("time-spectral-weights", dict(vis=str(spectra)), [(1.4, 15)] * 3 + [(1.4, 150)] * 3),
+        ("time-zero-weight", dict(vis=str(zero_weights)), [(0, 0)] * 6),
+        ("time-zero-corrected", dict(vis=str(zero_corrected)), [(2.6, 0)] * 6),
+        ("time-no-corrected", dict(vis=str(no_corrected), ydatacolumn=["data", "model"]),
+         [(2.6, 2.6)] * 3 + [(2.6, 260)] * 3),
+        ("time-shared-abscissa", dict(xdatacolumn="corrected", yaxis=["real", "amp"],
+                                      ydatacolumn=["data", "corrected"]), [(28, 2.6)] * 3 + [(28, 28)] * 3),
+    )
+    for name, overrides, coordinates in cases:
+        controls = base | overrides
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert len(selected) == len(coordinates)
+        assert {row[2] for row in selected} == {"1"}
+        assert {row[12] for row in selected} == {"XX"}
+        np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        times = [float(row[9]) for row in selected[:len(selected) // 2]]
+        spacing = [40] if name == "time-flagged-bins" else [20, 20]
+        np.testing.assert_allclose(np.diff(times), spacing, rtol=0, atol=0.001)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching time-averaged coordinates", flush=True)
+    compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
 
 
 def compare_float_columns(root, vis, source, native):

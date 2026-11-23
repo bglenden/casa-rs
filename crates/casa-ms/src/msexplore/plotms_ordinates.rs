@@ -4,10 +4,12 @@
 use casa_types::Complex64;
 use ndarray::ArrayView2;
 
+use super::MsAxis;
 use super::{
     ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterPointRef,
     MsScatterSeries, PlotMsInput, PreparedSelectedDataSource, VisibilityBinSamples,
-    check_grid_shapes, collect_bin_samples_into,
+    check_grid_shapes, collect_bin_samples_into, compute_weighted_visibility_math, plotms_figure,
+    scatter_series_identity,
 };
 use crate::MeasurementSet;
 
@@ -60,6 +62,33 @@ impl<'a> VisibilityColumns<'a> {
 
     pub(super) fn column(&self, ordinate: usize) -> Option<MsDataColumn> {
         self.axes[ordinate + 1].map(|index| self.sources[index].0)
+    }
+
+    pub(super) fn series_identity(
+        &self,
+        spec: &MsPlotSpec,
+        ordinate: usize,
+        group_key: &str,
+        group_label: &str,
+    ) -> (String, String, String) {
+        let axis = spec.y_axes[ordinate];
+        let (key, label, color) =
+            scatter_series_identity(axis, spec.y_axes.len() > 1, group_key, group_label);
+        if spec.y_axes.len() <= 2 && spec.secondary_y_axis() != Some(spec.y_axis()) {
+            return (key, label, color);
+        }
+        let column = self.column(ordinate).unwrap_or(spec.data_column);
+        let label = plotms_figure::column_axis_name(axis, column);
+        let label = if group_key == "all" {
+            label
+        } else {
+            format!("{label} · {group_label}")
+        };
+        (
+            format!("{ordinate}::{key}"),
+            label,
+            format!("{ordinate}::{color}"),
+        )
     }
 
     pub(super) fn read_row(
@@ -148,6 +177,47 @@ impl BinBuffer {
             weight.map(|spectrum| (spectrum, &mut self.weights)),
             &mut self.values,
         );
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct AveragedVisibility {
+    values: Vec<Complex64>,
+    weights: Vec<f64>,
+}
+
+impl AveragedVisibility {
+    pub(super) fn add(
+        &mut self,
+        samples: VisibilityBinSamples<'_>,
+        scalar_weight: f64,
+        conjugate: bool,
+    ) {
+        if conjugate {
+            self.values.extend(samples.values.iter().map(|v| v.conj()));
+        } else {
+            self.values.extend_from_slice(samples.values);
+        }
+        if samples.weights.is_empty() {
+            self.weights.resize(self.values.len(), scalar_weight);
+        } else {
+            self.weights.extend_from_slice(samples.weights);
+        }
+    }
+
+    pub(super) fn project(
+        &self,
+        axis: MsAxis,
+        scalar: bool,
+        zero_invalid_weight: bool,
+    ) -> Option<f64> {
+        compute_weighted_visibility_math(
+            axis,
+            &self.values,
+            &self.weights,
+            scalar,
+            zero_invalid_weight,
+        )
     }
 }
 

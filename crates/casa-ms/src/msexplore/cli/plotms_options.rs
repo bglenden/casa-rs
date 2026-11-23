@@ -42,6 +42,18 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
+    pub(super) fn plotms_independent_vector_time_average(&self) -> bool {
+        self.avgtime.is_some()
+            && !self.avgchannel.is_some_and(|width| width > 1)
+            && !self.avgscan
+            && !self.avgfield
+            && !self.avgbaseline
+            && !self.avgantenna
+            && !self.avgspw
+            && !self.scalar
+            && !self.has_mixed_ordinate_dimensions()
+    }
+
     pub(super) fn plotms_extended_averaging(&self) -> bool {
         self.avgtime.is_some()
             || self.avgscan
