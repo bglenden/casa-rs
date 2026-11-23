@@ -32,7 +32,11 @@ impl CalibraterLifecycle {
                 SolveState::of(solver).description(equation, "", "AP", "flex", None)
             })
         });
-        lines.push(format!(".   {}", solve.as_deref().unwrap_or("(None)")));
+        lines.extend(
+            format!(".   {}", solve.as_deref().unwrap_or("(None)"))
+                .lines()
+                .map(str::to_owned),
+        );
         Some(lines)
     }
 
@@ -48,13 +52,34 @@ impl CalibraterLifecycle {
         if let Some(equation) = &mut self.equation
             && let Some(solver) = &equation.solve
         {
-            equation.solve_description = Some(SolveState::of(solver).description(
-                equation,
-                interval,
-                apmode,
-                refant_mode,
-                reference,
-            ));
+            let gain = match solver {
+                ConfiguredSolve::SingleDish(solver) => {
+                    solver.gain_controls().map(|(radius, smooth)| {
+                        let smooth = if smooth { "True" } else { "False" };
+                        let default = if radius == 0. {
+                            " (half of primary beam will be used)"
+                        } else {
+                            ""
+                        };
+                        format!(
+                            "{}: {} smooth={smooth}\n radius={}{default}",
+                            solver.subtype(),
+                            solver.request.output_table.display(),
+                            format_calibration_number(radius)
+                        )
+                    })
+                }
+                _ => None,
+            };
+            equation.solve_description = Some(gain.unwrap_or_else(|| {
+                SolveState::of(solver).description(
+                    equation,
+                    interval,
+                    apmode,
+                    refant_mode,
+                    reference,
+                )
+            }));
         }
     }
 }
@@ -265,6 +290,26 @@ impl<'a> SolveState<'a> {
                     .then_some(&request.refant),
                 min_snr: request.min_snr,
                 normalization: request.normalization,
+            },
+            ConfiguredSolve::SingleDish(solver) => Self {
+                frequency_dependent: true,
+                ..Self::gain(
+                    &solver.request,
+                    solver.subtype(),
+                    solver.mode == CalibrationOutputMode::Append,
+                )
+            },
+            ConfiguredSolve::Opacity {
+                request,
+                mode,
+                channelized,
+            } => Self {
+                frequency_dependent: *channelized,
+                ..Self::gain(
+                    request,
+                    if *channelized { "TfOpac" } else { "TOpac" },
+                    *mode == CalibrationOutputMode::Append,
+                )
             },
             ConfiguredSolve::LegacyEp(solver) => Self {
                 subtype: "EP Jones",

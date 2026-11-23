@@ -7,7 +7,7 @@ use casa_calibration::{
     BandpassFrequencyInterval, BandpassSolveCombine, BandpassSolveCuts, BandpassSolveRequest,
     BandpassType, CalibrationSolveRequest, FringeControls, FringeCorrelation, GainNormalization,
     GainSolveCombine, GainSolveInterval, GainSolveMode, GainSolveModelSource, GainSolveRequest,
-    GainSolveRobustness, GainType, RefAntSelector,
+    GainSolveRobustness, GainType, RefAntSelector, SingleDishSolveControls,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -91,6 +91,51 @@ fn setsolve_bool(value: Option<&Bound<'_, PyAny>>, position: u8, default: bool) 
 
 fn setsolve_text(value: Option<&Bound<'_, PyAny>>, name: &str, default: &str) -> PyResult<String> {
     text(value.cloned(), name, default)
+}
+
+fn setsolve_mode(value: &str, phase_only: bool) -> (String, GainSolveMode, bool) {
+    let apmode = if phase_only {
+        "P".into()
+    } else {
+        value.to_ascii_uppercase()
+    };
+    let (mode, invalid) = match apmode.as_str() {
+        "P" => (GainSolveMode::Phase, false),
+        "A" => (GainSolveMode::Amplitude, false),
+        "AP" | "" => (GainSolveMode::AmplitudePhase, false),
+        _ => (GainSolveMode::AmplitudePhase, true),
+    };
+    (apmode, mode, invalid)
+}
+
+fn single_dish_controls(
+    family: &str,
+    fraction: Option<&Bound<'_, PyAny>>,
+    numedge: Option<&Bound<'_, PyAny>>,
+    radius: Option<&Bound<'_, PyAny>>,
+    smooth: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<SingleDishSolveControls>> {
+    if !matches!(
+        family,
+        "SDSKY_PS" | "SDSKY_OTF" | "SDSKY_RASTER" | "SDGAIN_OTFD"
+    ) {
+        return Ok(None);
+    }
+    let radius = radius
+        .map(|value| {
+            value.extract::<String>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("argument _radius must be a string")
+            })
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(Some(SingleDishSolveControls {
+        fraction: number(fraction.cloned(), "setsolve", 20, 0.1)? as f32,
+        numedge: setsolve_long(numedge, 21, -1)?,
+        radius,
+        smooth: setsolve_bool(smooth, 23, true)?,
+        invalid_apmode: false,
+    }))
 }
 
 fn setsolve_integer(
@@ -281,6 +326,7 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
+        let single_dish = single_dish_controls(&family, fraction, numedge, radius, smooth)?;
         let polarization =
             casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);
         let baseline = matches!(
@@ -366,17 +412,7 @@ impl super::PyCalibrater {
                 .map_or((elapsed.as_str(), None), |(time, frequency)| {
                     (time, Some(frequency))
                 });
-            let apmode = if phase_only {
-                "P".into()
-            } else {
-                apmode.to_ascii_uppercase()
-            };
-            let (solve_mode_value, invalid_mode) = match apmode.as_str() {
-                "P" => (GainSolveMode::Phase, false),
-                "A" => (GainSolveMode::Amplitude, false),
-                "AP" | "" => (GainSolveMode::AmplitudePhase, false),
-                _ => (GainSolveMode::AmplitudePhase, true),
-            };
+            let (apmode, solve_mode_value, invalid_mode) = setsolve_mode(&apmode, phase_only);
             let normtype = normtype.to_ascii_uppercase();
             let normalization = if normtype.contains("MEAN") {
                 GainNormalization::Mean
@@ -399,6 +435,14 @@ impl super::PyCalibrater {
                 robustness: GainSolveRobustness::from_casa(robust_mode(&solve_mode), thresholds)
                     .expect("recognized CASA robust mode"),
             };
+            if let Some(mut controls) = single_dish {
+                controls.invalid_apmode = invalid_mode;
+                state
+                    .set_tool_single_dish_solve(&family, standard.gain(GainType::G), mode, controls)
+                    .map_err(|_| setup_error())?;
+                state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
+                return Ok(true);
+            }
             if polarization {
                 state
                     .set_tool_polarization(
@@ -412,14 +456,22 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
-            if matches!(family.as_str(), "TF" | "TF JONES" | "TF NOISE") {
-                let frequency = casa_calibration::BandpassFrequencyInterval::from_casa(
-                    frequency.unwrap_or_default(),
-                )
-                .ok_or_else(setup_error)?;
-                state
-                    .set_tool_tf(standard.gain(GainType::T), mode, frequency, invalid_mode)
-                    .map_err(|_| setup_error())?;
+            if matches!(
+                family.as_str(),
+                "TF" | "TF JONES" | "TF NOISE" | "TOPAC" | "TFOPAC"
+            ) {
+                let channelized = family != "TOPAC";
+                let frequency = channelized
+                    .then(|| bandpass_frequency(frequency))
+                    .transpose()?
+                    .flatten();
+                let gain = standard.gain(GainType::T);
+                let configured = if family.ends_with("OPAC") {
+                    state.set_tool_opacity_solve(gain, mode, channelized)
+                } else {
+                    state.set_tool_tf(gain, mode, frequency, invalid_mode)
+                };
+                configured.map_err(|_| setup_error())?;
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }

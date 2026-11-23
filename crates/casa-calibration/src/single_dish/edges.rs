@@ -9,6 +9,7 @@ use casa_tables::RequiredScalarColumnValues::{Bool, Float64, Int32};
 use casa_types::ArrayValue;
 
 use super::spectrum::{self, ReferenceTimestamp, SkySpectrum};
+use crate::CalibrationOutputMode;
 use crate::constants::{
     COL_ANTENNA1, COL_ANTENNA2, COL_FIELD_ID, COL_INTERVAL, COL_OBSERVATION_ID, COL_SCAN_NUMBER,
     COL_TIME,
@@ -18,6 +19,7 @@ mod mask;
 mod otf;
 mod raster;
 
+#[derive(Clone, Copy)]
 pub(super) enum Selection {
     Otf { fraction: f64 },
     Raster { fraction: f64, noff: i64 },
@@ -45,7 +47,7 @@ pub(super) fn generate(
     ms: &MeasurementSet,
     selected: &[usize],
     destination: &Path,
-    overwrite: bool,
+    mode: CalibrationOutputMode,
     selection: Selection,
 ) -> Result<usize, String> {
     let descriptions = ms.data_description().map_err(error_text)?;
@@ -83,7 +85,7 @@ pub(super) fn generate(
     spectrum::write(
         ms,
         destination,
-        overwrite,
+        mode,
         subtype,
         ReferenceTimestamp::AllIntegrations,
         solutions,

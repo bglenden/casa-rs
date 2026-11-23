@@ -346,6 +346,9 @@ pub struct GainSolveReport {
 /// Errors returned by the limited `gaincal` solver.
 #[derive(Debug, Error)]
 pub enum GainSolveError {
+    /// A real opacity solve reached the unavailable fitting stage.
+    #[error("The configured opacity type cannot solve a calibration table.")]
+    OpacityCannotFit,
     /// Shared calibration-table persistence failed.
     #[error(transparent)]
     CalibrationTable(#[from] crate::CalibrationTableWriteError),
@@ -558,7 +561,8 @@ pub(crate) fn solve_tf(
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<GainSolveReport, GainSolveError> {
-    let (solved, spectrum) = solve_gain_rows_with_settings(ms, request, activity, Some(settings))?;
+    let (solved, spectrum) =
+        solve_gain_rows_with_settings(ms, request, activity, Some(settings), false)?;
     let spectrum = spectrum.expect("Tf prepared its spectral grid");
     writer::write_tf_caltable(
         ms,
@@ -626,7 +630,16 @@ pub(crate) fn solve_gain_rows(
     if request.gain_type.is_delay() {
         return delay::solve(ms, request, activity);
     }
-    solve_gain_rows_with_settings(ms, request, activity, None).map(|(solved, _)| solved)
+    solve_gain_rows_with_settings(ms, request, activity, None, false).map(|(solved, _)| solved)
+}
+
+pub(crate) fn gather_opacity_solve(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    activity: &mut ToolSolveActivity,
+) -> Result<SolveStats, GainSolveError> {
+    solve_gain_rows_with_settings(ms, request, Some(activity), None, true)
+        .map(|(solved, _)| solved.solve_stats)
 }
 
 fn solve_gain_rows_with_settings(
@@ -634,6 +647,7 @@ fn solve_gain_rows_with_settings(
     request: &GainSolveRequest,
     activity: Option<&mut ToolSolveActivity>,
     tf: Option<TfSolveSettings>,
+    reject_opacity_fit: bool,
 ) -> Result<(SolvedGains, Option<TfSpectrum>), GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel, true)?;
@@ -682,14 +696,20 @@ fn solve_gain_rows_with_settings(
         .map(|widths| tf_multi_bin_windows(ms, &context.rows, widths))
         .transpose()?
         .unwrap_or_default();
-    let direct_gain = activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T);
+    let input_rows = if reject_opacity_fit {
+        grouping::SolveInputRows::OpacityTool
+    } else {
+        grouping::SolveInputRows::gain(
+            activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T),
+        )
+    };
     let groups = build_solve_groups(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            input_rows: grouping::SolveInputRows::gain(direct_gain),
+            input_rows,
             gain_type: request.gain_type,
             model_source: request.model_source,
             point_stokes,
