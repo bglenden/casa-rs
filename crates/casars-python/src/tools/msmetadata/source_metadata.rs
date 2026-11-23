@@ -6,7 +6,7 @@ use casa_ms::{MeasurementSet, MsError, MsResult, MsSource};
 use casa_tables::Table;
 use casa_tables::table_measures::{ArrayMeasColumn, ScalarMeasColumn};
 use casa_types::measures::frequency::MFrequency;
-use casa_types::measures::record::{direction_to_record, frequency_to_record};
+use casa_types::measures::record::frequency_to_record;
 use casa_types::quanta::casacore::casacore_unit;
 use casa_types::{ArrayValue, ScalarValue, Value};
 use pyo3::prelude::*;
@@ -14,6 +14,7 @@ use pyo3::prelude::*;
 use super::PyMsMetadata;
 use super::scan_queries::int_array;
 use super::spw_membership::checked_spw;
+use crate::convert::holder::{CasaMeasure, Measure};
 use crate::convert::value::CasaValue;
 
 fn quantities_unit<'a>(table: &'a Table, column: &str, component: usize) -> MsResult<&'a str> {
@@ -139,7 +140,7 @@ impl PyMsMetadata {
                     let direction = column.get_direction(row)?;
                     Ok((
                         row.to_string(),
-                        CasaValue::from_record(&direction_to_record(&direction)),
+                        Measure::from_casa(&CasaMeasure::Direction(direction)).to_value(),
                     ))
                 })
                 .collect::<MsResult<Vec<_>>>()?;
