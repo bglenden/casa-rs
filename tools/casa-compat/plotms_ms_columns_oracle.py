@@ -703,18 +703,25 @@ def compare_time_averaged_columns(root, native):
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
                                ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
                                spw="0:1", avgtime="20")
+    independent = [(2.6, 28)] * 3 + [(2.6, 280)] * 3
+    corrected = [(7 / 3, 290 / 11), (25 / 9, 550 / 19)]
+    model = [(7 / 3, 2900 / 11), (25 / 9, 5500 / 19)]
     cases = (
-        ("time-independent", {}, [(2.6, 28)] * 3 + [(2.6, 280)] * 3),
-        ("time-flagged-bins", dict(vis=str(mixed_flags)), [(3, 30), (2.6, 28), (3, 300), (2.6, 280)]),
-        ("time-spectral-weights", dict(vis=str(spectra)), [(1.4, 15)] * 3 + [(1.4, 150)] * 3),
-        ("time-zero-weight", dict(vis=str(zero_weights)), [(0, 0)] * 6),
-        ("time-zero-corrected", dict(vis=str(zero_corrected)), [(2.6, 0)] * 6),
+        ("time-independent", {}, independent, 20),
+        ("time-flagged-bins", dict(vis=str(mixed_flags)), [(3, 30), (2.6, 28), (3, 300), (2.6, 280)], 40),
+        ("time-spectral-weights", dict(vis=str(spectra)), [(1.4, 15)] * 3 + [(1.4, 150)] * 3, 20),
+        ("time-zero-weight", dict(vis=str(zero_weights)), [(0, 0)] * 6, 20),
+        ("time-zero-corrected", dict(vis=str(zero_corrected)), [(2.6, 0)] * 6, 20),
         ("time-no-corrected", dict(vis=str(no_corrected), ydatacolumn=["data", "model"]),
-         [(2.6, 2.6)] * 3 + [(2.6, 260)] * 3),
+         [(2.6, 2.6)] * 3 + [(2.6, 260)] * 3, 20),
         ("time-shared-abscissa", dict(xdatacolumn="corrected", yaxis=["real", "amp"],
-                                      ydatacolumn=["data", "corrected"]), [(28, 2.6)] * 3 + [(28, 28)] * 3),
+                                      ydatacolumn=["data", "corrected"]), [(28, 2.6)] * 3 + [(28, 28)] * 3, 20),
+        ("time-short-window", dict(avgtime="4"), [(1, 10), (3, 30)] * 3 + [(1, 100), (3, 300)] * 3, 10),
+        ("time-15-second-window", dict(avgtime="15"), independent, 20),
+        ("time-25-second-window", dict(avgtime="25"), corrected + model, 30),
+        ("time-scan-boundary", dict(avgtime="25", field=""), corrected * 2 + model * 2, 30),
     )
-    for name, overrides, coordinates in cases:
+    for name, overrides, coordinates, spacing in cases:
         controls = base | overrides
         expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected), expformat="txt") is None
@@ -725,11 +732,17 @@ def compare_time_averaged_columns(root, native):
         np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float),
                                    coordinates, rtol=1.2e-5)
         times = [float(row[9]) for row in selected[:len(selected) // 2]]
-        spacing = [40] if name == "time-flagged-bins" else [20, 20]
         np.testing.assert_allclose(np.diff(times), spacing, rtol=0, atol=0.001)
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching time-averaged coordinates", flush=True)
+    controls = base | dict(xaxis="time", xdatacolumn="", expformat="txt")
+    expected, actual = (work / f"average-time-axis.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    for path in (expected, actual):
+        assert all(float(row[0]) == float(row[9]) for row in rows(path))
     compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
 
 

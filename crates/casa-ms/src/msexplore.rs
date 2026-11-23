@@ -2502,6 +2502,7 @@ pub struct PlotMsCalibration {
 /// CASA row and channel selection, optionally with transient calibrated arrays.
 struct PlotMsInput<'a> {
     row_order: &'a [usize],
+    time_bins: Option<&'a HashMap<usize, usize>>,
     channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
     rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
     models: Option<&'a HashMap<usize, ArrayValue>>,
@@ -2725,6 +2726,7 @@ pub(crate) fn build_calibrated_plotms_payload(
 ) -> Result<MsPlotPayload, String> {
     let input = PlotMsInput {
         row_order: &calibration.row_order,
+        time_bins: None,
         channels: &calibration.channels,
         rows: Some(&calibration.rows),
         models: None,
@@ -2750,6 +2752,14 @@ fn build_uncalibrated_plotms_payload(
         .map(|load| load(ms, &selected.selected_rows))
         .transpose()?
         .flatten();
+    let time_bins = columns
+        .secondary_y
+        .and_then(|_| spec.plots.first()?.averaging.avgtime)
+        .map(|seconds| {
+            crate::transform::selected_plot_time_bins(ms, &selected.selected_rows, seconds)
+                .map_err(|error| error.to_string())
+        })
+        .transpose()?;
     let row_order = selected
         .selected_rows
         .into_iter()
@@ -2770,6 +2780,7 @@ fn build_uncalibrated_plotms_payload(
     }
     let input = PlotMsInput {
         row_order: &row_order,
+        time_bins: time_bins.as_ref(),
         channels: &channels,
         rows: None,
         models: models.as_ref(),
@@ -3577,6 +3588,7 @@ struct SharedTimeAverageScopeKey {
 enum AveragingTimeKey {
     Exact(u64),
     Bucket(i64),
+    Group(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -3599,6 +3611,7 @@ struct AveragingPointKeyInputs<'a> {
     baseline: AveragingBaselineToken,
     corr_index: usize,
     row_time_value: f64,
+    time_group: Option<usize>,
     bin: &'a ChannelBin,
 }
 
@@ -4651,7 +4664,9 @@ fn build_averaging_point_key(
     spec: &MsPlotSpec,
     time_scope_origins: &std::collections::BTreeMap<TimeAverageScopeKey, f64>,
 ) -> AveragingPointKey {
-    let time_key = if let Some(avgtime) = spec.averaging.avgtime {
+    let time_key = if let Some(group) = inputs.time_group {
+        AveragingTimeKey::Group(group)
+    } else if let Some(avgtime) = spec.averaging.avgtime {
         let scope = build_time_average_scope_key(
             inputs.field_id,
             inputs.scan_number,
@@ -4704,7 +4719,7 @@ fn finalize_averaged_axis_value(
     scalar_average: bool,
     avgtime_enabled: bool,
     use_x_samples: bool,
-    zero_invalid_weight: bool,
+    reference_time_average: bool,
 ) -> Option<f64> {
     if axis.is_visibility_math() {
         let samples = if use_x_samples {
@@ -4712,7 +4727,7 @@ fn finalize_averaged_axis_value(
         } else {
             &accumulator.y_visibility
         };
-        return samples.project(axis, scalar_average, zero_invalid_weight);
+        return samples.project(axis, scalar_average, reference_time_average);
     }
     match axis {
         MsAxis::Time => {
@@ -4722,7 +4737,7 @@ fn finalize_averaged_axis_value(
                 .find(|(candidate, _)| *candidate == axis)
                 .map(|(_, samples)| samples)?;
             if avgtime_enabled {
-                if samples.len() == 1 {
+                if samples.len() == 1 && !reference_time_average {
                     return Some(
                         samples[0]
                             - average_float_samples(&accumulator.time_interval_samples)? / 2.0,
@@ -4780,8 +4795,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let visibility_columns =
         plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
+    let time_bins = calibration.and_then(|input| input.time_bins);
     let time_weight_kinds = calibration
-        .filter(|input| input.rows.is_none() && input.secondary_y_data_column.is_some())
+        .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
     let needs_observed_weights =
         time_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Observed));
@@ -4867,7 +4883,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut time_scope_origins = std::collections::BTreeMap::<TimeAverageScopeKey, f64>::new();
     let mut shared_time_scope_bounds =
         std::collections::BTreeMap::<SharedTimeAverageScopeKey, (f64, f64)>::new();
-    if spec.averaging.avgtime.is_some() {
+    if spec.averaging.avgtime.is_some() && time_bins.is_none() {
         for (row_slot, _row) in row_numbers.iter().copied().enumerate() {
             let flag_row_value = selected_flag_rows[row_slot];
             if flag_row_value && !include_row_flagged_points {
@@ -5059,6 +5075,7 @@ fn build_generic_visibility_scatter_with_averaging(
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
         let row_time_value = selected_times[row_slot];
+        let time_group = time_bins.map(|bins| bins[&row]);
         let row_uvw_value = selected_uvw[row_slot];
         let row_interval_value = selected_intervals[row_slot];
         let shared_time_scope_value = if use_shared_time_scope_midpoint {
@@ -5180,6 +5197,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             baseline: baseline_token.clone(),
                             corr_index: *corr_index,
                             row_time_value,
+                            time_group,
                             bin,
                         },
                         spec,
@@ -5443,7 +5461,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                 false,
                                 true,
                                 false,
-                                false,
+                                time_bins.is_some(),
                             )
                         }),
                     });
