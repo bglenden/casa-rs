@@ -241,6 +241,37 @@ impl Table {
         })
     }
 
+    pub(super) fn has_asdm_manager(&self) -> bool {
+        self.dm_info
+            .iter()
+            .any(|manager| manager.dm_type == crate::storage::asdm_stman::TYPE)
+    }
+
+    fn asdm_manages(&self, column: &str) -> bool {
+        self.dm_info.iter().any(|manager| {
+            manager.dm_type == crate::storage::asdm_stman::TYPE
+                && manager.columns.iter().any(|name| name == column)
+        })
+    }
+
+    fn require_writable_column(&self, column: &str) -> Result<(), TableError> {
+        if self.asdm_manages(column) {
+            return Err(TableError::Storage(format!(
+                "AsdmStMan column '{column}' is read-only"
+            )));
+        }
+        Ok(())
+    }
+
+    pub(super) fn require_mutable_row_registration(&self) -> Result<(), TableError> {
+        if self.has_asdm_manager() {
+            return Err(TableError::Storage(
+                "AsdmStMan row registration is read-only".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Returns the canonical read-only column accessor for `column`.
     pub fn column_accessor(&self, column: &str) -> Result<TableColumn<'_>, TableError> {
         self.require_column(column)?;
@@ -253,6 +284,7 @@ impl Table {
     /// Returns the canonical mutable column accessor for `column`.
     pub fn column_accessor_mut(&mut self, column: &str) -> Result<TableColumnMut<'_>, TableError> {
         self.require_column(column)?;
+        self.require_writable_column(column)?;
         Ok(TableColumnMut {
             table: self,
             column: column.to_string(),
@@ -282,6 +314,7 @@ impl Table {
     ) -> Result<TableCellMut<'_>, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
+        self.require_writable_column(column)?;
         Ok(TableCellMut {
             table: self,
             row_index,
@@ -305,6 +338,7 @@ impl Table {
     /// Returns [`TableError`] if the row violates the schema; the table is
     /// left unchanged in that case.
     pub fn add_row(&mut self, row: RecordValue) -> Result<(), TableError> {
+        self.require_mutable_row_registration()?;
         let auto_unlock = self.begin_write_operation("add_row")?;
         let result = (|| {
             let mut undefined = None;
@@ -333,6 +367,7 @@ impl Table {
     /// Callers that are not certain the row is schema-valid should keep using
     /// [`add_row`](Table::add_row).
     pub(crate) fn append_row_bound(&mut self, row: RecordValue) -> Result<(), TableError> {
+        self.require_mutable_row_registration()?;
         let auto_unlock = self.begin_write_operation("append_row_bound")?;
         let result = (|| {
             let undefined = self
@@ -371,6 +406,7 @@ impl Table {
     /// Compatibility note: new row-oriented write paths should prefer
     /// [`row_accessor_mut`](Table::row_accessor_mut).
     pub(crate) fn row_mut(&mut self, row_index: usize) -> Result<&mut RecordValue, TableError> {
+        self.require_mutable_row_registration()?;
         let row_count = self.row_count();
         self.inner
             .row_mut(row_index)?
@@ -628,6 +664,11 @@ impl Table {
     pub fn is_cell_defined(&self, row_index: usize, column: &str) -> Result<bool, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
+        if self.asdm_manages(column)
+            && let Some(shape) = self.stored_array_shape(row_index, column)?
+        {
+            return Ok(shape.is_some());
+        }
         // A table read lazily answers from the cell's own store, without
         // loading its rows (a record cell is always defined, so it is not
         // asked there).
@@ -683,7 +724,7 @@ impl Table {
     ) -> Result<Option<Vec<usize>>, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
-        if let Some(shape) = self.stored_tiled_array_shape(row_index, column)? {
+        if let Some(shape) = self.stored_array_shape(row_index, column)? {
             return Ok(shape);
         }
         // Ask the lazy store first: `cell` loads every row of the table.
@@ -714,7 +755,7 @@ impl Table {
     ) -> Result<Option<Vec<usize>>, TableError> {
         self.require_row(row_index)?;
         self.require_column(column)?;
-        if let Some(shape) = self.stored_tiled_array_shape(row_index, column)? {
+        if let Some(shape) = self.stored_array_shape(row_index, column)? {
             return Ok(shape);
         }
         let mut cells = self
@@ -723,7 +764,7 @@ impl Table {
         Ok(cells.pop().flatten().map(|cell| cell.shape().to_vec()))
     }
 
-    fn stored_tiled_array_shape(
+    fn stored_array_shape(
         &self,
         row_index: usize,
         column: &str,
@@ -734,10 +775,12 @@ impl Table {
                 .map(ColumnSchema::column_type),
             Some(ColumnType::Array(_))
         ) && self.dm_info.iter().any(|manager| {
-            manager.dm_type == "TiledShapeStMan"
-                && manager.columns.iter().any(|name| name == column)
+            matches!(
+                manager.dm_type.as_str(),
+                "TiledShapeStMan" | crate::storage::asdm_stman::TYPE
+            ) && manager.columns.iter().any(|name| name == column)
         }) {
-            return self.inner.try_stored_tiled_shape(row_index, column);
+            return self.inner.try_retained_array_shape(row_index, column);
         }
         Ok(None)
     }
@@ -771,6 +814,7 @@ impl Table {
         column: &str,
         value: Value,
     ) -> Result<(), TableError> {
+        self.require_writable_column(column)?;
         let schema_column = if let Some(schema) = self.schema() {
             Some(
                 schema
@@ -1313,6 +1357,7 @@ impl Table {
         value: ArrayValue,
     ) -> Result<(), TableError> {
         self.require_column(column)?;
+        self.require_writable_column(column)?;
         self.require_row_index_without_loading_rows(row_index)?;
         let Some(value) = self.inner.set_cached_array_cell(row_index, column, value)? else {
             return Ok(());
@@ -1469,6 +1514,9 @@ impl<'a> TableRowMut<'a> {
     /// Call [`PreparedTableRowMut::flush`] after the final mutation so the
     /// last loaded row is written back through the table accessor layer.
     pub fn prepare(self, columns: &[&str]) -> Result<PreparedTableRowMut<'a>, TableError> {
+        for column in columns {
+            self.table.require_writable_column(column)?;
+        }
         let (slots, column_indices) = compile_prepared_row_slots(self.table, columns)?;
         Ok(PreparedTableRowMut {
             table: self.table,

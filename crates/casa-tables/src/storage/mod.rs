@@ -3,6 +3,7 @@
 
 mod array_shapes;
 mod array_sources;
+pub(crate) mod asdm_stman;
 pub(crate) mod canonical;
 mod cell_elements;
 pub(crate) mod column_changes;
@@ -2047,6 +2048,9 @@ impl CompositeStorage {
             }
 
             match dm.type_name.as_str() {
+                asdm_stman::TYPE => {
+                    asdm_stman::fill_rows(table_dat, dm.seq_nr, &bound_cols, &mut rows)?
+                }
                 "StManAipsIO" => {
                     if !data_path.is_file() {
                         return Err(StorageError::MissingDataFile(data_path));
@@ -2847,6 +2851,12 @@ impl CompositeStorage {
             .enumerate()
             .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
             .collect();
+        if dm.type_name == asdm_stman::TYPE {
+            return table_dat
+                .asdm
+                .get(dm.seq_nr)?
+                .read(table_dat.asdm_column(col_desc)?, 0..nrrow);
+        }
         let mut rows: Vec<RecordValue> = (0..nrrow).map(|_| RecordValue::default()).collect();
         let mut undefined_cells: Vec<HashSet<String>> =
             (0..nrrow).map(|_| HashSet::new()).collect();
@@ -3068,6 +3078,14 @@ impl CompositeStorage {
                     selected_rows,
                 )
             }
+            asdm_stman::TYPE => table_dat
+                .asdm
+                .get(dm.seq_nr)?
+                .read(
+                    table_dat.asdm_column(col_desc)?,
+                    selected_rows.iter().copied(),
+                )
+                .map(Some),
             _ => Ok(None),
         }
     }

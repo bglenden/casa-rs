@@ -78,9 +78,21 @@ pub(crate) struct TableDatContents {
     /// that a column finds its manager by name) and keeps the name on file
     /// here for the writer; a column never renamed has no entry.
     pub names_on_file: std::collections::HashMap<String, String>,
+    pub(super) asdm: super::asdm_stman::Managers,
 }
 
 impl TableDatContents {
+    pub(super) fn asdm_column(
+        &self,
+        column: &ColumnDescContents,
+    ) -> Result<super::asdm_stman::Column, StorageError> {
+        let name = self
+            .names_on_file
+            .get(&column.col_name)
+            .unwrap_or(&column.col_name);
+        super::asdm_stman::Column::of(name, column.require_primitive_type()?)
+    }
+
     /// Bring both of `table.dat`'s row counts up to `rows`, the table's rows
     /// as persisted, read from the disk (`table.lock`'s sync data) and not
     /// from a handle, before the file read from disk is written back, as
@@ -230,12 +242,18 @@ pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, Sto
                 }
             }
 
+            let asdm = super::asdm_stman::Managers::open(
+                path.parent().unwrap_or_else(|| Path::new(".")),
+                &column_set.data_managers,
+                nrrow.max(column_set.nrrow),
+            )?;
             Ok(TableDatResult::Plain(TableDatContents {
                 nrrow,
                 big_endian,
                 table_desc,
                 column_set,
                 names_on_file,
+                asdm,
             }))
         }
         "RefTable" => {
@@ -1574,10 +1592,12 @@ impl TableDescContents {
 
 impl TableDatContents {
     pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        let asdm_bytes = self.asdm.retained_heap_bytes()?;
         let table_desc = &self.table_desc;
         let mut bytes = table_desc
             .name
             .capacity()
+            .checked_add(asdm_bytes)?
             .checked_add(table_desc.version.capacity())?
             .checked_add(table_desc.comment.capacity())?
             .checked_add(table_desc.table_keywords.retained_heap_bytes()?)?
@@ -1694,6 +1714,7 @@ impl TableDatContents {
                 columns: plain_columns,
             },
             names_on_file: std::collections::HashMap::new(),
+            asdm: Default::default(),
         }
     }
     /// Build `TableDatContents` with both a storage manager DM and virtual engine DMs.
@@ -2142,6 +2163,7 @@ impl TableDatContents {
                 columns: plain_columns,
             },
             names_on_file: std::collections::HashMap::new(),
+            asdm: Default::default(),
         }
     }
 }
@@ -2506,6 +2528,7 @@ mod tests {
                 }],
             },
             names_on_file: std::collections::HashMap::new(),
+            asdm: Default::default(),
         };
 
         let dir = test_dir("col_kw_rt");
