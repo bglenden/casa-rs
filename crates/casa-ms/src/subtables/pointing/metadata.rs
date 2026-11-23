@@ -21,73 +21,114 @@ struct Sample {
 struct PointingRows<'a>(&'a Table);
 
 impl PointingRows<'_> {
-    fn find(
+    fn visit(
         &self,
         mut rows: impl Iterator<Item = usize>,
-        antenna: i32,
-        mut matches: impl FnMut(Sample) -> MsResult<bool>,
-    ) -> MsResult<Option<Sample>> {
+        antennas: &[i32],
+        mut stop: impl FnMut(i32, Sample) -> MsResult<bool>,
+    ) -> MsResult<()> {
         let mut indices = Vec::with_capacity(BATCH_ROWS);
+        let mut selected = Vec::new();
+        let mut selected_antennas = Vec::new();
         loop {
             indices.extend(rows.by_ref().take(BATCH_ROWS));
             if indices.is_empty() {
-                return Ok(None);
+                return Ok(());
             }
-            let values = self.0.required_scalar_columns_owned_for_rows(
-                &["ANTENNA_ID", "TIME", "INTERVAL"],
-                &indices,
-            )?;
-            let (
-                Some(RequiredScalarColumnValues::Int32(antennas)),
-                Some(RequiredScalarColumnValues::Float64(times)),
-                Some(RequiredScalarColumnValues::Float64(intervals)),
-            ) = (
-                values.get("ANTENNA_ID"),
-                values.get("TIME"),
-                values.get("INTERVAL"),
-            )
-            else {
-                return Err(MsError::InvalidInput(
-                    "Invalid POINTING scalar columns".into(),
-                ));
+            // Read candidate IDs first. Large POINTING tables can contain
+            // many samples for antennas outside the requested baseline.
+            let values = self
+                .0
+                .required_scalar_columns_owned_for_rows(&["ANTENNA_ID"], &indices)?;
+            let Some(RequiredScalarColumnValues::Int32(ids)) = values.get("ANTENNA_ID") else {
+                return Err(MsError::InvalidInput("Invalid POINTING antenna IDs".into()));
             };
-            for (index, &row) in indices.iter().enumerate() {
-                if antennas[index] == antenna {
-                    let sample = Sample {
-                        row,
-                        time: times[index],
-                        interval: intervals[index],
-                    };
-                    if matches(sample)? {
-                        return Ok(Some(sample));
-                    }
+            for (&row, &id) in indices.iter().zip(ids) {
+                if antennas.contains(&id) {
+                    selected.push(row);
+                    selected_antennas.push(id);
                 }
             }
             indices.clear();
+            if selected.is_empty() {
+                continue;
+            }
+            let values = self
+                .0
+                .required_scalar_columns_owned_for_rows(&["TIME", "INTERVAL"], &selected)?;
+            let (
+                Some(RequiredScalarColumnValues::Float64(times)),
+                Some(RequiredScalarColumnValues::Float64(intervals)),
+            ) = (values.get("TIME"), values.get("INTERVAL"))
+            else {
+                return Err(MsError::InvalidInput(
+                    "Invalid POINTING time columns".into(),
+                ));
+            };
+            for (index, &row) in selected.iter().enumerate() {
+                let sample = Sample {
+                    row,
+                    time: times[index],
+                    interval: intervals[index],
+                };
+                if stop(selected_antennas[index], sample)? {
+                    return Ok(());
+                }
+            }
+            selected.clear();
+            selected_antennas.clear();
         }
     }
 
-    fn lookup(&self, antenna: i32, time: f64, guess: usize) -> MsResult<Option<Sample>> {
+    fn distinct_time(
+        &self,
+        rows: impl Iterator<Item = usize>,
+        antenna: i32,
+        time: f64,
+    ) -> MsResult<Option<f64>> {
+        let mut found = None;
+        self.visit(rows, &[antenna], |_, other| {
+            if other.time != time {
+                found = Some(other.time);
+            }
+            Ok(found.is_some())
+        })?;
+        Ok(found)
+    }
+
+    fn covers(&self, antenna: i32, sample: Sample, time: f64) -> MsResult<bool> {
+        let half = if sample.interval == 0.0 {
+            // A zero interval derives its coverage from the next sample at
+            // a different timestamp for this antenna, or the previous one.
+            let end = self.0.row_count();
+            let neighbor = match self.distinct_time(sample.row + 1..end, antenna, sample.time)? {
+                Some(next) => Some(next),
+                None => self.distinct_time((0..sample.row).rev(), antenna, sample.time)?,
+            };
+            neighbor.map_or(0.0, |other| (other - sample.time).abs() / 2.0)
+        } else {
+            sample.interval / 2.0
+        };
+        // Preserve casacore's endpoint comparison. At MeasurementSet epochs
+        // an absolute difference can round to the other side of the boundary.
+        Ok(half <= 0.0 || (sample.time >= time - half && sample.time <= time + half))
+    }
+
+    fn lookup(&self, antennas: [i32; 2], time: f64, guess: usize) -> MsResult<[Option<Sample>; 2]> {
         let end = self.0.row_count();
         let guess = guess.min(end);
-        self.find((guess..end).chain(0..guess), antenna, |sample| {
-            let half = if sample.interval == 0.0 {
-                // A zero interval derives its coverage from the next sample at
-                // a different timestamp for this antenna, or the previous one.
-                let distinct = |other: Sample| Ok(other.time != sample.time);
-                let next = self.find(sample.row + 1..end, antenna, distinct)?;
-                let neighbor = match next {
-                    Some(next) => Some(next),
-                    None => self.find((0..sample.row).rev(), antenna, distinct)?,
-                };
-                neighbor.map_or(0.0, |other| (other.time - sample.time).abs() / 2.0)
-            } else {
-                sample.interval / 2.0
-            };
-            // Compare endpoints in the same arithmetic as casacore. At
-            // MeasurementSet epochs, a subtraction can round differently.
-            Ok(half <= 0.0 || (sample.time >= time - half && sample.time <= time + half))
-        })
+        let mut samples = [None; 2];
+        self.visit((guess..end).chain(0..guess), &antennas, |id, sample| {
+            let index = usize::from(id != antennas[0]);
+            if samples[index].is_none() && self.covers(id, sample, time)? {
+                samples[index] = Some(sample);
+                if antennas[0] == antennas[1] {
+                    samples[1] = Some(sample);
+                }
+            }
+            Ok(samples.iter().all(Option::is_some))
+        })?;
+        Ok(samples)
     }
 }
 
@@ -110,8 +151,9 @@ impl MsPointing<'_> {
         interpolate: bool,
     ) -> MsResult<[MDirection; 2]> {
         let rows = PointingRows(self.table());
-        let direction = |antenna| {
-            let sample = rows.lookup(antenna, time, initial_row)?.ok_or_else(|| {
+        let samples = rows.lookup(antennas, time, initial_row)?;
+        let direction = |antenna, sample: Option<Sample>| {
+            let sample = sample.ok_or_else(|| {
                 MsError::InvalidInput(format!(
                     "No POINTING direction for antenna {antenna} at time {time}"
                 ))
@@ -128,8 +170,7 @@ impl MsPointing<'_> {
                 [before, after]
             };
             let distinct = |(guess, time)| -> MsResult<Option<Sample>> {
-                Ok(rows
-                    .lookup(antenna, time, guess)?
+                Ok(rows.lookup([antenna; 2], time, guess)?[0]
                     .filter(|other| other.row != sample.row))
             };
             let neighbor = match distinct(preferred)? {
@@ -155,11 +196,11 @@ impl MsPointing<'_> {
                 left.refer(),
             ))
         };
-        let first = direction(antennas[0])?;
+        let first = direction(antennas[0], samples[0])?;
         let last = if antennas[0] == antennas[1] {
             first.clone()
         } else {
-            direction(antennas[1])?
+            direction(antennas[1], samples[1])?
         };
         Ok([first, last])
     }
