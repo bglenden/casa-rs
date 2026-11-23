@@ -1155,6 +1155,7 @@ pub(crate) fn execute_tool_apply(
         selected,
         has_library_registration: correction.has_library_registration,
         legacy_corruption: false,
+        legacy_libraries: &[],
     };
     let (mut plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
     if additive::in_plan(&plan) {

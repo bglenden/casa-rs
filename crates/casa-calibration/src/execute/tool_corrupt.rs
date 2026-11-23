@@ -27,6 +27,11 @@ pub(crate) fn execute_tool_corrupt(
         selected,
         has_library_registration: correction.has_library_registration,
         legacy_corruption: operation.legacy,
+        legacy_libraries: if operation.legacy {
+            tracking.libraries
+        } else {
+            &[]
+        },
     };
     let (mut plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
     let activity = ToolApplyActivity::from_plan(

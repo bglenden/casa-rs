@@ -8,6 +8,95 @@ mod keys;
 pub(super) use keys::PatchGroup;
 pub(super) type PlannedTable = (ApplyCalibrationTablePlan, Vec<PatchGroup>);
 
+/// VI1 queries CLPatchPanel with wildcard scan and intent IDs. A library
+/// registration contributes only the first matching result, even if several
+/// physical slices expand to this visibility buffer.
+pub(super) fn choose_legacy_slices(
+    tables: &mut [PlannedTable],
+    rows: &[ApplyRowPlan],
+    registrations: &[crate::execute::LibraryApplyRegistration],
+) {
+    for registration in registrations
+        .iter()
+        .filter(|library| library.tables.len() > 1)
+    {
+        let slices = &mut tables[registration.tables.clone()];
+        let mut assigned = vec![Vec::new(); slices.len()];
+        let mut priorities = HashMap::new();
+        for row in rows {
+            let mut present = slices
+                .iter()
+                .enumerate()
+                .filter(|(_, (table, _))| table.applies_to(row));
+            let Some(first) = present.next() else {
+                continue;
+            };
+            let winner = if let Some(second) = present.next() {
+                std::iter::once(first)
+                    .chain(std::iter::once(second))
+                    .chain(present)
+                    .filter_map(|(index, (_, groups))| {
+                        let context = (
+                            index,
+                            row.calibration_observation_id,
+                            row.field_id,
+                            row.data_spw_id,
+                        );
+                        priorities
+                            .entry(context)
+                            .or_insert_with(|| legacy_priority(row, groups))
+                            .map(|key| (index, key))
+                    })
+                    .min_by(|(_, a), (_, b)| compare_legacy_keys(a, b))
+                    .map_or(first.0, |(index, _)| index)
+            } else {
+                first.0
+            };
+            assigned[winner].push(row.row_index);
+        }
+        for ((table, _), mut rows) in slices.iter_mut().zip(assigned) {
+            rows.sort_unstable();
+            table.applicable_selected_row_count = rows.len();
+            table.applicable_row_indices = Some(rows);
+        }
+    }
+}
+
+type LegacyKey = [i32; 5];
+
+fn legacy_priority(row: &ApplyRowPlan, groups: &[PatchGroup]) -> Option<LegacyKey> {
+    let matching = |axis: &[i32], id| {
+        if axis.contains(&id) {
+            Some(id)
+        } else if axis.contains(&-1) {
+            Some(-1)
+        } else {
+            None
+        }
+    };
+    groups
+        .iter()
+        .filter_map(|keys| {
+            Some([
+                matching(&keys[0], row.calibration_observation_id)?,
+                *keys[1].iter().min()?,
+                matching(&keys[2], row.field_id)?,
+                *keys[3].iter().min()?,
+                matching(&keys[4], row.data_spw_id)?,
+            ])
+        })
+        .min_by(compare_legacy_keys)
+}
+
+fn compare_legacy_keys(left: &LegacyKey, right: &LegacyKey) -> std::cmp::Ordering {
+    left.iter()
+        .zip(right)
+        .find_map(|(&left, &right)| {
+            (left >= 0 && right >= 0 && left != right).then(|| left.cmp(&right))
+        })
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
 pub(super) fn selected_rows(
     ms: &MeasurementSet,
     spec: &ApplyCalibrationTableSpec,

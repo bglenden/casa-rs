@@ -558,6 +558,7 @@ pub(crate) struct RegisteredApplySelection<'a> {
     pub(crate) selected: &'a ResolvedMsSelection,
     pub(crate) has_library_registration: bool,
     pub(crate) legacy_corruption: bool,
+    pub(crate) legacy_libraries: &'a [crate::execute::LibraryApplyRegistration],
 }
 
 pub(crate) fn plan_with_selection(
@@ -692,7 +693,7 @@ fn plan_selected_rows(
         });
     }
     let calibration_tables_started_at = Instant::now();
-    let calibration_tables = request
+    let mut calibration_tables = request
         .calibration_tables
         .iter()
         .map(|spec| {
@@ -717,6 +718,13 @@ fn plan_selected_rows(
     // Separate registrations of the same table are separate chain terms.
     if registered.is_none() {
         library::validate_overlaps(&calibration_tables)?;
+    }
+    if let Some(registration) = registered {
+        library::choose_legacy_slices(
+            &mut calibration_tables,
+            &selected_rows,
+            registration.legacy_libraries,
+        );
     }
     let calibration_tables = calibration_tables
         .into_iter()
