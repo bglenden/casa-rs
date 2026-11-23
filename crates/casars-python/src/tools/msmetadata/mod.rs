@@ -22,13 +22,14 @@ pub(crate) mod surface;
 mod time_state_queries;
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, Weak};
 
 use casa_ms::{MeasurementSet, MsResult};
 use casa_tables::lexical_absolute;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
+use super::ms::metadata_link::{MetadataLink, MetadataSnapshot};
 pub(super) use direction_metadata::direction_record;
 use scan_index::ScanIndex;
 
@@ -39,12 +40,58 @@ pub(crate) struct PyMsMetadata {
 }
 
 struct Attachment {
-    ms: MeasurementSet,
+    source: Source,
     max_cache_bytes: usize,
+    snapshot: Option<Arc<MetadataSnapshot>>,
     scans: Option<ScanIndex>,
+    scan_source: Weak<MetadataSnapshot>,
+}
+
+enum Source {
+    Open(Arc<MetadataSnapshot>),
+    Linked(Arc<MetadataLink>),
+}
+
+impl Source {
+    fn name(&self) -> &Path {
+        match self {
+            Self::Open(snapshot) => snapshot.ms.path().expect("an attached MS has a path"),
+            Self::Linked(link) => link.name(),
+        }
+    }
+}
+
+impl Attachment {
+    fn new(source: Source, maxcache: f64) -> Self {
+        Self {
+            source,
+            // CASA measures its metadata cache in decimal megabytes.
+            max_cache_bytes: (maxcache * 1e6) as usize,
+            snapshot: None,
+            scans: None,
+            scan_source: Weak::new(),
+        }
+    }
+
+    fn snapshot(&mut self) -> MsResult<Arc<MetadataSnapshot>> {
+        let snapshot = match &self.source {
+            Source::Open(snapshot) => return Ok(Arc::clone(snapshot)),
+            Source::Linked(link) => link.snapshot(self.snapshot.as_ref())?,
+        };
+        if self.max_cache_bytes > 0 {
+            self.snapshot = Some(Arc::clone(&snapshot));
+        }
+        Ok(snapshot)
+    }
 }
 
 impl PyMsMetadata {
+    pub(super) fn from_ms(link: Option<Arc<MetadataLink>>, maxcache: f64) -> Self {
+        Self {
+            attached: Mutex::new(link.map(|link| Attachment::new(Source::Linked(link), maxcache))),
+        }
+    }
+
     fn with_attachment<T: Send>(
         &self,
         py: Python<'_>,
@@ -64,7 +111,7 @@ impl PyMsMetadata {
         py: Python<'_>,
         query: impl FnOnce(&MeasurementSet) -> MsResult<T> + Send,
     ) -> PyResult<T> {
-        self.with_attachment(py, |attached| query(&attached.ms))
+        self.with_attachment(py, |attached| query(&attached.snapshot()?.ms))
     }
 
     fn with_scan_index<T: Send>(
@@ -73,15 +120,21 @@ impl PyMsMetadata {
         query: impl FnOnce(&MeasurementSet, &ScanIndex) -> MsResult<T> + Send,
     ) -> PyResult<T> {
         self.with_attachment(py, |attached| {
-            if let Some(index) = &attached.scans {
-                return query(&attached.ms, index);
+            let snapshot = attached.snapshot()?;
+            let ms = &snapshot.ms;
+            if attached.scan_source.as_ptr() != Arc::as_ptr(&snapshot) {
+                attached.scans = None;
+                attached.scan_source = Arc::downgrade(&snapshot);
             }
-            let index = ScanIndex::read(&attached.ms)?;
+            if let Some(index) = &attached.scans {
+                return query(ms, index);
+            }
+            let index = ScanIndex::read(ms)?;
             if index.cached_bytes() <= attached.max_cache_bytes {
                 let index = attached.scans.insert(index);
-                query(&attached.ms, index)
+                query(ms, index)
             } else {
-                query(&attached.ms, &index)
+                query(ms, &index)
             }
         })
     }
@@ -116,12 +169,8 @@ impl PyMsMetadata {
             let path = lexical_absolute(Path::new(if msfile.is_empty() { "." } else { msfile }));
             let ms = MeasurementSet::open(path).map_err(runtime_error)?;
             ms.check_referential_integrity().map_err(runtime_error)?;
-            *attached = Some(Attachment {
-                ms,
-                // CASA measures its metadata cache in decimal megabytes.
-                max_cache_bytes: (maxcache * 1e6) as usize,
-                scans: None,
-            });
+            let source = Source::Open(Arc::new(MetadataSnapshot::from_open(ms)));
+            *attached = Some(Attachment::new(source, maxcache));
             Ok(true)
         })
     }
@@ -141,12 +190,8 @@ impl PyMsMetadata {
 
     #[pyo3(signature = (), text_signature = "($self)")]
     fn name(&self, py: Python<'_>) -> PyResult<String> {
-        self.with_ms(py, |ms| {
-            Ok(ms
-                .path()
-                .expect("an attached MS has a path")
-                .display()
-                .to_string())
+        self.with_attachment(py, |attached| {
+            Ok(attached.source.name().display().to_string())
         })
     }
 

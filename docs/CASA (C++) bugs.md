@@ -10819,6 +10819,23 @@ open for `applycal`. casa-rs evaluates these expressions through the shared
 scan, time and UV-distance grammars. The oracle uses equivalent ordinary CASA
 TaQL predicates to compare the calibrated and untouched rows and their flags.
 
+## A metadata tool borrowed from `ms` can crash or follow a different attachment
+
+In CASA 6.7.6.14, a child returned by `ms.metadata()` can terminate
+the process when its `name()` is called. The borrowed constructor
+initializes the metadata reader without initializing the table pointer
+used by `name()`. For example, open the upstream `ngc5921_ut.ms`,
+obtain a child with `cachesize=0`, and call `name()` on it.
+The child can also start reading the rows of an unrelated MS after
+the parent closes and reopens, as seen when reopening a seven-row
+reference view. casa-rs gives the child the logical name of its
+original attachment. The same child continues to see selections and
+reset from that attachment and keeps its last selection after the
+parent detaches. It also drops cached scan metadata when its selection
+changes. In CASA, calling `scannumbers()` before selecting scans 3–5
+in `ngc5921_ut.ms` can keep returning all seven scans even though
+`nrows()` reports the selected row count (#1030).
+
 ## An unobserved antenna name can return every antenna station
 
 With CASA 6.7.6.14, attach a MeasurementSet whose ANTENNA table includes

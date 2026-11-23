@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1030 (`stubs.rs`).
 
 mod attachment_info;
+pub(super) mod metadata_link;
 mod statwt;
 mod stubs;
 mod subtable_queries;
@@ -12,7 +13,7 @@ pub(crate) mod surface;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use casa_ms::MeasurementSet;
 use casa_tables::{Table, TableOptions, TablePartNames, TableWriteLock, table_cache_name};
@@ -48,6 +49,7 @@ struct AttachedMs {
     is_multi_ms: bool,
     sources: Vec<PathBuf>,
     selected_rows: Option<Vec<usize>>,
+    metadata: OnceLock<Arc<metadata_link::MetadataLink>>,
     write_locks: BTreeMap<PathBuf, TableWriteLock>,
     read_locks: BTreeMap<PathBuf, Table>,
 }
@@ -75,6 +77,7 @@ impl AttachedMs {
             is_multi_ms,
             sources,
             selected_rows: None,
+            metadata: OnceLock::new(),
             write_locks: BTreeMap::new(),
             read_locks: BTreeMap::new(),
         };
