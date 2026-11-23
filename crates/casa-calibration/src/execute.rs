@@ -667,10 +667,40 @@ fn for_each_apply_row(
         path: ms_path.clone(),
         source: MsError::from(source),
     };
+    let main = ms.main_table();
     let readers = columns
         .iter()
-        .map(|name| ms.main_table().column_accessor(name))
+        .map(|&name| {
+            let selected = main.data_manager_info().iter().any(|manager| {
+                matches!(
+                    manager.dm_type.as_str(),
+                    "StandardStMan"
+                        | "TiledColumnStMan"
+                        | "TiledShapeStMan"
+                        | "TiledCellStMan"
+                        | "TiledDataStMan"
+                ) && manager.columns.iter().any(|column| column == name)
+            });
+            selected.then(|| main.column_accessor(name)).transpose()
+        })
         .collect::<Result<Vec<_>, _>>()
+        .map_err(read_error)?;
+    // Whole-column readers (including linked tables and virtual columns) must
+    // amortize their load across the preview rather than repeat it per batch.
+    let mut prepared_columns = Vec::new();
+    let prepared_slots: Vec<_> = readers
+        .iter()
+        .zip(&columns)
+        .map(|(reader, &name)| {
+            reader.is_none().then(|| {
+                prepared_columns.push(name);
+                prepared_columns.len() - 1
+            })
+        })
+        .collect();
+    let mut prepared = (!prepared_columns.is_empty())
+        .then(|| main.row_accessor().prepare(&prepared_columns))
+        .transpose()
         .map_err(read_error)?;
     let data_index = (!forward_model).then_some(1);
     let sigma_slots = columns
@@ -683,6 +713,7 @@ fn for_each_apply_row(
     for (index, row) in plan.selected_rows.iter().enumerate() {
         let offset = index % batch_rows;
         if offset == 0 {
+            arrays.clear();
             let end = (index + batch_rows).min(plan.selected_rows.len());
             let indices: Vec<_> = plan.selected_rows[index..end]
                 .iter()
@@ -690,7 +721,12 @@ fn for_each_apply_row(
                 .collect();
             arrays = readers
                 .iter()
-                .map(|column| column.array_cells_owned_uncached(&indices))
+                .map(|column| {
+                    column
+                        .as_ref()
+                        .map(|column| column.array_cells_owned_uncached(&indices))
+                        .transpose()
+                })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(read_error)?;
         }
@@ -700,13 +736,22 @@ fn for_each_apply_row(
                 data_desc_id: row.data_desc_id,
                 correlation_types: Vec::new(),
             })?;
+        if let Some(prepared) = prepared.as_mut() {
+            prepared.load(row.row_index).map_err(read_error)?;
+        }
         let read = |slot: usize| {
-            arrays[slot][offset].as_ref().ok_or_else(|| {
-                read_error(casa_tables::TableError::ColumnNotFound {
-                    row_index: row.row_index,
-                    column: columns[slot].to_owned(),
+            if let (Some(prepared), Some(prepared_slot)) = (&prepared, prepared_slots[slot]) {
+                return prepared.array_at(prepared_slot).map_err(read_error);
+            }
+            arrays[slot]
+                .as_ref()
+                .and_then(|cells| cells[offset].as_ref())
+                .ok_or_else(|| {
+                    read_error(casa_tables::TableError::ColumnNotFound {
+                        row_index: row.row_index,
+                        column: columns[slot].to_owned(),
+                    })
                 })
-            })
         };
         let input_flags = read(0)?;
         let shared;
