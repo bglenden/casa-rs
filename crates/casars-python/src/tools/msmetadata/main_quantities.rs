@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use casa_ms::{MeasurementSet, MsError, MsResult};
-use casa_tables::Table;
+use casa_tables::{Table, TableColumn};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayView2, Ix2};
 use pyo3::prelude::*;
@@ -16,7 +16,7 @@ use super::scan_index::Time;
 use crate::convert::value::CasaValue;
 use crate::tools::{LogLine, emit};
 
-const VISIBILITY_BATCH_ROWS: usize = 128;
+const VISIBILITY_BATCH_ROWS: usize = 512;
 const SCALAR_BATCH_ROWS: usize = 1 << 16;
 
 #[derive(Clone)]
@@ -101,6 +101,32 @@ fn selected_bandwidth(
     Ok(selected)
 }
 
+fn visit_flag_cells(
+    column: &TableColumn<'_>,
+    rows: &[usize],
+    antennas: [&[i32]; 2],
+    row_flags: &[bool],
+    autoc: bool,
+    mut visit: impl FnMut(usize, ArrayView2<'_, bool>) -> MsResult<()>,
+) -> MsResult<()> {
+    let [first, second] = antennas;
+    let selected = (0..rows.len())
+        .filter(|&index| !row_flags[index] && (autoc || first[index] != second[index]))
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Ok(());
+    }
+    let physical = selected
+        .iter()
+        .map(|&index| rows[index])
+        .collect::<Vec<_>>();
+    let flags_batch = column.array_cells_owned_uncached(&physical)?;
+    for (index, value) in selected.into_iter().zip(&flags_batch) {
+        visit(index, flags(value)?)?;
+    }
+    Ok(())
+}
+
 fn unflagged_rows(ms: &MeasurementSet, autoc: bool) -> MsResult<f64> {
     let windows = window_bandwidth(ms)?;
     let flag_column = ms.main_table().column_accessor("FLAG")?;
@@ -112,21 +138,23 @@ fn unflagged_rows(ms: &MeasurementSet, autoc: bool) -> MsResult<f64> {
         true,
         VISIBILITY_BATCH_ROWS,
         |rows, [first, second, descriptions], [], row_flags| {
-            let flags_batch = flag_column.array_cells_owned_uncached(rows)?;
-            for (index, flag) in flags_batch.iter().enumerate() {
-                if row_flags[index] || (!autoc && first[index] == second[index]) {
-                    continue;
-                }
-                let flag = flags(flag)?;
-                if flag.iter().all(|&flagged| !flagged) {
-                    total += 1.0;
-                } else if flag.iter().any(|&flagged| !flagged) {
-                    let window = bandwidth_definition(&windows, descriptions[index])?;
-                    total += selected_bandwidth(flag, window, true)?
-                        / (window.bandwidth * flag.nrows() as f64);
-                }
-            }
-            Ok(())
+            visit_flag_cells(
+                &flag_column,
+                rows,
+                [first, second],
+                row_flags,
+                autoc,
+                |index, flag| {
+                    if flag.iter().all(|&flagged| !flagged) {
+                        total += 1.0;
+                    } else if flag.iter().any(|&flagged| !flagged) {
+                        let window = bandwidth_definition(&windows, descriptions[index])?;
+                        total += selected_bandwidth(flag, window, true)?
+                            / (window.bandwidth * flag.nrows() as f64);
+                    }
+                    Ok(())
+                },
+            )
         },
     )?;
     Ok(total)
@@ -300,19 +328,23 @@ fn effective_exposure(ms: &MeasurementSet) -> MsResult<CasaValue> {
         true,
         VISIBILITY_BATCH_ROWS,
         |rows, [first, second, ddids], [times, exposure], row_flags| {
-            let flags_batch = flag_column.array_cells_owned_uncached(rows)?;
-            for (index, flag) in flags_batch.iter().enumerate() {
-                if row_flags[index] || first[index] == second[index] {
-                    continue;
-                }
-                let flags = flags(flag)?;
-                let window = bandwidth_definition(&descriptions, ddids[index])?;
-                let bandwidth = selected_bandwidth(flags, window, false)?;
-                let time = Time(times[index]);
-                total += exposure[index] * bandwidth
-                    / (time_bandwidth[&time] * baselines * flags.nrows() as f64);
-            }
-            Ok(())
+            visit_flag_cells(
+                &flag_column,
+                rows,
+                [first, second],
+                row_flags,
+                false,
+                |index, flags| {
+                    if flags.iter().any(|&flagged| !flagged) {
+                        let window = bandwidth_definition(&descriptions, ddids[index])?;
+                        let bandwidth = selected_bandwidth(flags, window, false)?;
+                        let time = Time(times[index]);
+                        total += exposure[index] * bandwidth
+                            / (time_bandwidth[&time] * baselines * flags.nrows() as f64);
+                    }
+                    Ok(())
+                },
+            )
         },
     )?;
     Ok(CasaValue::quantity(total, exposure_unit(ms.main_table())))
