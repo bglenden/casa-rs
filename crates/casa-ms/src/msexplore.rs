@@ -30,6 +30,7 @@ pub mod cli;
 mod plotms_atmosphere;
 mod plotms_columns;
 mod plotms_figure;
+mod plotms_model;
 mod plotms_text;
 pub mod task_contract;
 
@@ -589,6 +590,8 @@ impl fmt::Display for MsAxis {
 pub enum MsDataColumn {
     /// MAIN.DATA.
     Data,
+    /// MAIN.FLOAT_DATA for signed observed amplitude.
+    Float,
     /// MAIN.CORRECTED_DATA.
     Corrected,
     /// MAIN.MODEL_DATA.
@@ -612,6 +615,10 @@ pub enum MsDataColumn {
 }
 
 impl MsDataColumn {
+    fn needs_model(self) -> bool {
+        self == Self::Model || self.is_derived()
+    }
+
     fn is_derived(self) -> bool {
         matches!(
             self,
@@ -640,6 +647,7 @@ impl MsDataColumn {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Data => "data",
+            Self::Float => "float",
             Self::Corrected => "corrected",
             Self::Model => "model",
             Self::CorrectedMinusModel => "corrected_minus_model",
@@ -657,6 +665,7 @@ impl MsDataColumn {
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
             "data" => Ok(Self::Data),
+            "float" | "float_data" => Ok(Self::Float),
             "corrected" | "corrected_data" => Ok(Self::Corrected),
             "model" | "model_data" => Ok(Self::Model),
             "residual" | "corrected-model" | "corrected-model_vector" | "corrected_minus_model" => {
@@ -1761,6 +1770,7 @@ impl MsPlotSpec {
                     | MsAxis::Phase
                     | MsAxis::Real
                     | MsAxis::Imaginary
+                    | MsAxis::Channel
                     | MsAxis::U
                     | MsAxis::V
                     | MsAxis::W
@@ -2486,8 +2496,10 @@ struct PlotMsInput<'a> {
     row_order: &'a [usize],
     channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
     rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
+    models: Option<&'a HashMap<usize, ArrayValue>>,
     x_data_column: Option<MsDataColumn>,
     secondary_y_data_column: Option<MsDataColumn>,
+    prefer_float_data: bool,
 }
 
 fn build_msexplore_plot_payload_validated(
@@ -2698,8 +2710,10 @@ pub(crate) fn build_calibrated_plotms_payload(
         row_order: &calibration.row_order,
         channels: &calibration.channels,
         rows: Some(&calibration.rows),
+        models: None,
         x_data_column: calibration.x_data_column,
         secondary_y_data_column: None,
+        prefer_float_data: false,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -2709,9 +2723,20 @@ fn build_uncalibrated_plotms_payload(
     spec: &MsExploreSpec,
     x_data_column: Option<MsDataColumn>,
     secondary_y_data_column: Option<MsDataColumn>,
+    prefer_float_data: bool,
+    load_models: Option<cli::PlotMsModelLoader>,
 ) -> Result<MsPlotPayload, String> {
-    let row_order = crate::selection::resolve_casa_row_indices(ms, &spec.selection)
+    let selected = crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
         .map_err(|error| error.to_string())?;
+    let models = load_models
+        .map(|load| load(ms, &selected.selected_rows))
+        .transpose()?
+        .flatten();
+    let row_order = selected
+        .selected_rows
+        .into_iter()
+        .map(|row| row.row_index)
+        .collect::<Vec<_>>();
     let spw = spec
         .selection
         .spw
@@ -2729,8 +2754,10 @@ fn build_uncalibrated_plotms_payload(
         row_order: &row_order,
         channels: &channels,
         rows: None,
+        models: models.as_ref(),
         x_data_column,
         secondary_y_data_column,
+        prefer_float_data,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -6132,6 +6159,7 @@ struct VisibilityBinSamples<'a> {
     values: &'a [Complex64],
     weights: &'a [f64],
     projection: Option<(VisibilityColumnProjection, [Complex64; 2])>,
+    signed_amplitude: bool,
 }
 
 impl<'a> VisibilityBinSamples<'a> {
@@ -6155,6 +6183,7 @@ impl<'a> VisibilityBinSamples<'a> {
             values,
             weights,
             projection,
+            signed_amplitude: grid.is_some_and(|grid| grid.signed_amplitude),
         }
     }
 }
@@ -6243,6 +6272,11 @@ fn compute_axis_value(
         if let Some((projection, operands)) = visibility.projection {
             return Ok(projection.axis_value(axis, operands));
         }
+        let axis = if visibility.signed_amplitude && axis == MsAxis::Amplitude {
+            MsAxis::Real
+        } else {
+            axis
+        };
         return Ok(compute_weighted_visibility_math(
             axis,
             visibility.values,
@@ -6748,6 +6782,7 @@ struct ComplexGrid {
     chan_count: usize,
     values: Vec<Complex64>,
     model: Option<(VisibilityColumnProjection, Vec<Complex64>)>,
+    signed_amplitude: bool,
 }
 
 impl ComplexGrid {
@@ -6895,7 +6930,8 @@ fn selected_plot_weight_spectrum<'a>(
 
 enum SelectedArrayValues<'a> {
     Stored(Vec<Option<ArrayValue>>),
-    Calibrated(Vec<Option<&'a ArrayValue>>),
+    Projected(Vec<Option<&'a ArrayValue>>),
+    DefaultModel(Vec<Arc<ArrayValue>>),
 }
 
 struct SelectedArrayColumn<'a> {
@@ -6922,6 +6958,16 @@ impl<'a> SelectedArrayColumn<'a> {
         rows: &[usize],
         calibration: Option<&PlotMsInput<'a>>,
     ) -> Result<Self, String> {
+        if column == "MODEL_DATA"
+            && let Some(models) = calibration.and_then(|input| input.models)
+        {
+            return Ok(Self {
+                column,
+                values: SelectedArrayValues::Projected(
+                    rows.iter().map(|row| models.get(row)).collect(),
+                ),
+            });
+        }
         let cell: fn(&PlotMsCalibratedRow) -> Option<&ArrayValue> = match column {
             "CORRECTED_DATA" => |row| Some(&row.corrected_data),
             "FLAG" => |row| Some(&row.flags),
@@ -6938,14 +6984,15 @@ impl<'a> SelectedArrayColumn<'a> {
             .collect();
         Ok(Self {
             column,
-            values: SelectedArrayValues::Calibrated(values),
+            values: SelectedArrayValues::Projected(values),
         })
     }
 
     fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
         let value = match &self.values {
             SelectedArrayValues::Stored(values) => values.get(row_slot).and_then(Option::as_ref),
-            SelectedArrayValues::Calibrated(values) => values.get(row_slot).copied().flatten(),
+            SelectedArrayValues::Projected(values) => values.get(row_slot).copied().flatten(),
+            SelectedArrayValues::DefaultModel(values) => values.get(row_slot).map(Arc::as_ref),
         };
         value.ok_or_else(|| {
             format!(
@@ -6953,6 +7000,15 @@ impl<'a> SelectedArrayColumn<'a> {
                 self.column
             )
         })
+    }
+
+    fn visibility_grid(&self, row_slot: usize) -> Result<ComplexGrid, String> {
+        let cell = self.get(row_slot)?;
+        if self.column == "FLOAT_DATA" {
+            float_visibility_grid(cell)
+        } else {
+            complex_grid_from_array(cell)
+        }
     }
 }
 
@@ -6978,10 +7034,33 @@ impl<'a> PreparedSelectedDataSource<'a> {
         calibration: Option<&PlotMsInput<'a>>,
     ) -> Result<Self, String> {
         let load = |name| {
+            if name == "MODEL_DATA"
+                && calibration.is_some_and(|input| input.rows.is_none() && input.models.is_none())
+                && ms.main_table().schema().is_some_and(|schema| {
+                    schema.column("MODEL_DATA").is_none()
+                        && schema.column("FLOAT_DATA").is_none()
+                        && (schema.column("DATA").is_some()
+                            || schema.column("CORRECTED_DATA").is_some())
+                })
+            {
+                return Ok(SelectedArrayColumn {
+                    column: name,
+                    values: SelectedArrayValues::DefaultModel(plotms_model::default_cells(
+                        ms,
+                        row_indices,
+                    )?),
+                });
+            }
             SelectedArrayColumn::load_for_plot(ms.main_table(), name, row_indices, calibration)
         };
+        let observed = if calibration.is_some_and(|input| input.prefer_float_data) {
+            "FLOAT_DATA"
+        } else {
+            "DATA"
+        };
         match column {
-            MsDataColumn::Data => Ok(Self::Single(load("DATA")?)),
+            MsDataColumn::Data => Ok(Self::Single(load(observed)?)),
+            MsDataColumn::Float => Ok(Self::Single(load("FLOAT_DATA")?)),
             MsDataColumn::Corrected => Ok(Self::Single(load("CORRECTED_DATA")?)),
             MsDataColumn::Model => Ok(Self::Single(load("MODEL_DATA")?)),
             MsDataColumn::CorrectedMinusModel => Ok(Self::Difference {
@@ -6995,12 +7074,12 @@ impl<'a> PreparedSelectedDataSource<'a> {
                 scalar: true,
             }),
             MsDataColumn::DataMinusModel => Ok(Self::Difference {
-                left: load("DATA")?,
+                left: load(observed)?,
                 right: load("MODEL_DATA")?,
                 scalar: false,
             }),
             MsDataColumn::DataMinusModelScalar => Ok(Self::Difference {
-                left: load("DATA")?,
+                left: load(observed)?,
                 right: load("MODEL_DATA")?,
                 scalar: true,
             }),
@@ -7015,12 +7094,12 @@ impl<'a> PreparedSelectedDataSource<'a> {
                 scalar: true,
             }),
             MsDataColumn::DataDivModel => Ok(Self::Ratio {
-                numerator: load("DATA")?,
+                numerator: load(observed)?,
                 denominator: load("MODEL_DATA")?,
                 scalar: false,
             }),
             MsDataColumn::DataDivModelScalar => Ok(Self::Ratio {
-                numerator: load("DATA")?,
+                numerator: load(observed)?,
                 denominator: load("MODEL_DATA")?,
                 scalar: true,
             }),
@@ -7029,14 +7108,14 @@ impl<'a> PreparedSelectedDataSource<'a> {
 
     fn row(&self, row_slot: usize, project_plotms_columns: bool) -> Result<ComplexGrid, String> {
         match self {
-            Self::Single(column) => complex_grid_from_array(column.get(row_slot)?),
+            Self::Single(column) => column.visibility_grid(row_slot),
             Self::Difference {
                 left,
                 right,
                 scalar,
             } => {
-                let left = complex_grid_from_array(left.get(row_slot)?)?;
-                let right = complex_grid_from_array(right.get(row_slot)?)?;
+                let left = left.visibility_grid(row_slot)?;
+                let right = right.visibility_grid(row_slot)?;
                 if *scalar && project_plotms_columns {
                     return left.with_model(right, VisibilityColumnProjection::ScalarResidual);
                 }
@@ -7053,8 +7132,8 @@ impl<'a> PreparedSelectedDataSource<'a> {
                 denominator,
                 scalar,
             } => {
-                let numerator = complex_grid_from_array(numerator.get(row_slot)?)?;
-                let denominator = complex_grid_from_array(denominator.get(row_slot)?)?;
+                let numerator = numerator.visibility_grid(row_slot)?;
+                let denominator = denominator.visibility_grid(row_slot)?;
                 if project_plotms_columns {
                     let projection = if *scalar {
                         VisibilityColumnProjection::ScalarRatio
@@ -7096,6 +7175,7 @@ fn complex_grid_from_array(array: &ArrayValue) -> Result<ComplexGrid, String> {
                     .map(|value| Complex64::new(value.re as f64, value.im as f64))
                     .collect(),
                 model: None,
+                signed_amplitude: false,
             })
         }
         ArrayValue::Complex64(values) => {
@@ -7108,6 +7188,7 @@ fn complex_grid_from_array(array: &ArrayValue) -> Result<ComplexGrid, String> {
                 chan_count: values.ncols(),
                 values: values.iter().copied().collect(),
                 model: None,
+                signed_amplitude: false,
             })
         }
         other => Err(format!(
@@ -7115,6 +7196,28 @@ fn complex_grid_from_array(array: &ArrayValue) -> Result<ComplexGrid, String> {
             other.primitive_type()
         )),
     }
+}
+
+fn float_visibility_grid(array: &ArrayValue) -> Result<ComplexGrid, String> {
+    let ArrayValue::Float32(values) = array else {
+        return Err(format!(
+            "msexplore requires FLOAT_DATA cells with type FLOAT, found {:?}",
+            array.primitive_type()
+        ));
+    };
+    let values = values.view().into_dimensionality::<Ix2>().map_err(|_| {
+        "msexplore expects FLOAT_DATA cells with shape [num_corr, num_chan]".to_string()
+    })?;
+    Ok(ComplexGrid {
+        corr_count: values.nrows(),
+        chan_count: values.ncols(),
+        values: values
+            .iter()
+            .map(|&value| Complex64::new(f64::from(value), 0.0))
+            .collect(),
+        model: None,
+        signed_amplitude: true,
+    })
 }
 
 fn float_grid_from_array(array: &ArrayValue, column_name: &str) -> Result<FloatGrid, String> {
@@ -7186,6 +7289,7 @@ where
             .map(|(left, right)| combine(left, right))
             .collect(),
         model: None,
+        signed_amplitude: false,
     })
 }
 
@@ -8107,8 +8211,12 @@ mod tests {
         assert!(spec.validate().unwrap_err().contains("x axis field"));
 
         let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+        spec.x_axis = MsAxis::Amplitude;
         spec.y_axes = vec![MsAxis::Channel];
-        assert!(spec.validate().unwrap_err().contains("y axis channel"));
+        spec.validate()
+            .expect("channel ordinate uses the existing channel bins");
+        spec.y_axes = vec![MsAxis::Scan];
+        assert!(spec.validate().unwrap_err().contains("y axis scan"));
 
         let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
         spec.averaging.avgchannel = Some(8);
@@ -8853,12 +8961,14 @@ mod tests {
                     chan_count: 2,
                     values: vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
                     model: None,
+                    signed_amplitude: false,
                 },
                 ComplexGrid {
                     corr_count: 2,
                     chan_count: 1,
                     values: vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
                     model: None,
+                    signed_amplitude: false,
                 },
                 |left, right| left + right,
             )

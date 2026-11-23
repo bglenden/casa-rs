@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image
 
 from calibration_smoothcal_oracle import copy_ms, opened
+from imager_prediction_options_oracle import write_model
 from plotms_calibration_oracle import compare_text, plotms_launcher
 from record_casa_returns import make_cal_ms
 
@@ -391,10 +392,312 @@ def compare_ordinate_columns(root, vis, native):
                 assert image.size == (500, 360), (output, image.size)
 
 
+def compare_float_columns(root, vis, source, native):
+    float_only = root / "float-only.ms"
+    mixed = root / "float-and-complex.ms"
+    floating = source["DATA"].real.astype(np.float32) - 6
+    for destination in (float_only, mixed):
+        copy_ms(vis, destination)
+        with opened(destination, True) as table:
+            desc = table.getcoldesc("DATA")
+            desc.update(name="FLOAT_DATA", valueType="float",
+                        dataManagerType="StandardStMan", dataManagerGroup="FloatVis")
+            table.addcols({"FLOAT_DATA": desc})
+            table.putcol("FLOAT_DATA", floating)
+            if destination == float_only:
+                table.removecols(["DATA", "CORRECTED_DATA", "MODEL_DATA"])
+
+    cases = (
+        ("float-explicit", float_only, {}, (1, -4)),
+        ("float-default", float_only, {"ydatacolumn": ""}, (1, -4)),
+        ("float-corrected-fallback", float_only, {"ydatacolumn": "corrected"}, (1, -4)),
+        ("float-x", float_only, dict(xaxis="amp", yaxis="channel",
+                                     xdatacolumn="float", ydatacolumn=""), (-4, 1)),
+        ("float-mixed-explicit", mixed, {}, (1, -4)),
+        ("float-mixed-observed", mixed, {"ydatacolumn": "data"}, (1, -4)),
+        ("float-mixed-with-corrected", mixed,
+         dict(xaxis="amp", xdatacolumn="float", ydatacolumn="corrected"), (-4, 4.47214)),
+        ("float-mixed-default-with-corrected", mixed,
+         dict(xaxis="amp", xdatacolumn="", ydatacolumn="corrected"), (-4, 4.47214)),
+        ("float-mixed-data-phase", mixed, dict(yaxis="phase", ydatacolumn="data"), (1, 180)),
+        ("float-mixed-vector-residual", mixed,
+         dict(xaxis="amp", xdatacolumn="data-model_vector"), (12.8062, -4)),
+    )
+    for name, destination, overrides, first in cases:
+        controls = request(destination) | dict(xaxis="channel", yaxis="amp",
+                                                xdatacolumn="", ydatacolumn="float") | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        np.testing.assert_allclose(np.array(rows(expected)[0][:2], dtype=float), first, rtol=1.2e-5, atol=1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: 12 matching points", flush=True)
+
+    for name, column in (("float-explicit", "float"), ("float-default", "")):
+        controls = request(float_only) | dict(xaxis="channel", yaxis="amp",
+                                               xdatacolumn="", ydatacolumn=column)
+        compare_figure(root, native, controls, root / f"{name}.casa.txt",
+                       ("Amp:float vs. Channel", "Channel", "Amp:float"))
+
+    for destination in (float_only, mixed):
+        with opened(destination) as table:
+            np.testing.assert_array_equal(table.getcol("FLOAT_DATA"), floating)
+            if destination == float_only:
+                assert {"DATA", "CORRECTED_DATA", "MODEL_DATA"}.isdisjoint(table.colnames())
+            for name, expected in source.items():
+                if name in table.colnames():
+                    np.testing.assert_array_equal(table.getcol(name), expected, err_msg=name)
+
+    float_model = root / "float-and-model.ms"
+    copy_ms(mixed, float_model)
+    with opened(float_model, True) as table:
+        table.removecols(["DATA", "CORRECTED_DATA"])
+    invalid = (
+        ("missing-float", vis, "amp", "float", "FLOAT_DATA is unavailable"),
+        ("phase-float", float_only, "phase", "float", "requires an amplitude or real axis"),
+        ("vector-float-residual", float_model, "amp", "data-model_vector", "Data residuals not valid"),
+        ("scalar-float-residual", float_model, "amp", "data-model_scalar", "Data residuals not valid"),
+    )
+    for name, destination, axis, column, diagnostic in invalid:
+        controls = request(destination) | dict(xaxis="channel", yaxis=axis, xdatacolumn="", ydatacolumn=column)
+        for engine, task, message in (("casa", reference, "plot parameters failed"), ("native", native, diagnostic)):
+            output = root / f"{name}.{engine}.txt"
+            try:
+                task(**controls, plotfile=str(output), expformat="txt")
+            except Exception as error:
+                assert message in str(error), error
+            else:
+                raise AssertionError(f"{engine} accepted {name}")
+            assert not output.exists()
+
+    from casars.tasks import TaskParameterError
+
+    controls = request(mixed) | dict(xaxis="channel", yaxis="amp", xdatacolumn="",
+                                     ydatacolumn="data", avgchannel="2", expformat="txt")
+    expected, actual = (root / f"average-mixed-float.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert len(selected) == 6 and all(float(point[1]) < 0 for point in selected)
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging MeasurementSet FLOAT_DATA is pending #1032" in str(error), error
+    else:
+        raise AssertionError("Observed FLOAT_DATA averaging silently exported complex DATA")
+    assert not actual.exists()
+
+    controls = request(float_only) | dict(xaxis="channel", yaxis="real", xdatacolumn="", ydatacolumn="float")
+    expected, actual = (root / f"real-float.{engine}.txt" for engine in ("casa", "native"))
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    # For real-valued cells, CASA's signed amplitude already gives the real coordinates.
+    amp_reference = rows(root / "float-explicit.casa.txt")
+    actual_real = rows(actual)
+    np.testing.assert_allclose(np.array([p[:2] for p in actual_real], dtype=float),
+                               np.array([p[:2] for p in amp_reference], dtype=float),
+                               rtol=1.2e-5, atol=1e-7)
+    assert [p[2:] for p in actual_real] == [p[2:] for p in amp_reference]
+    assert any(line.startswith("# Channel Real ") for line in actual.read_text().splitlines())
+    try:
+        reference(**controls, plotfile=str(expected), expformat="txt")
+    except Exception as error:
+        assert "plot parameters failed" in str(error) or "Stream removed (Socket closed)" in str(error), error
+        assert not expected.exists()
+    else:
+        assert compare_text(actual, expected) == 12
+
+
+def compare_default_model(root, native):
+    vis = root / "default-model.ms"
+    make_cal_ms(str(vis), stokes="XX XY YX YY")
+    with opened(vis, True) as table:
+        corr, channel, row = np.indices(table.getcol("DATA").shape)
+        observed = (1 + channel + row / 256 + 2 * corr).astype(np.complex64)
+        flags = (channel == 2)
+        table.putcol("DATA", observed)
+        table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", np.zeros(observed.shape[2], dtype=bool))
+        absent = {"MODEL_DATA", "CORRECTED_DATA"}
+        table.removecols(sorted(absent.intersection(table.colnames())))
+
+    cases = (
+        ("unit-model-parallel", dict(xdatacolumn="model", yaxis="amp", ydatacolumn="data"), (1, 2)),
+        ("unit-model-cross", dict(xdatacolumn="model", yaxis="amp", ydatacolumn="data",
+                                  correlation="XY"), (0, 4)),
+        ("unit-model-corrected-residual", dict(xaxis="channel", xdatacolumn="", yaxis="real",
+                                                ydatacolumn="corrected-model_vector"), (1, 1)),
+        ("unit-model-cross-residual", dict(xaxis="channel", xdatacolumn="", yaxis="real",
+                                            ydatacolumn="data-model_vector", correlation="XY"), (1, 4)),
+    )
+    for name, overrides, first in cases:
+        controls = request(vis) | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert len(selected) == 12
+        assert {sample[2] for sample in selected} == {"1", "3"}
+        np.testing.assert_allclose(np.array(selected[0][:2], dtype=float), first, rtol=1.2e-5, atol=1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: 12 matching points without MODEL_DATA", flush=True)
+
+    controls = request(vis) | cases[0][1]
+    compare_figure(root, native, controls, root / "unit-model-parallel.casa.txt",
+                   ("Amp vs. Amp:model", "Amp:model", "Amp"))
+    with opened(vis) as table:
+        assert absent.isdisjoint(table.colnames())
+        np.testing.assert_array_equal(table.getcol("DATA"), observed)
+        np.testing.assert_array_equal(table.getcol("FLAG"), flags)
+
+    corrected_only = root / "corrected-only-model.ms"
+    copy_ms(vis, corrected_only)
+    casa.clearcal(str(corrected_only), addmodel=False)
+    with opened(corrected_only, True) as table:
+        assert "CORRECTED_DATA" in table.colnames()
+        table.removecols([column for column in ("DATA", "MODEL_DATA") if column in table.colnames()])
+    controls = request(corrected_only) | dict(xaxis="amp", xdatacolumn="model", yaxis="amp",
+                                              ydatacolumn="corrected", expformat="txt")
+    expected, actual = (root / f"unit-with-corrected-only.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    assert {float(point[0]) for point in rows(expected)} == {1.0}
+
+    virtual = root / "virtual-model.ms"
+    copy_ms(vis, virtual)
+    for name in ("SPECTRAL_WINDOW", "DATA_DESCRIPTION"):
+        with opened(virtual / name, True) as table:
+            table.addrows(1)
+            for column in table.colnames():
+                if table.iscelldefined(column, 0):
+                    table.putcell(column, 1, table.getcell(column, 0))
+            if name == "DATA_DESCRIPTION":
+                table.putcell("SPECTRAL_WINDOW_ID", 1, 1)
+            else:
+                table.putcell("NAME", 1, "SPW1")
+                table.putcell("CHAN_FREQ", 1, table.getcell("CHAN_FREQ", 0) + 2e7)
+                table.putcell("REF_FREQUENCY", 1, table.getcell("REF_FREQUENCY", 0) + 2e7)
+    with opened(virtual, True) as table:
+        phase = table.getcol("FIELD_ID") == 1
+        times = table.getcol("TIME")
+        integrations = np.unique(times[phase])
+        descriptions = table.getcol("DATA_DESC_ID")
+        descriptions[phase & (times >= integrations[len(integrations) // 2])] = 1
+        table.putcol("DATA_DESC_ID", descriptions)
+    casa.setjy(str(virtual), field="PHASE", spw="0", standard="manual",
+               fluxdensity=[7.25, 0, 0, 0], usescratch=False)
+    with opened(virtual, True) as table:
+        assert "MODEL_DATA" not in table.colnames()
+        table.putkeyword("definedmodel_field_0", "model_missing")
+    controls = request(virtual) | dict(xaxis="channel", xdatacolumn="", yaxis="amp", ydatacolumn="model",
+                                       expformat="txt")
+    expected, actual = (root / f"unit-with-other-virtual-field.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    assert {float(point[1]) for point in rows(expected)} == {1.0}
+
+    unmatched = controls | dict(field="PHASE", spw="1:1~3")
+    expected, actual = (root / f"unit-unmatched-virtual-window.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**unmatched, plotfile=str(expected)) is None
+    assert native(**unmatched, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    assert {float(point[1]) for point in rows(expected)} == {1.0}
+
+    controls |= dict(field="PHASE")
+    expected, actual = (root / f"selected-virtual-model.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert {float(point[1]) for point in rows(expected)} == {7.25}
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    figure_controls = {key: value for key, value in controls.items() if key != "expformat"}
+    compare_figure(root, native, figure_controls, expected,
+                   ("Amp:model vs. Channel", "Channel", "Amp:model"))
+    residual_controls = controls | dict(yaxis="real", ydatacolumn="data-model_vector")
+    expected, actual = (root / f"selected-virtual-residual.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**residual_controls, plotfile=str(expected)) is None
+    assert all(float(point[1]) < 0 for point in rows(expected))
+    assert native(**residual_controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+
+    from casars.tasks import TaskExecutionError
+
+    average = controls | dict(avgchannel="3")
+    expected, actual = (root / f"selected-virtual-averaged.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**average, plotfile=str(expected)) is None
+    assert len(rows(expected)) == 3
+    assert {float(point[1]) for point in rows(expected)} == {7.25}
+    try:
+        native(**average, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "virtual MeasurementSet models are pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS applied the unaveraged model path to an averaged request")
+    assert not actual.exists()
+    with opened(virtual) as table:
+        assert "MODEL_DATA" not in table.colnames()
+        np.testing.assert_array_equal(table.getcol("DATA"), observed)
+        np.testing.assert_array_equal(table.getcol("FLAG"), flags)
+
+    schema_root = root / "stored-model-schema"
+    schema_root.mkdir()
+    schema_fixture, _ = fixture(schema_root)
+    with opened(schema_fixture) as table:
+        descriptor = table.getcoldesc("MODEL_DATA")
+    stored = root / "stored-and-virtual-model.ms"
+    copy_ms(virtual, stored)
+    with opened(stored, True) as table:
+        table.addcols({"MODEL_DATA": descriptor})
+        physical_model = np.full(observed.shape, 19, dtype=np.complex64)
+        table.putcol("MODEL_DATA", physical_model)
+        table.removekeyword("definedmodel_field_0")
+    for name, field, spw, amplitude, count in (
+        ("virtual-and-stored", "PHASE", "0:1~3", 7.25, 6),
+        ("unmodeled-window-and-stored", "PHASE", "1:1~3", 1, 6),
+        ("stored-only-field", "FLUX", "0:1~3", 19, 12),
+    ):
+        selected = controls | dict(vis=str(stored), field=field, spw=spw)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**selected, plotfile=str(expected)) is None
+        assert {float(point[1]) for point in rows(expected)} == {amplitude}
+        assert native(**selected, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+    with opened(stored) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
+
+
+def compare_virtual_fourier_model(root, native):
+    work = root / "fourier-model"
+    work.mkdir()
+    vis, columns = fixture(work)
+    with opened(vis / "FIELD") as field:
+        direction = field.getcell("PHASE_DIR", 0)[:, 0]
+    with opened(vis / "SPECTRAL_WINDOW") as window:
+        frequency = window.getcell("CHAN_FREQ", 0)[0]
+    model = work / "point.im"
+    write_model(model, direction, frequency, 2.0, cell=5)
+    assert casa.ft(vis=str(vis), model=str(model), field="FLUX", usescratch=False) is None
+    with opened(vis) as table:
+        columns["MODEL_DATA"] = table.getcol("MODEL_DATA")
+    controls = request(vis) | dict(xaxis="real", yaxis="imag", xdatacolumn="model", ydatacolumn="model")
+    expected, actual = (work / f"fourier.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    first = np.array(rows(expected)[0][:2], dtype=float)
+    # The pinned Fourier gridder gives a slightly different norm from the
+    # image pixel flux for this off-center point. Compare its complex output.
+    np.testing.assert_allclose(first, [-1.76778, 0.938018], rtol=1.2e-5)
+    assert np.all(np.abs(first) > 0.5)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 12
+    with opened(vis) as table:
+        for name, values in columns.items():
+            np.testing.assert_array_equal(table.getcol(name), values)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
+    parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
@@ -402,6 +705,8 @@ def main():
     root = args.work.resolve()
     root.mkdir()
     os.environ["CASARS_MSEXPLORE_BIN"] = str(args.native_bin.resolve())
+    calibrate = args.calibrate_bin or args.native_bin.with_name("calibrate")
+    os.environ["CASARS_CALIBRATE_BIN"] = str(calibrate.resolve())
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
@@ -415,6 +720,9 @@ def main():
         compare_zero_model(root, vis, source, native)
         compare_ratio_float_range(root, vis, source, native)
         compare_ordinate_columns(root, vis, native)
+        compare_float_columns(root, vis, source, native)
+        compare_default_model(root, native)
+        compare_virtual_fourier_model(root, native)
 
 
 if __name__ == "__main__":

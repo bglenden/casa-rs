@@ -29,6 +29,7 @@ use casa_tables::lexical_absolute;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
+pub(super) use direction_metadata::direction_record;
 use scan_index::ScanIndex;
 
 /// CASA's `msmetadata` tool.

@@ -10891,6 +10891,21 @@ casa-rs keeps the public link name and resolves reads and writes against
 the MS captured at open, so changing the link cannot redirect an
 attached operation (#1030).
 
+## An invalid FIELD direction column can return the north celestial pole
+
+In CASA 6.7.6.14, call `ms.getfielddirmeas("phase")` on a valid MS.
+CASA logs an illegal column name and still returns a J2000 direction
+with declination π/2. casa-rs logs the bad column and returns the empty
+boolean array also used for other failed direction queries (#1030).
+
+## Empty MS selections can fail the spectral-window summary
+
+In CASA 6.7.6.14, select zero rows from a valid MS with nonempty
+DATA_DESCRIPTION and SPECTRAL_WINDOW, then call `getspectralwindowinfo()`.
+The scalar range returns an empty record and the summary indexes a
+missing field, raising an internal assertion error. casa-rs returns an
+empty dictionary because no data descriptions are used (#1030).
+
 ## An MS opened read-only can start writing through another handle
 
 In CASA 6.7.6.14, open an MS with `ms.open(path, nomodify=True)` and
@@ -10900,3 +10915,17 @@ call `hanningsmooth("data")`. It initially returns `False` and asks for
 and `hanningsmooth("data")` writes to MAIN, even after the writer closed.
 casa-rs retains the requested access mode per handle. A read-only handle
 continues to report `False` and refuses writes (#1030).
+
+## PlotMS can lose its backend on the real axis of FLOAT_DATA
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, select real versus channel on a
+float-only MeasurementSet using `ydatacolumn="float"`. The headless backend
+can close its RPC stream during export, producing no file. The cache fills
+the floating amplitude array. The real axis indexer reads a separate array
+that the cache leaves empty. The explicit axis validation permits real-valued plots.
+[Pinned cache](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+[Pinned indexer](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/PlotMSIndexer.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+
+casa-rs reads the real values directly. The regression checks the same
+selected samples against CASA's successful signed amplitude export, which
+has the same coordinates for float cells (#1032).

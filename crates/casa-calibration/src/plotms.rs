@@ -1,16 +1,48 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Read-only application of PlotMS callibrary inputs.
+//! Read-only PlotMS callibrary application and visibility model prediction.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use casa_ms::msexplore::{PlotMsCalibratedRow, PlotMsCalibration};
-use casa_ms::{MeasurementSet, MsSelection};
+use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelectionRow, TransformInputView};
 use casa_task_runtime::TaskFailure;
+use casa_types::ArrayValue;
 
 use crate::callib::{load_apply_specs_from_callib, parse_apply_specs};
 use crate::execute::evaluate_plot_rows;
+use crate::transform_models::plotms_model_input;
 use crate::{ApplyMode, ApplyPlanRequest, plan_apply};
+
+/// Predict model visibilities for the exact PlotMS row selection without
+/// writing MODEL_DATA. Return None when no selected field has a virtual model
+/// pointer, so PlotMS can use its physical or default model reader.
+pub fn load_models(
+    ms: &MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+) -> Result<Option<HashMap<usize, ArrayValue>>, String> {
+    let fields = casa_ms::scratch_columns::virtual_model_fields(ms);
+    if !rows.iter().any(|row| fields.contains(&row.field_id)) {
+        return Ok(None);
+    }
+    let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
+    let prepared = plotms_model_input()
+        .prepare(ms, rows, &BTreeMap::new())
+        .map_err(|error| error.to_string())?;
+    let mut columns = prepared
+        .read(ms.main_table(), &indices, &["MODEL_DATA"])
+        .map_err(|error| error.to_string())?;
+    let cells = columns
+        .remove("MODEL_DATA")
+        .ok_or_else(|| "virtual models did not supply MODEL_DATA".to_string())?;
+    Ok(Some(
+        indices
+            .into_iter()
+            .zip(cells)
+            .filter_map(|(row, cell)| cell.map(|cell| (row, cell)))
+            .collect(),
+    ))
+}
 
 /// Correct the selected plot rows through the applycal engine without saving them.
 pub fn load_calibration(

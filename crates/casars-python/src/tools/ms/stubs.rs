@@ -204,27 +204,9 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (dircolname = None, fieldid = None, time = None, format = None), text_signature = "($self, dircolname='PHASE_DIR', fieldid=0, time=0.0, format='measure')")]
-    fn getfielddirmeas(
-        &self,
-        dircolname: Option<&Bound<'_, PyAny>>,
-        fieldid: Option<&Bound<'_, PyAny>>,
-        time: Option<&Bound<'_, PyAny>>,
-        format: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getfielddirmeas")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn getscansummary(&self) -> PyResult<Py<PyAny>> {
         stub("getscansummary")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn getspectralwindowinfo(&self) -> PyResult<Py<PyAny>> {
-        stub("getspectralwindowinfo")
     }
 
     /// Not yet implemented in casa-rs.
