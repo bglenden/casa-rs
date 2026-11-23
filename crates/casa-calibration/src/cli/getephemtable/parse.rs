@@ -231,10 +231,7 @@ fn metadata(
                             / rows.len() as f64;
                         keys.upsert(
                             "radii",
-                            quantity(
-                                "km",
-                                Value::Array(ArrayValue::Float64(ndarray::arr1(&radii).into_dyn())),
-                            ),
+                            quantity("km", Value::Array(ArrayValue::from_f64_vec(radii.to_vec()))),
                         );
                         keys.upsert("meanrad", quantity("km", number(mean)));
                     }

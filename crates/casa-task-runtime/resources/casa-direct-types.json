@@ -320,6 +320,15 @@
     "band": "cStr",
     "hosts": "cStrVec"
   },
+  "getephemtable": {
+    "objectname": "cStr",
+    "asis": "cBool",
+    "timerange": "cStr",
+    "interval": "cStr",
+    "outfile": "cPath",
+    "rawdatafile": "cStr",
+    "overwrite": "cBool"
+  },
   "getjyperkalma": {
     "caltable": "cStr",
     "infile": "cStr",
