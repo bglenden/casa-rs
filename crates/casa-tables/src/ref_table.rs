@@ -522,6 +522,133 @@ mod tests {
     }
 
     #[test]
+    fn selected_scalar_reads_follow_reference_column_and_row_maps() {
+        use crate::storage::table_control::{
+            TableDatResult, read_table_dat_dispatch, write_ref_table_dat,
+        };
+        use crate::table::TableOptions;
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("parent.tbl");
+        let view = dir.path().join("view.tbl");
+        test_table().save(TableOptions::new(&parent)).unwrap();
+        let base = Table::open(TableOptions::new(&parent)).unwrap();
+        base.select_rows(&[4, 1, 3, 1])
+            .unwrap()
+            .save(TableOptions::new(&view))
+            .unwrap();
+        let control = view.join("table.dat");
+        let TableDatResult::Ref(mut reference) = read_table_dat_dispatch(&control).unwrap() else {
+            panic!("expected a reference descriptor");
+        };
+        reference.column_names[0] = "selected_id".to_owned();
+        reference
+            .column_name_map
+            .retain(|(column, _)| column != "id");
+        reference
+            .column_name_map
+            .push(("selected_id".into(), "id".into()));
+        write_ref_table_dat(&control, &reference).unwrap();
+
+        let table = Table::open(TableOptions::new(&view)).unwrap();
+        let values = table
+            .column_accessor("selected_id")
+            .unwrap()
+            .scalar_cells_owned_for_rows(&[3, 0, 1, 2])
+            .unwrap();
+        assert_eq!(values, [1, 4, 1, 3].map(|id| Some(ScalarValue::Int32(id))));
+    }
+
+    #[test]
+    fn projected_reference_reads_keep_physical_incremental_scalar_values() {
+        use crate::schema::ColumnOptions;
+        use crate::table::{DataManagerKind, TableOptions};
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("parent.tbl");
+        let view = dir.path().join("view.tbl");
+        let column = ColumnSchema::scalar("probe", PrimitiveType::Int32)
+            .with_options(ColumnOptions {
+                undefined: true,
+                ..ColumnOptions::default()
+            })
+            .unwrap();
+        let mut base = Table::with_schema(TableSchema::new(vec![column]).unwrap());
+        for value in [0, 4] {
+            base.add_row(RecordValue::new(vec![RecordField::new(
+                "probe",
+                Value::Scalar(ScalarValue::Int32(value)),
+            )]))
+            .unwrap();
+        }
+        base.save(TableOptions::new(&parent).with_data_manager(DataManagerKind::IncrementalStMan))
+            .unwrap();
+        let base = Table::open(TableOptions::new(&parent)).unwrap();
+        base.select_rows(&[1, 0])
+            .unwrap()
+            .save(TableOptions::new(&view))
+            .unwrap();
+
+        let storage = CompositeStorage;
+        let parent_values = storage
+            .load_scalar_column_rows_with_row_hint(&parent, "probe", &[1, 0], None)
+            .unwrap();
+        assert_eq!(parent_values, [Some(ScalarValue::Int32(4)), None]);
+        let reference_values = storage
+            .load_scalar_column_rows_with_row_hint(&view, "probe", &[0, 1], None)
+            .unwrap();
+        assert_eq!(
+            reference_values,
+            [4, 0].map(|value| Some(ScalarValue::Int32(value)))
+        );
+    }
+
+    #[test]
+    fn reference_metadata_writes_keep_parent_table_and_column_keyword_links() {
+        use crate::table::TableOptions;
+        use crate::table_path::add_directory;
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("run").join("parent.tbl");
+        let view = dir.path().join("view.tbl");
+        let target = parent.join("child.tbl");
+        std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+        let mut base = test_table();
+        let link = Value::table_ref(target.to_string_lossy().into_owned());
+        base.keywords_mut().upsert("LINK", link.clone());
+        base.set_column_keywords("id", RecordValue::new(vec![RecordField::new("LINK", link)]));
+        base.save(TableOptions::new(&parent)).unwrap();
+
+        let base = Table::open(TableOptions::new(&parent)).unwrap();
+        base.select_rows(&[1])
+            .unwrap()
+            .save(TableOptions::new(&view))
+            .unwrap();
+        let mut selected = Table::open(TableOptions::new(&view)).unwrap();
+        let check = |table: &Table, owner: &std::path::Path| {
+            for record in [table.keywords(), table.column_keywords("id").unwrap()] {
+                let Some(Value::TableRef(path)) = record.get("LINK") else {
+                    panic!("expected a table keyword");
+                };
+                assert_eq!(add_directory(path, owner), target);
+            }
+        };
+        check(&selected, &view);
+        selected
+            .keywords_mut()
+            .upsert("CHANGED", Value::Scalar(ScalarValue::Bool(true)));
+        selected
+            .save_metadata_only(TableOptions::new(&view))
+            .unwrap();
+        let reopened = Table::open(TableOptions::new(&parent)).unwrap();
+        assert_eq!(
+            reopened.keywords().get("CHANGED"),
+            Some(&Value::Scalar(ScalarValue::Bool(true)))
+        );
+        check(&reopened, &parent);
+    }
+
+    #[test]
     fn row_numbers_accessor() {
         let table = test_table();
         let view = table.select_rows(&[4, 1, 3]).unwrap();

@@ -312,9 +312,7 @@ def test_msmetadata_reads_selected_rows_from_casa_reference_ms(native_dataset, t
     assert 0 < selected.nrows() < table.nrows()
     selected.done()
     assert table.done()
-    for subtable in native_dataset.iterdir():
-        if subtable.is_dir():
-            (reference / subtable.name).symlink_to(subtable, target_is_directory=True)
+    assert not (reference / "FIELD").exists()
 
     results = []
     for module in (casatools, tools):

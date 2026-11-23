@@ -194,6 +194,21 @@ pub(crate) fn stored_table_keywords<'a>(
     stored
 }
 
+/// Retarget the representation of inherited keywords to their new owner
+/// without changing the tables they name. RefTable views inherit the parent
+/// keyword record in casacore.
+pub(crate) fn rebase_table_keywords(keywords: &mut RecordValue, parent: &Path, view: &Path) {
+    for field in keywords.fields_mut() {
+        match &mut field.value {
+            Value::TableRef(path) if Path::new(path).is_relative() => {
+                *path = strip_directory(&add_directory(path, parent), view);
+            }
+            Value::Record(nested) => rebase_table_keywords(nested, parent, view),
+            _ => {}
+        }
+    }
+}
+
 /// Absolute form of `path` with `.` and `..` resolved lexically, like
 /// casacore's `Path::absoluteName`.
 pub fn lexical_absolute(path: &Path) -> PathBuf {
@@ -389,6 +404,44 @@ mod tests {
         assert_eq!(stored.get("PSF"), Some(&Value::table_ref("./img.psf")));
         assert_eq!(stored.get("OTHER"), Some(&Value::table_ref("/elsewhere/t")));
         assert_eq!(stored.get("KEPT"), Some(&Value::table_ref("././already")));
+    }
+
+    #[test]
+    fn inherited_table_keywords_keep_the_same_targets() {
+        let parent = Path::new("/data/observations/base.ms");
+        let view = Path::new("/data/selections/view.ms");
+        let nested = RecordValue::new(vec![
+            RecordField::new("local", Value::table_ref("././ANTENNA")),
+            RecordField::new("peer", Value::table_ref("./shared.tbl")),
+        ]);
+        let mut keywords = RecordValue::new(vec![
+            RecordField::new("nested", Value::Record(nested)),
+            RecordField::new("external", Value::table_ref("/catalog/source.tbl")),
+            RecordField::new(
+                "string",
+                Value::Scalar(ScalarValue::String("././untouched".into())),
+            ),
+        ]);
+        rebase_table_keywords(&mut keywords, parent, view);
+        let Some(Value::Record(nested)) = keywords.get("nested") else {
+            panic!("nested record");
+        };
+        assert_eq!(
+            nested.get("local"),
+            Some(&Value::table_ref("/data/observations/base.ms/ANTENNA"))
+        );
+        assert_eq!(
+            nested.get("peer"),
+            Some(&Value::table_ref("/data/observations/shared.tbl"))
+        );
+        assert_eq!(
+            keywords.get("external"),
+            Some(&Value::table_ref("/catalog/source.tbl"))
+        );
+        assert_eq!(
+            keywords.get("string"),
+            Some(&Value::Scalar(ScalarValue::String("././untouched".into())))
+        );
     }
 
     #[test]

@@ -56,7 +56,7 @@ use crate::table::{
     SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape,
     SelectedReadFootprint,
 };
-use crate::table_path::add_directory_for_link;
+use crate::table_path::{add_directory_for_link, rebase_table_keywords};
 
 use self::array_sources::generated_array_group_sources;
 use self::incremental_stman::{
@@ -1370,6 +1370,17 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+        self.load_scalar_column_rows_in_layout(table_path, column, selected_rows, row_hint, false)
+    }
+
+    fn load_scalar_column_rows_in_layout(
+        &self,
+        table_path: &Path,
+        column: &str,
+        selected_rows: &[usize],
+        row_hint: Option<u64>,
+        preserve_ism_defaults: bool,
+    ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
         if selected_rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -1383,22 +1394,50 @@ impl CompositeStorage {
         }
 
         match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => self.load_plain_scalar_column_rows(
+            TableDatResult::Plain(table_dat) => self.load_plain_scalar_column_rows_in_layout(
                 table_path,
                 &table_dat,
                 column,
                 selected_rows,
                 row_hint,
+                preserve_ism_defaults,
             ),
             TableDatResult::Concat(concat) => {
                 self.load_concat_rows(table_path, &concat, selected_rows, |path, local| {
-                    self.load_scalar_column_rows_with_row_hint(path, column, local, None)
+                    self.load_scalar_column_rows_in_layout(
+                        path,
+                        column,
+                        local,
+                        None,
+                        preserve_ism_defaults,
+                    )
                 })
             }
-            TableDatResult::Ref(_) => {
-                let snapshot = self.load_with_row_hint(table_path, row_hint)?;
-                let values = scalar_column_from_snapshot(&snapshot, column)?;
-                Ok(select_scalar_rows(&values, selected_rows))
+            TableDatResult::Ref(reference) => {
+                if !reference.column_names.iter().any(|name| name == column) {
+                    return Ok(vec![None; selected_rows.len()]);
+                }
+                let parent = add_directory_for_link(&reference.parent_relative_path, table_path);
+                let parents = selected_rows
+                    .iter()
+                    .map(|&row| {
+                        reference.parent_row(row).ok_or_else(|| {
+                            StorageError::FormatMismatch(format!(
+                                "reference row {row} is out of bounds"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                // A full reference-row read retains the on-disk IncrementalStMan
+                // scalar values, including zero when the descriptor default is
+                // a different value. Projected reads keep that contract.
+                self.load_scalar_column_rows_in_layout(
+                    &parent,
+                    reference.parent_column(column),
+                    &parents,
+                    None,
+                    true,
+                )
             }
         }
     }
@@ -2691,6 +2730,25 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+        self.load_plain_scalar_column_rows_in_layout(
+            table_path,
+            table_dat,
+            column,
+            selected_rows,
+            row_hint,
+            false,
+        )
+    }
+
+    fn load_plain_scalar_column_rows_in_layout(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        column: &str,
+        selected_rows: &[usize],
+        row_hint: Option<u64>,
+        preserve_ism_defaults: bool,
+    ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
         if selected_rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -2797,6 +2855,7 @@ impl CompositeStorage {
                     &group_col_descs,
                     target_col_idx,
                     selected_rows,
+                    preserve_ism_defaults,
                 )? {
                     return Ok(values);
                 }
@@ -3797,6 +3856,8 @@ impl CompositeStorage {
                 TableSchema::new(columns).map_err(StorageError::from)
             })
             .transpose()?;
+        let mut keywords = parent.keywords;
+        rebase_table_keywords(&mut keywords, &parent_path, path);
         let column_keywords = names
             .iter()
             .filter_map(|&(name, base)| {
@@ -3804,7 +3865,10 @@ impl CompositeStorage {
                     .column_keywords
                     .get(base)
                     .cloned()
-                    .map(|keywords| (name.clone(), keywords))
+                    .map(|mut keywords| {
+                        rebase_table_keywords(&mut keywords, &parent_path, path);
+                        (name.clone(), keywords)
+                    })
             })
             .collect();
         let dm_info = parent
@@ -3825,7 +3889,7 @@ impl CompositeStorage {
             row_count: reference.row_map.len(),
             rows,
             undefined_cells,
-            keywords: parent.keywords,
+            keywords,
             column_keywords,
             schema,
             table_info: load_table_info(path),
