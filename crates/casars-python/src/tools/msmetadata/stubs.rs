@@ -44,37 +44,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (fieldid = None, epoch = None), text_signature = "($self, fieldid=0, epoch={})")]
-    fn phasecenter(
-        &self,
-        fieldid: Option<&Bound<'_, PyAny>>,
-        epoch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("phasecenter")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (rownum = None, interpolate = None, initialrow = None), text_signature = "($self, rownum=0, interpolate=False, initialrow=0)")]
-    fn pointingdirection(
-        &self,
-        rownum: Option<&Bound<'_, PyAny>>,
-        interpolate: Option<&Bound<'_, PyAny>>,
-        initialrow: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("pointingdirection")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (field = None, epoch = None), text_signature = "($self, field=0, epoch={})")]
-    fn refdir(
-        &self,
-        field: Option<&Bound<'_, PyAny>>,
-        epoch: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("refdir")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn summary(&self) -> PyResult<Py<PyAny>> {
         stub("summary")

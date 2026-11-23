@@ -6,6 +6,7 @@
 mod antenna_metadata;
 mod column_units;
 mod data_description;
+mod direction_metadata;
 mod intents;
 mod names;
 mod observation_metadata;

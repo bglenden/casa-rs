@@ -547,8 +547,15 @@ pub(crate) fn find_field_ephemeris(
     root: &Path,
     ephemeris_id: i32,
 ) -> Result<PathBuf, PhaseCentreEphemerisError> {
+    find_ephemeris_in_field(&root.join("FIELD"), ephemeris_id)
+}
+
+pub(crate) fn find_ephemeris_in_field(
+    field_path: &Path,
+    ephemeris_id: i32,
+) -> Result<PathBuf, PhaseCentreEphemerisError> {
     let prefix = format!("EPHEM{ephemeris_id}_");
-    let mut matches = fs::read_dir(root.join("FIELD"))?
+    let mut matches = fs::read_dir(field_path)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| {

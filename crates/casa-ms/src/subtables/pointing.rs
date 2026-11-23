@@ -11,6 +11,7 @@ use crate::derived::engine::resolve_direction_reference;
 use crate::schema::{self, SubtableId};
 use crate::{MsError, MsResult};
 
+mod metadata;
 mod single_dish;
 
 crate::subtables::define_generic_subtable!(
@@ -175,7 +176,19 @@ impl MsPointing<'_> {
         column: &str,
         polynomial: Option<(i32, f64)>,
     ) -> MsResult<MDirection> {
-        let ArrayValue::Float64(values) = self.array(row, column)? else {
+        let angles = self.direction_angles(self.array(row, column)?, row, column, polynomial)?;
+        let reference = resolve_direction_reference(self.table(), "POINTING", column, row)?;
+        Ok(MDirection::from_angles(angles[0], angles[1], reference))
+    }
+
+    fn direction_angles(
+        &self,
+        values: &ArrayValue,
+        row: usize,
+        column: &str,
+        polynomial: Option<(i32, f64)>,
+    ) -> MsResult<[f64; 2]> {
+        let ArrayValue::Float64(values) = values else {
             return Err(MsError::InvalidInput(format!(
                 "POINTING {column} must be double"
             )));
@@ -214,8 +227,9 @@ impl MsPointing<'_> {
         } else {
             [lon, lat]
         };
-        let reference = resolve_direction_reference(self.table(), "POINTING", column, row)?;
-        Ok(MDirection::from_angles(lon, lat, reference))
+        let [lon_scale, lat_scale] =
+            super::metadata_field::direction_radians(self.table(), column)?;
+        Ok([lon * lon_scale, lat * lat_scale])
     }
 }
 
