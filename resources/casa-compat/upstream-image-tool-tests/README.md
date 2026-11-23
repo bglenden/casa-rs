@@ -12,3 +12,8 @@ uses the public `casars.tools.image` and `casars.tools.coordsys` entry
 points. CASA still supplies the other tools used to build fixtures and
 inspect results. Both runs get separate local fixture copies and working
 directories. Each implementation writes its own pytest log and JUnit report.
+
+The `image_statistics` case `test_CAS_11460` creates a 32.2 GiB Float
+cube. Run it on a volume with room for the cube and its scratch data. To
+run the other statistics cases on a smaller volume, use
+`--only 'not test_CAS_11460'`.

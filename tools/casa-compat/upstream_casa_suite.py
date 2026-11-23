@@ -54,6 +54,10 @@ def pytest_configure():
     task = os.environ["CASARS_UPSTREAM_TEST_TASK"]
     implementation = os.environ["CASARS_UPSTREAM_TEST_IMPLEMENTATION"]
     if tool := os.environ.get("CASARS_UPSTREAM_TEST_TOOL"):
+        if task == "image":
+            # The general suite calls maketestimage() with the CASA demo FITS.
+            sample = Path("demo/Images/imagetestimage.fits")
+            copy_fixture(Path(ctsys.resolve(sample.as_posix())), sample)
         if implementation == "casa-rs":
             from casars import tools
             for name in tool.split(","):
