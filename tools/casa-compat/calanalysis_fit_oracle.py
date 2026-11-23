@@ -5,7 +5,11 @@
 import argparse
 from contextlib import chdir
 from itertools import product
+import json
 from pathlib import Path
+import signal
+from subprocess import run
+import sys
 
 import casatasks
 from casatools import calanalysis as casa_calanalysis
@@ -158,6 +162,39 @@ def exercise_narrow_band(path, readers):
         assert tool.close()
 
 
+def exercise_degenerate(path, readers):
+    script = """
+import json
+import sys
+from casatools import calanalysis
+tool = calanalysis()
+assert tool.open(sys.argv[1])
+print('attached', flush=True)
+tool.fit(antenna='0', **json.loads(sys.argv[2]))
+"""
+    cases = [({'axis': 'F'}, 'variance'),
+             ({'type': 'ROBUST', 'spw': '0:3'}, 'median'),
+             ({'type': 'ROBUST', 'spw': '0:3', 'order': 'LINEAR'}, 'median')]
+    for options, failure in cases:
+        reference = run([sys.executable, '-c', script, str(path), json.dumps(options)],
+                        capture_output=True, text=True, timeout=30, check=False)
+        assert reference.returncode == -signal.SIGABRT and 'attached' in reference.stdout, reference
+        assert failure in reference.stderr, reference
+        if 'native' in readers:
+            tool = readers['native']()
+            assert tool.open(str(path))
+            result = tool.fit(antenna='0', **options)
+            assert result
+            for record in result.values():
+                if record['flag'].all():
+                    assert record['validFit'] is False and not record['pars'].size
+                else:
+                    assert record['validFit'] and record['resVar'] == 0.
+                    close(record['model'], record['value'])
+            assert tool.close()
+        print(path.name, 'isolated abort', options, failure, flush=True)
+
+
 def compare(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     readers, writers = {'casa': casa_calanalysis}, {'casa': casatasks.gencal}
@@ -177,6 +214,7 @@ def compare(work, reference_only):
                 make_table(vis, path, maker, complex_values)
                 exercise(path, readers, complex_values)
                 exercise_narrow_band(path, readers)
+                exercise_degenerate(path, readers)
 
 
 if __name__ == '__main__':
