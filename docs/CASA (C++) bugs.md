@@ -10869,3 +10869,14 @@ In CASA 6.7.6.14, `msmetadata.summary()` computes minimum and maximum
 times on an empty array and aborts the Python process. casa-rs raises
 `RuntimeError` because the summary has no beginning or ending timestamp.
 The tool remains attached and reports zero rows (#1029).
+
+## Descending channels can produce negative unflagged counts and effective exposure
+
+CASA 6.7.6.14 weights usable samples by signed `CHAN_WIDTH` in
+`msmetadata.nrows(flagged=False)` and `effexposuretime()`. With four
+1 MHz channels stored in descending order, negative channel widths,
+positive `TOTAL_BANDWIDTH`, and one channel flagged in each correlation,
+CASA reports −13.5 unflagged cross-correlation rows and −22.5 s on an
+18-cross-row fixture. The ascending ordering gives +13.5 rows and +22.5 s.
+casa-rs uses channel-width magnitudes, so either ordering gives the same
+positive count and duration (#1029).

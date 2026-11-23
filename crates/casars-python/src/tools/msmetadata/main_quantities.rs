@@ -47,7 +47,9 @@ fn window_bandwidth(ms: &MeasurementSet) -> MsResult<Vec<Window>> {
         if let std::collections::btree_map::Entry::Vacant(entry) = bandwidths.entry(id) {
             entry.insert(Window {
                 bandwidth: windows.total_bandwidth(row)?,
-                channels: Arc::from(windows.chan_width(row)?),
+                // Channel order can give signed widths. A usable fraction
+                // or exposure is weighted by physical bandwidth.
+                channels: windows.chan_width(row)?.into_iter().map(f64::abs).collect(),
             });
         }
         result.push(bandwidths[&id].clone());
@@ -203,14 +205,20 @@ fn exposure(
         checked_row(pol, ms.polarization()?.row_count(), "Polarization ID")?;
     }
     let description_ids = windows_per_description(ms)?;
-    let mut first_by_description = BTreeMap::<usize, (f64, f64)>::new();
+    let mut first_by_description = BTreeMap::<usize, (f64, i32, f64)>::new();
     main_scalar_batches(
         ms,
-        ["OBSERVATION_ID", "ARRAY_ID", "SCAN_NUMBER", "DATA_DESC_ID"],
+        [
+            "OBSERVATION_ID",
+            "ARRAY_ID",
+            "SCAN_NUMBER",
+            "DATA_DESC_ID",
+            "FIELD_ID",
+        ],
         ["TIME", "EXPOSURE"],
         false,
         SCALAR_BATCH_ROWS,
-        |rows, [obs, arr, scan_number, desc], [times, exposures], _| {
+        |rows, [obs, arr, scan_number, desc, fields], [times, exposures], _| {
             for index in 0..rows.len() {
                 if i64::from(obs[index]) != observation
                     || i64::from(arr[index]) != array
@@ -226,11 +234,13 @@ fn exposure(
                 let (window, polarization) = description_ids[row];
                 if i64::from(window) == spw && (pol < 0 || i64::from(polarization) == pol) {
                     let time = times[index];
-                    let first = first_by_description
-                        .entry(row)
-                        .or_insert((time, exposures[index]));
-                    if time < first.0 {
-                        *first = (time, exposures[index]);
+                    let field = fields[index];
+                    let sample = (time, field, exposures[index]);
+                    let first = first_by_description.entry(row).or_insert(sample);
+                    // CASA visits tied subscans in field-ID order and keeps
+                    // the first physical row for an exact tie within a field.
+                    if time < first.0 || (time == first.0 && field < first.1) {
+                        *first = sample;
                     }
                 }
             }
@@ -268,7 +278,7 @@ fn exposure(
                     .into(),
             )
         })?;
-    let (_, first) = first_by_description.get(&id).ok_or_else(|| {
+    let (_, _, first) = first_by_description.get(&id).ok_or_else(|| {
         MsError::InvalidInput(
             "MS has no records for the specified scan, spectral window, and polarization".into(),
         )

@@ -1115,3 +1115,76 @@ def test_msmetadata_exposure_weights_partial_flags_by_channel_width(native_datas
             assert measured["value"] == pytest.approx(expected, abs=2e-12)
         finally:
             assert metadata.done()
+
+
+def test_msmetadata_first_exposure_breaks_timestamp_ties_by_field(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "FIELD"), nomodify=False)
+    fields = [(name, table.getcell(name, 0)) for name in table.colnames()
+              if table.iscelldefined(name, 0)]
+    assert table.addrows(1)
+    for name, value in fields:
+        assert table.putcell(name, 1, value)
+    assert table.putcell("NAME", 1, "other")
+    assert table.done()
+
+    assert table.open(str(native_dataset), nomodify=False)
+    scan = int(table.getcell("SCAN_NUMBER", 0))
+    assert table.getcell("TIME", 0) == table.getcell("TIME", 1)
+    assert table.getcell("DATA_DESC_ID", 0) == table.getcell("DATA_DESC_ID", 1)
+    assert table.putcell("FIELD_ID", 0, 1)
+    assert table.putcell("EXPOSURE", 0, 6.0)
+    assert table.putcell("EXPOSURE", 1, 10.0)
+    assert table.putcell("EXPOSURE", 2, 11.0)
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            for selection in ({}, {"polid": 0}):
+                assert metadata.exposuretime(scan=scan, **selection) == {"value": 10.0, "unit": "s"}
+        finally:
+            assert metadata.done()
+
+
+@pytest.mark.parametrize("descending", [False, True])
+def test_msmetadata_exposure_is_invariant_to_channel_order(native_dataset, descending):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+    frequencies = np.sort(table.getcell("CHAN_FREQ", 0))
+    assert len(frequencies) == 4
+    assert table.putcell("CHAN_FREQ", 0, frequencies[::-1] if descending else frequencies)
+    assert table.putcell("CHAN_WIDTH", 0, np.full(4, -1e6 if descending else 1e6))
+    assert table.putcell("TOTAL_BANDWIDTH", 0, 4e6)
+    assert table.done()
+
+    assert table.open(str(native_dataset), nomodify=False)
+    selected = np.flatnonzero(table.getcol("ANTENNA1") != table.getcol("ANTENNA2"))
+    exposure = table.getcol("EXPOSURE")
+    flags = np.zeros_like(table.getcol("FLAG"), dtype=bool, order="F")
+    flags[:, 0, :] = True
+    assert table.putcol("FLAG", flags)
+    assert table.putcol("FLAG_ROW", np.zeros(table.nrows(), dtype=bool))
+    assert table.done()
+
+    # Three of four equal-bandwidth channels remain in every correlation.
+    # The fixture has four antennas and therefore six possible baselines.
+    usable = 0.75
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            direction_sign = -1 if module is casatools and descending else 1
+            count = metadata.nrows(autoc=False, flagged=False)
+            assert count == pytest.approx(direction_sign * usable * len(selected))
+            measured = metadata.effexposuretime()
+            assert measured["unit"] == "s"
+            expected = direction_sign * usable * sum(exposure[selected]) / 6
+            assert measured["value"] == pytest.approx(expected, abs=2e-12)
+        finally:
+            assert metadata.done()
