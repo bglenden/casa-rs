@@ -272,24 +272,26 @@
   "decisions": [
     {
       "id": "honor-leakage-correlation-metadata",
-      "state": "Proposed",
+      "state": "Previously agreed",
       "inputs": "A consistent linear-feed CORR_TYPE order of XX, YY, XY, YX.",
       "casa": "Applies the correction to fixed slots and modifies a parallel hand.",
       "ours": "Applies the leakage correction and flags to the products named by the MeasurementSet.",
       "rationale": "The four-product layout is valid in casacore. Applying a cross-hand formula to a parallel hand changes the observed data incorrectly.",
       "impact": "The native output equals permuting the canonical-order result.",
+      "owner_decision": "Correct CASA data corruption under the standing deviations rule. [Owner decision](https://github.com/bglenden/casa-rs/issues/1054)",
       "evidence": [
         "leakage-application"
       ]
     },
     {
       "id": "reject-underspecified-leakage-shape",
-      "state": "Proposed",
+      "state": "Previously agreed",
       "inputs": "A D Jones calibration table with one complex receptor per solution.",
       "casa": "Aborts with ArrayShapeError.",
       "ours": "Raises a catchable invalid calibration shape error.",
       "rationale": "Two coefficients are required for a four-product leakage correction.",
       "impact": "The caller can handle the malformed caltable without losing the process.",
+      "owner_decision": "Correct CASA crashes and aborts under the standing deviations rule. [Owner decision](https://github.com/bglenden/casa-rs/issues/1054)",
       "evidence": [
         "leakage-application"
       ]

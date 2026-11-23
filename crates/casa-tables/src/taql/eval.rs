@@ -17,7 +17,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use casa_types::quanta::Quantity;
+use casa_types::quanta::{Quantity, Unit};
 use casa_types::{RecordValue, ScalarValue, Value};
 use num_complex::Complex64;
 #[path = "eval_arrays.rs"]
@@ -294,23 +294,15 @@ impl ExprValue {
             _ => {}
         }
 
+        if let Some((lhs, rhs, _)) = comparable_quantities(self, other)? {
+            return Ok(lhs.total_cmp(&rhs));
+        }
+
         // Same type fast path
         match (self, other) {
             (ExprValue::Bool(a), ExprValue::Bool(b)) => return Ok(a.cmp(b)),
             (ExprValue::Int(a), ExprValue::Int(b)) => return Ok(a.cmp(b)),
             (ExprValue::Float(a), ExprValue::Float(b)) => return Ok(a.total_cmp(b)),
-            (ExprValue::Quantity(a), ExprValue::Quantity(b)) => {
-                if !a.unit().conformant(b.unit()) {
-                    return Err(TaqlError::TypeError {
-                        message: format!(
-                            "cannot compare Quantity {} with Quantity {}",
-                            a.unit().name(),
-                            b.unit().name()
-                        ),
-                    });
-                }
-                return Ok(a.get_si_value().total_cmp(&b.get_si_value()));
-            }
             (ExprValue::String(a), ExprValue::String(b)) => return Ok(a.cmp(b)),
             (ExprValue::DateTime(a), ExprValue::DateTime(b)) => return Ok(a.total_cmp(b)),
             _ => {}
@@ -436,12 +428,86 @@ pub struct EvalContext<'a> {
     pub measures: Option<&'a std::sync::Arc<dyn casa_types::measures::MeasuresProvider>>,
 }
 
+/// Evaluates a string argument that must be independent of any table row.
+///
+/// # Errors
+///
+/// Returns a type error for row-dependent or non-string expressions and
+/// propagates evaluation errors from invalid constant expressions.
+pub fn eval_constant_string(
+    expr: &Expr,
+    name: &str,
+    style: ast::IndexStyle,
+) -> Result<String, TaqlError> {
+    fn error(name: &str) -> TaqlError {
+        TaqlError::TypeError {
+            message: format!("{name} requires a constant string argument"),
+        }
+    }
+
+    fn check(expr: &mut Expr, name: &str) -> Result<(), TaqlError> {
+        match expr {
+            Expr::ColumnRef(_)
+            | Expr::RowNumber
+            | Expr::Subquery(_)
+            | Expr::Aggregate { .. }
+            | Expr::BoundRowLookup { .. } => return Err(error(name)),
+            Expr::FunctionCall { name: func, .. }
+                if [
+                    "rownumber",
+                    "rownr",
+                    "rowid",
+                    "iscolumn",
+                    "iskeyword",
+                    "rand",
+                ]
+                .iter()
+                .any(|key| func.eq_ignore_ascii_case(key)) =>
+            {
+                return Err(error(name));
+            }
+            _ => {}
+        }
+        expr.try_for_each_child_mut(&mut |child| check(child, name))
+    }
+
+    check(&mut expr.clone(), name)?;
+    let ctx = EvalContext {
+        row: &RecordValue::default(),
+        row_index: 0,
+        style,
+        measures: None,
+    };
+    match eval_expr(expr, &ctx)? {
+        ExprValue::String(value) => Ok(value),
+        _ => Err(error(name)),
+    }
+}
+
 /// Evaluate an expression against a row context.
 pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlError> {
     match expr {
         Expr::Literal(lit) => Ok(eval_literal(lit)),
         Expr::ArrayLiteral(values) => arrays::literal(values, ctx),
         Expr::ColumnRef(col_ref) => eval_column_ref(col_ref, ctx),
+        Expr::BoundRowLookup {
+            original,
+            index,
+            values,
+            missing,
+        } => {
+            let ExprValue::Int(row) = eval_expr(index, ctx)? else {
+                return Err(TaqlError::TypeError {
+                    message: format!("{original} requires an integer row ID"),
+                });
+            };
+            usize::try_from(row)
+                .ok()
+                .and_then(|row| values.get(row))
+                .or(missing.as_ref())
+                .cloned()
+                .ok_or_else(|| TaqlError::Table(format!("{original} row {row} is out of range")))
+        }
         Expr::Unary { op, operand } => {
             let val = eval_expr(operand, ctx)?;
             eval_unary(*op, val)
@@ -483,12 +549,12 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
                 let item = eval_expr(v, ctx)?;
                 match item {
                     ExprValue::Array(arr) => {
-                        if arr.data.iter().any(|elem| elem == &val) {
+                        if contains_equal(&val, &arr.data)? {
                             found = true;
                             break;
                         }
                     }
-                    other if val == other => {
+                    other if equal_values(&val, &other)? => {
                         found = true;
                         break;
                     }
@@ -630,7 +696,7 @@ fn in_set_contains(
         match elem {
             ast::InSetElement::Value(v) => {
                 let item = eval_expr(v, ctx)?;
-                if *val == item {
+                if equal_values(val, &item)? {
                     return Ok(true);
                 }
             }
@@ -759,8 +825,8 @@ pub(super) fn eval_binary(
             let b = rhs.to_bool()?;
             Ok(ExprValue::Bool(a || b))
         }
-        BinaryOp::Eq => Ok(ExprValue::Bool(lhs == rhs)),
-        BinaryOp::Ne => Ok(ExprValue::Bool(lhs != rhs)),
+        BinaryOp::Eq => Ok(ExprValue::Bool(equal_values(&lhs, &rhs)?)),
+        BinaryOp::Ne => Ok(ExprValue::Bool(!equal_values(&lhs, &rhs)?)),
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             eval_predicate_order(op, lhs, rhs)
         }
@@ -796,11 +862,15 @@ fn eval_predicate_order(
     lhs: ExprValue,
     rhs: ExprValue,
 ) -> Result<ExprValue, TaqlError> {
-    let order = match (&lhs, &rhs) {
-        (ExprValue::Float(a), ExprValue::Float(b)) => a.partial_cmp(b),
-        (ExprValue::Int(a), ExprValue::Float(b)) => (*a as f64).partial_cmp(b),
-        (ExprValue::Float(a), ExprValue::Int(b)) => a.partial_cmp(&(*b as f64)),
-        _ => Some(lhs.compare(&rhs)?),
+    let order = if let Some((lhs, rhs, _)) = comparable_quantities(&lhs, &rhs)? {
+        lhs.partial_cmp(&rhs)
+    } else {
+        match (&lhs, &rhs) {
+            (ExprValue::Float(a), ExprValue::Float(b)) => a.partial_cmp(b),
+            (ExprValue::Int(a), ExprValue::Float(b)) => (*a as f64).partial_cmp(b),
+            (ExprValue::Float(a), ExprValue::Int(b)) => a.partial_cmp(&(*b as f64)),
+            _ => Some(lhs.compare(&rhs)?),
+        }
     };
     Ok(ExprValue::Bool(order.is_some_and(|order| match op {
         BinaryOp::Lt => order == Ordering::Less,
@@ -809,6 +879,73 @@ fn eval_predicate_order(
         BinaryOp::Ge => order != Ordering::Less,
         _ => unreachable!("ordered comparison"),
     })))
+}
+
+fn equal_values(lhs: &ExprValue, rhs: &ExprValue) -> Result<bool, TaqlError> {
+    Ok(match comparable_quantities(lhs, rhs)? {
+        Some((lhs, rhs, _)) => lhs == rhs,
+        None => lhs == rhs,
+    })
+}
+
+fn contains_equal(value: &ExprValue, candidates: &[ExprValue]) -> Result<bool, TaqlError> {
+    for candidate in candidates {
+        if equal_values(value, candidate)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// A unitless real operand inherits the other operand's unit. If both have a
+/// unit, use the first one and convert the second before comparing or adding.
+fn comparable_quantities<'a>(
+    lhs: &'a ExprValue,
+    rhs: &'a ExprValue,
+) -> Result<Option<(f64, f64, &'a Unit)>, TaqlError> {
+    match (lhs, rhs) {
+        (ExprValue::Quantity(lhs), ExprValue::Quantity(rhs)) => {
+            let right = rhs
+                .get_value_in(lhs.unit())
+                .map_err(|error| TaqlError::TypeError {
+                    message: error.to_string(),
+                })?;
+            Ok(Some((lhs.value(), right, lhs.unit())))
+        }
+        (ExprValue::Quantity(lhs), ExprValue::Int(_) | ExprValue::Float(_)) => {
+            Ok(Some((lhs.value(), rhs.to_float()?, lhs.unit())))
+        }
+        (ExprValue::Int(_) | ExprValue::Float(_), ExprValue::Quantity(rhs)) => {
+            Ok(Some((lhs.to_float()?, rhs.value(), rhs.unit())))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn quantity_product(lhs: &ExprValue, rhs: &ExprValue, divide: bool) -> Option<ExprValue> {
+    fn quantity(value: &ExprValue) -> Option<Quantity> {
+        match value {
+            ExprValue::Quantity(value) => Some(value.clone()),
+            ExprValue::Int(value) => Some(Quantity::dimensionless(*value as f64)),
+            ExprValue::Float(value) => Some(Quantity::dimensionless(*value)),
+            _ => None,
+        }
+    }
+
+    if !matches!(lhs, ExprValue::Quantity(_)) && !matches!(rhs, ExprValue::Quantity(_)) {
+        return None;
+    }
+    let (lhs, rhs) = (quantity(lhs)?, quantity(rhs)?);
+    if divide && lhs.unit().conformant(rhs.unit()) {
+        return Some(ExprValue::Float(
+            lhs.value() / rhs.get_value_in(lhs.unit()).ok()?,
+        ));
+    }
+    Some(ExprValue::Quantity(if divide {
+        &lhs / &rhs
+    } else {
+        &lhs * &rhs
+    }))
 }
 
 fn arithmetic_operands(
@@ -830,6 +967,12 @@ fn eval_arithmetic_add(lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, Taql
     if let (ExprValue::String(a), ExprValue::String(b)) = (&lhs, &rhs) {
         return Ok(ExprValue::String(format!("{a}{b}")));
     }
+    if let Some((lhs, rhs, unit)) = comparable_quantities(&lhs, &rhs)? {
+        return Ok(ExprValue::Quantity(Quantity::with_unit(
+            lhs + rhs,
+            unit.clone(),
+        )));
+    }
     let (a, b) = arithmetic_operands(lhs, rhs)?;
     match (a, b) {
         (ExprValue::Int(a), ExprValue::Int(b)) => Ok(ExprValue::Int(a.wrapping_add(b))),
@@ -840,6 +983,12 @@ fn eval_arithmetic_add(lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, Taql
 }
 
 fn eval_arithmetic_sub(lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, TaqlError> {
+    if let Some((lhs, rhs, unit)) = comparable_quantities(&lhs, &rhs)? {
+        return Ok(ExprValue::Quantity(Quantity::with_unit(
+            lhs - rhs,
+            unit.clone(),
+        )));
+    }
     let (a, b) = arithmetic_operands(lhs, rhs)?;
     match (a, b) {
         (ExprValue::Int(a), ExprValue::Int(b)) => Ok(ExprValue::Int(a.wrapping_sub(b))),
@@ -850,6 +999,9 @@ fn eval_arithmetic_sub(lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, Taql
 }
 
 fn eval_arithmetic_mul(lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, TaqlError> {
+    if let Some(value) = quantity_product(&lhs, &rhs, false) {
+        return Ok(value);
+    }
     let (a, b) = arithmetic_operands(lhs, rhs)?;
     match (a, b) {
         (ExprValue::Int(a), ExprValue::Int(b)) => Ok(ExprValue::Int(a.wrapping_mul(b))),
@@ -860,6 +1012,9 @@ fn eval_arithmetic_mul(lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, Taql
 }
 
 fn eval_arithmetic_div(lhs: ExprValue, rhs: ExprValue) -> Result<ExprValue, TaqlError> {
+    if let Some(value) = quantity_product(&lhs, &rhs, true) {
+        return Ok(value);
+    }
     let (a, b) = arithmetic_operands(lhs, rhs)?;
     match (a, b) {
         // TableExprNodeDivideDouble promotes integer operands to Double,

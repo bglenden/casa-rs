@@ -171,24 +171,24 @@ Evidence: [leakage-application](#applycal-evidence-leakage-application).
 
 #### applycal deviations and unfinished work
 
-##### honor-leakage-correlation-metadata: Proposed
+##### honor-leakage-correlation-metadata: Previously agreed
 
 - Inputs: A consistent linear-feed CORR_TYPE order of XX, YY, XY, YX.
 - CASA: Applies the correction to fixed slots and modifies a parallel hand.
 - casa-rs: Applies the leakage correction and flags to the products named by the MeasurementSet.
 - Rationale: The four-product layout is valid in casacore. Applying a cross-hand formula to a parallel hand changes the observed data incorrectly.
 - User impact: The native output equals permuting the canonical-order result.
-- Owner decision: Pending; not an accepted deviation.
+- Owner decision: Correct CASA data corruption under the standing deviations rule. [Owner decision](https://github.com/bglenden/casa-rs/issues/1054)
 - Evidence: [leakage-application](#applycal-evidence-leakage-application).
 
-##### reject-underspecified-leakage-shape: Proposed
+##### reject-underspecified-leakage-shape: Previously agreed
 
 - Inputs: A D Jones calibration table with one complex receptor per solution.
 - CASA: Aborts with ArrayShapeError.
 - casa-rs: Raises a catchable invalid calibration shape error.
 - Rationale: Two coefficients are required for a four-product leakage correction.
 - User impact: The caller can handle the malformed caltable without losing the process.
-- Owner decision: Pending; not an accepted deviation.
+- Owner decision: Correct CASA crashes and aborts under the standing deviations rule. [Owner decision](https://github.com/bglenden/casa-rs/issues/1054)
 - Evidence: [leakage-application](#applycal-evidence-leakage-application).
 
 #### applycal evidence

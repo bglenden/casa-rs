@@ -5,6 +5,7 @@ use std::{borrow::Cow, collections::BTreeMap};
 
 use casa_types::quanta::MvTime;
 
+use super::intent::MatchMode;
 use crate::selection::antenna_expr::regex::FieldRegex;
 use crate::selection::syntax::{canonical_numeric_ranges, dedup_i32, parse_numeric_id_selector};
 use crate::selection::{CompiledMsSelection, UvBound, UvBoundOp, UvSelectionRange, UvUnit};
@@ -539,7 +540,12 @@ fn apply_intent_selector(
     value: &str,
     flagdata: bool,
 ) -> MsResult<CompiledMsSelection> {
-    let state_ids = parse_state_selector_impl(ms, value, flagdata)?;
+    let mode = if flagdata {
+        MatchMode::FlagData
+    } else {
+        MatchMode::Task
+    };
+    let state_ids = parse_state_selector_with_mode(ms, value, mode)?;
     if state_ids.is_empty() {
         return Err(MsError::VersionError(format!(
             "intent selector {value:?} did not match any STATE rows"
@@ -1007,19 +1013,19 @@ fn parse_two_or_four_digit_year(value: &str, original: &str) -> MsResult<i32> {
 }
 
 pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
-    parse_state_selector_impl(ms, value, false)
+    parse_state_selector_with_mode(ms, value, MatchMode::Task)
 }
 
-fn parse_state_selector_impl(
+pub(super) fn parse_state_selector_with_mode(
     ms: &MeasurementSet,
     value: &str,
-    flagdata: bool,
+    mode: MatchMode,
 ) -> MsResult<Vec<i32>> {
     let state = ms.state()?;
     let modes = (0..state.row_count())
         .map(|row| Ok((state.string(row, "OBS_MODE")?, state.bool(row, "FLAG_ROW")?)))
         .collect::<MsResult<Vec<_>>>()?;
-    super::intent::resolve(value, &modes, flagdata)
+    super::intent::resolve(value, &modes, mode)
 }
 
 pub(crate) fn parse_correlation_selector(value: &str) -> MsResult<Vec<i32>> {

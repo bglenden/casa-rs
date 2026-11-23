@@ -199,7 +199,9 @@ fn validate_no_calc_aggregates(expr: &Expr) -> Result<(), TaqlError> {
             }
             validate_no_calc_aggregates(arg)
         }
-        Expr::Unary { operand, .. } => validate_no_calc_aggregates(operand),
+        Expr::Unary { operand, .. } | Expr::BoundRowLookup { index: operand, .. } => {
+            validate_no_calc_aggregates(operand)
+        }
         Expr::Binary { left, right, .. } => {
             validate_no_calc_aggregates(left)?;
             validate_no_calc_aggregates(right)
@@ -276,7 +278,9 @@ fn expr_has_column_ref(expr: &Expr) -> bool {
             pattern: right,
             ..
         } => expr_has_column_ref(left) || expr_has_column_ref(right),
-        Expr::Aggregate { arg, .. } => expr_has_column_ref(arg),
+        Expr::Aggregate { arg, .. } | Expr::BoundRowLookup { index: arg, .. } => {
+            expr_has_column_ref(arg)
+        }
         Expr::FunctionCall { args, .. } | Expr::ArrayLiteral(args) => {
             args.iter().any(expr_has_column_ref)
         }
@@ -321,7 +325,9 @@ fn expr_uses_table_rows(expr: &Expr) -> bool {
             expr_uses_table_rows(left) || expr_uses_table_rows(right)
         }
         Expr::ArrayLiteral(items) => items.iter().any(expr_uses_table_rows),
-        Expr::Aggregate { arg, .. } => expr_uses_table_rows(arg),
+        Expr::Aggregate { arg, .. } | Expr::BoundRowLookup { index: arg, .. } => {
+            expr_uses_table_rows(arg)
+        }
         Expr::ArrayIndex { array, indices } => {
             expr_uses_table_rows(array)
                 || indices.iter().any(|el| match el {
@@ -367,9 +373,9 @@ fn validate_calc_columns(expr: &Expr, table: &Table) -> Result<(), TaqlError> {
             }
             Ok(())
         }
-        Expr::Unary { operand, .. } | Expr::IsNull { expr: operand, .. } => {
-            validate_calc_columns(operand, table)
-        }
+        Expr::Unary { operand, .. }
+        | Expr::IsNull { expr: operand, .. }
+        | Expr::BoundRowLookup { index: operand, .. } => validate_calc_columns(operand, table),
         Expr::Binary { left, right, .. }
         | Expr::Like {
             expr: left,
@@ -615,6 +621,17 @@ fn resolve_calc_subexprs(
                 .map(|a| resolve_calc_subexprs(a, ctx, open_table))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
+        Expr::BoundRowLookup {
+            original,
+            index,
+            values,
+            missing,
+        } => Ok(Expr::BoundRowLookup {
+            original: original.clone(),
+            index: Box::new(resolve_calc_subexprs(index, ctx, open_table)?),
+            values: values.clone(),
+            missing: missing.clone(),
+        }),
         Expr::ArrayLiteral(items) => Ok(Expr::ArrayLiteral(
             items
                 .iter()
@@ -715,9 +732,9 @@ fn resolve_calc_subexprs(
 fn has_subquery_or_agg(expr: &Expr) -> bool {
     match expr {
         Expr::Subquery(_) | Expr::Aggregate { .. } => true,
-        Expr::Unary { operand, .. } | Expr::IsNull { expr: operand, .. } => {
-            has_subquery_or_agg(operand)
-        }
+        Expr::Unary { operand, .. }
+        | Expr::IsNull { expr: operand, .. }
+        | Expr::BoundRowLookup { index: operand, .. } => has_subquery_or_agg(operand),
         Expr::Binary { left, right, .. }
         | Expr::Like {
             expr: left,
