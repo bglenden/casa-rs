@@ -65,6 +65,7 @@ pub use error::TaqlError;
 pub use exec::{
     TaqlExecution, TaqlResult, execute_for_tool, execute_readonly_for_tool, execute_with_rows,
 };
+pub use mscal_wavelengths::UvwWavelengthScale;
 pub use row_function::BoundRowFunction;
 
 /// Parses a TaQL query string into an AST [`Statement`].

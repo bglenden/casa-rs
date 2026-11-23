@@ -14,21 +14,8 @@ pub(super) fn bind(
     table: &Table,
     per_channel: bool,
 ) -> Result<BoundRowFunction, TaqlError> {
-    let descriptions = open_subtable(table, "DATA_DESCRIPTION")?;
-    let windows = open_subtable(table, "SPECTRAL_WINDOW")?;
-    let dd_to_spw: Vec<_> = descriptions
-        .column_accessor("SPECTRAL_WINDOW_ID")
-        .and_then(|column| column.scalar_cells_owned())
-        .map_err(table_error)?
-        .into_iter()
-        .map(|id| match id {
-            Some(ScalarValue::Int32(id)) => usize::try_from(id).ok(),
-            _ => None,
-        })
-        .collect();
-    let scale = WavelengthScale::read(&windows, per_channel)?;
+    let scale = UvwWavelengthScale::read(table, per_channel)?;
     Ok(BoundRowFunction::new(expression, move |context| {
-        let spw = spectral_window(context, &dd_to_spw)?;
         let Some(Value::Array(CellArray::Float64(uvw))) = context.row.get("UVW") else {
             return Err(TaqlError::Table(
                 "MSCAL requires a double UVW column".into(),
@@ -39,8 +26,50 @@ pub(super) fn bind(
                 "MSCAL requires three UVW coordinates".into(),
             ));
         }
-        scale.apply(spw, [uvw[0], uvw[1], uvw[2]])
+        scale.apply(context, [uvw[0], uvw[1], uvw[2]])
     }))
+}
+
+/// A MeasurementSet's data-description and frequency lookup for UVW in wavelengths.
+pub struct UvwWavelengthScale {
+    dd_to_spw: Vec<Option<usize>>,
+    scale: WavelengthScale,
+}
+
+impl UvwWavelengthScale {
+    /// Prepares one factor per window, or one per channel when `per_channel` is set.
+    ///
+    /// # Errors
+    ///
+    /// Returns a table error when a required subtable or column cannot be read.
+    pub fn read(table: &Table, per_channel: bool) -> Result<Self, TaqlError> {
+        let descriptions = open_subtable(table, "DATA_DESCRIPTION")?;
+        let windows = open_subtable(table, "SPECTRAL_WINDOW")?;
+        let dd_to_spw = descriptions
+            .column_accessor("SPECTRAL_WINDOW_ID")
+            .and_then(|column| column.scalar_cells_owned())
+            .map_err(table_error)?
+            .into_iter()
+            .map(|id| match id {
+                Some(ScalarValue::Int32(id)) => usize::try_from(id).ok(),
+                _ => None,
+            })
+            .collect();
+        Ok(Self {
+            dd_to_spw,
+            scale: WavelengthScale::read(&windows, per_channel)?,
+        })
+    }
+
+    /// Scales the row's UVW coordinates in metres into wavelengths.
+    ///
+    /// # Errors
+    ///
+    /// Returns a table error when the row's data description or frequency is missing.
+    pub fn apply(&self, context: &EvalContext<'_>, uvw: [f64; 3]) -> Result<ExprValue, TaqlError> {
+        self.scale
+            .apply(spectral_window(context, &self.dd_to_spw)?, uvw)
+    }
 }
 
 fn spectral_window(

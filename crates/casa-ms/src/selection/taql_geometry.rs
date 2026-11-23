@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use casa_tables::taql::ast::Expr;
 use casa_tables::taql::eval::{ArrayValue, EvalContext, ExprValue, eval_constant};
-use casa_tables::taql::{BoundRowFunction, IndexStyle, TaqlError};
+use casa_tables::taql::{BoundRowFunction, IndexStyle, TaqlError, UvwWavelengthScale};
+use casa_types::measures::baseline::{baseline_rotation, j2000_baseline_uvw};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frame::MeasFrame;
@@ -61,17 +62,30 @@ impl<'a> GeometryBinder<'a> {
                 geometry
             }
         };
-        let unit = Unit::new(if kind == Kind::Delay { "s" } else { "rad" })
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        let unit = Unit::new(match kind {
+            Kind::Delay => "s",
+            Kind::ProjectedUvw { .. } => "m",
+            _ => "rad",
+        })
+        .map_err(|error| MsError::InvalidInput(error.to_string()))?;
         let argument = args
             .first()
             .map(|arg| eval_constant(arg, name, style))
             .transpose()
             .map_err(taql_error)?;
         let source = Source::read(self.ms, argument, kind, &geometry.measures)?;
+        let scale = match kind {
+            Kind::ProjectedUvw {
+                wavelengths: Some(per_channel),
+                ..
+            } => Some(
+                UvwWavelengthScale::read(self.ms.main_table(), per_channel).map_err(taql_error)?,
+            ),
+            _ => None,
+        };
         let displayed = args.first().map(ToString::to_string).unwrap_or_default();
         let bound = BoundRowFunction::new(format!("{name}({displayed})"), move |context| {
-            geometry.evaluate(context, kind, site, &source, &unit)
+            geometry.evaluate(context, kind, site, &source, &unit, scale.as_ref())
         });
         Ok(Some(Expr::BoundRowFunction(bound)))
     }
@@ -104,10 +118,31 @@ enum Kind {
     SiderealTime,
     TerrestrialDirection,
     Delay,
+    ProjectedUvw {
+        apparent: bool,
+        wavelengths: Option<bool>,
+    },
 }
 
 impl Kind {
     fn parse(function: &str) -> Option<(Self, Site)> {
+        for (prefix, apparent) in [("uvwj2000", false), ("uvwapp", true)] {
+            if let Some(suffix) = function.strip_prefix(prefix) {
+                let wavelengths = match suffix {
+                    "" => None,
+                    "wvl" => Some(false),
+                    "wvls" => Some(true),
+                    _ => return None,
+                };
+                return Some((
+                    Self::ProjectedUvw {
+                        apparent,
+                        wavelengths,
+                    },
+                    Site::Array,
+                ));
+            }
+        }
         let (name, site) = if let Some(name) = function.strip_suffix('1') {
             (name, Site::First)
         } else if let Some(name) = function.strip_suffix('2') {
@@ -189,6 +224,7 @@ impl Geometry {
         site: Site,
         source: &Source,
         unit: &Unit,
+        scale: Option<&UvwWavelengthScale>,
     ) -> Result<ExprValue, TaqlError> {
         let Some(Value::Scalar(ScalarValue::Float64(time))) = context.row.get("TIME") else {
             return Err(TaqlError::Table(
@@ -247,7 +283,41 @@ impl Geometry {
                     .as_mjd(),
             )),
             Kind::Delay => Ok(scalar(self.delay(context, antenna, direction, &frame)?)),
+            Kind::ProjectedUvw { apparent, .. } => {
+                let value = self.projected_uvw(context, &direction, &frame, apparent)?;
+                match scale {
+                    Some(scale) => scale.apply(context, value),
+                    None => Ok(ExprValue::Array(ArrayValue {
+                        shape: vec![3],
+                        data: value.into_iter().map(scalar).collect(),
+                    })),
+                }
+            }
         }
+    }
+
+    fn projected_uvw(
+        &self,
+        context: &EvalContext<'_>,
+        direction: &MDirection,
+        frame: &MeasFrame,
+        apparent: bool,
+    ) -> Result<[f64; 3], TaqlError> {
+        let first = self.antenna(row_index(context, "ANTENNA1")?)?.as_itrf();
+        let second = self.antenna(row_index(context, "ANTENNA2")?)?.as_itrf();
+        let baseline = std::array::from_fn(|axis| second[axis] - first[axis]);
+        if baseline == [0.0; 3] {
+            return Ok(baseline);
+        }
+        let rotation = baseline_rotation(DirectionRef::ITRF, DirectionRef::J2000, frame, false)
+            .map_err(measure_error)?;
+        let mut uvw = j2000_baseline_uvw(rotate(rotation, baseline), direction);
+        if apparent {
+            let rotation = baseline_rotation(DirectionRef::J2000, DirectionRef::APP, frame, true)
+                .map_err(measure_error)?;
+            uvw = rotate(rotation, uvw);
+        }
+        Ok(uvw)
     }
 
     fn antenna(&self, id: usize) -> Result<&MPosition, TaqlError> {
@@ -403,4 +473,8 @@ fn row_index(context: &EvalContext<'_>, column: &str) -> Result<usize, TaqlError
 
 fn measure_error(error: MeasureError) -> TaqlError {
     TaqlError::Table(error.to_string())
+}
+
+fn rotate(matrix: [[f64; 3]; 3], vector: [f64; 3]) -> [f64; 3] {
+    matrix.map(|row| row.into_iter().zip(vector).map(|(a, b)| a * b).sum())
 }
