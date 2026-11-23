@@ -122,6 +122,42 @@ def exercise(path, readers, complex_values):
         assert tool.close()
 
 
+def exercise_narrow_band(path, readers):
+    frequencies = 1e11 + 1e6*np.arange(CHANNELS)
+    with opened(path/'SPECTRAL_WINDOW', True) as spw:
+        assert spw.putcell('CHAN_FREQ', 0, frequencies)
+        assert spw.putcell('REF_FREQUENCY', 0, frequencies.mean())
+    tools = {label: factory() for label, factory in readers.items()}
+    for tool in tools.values():
+        assert tool.open(str(path))
+    for weighted in (False, True):
+        outputs = {label: tool.fit(antenna='0', spw='0:0~7', order='LINEAR', weight=weighted)
+                   for label, tool in tools.items()}
+        reference = outputs['casa']
+        assert len(reference) == 2
+        if 'native' in outputs:
+            compare_records(outputs['native'], reference)
+        for record in reference.values():
+            assert record['validFit']
+            use = ~record['flag']
+            x, y = record[record['abscissa']], record['value']
+            if weighted:
+                sigma = record['valueErr'][use]
+                centered = (x-x[0])/1e6
+                a = np.stack((np.ones(len(x)), centered), axis=-1)
+                params = np.linalg.lstsq(a[use]/sigma[:, None], y[use]/sigma, rcond=None)[0]
+                np.testing.assert_allclose(record['model'], a@params, rtol=1e-5, atol=1e-6)
+            else:
+                x_scale, y_scale = abs(x[use].min())+abs(x[use].max()), abs(y[use].min())+abs(y[use].max())
+                basis = np.array([1., x[use].mean()/x_scale])
+                update = (y[use].mean()/y_scale - basis.sum())/(basis@basis)
+                coeff = (1.+update*basis)*np.array([y_scale, y_scale/x_scale])
+                np.testing.assert_allclose(record['pars'], coeff, rtol=1e-7, atol=1e-18)
+        print(path.name, 'narrow frequency band', weighted, len(reference), flush=True)
+    for tool in tools.values():
+        assert tool.close()
+
+
 def compare(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     readers, writers = {'casa': casa_calanalysis}, {'casa': casatasks.gencal}
@@ -140,6 +176,7 @@ def compare(work, reference_only):
                 path = work/f'{writer}-{kind}.cal'
                 make_table(vis, path, maker, complex_values)
                 exercise(path, readers, complex_values)
+                exercise_narrow_band(path, readers)
 
 
 if __name__ == '__main__':

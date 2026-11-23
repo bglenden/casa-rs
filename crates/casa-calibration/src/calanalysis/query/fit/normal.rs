@@ -70,26 +70,30 @@ impl System {
                     .sum()
             })
             .collect::<Vec<f64>>();
-        let covariance = distribute
-            .iter()
-            .map(|row| {
-                distribute
-                    .iter()
-                    .map(|other| {
-                        row.iter()
-                            .zip(&independent)
-                            .map(|(left, &i)| {
-                                left * other
-                                    .iter()
-                                    .zip(&independent)
-                                    .map(|(right, &j)| self.matrix[i][j] * right)
-                                    .sum::<f64>()
-                            })
-                            .sum::<f64>()
-                    })
-                    .collect()
-            })
-            .collect();
+        let covariance = if rank == self.terms {
+            distribute
+        } else {
+            distribute
+                .iter()
+                .map(|row| {
+                    distribute
+                        .iter()
+                        .map(|other| {
+                            row.iter()
+                                .zip(&independent)
+                                .map(|(left, &i)| {
+                                    left * other
+                                        .iter()
+                                        .zip(&independent)
+                                        .map(|(right, &j)| self.matrix[i][j] * right)
+                                        .sum::<f64>()
+                                })
+                                .sum::<f64>()
+                        })
+                        .collect()
+                })
+                .collect()
+        };
         let chi_square = self.chi_square(&correction);
         let coefficients = correction.into_iter().map(|value| value + 1.).collect();
         Some(Solution {
@@ -108,8 +112,9 @@ impl System {
             let original = self.matrix[index][index];
             let pivot = normal[index][index];
             // LSQFit compares the squared Schur pivot to the original
-            // diagonal. Rank can change when uncertainty weights change.
-            if original == 0. || pivot.powi(2) / original <= 1e-12 {
+            // diagonal, using the LinearFitSVD collinearity factor 1e-8 squared.
+            // Rank can change when uncertainty weights change.
+            if original == 0. || pivot.powi(2) / original <= 1e-16 {
                 terms.swap_remove(rank);
                 continue;
             }
