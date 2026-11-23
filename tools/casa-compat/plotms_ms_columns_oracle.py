@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image
 
 from calibration_smoothcal_oracle import copy_ms, opened
+from imager_prediction_options_oracle import write_model
 from plotms_calibration_oracle import compare_text, plotms_launcher
 from record_casa_returns import make_cal_ms
 
@@ -649,6 +650,32 @@ def compare_default_model(root, native):
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
 
 
+def compare_virtual_fourier_model(root, native):
+    work = root / "fourier-model"
+    work.mkdir()
+    vis, columns = fixture(work)
+    with opened(vis / "FIELD") as field:
+        direction = field.getcell("PHASE_DIR", 0)[:, 0]
+    with opened(vis / "SPECTRAL_WINDOW") as window:
+        frequency = window.getcell("CHAN_FREQ", 0)[0]
+    model = work / "point.im"
+    write_model(model, direction, frequency, 2.0, cell=5)
+    assert casa.ft(vis=str(vis), model=str(model), field="FLUX", usescratch=False) is None
+    with opened(vis) as table:
+        columns["MODEL_DATA"] = table.getcol("MODEL_DATA")
+    controls = request(vis) | dict(xaxis="real", yaxis="imag", xdatacolumn="model", ydatacolumn="model")
+    expected, actual = (work / f"fourier.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    first = np.array(rows(expected)[0][:2], dtype=float)
+    np.testing.assert_allclose(np.linalg.norm(first), 2.0, rtol=1.2e-5)
+    assert np.all(np.abs(first) > 0.5)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 12
+    with opened(vis) as table:
+        for name, values in columns.items():
+            np.testing.assert_array_equal(table.getcol(name), values)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -678,6 +705,7 @@ def main():
         compare_ordinate_columns(root, vis, native)
         compare_float_columns(root, vis, source, native)
         compare_default_model(root, native)
+        compare_virtual_fourier_model(root, native)
 
 
 if __name__ == "__main__":
