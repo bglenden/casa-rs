@@ -103,6 +103,18 @@ def at_tool(profile: dict, bands: list[dict], sets: list[dict], factory=None) ->
     if factory is None:
         from casatools import atmosphere as factory
 
+    import numpy as np
+
+    def scalar(result, unit):
+        if unit is None:
+            assert type(result) is float, (result, type(result))
+        else:
+            assert type(result) is dict and set(result) == {"unit", "value"}, result
+            array = result["value"]
+            assert result["unit"] == unit, (result, unit)
+            assert type(array) is np.ndarray and array.dtype == np.float64 and array.shape == (1,), result
+        return value(result)
+
     at = factory()
     at.initAtmProfile(
         altitude={"value": profile["altitude_m"], "unit": "m"},
@@ -160,18 +172,23 @@ def at_tool(profile: dict, bands: list[dict], sets: list[dict], factory=None) ->
     for s, band in enumerate(bands):
         channels = at.getNumChan(s)
         assert channels == band["channels"], (band, channels)
-        window = {key: [value(call(c, s)) for c in range(channels)] for key, call in calls.items()}
-        window["average_tebb"] = value(at.getAverageTebbSky(s, default))
-        window["average_trj"] = value(at.getAverageTrjSky(s, default))
+        units = {"freq_hz": "GHz", "wet": "neper", "tebb": "K", "tebb_1mm": "K", "trj": "K"}
+        units.update({key: "deg" if key.endswith("_phase") else "m" for key in calls
+                      if key.endswith(("_phase", "_path"))})
+        window = {key: [scalar(call(c, s), units.get(key)) for c in range(channels)]
+                  for key, call in calls.items()}
+        window["average_tebb"] = scalar(at.getAverageTebbSky(s, default), "K")
+        window["average_trj"] = scalar(at.getAverageTrjSky(s, default), "K")
         window.update({key: [] for key in set_calls})
         windows.append(window)
     for set_ in sets:
         at.setUserWH2O({"value": set_["water_m"] * 1e3, "unit": "mm"})
         at.setAirMass(set_["airmass"])
         for s, window in enumerate(windows):
+            set_units = {"set_tebb": "K", "set_wet": "neper", "set_disp_phase": "deg", "set_nondisp_phase": "deg"}
             for key, call in set_calls.items():
-                window[key].append([value(call(c, s)) for c in range(len(window["dry"]))])
-    ground = value(at.getGroundWH2O())
+                window[key].append([scalar(call(c, s), set_units[key]) for c in range(len(window["dry"]))])
+    ground = scalar(at.getGroundWH2O(), "mm")
     at.done()
     return {"ground_water_m": ground, "windows": windows}
 
