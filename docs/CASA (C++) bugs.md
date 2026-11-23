@@ -8709,6 +8709,17 @@ CASA deletes the nested input before failing to open the metadata. Casa-rs
 rejects the overlap and keeps both tables. An exact reference to `out.im`
 is valid and reads the new staged output.
 
+## An analysis output can remove an entry needed by its mask expression
+
+Use a saved expression as the `mask` operand of `subimage` and replace an
+existing native `out.im`. In CASA 6.7.6.14, the replacement can delete a
+symbolic link inside `out.im` used to reach the saved image or one of its
+leaves. It can also delete the referent of a linked `imageexpr.json` inside
+`out.im`. A leaf read can then fail after the original directory is gone.
+Casa-rs checks the entries used by the mask before publication and keeps
+the original table. A disjoint sibling reached through the same directory
+link is still writable. See [#1627](https://github.com/bglenden/casa-rs/issues/1627).
+
 ## A saved `imagecalc` operand can return a stale cached section
 
 With `imagecalc(pixels='"expr.im" + 1')`, where the saved `expr.im` contains
