@@ -203,6 +203,14 @@ fn linear_solution(
     free: &[usize],
     samples: &[Sample],
 ) -> Option<Vec<f64>> {
+    if values.len() == 1 && curve.polynomial.is_some() {
+        // The normal equation for a constant is the weighted mean.
+        let (sum, weight) = samples.iter().fold((0., 0.), |(sum, weight), sample| {
+            (sum + sample.weight * sample.y, weight + sample.weight)
+        });
+        values[0] = sum / weight;
+        return (weight > 0. && values[0].is_finite()).then_some(values);
+    }
     let mut slopes = vec![0.; values.len()];
     let mut scale = vec![0_f64; free.len()];
     let mut rows: Vec<_> = samples
