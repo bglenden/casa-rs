@@ -260,7 +260,7 @@ fn run_task(
 impl CliOptions {
     fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 2]> {
         (self.x_data_column.is_some()
-            || self.data_column.is_vector_residual()
+            || self.data_column.is_residual()
             || self.data_column == MsDataColumn::Corrected)
             .then_some([
                 self.x_data_column.unwrap_or(self.data_column),
@@ -277,13 +277,13 @@ fn check_plotms_columns(
         !matches!(
             column,
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
-        ) && !column.is_vector_residual()
+        ) && !column.is_residual()
     }) {
         return Err(TaskFailure::validation(
             "distinct MeasurementSet X and Y derived data columns are pending #1032",
         ));
     }
-    if columns.into_iter().any(MsDataColumn::is_vector_residual)
+    if columns.into_iter().any(MsDataColumn::is_residual)
         && (options.avgchannel.is_some_and(|width| width > 1)
             || options.avgtime.is_some()
             || options.avgscan
@@ -329,6 +329,7 @@ fn run_visibility_plot(
         let adjusted = columns.map(|column| match column {
             MsDataColumn::Corrected => MsDataColumn::Data,
             MsDataColumn::CorrectedMinusModel => MsDataColumn::DataMinusModel,
+            MsDataColumn::CorrectedMinusModelScalar => MsDataColumn::DataMinusModelScalar,
             other => other,
         });
         if adjusted != *columns {
@@ -1216,8 +1217,8 @@ fn options_from_plotms(
     };
     let x_data_column =
         (x_axis.is_visibility_math() && x_column != data_column).then_some(x_column);
-    let residual_plot = data_column.is_vector_residual()
-        || x_data_column.is_some_and(MsDataColumn::is_vector_residual);
+    let residual_plot =
+        data_column.is_residual() || x_data_column.is_some_and(MsDataColumn::is_residual);
     let visibility_document = visibility_document
         || residual_plot
         || x_data_column.is_some()
