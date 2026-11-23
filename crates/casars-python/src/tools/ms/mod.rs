@@ -3,17 +3,18 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1030 (`stubs.rs`).
 
+mod attachment_info;
 mod statwt;
 mod stubs;
 pub(crate) mod surface;
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use casa_ms::MeasurementSet;
-use casa_tables::{Table, TableWriteLock};
+use casa_tables::{Table, TableOptions, TableWriteLock, table_cache_name};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBoolMethods};
@@ -37,6 +38,9 @@ pub(crate) struct PyMsTool {
 struct AttachedMs {
     path: PathBuf,
     writable: bool,
+    original_rows: usize,
+    part_names: Vec<PathBuf>,
+    is_multi_ms: bool,
     sources: Vec<PathBuf>,
     selected_rows: Option<Vec<usize>>,
     write_locks: BTreeMap<PathBuf, TableWriteLock>,
@@ -47,9 +51,16 @@ impl AttachedMs {
     fn open(path: PathBuf, writable: bool, lock: bool, check: bool) -> PyResult<Self> {
         let sources =
             casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?;
+        let main = Table::open(TableOptions::new(&path)).map_err(runtime_error)?;
+        let original_rows = main.row_count();
+        let is_multi_ms = main.info().sub_type == "CONCATENATED";
+        let part_names = Table::immediate_part_names(&path).map_err(runtime_error)?;
         let mut attached = Self {
             path,
             writable,
+            original_rows,
+            part_names,
+            is_multi_ms,
             sources,
             selected_rows: None,
             write_locks: BTreeMap::new(),
@@ -138,7 +149,7 @@ impl PyMsTool {
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             *attached = None;
-            let path = std::fs::canonicalize(thems).map_err(runtime_error)?;
+            let path = table_cache_name(Path::new(thems)).map_err(runtime_error)?;
             *attached = Some(AttachedMs::open(path, !nomodify, lock, check)?);
             Ok(true)
         })
