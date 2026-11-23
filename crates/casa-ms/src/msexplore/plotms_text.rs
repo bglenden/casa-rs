@@ -171,7 +171,9 @@ fn write_series(
     verbose: bool,
     channel_major: bool,
 ) -> std::io::Result<()> {
-    for section in data.chunk_by(|left, right| left.y_axis == right.y_axis) {
+    for section in
+        data.chunk_by(|left, right| left.y_index == right.y_index && left.y_axis == right.y_axis)
+    {
         let y_axis = section[0].y_axis;
         write_section(output, name(x_axis), name(y_axis), verbose)?;
         let mut points = section.iter().flat_map(|series| {

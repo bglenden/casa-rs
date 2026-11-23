@@ -28,6 +28,7 @@ mod atmosphere;
 mod calibration;
 pub mod cli;
 mod plotms_atmosphere;
+mod plotms_columns;
 mod plotms_figure;
 mod plotms_text;
 pub mod task_contract;
@@ -1589,7 +1590,11 @@ impl MsPlotSpec {
 
     /// Validate the current plot specification against the current engine.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_common()?;
+        self.validate_with_ordinate_columns(false)
+    }
+
+    fn validate_with_ordinate_columns(&self, independent_ordinates: bool) -> Result<(), String> {
+        self.validate_common(independent_ordinates)?;
         if self.layout.rowindex != 0 || self.layout.colindex != 0 || self.layout.plotindex != 0 {
             return Err(
                 "msexplore per-plot rowindex/colindex/plotindex placement is reserved for multi-plot page composition".to_string(),
@@ -1605,7 +1610,7 @@ impl MsPlotSpec {
     }
 
     fn validate_for_page_child(&self) -> Result<(), String> {
-        self.validate_common()?;
+        self.validate_common(false)?;
         if self.flag_edit.is_some() {
             return Err(
                 "msexplore staged flag editing currently supports standalone scatter plots only"
@@ -1627,14 +1632,14 @@ impl MsPlotSpec {
         Ok(())
     }
 
-    fn validate_common(&self) -> Result<(), String> {
+    fn validate_common(&self, independent_ordinates: bool) -> Result<(), String> {
         if self.y_axes.is_empty() {
             return Err("msexplore requires at least one y axis per plot".to_string());
         }
         if self.y_axes.len() > 2 {
             return Err("msexplore currently supports at most two y axes per plot".to_string());
         }
-        if self.y_axes.len() == 2 && self.y_axes[0] == self.y_axes[1] {
+        if self.y_axes.len() == 2 && self.y_axes[0] == self.y_axes[1] && !independent_ordinates {
             return Err(
                 "msexplore does not allow duplicate y axes with the same data column".to_string(),
             );
@@ -1894,6 +1899,10 @@ pub struct MsExploreSpec {
 impl MsExploreSpec {
     /// Validate the high-level request.
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_with_ordinate_columns(false)
+    }
+
+    fn validate_with_ordinate_columns(&self, independent_ordinates: bool) -> Result<(), String> {
         if self.plots.is_empty() {
             return Err("msexplore requires at least one plot per invocation".to_string());
         }
@@ -1901,7 +1910,7 @@ impl MsExploreSpec {
             return Err("msexplore max_plot_points must be a positive integer".to_string());
         }
         if self.plots.len() == 1 {
-            self.plots[0].validate()?;
+            self.plots[0].validate_with_ordinate_columns(independent_ordinates)?;
             return Ok(());
         }
 
@@ -2032,6 +2041,8 @@ pub struct MsScatterSeries {
     pub color_group: String,
     /// Y axis rendered by this series.
     pub y_axis: MsAxis,
+    /// Position of this ordinate in the plot request.
+    pub y_index: usize,
     /// Plot points as `(x, y)`.
     pub points: Vec<(f64, f64)>,
     /// Provenance for each plotted point in `points`.
@@ -2279,6 +2290,7 @@ fn compact_scatter_series(
                 label: entry.label,
                 color_group: entry.color_group,
                 y_axis: entry.y_axis,
+                y_index: entry.y_index,
                 points,
                 provenance,
                 plotms_metadata,
@@ -2475,6 +2487,7 @@ struct PlotMsInput<'a> {
     channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
     rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
     x_data_column: Option<MsDataColumn>,
+    secondary_y_data_column: Option<MsDataColumn>,
 }
 
 fn build_msexplore_plot_payload_validated(
@@ -2520,7 +2533,9 @@ fn build_msexplore_payload_internal(
     allow_decimation: bool,
     calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
-    spec.validate()?;
+    spec.validate_with_ordinate_columns(
+        calibration.is_some_and(|input| input.secondary_y_data_column.is_some()),
+    )?;
     let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
     let header_lines = resolve_page_header_lines(ms, spec)?;
     if spec.plots.len() == 1 {
@@ -2684,6 +2699,7 @@ pub(crate) fn build_calibrated_plotms_payload(
         channels: &calibration.channels,
         rows: Some(&calibration.rows),
         x_data_column: calibration.x_data_column,
+        secondary_y_data_column: None,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -2692,6 +2708,7 @@ fn build_uncalibrated_plotms_payload(
     ms: &MeasurementSet,
     spec: &MsExploreSpec,
     x_data_column: Option<MsDataColumn>,
+    secondary_y_data_column: Option<MsDataColumn>,
 ) -> Result<MsPlotPayload, String> {
     let row_order = crate::selection::resolve_casa_row_indices(ms, &spec.selection)
         .map_err(|error| error.to_string())?;
@@ -2713,6 +2730,7 @@ fn build_uncalibrated_plotms_payload(
         channels: &channels,
         rows: None,
         x_data_column,
+        secondary_y_data_column,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -3817,6 +3835,13 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    let secondary_y_data_column = calibration.and_then(|input| input.secondary_y_data_column);
+    let secondary_uses_x = x_data_source.is_some()
+        && secondary_y_data_column == calibration.and_then(|input| input.x_data_column);
+    let secondary_data_source = secondary_y_data_column
+        .filter(|&column| !secondary_uses_x && column != spec.data_column)
+        .map(|column| PreparedSelectedDataSource::new(ms, column, &row_numbers, calibration))
+        .transpose()?;
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("load_visibility_data", &mut checkpoint_started);
     }
@@ -3969,10 +3994,17 @@ fn build_generic_visibility_scatter(
             .as_ref()
             .map(|source| source.row(row_slot, project_plotms_columns))
             .transpose()?;
+        let secondary_grid = secondary_data_source
+            .as_ref()
+            .map(|source| source.row(row_slot, project_plotms_columns))
+            .transpose()?;
         if let (Some(x), Some(y)) = (&x_grid, &grid)
             && (x.corr_count, x.chan_count) != (y.corr_count, y.chan_count)
         {
             return Err("PlotMS X and Y data cells have different shapes".into());
+        }
+        if let (Some(primary), Some(secondary)) = (&grid, &secondary_grid) {
+            check_grid_shapes(primary, secondary)?;
         }
         if let Some(started) = row_grid_started {
             scatter_timing.row_grid += started.elapsed();
@@ -4153,14 +4185,36 @@ fn build_generic_visibility_scatter(
                 .y_axes
                 .iter()
                 .copied()
-                .map(|y_axis| {
+                .enumerate()
+                .map(|(y_index, y_axis)| {
                     let (series_key, series_label, color_group) = scatter_series_identity(
                         y_axis,
                         spec.y_axes.len() > 1,
                         &group_key,
                         &group_label,
                     );
-                    (y_axis, series_key, series_label, color_group)
+                    let (series_key, series_label, color_group) =
+                        if spec.secondary_y_axis() == Some(spec.y_axis()) {
+                            let column = if y_index == 0 {
+                                spec.data_column
+                            } else {
+                                secondary_y_data_column.unwrap_or(spec.data_column)
+                            };
+                            let label = plotms_figure::column_axis_name(y_axis, column);
+                            let label = if group_key == "all" {
+                                label
+                            } else {
+                                format!("{label} · {group_label}")
+                            };
+                            (
+                                format!("{y_index}::{series_key}"),
+                                label,
+                                format!("{y_index}::{color_group}"),
+                            )
+                        } else {
+                            (series_key, series_label, color_group)
+                        };
+                    (y_index, y_axis, series_key, series_label, color_group)
                 })
                 .collect::<Vec<_>>();
             if let Some(started) = grouping_started {
@@ -4170,6 +4224,7 @@ fn build_generic_visibility_scatter(
             let mut x_visibility_weights = Vec::<f64>::new();
             let mut samples = Vec::<Complex64>::new();
             let mut visibility_weights = Vec::<f64>::new();
+            let mut secondary_samples = Vec::<Complex64>::new();
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
@@ -4198,6 +4253,18 @@ fn build_generic_visibility_scatter(
                         bin,
                         averaging_weight_grid.map(|grid| (grid, &mut x_visibility_weights)),
                         &mut x_samples,
+                    );
+                }
+                if let Some(grid) = &secondary_grid {
+                    collect_bin_samples_into(
+                        grid,
+                        flags
+                            .as_ref()
+                            .expect("secondary visibility data loads flags"),
+                        *corr_index,
+                        bin,
+                        None,
+                        &mut secondary_samples,
                     );
                 }
                 if let Some(flags) = flags.as_ref() {
@@ -4255,6 +4322,13 @@ fn build_generic_visibility_scatter(
                 } else {
                     y_visibility
                 };
+                let secondary_visibility = if secondary_uses_x {
+                    x_visibility
+                } else if let Some(grid) = &secondary_grid {
+                    VisibilityBinSamples::new(Some(grid), &secondary_samples, &[], *corr_index, bin)
+                } else {
+                    y_visibility
+                };
                 let Some(x_value) = compute_axis_value(
                     spec.x_axis,
                     x_visibility,
@@ -4279,10 +4353,14 @@ fn build_generic_visibility_scatter(
                 let panel = panels
                     .get_mut(&panel_key)
                     .expect("panel inserted before mutation");
-                for (y_axis, series_key, series_label, color_group) in &series_identity {
+                for (y_index, y_axis, series_key, series_label, color_group) in &series_identity {
                     let Some(y_value) = compute_axis_value(
                         *y_axis,
-                        y_visibility,
+                        if *y_index == 0 {
+                            y_visibility
+                        } else {
+                            secondary_visibility
+                        },
                         &flag_samples,
                         &weight_spectrum_samples,
                         &sigma_spectrum_samples,
@@ -4320,6 +4398,7 @@ fn build_generic_visibility_scatter(
                                 label: series_label.clone(),
                                 color_group: color_group.clone(),
                                 y_axis: *y_axis,
+                                y_index: *y_index,
                                 points: Vec::new(),
                                 provenance: Vec::new(),
                                 plotms_metadata: Vec::new(),
@@ -4416,9 +4495,9 @@ fn build_generic_visibility_scatter(
         .unwrap_or(spec.data_column);
     let fixed_x_bounds = bounds_for_column(spec.x_axis, x_column);
     let fixed_y_bounds = bounds_for_column(spec.y_axis(), spec.data_column);
-    let secondary_fixed_y_bounds = spec
-        .secondary_y_axis()
-        .and_then(|axis| bounds_for_column(axis, spec.data_column));
+    let secondary_fixed_y_bounds = spec.secondary_y_axis().and_then(|axis| {
+        bounds_for_column(axis, secondary_y_data_column.unwrap_or(spec.data_column))
+    });
     let mut panels = panel_order
         .into_iter()
         .filter_map(|panel_key| {
@@ -4430,6 +4509,8 @@ fn build_generic_visibility_scatter(
                         .points
                         .sort_by(|left, right| left.0.total_cmp(&right.0));
                 }
+            } else {
+                series.sort_by_key(|entry| entry.y_index);
             }
             Some(MsScatterPanelPayload {
                 key: panel_key,
@@ -5384,6 +5465,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 label: series.label,
                 color_group: series.color_group,
                 y_axis: series.y_axis,
+                y_index: usize::from(spec.secondary_y_axis() == Some(series.y_axis)),
                 points: Vec::new(),
                 provenance: Vec::new(),
                 plotms_metadata: Vec::new(),
@@ -7142,6 +7224,7 @@ mod tests {
             label: label.to_string(),
             color_group: color_group.to_string(),
             y_axis,
+            y_index: 0,
             points: points.to_vec(),
             plotms_metadata: Vec::new(),
             provenance: (0..points.len())
@@ -8148,6 +8231,7 @@ mod tests {
             label: "Amplitude".to_string(),
             color_group: "all".to_string(),
             y_axis: MsAxis::Amplitude,
+            y_index: 0,
             points: (0..5).map(|index| (index as f64, index as f64)).collect(),
             plotms_metadata: Vec::new(),
             provenance: (0..5)
@@ -8201,6 +8285,7 @@ mod tests {
                     label: "A".to_string(),
                     color_group: "a".to_string(),
                     y_axis: MsAxis::Amplitude,
+                    y_index: 0,
                     points: (0..5).map(|index| (index as f64, index as f64)).collect(),
                     plotms_metadata: Vec::new(),
                     provenance: (0..5)
@@ -8216,6 +8301,7 @@ mod tests {
                     label: "B".to_string(),
                     color_group: "b".to_string(),
                     y_axis: MsAxis::Amplitude,
+                    y_index: 0,
                     points: (5..10).map(|index| (index as f64, index as f64)).collect(),
                     plotms_metadata: Vec::new(),
                     provenance: (5..10)
