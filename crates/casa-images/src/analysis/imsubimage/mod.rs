@@ -140,7 +140,10 @@ pub struct SubimagePlan {
     /// Native coordinate representation when it differs from the typed model.
     pub coordinate_record: Option<RecordValue>,
     pub(in crate::analysis) image_info: ImageInfo,
+    stored_image_info: Option<RecordValue>,
 }
+
+mod beam_records;
 
 impl SubimagePlan {
     /// Resolves the requested image region and the output pixel coordinates.
@@ -153,6 +156,22 @@ impl SubimagePlan {
         options: SubimageOptions<'_>,
     ) -> Result<Self, ImageError> {
         Self::new_with_beams(image, native_coordinates, options, None)
+    }
+
+    /// Plans an image section and retains the saved values and units of its beams.
+    ///
+    /// # Errors
+    /// The region, axes, or saved beam metadata are invalid.
+    pub fn new_preserving_beams<T: ImagePixel>(
+        image: &dyn ImageInterface<T>,
+        native_coordinates: Option<RecordValue>,
+        options: SubimageOptions<'_>,
+        source_beams: &RecordValue,
+    ) -> Result<Self, ImageError> {
+        let mut plan =
+            Self::new_with_beams(image, native_coordinates, options, Some(source_beams))?;
+        plan.preserve_beams(image.coordinates(), source_beams)?;
+        Ok(plan)
     }
 
     pub(in crate::analysis) fn new_with_beams<T: ImagePixel>(
@@ -269,7 +288,34 @@ impl SubimagePlan {
             coordinates,
             coordinate_record,
             image_info,
+            stored_image_info: None,
         })
+    }
+
+    fn preserve_beams(
+        &mut self,
+        coordinates: &casa_coordinates::CoordinateSystem,
+        source: &RecordValue,
+    ) -> Result<(), ImageError> {
+        self.stored_image_info = beam_records::select_image_info(
+            coordinates,
+            &self.selection,
+            &self.image_info,
+            source,
+        )?;
+        Ok(())
+    }
+
+    fn keep_first_beam(&mut self) {
+        let first = *self.image_info.beam_set.beam(0, 0);
+        self.image_info.beam_set.set_all(first);
+        if let Some(info) = &mut self.stored_image_info
+            && let Some(Value::Record(grid)) = info.remove("perplanebeams")
+            && !first.is_null()
+            && let Some(beam) = grid.get("*0")
+        {
+            info.upsert("restoringbeam", beam.clone());
+        }
     }
 
     /// The lower and upper pixel bounds in the source image, inclusive.
@@ -561,7 +607,11 @@ impl SubimagePlan {
             });
         }
         output.set_units_string(source.units().to_owned())?;
-        output.set_image_info(&self.image_info)?;
+        if let Some(info) = &self.stored_image_info {
+            output.set_image_info_record(info.clone())?;
+        } else {
+            output.set_image_info(&self.image_info)?;
+        }
         output.set_misc_info(source.misc_info())
     }
 

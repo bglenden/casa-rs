@@ -734,15 +734,19 @@ impl ImageBeamSet {
         rec
     }
 
-    /// Deserializes a beam set from the casacore `ImageBeamSet::fromRecord()` layout.
-    pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
+    pub(crate) fn record_shape(rec: &RecordValue) -> Result<[usize; 2], ImageError> {
         let nchan = read_record_usize(rec, "nChannels")
             .ok_or_else(|| ImageError::InvalidMetadata("no valid nChannels field found".into()))?
             .max(1);
         let nstokes = read_record_usize(rec, "nStokes")
             .ok_or_else(|| ImageError::InvalidMetadata("no valid nStokes field found".into()))?
             .max(1);
+        Ok([nchan, nstokes])
+    }
 
+    /// Deserializes a beam set from the casacore `ImageBeamSet::fromRecord()` layout.
+    pub fn from_record(rec: &RecordValue) -> Result<Self, ImageError> {
+        let [nchan, nstokes] = Self::record_shape(rec)?;
         let mut rows = vec![vec![GaussianBeam::default(); nstokes]; nchan];
         for count in 0..(nchan * nstokes) {
             let key = format!("*{count}");
