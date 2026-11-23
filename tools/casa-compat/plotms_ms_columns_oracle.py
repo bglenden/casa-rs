@@ -561,8 +561,6 @@ def compare_default_model(root, native):
     assert compare_text(actual, expected) == 12
     assert {float(point[0]) for point in rows(expected)} == {1.0}
 
-    from casars.tasks import TaskExecutionError
-
     virtual = root / "virtual-model.ms"
     copy_ms(vis, virtual)
     for name in ("SPECTRAL_WINDOW", "DATA_DESCRIPTION"):
@@ -608,19 +606,28 @@ def compare_default_model(root, native):
     expected, actual = (root / f"selected-virtual-model.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected)) is None
     assert {float(point[1]) for point in rows(expected)} == {7.25}
-    try:
-        native(**controls, plotfile=str(actual))
-    except TaskExecutionError as error:
-        assert "virtual MeasurementSet models are pending #1032" in str(error), error
-    else:
-        raise AssertionError("PlotMS substituted a unit model for a selected virtual definition")
-    assert not actual.exists()
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    figure_controls = {key: value for key, value in controls.items() if key != "expformat"}
+    compare_figure(root, native, figure_controls, expected,
+                   ("Amp:model vs. Channel", "Channel", "Amp:model"))
+    residual_controls = controls | dict(yaxis="real", ydatacolumn="data-model_vector")
+    expected, actual = (root / f"selected-virtual-residual.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**residual_controls, plotfile=str(expected)) is None
+    assert all(float(point[1]) < 0 for point in rows(expected))
+    assert native(**residual_controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    with opened(virtual) as table:
+        assert "MODEL_DATA" not in table.colnames()
+        np.testing.assert_array_equal(table.getcol("DATA"), observed)
+        np.testing.assert_array_equal(table.getcol("FLAG"), flags)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
+    parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
@@ -628,6 +635,8 @@ def main():
     root = args.work.resolve()
     root.mkdir()
     os.environ["CASARS_MSEXPLORE_BIN"] = str(args.native_bin.resolve())
+    calibrate = args.calibrate_bin or args.native_bin.with_name("calibrate")
+    os.environ["CASARS_CALIBRATE_BIN"] = str(calibrate.resolve())
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
