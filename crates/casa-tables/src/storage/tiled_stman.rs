@@ -8987,6 +8987,19 @@ fn copy_cube_to_tile(
         tile_data[..len].copy_from_slice(&cube_data[start..start + len]);
         return;
     }
+    // A single FLAG_CATEGORY plane shares the contiguous correlation and
+    // channel axes of its source cell. Copy the plane as one run, including
+    // when the channel tile covers only part of that axis.
+    if ndim == 3
+        && actual_extent[2] == 1
+        && actual_extent[0] == cube_shape[0]
+        && actual_extent[0] == tile_shape[0]
+    {
+        let start = (cube_start[2] * cube_shape[1] + cube_start[1]) * inner_bytes;
+        let len = actual_extent[1] * inner_bytes;
+        tile_data[..len].copy_from_slice(&cube_data[start..start + len]);
+        return;
+    }
 
     let outer_dims = &actual_extent[1..];
     let outer_total: usize = outer_dims.iter().product();

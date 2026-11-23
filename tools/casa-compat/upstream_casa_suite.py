@@ -34,6 +34,9 @@ def pytest_configure():
     if not casatasks.casalog.setlogfile(str(Path.cwd() / "casapy.log")):
         raise RuntimeError("could not open the upstream suite log")
 
+    if os.environ.get("CASARS_UPSTREAM_EAGER_ASDM_FIXTURES") == "1":
+        casatasks.importasdm = _eager_asdm_fixture(casatasks.importasdm)
+
     task = os.environ["CASARS_UPSTREAM_TEST_TASK"]
     implementation = os.environ["CASARS_UPSTREAM_TEST_IMPLEMENTATION"]
     if tool := os.environ.get("CASARS_UPSTREAM_TEST_TOOL"):
@@ -52,6 +55,15 @@ def pytest_configure():
     if implementation == "casa-rs":
         entry_point = _native_task(entry_point, casatasks.casalog)
     setattr(casatasks, task, entry_point)
+
+
+def _eager_asdm_fixture(importasdm):
+    @wraps(importasdm)
+    def build(*args, **kwargs):
+        kwargs["lazy"] = False
+        return importasdm(*args, **kwargs)
+
+    return build
 
 
 def _timed_task(task, output):
@@ -113,7 +125,8 @@ def pytest_sessionfinish(session):
         session.exitstatus = 1
 
 
-def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures):
+def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures,
+              *, eager_asdm_fixtures=False):
     script_kind, name = suite.stem.removeprefix("test_").split("_", 1)
     task = name.removesuffix("_mms")
     tool, fixture_group = {"ms_statwt": ("ms", "statwt")}.get(name, (task, task))
@@ -141,6 +154,8 @@ def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures
         }
         if script_kind == "tool":
             env["CASARS_UPSTREAM_TEST_TOOL"] = tool
+        if eager_asdm_fixtures:
+            env["CASARS_UPSTREAM_EAGER_ASDM_FIXTURES"] = "1"
         env["PYTHONPATH"] = os.pathsep.join(filter(None, (
             str(Path(__file__).resolve().parent), env.get("PYTHONPATH")
         )))
@@ -188,6 +203,9 @@ def main(family, description):
     parser.add_argument("--trials", type=int, help="repeat the suite and record public call timings")
     parser.add_argument("--fixture", action="append", type=Path, default=[],
                         help="stage only this path relative to the suite's fixture directory")
+    if family == "ms":
+        parser.add_argument("--eager-asdm-fixtures", action="store_true",
+                            help="materialize visibility columns in CASA-built ASDM fixtures")
     args = parser.parse_args()
     data = args.casatestdata.resolve()
     if not (data / "unittest").is_dir():
@@ -205,7 +223,9 @@ def main(family, description):
     for trial in range(args.trials or 1):
         order = implementations if trial % 2 == 0 else implementations[::-1]
         results = [run_suite(suites[args.task], data, mode, output, args.only,
-                             trial + 1 if args.trials else None, args.fixture) for mode in order]
+                             trial + 1 if args.trials else None, args.fixture,
+                             eager_asdm_fixtures=getattr(args, "eager_asdm_fixtures", False))
+                   for mode in order]
         success &= not any(results)
         if not success:
             break

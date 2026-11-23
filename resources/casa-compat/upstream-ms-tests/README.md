@@ -13,8 +13,15 @@ and independently read outputs. Each run has its own fixture copy, working
 directory and JUnit report. Fixture copies preserve `table.lock`, which in
 some upstream datasets contains the current subtable row counts.
 
-The `agentflagger` display cases require the CASA flagging GUI. The
-headless workflow is covered by the flagging parity tests. Use
-`--only 'not test_display'` for the upstream tool suite on a headless host.
-The `ms_statwt` suite exercises the supported `ms.statwt` method. General
+The native `agentflagger` currently supports calibration tables. Use
+`--only 'test_tsys or test_bpass'` for its two supported upstream groups.
+The remaining groups use the MeasurementSet or GUI tool surfaces. The
+`ms_statwt` suite exercises the supported `ms.statwt` method. General
 `ms` and `msmetadata` coverage follows those tools' public implementations.
+
+The stock `split::test_updateFlagcmd1` prepares a lazy ASDM-backed
+MeasurementSet. Native storage cannot read its `AsdmStMan` visibility
+column. Run that assertion on the same materialized visibility data by
+adding `--eager-asdm-fixtures --only test_updateFlagcmd1`. The option
+changes fixture creation for both implementations. The default run keeps
+the upstream lazy fixture.
