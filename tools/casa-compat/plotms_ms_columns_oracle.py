@@ -257,16 +257,18 @@ def compare_ratio_float_range(root, vis, source, native):
     with opened(bounded, True) as table:
         table.putcol("DATA", data)
         table.putcol("MODEL_DATA", model)
-    for method, phase in (("vector", 0.0), ("scalar", np.inf)):
+    for method, large_phase, small_phase in (("vector", 0.0, 0.0), ("scalar", np.inf, 6.34349e-29)):
         name = f"{method}-ratio-float-range"
         column = f"data/model_{method}"
         controls = request(bounded) | dict(xdatacolumn=column, ydatacolumn=column, expformat="txt")
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected)) is None
-        np.testing.assert_array_equal(np.array([sample[:2] for sample in rows(expected)[:2]], dtype=float),
-                                      [[np.inf, phase], [0.0, 0.0]])
         assert native(**controls, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == 12
+        for export in (expected, actual):
+            extremes = np.array([sample[:2] for sample in rows(export)[:2]], dtype=float)
+            np.testing.assert_allclose(extremes, [[np.inf, large_phase], [0.0, small_phase]],
+                                       rtol=1.2e-5, atol=0)
         print(f"{name}: matched the float range for 12 selected points", flush=True)
 
 

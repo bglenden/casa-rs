@@ -6104,24 +6104,34 @@ impl VisibilityColumnProjection {
                     Complex64::new(infinity * observed.re, infinity * observed.im)
                 } else {
                     observed / model
-                };
-                Some(match axis {
+                }
+                .map(|component| component as f32);
+                // CASA caches the complex float quotient before converting its axes.
+                Some(f64::from(match axis {
                     MsAxis::Amplitude => value.norm(),
-                    MsAxis::Phase => value.arg().to_degrees(),
+                    MsAxis::Phase => Self::float_phase_degrees(value.arg()),
                     MsAxis::Real => value.re,
                     MsAxis::Imaginary => value.im,
                     _ => unreachable!("visibility projection requires a visibility axis"),
-                })
+                }))
             }
-            Self::ScalarRatio => Some(match axis {
-                MsAxis::Amplitude => observed.norm() / model.norm(),
-                MsAxis::Phase => (observed.arg() / model.norm()).to_degrees(),
-                // CASA's scalar ratio uses component differences for these axes.
-                MsAxis::Real => observed.re - model.re,
-                MsAxis::Imaginary => observed.im - model.im,
-                _ => unreachable!("visibility projection requires a visibility axis"),
-            }),
+            Self::ScalarRatio => {
+                let observed = observed.map(|component| component as f32);
+                let model = model.map(|component| component as f32);
+                Some(f64::from(match axis {
+                    MsAxis::Amplitude => observed.norm() / model.norm(),
+                    MsAxis::Phase => Self::float_phase_degrees(observed.arg() / model.norm()),
+                    // CASA's scalar ratio uses component differences for these axes.
+                    MsAxis::Real => observed.re - model.re,
+                    MsAxis::Imaginary => observed.im - model.im,
+                    _ => unreachable!("visibility projection requires a visibility axis"),
+                }))
+            }
         }
+    }
+
+    fn float_phase_degrees(radians: f32) -> f32 {
+        f64::from(radians).to_degrees() as f32
     }
 }
 
