@@ -23,22 +23,44 @@ pub fn transform_model_input(
 ) -> Arc<dyn TransformInputView> {
     Arc::new(ModelView {
         calibration,
-        materialize,
+        materialize: if materialize {
+            ModelMaterialization::SourceColumn
+        } else {
+            ModelMaterialization::Disabled
+        },
     })
+}
+
+pub(crate) fn plotms_model_input() -> impl TransformInputView {
+    ModelView {
+        calibration: None,
+        materialize: ModelMaterialization::SelectedPlot,
+    }
+}
+
+#[derive(Debug)]
+enum ModelMaterialization {
+    Disabled,
+    SourceColumn,
+    SelectedPlot,
 }
 
 #[derive(Debug)]
 struct ModelView {
     calibration: Option<Arc<dyn TransformInputView>>,
-    materialize: bool,
+    materialize: ModelMaterialization,
 }
 
 impl ModelView {
     fn materializes(&self, input: &MeasurementSet) -> bool {
-        self.materialize
-            && input
+        match self.materialize {
+            ModelMaterialization::Disabled => false,
+            ModelMaterialization::SourceColumn => input
                 .subtable(SubtableId::Source)
-                .is_some_and(|source| has_column(source, "SOURCE_MODEL"))
+                .is_some_and(|source| has_column(source, "SOURCE_MODEL")),
+            // The PlotMS loader calls the view only for selected virtual fields.
+            ModelMaterialization::SelectedPlot => true,
+        }
     }
 }
 

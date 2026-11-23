@@ -1942,6 +1942,14 @@ def _execute(
     return _execute_task(task, resolved, workspace, None, value_only=value_only)
 
 
+def _plotms_model_requested(parameters: SurfaceParameters) -> bool:
+    y = parameters.get("ydatacolumn")
+    ordinates = y if isinstance(y, (list, tuple)) else (y,)
+    columns = (parameters.get("xdatacolumn"), *ordinates)
+    names = (column.lower() for column in columns if isinstance(column, str))
+    return any("model" in name or name == "residual" for name in names)
+
+
 def _execute_task(
     task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None,
     *, bandpass_completed_pages: int | None = None, argument_text: Mapping[str, str] | None = None,
@@ -1953,7 +1961,7 @@ def _execute_task(
         request = loads(invocation.stdin)
         request["argument_text"] = argument_text
         invocation = replace(invocation, stdin=dumps(request))
-    if task == "plotms" and resolved.get("callib"):
+    if task == "plotms" and (resolved.get("callib") or _plotms_model_requested(resolved)):
         command = (_task_executable("calibrate"), "plotms", *invocation.args)
     else:
         command = (_task_executable(task), *invocation.args)

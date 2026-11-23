@@ -622,6 +622,32 @@ def compare_default_model(root, native):
         np.testing.assert_array_equal(table.getcol("DATA"), observed)
         np.testing.assert_array_equal(table.getcol("FLAG"), flags)
 
+    schema_root = root / "stored-model-schema"
+    schema_root.mkdir()
+    schema_fixture, _ = fixture(schema_root)
+    with opened(schema_fixture) as table:
+        descriptor = table.getcoldesc("MODEL_DATA")
+    stored = root / "stored-and-virtual-model.ms"
+    copy_ms(virtual, stored)
+    with opened(stored, True) as table:
+        table.addcols({"MODEL_DATA": descriptor})
+        physical_model = np.full(observed.shape, 19, dtype=np.complex64)
+        table.putcol("MODEL_DATA", physical_model)
+        table.removekeyword("definedmodel_field_0")
+    for name, field, spw, amplitude, count in (
+        ("virtual-and-stored", "PHASE", "0:1~3", 7.25, 6),
+        ("unmodeled-window-and-stored", "PHASE", "1:1~3", 1, 6),
+        ("stored-only-field", "FLUX", "0:1~3", 19, 12),
+    ):
+        selected = controls | dict(vis=str(stored), field=field, spw=spw)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**selected, plotfile=str(expected)) is None
+        assert {float(point[1]) for point in rows(expected)} == {amplitude}
+        assert native(**selected, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+    with opened(stored) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

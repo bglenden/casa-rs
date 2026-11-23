@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Schema-backed CLI support for `msexplore`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -21,7 +21,7 @@ use super::{
     build_calibrated_plotms_payload, build_msexplore_payload, build_uncalibrated_plotms_payload,
     export_msexplore_plot, preview_msexplore_flag_edit_for_request,
 };
-use crate::{MeasurementSet, MsSelection};
+use crate::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
 #[derive(Debug)]
@@ -174,23 +174,31 @@ pub fn task_front_end()
 pub fn task_front_end_with_plot_payload(
     payload: Option<PathBuf>,
 ) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
-    task_front_end_with_calibration(payload, None)
+    task_front_end_with_plot_sources(payload, None, None)
 }
 
 /// Load transient PlotMS calibration from the user's callibrary entries.
 pub type PlotMsCalibrationLoader =
     fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
 
-/// Use the existing PlotMS front end with a caller-provided calibration engine.
-pub fn task_front_end_with_calibration(
+/// Compute MODEL_DATA on the exact selected MAIN rows. Return None when the
+/// ordinary physical or default model supplies all selected cells.
+pub type PlotMsModelLoader = fn(
+    &MeasurementSet,
+    &[ResolvedMsSelectionRow],
+) -> Result<Option<HashMap<usize, ArrayValue>>, String>;
+
+/// Use the existing PlotMS front end with caller-provided calibration and model sources.
+pub fn task_front_end_with_plot_sources(
     payload: Option<PathBuf>,
     load_calibration: Option<PlotMsCalibrationLoader>,
+    load_models: Option<PlotMsModelLoader>,
 ) -> TaskFrontEnd<impl Fn(&TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>> {
     TaskFrontEnd::new_with_deferred_schema(
         "msexplore",
         msexplore_task_schema_bundle(),
         &["msexplore", "plotms"],
-        move |task| run_task(task, payload.as_deref(), load_calibration),
+        move |task| run_task(task, payload.as_deref(), load_calibration, load_models),
     )
     .expect("the msexplore contract carries msexplore and plotms")
 }
@@ -201,6 +209,7 @@ fn run_task(
     task: &TaskInvocation<'_>,
     payload: Option<&Path>,
     load_calibration: Option<PlotMsCalibrationLoader>,
+    load_models: Option<PlotMsModelLoader>,
 ) -> Result<TaskSuccess, TaskFailure> {
     if task.surface() == "plotms"
         && let Some(path) = super::calibration::input(task)?
@@ -251,7 +260,14 @@ fn run_task(
             }
         }
         if visibility_document {
-            return run_visibility_plot(task, options, payload, calibration, atmosphere);
+            return run_visibility_plot(
+                task,
+                options,
+                payload,
+                calibration,
+                atmosphere,
+                load_models,
+            );
         }
         options
     } else {
@@ -319,6 +335,7 @@ fn run_visibility_plot(
     array_payload: Option<&Path>,
     calibration: Option<(PlotMsCalibrationLoader, Vec<String>)>,
     atmosphere: Option<super::calibration::atmosphere::Options>,
+    load_models: Option<PlotMsModelLoader>,
 ) -> Result<TaskSuccess, TaskFailure> {
     let output = options.plot_output.as_deref();
     super::task_contract::refuse_unwritable_outputs(
@@ -359,6 +376,16 @@ fn run_visibility_plot(
     if !options.selection.selectdata {
         options.selection = MsSelection::default();
     }
+    let load_models = load_models.filter(|_| {
+        axis_columns.is_some_and(|columns| {
+            [options.x_axis, options.y_axis, options.y_axis2]
+                .into_iter()
+                .zip(columns)
+                .any(|(axis, column)| {
+                    axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model()
+                })
+        })
+    });
     let library = calibration
         .as_ref()
         .map_or(&[][..], |(_, entries)| entries.as_slice());
@@ -391,6 +418,7 @@ fn run_visibility_plot(
                 options.x_data_column,
                 options.secondary_y_data_column,
                 prefer_float_data,
+                load_models,
             ),
         }
         .map_err(TaskFailure::execution)?;
