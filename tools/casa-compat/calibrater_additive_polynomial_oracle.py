@@ -42,12 +42,12 @@ def polynomial_fixture(work):
     return vis, (low, high), coordinates
 
 
-def calibrate(factory, vis, product, mode, order, legacy):
+def calibrate(factory, vis, product, mode, order, legacy, **options):
     tool = factory()
     assert tool.setvi(legacy, True) and tool.open(str(vis), addmodel=True)
     assert tool.selectvis(field='FLUX', spw='0:2~9')
     assert tool.setptmodel([2., .1, .07, .04])
-    assert tool.setsolve('A', 'inf', str(product), fitorder=order, apmode=mode)
+    assert tool.setsolve('A', 'inf', str(product), fitorder=order, apmode=mode, **options)
     actual = result(tool.solve)
     if order < 0 or not legacy:
         assert actual == (False, ('RuntimeError', 'Error in Calibrater::solve.'))
@@ -109,6 +109,36 @@ def check_apply(factory, vis, product, legacy):
     return activity
 
 
+def check_partial_time_flags(work, factories, datasets, coordinates):
+    # The last channel is missing from one of the two retained integrations.
+    # VI1 divides that channel's collected sum by the full baseline weight.
+    samples = np.ones(8, dtype=np.complex64)
+    samples[-1] = 1.5 + .125j
+    expected = np.polynomial.polynomial.polyfit(coordinates[FIT_CHANNELS], samples, 2)
+    for name, factory in factories.items():
+        vis = datasets[name]
+        with opened(vis, True) as table:
+            p, q, field = (table.getcol(key) for key in ('ANTENNA1', 'ANTENNA2', 'FIELD_ID'))
+            rows = np.flatnonzero((p == 0) & (q == 1) & (field == 0))
+            data = table.getcol('DATA')
+            flags = np.zeros_like(data, dtype=bool)
+            flags[..., rows] = True
+            flags[..., rows[0]] = False
+            flags[:, 2:9, rows[-1]] = False
+            data[..., rows[0]] = 3. + .25j
+            data[..., rows[-1]] = -1. - .25j
+            assert table.putcol('DATA', data) and table.putcol('FLAG', flags)
+        product = work/f'partial-flags-{name}.cal'
+        calibrate(factory, vis, product, 'AP', 2, True, preavg=.1)
+        with opened(product) as table:
+            a, b = (table.getcol(key) for key in ('ANTENNA1', 'ANTENNA2'))
+            selected = np.flatnonzero((a == 0) & (b == 1))[0]
+            coefficients = table.getcell('CPARAM', int(selected))
+            np.testing.assert_allclose(coefficients, np.broadcast_to(expected, coefficients.shape),
+                                       atol=2e-6, rtol=0.)
+    print('partial time flags and full-interval preaveraging matched', flush=True)
+
+
 def run(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     work.mkdir()
@@ -143,6 +173,7 @@ def run(work, reference_only):
                             same_record(activities['native'], activities['casa'])
                         print(label, writer, old, 'application matched', flush=True)
             print(label, 'reference' if reference_only else 'matched', flush=True)
+        check_partial_time_flags(work, factories, datasets, coordinates)
 
 
 if __name__ == '__main__':

@@ -18,13 +18,14 @@ pub(in crate::solve) struct Gather {
 #[derive(Clone, Debug)]
 pub(in crate::solve) struct Spectrum {
     pub(in crate::solve) channels: Vec<usize>,
-    pairs: BTreeMap<(i32, i32), Vec<Average>>,
+    pairs: BTreeMap<(i32, i32), Baseline>,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct Average {
-    sum: Complex32,
-    weight: f32,
+#[derive(Clone, Debug)]
+struct Baseline {
+    sums: Vec<Complex32>,
+    observed: Vec<bool>,
+    weights: Vec<f32>,
 }
 
 impl Gather {
@@ -41,6 +42,19 @@ impl Gather {
                 "unsupported additive fit correlation count".into(),
             ));
         }
+        let accepted = channels
+            .indices
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|&(_, channel)| {
+                !channels.excluded.get(channel).copied().unwrap_or(false)
+                    && !samples.flags.column(channel).iter().any(|flagged| *flagged)
+            })
+            .collect::<Vec<_>>();
+        let Some(&(_, first)) = accepted.first() else {
+            return Ok(false);
+        };
         let window = self
             .windows
             .entry(row.data_desc_id)
@@ -52,37 +66,40 @@ impl Gather {
         let spectrum = window
             .pairs
             .entry((p.min(q), p.max(q)))
-            .or_insert_with(|| vec![Average::default(); count * channels.indices.len()]);
+            .or_insert_with(|| Baseline {
+                sums: vec![Complex32::ZERO; count * channels.indices.len()],
+                observed: vec![false; count * channels.indices.len()],
+                weights: vec![0.; count],
+            });
         let mut used = false;
-        for (position, &channel) in channels.indices.iter().enumerate() {
-            if channels.excluded.get(channel).copied().unwrap_or(false)
-                || samples.flags.column(channel).iter().any(|flagged| *flagged)
-            {
+        for hand in 0..count {
+            let source_hand = if p > q && count == 4 && matches!(hand, 1 | 2) {
+                3 - hand
+            } else {
+                hand
+            };
+            let weight = samples.weights[[source_hand, first]];
+            if !weight.is_finite() || weight <= 0. {
                 continue;
             }
-            for hand in 0..count {
-                let source_hand = if p > q && count == 4 && matches!(hand, 1 | 2) {
-                    3 - hand
-                } else {
-                    hand
-                };
-                let weight = samples.weights[[source_hand, channel]];
-                if !weight.is_finite() || weight <= 0. {
-                    continue;
-                }
+            // VI1 divides every channel by the same total baseline weight.
+            spectrum.weights[hand] += weight;
+            for &(position, channel) in &accepted {
                 let data = samples.data[[source_hand, channel]];
                 let value = if p > q { data.conj() } else { data };
-                let average = &mut spectrum[position * count + hand];
-                average.sum += value * weight;
-                average.weight += weight;
-                used = true;
+                let index = position * count + hand;
+                spectrum.sums[index] += value * weight;
+                spectrum.observed[index] = true;
             }
+            used = true;
         }
         if used {
-            let first = samples.weights[[0, channels.indices[0]]];
-            let last = samples.weights[[count - 1, channels.indices[0]]];
-            self.time
-                .observe(row.time_seconds, f64::from(0.5 * (first + last)));
+            let first_weight = samples.weights[[0, first]];
+            let last_weight = samples.weights[[count - 1, first]];
+            self.time.observe(
+                row.time_seconds,
+                f64::from(0.5 * (first_weight + last_weight)),
+            );
         }
         Ok(used)
     }
@@ -118,15 +135,16 @@ impl Gather {
                                 .get(&pair)
                                 .map(|averages| (&frequencies[dd], window, averages))
                         })
-                        .flat_map(|(frequencies, window, averages)| {
-                            window
-                                .channels
-                                .iter()
-                                .zip(averages[hand..].iter().step_by(correlations))
-                                .filter(|(_, average)| average.weight > 0.)
-                                .map(move |(&channel, average)| {
+                        .flat_map(|(frequencies, window, baseline)| {
+                            let weight = baseline.weights[hand];
+                            window.channels.iter().enumerate().filter_map(
+                                move |(position, &channel)| {
+                                    let cell = position * correlations + hand;
+                                    if !baseline.observed[cell] {
+                                        return None;
+                                    }
                                     let location = coordinate(frequencies[channel], domain);
-                                    let value = average.sum / average.weight;
+                                    let value = baseline.sums[cell] / weight;
                                     let value = match mode {
                                         GainSolveMode::Phase if value.norm() > 0. => {
                                             value / value.norm()
@@ -136,12 +154,13 @@ impl Gather {
                                         }
                                         _ => value,
                                     };
-                                    (
+                                    Some((
                                         location,
                                         value,
-                                        f64::from(average.weight) / window.channels.len() as f64,
-                                    )
-                                })
+                                        f64::from(weight) / window.channels.len() as f64,
+                                    ))
+                                },
+                            )
                         })
                         .collect::<Vec<_>>();
                     let coefficients = fit(&observations, terms);

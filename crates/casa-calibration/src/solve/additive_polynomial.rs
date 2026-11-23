@@ -137,6 +137,9 @@ pub(crate) fn solve(
             request.solve_mode,
         ));
     }
+    if request.normalize_average_amplitude {
+        super::baseline::normalize(&mut solved.rows, false, request.normalization_type);
+    }
     super::writer::write_additive_polynomial_caltable(ms, request, &solved, mode, &grid)
 }
 

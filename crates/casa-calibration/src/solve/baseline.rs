@@ -354,7 +354,11 @@ fn solve_group(
         .collect()
 }
 
-fn normalize(rows: &mut [SolutionRow], frequency_dependent: bool, method: GainNormalization) {
+pub(super) fn normalize(
+    rows: &mut [SolutionRow],
+    frequency_dependent: bool,
+    method: GainNormalization,
+) {
     if frequency_dependent {
         for row in rows {
             for receptor in 0..2 {
