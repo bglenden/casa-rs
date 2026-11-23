@@ -5012,6 +5012,14 @@ wide. casa-rs follows this, measured with CASA 6.7.6.14 on
 for 20 ranges, in the unit test
 `compile::domains::tests::a_spectral_range_masks_the_channels_casa_masks`.
 
+## Explicit channel-zero range can terminate Python
+
+On a `[3, 4, 8]` image, CASA 6.7.6.14 can terminate with SIGSEGV
+when `image.collapse("mean", axes=2, chans="range=[0pix,0pix]")`
+reads the spectral bounds. `AnnotationBase::setFrequencyLimits` treats two
+numeric zeros as an absent range, while the caller indexes both bounds.
+Casa-rs selects channel zero for the explicitly unit-bearing range.
+
 ## A mask string of several lines is an empty mask in `tclean`
 
 - Date noted: 2026-11-03
@@ -10614,6 +10622,10 @@ CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones,
 ## Direct KAntPos can abort when a solution combines multiple buffers
 
 CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. Both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. Two overlapping windows with `combine='spw'` or two fields with `combine='field'` terminated in both iterators when the multi-buffer fitter assigned two terms to a three-term array. Casa-rs reports a recoverable error when this fit is reached. Windows separated into single-buffer scan or integration intervals produce tables. [Paired antenna-position oracle](../tools/casa-compat/calibrater_antenna_position_oracle.py)
+
+## A Noise baseline indexing assumes ordered antenna columns
+
+With eight antennas, both CASA 6.7.6.14 calibrater iterators applied the `A Noise` coefficients of `(0, 7)` to a deliberately reversed `(1, 0)` visibility. Casa-rs uses the coefficients of `(0, 1)`, conjugates them, and exchanges the cross hands to preserve the visibility's orientation. The ordinary ordered-baseline inputs agree with CASA. [Paired A Noise oracle](../tools/casa-compat/calibrater_anoise_oracle.py)
 
 ## Direct EVLASWP can gather data and fail at fitting
 

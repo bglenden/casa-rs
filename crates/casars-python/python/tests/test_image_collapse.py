@@ -17,6 +17,66 @@ def casa():
     return api
 
 
+@pytest.mark.parametrize("selector,first,last", [
+    ("range=[4pix,2pix]", 2, 4),
+    ("range=[-2pix,3pix]", 0, 3),
+    ("range=[-1pix,-1pix]", 0, 0),
+    ("range=[-0.5pix,-0.5pix]", 0, 0),
+    ("range=[2.4pix,4.6pix]", 2, 5),
+    ("range=[2pix,4channel]", 2, 4),
+    ("range=[1.414998GHz,1.415GHz]", 2, 4),
+])
+def test_collapse_spectral_range_argument(casa, selector, first, last):
+    pixels = np.broadcast_to(np.arange(8, dtype=np.float32), (3, 4, 8))
+    for api in (casa, tools):
+        source = api.image()
+        result = None
+        try:
+            assert source.fromarray(pixels=pixels)
+            result = source.collapse("mean", axes=2, chans=selector)
+            assert result.shape().tolist() == [3, 4, 1]
+            expected = (first + last) / 2
+            np.testing.assert_array_equal(result.getchunk(), np.full((3, 4, 1), expected))
+            assert result.getchunk(getmask=True).all()
+            frequency = source.toworld([0, 0, expected])["numeric"][2]
+            assert result.toworld([0, 0, 0])["numeric"][2] == frequency
+        finally:
+            if result is not None:
+                result.done()
+            source.done()
+
+
+def test_collapse_rejects_invalid_spectral_range_argument(casa):
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromshape(shape=[3, 4, 8])
+            for selector in (
+                "range=[1,3]", "range=[2pix,4kHz]", "range=[20pix,30pix]",
+                "range=[-10pix,-2pix]",
+            ):
+                with pytest.raises(RuntimeError):
+                    source.collapse("mean", axes=2, chans=selector)
+                assert source.shape().tolist() == [3, 4, 8]
+        finally:
+            source.done()
+
+
+def test_collapse_explicit_channel_zero():
+    source = tools.image()
+    result = None
+    try:
+        pixels = np.broadcast_to(np.arange(1, 9, dtype=np.float32), (3, 4, 8))
+        assert source.fromarray(pixels=pixels)
+        result = source.collapse("mean", axes=2, chans="range=[0pix,0pix]")
+        np.testing.assert_array_equal(result.getchunk(), np.ones((3, 4, 1)))
+        assert result.getchunk(getmask=True).all()
+    finally:
+        if result is not None:
+            result.done()
+        source.done()
+
+
 @pytest.mark.parametrize("function,expected,valid", [
     ("su", [4., -19., 0.], [True, True, False]),
     (" MEA ", [4. / 3., -19. / 4., 0.], [True, True, False]),
