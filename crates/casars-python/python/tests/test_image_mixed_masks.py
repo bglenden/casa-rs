@@ -371,3 +371,102 @@ image.done()
         if child.poll() is None:
             child.wait(timeout=15)
         image.done()
+
+
+@pytest.mark.parametrize("link_position", ["root", "leaf", "descriptor"])
+def test_named_analysis_cannot_remove_mask_dependency_entries(tmp_path, link_position):
+    source, destination, leaf, saved, link = (
+        tmp_path / name for name in ("source.im", "destination.im", "leaf.im", "saved.im", "mount")
+    )
+    link = destination / link.name
+    values = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = tools.image()
+    for path, pixels in ((source, values + 10), (destination, values + 50), (leaf, values)):
+        assert image.fromarray(str(path), pixels, linear=True) and image.done()
+    saved.mkdir()
+    descriptor = saved / "imageexpr.json"
+    if link_position == "root":
+        link.symlink_to(saved, target_is_directory=True)
+        mask_path = link
+    else:
+        mask_path = saved
+    if link_position == "leaf":
+        link.symlink_to(leaf, target_is_directory=True)
+        leaf_path = link
+    else:
+        leaf_path = leaf
+    contents = json.dumps({"ImageExpr": f'"{leaf_path}" * 3'})
+    if link_position == "descriptor":
+        link.write_text(contents)
+        descriptor.symlink_to(link)
+    else:
+        descriptor.write_text(contents)
+    try:
+        assert image.open(str(source))
+        with pytest.raises(RuntimeError, match="overlaps image mask operand|matches or contains input image"):
+            image.subimage(outfile=str(destination), mask=f'"{mask_path}" > 4', overwrite=True)
+        np.testing.assert_array_equal(image.getregion(mask=f'"{mask_path}" > 4', getmask=True),
+                                      values * 3 > 4)
+        assert image.done() and image.open(str(destination))
+        np.testing.assert_array_equal(image.getchunk(), values + 50)
+        assert link.exists()
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+@pytest.mark.parametrize("route", ["physical", "alias"])
+def test_named_analysis_can_replace_a_disjoint_sibling_under_a_mask_alias(tmp_path, backend, route):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    physical, alias, saved = (tmp_path / name for name in ("physical", "alias", "saved.im"))
+    physical.mkdir()
+    alias.symlink_to(physical, target_is_directory=True)
+    saved.mkdir()
+    destination = (physical if route == "physical" else alias) / "destination.im"
+    operand = alias / "leaf.im"
+    values = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    try:
+        for path in (destination, operand):
+            assert image.fromarray(str(path), values, linear=True) and image.done()
+        assert image.fromarray(pixels=values + 10, linear=True)
+        (saved / "imageexpr.json").write_text(json.dumps({"ImageExpr": f'"{operand}" * 3'}))
+        output = image.subimage(outfile=str(destination), mask=f'"{saved}" > 4', overwrite=True)
+        try:
+            np.testing.assert_array_equal(output.getchunk(getmask=True), values * 3 > 4)
+        finally:
+            output.done()
+        assert alias.is_symlink() and operand.is_dir()
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+@pytest.mark.parametrize("check", ["precision", "geometry"])
+def test_composed_subimage_mask_uses_source_precision_and_coordinates(tmp_path, backend, check):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    leaf, saved, output = (tmp_path / name for name in ("leaf.im", "saved.im", "output.im"))
+    values = np.full((2, 3), 16777216, dtype=np.float32)
+    image = api.image()
+    try:
+        assert image.fromarray(str(leaf), values, linear=True) and image.done()
+        saved.mkdir()
+        (saved / "imageexpr.json").write_text(json.dumps({"ImageExpr": f'"{leaf}"'}))
+        assert image.fromarray(pixels=values, linear=(check == "precision"))
+        if check == "precision":
+            masked = image.subimage(mask=f'"{saved}" + 1 > 16777216')
+            try:
+                np.testing.assert_array_equal(masked.getchunk(getmask=True), np.zeros(values.shape, dtype=bool))
+            finally:
+                masked.done()
+        else:
+            with pytest.raises(RuntimeError, match="region axis is unknown or inconsistent"):
+                image.subimage(outfile=str(output), mask=f'"{saved}" >= 0')
+            assert not output.exists()
+            np.testing.assert_array_equal(image.getchunk(), values)
+    finally:
+        image.done()

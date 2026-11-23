@@ -2,7 +2,8 @@
 
 //! Read-only section access to saved expressions and virtual images used in masks.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
+use std::fs::File;
 use std::sync::Arc;
 
 use casa_tables::{LockType, lexical_absolute};
@@ -10,7 +11,7 @@ use casa_types::{Complex64, RecordValue};
 
 use crate::concat_file::{ConcatManifest, is_image_concat};
 use crate::concatenate::{ConcatInput, ConcatenationPlan};
-use crate::expr_file::{ToolExpressionManifest, is_image_expr, read_tool_manifest};
+use crate::expr_file::{ToolExpressionManifest, is_image_expr, read_tool_manifest_from_reader};
 use crate::virtual_concat::{ConcatImage, ConcatLockState, ConcatMember};
 use crate::{ImageInfo, ImagePixelType};
 
@@ -26,9 +27,10 @@ pub(super) fn recognizes(path: &Path) -> bool {
 
 pub(super) fn open(
     path: &Path,
+    entry: &Path,
     temporary_locks: bool,
-) -> Result<(Operand, Vec<PathBuf>), ImageError> {
-    let (frames, dependencies) = capture(path, temporary_locks)?;
+) -> Result<(Operand, Dependencies), ImageError> {
+    let (frames, dependencies) = capture(path, entry, temporary_locks)?;
     let mut frames = frames.into_iter().peekable();
     let mut compiled = BoundImageToolOperands::new();
     while let Some(frame) = frames.next() {
@@ -41,7 +43,54 @@ pub(super) fn open(
     unreachable!("the graph has a root")
 }
 
-fn capture(path: &Path, temporary_locks: bool) -> Result<(Vec<Frame>, Vec<PathBuf>), ImageError> {
+#[derive(Default)]
+pub(super) struct Dependencies {
+    entries: BTreeSet<PathBuf>,
+    images: BTreeSet<PathBuf>,
+}
+
+impl Dependencies {
+    pub(super) fn check_output(&self, output: &Path) -> Result<(), ImageError> {
+        let route = lexical_absolute(output);
+        let path = std::path::absolute(output).map_err(io)?;
+        let entry = path
+            .parent()
+            .and_then(|parent| parent.canonicalize().ok())
+            .zip(path.file_name())
+            .map(|(parent, name)| parent.join(name));
+        let referent = output.canonicalize().ok();
+        for destination in std::iter::once(&route)
+            .chain(entry.iter())
+            .chain(referent.iter())
+        {
+            // Aliases are protected entries. Using the same directory alias
+            // to address a disjoint sibling does not remove the alias itself.
+            let overlap = self
+                .entries
+                .iter()
+                .find(|entry| entry.starts_with(destination))
+                .or_else(|| {
+                    self.images
+                        .iter()
+                        .find(|image| destination.starts_with(image))
+                });
+            if let Some(dependency) = overlap {
+                return Err(ImageError::CasaSelection(format!(
+                    "Output path '{}' overlaps image mask operand '{}'",
+                    output.display(),
+                    dependency.display()
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn capture(
+    path: &Path,
+    entry: &Path,
+    temporary_locks: bool,
+) -> Result<(Vec<Frame>, Dependencies), ImageError> {
     let directory = std::env::current_dir().map_err(io)?;
     let first = Frame::open(
         path.canonicalize().map_err(io)?,
@@ -52,15 +101,12 @@ fn capture(path: &Path, temporary_locks: bool) -> Result<(Vec<Frame>, Vec<PathBu
     let mut completed = HashSet::new();
     let mut frames = vec![first];
     let mut ordered = Vec::new();
-    let mut dependencies = HashSet::new();
-    capture_path(path, &mut dependencies)?;
+    let mut dependencies = Dependencies::default();
+    capture_image(path, entry, &mut dependencies)?;
 
     while let Some(frame) = frames.last_mut() {
         if let Some((path, entry)) = frame.next_member() {
-            capture_path(path, &mut dependencies)?;
-            if entry != path {
-                capture_path(entry, &mut dependencies)?;
-            }
+            capture_image(path, entry, &mut dependencies)?;
             if active.contains(path) {
                 return Err(ImageError::CasaSelection(format!(
                     "Cycle in image expression or concatenation at {}",
@@ -75,14 +121,15 @@ fn capture(path: &Path, temporary_locks: bool) -> Result<(Vec<Frame>, Vec<PathBu
             }
         } else {
             let frame = frames.pop().expect("an active graph frame");
-            capture_path(&frame.descriptor, &mut dependencies)?;
+            capture_entry(&frame.descriptor, &mut dependencies.entries)?;
+            dependencies
+                .entries
+                .insert(frame.resolved_descriptor.clone());
             active.remove(&frame.path);
             completed.insert(frame.path.clone());
             ordered.push(frame);
         }
     }
-    let mut dependencies: Vec<_> = dependencies.into_iter().collect();
-    dependencies.sort_unstable();
     Ok((ordered, dependencies))
 }
 
@@ -90,7 +137,27 @@ fn io(error: std::io::Error) -> ImageError {
     ImageError::Io(error.to_string())
 }
 
-fn capture_path(path: &Path, dependencies: &mut HashSet<PathBuf>) -> Result<(), ImageError> {
+fn capture_image(
+    path: &Path,
+    entry: &Path,
+    dependencies: &mut Dependencies,
+) -> Result<(), ImageError> {
+    capture_entry(path, &mut dependencies.entries)?;
+    if entry != path {
+        capture_entry(entry, &mut dependencies.entries)?;
+    }
+    if path.is_dir() {
+        dependencies.images.insert(path.to_path_buf());
+    }
+    if crate::miriad_read::MiriadImage::recognizes_input(path, path) {
+        for entry in crate::miriad_read::MiriadImage::linked_input_files(path) {
+            capture_entry(&entry, &mut dependencies.entries)?;
+        }
+    }
+    Ok(())
+}
+
+fn capture_entry(path: &Path, dependencies: &mut BTreeSet<PathBuf>) -> Result<(), ImageError> {
     dependencies.insert(lexical_absolute(path));
     dependencies.insert(path.canonicalize().map_err(io)?);
     let mut routes = vec![path.to_path_buf()];
@@ -117,12 +184,6 @@ fn capture_path(path: &Path, dependencies: &mut HashSet<PathBuf>) -> Result<(), 
             }
         }
     }
-    if crate::miriad_read::MiriadImage::recognizes_input(path, path) {
-        for entry in crate::miriad_read::MiriadImage::linked_input_files(path) {
-            dependencies.insert(lexical_absolute(&entry));
-            dependencies.insert(entry.canonicalize().map_err(io)?);
-        }
-    }
     Ok(())
 }
 
@@ -140,6 +201,7 @@ enum Source {
 struct Frame {
     path: PathBuf,
     descriptor: PathBuf,
+    resolved_descriptor: PathBuf,
     source: Source,
     temporary_locks: bool,
     next: usize,
@@ -151,32 +213,35 @@ impl Frame {
         directory: &Path,
         mut temporary_locks: bool,
     ) -> Result<Self, ImageError> {
-        let (descriptor, source) = if is_image_concat(&path) {
-            let manifest = ConcatManifest::open(&path)?;
+        let is_concat = is_image_concat(&path);
+        let descriptor = path.join(if is_concat {
+            "imageconcat.json"
+        } else {
+            "imageexpr.json"
+        });
+        let resolved_descriptor = descriptor.canonicalize().map_err(io)?;
+        let source = if is_concat {
+            let manifest = ConcatManifest::open_descriptor(&resolved_descriptor)?;
             temporary_locks |= manifest.temp_close();
             let paths = manifest
                 .paths(&path)
                 .into_iter()
                 .map(|entry| Ok((entry.canonicalize().map_err(io)?, entry)))
                 .collect::<Result<_, ImageError>>()?;
-            (
-                path.join("imageconcat.json"),
-                Source::Concat { manifest, paths },
-            )
+            Source::Concat { manifest, paths }
         } else {
-            let manifest = read_tool_manifest(&path)?;
+            let manifest =
+                read_tool_manifest_from_reader(File::open(&resolved_descriptor).map_err(io)?)?;
             let inputs = ImageToolExpressionInputs::resolve_in_directory(
                 manifest.expression.clone(),
                 directory,
             )?;
-            (
-                path.join("imageexpr.json"),
-                Source::Saved { manifest, inputs },
-            )
+            Source::Saved { manifest, inputs }
         };
         Ok(Self {
             path,
             descriptor,
+            resolved_descriptor,
             source,
             temporary_locks,
             next: 0,

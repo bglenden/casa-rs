@@ -201,7 +201,8 @@ pub(in crate::analysis) fn validate_mask(
             .map(|(name, image)| (name.clone(), image as &dyn ImageInterface<Complex64>))
             .collect(),
     );
-    let builder = subimage_mask_builder(&expression, &real, &complex).map_err(mask_parse_error)?;
+    let builder =
+        subimage_mask_builder(&expression, &real, &complex, None).map_err(mask_parse_error)?;
     let shape = builder.shape();
     if shape.is_empty() || shape == target_shape {
         return Ok(());

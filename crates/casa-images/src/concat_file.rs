@@ -43,8 +43,11 @@ impl ConcatManifest {
     /// # Errors
     /// Returns an error for unreadable, malformed or unsupported metadata.
     pub fn open(directory: &Path) -> Result<Self, ImageError> {
-        let path = directory.join(FILE);
-        let bytes = fs::read(&path).map_err(|error| ImageError::Io(error.to_string()))?;
+        Self::open_descriptor(&directory.join(FILE))
+    }
+
+    pub(crate) fn open_descriptor(path: &Path) -> Result<Self, ImageError> {
+        let bytes = fs::read(path).map_err(|error| ImageError::Io(error.to_string()))?;
         let manifest: Self = serde_json::from_slice(&bytes)
             .map_err(|error| ImageError::InvalidMetadata(format!("{}: {error}", path.display())))?;
         if manifest.version != 1 {

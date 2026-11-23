@@ -23,7 +23,7 @@ use crate::analysis::mask_error_wording;
 use crate::expr_parser::{
     HashMapResolver, ImageToolPixelExpression, ReplacementPixels, compile_image_tool_pixels,
     evaluate_real_scalar, evaluate_replacement, image_tool_mask_builder, parse_image_tool_mask,
-    parse_subimage_mask_expr, referenced_images,
+    referenced_images, subimage_mask_builder,
 };
 use crate::fits_read::{FitsToolImport, SharedFitsSectionReader};
 use crate::image_expr::{
@@ -475,7 +475,8 @@ fn open_operands_for_outputs(
         .iter()
         .map(|operand| {
             let image = if composed::recognizes(&operand.path) {
-                let (image, dependencies) = composed::open(&operand.path, temporary_source_locks)?;
+                let (image, dependencies) =
+                    composed::open(&operand.path, &operand.entry, temporary_source_locks)?;
                 check_mask_outputs(destinations, &dependencies)?;
                 image
             } else {
@@ -620,17 +621,17 @@ pub fn with_mask_output_paths<'a, R>(
     build()
 }
 
-fn check_mask_outputs(destinations: &[&Path], dependencies: &[PathBuf]) -> Result<(), ImageError> {
+fn check_mask_outputs(
+    destinations: &[&Path],
+    dependencies: &composed::Dependencies,
+) -> Result<(), ImageError> {
     MASK_OUTPUTS.with_borrow(|pending| {
         let pending_overwrites = pending.iter().map(PathBuf::as_path).filter(|path| {
             // A fresh child cannot remove an existing graph dependency.
             path.symlink_metadata().is_ok()
         });
         for output in destinations.iter().copied().chain(pending_overwrites) {
-            for dependency in dependencies {
-                super::ensure_outfile_does_not_alias_input(output, dependency)?;
-                super::ensure_artifacts_do_not_overlap(output, dependency)?;
-            }
+            dependencies.check_output(output)?;
         }
         Ok(())
     })
@@ -690,17 +691,32 @@ impl<'a> PreparedMask<'a> {
         }
         let opened = open_operands_for_outputs(&operands, false, &destinations)?;
         let (real, complex) = operand_resolvers(&opened);
-        let expression =
-            parse_subimage_mask_expr(&expr, &real, &complex).map_err(mask_parse_error)?;
-        let mask_shape = expression.shape();
-        let mapped_axes = if mask_shape != target_shape && !mask_shape.is_empty() {
-            if !stretch {
-                return Err(ImageError::CasaSelection(format!(
-                    "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) \
-                     are different, and it was specified that the mask should not be extended, \
-                     so the mask cannot be applied to the (sub)image"
-                )));
-            }
+        let has_composed = operands
+            .iter()
+            .any(|operand| composed::recognizes(&operand.path));
+        let precision = |name: &str| is_single_precision(&opened, name);
+        let builder = subimage_mask_builder(
+            &expr,
+            &real,
+            &complex,
+            has_composed.then_some(&precision as &dyn Fn(&str) -> bool),
+        )
+        .map_err(mask_parse_error)?;
+        let mask_shape = builder.shape();
+        let extends = mask_shape != target_shape && !mask_shape.is_empty();
+        if extends && !stretch {
+            return Err(ImageError::CasaSelection(format!(
+                "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) are different, and it was specified that the mask should not be extended, so the mask cannot be applied to the (sub)image"
+            )));
+        }
+        let mapped_axes = if has_composed && !mask_shape.is_empty() {
+            Some(geometry::image_tool_mask_axes(
+                builder.expression_coordinates(),
+                mask_shape,
+                target_coordinates,
+                target_shape,
+            )?)
+        } else if extends {
             opened
                 .iter()
                 .map(|(_, image)| image.geometry())
@@ -709,10 +725,16 @@ impl<'a> PreparedMask<'a> {
                     stretch_axes(coordinates, target_coordinates, mask_shape, target_shape)
                 })
                 .transpose()?
-                .filter(|axes| axes.iter().copied().ne(0..axes.len()))
         } else {
             None
-        };
+        }
+        .filter(|axes| axes.iter().copied().ne(0..axes.len()));
+        let expression = builder.compile().map_err(|error| {
+            mask_parse_error(crate::expr_parser::ExprParseError {
+                message: error.to_string(),
+                position: 0,
+            })
+        })?;
         Ok(Some(Self {
             expression,
             target_shape,
