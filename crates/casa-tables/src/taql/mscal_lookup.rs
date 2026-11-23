@@ -22,7 +22,7 @@ pub(super) fn bind(expr: &mut Expr, table: &Table, style: IndexStyle) -> Result<
 
 fn bind_lookup(
     name: &str,
-    args: &[Expr],
+    args: &mut [Expr],
     table: &Table,
     style: IndexStyle,
 ) -> Result<Option<Expr>, TaqlError> {
@@ -42,6 +42,9 @@ fn bind_lookup(
     );
 
     if function == "stokes" {
+        for argument in args.iter_mut().skip(1) {
+            super::mscal_help::fold_filter(argument, table, style)?;
+        }
         return super::mscal_stokes::bind(name, original, args, table, style)
             .map(|function| Some(Expr::BoundRowFunction(function)));
     }

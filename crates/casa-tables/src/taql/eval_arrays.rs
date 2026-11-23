@@ -59,18 +59,10 @@ pub(super) fn binary(
     lhs: &ExprValue,
     rhs: &ExprValue,
 ) -> Option<Result<ExprValue, TaqlError>> {
-    let (left, right) = (
-        if let ExprValue::Array(value) = lhs {
-            Some(value)
-        } else {
-            None
-        },
-        if let ExprValue::Array(value) = rhs {
-            Some(value)
-        } else {
-            None
-        },
-    );
+    let left_data = lhs.array_with_mask();
+    let right_data = rhs.array_with_mask();
+    let left = left_data.map(|(array, _)| array);
+    let right = right_data.map(|(array, _)| array);
     let array = left.or(right)?;
     if left
         .zip(right)
@@ -89,10 +81,19 @@ pub(super) fn binary(
             )
         })
         .collect::<Result<Vec<_>, _>>();
+    let left_mask = left_data.and_then(|(_, mask)| mask);
+    let right_mask = right_data.and_then(|(_, mask)| mask);
+    let mask = match (left_mask, right_mask) {
+        (Some(left), Some(right)) => Some(left.iter().zip(right).map(|(&a, &b)| a || b).collect()),
+        (left, right) => left.or(right).map(<[bool]>::to_vec),
+    };
     Some(values.map(|data| {
-        ExprValue::Array(ArrayValue {
-            shape: array.shape.clone(),
-            data,
-        })
+        ExprValue::from_array_with_mask(
+            ArrayValue {
+                shape: array.shape.clone(),
+                data,
+            },
+            mask,
+        )
     }))
 }

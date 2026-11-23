@@ -66,13 +66,12 @@ pub(super) fn bind(
     let data = args[0].clone();
     Ok(BoundRowFunction::new(
         expression,
-        move |context: &EvalContext<'_>| {
-            let ExprValue::Array(input) = eval_expr(&data, context)? else {
-                return Err(type_error(
-                    "MSCAL.STOKES requires a Complex, Double or Bool array",
-                ));
-            };
-            plan.convert(input)
+        move |context: &EvalContext<'_>| match eval_expr(&data, context)? {
+            ExprValue::Array(input) => plan.convert(input, None),
+            ExprValue::MaskedArray(input, mask) => plan.convert(input, Some(mask)),
+            _ => Err(type_error(
+                "MSCAL.STOKES requires a Complex, Double or Bool array",
+            )),
         },
     ))
 }
@@ -140,7 +139,11 @@ impl Conversion {
         })
     }
 
-    fn convert(&self, mut input: ArrayValue) -> Result<ExprValue, TaqlError> {
+    fn convert(
+        &self,
+        mut input: ArrayValue,
+        mask: Option<Vec<bool>>,
+    ) -> Result<ExprValue, TaqlError> {
         if input.shape.first().copied() != Some(self.input_width) {
             return Err(type_error(
                 "MSCAL.STOKES array correlation axis does not match CORR_TYPE",
@@ -160,10 +163,22 @@ impl Conversion {
                 }
             }
         }
-        Ok(ExprValue::Array(ArrayValue {
-            shape: input.shape,
-            data,
-        }))
+        let mask = mask.map(|mask| {
+            mask.chunks_exact(self.input_width)
+                .flat_map(|sample| {
+                    self.outputs
+                        .iter()
+                        .map(move |output| output.flagged(sample))
+                })
+                .collect()
+        });
+        Ok(ExprValue::from_array_with_mask(
+            ArrayValue {
+                shape: input.shape,
+                data,
+            },
+            mask,
+        ))
     }
 
     fn convert_complex(
@@ -205,15 +220,11 @@ impl Conversion {
                 _ => Err(type_error("MSCAL.STOKES input array must be homogeneous")),
             })
             .collect::<Result<Vec<_>, _>>()?;
-        data.extend(self.outputs.iter().map(|output| {
-            ExprValue::Bool(
-                output
-                    .flags
-                    .iter()
-                    .zip(&sample)
-                    .any(|(uses, flag)| *uses && *flag),
-            )
-        }));
+        data.extend(
+            self.outputs
+                .iter()
+                .map(|output| ExprValue::Bool(output.flagged(&sample))),
+        );
         Ok(())
     }
 
@@ -252,6 +263,13 @@ impl Conversion {
 }
 
 impl Product {
+    fn flagged(&self, sample: &[bool]) -> bool {
+        self.flags
+            .iter()
+            .zip(sample)
+            .any(|(&uses, &flag)| uses && flag)
+    }
+
     fn linear(kind: Correlation, linear: Vec<Complex32>) -> Self {
         Self {
             kind,

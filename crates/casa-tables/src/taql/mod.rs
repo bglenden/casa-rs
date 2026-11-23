@@ -54,6 +54,7 @@ mod expr_walk;
 pub mod aggregate;
 pub mod format;
 pub mod functions;
+mod masked_arrays;
 mod meas_udf;
 mod mscal_help;
 mod mscal_lookup;

@@ -3,11 +3,13 @@
 //! Text from casacore derivedmscal/DerivedMC/Register.cc.
 //! Copyright (C) 2010 Associated Universities, Inc. Washington DC, USA.
 
+use std::sync::Arc;
+
 use crate::Table;
 
 use super::{
     TaqlError,
-    ast::{Expr, IndexStyle, Literal},
+    ast::{Expr, IndexStyle},
     eval::{EvalContext, ExprValue, eval_expr, reads_current_row},
 };
 
@@ -60,17 +62,8 @@ fn fold(expr: &mut Expr, table: &Table, style: IndexStyle) -> Result<Constant, T
             style,
             measures: table.measures_provider(),
         };
-        let literal = match eval_expr(expr, &ctx)? {
-            ExprValue::String(value) => Some(Literal::String(value)),
-            ExprValue::Bool(value) => Some(Literal::Bool(value)),
-            ExprValue::Int(value) => Some(Literal::Int(value)),
-            ExprValue::Float(value) => Some(Literal::Float(value)),
-            _ => None,
-        };
-        if let Some(literal) = literal {
-            *expr = Expr::Literal(literal);
-            return Ok(Constant::Yes);
-        }
+        *expr = Expr::PreparedConstant(Arc::new(eval_expr(expr, &ctx)?));
+        return Ok(Constant::Yes);
     }
     Ok(Constant::Help)
 }

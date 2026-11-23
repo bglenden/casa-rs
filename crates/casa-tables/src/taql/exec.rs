@@ -1215,6 +1215,11 @@ impl std::hash::Hash for ExprValueKey {
                 arr.shape.hash(state);
                 arr.data.len().hash(state);
             }
+            ExprValue::MaskedArray(arr, mask) => {
+                arr.shape.hash(state);
+                arr.data.len().hash(state);
+                mask.hash(state);
+            }
             ExprValue::Regex { pattern, flags } => {
                 pattern.hash(state);
                 flags.hash(state);
@@ -1340,7 +1345,7 @@ fn expr_value_to_literal(val: &ExprValue) -> Literal {
         ExprValue::Complex(c) => Literal::Complex(*c),
         ExprValue::String(s) => Literal::String(s.clone()),
         ExprValue::DateTime(v) => Literal::Float(*v),
-        ExprValue::Array(_) => Literal::Null, // arrays don't have a literal form
+        ExprValue::Array(_) | ExprValue::MaskedArray(..) => Literal::Null, // arrays have no literal form
         ExprValue::Regex { pattern, flags } => Literal::Regex {
             pattern: pattern.clone(),
             flags: flags.clone(),
@@ -1627,7 +1632,7 @@ fn expr_value_to_value_untyped(val: &ExprValue) -> Value {
         ExprValue::Complex(c) => Value::Scalar(ScalarValue::Complex64(*c)),
         ExprValue::String(s) => Value::Scalar(ScalarValue::String(s.clone())),
         ExprValue::DateTime(v) => Value::Scalar(ScalarValue::Float64(*v)),
-        ExprValue::Array(arr) => expr_array_to_value(arr),
+        ExprValue::Array(arr) | ExprValue::MaskedArray(arr, _) => expr_array_to_value(arr),
         ExprValue::Regex { pattern, .. } => Value::Scalar(ScalarValue::String(pattern.clone())),
         ExprValue::Null => Value::Scalar(ScalarValue::Bool(false)), // fallback
     }
