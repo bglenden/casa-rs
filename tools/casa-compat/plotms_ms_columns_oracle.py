@@ -565,15 +565,43 @@ def compare_default_model(root, native):
 
     virtual = root / "virtual-model.ms"
     copy_ms(vis, virtual)
-    casa.setjy(str(virtual), field="PHASE", standard="manual", fluxdensity=[7.25, 0, 0, 0], usescratch=False)
-    with opened(virtual) as table:
+    for name in ("SPECTRAL_WINDOW", "DATA_DESCRIPTION"):
+        with opened(virtual / name, True) as table:
+            table.addrows(1)
+            for column in table.colnames():
+                if table.iscelldefined(column, 0):
+                    table.putcell(column, 1, table.getcell(column, 0))
+            if name == "DATA_DESCRIPTION":
+                table.putcell("SPECTRAL_WINDOW_ID", 1, 1)
+            else:
+                table.putcell("NAME", 1, "SPW1")
+                table.putcell("CHAN_FREQ", 1, table.getcell("CHAN_FREQ", 0) + 2e7)
+                table.putcell("REF_FREQUENCY", 1, table.getcell("REF_FREQUENCY", 0) + 2e7)
+    with opened(virtual, True) as table:
+        phase = table.getcol("FIELD_ID") == 1
+        times = table.getcol("TIME")
+        integrations = np.unique(times[phase])
+        descriptions = table.getcol("DATA_DESC_ID")
+        descriptions[phase & (times >= integrations[len(integrations) // 2])] = 1
+        table.putcol("DATA_DESC_ID", descriptions)
+    casa.setjy(str(virtual), field="PHASE", spw="0", standard="manual",
+               fluxdensity=[7.25, 0, 0, 0], usescratch=False)
+    with opened(virtual, True) as table:
         assert "MODEL_DATA" not in table.colnames()
+        table.putkeyword("definedmodel_field_0", "model_missing")
     controls = request(virtual) | dict(xaxis="channel", xdatacolumn="", yaxis="amp", ydatacolumn="model",
                                        expformat="txt")
     expected, actual = (root / f"unit-with-other-virtual-field.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected)) is None
     assert native(**controls, plotfile=str(actual)) is None
     assert compare_text(actual, expected) == 12
+    assert {float(point[1]) for point in rows(expected)} == {1.0}
+
+    unmatched = controls | dict(field="PHASE", spw="1:1~3")
+    expected, actual = (root / f"unit-unmatched-virtual-window.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**unmatched, plotfile=str(expected)) is None
+    assert native(**unmatched, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
     assert {float(point[1]) for point in rows(expected)} == {1.0}
 
     controls |= dict(field="PHASE")
