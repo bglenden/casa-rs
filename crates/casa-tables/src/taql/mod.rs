@@ -54,6 +54,7 @@ pub mod aggregate;
 pub mod format;
 pub mod functions;
 mod meas_udf;
+mod mscal_lookup;
 
 pub use ast::{IndexStyle, Statement};
 pub use calc::{CalcOutput, evaluate_calc};

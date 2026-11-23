@@ -672,6 +672,16 @@ def run(root, native_bin, only=None):
         ('taql', dict(msselect='ANTENNA1==0 AND SCAN_NUMBER==2')),
         ('taql-empty', dict(msselect='ANTENNA1==999', flagbackup=True)),
         ('taql-invalid', dict(msselect='NONEXISTENT_COLUMN==0', flagbackup=True)),
+        ('mscal-antenna-name', dict(msselect='mscal.ant1name() == "A0"')),
+        ('mscal-antenna2-name', dict(msselect='derivedmscal.ant2name() == "A4"')),
+        ('mscal-antenna-column', dict(msselect='mscal.ant1col("DISH_DIAMETER") > 0 AND ANTENNA1 > 0')),
+        ('mscal-field-column', dict(msselect='mscal.fieldcol(upper("name")) == "PHASE"')),
+        ('mscal-spw-column', dict(msselect='mscal.spwcol("NUM_CHAN") > 0')),
+        ('mscal-polarization-column', dict(msselect='mscal.polcol("NUM_CORR") == 2')),
+        ('mscal-subtable-column', dict(msselect='mscal.subcol("ANTENNA", "NAME", ANTENNA2) IN ["A3", "A4"]')),
+        ('mscal-processor-default', dict(msselect='mscal.proccol("TYPE") == ""')),
+        ('mscal-invalid-row-argument', dict(msselect='mscal.subcol("ANTENNA", "NAME", 0.5) == "A0"')),
+        ('mscal-invalid-metadata-argument', dict(msselect='mscal.ant1col(ANTENNA1) == "A0"')),
     ]:
         case(f'api-select-{label}', arguments, input_vis=observation_source)
 

@@ -442,6 +442,24 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
         Expr::Literal(lit) => Ok(eval_literal(lit)),
         Expr::ArrayLiteral(values) => arrays::literal(values, ctx),
         Expr::ColumnRef(col_ref) => eval_column_ref(col_ref, ctx),
+        Expr::BoundRowLookup {
+            original,
+            index,
+            values,
+            missing,
+        } => {
+            let ExprValue::Int(row) = eval_expr(index, ctx)? else {
+                return Err(TaqlError::TypeError {
+                    message: format!("{original} requires an integer row ID"),
+                });
+            };
+            usize::try_from(row)
+                .ok()
+                .and_then(|row| values.get(row))
+                .or(missing.as_ref())
+                .cloned()
+                .ok_or_else(|| TaqlError::Table(format!("{original} row {row} is out of range")))
+        }
         Expr::Unary { op, operand } => {
             let val = eval_expr(operand, ctx)?;
             eval_unary(*op, val)

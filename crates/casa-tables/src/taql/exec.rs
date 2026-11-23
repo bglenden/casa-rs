@@ -182,6 +182,8 @@ pub(super) fn select_row_indices(
 
     // 1. WHERE filter
     let mut row_indices: Vec<usize> = if let Some(ref where_clause) = sel.where_clause {
+        let mut where_clause = where_clause.clone();
+        super::mscal_lookup::bind(&mut where_clause, table, style)?;
         let mut indices = Vec::new();
         for i in 0..row_count {
             let row = table
@@ -194,7 +196,7 @@ pub(super) fn select_row_indices(
                 style,
                 measures: table.measures_provider(),
             };
-            let val = eval_expr(where_clause, &ctx)?;
+            let val = eval_expr(&where_clause, &ctx)?;
             if val.to_bool()? {
                 indices.push(i);
             }
