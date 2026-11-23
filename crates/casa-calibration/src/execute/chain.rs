@@ -15,6 +15,7 @@ pub(super) struct ApplyChain {
     pub(super) parang: Option<ParallacticAngleState>,
     pub(super) additive: Option<additive::ToolState>,
     pub(super) legacy_corruption: bool,
+    pub(super) legacy_scans: crate::plan::LegacyScanOverrides,
 }
 
 impl ApplyChain {
@@ -79,6 +80,7 @@ impl ApplyChain {
             parang,
             additive: None,
             legacy_corruption: false,
+            legacy_scans: Default::default(),
         })
     }
 

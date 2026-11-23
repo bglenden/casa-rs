@@ -4,6 +4,7 @@
 
 import argparse
 from contextlib import chdir
+from itertools import permutations, product
 from pathlib import Path
 
 import casatasks
@@ -76,6 +77,81 @@ def check_reselection(factory, vis, table, legacy, selection):
     assert tool.close()
 
 
+def check_scan_mapping(work, paths, factories, original):
+    prior = work/'scan-mapped.cal'
+    copy_ms(original, prior)
+    with opened(prior, True) as table:
+        assert table.putcol('SCAN_NUMBER', np.ones(table.nrows(), dtype='int32'))
+    slices = [{'scan': '1', 'scanmap': [0, 1, 2], 'fldmap': [0, 0]},
+              {'scan': '2', 'fldmap': [1, 1]}]
+    for legacy, operation, order in product((True, False), ('corrupt', 'correct'),
+                                            (slices, slices[::-1])):
+        records = {}
+        library = library_record(prior, order)
+        for engine, factory in factories.items():
+            activity, actual, data, field, scan = run_case(
+                factory, paths[engine], library, legacy, operation, {'field': 'FLUX'})
+            selected = field == 0
+            gain = np.where((scan[selected] == 1) | (legacy and operation == 'corrupt'), 1.2, 1.5)
+            expected = np.ones_like(data) if operation == 'corrupt' else data.copy()
+            expected[..., selected] *= gain**(2 if operation == 'corrupt' else -2)
+            np.testing.assert_allclose(actual, expected, atol=4e-7, rtol=4e-7)
+            records[engine] = activity
+        if 'native' in records:
+            same_record(records['native'], records['casa'])
+        print('mapped scan', legacy, operation, order[0]['scan'], flush=True)
+
+
+def library_record(prior, slices):
+    return {str(prior): {str(i): {'tinterp': 'linear', 'calwt': False} | options
+                         for i, options in enumerate(slices)}}
+
+
+def check_cyclic_intents(work, paths, factories, original):
+    prior = work/'cyclic-intent.cal'
+    copy_ms(original, prior)
+    with opened(prior, True) as table:
+        assert table.removerows(np.flatnonzero(table.getcol('ANTENNA1') != 0).tolist())
+    for name, changes in ((prior, {'FIELD_ID': 2, 'CPARAM': np.full((2, 1), 1.8, np.complex64)}),
+                          (prior/'FIELD', {'NAME': 'THIRD'})):
+        with opened(name, True) as table:
+            values = {key: table.getcell(key, 0) for key in table.colnames()
+                      if table.iscelldefined(key, 0)} | changes
+            row = table.nrows()
+            table.addrows(1)
+            for key, value in values.items():
+                assert table.putcell(key, row, value)
+    for path in paths.values():
+        with opened(path, True) as table:
+            _, index = np.unique(table.getcol('TIME'), return_inverse=True)
+            assert table.putcol('STATE_ID', (index % 3).astype('int32'))
+        with opened(path/'STATE', True) as table:
+            table.addrows(max(0, 3 - table.nrows()))
+            for i, intent in enumerate(('BANDPASS', 'PHASE', 'FLUX')):
+                assert table.putcell('OBS_MODE', i, f'CALIBRATE_{intent}#ON_SOURCE')
+    slices = {
+        'A': {'scan': '1', 'intent': 'CALIBRATE_FLUX*', 'fldmap': [0, 0]},
+        'C': {'intent': 'CALIBRATE_PHASE*', 'fldmap': [1, 1]},
+        'B': {'scan': '2', 'intent': 'CALIBRATE_BANDPASS*', 'fldmap': [2, 2]},
+    }
+    reference = {'ACB': 2.25, 'ABC': 2.25, 'CAB': 2.25, 'CBA': 3.24, 'BAC': 1.44, 'BCA': 3.24}
+    native = reference | {'CAB': 3.24, 'BCA': 1.44}
+    for order in permutations('ACB'):
+        ordered = ''.join(order)
+        library = library_record(prior, [slices[key] for key in order])
+        for engine, factory in factories.items():
+            path = paths[engine]
+            _, actual, _, field, _ = run_case(
+                factory, path, library, True, 'corrupt', {'field': 'FLUX', 'baseline': 'A0&&&'})
+            with opened(path) as table:
+                first, second = (table.getcol(name) for name in ('ANTENNA1', 'ANTENNA2'))
+            selected = (field == 0) & (first == 0) & (second == 0)
+            expected = np.ones_like(actual)
+            expected[..., selected] = (reference if engine == 'casa' else native)[ordered]
+            np.testing.assert_allclose(actual, expected, atol=4e-7, rtol=4e-7)
+        print('cyclic scan/intent', ordered, flush=True)
+
+
 def experiment(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     work.mkdir()
@@ -145,6 +221,8 @@ def experiment(work, reference_only):
                 for engine, factory in factories.items():
                     check_reselection(factory, datasets[engine], cal, legacy, selection)
                 print(legacy, selection, 'clears registered slices', flush=True)
+        check_scan_mapping(work, datasets, factories, cal)
+        check_cyclic_intents(work, datasets, factories, cal)
 
 
 if __name__ == '__main__':

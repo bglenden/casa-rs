@@ -33,7 +33,7 @@ pub(crate) fn execute_tool_corrupt(
             &[]
         },
     };
-    let (mut plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
+    let (mut plan, _, legacy_scans) = plan_with_selection(ms, request, None, Some(registration))?;
     let activity = ToolApplyActivity::from_plan(
         &plan,
         tracking.names,
@@ -45,9 +45,15 @@ pub(crate) fn execute_tool_corrupt(
     let mut chain = ApplyChain::load(ms, &plan, false)?;
     chain.arrange_for_tool(&plan, correction.parang_terms, tracking.additive);
     chain.legacy_corruption = operation.legacy;
+    chain.legacy_scans = legacy_scans;
     chain.steps.reverse();
-    let (all_calibrated, missing_library) =
-        select_corruption_rows(ms, &mut plan, tracking.libraries, operation)?;
+    let (all_calibrated, missing_library) = select_corruption_rows(
+        ms,
+        &mut plan,
+        tracking.libraries,
+        &chain.legacy_scans,
+        operation,
+    )?;
     if !plan.selected_rows.is_empty() {
         if correction.tableless_opacity {
             return Err(unresolved_opacity(ms));
@@ -67,6 +73,7 @@ fn select_corruption_rows(
     ms: &MeasurementSet,
     plan: &mut ApplyPlan,
     libraries: &[LibraryApplyRegistration],
+    legacy_scans: &crate::plan::LegacyScanOverrides,
     operation: ModelCorruption,
 ) -> Result<(bool, Option<String>), ApplyExecutionError> {
     if operation.legacy && !libraries.is_empty() {
@@ -84,11 +91,14 @@ fn select_corruption_rows(
                 continue;
             }
             if let Some(library) = libraries.iter().find(|library| {
-                !plan.calibration_tables[library.tables.clone()]
-                    .iter()
-                    .any(|slice| {
-                        slice.applies_to(&row) && availability::table_available(&row, slice)
-                    })
+                !library.tables.clone().any(|index| {
+                    let slice = &plan.calibration_tables[index];
+                    let scan = legacy_scans
+                        .get(&(index, row.row_index))
+                        .copied()
+                        .unwrap_or(row.scan_number);
+                    slice.applies_to_scan(&row, scan) && availability::table_available(&row, slice)
+                })
             }) {
                 return Ok((false, Some(library.name.clone())));
             }
