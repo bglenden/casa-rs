@@ -657,6 +657,44 @@ def compare_averaged_columns(root, native):
             np.testing.assert_array_equal(table.getcol(name), data)
 
 
+def time_average_fixture(root):
+    vis, _ = fixture(root)
+    with opened(vis, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        shape = table.getcol("DATA").shape
+        base = np.where(integration % 2 == 0, 1, 3)
+        for factor, name in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            values = (10 ** factor * base).astype(np.complex64)[None, None, :]
+            table.putcol(name, np.broadcast_to(values, shape))
+        for name, later in (("WEIGHT", 9), ("SIGMA", 0.5)):
+            values = np.where(integration % 2 == 0, 1, later).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, (shape[0], shape[2])))
+    return vis
+
+
+def compare_time_averaged_columns(root, native):
+    work = root / "time-averaged-columns"
+    work.mkdir()
+    vis = time_average_fixture(work)
+    controls = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
+                                   ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
+                                   spw="0:1", avgtime="20")
+    name = "time-average-independent"
+    expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert len(selected) == 6
+    assert {row[2] for row in selected} == {"1"}
+    assert {row[12] for row in selected} == {"XX"}
+    np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float),
+                               [(2.6, 28)] * 3 + [(2.6, 280)] * 3, rtol=1.2e-5)
+    np.testing.assert_allclose(np.diff([float(row[9]) for row in selected[:3]]), [20, 20], atol=0.001)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == len(selected)
+    compare_ordinate_figure(work, name, native, controls, "Real", ["Real:corrected", "Real:model"])
+    print(f"{name}: {len(selected)} matching time-averaged coordinates and PNG artists", flush=True)
+
+
 def compare_float_columns(root, vis, source, native):
     float_only = root / "float-only.ms"
     mixed = root / "float-and-complex.ms"
@@ -987,6 +1025,7 @@ def main():
         compare_ordinate_columns(root, vis, native)
         compare_multiple_ordinates(root, vis, native)
         compare_averaged_columns(root, native)
+        compare_time_averaged_columns(root, native)
         compare_float_columns(root, vis, source, native)
         compare_default_model(root, native)
         compare_virtual_fourier_model(root, native)
