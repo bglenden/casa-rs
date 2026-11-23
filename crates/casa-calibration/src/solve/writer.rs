@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use casa_ms::MsError;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
+use casa_ms::{MeasurementSetBuilder, MsError};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -115,6 +115,7 @@ pub(super) fn write_baseline_caltable(
     request: &GainSolveRequest,
     solved: &SolvedGains,
     mode: crate::CalibrationOutputMode,
+    subtype: &'static str,
     channels: Option<GainChannelGrid<'_>>,
     legacy: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
@@ -122,11 +123,6 @@ pub(super) fn write_baseline_caltable(
         || "<in-memory>".to_owned(),
         |path| path.display().to_string(),
     );
-    let subtype = if channels.is_some() {
-        "Mf Mueller"
-    } else {
-        "M Mueller"
-    };
     let spectrum = if legacy {
         GainTableSpectrum::LegacyMueller(channels)
     } else {
@@ -155,8 +151,11 @@ fn write_gain_table(
         GainTableSpectrum::LegacyMueller(grid) => (grid, true),
     };
     let delay = request.gain_type.is_delay();
-    let legacy_gain_metadata =
-        !delay && !matches!(subtype, "Accor Jones" | "M Mueller" | "Mf Mueller");
+    let legacy_gain_metadata = !delay
+        && !matches!(
+            subtype,
+            "Accor Jones" | "M Mueller" | "Mf Mueller" | "A Mueller"
+        );
     let (parameter_column, parameter_type) = if delay {
         (COL_FPARAM, casa_types::PrimitiveType::Float32)
     } else {
@@ -295,12 +294,7 @@ fn write_gain_table(
         writer.append(RecordValue::new(fields))?;
     }
 
-    writer.copy_subtables(&[
-        (SubtableId::Observation, "OBSERVATION"),
-        (SubtableId::Antenna, "ANTENNA"),
-        (SubtableId::Field, "FIELD"),
-        (SubtableId::History, "HISTORY"),
-    ])?;
+    write_gain_context(&writer, subtype)?;
     if let Some(channels) = channels {
         writer.copy_subtables(&[(SubtableId::SpectralWindow, "SPECTRAL_WINDOW")])?;
         let path = writer.output_path().join("SPECTRAL_WINDOW");
@@ -341,6 +335,34 @@ fn write_gain_table(
     writer.save_main()?;
 
     Ok(gain_report(request, solved))
+}
+
+fn write_gain_context(
+    writer: &CalibrationTableWriter<'_>,
+    subtype: &str,
+) -> Result<(), GainSolveError> {
+    writer.copy_subtables(&[
+        (SubtableId::Observation, "OBSERVATION"),
+        (SubtableId::Antenna, "ANTENNA"),
+        (SubtableId::Field, "FIELD"),
+    ])?;
+    if subtype == "A Mueller" {
+        // A fit starts its own history independently of the MS import history.
+        let template = MeasurementSet::create_memory(MeasurementSetBuilder::new())
+            .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+        template
+            .subtable(SubtableId::History)
+            .expect("standard MS history")
+            .save(TableOptions::new(writer.output_path().join("HISTORY")))
+            .map_err(|source| crate::CalibrationTableWriteError::CopySubtable {
+                subtable: "HISTORY".into(),
+                path: writer.output_path().display().to_string(),
+                source: Box::new(source),
+            })?;
+    } else {
+        writer.copy_subtables(&[(SubtableId::History, "HISTORY")])?;
+    }
+    Ok(())
 }
 
 fn gain_report(request: &GainSolveRequest, solved: &SolvedGains) -> GainSolveReport {

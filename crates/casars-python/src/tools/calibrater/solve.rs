@@ -234,6 +234,7 @@ fn standard_request(
             }
         }
         "ACCOR" | "ACCOR JONES" => CalibrationSolveRequest::Accor(standard.gain(GainType::G)),
+        "A" | "A MUELLER" => CalibrationSolveRequest::AdditiveMueller(standard.gain(GainType::G)),
         "FRINGE" | "FRINGE JONES" => {
             let (controls, active_phase) = fringe.expect("parsed fringe controls");
             CalibrationSolveRequest::FringeTool {
@@ -328,7 +329,10 @@ impl super::PyCalibrater {
         let single_dish = single_dish_controls(&family, fraction, numedge, radius, smooth)?;
         let polarization =
             casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);
-        let baseline = matches!(family.as_str(), "M" | "M MUELLER" | "MF" | "MF MUELLER");
+        let baseline = matches!(
+            family.as_str(),
+            "M" | "M MUELLER" | "MF" | "MF MUELLER" | "A" | "A MUELLER"
+        );
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
         let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
             let active = paramactive

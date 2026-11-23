@@ -47,7 +47,7 @@ def nrms(actual, expected):
     return np.linalg.norm(actual - expected) / power if power else np.linalg.norm(actual)
 
 
-def compare_tables(reference, actual, *, flagged_rtol=0.):
+def compare_tables(reference, actual, *, flagged_rtol=0., time_atol=1e-5):
     with opened(reference) as expected, opened(actual) as candidate:
         assert expected.info() == candidate.info(), (expected.info(), candidate.info())
         assert expected.colnames() == candidate.colnames()
@@ -61,7 +61,7 @@ def compare_tables(reference, actual, *, flagged_rtol=0.):
             reference_values = expected.getcol(name)[..., left]
             actual_values = candidate.getcol(name)[..., right]
             if name == 'TIME':
-                np.testing.assert_allclose(actual_values, reference_values, atol=10e-6, rtol=0.)
+                np.testing.assert_allclose(actual_values, reference_values, atol=time_atol, rtol=0.)
             else:
                 np.testing.assert_array_equal(actual_values, reference_values, err_msg=name)
         flag = expected.getcol('FLAG')[..., left]

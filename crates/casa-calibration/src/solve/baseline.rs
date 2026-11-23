@@ -13,25 +13,54 @@ use super::grouping::{
 use super::kernel::SolutionRow;
 use super::writer::{GainChannelGrid, write_baseline_caltable};
 use super::{
-    GainNormalization, GainSolveError, GainSolveMode, GainSolveReport, GainSolveRequest, GainType,
-    RefAntSelector, SolvedGains,
+    GainNormalization, GainSolveError, GainSolveMode, GainSolveModelSource, GainSolveReport,
+    GainSolveRequest, GainType, RefAntSelector, SolvedGains,
 };
 use crate::bandpass::solution_frequency_bin_widths;
 use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 use crate::{ApplyPlanError, BandpassFrequencyInterval, CalibrationOutputMode, SelectedData};
 
+pub(crate) enum Family {
+    Multiplicative {
+        frequency_dependent: bool,
+        frequency_interval: Option<BandpassFrequencyInterval>,
+    },
+    Additive,
+}
+
 pub(crate) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
-    frequency_dependent: bool,
-    frequency_interval: Option<BandpassFrequencyInterval>,
+    family: Family,
     mode: CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
     legacy_iterator: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
+    let additive = matches!(family, Family::Additive);
+    if additive && !legacy_iterator {
+        return Err(GainSolveError::Baseline(
+            "Can't do selfGatherAndSolve for A Mueller".into(),
+        ));
+    }
+    let (frequency_dependent, frequency_interval, subtype) = match family {
+        Family::Additive => (false, None, "A Mueller"),
+        Family::Multiplicative {
+            frequency_dependent,
+            frequency_interval,
+        } => (
+            frequency_dependent,
+            frequency_interval,
+            if frequency_dependent {
+                "Mf Mueller"
+            } else {
+                "M Mueller"
+            },
+        ),
+    };
     super::validate_solve_interval(request.solve_interval)?;
     let direct = activity.is_some();
+    let legacy_gather = legacy_iterator && (direct || additive);
     // The legacy self-gather does not use the modern per-hand flag controls
     // or publish the generic solve activity.
     let track_gather = direct && !legacy_iterator;
@@ -44,19 +73,23 @@ pub(crate) fn solve(
         &request.prior_calibration_tables,
         request.parang,
         true,
-        PriorCalibrationMode::Baseline {
-            share_input_flags: !corrdepflags,
+        if additive {
+            PriorCalibrationMode::Data
+        } else {
+            PriorCalibrationMode::Baseline {
+                share_input_flags: !corrdepflags,
+            }
         },
     )
     .map_err(setup_error)?;
     let bin_widths = solution_frequency_bin_widths(ms, &context.rows, frequency_interval)
         .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
-    let incompatible_legacy_windows = if direct && legacy_iterator && frequency_dependent {
+    let incompatible_legacy_windows = if legacy_gather && frequency_dependent {
         legacy_binned_windows(ms, &context.rows, &bin_widths)?
     } else {
         BTreeSet::new()
     };
-    let preaverage = if direct && legacy_iterator {
+    let preaverage = if legacy_gather {
         let requested = request.preaverage_seconds;
         (requested.is_finite() && requested >= 0.).then_some(if requested < f64::EPSILON {
             0.1
@@ -68,16 +101,22 @@ pub(crate) fn solve(
     } else {
         None
     };
+    let (model_source, point_stokes) = if additive {
+        // The legacy baseline gather with a unit model averages the calibrated DATA.
+        (GainSolveModelSource::PointSource, [1., 0., 0., 0.])
+    } else {
+        (request.model_source, request.smodel)
+    };
     let groups = build_solve_groups(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
         &bin_widths,
         SolveGroupOptions {
-            input_rows: SolveInputRows::baseline(direct, legacy_iterator),
+            input_rows: SolveInputRows::baseline(direct || additive, legacy_iterator),
             gain_type: GainType::G,
-            model_source: request.model_source,
-            point_stokes: request.smodel,
+            model_source,
+            point_stokes,
             rotate_model: false,
             solve_interval: request.solve_interval,
             combine: request.combine,
@@ -162,14 +201,7 @@ pub(crate) fn solve(
         bin_widths: &bin_widths,
         selected_rows: &context.rows,
     });
-    write_baseline_caltable(
-        ms,
-        request,
-        &solved,
-        mode,
-        channels,
-        direct && legacy_iterator,
-    )
+    write_baseline_caltable(ms, request, &solved, mode, subtype, channels, legacy_gather)
 }
 
 fn legacy_binned_windows(
