@@ -7,6 +7,8 @@ use std::sync::Arc;
 use casa_types::Complex32;
 use ndarray::{ArrayD, Ix2};
 
+use crate::lookup::complex_from_casa_polar;
+
 use super::{
     ApplyBuffer, ApplyExecutionError, CalibrationGrid, GainGrid, bandpass, correcting_gain,
     correlation_receptors, stokes_name,
@@ -25,7 +27,7 @@ impl Sample {
         let value = if round_trip && !flagged {
             let phase = value.im.atan2(value.re);
             let amplitude = value.re.hypot(value.im);
-            Complex32::new(amplitude * phase.cos(), amplitude * phase.sin())
+            complex_from_casa_polar(amplitude, phase)
         } else {
             value
         };

@@ -2687,7 +2687,7 @@ fn apply_row_all_channels(
             bounded_frequency_cache && ant2.interpolated,
         );
         let ordered_gains = !forward_model
-            && table_plan.callibrary.is_some()
+            && table_plan.spec.callibrary.is_some()
             && matches!(subtype, "B Jones" | "G Jones" | "T Jones");
         let raw_jones = ordered_gains.then(|| {
             [
