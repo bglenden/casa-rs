@@ -66,7 +66,7 @@ fn right_ordinates(task: &TaskInvocation<'_>) -> Result<Vec<bool>, TaskFailure> 
             ),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let is_list = |value| matches!(value, Some(ParameterValue::Array(_)));
+    let is_list = |value: Option<&ParameterValue>| matches!(value, Some(ParameterValue::Array(_)));
     if is_list(supplied) == is_list(task.value("yaxis")) {
         Ok(sides)
     } else {
