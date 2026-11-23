@@ -1240,6 +1240,7 @@ fn options_from_plotms(
     let derived_column_plot = data_column.is_derived()
         || x_data_column.is_some_and(MsDataColumn::is_derived)
         || secondary_y_data_column.is_some_and(MsDataColumn::is_derived);
+    let normalize_zero_average = derived_column_plot || secondary_y_data_column.is_some();
     let visibility_document = visibility_document
         || y_axis2.is_some()
         || derived_column_plot
@@ -1296,12 +1297,12 @@ fn options_from_plotms(
             .map(|value| number::<usize>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&width| !derived_column_plot || width != 0),
+            .filter(|&width| !normalize_zero_average || width != 0),
         avgtime: average_text("avgtime")?
             .map(|value| number::<f64>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&interval| !derived_column_plot || interval != 0.0),
+            .filter(|&interval| !normalize_zero_average || interval != 0.0),
         avgscan: average("avgscan")?,
         avgfield: average("avgfield")?,
         avgbaseline: average("avgbaseline")?,

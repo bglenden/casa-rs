@@ -185,6 +185,8 @@ def compare_missing_corrected(root, vis, source, native):
         "vector-ratio-without-corrected": dict(xdatacolumn="corrected/model_vector", ydatacolumn="data/model_vector"),
         "scalar-ratio-without-corrected": dict(xdatacolumn="data/model_scalar", ydatacolumn="corrected/model_scalar"),
         "scalar-without-corrected": dict(xdatacolumn="corrected-model_scalar", ydatacolumn="data-model_scalar"),
+        "ordinate-without-corrected": dict(xaxis="channel", yaxis=["amp", "amp"],
+                                            xdatacolumn="", ydatacolumn=["data", "corrected"]),
     }
     for name, options in cases.items():
         controls = request(fallback) | options | dict(expformat="txt")
@@ -192,7 +194,7 @@ def compare_missing_corrected(root, vis, source, native):
         assert reference(**controls, plotfile=str(expected)) is None
         assert native(**controls, plotfile=str(actual)) is None
         count = compare_text(actual, expected)
-        assert count == 12
+        assert count == (24 if name == "ordinate-without-corrected" else 12)
         print(f"{name}: {count} matches with no stored CORRECTED_DATA", flush=True)
     compare_figure(root, native, request(fallback), root / "corrected-on-y.casa.txt",
                    ("Phase vs. Amp", "Amp", "Phase (degrees)"))
@@ -281,16 +283,18 @@ def compare_ordinate_columns(root, vis, native):
     from casars import _plot_document
 
     base = request(vis) | dict(xaxis="channel", xdatacolumn="", yaxislocation=["left", "right"])
-    cases = (
-        ("ord-distinct-axes", ["amp", "phase"], ["data", "corrected"]),
-        ("ord-same-axis", ["amp", "amp"], ["data", "corrected"]),
-        ("ord-same-axis-short-list", ["amp", "amp"], ["corrected"]),
-        ("ord-short-list", ["amp", "phase"], ["corrected"]),
-        ("ord-scalar-column", ["amp", "phase"], "corrected"),
-        ("ord-reverse-axes", ["phase", "amp"], ["corrected", "data"]),
-    )
-    for name, axes, columns in cases:
-        controls = base | dict(yaxis=axes, ydatacolumn=columns, expformat="txt")
+    cases = {
+        "ord-distinct-axes": dict(yaxis=["amp", "phase"], ydatacolumn=["data", "corrected"]),
+        "ord-same-axis": dict(yaxis=["amp", "amp"], ydatacolumn=["data", "corrected"]),
+        "ord-same-axis-short-list": dict(yaxis=["amp", "amp"], ydatacolumn=["corrected"]),
+        "ord-short-list": dict(yaxis=["amp", "phase"], ydatacolumn=["corrected"]),
+        "ord-scalar-column": dict(yaxis=["amp", "phase"], ydatacolumn="corrected"),
+        "ord-reverse-axes": dict(yaxis=["phase", "amp"], ydatacolumn=["corrected", "data"]),
+        "ord-shares-x-column": dict(xaxis="amp", xdatacolumn="corrected", yaxis=["amp", "phase"],
+                                     ydatacolumn=["data", "corrected"], avgchannel="0", avgtime="0"),
+    }
+    for name, options in cases.items():
+        controls = base | options | dict(expformat="txt")
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected)) is None
         selected = rows(expected)
@@ -299,6 +303,17 @@ def compare_ordinate_columns(root, vis, native):
         assert native(**controls, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == 24
         print(f"{name}: matched both ordinates for 12 selected points", flush=True)
+
+    duplicate = base | dict(yaxis=["amp", "amp"], ydatacolumn=["data", "data"], expformat="txt")
+    for engine, task in (("casa", reference), ("native", native)):
+        output = root / f"ord-duplicate.{engine}.txt"
+        try:
+            task(**duplicate, plotfile=str(output))
+        except RuntimeError as error:
+            assert "Remove duplicate y-axes." in str(error), error
+        else:
+            raise AssertionError(f"{engine} accepted duplicate ordinates with the same column")
+        assert not output.exists()
 
     capture = []
     render = _plot_document.render_document
