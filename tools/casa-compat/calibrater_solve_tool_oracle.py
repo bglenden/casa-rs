@@ -3,6 +3,8 @@
 """Test direct calibrater solve configuration against CASA 6.7.6.14."""
 
 import argparse
+from contextlib import chdir
+from itertools import product
 from pathlib import Path
 
 import casatasks
@@ -339,24 +341,68 @@ def direct_gain_gather_counts(work, engines):
     print('direct G matched cross-hand attempt and single-correlation data counts', flush=True)
 
 
+def min_snr_product(factory, vis, table, gain, mode, minimum):
+    tool = factory()
+    assert tool.open(str(vis), addcorr=False, addmodel=False)
+    try:
+        assert tool.selectvis(field='0') and tool.setptmodel([1., 0., 0., 0.])
+        assert tool.setsolve(gain, 'inf', str(table), apmode=mode, minblperant=2, minsnr=minimum)
+        assert tool.solve() and table.exists()
+    finally:
+        assert tool.close()
+    with opened(table) as cal:
+        return {key: cal.getcol(key) for key in ('CPARAM', 'FLAG', 'SNR')}
+
+
+def min_snr_payload(work, factories):
+    vis = work/'gain.ms'
+    with chdir(work):
+        make_cal_ms(str(vis))
+        for gain, mode in product(('G', 'T'), ('AP', 'A', 'P')):
+            uncut = min_snr_product(factories['casa'], vis, work/f'{gain}-{mode}-uncut.cal',
+                                    gain, mode, 0.)
+            present = ~uncut['FLAG']
+            ordered = np.unique(uncut['SNR'][present])
+            middle = len(ordered)//2
+            threshold = (float(ordered[middle-1]) + float(ordered[middle]))/2
+            paths = {engine: work/f'{gain}-{mode}-cut-{engine}.cal' for engine in factories}
+            results = {engine: min_snr_product(factory, vis, paths[engine], gain, mode, threshold)
+                       for engine, factory in factories.items()}
+            cut = results['casa']
+            flagged = present & cut['FLAG']
+            assert 0 < np.count_nonzero(flagged) < np.count_nonzero(present)
+            expected = uncut['CPARAM'][flagged] if mode == 'AP' else 1.
+            np.testing.assert_array_equal(cut['CPARAM'][flagged], expected)
+            if 'native' in results:
+                compare_solutions(paths)
+                compare_readers(paths)
+                np.testing.assert_allclose(results['native']['CPARAM'][flagged], expected,
+                                           rtol=1e-3, atol=1e-6)
+            print(gain, mode, 'minsnr payload checked', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
     parser.add_argument('--reference-only', action='store_true')
     parser.add_argument('--only', choices=tuple(CASES))
     parser.add_argument('--legacy', action='store_true')
+    parser.add_argument('--min-snr-payload', action='store_true')
     config = parser.parse_args()
     assert casatasks.version_string() == '6.7.6.14'
     work = config.work.resolve()
     work.mkdir()
-    vis = work/'source.ms'
-    make_cal_ms(str(vis), channels=16, scan_seconds=80, integration_seconds=4)
-    vis = amplitude_data(work, vis)
     factories = {'casa': calibrater}
     if not config.reference_only:
         from casars.tools import calibrater as native_calibrater
 
         factories['native'] = native_calibrater
+    if config.min_snr_payload:
+        min_snr_payload(work, factories)
+        return
+    vis = work/'source.ms'
+    make_cal_ms(str(vis), channels=16, scan_seconds=80, integration_seconds=4)
+    vis = amplitude_data(work, vis)
     engines = {name: factory() for name, factory in factories.items()}
     assert compare_calls(engines, 'solve') == (True, False)
     assert compare_calls(engines, 'setcorrdepflags', False) == (True, True)
