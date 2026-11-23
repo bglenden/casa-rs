@@ -223,16 +223,7 @@ fn run_task(
         if calibration.is_none()
             && let Some(x_column) = options.x_data_column
         {
-            if [x_column, options.data_column].into_iter().any(|column| {
-                !matches!(
-                    column,
-                    MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
-                )
-            }) {
-                return Err(TaskFailure::validation(
-                    "distinct MeasurementSet X and Y derived data columns are pending #1032",
-                ));
-            }
+            check_mixed_plotms_columns(&options, x_column)?;
             let symbols = task.value("customflaggedsymbol");
             let ordinate_count = 1 + usize::from(options.y_axis2.is_some());
             if (0..ordinate_count)
@@ -264,6 +255,43 @@ fn run_task(
         Some(note) => success.with_note(note),
         None => success,
     })
+}
+
+fn check_mixed_plotms_columns(
+    options: &CliOptions,
+    x_column: MsDataColumn,
+) -> Result<(), TaskFailure> {
+    let columns = [x_column, options.data_column];
+    let residual = |column| {
+        matches!(
+            column,
+            MsDataColumn::DataMinusModel | MsDataColumn::CorrectedMinusModel
+        )
+    };
+    if columns.into_iter().any(|column| {
+        !matches!(
+            column,
+            MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+        ) && !residual(column)
+    }) {
+        return Err(TaskFailure::validation(
+            "distinct MeasurementSet X and Y derived data columns are pending #1032",
+        ));
+    }
+    if columns.into_iter().any(residual)
+        && (options.avgchannel.is_some_and(|width| width > 1)
+            || options.avgtime.is_some()
+            || options.avgscan
+            || options.avgfield
+            || options.avgbaseline
+            || options.avgantenna
+            || options.avgspw)
+    {
+        return Err(TaskFailure::validation(
+            "averaging derived data columns on distinct MeasurementSet axes is pending #1032",
+        ));
+    }
+    Ok(())
 }
 
 fn run_visibility_plot(

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare independent stored visibility columns through both public PlotMS tasks."""
+"""Compare independent visibility columns through both public PlotMS tasks."""
 
 import argparse
 from contextlib import chdir
@@ -82,6 +82,8 @@ def pending_cases(root, native, vis):
 
     cases = (
         ("scalar-difference", dict(xdatacolumn="data-model_scalar"), 12, "derived data columns"),
+        ("averaged-vector", dict(xdatacolumn="corrected-model_vector", avgchannel="3"),
+         6, "averaging derived data columns"),
         ("visible-flags", dict(customflaggedsymbol=True), 18, "displaying flagged points"),
     )
     for name, options, point_count, diagnostic in cases:
@@ -92,7 +94,7 @@ def pending_cases(root, native, vis):
         assert len(selected) == point_count
         if name == "scalar-difference":
             assert all(float(point[0]) < 0 for point in selected)
-        else:
+        elif name == "visible-flags":
             assert {sample[2] for sample in selected} == {"1", "2", "3"}
         try:
             native(**controls, plotfile=str(actual))
@@ -110,6 +112,11 @@ def compare(root, vis, native):
         "model-and-default": {"xdatacolumn": "model", "ydatacolumn": ""},
         "default-and-corrected": {"xdatacolumn": ""},
         "same-axis-distinct-columns": {"xaxis": "real", "yaxis": "real", "xdatacolumn": "model"},
+        "explicit-vector": {"xdatacolumn": "data-model_vector", "ydatacolumn": "corrected-model_vector"},
+        "implicit-vector": {"xdatacolumn": "data-model", "ydatacolumn": "corrected-model"},
+        "residual-alias": {"xdatacolumn": "residual", "ydatacolumn": "data"},
+        "vector-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data-model_vector",
+                              "ydatacolumn": "corrected-model_vector"},
     }
     for name, options in cases.items():
         controls = base | options
@@ -132,6 +139,9 @@ def compare(root, vis, native):
     real = base | cases["same-axis-distinct-columns"] | dict(xlabel="Model real part")
     compare_figure(root, native, real, root / "same-axis-distinct-columns.casa.txt",
                    ("Real:corrected vs. Real:model", "Model real part", "Real:corrected"))
+    compare_figure(root, native, base | cases["explicit-vector"], root / "explicit-vector.casa.txt",
+                   ("Phase:corrected-model (vector) vs. Amp:data-model (vector)",
+                    "Amp:data-model (vector)", "Phase:corrected-model (vector) (degrees)"))
     pending_cases(root, native, vis)
 
 

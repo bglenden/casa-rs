@@ -22,7 +22,7 @@ pub(super) fn prepare(
     output: Option<&Path>,
     show: bool,
     overlays: &[Vec<Curve>],
-    stored_columns: Option<[MsDataColumn; 2]>,
+    columns: Option<[MsDataColumn; 2]>,
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
     let (x, y, second, grid) = match payload {
         MsPlotPayload::Scatter(plot) => (plot.x_axis, plot.y_axis, plot.secondary_y_axis, None),
@@ -34,8 +34,8 @@ pub(super) fn prepare(
         }
     };
     let mut document = plotms_visibility_document(payload);
-    if let Some(columns) = stored_columns {
-        label_stored_columns(task, &mut document, [x, y], second, columns)?;
+    if let Some(columns) = columns {
+        label_visibility_columns(task, &mut document, [x, y], second, columns)?;
     }
     document.show_legend = task.flag("showlegend")?;
     let limits = plot_limits(task.value("plotrange"))?;
@@ -92,7 +92,7 @@ pub(super) fn prepare(
     Ok(figures)
 }
 
-fn label_stored_columns(
+fn label_visibility_columns(
     task: &TaskInvocation<'_>,
     document: &mut PlotDocument,
     [x, y]: [MsAxis; 2],
@@ -137,7 +137,12 @@ fn label_stored_columns(
 fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
     let name = plotms_text::name(axis);
     if axis.is_visibility_math() && column != MsDataColumn::Data {
-        format!("{name}:{column}")
+        let label = match column {
+            MsDataColumn::DataMinusModel => "data-model (vector)",
+            MsDataColumn::CorrectedMinusModel => "corrected-model (vector)",
+            other => other.as_str(),
+        };
+        format!("{name}:{label}")
     } else {
         name.into()
     }
