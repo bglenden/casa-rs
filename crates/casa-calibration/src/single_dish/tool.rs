@@ -14,13 +14,13 @@ use crate::table_maintenance::overlaps_measurement_set;
 use crate::{ApplyPlanRequest, CalibrationOutputMode, GainSolveRequest, plan_apply};
 
 /// Family-specific controls on `calibrater.setsolve` for total-power data.
-pub struct SingleDishSolveControls<'a> {
+pub struct SingleDishSolveControls {
     /// Fraction of a map used for the sky reference spectrum.
     pub fraction: f32,
     /// Explicit raster edge integrations, or a negative automatic count.
     pub numedge: i64,
     /// Angular radius of the double-circle gain reference region.
-    pub radius: &'a str,
+    pub radius: String,
     /// Smooth the gain reference timeline before taking the ratio.
     pub smooth: bool,
     /// The generic amplitude/phase selector could not be resolved.
@@ -45,7 +45,7 @@ impl Solver {
         family: &str,
         request: GainSolveRequest,
         mode: CalibrationOutputMode,
-        controls: SingleDishSolveControls<'_>,
+        controls: SingleDishSolveControls,
         legacy: bool,
     ) -> Result<Self, String> {
         let fraction = f64::from(controls.fraction);
@@ -60,7 +60,7 @@ impl Solver {
                 noff: controls.numedge,
             }),
             "SDGAIN_OTFD" => Kind::Gain(gain::Controls {
-                radius: parse_radius(controls.radius)?,
+                radius: parse_radius(&controls.radius)?,
                 smooth: controls.smooth,
                 solve_mode: request.solve_mode,
                 correlation_dependent_flags: false,

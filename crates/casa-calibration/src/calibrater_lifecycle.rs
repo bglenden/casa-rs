@@ -887,7 +887,7 @@ impl CalibraterLifecycle {
         family: &str,
         request: crate::GainSolveRequest,
         mode: CalibrationOutputMode,
-        controls: crate::SingleDishSolveControls<'_>,
+        controls: crate::SingleDishSolveControls,
     ) -> Result<(), CalibraterLifecycleError> {
         let solver = crate::single_dish::tool::Solver::new(
             family,

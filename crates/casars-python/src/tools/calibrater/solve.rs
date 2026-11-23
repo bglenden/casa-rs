@@ -93,6 +93,36 @@ fn setsolve_text(value: Option<&Bound<'_, PyAny>>, name: &str, default: &str) ->
     text(value.cloned(), name, default)
 }
 
+fn single_dish_controls(
+    family: &str,
+    fraction: Option<&Bound<'_, PyAny>>,
+    numedge: Option<&Bound<'_, PyAny>>,
+    radius: Option<&Bound<'_, PyAny>>,
+    smooth: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<SingleDishSolveControls>> {
+    if !matches!(
+        family,
+        "SDSKY_PS" | "SDSKY_OTF" | "SDSKY_RASTER" | "SDGAIN_OTFD"
+    ) {
+        return Ok(None);
+    }
+    let radius = radius
+        .map(|value| {
+            value.extract::<String>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("argument _radius must be a string")
+            })
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(Some(SingleDishSolveControls {
+        fraction: number(fraction.cloned(), "setsolve", 20, 0.1)? as f32,
+        numedge: setsolve_long(numedge, 21, -1)?,
+        radius,
+        smooth: setsolve_bool(smooth, 23, true)?,
+        invalid_apmode: false,
+    }))
+}
+
 fn setsolve_integer(
     value: Option<&Bound<'_, PyAny>>,
     position: u8,
@@ -280,29 +310,7 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
-        let radius_text;
-        let single_dish = if matches!(
-            family.as_str(),
-            "SDSKY_PS" | "SDSKY_OTF" | "SDSKY_RASTER" | "SDGAIN_OTFD"
-        ) {
-            radius_text = radius
-                .map(|value| {
-                    value.extract::<String>().map_err(|_| {
-                        pyo3::exceptions::PyTypeError::new_err("argument _radius must be a string")
-                    })
-                })
-                .transpose()?
-                .unwrap_or_default();
-            Some(SingleDishSolveControls {
-                fraction: number(fraction.cloned(), "setsolve", 20, 0.1)? as f32,
-                numedge: setsolve_long(numedge, 21, -1)?,
-                radius: &radius_text,
-                smooth: setsolve_bool(smooth, 23, true)?,
-                invalid_apmode: false,
-            })
-        } else {
-            None
-        };
+        let single_dish = single_dish_controls(&family, fraction, numedge, radius, smooth)?;
         let polarization =
             casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);
         let baseline = matches!(family.as_str(), "M" | "M MUELLER" | "MF" | "MF MUELLER");
