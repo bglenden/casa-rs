@@ -655,6 +655,7 @@ def check_averaged_agent_time(libraries):
         times = main.getcol("TIME")
         first, second = np.unique(times)[:2]
         data = np.full_like(main.getcol("DATA"), 8.)
+        data[:, ::2, :] = 3.
         main.putcol("DATA", data)
         for column in ("FLAG", "FLAG_ROW"):
             main.putcol(column, np.zeros_like(main.getcol(column)))
@@ -667,9 +668,8 @@ def check_averaged_agent_time(libraries):
     midpoint = first + (second - first) / 2
     assert not np.any(np.abs(times - midpoint) <= 1)
     timerange = f"{stamp(midpoint - 1)}~{stamp(midpoint + 1)}"
-    expected_rows = np.isin(times, [first, second])
-    expected = np.broadcast_to(expected_rows[:, None, None], data.shape)
-    assert np.count_nonzero(expected) == 1280
+    expected = np.isin(times, [first, second])[:, None, None] & (data.real > 6.)
+    assert np.count_nonzero(expected) == 640
     for name, task in libraries:
         vis = f"averaged-agent-time-{name}.ms"
         copytree(source, vis)
@@ -678,12 +678,12 @@ def check_averaged_agent_time(libraries):
             inpfile=[
                 f"mode='clip' datacolumn='DATA' timerange='{timerange}' "
                 "timeavg=True timebin='20s' clipminmax=[0,6]",
-                "mode='antint' antint_ref_antenna='A0' minchanfrac=0.01",
+                "mode='extend' scan='999'",
             ],
         ) == {}
         samples, rows = flags(vis)
         np.testing.assert_array_equal(samples, expected, err_msg=f"{name} averaged FLAG")
-        np.testing.assert_array_equal(rows, expected_rows, err_msg=f"{name} averaged FLAG_ROW")
+        np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{name} averaged FLAG_ROW")
     return 1
 
 
