@@ -6379,11 +6379,11 @@ mod tests {
         assert_eq!(opacity_key.kind, 3);
         assert!(materialized_grid_key(&complex, 3, 2, 12.5, 7).is_none());
 
-        assert!(cache.materialized_grid(antpos_key).is_none());
-        cache.insert_materialized_grid(antpos_key, antpos.clone());
+        assert!(cache.materialized_grid(antpos_key, false).is_none());
+        cache.insert_materialized_grid(antpos_key, antpos.clone(), false);
         assert!(Arc::ptr_eq(
             &cache
-                .materialized_grid(antpos_key)
+                .materialized_grid(antpos_key, false)
                 .expect("materialized grid"),
             &antpos
         ));
