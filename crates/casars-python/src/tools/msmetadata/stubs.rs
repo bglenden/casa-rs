@@ -121,16 +121,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw, unit = None), text_signature = "($self, spw, unit='Hz')")]
-    fn chanfreqs(
-        &self,
-        spw: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("chanfreqs")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (spw, unit = None, asvel = None), text_signature = "($self, spw, unit='', asvel=False)")]
     fn chanres(
         &self,
@@ -142,41 +132,9 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw, unit = None), text_signature = "($self, spw, unit='Hz')")]
-    fn chanwidths(
-        &self,
-        spw: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("chanwidths")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (spw = None), text_signature = "($self, spw=-1)")]
     fn corrbit(&self, spw: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("corrbit")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pol = None), text_signature = "($self, pol=-1)")]
-    fn corrprodsforpol(&self, pol: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("corrprodsforpol")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (pol = None), text_signature = "($self, pol=-1)")]
-    fn corrtypesforpol(&self, pol: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("corrtypesforpol")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw = None, pol = None), text_signature = "($self, spw=-1, pol=-1)")]
-    fn datadescids(
-        &self,
-        spw: Option<&Bound<'_, PyAny>>,
-        pol: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("datadescids")
     }
 
     /// Not yet implemented in casa-rs.
@@ -311,16 +269,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw, unit = None), text_signature = "($self, spw, unit='Hz')")]
-    fn meanfreq(
-        &self,
-        spw: &Bound<'_, PyAny>,
-        unit: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("meanfreq")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (fieldids = None), text_signature = "($self, fieldids='')")]
     fn namesforfields(&self, fieldids: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("namesforfields")
@@ -345,18 +293,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw), text_signature = "($self, spw)")]
-    fn nchan(&self, spw: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("nchan")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (polid = None), text_signature = "($self, polid=-1)")]
-    fn ncorrforpol(&self, polid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("ncorrforpol")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (autoc = None, flagged = None), text_signature = "($self, autoc=True, flagged=True)")]
     fn nrows(
         &self,
@@ -376,12 +312,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn nsources(&self) -> PyResult<Py<PyAny>> {
         stub("nsources")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (includewvr = None), text_signature = "($self, includewvr=True)")]
-    fn nspw(&self, includewvr: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("nspw")
     }
 
     /// Not yet implemented in casa-rs.
@@ -412,12 +342,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (ddid = None), text_signature = "($self, ddid=-1)")]
-    fn polidfordatadesc(&self, ddid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("polidfordatadesc")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn propermotions(&self) -> PyResult<Py<PyAny>> {
         stub("propermotions")
@@ -431,12 +355,6 @@ impl PyMsMetadata {
         epoch: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("refdir")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw = None), text_signature = "($self, spw=-1)")]
-    fn reffreq(&self, spw: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("reffreq")
     }
 
     /// Not yet implemented in casa-rs.
@@ -548,12 +466,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw), text_signature = "($self, spw)")]
-    fn sideband(&self, spw: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        stub("sideband")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn sourcedirs(&self) -> PyResult<Py<PyAny>> {
         stub("sourcedirs")
@@ -581,12 +493,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn sourcetimes(&self) -> PyResult<Py<PyAny>> {
         stub("sourcetimes")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (ddid = None), text_signature = "($self, ddid=-1)")]
-    fn spwfordatadesc(&self, ddid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("spwfordatadesc")
     }
 
     /// Not yet implemented in casa-rs.
@@ -738,11 +644,5 @@ impl PyMsMetadata {
         spw: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("transitions")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (complement = None), text_signature = "($self, complement=False)")]
-    fn wvrspws(&self, complement: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("wvrspws")
     }
 }

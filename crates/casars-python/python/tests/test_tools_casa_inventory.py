@@ -39,6 +39,9 @@ IMPLEMENTED["calanalysis"] = {
 IMPLEMENTED["msmetadata"] = {
     "open", "close", "done", "name", "nantennas", "nfields", "nobservations",
     "nstates", "fieldnames", "observatorynames", "observers", "projects",
+    "nchan", "chanfreqs", "chanwidths", "meanfreq", "sideband", "reffreq",
+    "datadescids", "spwfordatadesc", "polidfordatadesc", "corrtypesforpol",
+    "corrprodsforpol", "ncorrforpol", "wvrspws", "nspw",
 }
 IMPLEMENTED["atmosphere"] = set(casa_signatures("atmosphere")["methods"])
 IMPLEMENTED["wvr"] = {"gcal"}

@@ -3,6 +3,8 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1029 (`stubs.rs`).
 
+mod data_description;
+mod spectral;
 mod stubs;
 pub(crate) mod surface;
 
