@@ -765,6 +765,33 @@ def run(root, native_bin, only=None):
          dict(msselect='DATA_DESC_ID == 1 AND mscal.uvwwvls()[2,7] < -5000', spwmap=[0, 1]),
          input_vis=multi_source, gain=multi_gain, precorrected=True)
 
+    for label, predicate in [
+        ('ha', 'mscal.ha() < -0.256rad'),
+        ('ha1', 'mscal.ha1() < -0.256'),
+        ('ha2', 'mscal.ha2() < -0.255'),
+        ('hadec', 'mscal.hadec()[1] < -0.256'),
+        ('hadec1', 'mscal.hadec1()[1] < -0.256'),
+        ('hadec2', 'mscal.hadec2()[1] < -0.255'),
+        ('azel', 'mscal.azel()[2] > 1.312rad'),
+        ('azel1', 'mscal.azel1()[2] > 1.312'),
+        ('azel2', 'mscal.azel2()[2] > 1.312'),
+        ('last', 'mscal.last() > 65582.0014'),
+        ('last1', 'mscal.last1() > 65582.0014'),
+        ('last2', 'mscal.last2() > 65582.0014'),
+        ('pa1', 'mscal.pa1() < -1.14rad'),
+        ('pa2', 'mscal.pa2() < -1.14rad'),
+        ('itrf', 'mscal.itrf()[1] < -0.927'),
+        ('delay', 'mscal.delay() > 10ns'),
+        ('delay1', 'mscal.delay1() > 10ns'),
+        ('delay2', 'mscal.delay2() > 10ns'),
+        ('field-column', 'mscal.ha("DELAY_DIR") < -0.256'),
+        ('fixed-direction', 'mscal.ha([10deg,-20deg]) < -0.169rad'),
+        ('solar-direction', 'mscal.azel("SUN")[1] < -1rad AND ANTENNA1 == 0'),
+        ('row-dependent-direction', 'mscal.ha(FIELD_ID) < -0.256'),
+        ('wrong-length-direction', 'mscal.ha([10deg]) < -0.256'),
+    ]:
+        case(f'api-select-mscal-geometry-{label}', dict(msselect=predicate), input_vis=observation_source)
+
     for label, arguments in [
         ('scalar-map', dict(spwmap=0, flagbackup=True)),
         ('empty-text-map', dict(spwmap='')),
