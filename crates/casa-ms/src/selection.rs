@@ -46,6 +46,7 @@ pub mod syntax;
 mod taql_geometry;
 mod taql_selection;
 pub mod time_expr;
+mod tool_indices;
 mod uv_expr;
 pub(crate) use uv_expr::UvDistanceSelection;
 
@@ -62,6 +63,7 @@ pub use time_expr::{
     LogicalRowFilter, TimeCondition, TimeDefaults, TimeListEntry, TimeSelection, TimeSelector,
     TimeSelectorDefaults, TimeTerm, msselection_first_logical_row, resolve_time_selector,
 };
+pub use tool_indices::{MsSelectionIndices, ParsedMsToolSelection};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RowGrammar {
