@@ -9,7 +9,8 @@ use crate::{MsError, MsResult};
 use super::super::metadata_field::signed_angles;
 use super::MsPointing;
 
-const BATCH_ROWS: usize = 4096;
+const FIRST_BATCH_ROWS: usize = 1 << 15;
+const FOLLOWUP_BATCH_ROWS: usize = 1 << 17;
 
 #[derive(Clone, Copy)]
 struct Sample {
@@ -26,57 +27,49 @@ impl PointingRows<'_> {
         mut rows: impl Iterator<Item = usize>,
         antennas: &[i32],
         mut stop: impl FnMut(i32, Sample) -> MsResult<bool>,
-    ) -> MsResult<()> {
-        let mut indices = Vec::with_capacity(BATCH_ROWS);
-        let mut selected = Vec::new();
-        let mut selected_antennas = Vec::new();
+    ) -> MsResult<bool> {
+        let mut indices = Vec::with_capacity(FIRST_BATCH_ROWS);
+        let mut size = FIRST_BATCH_ROWS;
         loop {
-            indices.extend(rows.by_ref().take(BATCH_ROWS));
+            indices.extend(rows.by_ref().take(size));
             if indices.is_empty() {
-                return Ok(());
+                return Ok(false);
             }
-            // Read candidate IDs first. Large POINTING tables can contain
-            // many samples for antennas outside the requested baseline.
-            let values = self
-                .0
-                .required_scalar_columns_owned_for_rows(&["ANTENNA_ID"], &indices)?;
-            let Some(RequiredScalarColumnValues::Int32(ids)) = values.get("ANTENNA_ID") else {
-                return Err(MsError::InvalidInput("Invalid POINTING antenna IDs".into()));
-            };
-            for (&row, &id) in indices.iter().zip(ids) {
-                if antennas.contains(&id) {
-                    selected.push(row);
-                    selected_antennas.push(id);
-                }
-            }
-            indices.clear();
-            if selected.is_empty() {
-                continue;
-            }
-            let values = self
-                .0
-                .required_scalar_columns_owned_for_rows(&["TIME", "INTERVAL"], &selected)?;
+            // The storage manager parses its bucket index on each request.
+            // A small first read retains short-search latency, and wider
+            // contiguous reads amortize that cost for a longer search.
+            let values = self.0.required_scalar_columns_owned_for_rows(
+                &["ANTENNA_ID", "TIME", "INTERVAL"],
+                &indices,
+            )?;
             let (
+                Some(RequiredScalarColumnValues::Int32(ids)),
                 Some(RequiredScalarColumnValues::Float64(times)),
                 Some(RequiredScalarColumnValues::Float64(intervals)),
-            ) = (values.get("TIME"), values.get("INTERVAL"))
+            ) = (
+                values.get("ANTENNA_ID"),
+                values.get("TIME"),
+                values.get("INTERVAL"),
+            )
             else {
                 return Err(MsError::InvalidInput(
-                    "Invalid POINTING time columns".into(),
+                    "Invalid POINTING scalar columns".into(),
                 ));
             };
-            for (index, &row) in selected.iter().enumerate() {
-                let sample = Sample {
-                    row,
-                    time: times[index],
-                    interval: intervals[index],
-                };
-                if stop(selected_antennas[index], sample)? {
-                    return Ok(());
+            for (index, (&row, &id)) in indices.iter().zip(ids).enumerate() {
+                if antennas.contains(&id) {
+                    let sample = Sample {
+                        row,
+                        time: times[index],
+                        interval: intervals[index],
+                    };
+                    if stop(id, sample)? {
+                        return Ok(true);
+                    }
                 }
             }
-            selected.clear();
-            selected_antennas.clear();
+            size = FOLLOWUP_BATCH_ROWS;
+            indices.clear();
         }
     }
 
@@ -118,7 +111,7 @@ impl PointingRows<'_> {
         let end = self.0.row_count();
         let guess = guess.min(end);
         let mut samples = [None; 2];
-        self.visit((guess..end).chain(0..guess), &antennas, |id, sample| {
+        let mut matched = |id, sample| {
             let index = usize::from(id != antennas[0]);
             if samples[index].is_none() && self.covers(id, sample, time)? {
                 samples[index] = Some(sample);
@@ -127,7 +120,10 @@ impl PointingRows<'_> {
                 }
             }
             Ok(samples.iter().all(Option::is_some))
-        })?;
+        };
+        if !self.visit(guess..end, &antennas, &mut matched)? {
+            self.visit(0..guess, &antennas, matched)?;
+        }
         Ok(samples)
     }
 }
@@ -151,14 +147,22 @@ impl MsPointing<'_> {
         interpolate: bool,
     ) -> MsResult<[MDirection; 2]> {
         let rows = PointingRows(self.table());
-        let samples = rows.lookup(antennas, time, initial_row)?;
-        let direction = |antenna, sample: Option<Sample>| {
-            let sample = sample.ok_or_else(|| {
+        let [first, second] = rows.lookup(antennas, time, initial_row)?;
+        let require_sample = |antenna, sample: Option<Sample>| {
+            sample.ok_or_else(|| {
                 MsError::InvalidInput(format!(
                     "No POINTING direction for antenna {antenna} at time {time}"
                 ))
-            })?;
-            let left = self.read_metadata_direction(sample.row)?;
+            })
+        };
+        let first_sample = require_sample(antennas[0], first)?;
+        let second_sample = require_sample(antennas[1], second)?;
+        let selected = [first_sample.row, second_sample.row];
+        let autocorrelation = antennas[0] == antennas[1];
+        let mut directions = self
+            .read_metadata_directions(&selected[..if autocorrelation { 1 } else { 2 }])?
+            .into_iter();
+        let direction = |antenna, sample: Sample, left: MDirection| {
             if !interpolate || main_interval >= sample.interval {
                 return Ok(left);
             }
@@ -188,7 +192,8 @@ impl MsPointing<'_> {
                 ));
             }
             let a = signed_angles(&left);
-            let b = signed_angles(&self.read_metadata_direction(neighbor.row)?);
+            let right = self.read_metadata_directions(&[neighbor.row])?;
+            let b = signed_angles(&right[0]);
             let delta = (time - sample.time) / (neighbor.time - sample.time);
             Ok(MDirection::from_angles(
                 a[0] + (b[0] - a[0]) * delta,
@@ -196,25 +201,38 @@ impl MsPointing<'_> {
                 left.refer(),
             ))
         };
-        let first = direction(antennas[0], samples[0])?;
-        let last = if antennas[0] == antennas[1] {
+        let first = direction(
+            antennas[0],
+            first_sample,
+            directions.next().expect("first requested direction"),
+        )?;
+        let last = if autocorrelation {
             first.clone()
         } else {
-            direction(antennas[1], samples[1])?
+            direction(
+                antennas[1],
+                second_sample,
+                directions.next().expect("second requested direction"),
+            )?
         };
         Ok([first, last])
     }
 
-    fn read_metadata_direction(&self, row: usize) -> MsResult<MDirection> {
+    fn read_metadata_directions(&self, rows: &[usize]) -> MsResult<Vec<MDirection>> {
         let table = self.table();
         let values = table
             .column_accessor("DIRECTION")?
-            .array_cells_owned_uncached(&[row])?
-            .pop()
-            .flatten()
-            .ok_or_else(|| MsError::InvalidInput("Missing POINTING direction".into()))?;
-        let angles = self.direction_angles(&values, row, "DIRECTION", None)?;
-        let reference = resolve_direction_reference_selected(table, "POINTING", "DIRECTION", row)?;
-        Ok(MDirection::from_angles(angles[0], angles[1], reference))
+            .array_cells_owned_uncached(rows)?;
+        rows.iter()
+            .zip(values)
+            .map(|(&row, values)| {
+                let values = values
+                    .ok_or_else(|| MsError::InvalidInput("Missing POINTING direction".into()))?;
+                let angles = self.direction_angles(&values, row, "DIRECTION", None)?;
+                let reference =
+                    resolve_direction_reference_selected(table, "POINTING", "DIRECTION", row)?;
+                Ok(MDirection::from_angles(angles[0], angles[1], reference))
+            })
+            .collect()
     }
 }
