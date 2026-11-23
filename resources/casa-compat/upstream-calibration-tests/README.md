@@ -18,3 +18,18 @@ The `applycal` suite uses `unittest/applycal` from casatestdata commit
 [`5e48637233019176f328ab4552e96395ab967581`](https://open-bitbucket.nrao.edu/projects/CASA/repos/casatestdata/browse/unittest/applycal?at=5e48637233019176f328ab4552e96395ab967581).
 Hydrate its Git LFS objects and preserve its symbolic links before running.
 The Multi-MS shares its POINTING subtable through links between partitions.
+
+## Source inventory
+
+[The source manifest](upstream-sources.json) records the upstream path and SHA-256
+for 37 task modules and the `calanalysis` and `calibrater` tool modules. The
+shared `agentflagger`, `ms_statwt`, flagging, split and mstransform suites are in
+the [MeasurementSet suite](../upstream-ms-tests/README.md). The tagged CASA
+repository has no standalone Python test module for `ssoflux`, `uvsub`,
+`atmosphere`, `singledishms`, `wvr` or the callibrary helpers.
+
+Choose a module name in place of `applycal` in the command above. Use `--only`
+to select a pytest case expression and `--fixture` to select source fixture
+paths for that run. The `predictcomp` and `sdatmcor` suites also resolve stock
+data outside the casatestdata `unittest` directory. The runner adds that pinned
+source directory to CASA's search path for those two suites.
