@@ -156,6 +156,10 @@ def compare(root, vis, native):
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         native_seconds = perf_counter() - start
         count = compare_text(actual, expected)
+        if controls["xaxis"] == "time":
+            native_times = [float(point[0]) for point in rows(actual)]
+            casa_times = [float(point[0]) for point in selected]
+            np.testing.assert_allclose(native_times, casa_times, rtol=0, atol=0.00051)
         print(f"{name}: {count} points, CASA {casa_seconds:.3f}s, casa-rs {native_seconds:.3f}s",
               flush=True)
     compare_figure(root, native, base, root / "data-and-corrected.casa.txt",
