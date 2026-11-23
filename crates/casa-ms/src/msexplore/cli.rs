@@ -42,6 +42,7 @@ struct CliOptions {
     data_column: MsDataColumn,
     x_data_column: Option<MsDataColumn>,
     secondary_y_data_column: Option<MsDataColumn>,
+    weight_axis_columns: [Option<MsDataColumn>; 3],
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
     avgtime: Option<f64>,
@@ -380,6 +381,7 @@ fn run_visibility_plot(
                 options.secondary_y_data_column,
                 prefer_float_data,
                 load_models,
+                options.weight_axis_columns,
             ),
         }
         .map_err(TaskFailure::execution)?;
@@ -1121,6 +1123,7 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
         data_column: required(task, "datacolumn", MsDataColumn::parse)?,
         x_data_column: None,
         secondary_y_data_column: None,
+        weight_axis_columns: [None; 3],
         color_by: required(task, "color_by", MsColorAxis::parse)?,
         avgchannel: parsed(task, "avgchannel", number::<usize>)?,
         avgtime: parsed(task, "avgtime", number::<f64>)?,
@@ -1217,6 +1220,10 @@ fn options_from_plotms(
     };
     let x_column = data_column(text("xdatacolumn")?)?.unwrap_or(MsDataColumn::Data);
     let [y_column, secondary_y] = plotms_columns::ordinate_columns(task, y_axis, y_axis2)?;
+    let weight_axis_columns = plotms_columns::weight_axis_columns(
+        [Some(x_axis), Some(y_axis), y_axis2],
+        [x_column, y_column, secondary_y],
+    );
     let secondary_uses_data = y_axis2.is_some_and(MsAxis::is_visibility_math);
     let data_column = if y_axis.is_visibility_math() {
         y_column
@@ -1285,6 +1292,7 @@ fn options_from_plotms(
         data_column,
         x_data_column,
         secondary_y_data_column,
+        weight_axis_columns,
         color_by,
         avgchannel: average_text("avgchannel")?
             .map(|value| number::<usize>(&value))

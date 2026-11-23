@@ -467,6 +467,20 @@ def compare_averaged_columns(root, native):
     compare_ordinate_figure(work, "avg-independent-weighted", native, base, "Real",
                             ["Real:corrected", "Real:model"])
 
+    # Weight axes also select an input cache column. Their own averaged
+    # coordinate coverage is tracked in #1032.
+    weight_axis = base | dict(xdatacolumn="model", yaxis="weight", ydatacolumn="",
+                              yaxislocation="left", expformat="txt")
+    expected, actual = (work / f"avg-model-vs-weight.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**weight_axis, plotfile=str(expected)) is None
+    assert native(**weight_axis, plotfile=str(actual)) is None
+    casa_rows, native_rows = rows(expected), rows(actual)
+    assert len(casa_rows) == len(native_rows) == 12
+    assert float(casa_rows[0][0]) == 280
+    np.testing.assert_allclose([float(point[0]) for point in native_rows],
+                               [float(point[0]) for point in casa_rows], rtol=1.2e-5)
+    assert [point[2:] for point in native_rows] == [point[2:] for point in casa_rows]
+
     from casars.tasks import TaskParameterError
 
     average_time = base | dict(avgtime="20", expformat="txt")

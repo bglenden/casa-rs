@@ -15,6 +15,19 @@ pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) 
         .any(|(axis, column)| axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model())
 }
 
+pub(super) fn weight_axis_columns(
+    axes: [Option<MsAxis>; 3],
+    columns: [MsDataColumn; 3],
+) -> [Option<MsDataColumn>; 3] {
+    std::array::from_fn(|index| {
+        matches!(
+            axes[index],
+            Some(MsAxis::Weight | MsAxis::WeightSpectrum | MsAxis::Sigma | MsAxis::SigmaSpectrum)
+        )
+        .then_some(columns[index])
+    })
+}
+
 pub(super) fn check_averaging(
     averaging: bool,
     extended_averaging_with_independent_ordinates: bool,
@@ -49,17 +62,27 @@ pub(super) fn channel_weight_kinds(
         Some(spec.y_axis()),
         spec.secondary_y_axis(),
     ];
-    let mut active = axes.into_iter().zip(columns).filter_map(|(axis, column)| {
-        axis.is_some_and(MsAxis::is_visibility_math)
-            .then_some(column)
-    });
+    let schema = ms.main_table().schema();
+    let has = |name| schema.is_some_and(|schema| schema.contains_column(name));
+    let mut active = axes
+        .into_iter()
+        .zip(columns)
+        .zip(input.weight_axis_columns)
+        .filter_map(|((axis, column), weight_column)| {
+            let weight_column = match weight_column {
+                Some(MsDataColumn::Corrected) if !has("CORRECTED_DATA") => Some(MsDataColumn::Data),
+                weight_column => weight_column,
+            };
+            weight_column.or_else(|| {
+                axis.is_some_and(MsAxis::is_visibility_math)
+                    .then_some(column)
+            })
+        });
     // PlotMS configures the transform to load all columns for a mixed-column
     // request, so a model uses the corrected or observed weighting when present.
     let all = active
         .next()
         .is_some_and(|first| active.any(|column| column != first));
-    let schema = ms.main_table().schema();
-    let has = |name| all && schema.is_some_and(|schema| schema.contains_column(name));
     columns.map(|column| {
         let column = match column {
             MsDataColumn::Data => OptionalMainColumn::Data,
@@ -67,7 +90,12 @@ pub(super) fn channel_weight_kinds(
             MsDataColumn::Model => OptionalMainColumn::ModelData,
             _ => return WeightKind::Unit,
         };
-        visibility_weight_kind(column, has("DATA"), has("CORRECTED_DATA"), false)
+        visibility_weight_kind(
+            column,
+            all && has("DATA"),
+            all && has("CORRECTED_DATA"),
+            false,
+        )
     })
 }
 

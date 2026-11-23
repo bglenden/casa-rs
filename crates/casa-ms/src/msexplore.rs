@@ -2500,6 +2500,7 @@ struct PlotMsInput<'a> {
     models: Option<&'a HashMap<usize, ArrayValue>>,
     x_data_column: Option<MsDataColumn>,
     secondary_y_data_column: Option<MsDataColumn>,
+    weight_axis_columns: [Option<MsDataColumn>; 3],
     prefer_float_data: bool,
 }
 
@@ -2714,6 +2715,7 @@ pub(crate) fn build_calibrated_plotms_payload(
         models: None,
         x_data_column: calibration.x_data_column,
         secondary_y_data_column: None,
+        weight_axis_columns: [None; 3],
         prefer_float_data: false,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
@@ -2726,6 +2728,7 @@ fn build_uncalibrated_plotms_payload(
     secondary_y_data_column: Option<MsDataColumn>,
     prefer_float_data: bool,
     load_models: Option<cli::PlotMsModelLoader>,
+    weight_axis_columns: [Option<MsDataColumn>; 3],
 ) -> Result<MsPlotPayload, String> {
     let selected = crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
         .map_err(|error| error.to_string())?;
@@ -2758,6 +2761,7 @@ fn build_uncalibrated_plotms_payload(
         models: models.as_ref(),
         x_data_column,
         secondary_y_data_column,
+        weight_axis_columns,
         prefer_float_data,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
