@@ -68,6 +68,8 @@ struct Frame {
     source_velocity: Option<f64>,
 }
 
+const MIN_SOURCE_VELOCITY_M_PER_S: f64 = 1e-6;
+
 impl Plan {
     pub(super) fn new(
         input: &MeasurementSet,
@@ -394,6 +396,7 @@ impl Window {
             .transpose()?;
         let source_shift = conversion
             .and_then(|target| target.source_velocity)
+            .filter(|velocity| velocity.abs() > MIN_SOURCE_VELOCITY_M_PER_S)
             .map(|velocity| radial_shift(-velocity));
         let into_frame = |frequency| {
             converted_frame
@@ -649,7 +652,7 @@ impl Frame {
                 .attached_radial_velocity(time, field)
                 .map_err(ms_error)?
                 .map(|velocity| velocity.ms())
-                .filter(|velocity| velocity.abs() > 1e-6)
+                .filter(|velocity| velocity.abs() > MIN_SOURCE_VELOCITY_M_PER_S)
                 .map_or(0., |velocity| velocity - 2. * offset)
         } else {
             0.
