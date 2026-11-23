@@ -209,6 +209,19 @@ or `--implementation casa` reruns one side. The runner uses the normal native
 Python task entry point and keeps each implementation's fixture copy and
 products isolated. The output directory retains logs and JUnit results.
 
+**Upstream CASA image and coordsys tool suites.** The 12 Python modules from
+CASA 6.7.6.14 can run through the public Python tools with the same runner
+isolation and result reports:
+
+```bash
+CASA_PYTHON tools/casa-compat/upstream_image_tool_suite.py coordsys \
+  --casatestdata /Volumes/home/casatestdata --out target/upstream-image-tool-tests
+```
+
+Use `--help` to list suite names and `--only` to select individual tests.
+The casa-rs run replaces both `image` and `coordsys` so the upstream tests
+can check the interaction between tools as well as standalone calls.
+
 **Upstream CASA MeasurementSet task suites.** The same runner supports the
 imported MeasurementSet suites, with installed CASA 6.7.6.14 as the control.
 
