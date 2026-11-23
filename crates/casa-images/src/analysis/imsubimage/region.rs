@@ -563,6 +563,17 @@ fn parse_crtf_spectral_range(
     axis_len: usize,
     text_origin: Option<&CoordinateSystem>,
 ) -> Result<Vec<usize>, ImageError> {
+    let [first, last] = crtf_spectral_bounds(val, coords, spec_axis, axis_len, text_origin)?;
+    Ok((first..=last).collect())
+}
+
+fn crtf_spectral_bounds(
+    val: &str,
+    coords: &CoordinateSystem,
+    spec_axis: usize,
+    axis_len: usize,
+    text_origin: Option<&CoordinateSystem>,
+) -> Result<[usize; 2], ImageError> {
     let inner = val
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
@@ -586,7 +597,20 @@ fn parse_crtf_spectral_range(
             "CRTF spectral range [{inner}] selects no channels in 0..{axis_len}"
         )));
     }
-    Ok((lo as usize..=hi as usize).collect())
+    Ok([lo as usize, hi as usize])
+}
+
+fn channel_position(text: &str) -> Option<&str> {
+    ["channel", "chan", "pix"]
+        .into_iter()
+        .find_map(|unit| text.strip_suffix(unit))
+        .map(str::trim)
+}
+
+fn nearest_channel(pixel: f64) -> isize {
+    // Match the LCBox intersection at the lower edge: conversion to a
+    // signed integer truncates the shifted position toward zero.
+    (pixel + 0.5) as isize
 }
 
 fn parse_spectral_endpoint(
@@ -597,11 +621,8 @@ fn parse_spectral_endpoint(
 ) -> Result<isize, ImageError> {
     let lower = text.trim().to_ascii_lowercase();
     let pixel =
-        if let Some(ch_str) = lower
-            .strip_suffix("chan")
-            .or_else(|| lower.strip_suffix("pix"))
-        {
-            Some(ch_str.trim().parse::<f64>().map_err(|e| {
+        if let Some(position) = channel_position(&lower) {
+            Some(position.parse::<f64>().map_err(|e| {
                 ImageError::InvalidMetadata(format!("invalid channel {text:?}: {e}"))
             })?)
         } else {
@@ -610,7 +631,7 @@ fn parse_spectral_endpoint(
     if let Some(pixel) = pixel
         && text_origin.is_none()
     {
-        return Ok(pixel.round() as isize);
+        return Ok(nearest_channel(pixel));
     }
     if let Some(origin) = text_origin {
         let origin = spectral_coordinate(origin)?;
@@ -625,7 +646,7 @@ fn parse_spectral_endpoint(
                 .map_err(|error| ImageError::InvalidMetadata(error.to_string()))?,
         };
         let world = input.value_from_hz(hz)?;
-        return Ok(input.to_pixel(&[world])?[0].round() as isize);
+        return Ok(nearest_channel(input.to_pixel(&[world])?[0]));
     }
     let q = Quantity::read(text.trim())
         .map_err(|e| ImageError::InvalidMetadata(format!("invalid CRTF range {text:?}: {e}")))?;
@@ -638,7 +659,7 @@ fn parse_spectral_endpoint(
         ));
     };
     let world = spectral.value_from_hz(q.get_si_value())?;
-    Ok(spectral.to_pixel(&[world])?[0].round() as isize)
+    Ok(nearest_channel(spectral.to_pixel(&[world])?[0]))
 }
 
 fn spectral_coordinate(coordinates: &CoordinateSystem) -> Result<&SpectralCoordinate, ImageError> {

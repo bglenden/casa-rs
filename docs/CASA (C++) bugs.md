@@ -5012,6 +5012,14 @@ wide. casa-rs follows this, measured with CASA 6.7.6.14 on
 for 20 ranges, in the unit test
 `compile::domains::tests::a_spectral_range_masks_the_channels_casa_masks`.
 
+## Explicit channel-zero range can terminate Python
+
+On a `[3, 4, 8]` image, CASA 6.7.6.14 can terminate with SIGSEGV
+when `image.collapse("mean", axes=2, chans="range=[0pix,0pix]")`
+reads the spectral bounds. `AnnotationBase::setFrequencyLimits` treats two
+numeric zeros as an absent range, while the caller indexes both bounds.
+Casa-rs selects channel zero for the explicitly unit-bearing range.
+
 ## A mask string of several lines is an empty mask in `tclean`
 
 - Date noted: 2026-11-03
