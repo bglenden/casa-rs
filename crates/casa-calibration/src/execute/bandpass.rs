@@ -249,6 +249,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bandpass_weights_use_float_full_band_power_for_each_receptor() {
+        let solution = |amplitudes: [f32; 8]| {
+            Arc::new(CalibrationGrid::Complex(GainGrid {
+                receptor_count: 2,
+                channel_count: 4,
+                values: ArrayD::from_shape_vec(
+                    IxDyn(&[2, 4]),
+                    amplitudes
+                        .into_iter()
+                        .map(|amplitude| Complex32::new(amplitude, 0.))
+                        .collect(),
+                )
+                .unwrap(),
+                flags: ArrayD::from_elem(IxDyn(&[2, 4]), false),
+            }))
+        };
+        let first = solution([4096., 1., 1., 1., 2., 2., 2., 2.]);
+        let second = solution([1., 1., 1., 1., 3., 3., 3., 3.]);
+        let mut powers = PowerCache::default();
+        assert_eq!(
+            powers.factors(0, (0, &first), (1, &second), &[5, 6, 7, 8]),
+            Some(vec![4_194_304., 37_748_736., 4., 36.])
+        );
+    }
+
+    #[test]
     fn constant_wide_bandpass_shares_payload_and_resampling_across_times() {
         check_constant_wide_table_shares_payload(None, 2.);
     }
