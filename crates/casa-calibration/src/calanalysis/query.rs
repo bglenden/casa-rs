@@ -11,7 +11,10 @@ use casa_ms::selection::{
 use super::*;
 use crate::constants::COL_SPECTRAL_WINDOW_ID;
 
+mod fit;
 mod series;
+
+pub use fit::CalAnalysisFit;
 
 /// CASA's common selection and conversion arguments for `get` and `fit`.
 #[derive(Debug, Clone, Copy)]

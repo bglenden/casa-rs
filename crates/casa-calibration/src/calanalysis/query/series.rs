@@ -6,6 +6,7 @@ use std::f64::consts::{PI, TAU};
 use casa_provider_contracts::CasaValue;
 use num_complex::Complex64;
 
+use super::fit::FitOptions;
 use super::*;
 use crate::constants::{COL_CPARAM, COL_FLAG, COL_FPARAM, COL_PARAMERR};
 
@@ -59,6 +60,26 @@ impl CalAnalysis {
     /// # Errors
     /// Invalid selector or unreadable calibration metadata and data.
     pub fn get(&self, request: CalAnalysisQuery<'_>) -> Result<CasaValue, String> {
+        self.records(request, None)
+    }
+
+    /// Fit each selected series and return its data, polynomial and statistics.
+    /// Invalid individual fits retain their input series and an empty fit record.
+    /// # Errors
+    /// Invalid selector, fitting options, or unreadable calibration data.
+    pub fn fit(
+        &self,
+        request: CalAnalysisQuery<'_>,
+        options: CalAnalysisFit<'_>,
+    ) -> Result<CasaValue, String> {
+        self.records(request, Some(FitOptions::parse(options)?))
+    }
+
+    fn records(
+        &self,
+        request: CalAnalysisQuery<'_>,
+        fit: Option<FitOptions>,
+    ) -> Result<CasaValue, String> {
         let component = self.component(request.amplitude_or_phase)?;
         let iteration = match initial(request.axis, 'T') {
             'T' => Iteration::Time,
@@ -83,6 +104,7 @@ impl CalAnalysis {
                             (iteration, along, fixed),
                             samples,
                             request,
+                            fit,
                         )?;
                         records.push((records.len().to_string(), series));
                         Ok(())
@@ -105,7 +127,7 @@ impl CalAnalysis {
     }
 }
 
-fn initial(value: &str, default: char) -> char {
+pub(super) fn initial(value: &str, default: char) -> char {
     value
         .trim()
         .chars()
@@ -253,6 +275,7 @@ fn build_record(
     (iteration, abscissa, coordinate): (Iteration, &[f64], f64),
     samples: &[Sample],
     query: CalAnalysisQuery<'_>,
+    fit: Option<FitOptions>,
 ) -> Result<CasaValue, String> {
     let (x, fixed) = match iteration {
         Iteration::Time => ("frequency", "time"),
@@ -312,6 +335,9 @@ fn build_record(
             entries.push(("jumpMax", CasaValue::float(query.jump_max)));
         }
         Component::Real => (),
+    }
+    if let Some(fit) = fit {
+        entries.extend(fit.record(abscissa, &values, &errors, &mut flags));
     }
     entries.push(("value", CasaValue::float64_vector(values)));
     entries.push(("valueErr", CasaValue::float64_vector(errors)));

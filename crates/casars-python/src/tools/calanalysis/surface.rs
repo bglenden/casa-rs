@@ -43,7 +43,7 @@ const METHODS: &[Method] = &[
     method("close", &[], R::Bool, S::Implemented),
     method("feed", &[], R::Texts, S::Implemented),
     method("field", NAMES, R::Texts, S::Implemented),
-    method("fit", FIT, R::Record, S::NotYetImplemented),
+    method("fit", FIT, R::Record, S::Implemented),
     method("freq", &[], R::Record, S::Implemented),
     method("get", &GET, R::Record, S::Implemented),
     method("msname", &[], R::Text, S::Implemented),

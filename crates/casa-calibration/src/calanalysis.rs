@@ -12,7 +12,7 @@ use crate::constants::{
 };
 
 mod query;
-pub use query::CalAnalysisQuery;
+pub use query::{CalAnalysisFit, CalAnalysisQuery};
 
 /// A named axis of an attached calibration table.
 #[derive(Clone, Copy)]
