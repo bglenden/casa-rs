@@ -386,6 +386,13 @@ pub enum ArrayValue {
 }
 
 impl ArrayValue {
+    /// Checked logical heap bytes owned by this array, including its
+    /// element storage and any dynamic shape and stride words.
+    #[doc(hidden)]
+    pub fn retained_heap_bytes(&self) -> Option<usize> {
+        array_retained_heap_bytes(self)
+    }
+
     /// Returns the [`PrimitiveType`] tag for the elements of this array.
     ///
     /// The result is determined entirely by the active variant.

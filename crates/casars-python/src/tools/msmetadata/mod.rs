@@ -42,6 +42,7 @@ pub(crate) struct PyMsMetadata {
 struct Attachment {
     source: Source,
     max_cache_bytes: usize,
+    spectral_windows: Option<usize>,
     snapshot: Option<Arc<MetadataSnapshot>>,
     scans: Option<ScanIndex>,
     scan_source: Weak<MetadataSnapshot>,
@@ -67,6 +68,7 @@ impl Attachment {
             source,
             // CASA measures its metadata cache in decimal megabytes.
             max_cache_bytes: (maxcache * 1e6) as usize,
+            spectral_windows: None,
             snapshot: None,
             scans: None,
             scan_source: Weak::new(),
@@ -74,14 +76,38 @@ impl Attachment {
     }
 
     fn snapshot(&mut self) -> MsResult<Arc<MetadataSnapshot>> {
-        let snapshot = match &self.source {
-            Source::Open(snapshot) => return Ok(Arc::clone(snapshot)),
-            Source::Linked(link) => link.snapshot(self.snapshot.as_ref())?,
-        };
-        if self.max_cache_bytes > 0 {
-            self.snapshot = Some(Arc::clone(&snapshot));
+        match &self.source {
+            Source::Open(snapshot) => Ok(Arc::clone(snapshot)),
+            Source::Linked(link) => link.snapshot(self.snapshot.as_ref()),
         }
-        Ok(snapshot)
+    }
+
+    fn retain_snapshot(&mut self, snapshot: Arc<MetadataSnapshot>) -> MsResult<()> {
+        if let Source::Linked(link) = &self.source {
+            link.verify_directory()?;
+            let scans = self.scans.as_ref().map_or(0, ScanIndex::cached_bytes);
+            let fits = self.max_cache_bytes > 0
+                && snapshot
+                    .ms
+                    .retained_cell_cache_bytes()
+                    .is_some_and(|bytes| {
+                        let retained =
+                            bytes.saturating_add(std::mem::size_of::<MetadataSnapshot>());
+                        retained <= self.max_cache_bytes.saturating_sub(scans)
+                    });
+            self.snapshot = fits.then_some(snapshot);
+        }
+        Ok(())
+    }
+
+    fn query_snapshot<T>(
+        &mut self,
+        query: impl FnOnce(&MeasurementSet) -> MsResult<T>,
+    ) -> MsResult<T> {
+        let snapshot = self.snapshot()?;
+        let result = query(&snapshot.ms);
+        self.retain_snapshot(snapshot)?;
+        result
     }
 }
 
@@ -111,7 +137,7 @@ impl PyMsMetadata {
         py: Python<'_>,
         query: impl FnOnce(&MeasurementSet) -> MsResult<T> + Send,
     ) -> PyResult<T> {
-        self.with_attachment(py, |attached| query(&attached.snapshot()?.ms))
+        self.with_attachment(py, |attached| attached.query_snapshot(query))
     }
 
     fn with_scan_index<T: Send>(
@@ -126,16 +152,18 @@ impl PyMsMetadata {
                 attached.scans = None;
                 attached.scan_source = Arc::downgrade(&snapshot);
             }
-            if let Some(index) = &attached.scans {
-                return query(ms, index);
-            }
-            let index = ScanIndex::read(ms)?;
-            if index.cached_bytes() <= attached.max_cache_bytes {
-                let index = attached.scans.insert(index);
+            let result = if let Some(index) = &attached.scans {
                 query(ms, index)
             } else {
-                query(ms, &index)
-            }
+                let index = ScanIndex::read(ms)?;
+                if index.cached_bytes() <= attached.max_cache_bytes {
+                    query(ms, attached.scans.insert(index))
+                } else {
+                    query(ms, &index)
+                }
+            };
+            attached.retain_snapshot(snapshot)?;
+            result
         })
     }
 

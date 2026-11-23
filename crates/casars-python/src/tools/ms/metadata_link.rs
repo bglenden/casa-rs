@@ -2,6 +2,7 @@
 //! Read-only metadata attached to an MS tool's current selection.
 
 use std::collections::HashMap;
+use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -24,7 +25,9 @@ struct State {
 pub(in crate::tools) struct MetadataLink {
     path: PathBuf,
     name: PathBuf,
+    directory: Metadata,
     original_rows: usize,
+    live_concatenation: bool,
     state: Mutex<State>,
 }
 
@@ -51,7 +54,9 @@ impl MetadataLink {
         Self {
             path: attached.path.clone(),
             name: attached.name.clone(),
+            directory: attached.directory.clone(),
             original_rows: attached.original_rows,
+            live_concatenation: matches!(attached.part_names, TablePartNames::Concatenation { .. }),
             state: Mutex::new(State {
                 selected: attached.selected_rows.as_deref().map(Arc::from),
                 plain_rows: attached
@@ -68,6 +73,7 @@ impl MetadataLink {
     }
 
     pub(in crate::tools) fn row_count(&self) -> MsResult<usize> {
+        self.verify_directory()?;
         let state = self
             .state
             .lock()
@@ -75,19 +81,40 @@ impl MetadataLink {
         if let Some(rows) = &state.selected {
             return Ok(rows.len());
         }
-        match &state.plain_rows {
-            Some(rows) => Ok(rows.count(&self.path)?),
-            None => Ok(self.original_rows),
-        }
+        let rows = match &state.plain_rows {
+            Some(rows) => rows.count(&self.path)?,
+            None if self.live_concatenation => {
+                Table::open(TableOptions::new(&self.path))?.row_count()
+            }
+            None => self.original_rows,
+        };
+        self.verify_directory()?;
+        Ok(rows)
     }
 
     pub(in crate::tools) fn spectral_window_count(&self) -> MsResult<usize> {
+        self.verify_directory()?;
         // A MAIN row selection leaves its linked spectral-window table intact.
         let main = Table::open(TableOptions::new(&self.path))?;
         let paths = MeasurementSet::linked_subtable_paths(&main, SubtableId::SpectralWindow)?;
-        paths.into_iter().try_fold(0, |count, path| {
-            Ok(count + Table::open(TableOptions::new(path))?.row_count())
-        })
+        let mut count = 0;
+        for path in paths {
+            count += Table::open(TableOptions::new(path))?.row_count();
+        }
+        self.verify_directory()?;
+        Ok(count)
+    }
+
+    pub(in crate::tools) fn verify_directory(&self) -> MsResult<()> {
+        let valid =
+            fs::metadata(&self.path).is_ok_and(|current| same_directory(&self.directory, &current));
+        if valid {
+            return Ok(());
+        }
+        Err(MsError::InvalidInput(format!(
+            "original MeasurementSet attachment at {} is unavailable or has been replaced",
+            self.name.display()
+        )))
     }
 
     pub(super) fn set_selected(&self, selected: Option<Arc<[usize]>>) -> MsResult<()> {
@@ -104,6 +131,7 @@ impl MetadataLink {
         &self,
         cached: Option<&Arc<MetadataSnapshot>>,
     ) -> MsResult<Arc<MetadataSnapshot>> {
+        self.verify_directory()?;
         let view = {
             let mut state = self
                 .state
@@ -126,6 +154,7 @@ impl MetadataLink {
             Some(links) => MeasurementSet::open_with_subtable_paths(&view.path, links)?,
             None => MeasurementSet::open(&view.path)?,
         };
+        self.verify_directory()?;
         Ok(Arc::new(MetadataSnapshot {
             ms,
             view: Some(view),
@@ -166,6 +195,25 @@ impl MetadataLink {
     }
 }
 
+fn same_directory(expected: &Metadata, current: &Metadata) -> bool {
+    if !current.is_dir() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        expected.dev() == current.dev() && expected.ino() == current.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        expected
+            .created()
+            .ok()
+            .zip(current.created().ok())
+            .is_some_and(|(expected, current)| expected == current)
+    }
+}
+
 fn contains_concatenation(path: &Path) -> MsResult<bool> {
     let mut path = path.to_path_buf();
     for _ in 0..128 {
@@ -181,15 +229,16 @@ fn contains_concatenation(path: &Path) -> MsResult<bool> {
 }
 
 fn concatenated_subtables(main: &Table, scratch: &Path) -> MsResult<HashMap<SubtableId, PathBuf>> {
-    let mut result = HashMap::new();
-    for &id in SubtableId::ALL_REQUIRED
+    let ids = SubtableId::ALL_REQUIRED
         .iter()
         .chain(SubtableId::ALL_OPTIONAL)
-    {
-        let paths = match MeasurementSet::linked_subtable_paths(main, id) {
-            Ok(paths) => paths,
-            Err(MsError::MissingSubtable(_)) => continue,
-            Err(error) => return Err(error),
+        .copied()
+        .collect::<Vec<_>>();
+    let mut linked = MeasurementSet::linked_subtables(main, &ids)?;
+    let mut result = HashMap::new();
+    for id in ids {
+        let Some(paths) = linked.remove(&id) else {
+            continue;
         };
         let path = if let [path] = paths.as_slice() {
             path.clone()

@@ -322,6 +322,51 @@ impl TableImpl {
         self.retained_owned_metadata_heap_bytes()
     }
 
+    pub(crate) fn retained_cell_cache_bytes(&self) -> Option<usize> {
+        // Metadata readers have no need to retain a fully materialized row store.
+        if self.loaded_rows.get().is_some() {
+            return None;
+        }
+        let mut bytes = 0usize;
+        for column in self
+            .loaded_scalar_columns
+            .values()
+            .filter_map(OnceLock::get)
+        {
+            bytes = bytes.checked_add(
+                column
+                    .capacity()
+                    .checked_mul(size_of::<Option<ScalarValue>>())?,
+            )?;
+            for value in column.iter().flatten() {
+                if let ScalarValue::String(text) = value {
+                    bytes = bytes.checked_add(text.capacity())?;
+                }
+            }
+        }
+        for column in self.loaded_array_columns.values().filter_map(OnceLock::get) {
+            bytes = bytes.checked_add(
+                column
+                    .capacity()
+                    .checked_mul(size_of::<Option<ArrayValue>>())?,
+            )?;
+            for array in column.iter().flatten() {
+                bytes = bytes.checked_add(array.retained_heap_bytes()?)?;
+            }
+        }
+        for column in self.buffered_array_cells.values().filter_map(OnceLock::get) {
+            bytes = bytes.checked_add(
+                column
+                    .capacity()
+                    .checked_mul(size_of::<OnceLock<Option<ArrayValue>>>())?,
+            )?;
+            for array in column.iter().filter_map(OnceLock::get).flatten() {
+                bytes = bytes.checked_add(array.retained_heap_bytes()?)?;
+            }
+        }
+        Some(bytes)
+    }
+
     pub(crate) fn retained_owned_metadata_heap_bytes(&self) -> Option<usize> {
         if self
             .loaded_scalar_columns

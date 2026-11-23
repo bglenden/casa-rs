@@ -146,17 +146,34 @@ impl PyMsMetadata {
     #[pyo3(signature = (includewvr = true), text_signature = "($self, includewvr=True)")]
     fn nspw(&self, py: Python<'_>, includewvr: bool) -> PyResult<usize> {
         self.with_attachment(py, |attached| {
-            if includewvr && let Source::Linked(link) = &attached.source {
-                return link.spectral_window_count();
+            let known = attached.spectral_windows;
+            let (total, excluded) = if includewvr {
+                let total = match &attached.source {
+                    Source::Linked(link) => {
+                        link.verify_directory()?;
+                        match known {
+                            Some(total) => total,
+                            None => link.spectral_window_count()?,
+                        }
+                    }
+                    Source::Open(snapshot) => snapshot.ms.spectral_window()?.row_count(),
+                };
+                (total, 0)
+            } else {
+                attached.query_snapshot(|ms| {
+                    let windows = ms.spectral_window()?;
+                    let total = known.unwrap_or_else(|| windows.row_count());
+                    let excluded = water_vapor_windows(&windows)?
+                        .into_iter()
+                        .filter(|&id| id < total)
+                        .count();
+                    Ok((total, excluded))
+                })?
+            };
+            if total > 0 {
+                attached.spectral_windows = Some(total);
             }
-            let snapshot = attached.snapshot()?;
-            let windows = snapshot.ms.spectral_window()?;
-            Ok(windows.row_count()
-                - if includewvr {
-                    0
-                } else {
-                    water_vapor_windows(&windows)?.len()
-                })
+            Ok(total - excluded)
         })
     }
 

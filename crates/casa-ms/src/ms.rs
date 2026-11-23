@@ -563,6 +563,18 @@ impl MeasurementSet {
         self.subtables.keys().copied().collect()
     }
 
+    /// The bytes retained by lazy cell payloads, or no estimate if a table
+    /// has materialized all of its rows.
+    #[doc(hidden)]
+    pub fn retained_cell_cache_bytes(&self) -> Option<usize> {
+        self.subtables
+            .values()
+            .chain(std::iter::once(&self.main))
+            .try_fold(0usize, |bytes, table| {
+                bytes.checked_add(table.retained_cell_cache_bytes()?)
+            })
+    }
+
     /// The filesystem path, if any.
     pub fn path(&self) -> Option<&Path> {
         self.path.as_deref()

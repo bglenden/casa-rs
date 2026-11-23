@@ -12,6 +12,7 @@ pub(crate) mod surface;
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::Metadata;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -40,6 +41,7 @@ pub(crate) struct PyMsTool {
 struct AttachedMs {
     name: PathBuf,
     path: PathBuf,
+    directory: Metadata,
     main: Table,
     subtables: subtable_queries::Subtables,
     writable: bool,
@@ -57,6 +59,7 @@ struct AttachedMs {
 impl AttachedMs {
     fn open(name: PathBuf, writable: bool, lock: bool, check: bool) -> PyResult<Self> {
         let path = name.canonicalize().map_err(runtime_error)?;
+        let directory = std::fs::metadata(&path).map_err(runtime_error)?;
         let sources =
             casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?;
         let main = Table::open(TableOptions::new(&path)).map_err(runtime_error)?;
@@ -68,6 +71,7 @@ impl AttachedMs {
         let mut attached = Self {
             name,
             path,
+            directory,
             main,
             subtables: subtable_queries::Subtables::default(),
             writable,

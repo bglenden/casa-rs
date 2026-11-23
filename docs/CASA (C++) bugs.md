@@ -10834,7 +10834,17 @@ reset from that attachment and keeps its last selection after the
 parent detaches. It also drops cached scan metadata when its selection
 changes. In CASA, calling `scannumbers()` before selecting scans 3–5
 in `ngc5921_ut.ms` can keep returning all seven scans even though
-`nrows()` reports the selected row count (#1030).
+`nrows()` reports the selected row count. If the original directory
+is removed or replaced, casa-rs reports an unavailable attachment on
+queries that need its data (#1030).
+
+## A Multi-MS metadata count can omit newly published member rows
+
+Open a genuine CASA Multi-MS and obtain its metadata with
+`cachesize=0`. Append a complete row to the last member and close its
+writer. CASA 6.7.6.14's child count can stay at the original total and a
+summary can abort. The casa-rs child counts the published member rows
+and reports the same total in its summary (#1030).
 
 ## Concatenated FIELD tables can hide their ephemerides
 
