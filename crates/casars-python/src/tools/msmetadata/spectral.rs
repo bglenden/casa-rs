@@ -8,7 +8,7 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 use numpy::IntoPyArray;
 use pyo3::prelude::*;
 
-use super::PyMsMetadata;
+use super::{PyMsMetadata, Source};
 use crate::convert::value::CasaValue;
 
 pub(super) fn spw_row(spw: &MsSpectralWindow<'_>, id: i64) -> MsResult<usize> {
@@ -145,14 +145,35 @@ fn channel_resolution(
 impl PyMsMetadata {
     #[pyo3(signature = (includewvr = true), text_signature = "($self, includewvr=True)")]
     fn nspw(&self, py: Python<'_>, includewvr: bool) -> PyResult<usize> {
-        self.with_ms(py, |ms| {
-            let windows = ms.spectral_window()?;
-            let total = windows.row_count();
-            if includewvr {
-                Ok(total)
+        self.with_attachment(py, |attached| {
+            let known = attached.spectral_windows;
+            let (total, excluded) = if includewvr {
+                let total = match &attached.source {
+                    Source::Linked(link) => {
+                        link.verify_directory()?;
+                        match known {
+                            Some(total) => total,
+                            None => link.spectral_window_count()?,
+                        }
+                    }
+                    Source::Open(snapshot) => snapshot.ms.spectral_window()?.row_count(),
+                };
+                (total, 0)
             } else {
-                Ok(total - water_vapor_windows(&windows)?.len())
+                attached.query_snapshot(|ms| {
+                    let windows = ms.spectral_window()?;
+                    let total = known.unwrap_or_else(|| windows.row_count());
+                    let excluded = water_vapor_windows(&windows)?
+                        .into_iter()
+                        .filter(|&id| id < total)
+                        .count();
+                    Ok((total, excluded))
+                })?
+            };
+            if total > 0 {
+                attached.spectral_windows = Some(total);
             }
+            Ok(total - excluded)
         })
     }
 

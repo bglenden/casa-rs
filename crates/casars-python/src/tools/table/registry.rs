@@ -52,6 +52,26 @@ pub(crate) fn prepare_provider_write(path: &Path) -> Result<(), Fail> {
 /// Every tool made in this process that is still alive, with its
 /// `State::id`.
 static TOOLS: Mutex<Vec<(u64, Weak<Mutex<State>>)>> = Mutex::new(Vec::new());
+/// The plain tables reported by tools with a live MeasurementSet attachment.
+static ATTACHMENTS: Mutex<Vec<Weak<Vec<PathBuf>>>> = Mutex::new(Vec::new());
+
+/// The caller retains the returned handle for the lifetime of its attachment.
+pub(crate) fn attach_table_paths(paths: Vec<PathBuf>) -> Arc<Vec<PathBuf>> {
+    let paths = Arc::new(paths);
+    let mut attachments = ATTACHMENTS.lock().unwrap_or_else(PoisonError::into_inner);
+    attachments.retain(|paths| paths.strong_count() > 0);
+    attachments.push(Arc::downgrade(&paths));
+    paths
+}
+
+pub(super) fn attached_table_paths() -> Vec<PathBuf> {
+    let attachments = ATTACHMENTS.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut paths = Vec::new();
+    for attachment in attachments.iter().filter_map(Weak::upgrade) {
+        paths.extend(attachment.iter().cloned());
+    }
+    paths
+}
 
 /// Per-table notification of metadata writes in this process.
 /// Weak references keep the registry from retaining closed tables.

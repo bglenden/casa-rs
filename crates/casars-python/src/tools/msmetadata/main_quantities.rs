@@ -9,10 +9,10 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{ArrayView2, Ix2};
 use pyo3::prelude::*;
 
-use super::PyMsMetadata;
 use super::main_scalar_batches::main_scalar_batches;
 use super::names::checked_row;
 use super::scan_index::Time;
+use super::{PyMsMetadata, Source};
 use crate::convert::value::CasaValue;
 use crate::tools::{LogLine, emit};
 
@@ -364,13 +364,20 @@ fn effective_exposure(ms: &MeasurementSet) -> MsResult<CasaValue> {
 impl PyMsMetadata {
     #[pyo3(signature = (autoc = true, flagged = true), text_signature = "($self, autoc=True, flagged=True)")]
     fn nrows(&self, py: Python<'_>, autoc: bool, flagged: bool) -> PyResult<f64> {
+        if flagged && autoc {
+            return self.with_attachment(py, |attached| {
+                let count = match &attached.source {
+                    Source::Open(snapshot) => snapshot.ms.row_count(),
+                    Source::Linked(link) => link.row_count()?,
+                };
+                Ok(count as f64)
+            });
+        }
         self.with_ms(py, |ms| {
-            if !flagged {
-                unflagged_rows(ms, autoc)
-            } else if autoc {
-                Ok(ms.row_count() as f64)
-            } else {
+            if flagged {
                 cross_rows(ms).map(|count| count as f64)
+            } else {
+                unflagged_rows(ms, autoc)
             }
         })
     }

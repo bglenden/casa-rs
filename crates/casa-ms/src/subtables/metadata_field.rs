@@ -12,7 +12,7 @@ use casa_types::quanta::casacore::casacore_unit;
 use casa_types::quanta::{Dimension, UnitDim};
 use casa_types::{ArrayValue, ScalarValue, Value};
 
-use crate::ephemeris::find_ephemeris_in_field;
+use crate::ephemeris::{PhaseCentreEphemerisError, find_ephemeris_in_field};
 use crate::{MeasurementSet, MsError, MsResult, SubTable, open_measures_runtime};
 
 use super::MsField;
@@ -160,7 +160,18 @@ impl MsField<'_> {
         let field_path = self.table().path().ok_or_else(|| {
             MsError::InvalidInput("field ephemeris requires an on-disk MeasurementSet".into())
         })?;
-        find_ephemeris_in_field(field_path, id)
+        let result = find_ephemeris_in_field(field_path, id);
+        if matches!(
+            result,
+            Err(PhaseCentreEphemerisError::MissingEphemerisTable { .. })
+        ) && let Some(source) = self.table().physical_row_path(row)?
+            && source != field_path
+        {
+            return find_ephemeris_in_field(&source, id)
+                .map(Some)
+                .map_err(|error| MsError::InvalidInput(error.to_string()));
+        }
+        result
             .map(Some)
             .map_err(|error| MsError::InvalidInput(error.to_string()))
     }

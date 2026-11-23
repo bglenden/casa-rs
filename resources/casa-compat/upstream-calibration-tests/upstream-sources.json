@@ -56,10 +56,20 @@
       "sha256": "b67b9a25f52a7d0143699943d49c985b25940c4828e96b8717647c73733130fa",
       "size": 5328
     },
+    "test_task_smoothcal.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_smoothcal.py",
+      "sha256": "8b81cd8a37836145534d5dc94f6cf990fdf0fdd5f6f1dd81b5dae8f5eeca40d1",
+      "size": 8722
+    },
     "test_tool_calanalysis.py": {
       "upstream_path": "casatools/tests/tools/calanalysis/test_tool_calanalysis.py",
       "sha256": "1ec89b7f1ec0ff047190827517608cbe8948064f3d84a6726a68ec9b4f32c7f7",
       "size": 10353
+    },
+    "test_tool_calibrater.py": {
+      "upstream_path": "casatools/tests/tools/calibrater/test_tool_calibrater.py",
+      "sha256": "961975beaeb9baef56ed6aefa052756aeffc1aebeede564d27118a04faf9d27b",
+      "size": 21272
     }
   }
 }

@@ -49,7 +49,7 @@ impl PyMsTool {
                 selected.retain(|row| previous.binary_search(row).is_ok());
             }
             let nonempty = !selected.is_empty();
-            attached.selected_rows = Some(selected);
+            attached.set_selected_rows(Some(selected))?;
             Ok(nonempty)
         })
     }
