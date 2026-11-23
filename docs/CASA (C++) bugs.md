@@ -10891,16 +10891,6 @@ casa-rs keeps the public link name and resolves reads and writes against
 the MS captured at open, so changing the link cannot redirect an
 attached operation (#1030).
 
-## An MS opened read-only can start writing through another handle
-
-In CASA 6.7.6.14, open an MS with `ms.open(path, nomodify=True)` and
-call `hanningsmooth("data")`. It initially returns `False` and asks for
-`nomodify=False`. Open and close the same path for update with a second
-`ms` or `table` tool. The first handle now reports `iswritable() == True`
-and `hanningsmooth("data")` writes to MAIN, even after the writer closed.
-casa-rs retains the requested access mode per handle. A read-only handle
-continues to report `False` and refuses writes (#1030).
-
 ## An invalid FIELD direction column can return the north celestial pole
 
 In CASA 6.7.6.14, call `ms.getfielddirmeas("phase")` on a valid MS.
@@ -10915,3 +10905,13 @@ DATA_DESCRIPTION and SPECTRAL_WINDOW, then call `getspectralwindowinfo()`.
 The scalar range returns an empty record and the summary indexes a
 missing field, raising an internal assertion error. casa-rs returns an
 empty dictionary because no data descriptions are used (#1030).
+
+## An MS opened read-only can start writing through another handle
+
+In CASA 6.7.6.14, open an MS with `ms.open(path, nomodify=True)` and
+call `hanningsmooth("data")`. It initially returns `False` and asks for
+`nomodify=False`. Open and close the same path for update with a second
+`ms` or `table` tool. The first handle now reports `iswritable() == True`
+and `hanningsmooth("data")` writes to MAIN, even after the writer closed.
+casa-rs retains the requested access mode per handle. A read-only handle
+continues to report `False` and refuses writes (#1030).

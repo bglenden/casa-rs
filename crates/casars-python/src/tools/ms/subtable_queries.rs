@@ -32,16 +32,17 @@ struct Subtable(RefCell<Option<SubtableSnapshot>>);
 
 struct SubtableSnapshot {
     tables: Vec<Table>,
-    publication: Option<(TableFiles, TableStamp)>,
+    publication: Vec<(TableFiles, TableStamp)>,
 }
 
 impl Subtable {
     fn read(&self, main: &Table, id: SubtableId) -> MsResult<Ref<'_, [Table]>> {
         let current = self.0.borrow().as_ref().is_some_and(|snapshot| {
-            snapshot
-                .publication
-                .as_ref()
-                .is_some_and(|(files, stamp)| files.stamp() == Some(*stamp))
+            snapshot.publication.len() == snapshot.tables.len()
+                && snapshot
+                    .publication
+                    .iter()
+                    .all(|(files, stamp)| files.stamp() == Some(*stamp))
         });
         if !current {
             *self.0.borrow_mut() = Some(Self::open(main, id)?);
@@ -57,20 +58,15 @@ impl Subtable {
 
     fn open(main: &Table, id: SubtableId) -> MsResult<SubtableSnapshot> {
         let paths = MeasurementSet::linked_subtable_paths(main, id)?;
-        let single = paths.len() == 1;
         let mut tables = Vec::with_capacity(paths.len());
-        let mut publication = None;
+        let mut publication = Vec::with_capacity(paths.len());
         for path in paths {
-            let candidate = if single {
-                let files = TableFiles::new(&path);
-                files.stamp().map(|stamp| (files, stamp))
-            } else {
-                None
-            };
+            let files = TableFiles::new(&path);
+            let stamp = files.stamp();
             let table = Table::open(TableOptions::new(&path))?;
             // Reference, concatenated, or virtual columns may see changes
             // that do not touch this table's control and sync files.
-            if candidate.is_some()
+            if let Some(stamp) = stamp
                 && !table.is_memory()
                 && table.schema().is_some_and(|schema| {
                     schema
@@ -83,7 +79,7 @@ impl Subtable {
                     TablePartNames::Plain(_)
                 )
             {
-                publication = candidate;
+                publication.push((files, stamp));
             }
             tables.push(table);
         }

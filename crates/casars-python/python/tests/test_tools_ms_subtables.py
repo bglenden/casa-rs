@@ -177,6 +177,16 @@ def test_ms_reads_member_subtables_from_casa_multi_ms(native_dataset, tmp_path, 
         second = ms.getfielddirmeas(fieldid=1)
         if explicit_field:
             assert second["m0"]["value"] == pytest.approx(0.731, abs=1e-13)
+            member = dataset / "SUBMSS" / parts[1].name / "FIELD"
+            changed = values.copy()
+            changed[0, 0] = 0.689
+            assert table.open(str(member), nomodify=False)
+            assert table.putcell("PHASE_DIR", 0, changed)
+            assert table.done()
+            assert ms.getfielddirmeas(fieldid=1)["m0"]["value"] == pytest.approx(0.689, abs=1e-13)
+            assert table.open(str(member), nomodify=False)
+            assert table.putcell("PHASE_DIR", 0, values)
+            assert table.done()
         else:
             np.testing.assert_array_equal(second, np.empty(0, dtype=bool), strict=True)
         info = ms.getspectralwindowinfo()
