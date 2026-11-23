@@ -197,6 +197,32 @@ def test_ms_selection_time_defaults_and_selector_grammars(two_spws_dataset):
         assert ms.done()
 
 
+def test_ms_time_only_selection_uses_first_unflagged_reference_row(native_dataset, tmp_path):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    times = table.getcol("TIME")
+    first, second = np.unique(times)[:2]
+    assert table.putcol("FLAG_ROW", times == first)
+    reference = tmp_path / "time-selection.ms"
+    flagged = np.flatnonzero(times == first)[:3]
+    valid = np.flatnonzero(times == second)[:2]
+    view = table.selectrows(np.concatenate((flagged, valid[::-1])), str(reference))
+    assert view.done()
+    assert table.done()
+
+    for api in (casa, tools):
+        ms = api.ms()
+        assert ms.open(str(reference))
+        assert ms.msselect({"time": "*"}, onlyparse=True)
+        assert ms.nrow(True) == 5
+        assert ms.msselect({"time": "*"})
+        assert ms.nrow(True) == 2
+        assert ms.msselect({"taql": f"TIME == {second!s}"})
+        assert ms.nrow(True) == 2
+        assert ms.done()
+
+
 def test_ms_selection_string_and_record_argument_forms(native_dataset, monkeypatch):
     casa = pinned_casa()
     dataset = str(native_dataset)
