@@ -671,7 +671,7 @@ fn for_each_apply_row(
         .iter()
         .map(|name| ms.main_table().column_accessor(name))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(&read_error)?;
+        .map_err(read_error)?;
     let data_index = (!forward_model).then_some(1);
     let sigma_slots = columns
         .iter()
@@ -692,7 +692,7 @@ fn for_each_apply_row(
                 .iter()
                 .map(|column| column.array_cells_owned_uncached(&indices))
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(&read_error)?;
+                .map_err(read_error)?;
         }
         let correlation_types = correlation_types_by_ddid
             .get(&row.data_desc_id)
