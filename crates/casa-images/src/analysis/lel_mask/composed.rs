@@ -3,7 +3,6 @@
 //! Read-only section access to saved expressions and virtual images used in masks.
 
 use std::collections::HashSet;
-use std::fs;
 use std::sync::Arc;
 
 use casa_tables::{LockType, lexical_absolute};
