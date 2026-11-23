@@ -242,11 +242,11 @@ pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, Sto
                 }
             }
 
-            let asdm = super::asdm_stman::Managers::open(
+            let asdm = super::asdm_stman::Managers::from_bindings(
                 path.parent().unwrap_or_else(|| Path::new(".")),
                 &column_set.data_managers,
                 nrrow.max(column_set.nrrow),
-            )?;
+            );
             Ok(TableDatResult::Plain(TableDatContents {
                 nrrow,
                 big_endian,

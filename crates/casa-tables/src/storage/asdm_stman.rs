@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use casa_aipsio::{AipsIo, AipsOpenOption, ByteOrder};
 use casa_types::{ArrayValue, Complex32, PrimitiveType};
@@ -17,39 +17,78 @@ use super::table_control::DataManagerEntry;
 pub(crate) const TYPE: &str = "AsdmStMan";
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct Managers(HashMap<u32, Arc<Index>>);
+pub(super) struct Managers(HashMap<u32, Arc<Manager>>);
+
+#[derive(Debug)]
+struct Manager {
+    path: PathBuf,
+    rows: u64,
+    index: OnceLock<Result<Index, String>>,
+}
+
+impl Manager {
+    fn index(&self) -> Result<&Index, StorageError> {
+        self.index
+            .get_or_init(|| Index::open(&self.path, self.rows).map_err(|error| error.to_string()))
+            .as_ref()
+            .map_err(|error| invalid(format!("read index {}: {error}", self.path.display())))
+    }
+}
 
 impl Managers {
-    pub(super) fn open(
+    pub(super) fn from_bindings(
         directory: &Path,
         managers: &[DataManagerEntry],
         rows: u64,
-    ) -> Result<Self, StorageError> {
-        managers
-            .iter()
-            .filter(|manager| manager.type_name == TYPE)
-            .map(|manager| {
-                let path = directory.join(format!("table.f{}asdmindex", manager.seq_nr));
-                let index = Index::open(&path, rows)?;
-                Ok((manager.seq_nr, Arc::new(index)))
-            })
-            .collect::<Result<HashMap<_, _>, _>>()
-            .map(Self)
+    ) -> Self {
+        Self(
+            managers
+                .iter()
+                .filter(|manager| manager.type_name == TYPE)
+                .map(|manager| {
+                    let path = directory.join(format!("table.f{}asdmindex", manager.seq_nr));
+                    (
+                        manager.seq_nr,
+                        Arc::new(Manager {
+                            path,
+                            rows,
+                            index: OnceLock::new(),
+                        }),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    pub(super) fn retain_indexes(&self) -> Result<(), StorageError> {
+        self.0
+            .values()
+            .try_for_each(|manager| manager.index().map(|_| ()))
     }
 
     pub(super) fn get(&self, sequence: u32) -> Result<&Index, StorageError> {
         self.0
             .get(&sequence)
-            .map(Arc::as_ref)
-            .ok_or_else(|| invalid(format!("missing index for manager {sequence}")))
+            .ok_or_else(|| invalid(format!("missing index for manager {sequence}")))?
+            .index()
     }
 
     pub(super) fn retained_heap_bytes(&self) -> Option<usize> {
         self.0.values().try_fold(
             self.0
                 .capacity()
-                .checked_mul(std::mem::size_of::<(u32, Arc<Index>)>())?,
-            |bytes, index| bytes.checked_add(index.retained_heap_bytes()?),
+                .checked_mul(std::mem::size_of::<(u32, Arc<Manager>)>())?,
+            |bytes, manager| {
+                let index_bytes = match manager.index.get() {
+                    Some(Ok(index)) => index.retained_heap_bytes()?,
+                    Some(Err(error)) => error.capacity(),
+                    None => 0,
+                };
+                bytes
+                    .checked_add(std::mem::size_of::<Manager>())?
+                    .checked_add(manager.path.capacity())?
+                    .checked_add(index_bytes)
+            },
         )
     }
 }
@@ -63,6 +102,8 @@ pub(super) struct Index {
 
 impl Index {
     fn open(path: &Path, rows: u64) -> Result<Self, StorageError> {
+        #[cfg(test)]
+        tests::INDEX_OPENS.with(|count| count.set(count.get() + 1));
         let size = std::fs::metadata(path)?.len();
         let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
         let version = io.getstart(TYPE)?;
@@ -107,12 +148,10 @@ impl Index {
     }
 
     fn retained_heap_bytes(&self) -> Option<usize> {
-        let fixed = std::mem::size_of::<Self>()
-            .checked_add(
-                self.descriptors
-                    .capacity()
-                    .checked_mul(std::mem::size_of::<Descriptor>())?,
-            )?
+        let fixed = self
+            .descriptors
+            .capacity()
+            .checked_mul(std::mem::size_of::<Descriptor>())?
             .checked_add(
                 self.bdfs
                     .capacity()

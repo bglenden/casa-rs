@@ -7,6 +7,10 @@ use crate::storage::table_control::{
 use crate::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
+thread_local! {
+    pub(super) static INDEX_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Copy)]
 struct Block {
     format: i16,
@@ -338,4 +342,112 @@ fn malformed_index_and_short_payload_fail_before_decoding() {
         index(&file, &bdf, true, &[bad]);
         assert!(Index::open(&file, 6).is_err());
     }
+}
+
+#[test]
+fn selected_prepared_and_full_reads_share_one_index() {
+    let root = tempfile::tempdir().unwrap();
+    let bdf = root.path().join("samples.bdf");
+    std::fs::write(&bdf, encoded_cross_shorts(true)).unwrap();
+    let source = root.path().join("lazy");
+    binding(&source, &bdf, true, &[CROSS], 6);
+    INDEX_OPENS.with(|count| count.set(0));
+
+    let table = Table::open(TableOptions::new(&source)).unwrap();
+    let data = table.column_accessor("DATA").unwrap();
+    assert_eq!(
+        data.array_cells_owned_uncached(&[2, 0]).unwrap()[0]
+            .as_ref()
+            .unwrap()
+            .shape(),
+        &[3, 2],
+    );
+    assert_eq!(
+        table.column_accessor("ID").unwrap().scalar_cell(1).unwrap(),
+        &ScalarValue::Int32(1),
+    );
+    let mut prepared = table.row_accessor().prepare(&["DATA", "ID"]).unwrap();
+    prepared.load(2).unwrap();
+    assert_eq!(table.rows().unwrap().len(), 6);
+    assert_eq!(INDEX_OPENS.with(std::cell::Cell::get), 1);
+}
+
+#[test]
+fn same_path_copy_and_flush_after_column_removal_leave_the_source_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    let bdf = root.path().join("samples.bdf");
+    std::fs::write(&bdf, encoded_cross_shorts(true)).unwrap();
+    let source = root.path().join("lazy");
+    binding(&source, &bdf, true, &[CROSS], 6);
+    let snapshot = || {
+        ["table.dat", "table.f0", "table.f1asdmindex"]
+            .map(|name| std::fs::read(source.join(name)).unwrap())
+    };
+    let before = snapshot();
+    let mut table = Table::open(TableOptions::new(&source)).unwrap();
+    assert!(table.shallow_copy(TableOptions::new(&source)).is_err());
+    assert_eq!(snapshot(), before);
+    for name in ["DATA", "FLAG", "SIGMA", "WEIGHT"] {
+        table.remove_column(name).unwrap();
+    }
+    assert!(
+        table
+            .data_manager_info()
+            .iter()
+            .all(|manager| manager.dm_type != TYPE)
+    );
+    assert!(table.flush().is_err());
+    assert_eq!(snapshot(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn renamed_reference_rejects_asdm_mutation_before_any_group_is_persisted() {
+    use crate::storage::{CompositeStorage, RefTableDatContents, TableInfo};
+    use crate::{LockMode, LockOptions, LockType};
+
+    let root = tempfile::tempdir().unwrap();
+    let bdf = root.path().join("samples.bdf");
+    std::fs::write(&bdf, encoded_cross_shorts(true)).unwrap();
+    let source = root.path().join("lazy");
+    let reference = root.path().join("view");
+    binding(&source, &bdf, true, &[CROSS], 6);
+    CompositeStorage
+        .save_ref_table(
+            &reference,
+            &RefTableDatContents {
+                nrrow: 2,
+                big_endian: true,
+                parent_relative_path: source.to_str().unwrap().into(),
+                column_name_map: vec![("VISIBILITY".into(), "DATA".into())],
+                column_names: vec!["ID".into(), "VISIBILITY".into()],
+                parent_nrrow: 6,
+                row_order: true,
+                row_map: vec![0, 1],
+            },
+            &TableInfo::default(),
+        )
+        .unwrap();
+    let mut view = Table::open_with_lock(
+        TableOptions::new(reference),
+        LockOptions::new(LockMode::UserLocking),
+    )
+    .unwrap();
+    assert!(view.lock(LockType::Write, 1).unwrap());
+    view.row_accessor_mut()
+        .set_cell(0, "ID", Value::Scalar(ScalarValue::Int32(99)))
+        .unwrap();
+    assert!(view.cell_accessor_mut(1, "VISIBILITY").is_err());
+    assert!(
+        view.prepare_write()
+            .save_selected_rows(&["ID", "VISIBILITY"], &[0, 1])
+            .is_err()
+    );
+    let reopened = Table::open(TableOptions::new(source)).unwrap();
+    assert_eq!(
+        reopened.cell_accessor(0, "ID").unwrap().scalar().unwrap(),
+        &ScalarValue::Int32(0)
+    );
+    let data = reopened.cell_accessor(1, "DATA").unwrap().array().unwrap();
+    assert_eq!(data_values(data)[0], Complex32::new(16., -16.));
 }

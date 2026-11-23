@@ -117,6 +117,7 @@ impl RetainedTableReadMetadata {
         table_path: &Path,
         table_dat: TableDatContents,
     ) -> Result<Self, StorageError> {
+        table_dat.asdm.retain_indexes()?;
         let tiled = TiledReadMetadata::open(table_path, &table_dat.column_set.data_managers)?;
         Ok(Self { table_dat, tiled })
     }
@@ -1136,6 +1137,22 @@ impl CompositeStorage {
         Ok(snapshot)
     }
 
+    pub(crate) fn load_plain_selected_columns(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        columns: &[&str],
+        row_hint: Option<u64>,
+    ) -> Result<StorageSnapshot, StorageError> {
+        let requested = columns.iter().copied().collect();
+        let mut snapshot =
+            self.load_plain_table_filtered(table_path, table_dat, row_hint, Some(&requested))?;
+        for row in &mut snapshot.rows {
+            *row = reorder_row_to_requested_columns(row, columns);
+        }
+        Ok(snapshot)
+    }
+
     /// Rewrite the keywords in `table_path`'s `table.dat` and its
     /// `table.info`, keeping the data-manager layout on disk. The snapshot's
     /// `row_count` is the count the table's sync data publishes, which the
@@ -1961,7 +1978,7 @@ impl CompositeStorage {
         clippy::too_many_lines,
         reason = "predates the function-length limit; #705"
     )]
-    fn load_plain_table_filtered(
+    pub(crate) fn load_plain_table_filtered(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
@@ -2237,7 +2254,7 @@ impl CompositeStorage {
         self.load_plain_scalar_columns_filtered(table_path, table_dat, row_hint, None)
     }
 
-    fn load_plain_scalar_column(
+    pub(crate) fn load_plain_scalar_column(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
@@ -3781,13 +3798,27 @@ impl CompositeStorage {
             })
             .transpose()?;
         let column_keywords = names
-            .into_iter()
-            .filter_map(|(name, base)| {
+            .iter()
+            .filter_map(|&(name, base)| {
                 parent
                     .column_keywords
                     .get(base)
                     .cloned()
                     .map(|keywords| (name.clone(), keywords))
+            })
+            .collect();
+        let dm_info = parent
+            .dm_info
+            .into_iter()
+            .filter(|manager| manager.dm_type == asdm_stman::TYPE)
+            .filter_map(|mut manager| {
+                let columns = names
+                    .iter()
+                    .filter(|(_, base)| manager.columns.contains(base))
+                    .map(|(view, _)| (*view).clone())
+                    .collect::<Vec<_>>();
+                manager.columns = columns;
+                (!manager.columns.is_empty()).then_some(manager)
             })
             .collect();
         Ok(StorageSnapshot {
@@ -3800,7 +3831,7 @@ impl CompositeStorage {
             table_info: load_table_info(path),
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
-            dm_info: vec![],
+            dm_info,
             retained_read_metadata: None,
         })
     }

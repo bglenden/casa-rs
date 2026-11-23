@@ -254,7 +254,7 @@ impl Table {
         })
     }
 
-    fn require_writable_column(&self, column: &str) -> Result<(), TableError> {
+    pub(super) fn require_writable_column(&self, column: &str) -> Result<(), TableError> {
         if self.asdm_manages(column) {
             return Err(TableError::Storage(format!(
                 "AsdmStMan column '{column}' is read-only"

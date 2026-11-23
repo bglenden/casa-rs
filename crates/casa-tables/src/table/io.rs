@@ -288,12 +288,23 @@ impl Table {
     }
 
     fn require_full_save_destination(&self, target: &Path) -> Result<(), TableError> {
-        if self.has_asdm_manager()
-            && self
-                .source_path
-                .as_deref()
-                .is_some_and(|path| super::locking::same_directory(path, target))
+        if !self
+            .source_path
+            .as_deref()
+            .is_some_and(|path| super::locking::same_directory(path, target))
         {
+            return Ok(());
+        }
+        let control = target.join(crate::storage::TABLE_CONTROL_FILE);
+        let persisted_asdm = control.is_file()
+            && matches!(
+                crate::storage::read_table_dat_dispatch(&control)?,
+                crate::storage::TableDatResult::Plain(table)
+                    if table.column_set.data_managers.iter().any(|manager| {
+                        manager.type_name == crate::storage::asdm_stman::TYPE
+                    })
+            );
+        if persisted_asdm || self.has_asdm_manager() {
             return Err(TableError::Storage(
                 "AsdmStMan is read-only. Materialize the table at a new path.".into(),
             ));
@@ -1970,6 +1981,7 @@ impl Table {
     ///
     /// `TableCopy::makeEmptyTable(name, ..., noRows=True)`.
     pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
+        self.require_full_save_destination(&opts.path)?;
         self.validate()?;
         self.note_persisted_write(&opts.path);
         let storage = CompositeStorage;
