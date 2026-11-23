@@ -699,6 +699,37 @@ def compare_time_averaged_columns(root, native):
                 table.putcol(name, np.zeros_like(table.getcol(name)))
     with opened(no_corrected, True) as table:
         table.removecols(["CORRECTED_DATA"])
+    trailing, leading, row_flag_only, reversed_time, weighted_uvw = (
+        work / f"{name}.ms" for name in ("trailing", "leading", "row-flag-only", "reversed", "weighted-uvw")
+    )
+    odd = integration % 2 == 1
+    for path in (trailing, leading, row_flag_only, reversed_time, weighted_uvw):
+        copy_ms(vis, path)
+        with opened(path, True) as table:
+            if path == trailing:
+                flag = table.getcol("FLAG")
+                flag[0, 1, odd] = True
+                table.putcol("FLAG", flag)
+            elif path == leading:
+                flag = table.getcol("FLAG")
+                flag[:, :, ~odd] = True
+                table.putcol("FLAG", flag)
+                table.putcol("FLAG_ROW", ~odd)
+            elif path == row_flag_only:
+                table.putcol("FLAG_ROW", odd)
+            elif path == reversed_time:
+                times = np.unique(table.getcol("TIME"))
+                reversed_times = times[-1 - integration]
+                table.putcol("TIME", reversed_times)
+                table.putcol("TIME_CENTROID", reversed_times)
+                data = table.getcol("DATA")
+                data[:, :, odd] = -1
+                table.putcol("DATA", data)
+                table.putcol("SIGMA", np.ones_like(table.getcol("SIGMA")))
+            else:
+                uvw = np.zeros_like(table.getcol("UVW"))
+                uvw[0, odd] = 10
+                table.putcol("UVW", uvw)
 
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
                                ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
@@ -720,6 +751,11 @@ def compare_time_averaged_columns(root, native):
         ("time-15-second-window", dict(avgtime="15"), independent, 20),
         ("time-25-second-window", dict(avgtime="25"), corrected + model, 30),
         ("time-scan-boundary", dict(avgtime="25", field=""), corrected * 2 + model * 2, 30),
+        ("time-trailing-cell-flag", dict(vis=str(trailing)), [(1, 10)] * 3 + [(1, 100)] * 3, 20),
+        ("time-leading-row-flag", dict(vis=str(leading)), [(3, 30)] * 3 + [(3, 300)] * 3, 20),
+        ("time-row-flag-only", dict(vis=str(row_flag_only)), independent, 20),
+        ("time-reversed-and-vector", dict(vis=str(reversed_time), xaxis="amp"),
+         [(0, 28)] * 3 + [(0, 280)] * 3, 20),
     )
     for name, overrides, coordinates, spacing in cases:
         controls = base | overrides
@@ -736,13 +772,29 @@ def compare_time_averaged_columns(root, native):
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching time-averaged coordinates", flush=True)
-    controls = base | dict(xaxis="time", xdatacolumn="", expformat="txt")
-    expected, actual = (work / f"average-time-axis.{engine}.txt" for engine in ("casa", "native"))
+    for axis in ("time", "channel", "frequency"):
+        controls = base | dict(xaxis=axis, xdatacolumn="", expformat="txt")
+        expected, actual = (work / f"average-{axis}-axis.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 6
+        if axis == "time":
+            for path in (expected, actual):
+                assert all(float(row[0]) == float(row[9]) for row in rows(path))
+    from casars.tasks import TaskParameterError
+
+    controls = base | dict(vis=str(weighted_uvw), xaxis="u", xdatacolumn="", expformat="txt")
+    expected, actual = (work / f"time-weighted-u.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected)) is None
-    assert native(**controls, plotfile=str(actual)) is None
-    assert compare_text(actual, expected) == 6
-    for path in (expected, actual):
-        assert all(float(row[0]) == float(row[9]) for row in rows(path))
+    assert len(rows(expected)) == 6
+    assert {float(row[0]) for row in rows(expected)} == {9}
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS admitted a request requiring weighted UVW coordinates")
+    assert not actual.exists()
     compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
 
 
@@ -1015,6 +1067,30 @@ def compare_default_model(root, native):
         assert {float(point[1]) for point in rows(expected)} == {amplitude}
         assert native(**selected, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == count
+    average = controls | dict(vis=str(stored), xaxis="channel", xdatacolumn="",
+                              yaxis=["amp", "amp"], ydatacolumn=["data", "model"], avgtime="20")
+    for name, field, spw, amplitude in (
+        ("average-virtual-and-stored", "PHASE", "0:1", 7.25),
+        ("average-unmodeled-window-and-stored", "PHASE", "1:1", 1),
+        ("average-stored-only-field", "FLUX", "0:1", 19),
+    ):
+        selected = average | dict(field=field, spw=spw)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**selected, plotfile=str(expected)) is None
+        coordinates = rows(expected)
+        assert coordinates and len(coordinates) % 2 == 0
+        assert {float(point[1]) for point in coordinates[len(coordinates) // 2:]} == {amplitude}
+        if field == "FLUX":
+            assert native(**selected, plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == len(coordinates)
+        else:
+            try:
+                native(**selected, plotfile=str(actual))
+            except TaskExecutionError as error:
+                assert "virtual MeasurementSet models are pending #1032" in str(error), error
+            else:
+                raise AssertionError("PlotMS used the stored model for an averaged virtual-model field")
+            assert not actual.exists()
     with opened(stored) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
 

@@ -2059,17 +2059,19 @@ pub struct MsScatterSeries {
     pub points: Vec<(f64, f64)>,
     /// Provenance for each plotted point in `points`.
     pub provenance: Vec<MsScatterPointRef>,
-    /// Display metadata for calibrated PlotMS points, when available.
+    /// Display metadata for PlotMS points, when available.
     pub plotms_metadata: Vec<MsScatterPlotMsMetadata>,
 }
 
-/// Display metadata for one calibrated PlotMS export coordinate.
+/// Display metadata for one PlotMS export coordinate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MsScatterPlotMsMetadata {
     /// Channel identifier after any channel averaging.
     pub channel: usize,
     /// Timestamp after time averaging, when enabled.
     pub average_time: Option<f64>,
+    /// Position of the time-averaged buffer in the selected visibility iterator.
+    pub averaging_group: Option<usize>,
 }
 
 /// One plotted point's originating visibility sample range.
@@ -2754,8 +2756,25 @@ fn build_uncalibrated_plotms_payload(
         .flatten();
     let time_bins = columns
         .secondary_y
-        .and_then(|_| spec.plots.first()?.averaging.avgtime)
-        .map(|seconds| {
+        .and_then(|_| {
+            let plot = spec.plots.first()?;
+            Some((plot, plot.averaging.avgtime?))
+        })
+        .map(|(plot, seconds)| {
+            if plotms_columns::uses_model(
+                [
+                    Some(plot.x_axis),
+                    Some(plot.y_axis()),
+                    plot.secondary_y_axis(),
+                ],
+                [
+                    columns.x.unwrap_or(plot.data_column),
+                    plot.data_column,
+                    columns.secondary_y.unwrap_or(plot.data_column),
+                ],
+            ) {
+                plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
+            }
             crate::transform::selected_plot_time_bins(ms, &selected.selected_rows, seconds)
                 .map_err(|error| error.to_string())
         })
@@ -3584,11 +3603,20 @@ struct SharedTimeAverageScopeKey {
     spw_id: Option<i32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum AveragingTimeKey {
     Exact(u64),
     Bucket(i64),
     Group(usize),
+}
+
+impl AveragingTimeKey {
+    fn group(self) -> Option<usize> {
+        match self {
+            Self::Group(group) => Some(group),
+            Self::Exact(_) | Self::Bucket(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -4403,6 +4431,7 @@ fn build_generic_visibility_scatter(
                         series.plotms_metadata.push(MsScatterPlotMsMetadata {
                             channel: bin.display_channel(),
                             average_time: None,
+                            averaging_group: None,
                         });
                     }
                     if let Some(started) = push_started {
@@ -4737,7 +4766,7 @@ fn finalize_averaged_axis_value(
                 .find(|(candidate, _)| *candidate == axis)
                 .map(|(_, samples)| samples)?;
             if avgtime_enabled {
-                if samples.len() == 1 && !reference_time_average {
+                if samples.len() == 1 {
                     return Some(
                         samples[0]
                             - average_float_samples(&accumulator.time_interval_samples)? / 2.0,
@@ -4943,10 +4972,11 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
+    let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
-        if flag_row_value && !include_row_flagged_points {
+        if flag_row_value && !include_row_flagged_points && time_bins.is_none() {
             continue;
         }
 
@@ -5076,6 +5106,17 @@ fn build_generic_visibility_scatter_with_averaging(
         let antenna2_value = selected_antenna2[row_slot];
         let row_time_value = selected_times[row_slot];
         let time_group = time_bins.map(|bins| bins[&row]);
+        if let Some(group) = time_group {
+            let unflagged = selected_correlations.iter().any(|(corr, _)| {
+                channel_bins
+                    .iter()
+                    .any(|bin| bin.channels().any(|channel| !flags[(*corr, channel)]))
+            });
+            time_bounds
+                .entry(group)
+                .or_insert_with(|| plotms_ordinates::VisibilityTimeBounds::new(row_time_value))
+                .observe(row_time_value, unflagged);
+        }
         let row_uvw_value = selected_uvw[row_slot];
         let row_interval_value = selected_intervals[row_slot];
         let shared_time_scope_value = if use_shared_time_scope_midpoint {
@@ -5239,7 +5280,10 @@ fn build_generic_visibility_scatter_with_averaging(
                         accumulator
                             .y_visibility
                             .add(y_samples, scalar_weight, conjugate);
-                        if calibration.is_some() && spec.averaging.avgtime.is_some() {
+                        if calibration.is_some()
+                            && spec.averaging.avgtime.is_some()
+                            && time_group.is_none()
+                        {
                             push_numeric_axis_sample(
                                 accumulator,
                                 MsAxis::Time,
@@ -5410,43 +5454,47 @@ fn build_generic_visibility_scatter_with_averaging(
                 provenance: Vec::new(),
                 plotms_metadata: Vec::new(),
             };
-            let mut points = series.points.into_values();
-            let mut corrected_order = calibration.map(|_| {
+            let mut points = series
+                .points
+                .into_iter()
+                .map(|(key, point)| (key.time_key.group(), point));
+            let mut plot_order = calibration.map(|_| {
                 let mut ordered = points.by_ref().collect::<Vec<_>>();
-                ordered.sort_by_key(|entry| {
-                    entry
-                        .representative
-                        .as_ref()
-                        .map(|point| (point.row, point.chan_start, point.corr))
+                ordered.sort_by_key(|(group, entry)| {
+                    entry.representative.as_ref().map(|point| {
+                        let (row, channel, correlation) = point.plotms_order();
+                        (group.unwrap_or(row), channel, correlation)
+                    })
                 });
                 ordered.into_iter()
             });
-            let ordered = std::iter::from_fn(|| match &mut corrected_order {
+            let ordered = std::iter::from_fn(|| match &mut plot_order {
                 Some(points) => points.next(),
                 None => points.next(),
             });
-            for accumulator in ordered {
+            for (group, accumulator) in ordered {
                 let Some(representative) = accumulator.representative.clone() else {
                     continue;
                 };
-                let Some(x_value) = finalize_averaged_axis_value(
-                    spec.x_axis,
-                    &accumulator,
-                    spec.averaging.scalar,
-                    spec.averaging.avgtime.is_some(),
-                    true,
-                    time_weight_kinds.is_some(),
-                ) else {
+                let planned_time = group.and_then(|group| time_bounds[&group].midpoint());
+                let project = |axis, x_axis| {
+                    if axis == MsAxis::Time && group.is_some() {
+                        planned_time
+                    } else {
+                        finalize_averaged_axis_value(
+                            axis,
+                            &accumulator,
+                            spec.averaging.scalar,
+                            spec.averaging.avgtime.is_some(),
+                            x_axis,
+                            group.is_some(),
+                        )
+                    }
+                };
+                let Some(x_value) = project(spec.x_axis, true) else {
                     continue;
                 };
-                let Some(y_value) = finalize_averaged_axis_value(
-                    series.y_axis,
-                    &accumulator,
-                    spec.averaging.scalar,
-                    spec.averaging.avgtime.is_some(),
-                    false,
-                    time_weight_kinds.is_some(),
-                ) else {
+                let Some(y_value) = project(series.y_axis, false) else {
                     continue;
                 };
                 output.points.push((x_value, y_value));
@@ -5454,16 +5502,11 @@ fn build_generic_visibility_scatter_with_averaging(
                 if calibration.is_some() {
                     output.plotms_metadata.push(MsScatterPlotMsMetadata {
                         channel: accumulator.display_channel,
-                        average_time: spec.averaging.avgtime.and_then(|_| {
-                            finalize_averaged_axis_value(
-                                MsAxis::Time,
-                                &accumulator,
-                                false,
-                                true,
-                                false,
-                                time_bins.is_some(),
-                            )
-                        }),
+                        average_time: spec
+                            .averaging
+                            .avgtime
+                            .and_then(|_| project(MsAxis::Time, false)),
+                        averaging_group: group,
                     });
                 }
                 point_budget.record_points(

@@ -52,6 +52,10 @@ impl CliOptions {
             && !self.avgspw
             && !self.scalar
             && !self.has_mixed_ordinate_dimensions()
+            && self.x_axis.is_some_and(|axis| {
+                axis.is_visibility_math()
+                    || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
+            })
     }
 
     pub(super) fn plotms_extended_averaging(&self) -> bool {

@@ -221,6 +221,33 @@ impl AveragedVisibility {
     }
 }
 
+pub(super) struct VisibilityTimeBounds {
+    first: f64,
+    last_unflagged: Option<f64>,
+}
+
+impl VisibilityTimeBounds {
+    pub(super) fn new(time: f64) -> Self {
+        Self {
+            first: time,
+            last_unflagged: None,
+        }
+    }
+
+    pub(super) fn observe(&mut self, time: f64, unflagged: bool) {
+        self.first = self.first.min(time);
+        if unflagged {
+            self.last_unflagged = Some(self.last_unflagged.map_or(time, |last| last.max(time)));
+        }
+    }
+
+    pub(super) fn midpoint(&self) -> Option<f64> {
+        // CASA anchors on the first integration and ends at the last usable one.
+        self.last_unflagged
+            .map(|last| self.first + (last - self.first) / 2.0)
+    }
+}
+
 pub(super) fn order_series(series: &mut MsScatterSeries) {
     if series
         .provenance
