@@ -12,6 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
 
 use super::PyMsMetadata;
+use super::column_units::column_unit_factor;
 use super::intents::wildcard_pattern;
 use super::names::{Indices, checked_row, selector_text};
 use super::observation_metadata::observatory_position;
@@ -38,6 +39,9 @@ impl AntennaSelection {
         let names = if let Ok(array) = value.cast::<PyUntypedArray>() {
             let kind = array.dtype().kind();
             if matches!(kind, b'S' | b'U') {
+                if array.len() == 0 {
+                    return Ok(Self::Names(Vec::new()));
+                }
                 Some(
                     array
                         .call_method1("ravel", ("F",))?
@@ -66,8 +70,17 @@ impl AntennaSelection {
                 return Ok(Self::Names(names));
             }
         }
-        Ok(Self::Indices(Indices::capture(Some(value))?))
+        Ok(Self::Indices(antenna_indices(Some(value))?))
     }
+}
+
+fn antenna_indices(value: Option<&Bound<'_, PyAny>>) -> PyResult<Indices> {
+    if let Some(value) = value
+        && value.is_instance(&value.py().import("numpy")?.getattr("bool_")?)?
+    {
+        return Ok(Indices::Unsupported);
+    }
+    Indices::capture(value)
 }
 
 fn diameter_limit(value: Option<&Bound<'_, PyAny>>, default: &str) -> PyResult<f64> {
@@ -209,8 +222,16 @@ fn position_measure(antenna: &MsAntenna<'_>, row: usize) -> MsResult<Measure> {
     };
     Ok(Measure {
         refer,
-        value: MeasureValue::Position(antenna.position(row)?),
+        value: MeasureValue::Position(position_metres(antenna, row)?),
     })
+}
+
+fn position_metres(antenna: &MsAntenna<'_>, row: usize) -> MsResult<[f64; 3]> {
+    let mut xyz = antenna.position(row)?;
+    for (component, value) in xyz.iter_mut().enumerate() {
+        *value *= column_unit_factor(antenna.table(), "POSITION", component, "m")?;
+    }
+    Ok(xyz)
 }
 
 fn selected_antenna_ids(
@@ -368,7 +389,7 @@ impl PyMsMetadata {
         self.with_ms(py, |ms| {
             let antenna = ms.antenna()?;
             let row = scalar_row(&antenna, which, false)?;
-            let (longitude, latitude, radius) = geometry(antenna.position(row)?);
+            let (longitude, latitude, radius) = geometry(position_metres(&antenna, row)?);
             let (obs_longitude, obs_latitude, obs_radius) =
                 geometry(observatory_position(ms, 0)?.as_itrf());
             Ok(CasaValue::record([
@@ -398,8 +419,9 @@ impl PyMsMetadata {
         py: Python<'_>,
         which: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        let which = match Indices::capture(which)? {
+        let which = match antenna_indices(which)? {
             Indices::Empty | Indices::BooleanVector => FieldSelector::Id(0),
+            Indices::Scalar(id) => FieldSelector::Id(id),
             _ => match which {
                 Some(value) => value.extract::<FieldSelector>()?,
                 None => FieldSelector::Id(0),

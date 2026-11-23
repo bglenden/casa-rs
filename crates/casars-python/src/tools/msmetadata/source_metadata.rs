@@ -3,35 +3,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSource};
-use casa_tables::Table;
 use casa_tables::table_measures::{ArrayMeasColumn, ScalarMeasColumn};
+use casa_types::ArrayValue;
 use casa_types::measures::frequency::MFrequency;
 use casa_types::measures::record::frequency_to_record;
-use casa_types::quanta::casacore::casacore_unit;
-use casa_types::{ArrayValue, ScalarValue, Value};
 use pyo3::prelude::*;
 
 use super::PyMsMetadata;
+use super::column_units::{column_unit, column_unit_factor};
 use super::scan_queries::int_array;
 use super::spw_membership::checked_spw;
 use crate::convert::holder::{CasaMeasure, Measure};
 use crate::convert::value::CasaValue;
-
-fn quantities_unit<'a>(table: &'a Table, column: &str, component: usize) -> MsResult<&'a str> {
-    let units = table
-        .column_keywords(column)
-        .and_then(|keywords| keywords.get("QuantumUnits"));
-    match units {
-        Some(Value::Array(ArrayValue::String(values))) => values
-            .iter()
-            .nth(component)
-            .or_else(|| values.first())
-            .map(String::as_str),
-        Some(Value::Scalar(ScalarValue::String(value))) => Some(value.as_str()),
-        _ => None,
-    }
-    .ok_or_else(|| MsError::InvalidInput(format!("{column} has no quantum unit")))
-}
 
 fn quantity(value: f64, unit: &str) -> CasaValue {
     CasaValue::record([
@@ -153,7 +136,7 @@ impl PyMsMetadata {
     fn sourcetimes(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.with_ms(py, |ms| {
             let source = ms.source()?;
-            let unit = quantities_unit(source.table(), "TIME", 0)?;
+            let unit = column_unit(source.table(), "TIME", 0)?;
             let values = (0..source.row_count())
                 .map(|row| Ok((row.to_string(), quantity(source.f64(row, "TIME")?, unit))))
                 .collect::<MsResult<Vec<_>>>()?;
@@ -168,8 +151,8 @@ impl PyMsMetadata {
             let source = ms.source()?;
             let column = "PROPER_MOTION";
             let units = [
-                quantities_unit(source.table(), column, 0)?,
-                quantities_unit(source.table(), column, 1)?,
+                column_unit(source.table(), column, 0)?,
+                column_unit(source.table(), column, 1)?,
             ];
             let motions = (0..source.row_count())
                 .map(|row| {
@@ -209,18 +192,7 @@ impl PyMsMetadata {
             if !table.is_cell_defined(row, "REST_FREQUENCY")? {
                 return Ok(CasaValue::Bool(false));
             }
-            let unit = quantities_unit(table, "REST_FREQUENCY", 0)?;
-            let unit =
-                casacore_unit(unit).map_err(|error| MsError::InvalidInput(error.to_string()))?;
-            let hz =
-                casacore_unit("Hz").map_err(|error| MsError::InvalidInput(error.to_string()))?;
-            if !unit.conformant(&hz) {
-                return Err(MsError::InvalidInput(format!(
-                    "REST_FREQUENCY unit {} is not a frequency",
-                    unit.name()
-                )));
-            }
-            let scale = unit.val().factor / hz.val().factor;
+            let scale = column_unit_factor(table, "REST_FREQUENCY", 0, "Hz")?;
             let values = frequencies
                 .get(row)?
                 .into_iter()

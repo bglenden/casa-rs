@@ -566,10 +566,14 @@ def test_msmetadata_antenna_observation_selectors_and_measures(native_dataset):
     table = tools.table()
     assert table.open(str(native_dataset / "ANTENNA"), nomodify=False)
     assert table.putcol("DISH_DIAMETER", np.array([25., 18., 30., 25.]))
+    position = table.getcol("POSITION")
+    assert table.putcol("POSITION", position / np.array([[1000.], [1.], [0.01]]))
+    assert table.putcolkeyword("POSITION", "QuantumUnits", ["km", "m", "cm"])
     assert table.done()
     assert table.open(str(native_dataset / "OBSERVATION"), nomodify=False)
     assert table.putcell("SCHEDULE", 0, ["schedule A", "schedule B"])
-    assert table.putcell("TIME_RANGE", 0, np.array([4.8e9, 4.8e9 + 600.]))
+    assert table.putcell("TIME_RANGE", 0, np.array([4.8e9, 4.8e9 + 600.]) / 86400.)
+    assert table.putcolkeyword("TIME_RANGE", "QuantumUnits", ["d"])
     assert table.done()
 
     results = []
@@ -592,6 +596,23 @@ def test_msmetadata_antenna_observation_selectors_and_measures(native_dataset):
             assert metadata.antennastations([2, 0, 2]) == ["P3", "P1", "P3"]
             assert metadata.antennastations(np.array([b"A4", b"A3"])) == ["P4", "P3"]
             assert metadata.antennastations("A1", obsid=0) == ["P1"]
+            for dtype in ("U1", "S1"):
+                empty = np.array([], dtype=dtype)
+                np.testing.assert_array_equal(metadata.antennaids(empty), np.array([], dtype=np.int64), strict=True)
+                assert metadata.antennastations(empty) == []
+            if module is casatools:
+                for selector in (np.uint32(1), np.bool_(True)):
+                    np.testing.assert_array_equal(metadata.antennaids(selector), np.arange(4), strict=True)
+                    assert metadata.antennastations(selector) == ["P1", "P2", "P3", "P4"]
+                    assert metadata.antennaposition(selector) == metadata.antennaposition(0)
+            else:
+                assert metadata.antennastations(np.uint32(1)) == ["P2"]
+                assert metadata.antennaposition(np.uint32(1)) == metadata.antennaposition(1)
+                with pytest.raises(RuntimeError):
+                    metadata.antennaids(np.uint32(1))
+                for query in (metadata.antennaids, metadata.antennastations, metadata.antennaposition):
+                    with pytest.raises(RuntimeError):
+                        query(np.bool_(True))
             assert metadata.schedule(0) == ["schedule A", "schedule B"]
             results.append([
                 metadata.antennaposition(), metadata.antennaposition(b"A2"),

@@ -7,6 +7,7 @@ use casa_types::measures::{EpochRef, MEpoch, MPosition};
 use pyo3::prelude::*;
 
 use super::PyMsMetadata;
+use super::column_units::column_unit_factor;
 use super::names::checked_row;
 use crate::convert::holder::{CasaMeasure, Measure};
 use crate::convert::value::CasaValue;
@@ -55,6 +56,7 @@ fn time_range(observation: &MsObservation<'_>, row: usize) -> MsResult<CasaValue
             "OBSERVATION.TIME_RANGE requires two values".into(),
         ));
     };
+    let seconds_per_unit = column_unit_factor(table, "TIME_RANGE", 0, "s")?;
     let measure = |seconds| {
         Measure::from_casa(&CasaMeasure::Epoch(MEpoch::from_mjd_seconds(
             seconds, refer,
@@ -62,8 +64,8 @@ fn time_range(observation: &MsObservation<'_>, row: usize) -> MsResult<CasaValue
         .to_value()
     };
     Ok(CasaValue::record([
-        ("begin", measure(*begin)),
-        ("end", measure(*end)),
+        ("begin", measure(*begin * seconds_per_unit)),
+        ("end", measure(*end * seconds_per_unit)),
     ]))
 }
 

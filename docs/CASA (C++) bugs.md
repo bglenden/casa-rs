@@ -10819,3 +10819,14 @@ branch passes its empty intersection to an accessor where an omitted ID
 list means every station. The numeric selection of the same antenna
 returns an empty list. casa-rs returns an empty list for both forms
 because no selected antenna participated in the observation (#1029).
+
+## Unsupported antenna scalars can silently select unrelated antennas
+
+With CASA 6.7.6.14, pass `numpy.uint32(1)` or `numpy.bool_(True)` as
+the selector for `msmetadata.antennaids`, `antennastations`, or
+`antennaposition`. CASA discards the scalar. It returns all antenna IDs,
+all stations, or the position of antenna zero, respectively, just as for
+an omitted selector. casa-rs uses the unsigned antenna ID in the two
+methods that accept IDs and raises `RuntimeError` for unsupported selector
+types. An unsupported value cannot silently widen the selection or return
+the position of a different antenna (#1029).

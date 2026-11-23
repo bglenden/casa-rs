@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1029 (`stubs.rs`).
 
 mod antenna_metadata;
+mod column_units;
 mod data_description;
 mod intents;
 mod names;
