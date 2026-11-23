@@ -20,11 +20,13 @@ def test_clearcal_updates_an_open_table(native_dataset, tmp_path):
     ):
         vis = tmp_path / f"{label}.ms"
         shutil.copytree(native_dataset, vis)
-        alias = tmp_path / f"{label}-alias.ms"
-        alias.symlink_to(vis.name, target_is_directory=True)
+        opened_path = vis
+        if label == "native":
+            opened_path = tmp_path / "native-alias.ms"
+            opened_path.symlink_to(vis.name, target_is_directory=True)
         table = backend.table()
         other = backend.table()
-        assert table.open(str(alias), nomodify=False)
+        assert table.open(str(opened_path), nomodify=False)
         assert other.open(str(native_dataset))
         try:
             assert table.haslock(write=False)
@@ -38,7 +40,9 @@ def test_clearcal_updates_an_open_table(native_dataset, tmp_path):
             assert table.putcol("CORRECTED_DATA", overwrite)
             clearcal(str(vis))
             np.testing.assert_array_equal(table.getcol("CORRECTED_DATA"), corrected)
-            assert other.haslock(write=False)
+            # CASA releases automatic locks process-wide. The native task
+            # releases only the table it is about to change.
+            assert other.haslock(write=False) == (label == "native")
         finally:
             assert table.done()
             assert other.done()

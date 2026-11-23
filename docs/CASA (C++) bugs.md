@@ -10929,3 +10929,18 @@ that the cache leaves empty. The explicit axis validation permits real-valued pl
 casa-rs reads the real values directly. The regression checks the same
 selected samples against CASA's successful signed amplitude export, which
 has the same coordinates for float cells (#1032).
+
+## Clearcal releases a caller's explicit table lock
+
+In CASA 6.7.6.14, open a writable MeasurementSet with
+`table.open(vis, nomodify=False, lockoptions={'option': 'user'})` and take an
+explicit write lock with `table.lock(write=True)`. Calling
+`clearcal(vis, addmodel=True)` writes the scratch columns. The attached
+table then reports `haslock(write=True) == False` even though its owner never
+released the lock.
+
+CASA also releases automatic locks on unrelated tables open in the same process.
+casa-rs yields automatic locks on the input MeasurementSet before its
+clearcal provider starts and keeps the caller's table attached. An explicit
+or active lock still held by the caller produces a `RuntimeError` before
+the task writes. The caller retains ownership of that lock (#1520).
