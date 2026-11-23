@@ -1,6 +1,11 @@
 {
   "revision": "9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2",
   "files": {
+    "test_task_accor.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_accor.py",
+      "sha256": "01f02d81e204c6f7aa4dc3234f46e51da22306b51e2ba3704d181047624aa359",
+      "size": 11867
+    },
     "test_task_applycal.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_applycal.py",
       "sha256": "aa0f868a7bc4a01bc3d177330c068e70b17bc3616baf69636f94b44c1182eba2",
@@ -10,6 +15,11 @@
       "upstream_path": "casatasks/tests/tasks/test_task_bandpass.py",
       "sha256": "76c52418e3ecc5b38cd8dce3ed77bb10b6876d3eb2fd9176dfbb8986ff0a0fec",
       "size": 6297
+    },
+    "test_task_delmod.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_delmod.py",
+      "sha256": "5efce69fce4f3994a8d1a0f49ad120017d6ff3fd130115fd63c363648b7c484c",
+      "size": 5641
     },
     "test_task_fluxscale.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_fluxscale.py",
