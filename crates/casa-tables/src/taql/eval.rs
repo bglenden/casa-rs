@@ -451,7 +451,8 @@ pub fn eval_constant_string(
             | Expr::RowNumber
             | Expr::Subquery(_)
             | Expr::Aggregate { .. }
-            | Expr::BoundRowLookup { .. } => return Err(error(name)),
+            | Expr::BoundRowLookup { .. }
+            | Expr::BoundRowFunction(_) => return Err(error(name)),
             Expr::FunctionCall { name: func, .. }
                 if [
                     "rownumber",
@@ -508,6 +509,7 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
                 .cloned()
                 .ok_or_else(|| TaqlError::Table(format!("{original} row {row} is out of range")))
         }
+        Expr::BoundRowFunction(function) => function.evaluate(ctx),
         Expr::Unary { op, operand } => {
             let val = eval_expr(operand, ctx)?;
             eval_unary(*op, val)

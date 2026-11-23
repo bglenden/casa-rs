@@ -56,6 +56,8 @@ pub mod format;
 pub mod functions;
 mod meas_udf;
 mod mscal_lookup;
+mod mscal_wavelengths;
+mod row_function;
 
 pub use ast::{IndexStyle, Statement};
 pub use calc::{CalcOutput, evaluate_calc};
@@ -63,6 +65,7 @@ pub use error::TaqlError;
 pub use exec::{
     TaqlExecution, TaqlResult, execute_for_tool, execute_readonly_for_tool, execute_with_rows,
 };
+pub use row_function::BoundRowFunction;
 
 /// Parses a TaQL query string into an AST [`Statement`].
 ///

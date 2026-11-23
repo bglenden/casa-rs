@@ -433,6 +433,8 @@ pub enum Expr {
         values: Arc<[ExprValue]>,
         missing: Option<ExprValue>,
     },
+    /// A row computation with metadata prepared for this query.
+    BoundRowFunction(super::BoundRowFunction),
     /// A vector expression such as `[ANTENNA1, ANTENNA2]`.
     ArrayLiteral(Vec<Expr>),
     /// `expr BETWEEN low AND high`
@@ -1034,6 +1036,7 @@ impl fmt::Display for Expr {
                 write!(f, ")")
             }
             Self::BoundRowLookup { original, .. } => write!(f, "{original}"),
+            Self::BoundRowFunction(function) => write!(f, "{function}"),
             Self::ArrayLiteral(values) => {
                 write!(f, "[")?;
                 for (index, value) in values.iter().enumerate() {

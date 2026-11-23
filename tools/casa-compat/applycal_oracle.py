@@ -753,6 +753,18 @@ def run(root, native_bin, only=None):
     case('api-select-mscal-selector-time', dict(msselect='mscal.time(">2019/12/31/21:53:15")'),
          input_vis=observation_source, casa_control_msselect=f'TIME >= {time_bound}')
 
+    for label, predicate in [
+        ('reference', 'mscal.uvwwvl()[1] < -7500'),
+        ('channel', 'derivedmscal.uvwwvls()[2,7] < -5000'),
+        ('channel-frequency', 'abs(mscal.uvwwvls()[1,7] - mscal.uvwwvl()[1]) > 0.5'),
+        ('channel-shape', 'nelements(mscal.uvwwvls()) == 24 AND ANTENNA1 == 0'),
+        ('invalid-argument', 'mscal.uvwwvl(1)[1] < -7500'),
+    ]:
+        case(f'api-select-mscal-wavelength-{label}', dict(msselect=predicate), input_vis=observation_source)
+    case('api-select-mscal-wavelength-multiple-windows',
+         dict(msselect='DATA_DESC_ID == 1 AND mscal.uvwwvls()[2,7] < -5000', spwmap=[0, 1]),
+         input_vis=multi_source, gain=multi_gain, precorrected=True)
+
     for label, arguments in [
         ('scalar-map', dict(spwmap=0, flagbackup=True)),
         ('empty-text-map', dict(spwmap='')),
