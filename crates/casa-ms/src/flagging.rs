@@ -35,8 +35,9 @@ use crate::ms::MeasurementSet;
 use crate::schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
 use crate::selection::{
-    MsSelection, resolve_flagdata_selection_with_system_budget,
-    resolve_row_indices_with_system_budget,
+    MsSelection, ResolvedMsSelectionRow, TimeDefaults, TimeSelection, TimeSelectorDefaults,
+    flagdata_c_string, resolve_flagdata_selection_with_system_budget,
+    resolve_row_indices_with_system_budget, resolve_time_selector,
 };
 use crate::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationBatch,
@@ -785,17 +786,19 @@ fn report_after(
     changes: ChangeSet,
     backup_version: Option<String>,
     thresholds: Option<(f64, f64)>,
+    time_selection: FlagTimeSelection,
 ) -> Result<FlagDataReport, FlaggingError> {
     let summary = match changes.summary {
         Some(summary) => summary,
         None if request.casa_row_selection
-            && request.selection.timerange.is_none()
-            && request.selection.msselect.is_none() =>
+            && (time_selection != FlagTimeSelection::Global
+                || (request.selection.timerange.is_none()
+                    && request.selection.msselect.is_none())) =>
         {
             summarize_flags(ms, rows)?
         }
         None => {
-            let summary_rows = selected_rows(ms, request)?;
+            let summary_rows = selected_rows(ms, request, time_selection)?;
             summarize_flags(ms, &summary_rows.rows)?
         }
     };
@@ -846,34 +849,99 @@ fn flagging_channels(
     Ok(Some(ranges))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FlagTimeSelection {
+    Global,
+    GlobalAndAgent,
+    Agent { initial_default_row: usize },
+}
+
+fn time_on_globally_selected_rows(
+    text: &str,
+    rows: &[ResolvedMsSelectionRow],
+) -> crate::MsResult<TimeSelection> {
+    let Some(first) = rows.first() else {
+        return Ok(TimeSelection::all());
+    };
+    // Exposure affects the global predicate and the width in getTimeList(),
+    // but only the endpoints are used by the list agent.
+    let defaults = |row: &ResolvedMsSelectionRow| TimeDefaults {
+        time_mjd_s: row.time_mjd_seconds,
+        exposure_s: 0.0,
+    };
+    let first_unflagged = rows.iter().find(|row| !row.flag_row).unwrap_or(first);
+    resolve_time_selector(
+        text,
+        TimeSelectorDefaults {
+            first_term: defaults(first_unflagged),
+            later_terms: defaults(first),
+        },
+    )
+}
+
 fn selected_rows(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
+    time_selection: FlagTimeSelection,
 ) -> Result<SelectedFlagRows, FlaggingError> {
     let selection_error = |source| FlaggingError::MutateFlags {
         path: display_ms_path(ms),
         reason: format!("select rows: {source}"),
     };
-    let (rows, channel_ranges) = if request.casa_row_selection {
-        let resolved = resolve_flagdata_selection_with_system_budget(ms, &request.selection)
+    let timerange = request
+        .selection
+        .timerange
+        .as_deref()
+        .filter(|_| request.selection.selectdata)
+        .map(flagdata_c_string)
+        .filter(|text| !text.is_empty());
+    let agent_default_row = match time_selection {
+        FlagTimeSelection::Agent {
+            initial_default_row,
+        } => Some(initial_default_row),
+        _ => None,
+    };
+    let (rows, channel_ranges, missing_rows) = if request.casa_row_selection {
+        let resolved = resolve_flagdata_selection_with_system_budget(
+            ms,
+            &request.selection,
+            agent_default_row,
+        )
+        .map_err(selection_error)?;
+        let missing_rows = resolved.selected_rows.is_empty();
+        // CASA parses a one-command list's agent on the globally selected
+        // table, so omitted dates can differ from the initial global parse.
+        let agent_time = timerange
+            .filter(|_| time_selection == FlagTimeSelection::GlobalAndAgent)
+            .map(|text| time_on_globally_selected_rows(text, &resolved.selected_rows))
+            .transpose()
             .map_err(selection_error)?;
         (
-            resolved.row_indices().collect::<Vec<_>>(),
+            resolved
+                .selected_rows
+                .into_iter()
+                .filter(|row| {
+                    agent_time
+                        .as_ref()
+                        .is_none_or(|time| time.holds_agent_time(row.time_mjd_seconds))
+                })
+                .map(|row| row.row_index)
+                .collect(),
             resolved.channel_selections,
+            missing_rows,
         )
     } else {
-        (
-            resolve_row_indices_with_system_budget(ms, &request.selection)
-                .map_err(selection_error)?,
-            BTreeMap::new(),
-        )
+        let rows = resolve_row_indices_with_system_budget(ms, &request.selection)
+            .map_err(selection_error)?;
+        let missing_rows = rows.is_empty();
+        (rows, BTreeMap::new(), missing_rows)
     };
     let field = request
         .selection
         .field
         .as_deref()
         .filter(|text| !text.trim().is_empty());
-    let explicit_spw_filter = rows.is_empty()
+    let explicit_spw_filter = missing_rows
         && request.casa_row_selection
         && request
             .selection
@@ -902,16 +970,20 @@ fn selected_rows(
             .into_iter()
             .flatten()
             .any(|text| !text.is_empty() && !text.starts_with('\0')));
-    if rows.is_empty() && request.selection.selectdata && explicit_row_filter {
+    if missing_rows && request.selection.selectdata && explicit_row_filter {
         // An empty result can mean no matching FIELD metadata or simply no
         // selected MAIN rows. Keep separate diagnostics for the two cases.
         if let Some(field) = field {
             ms.resolve_field_selector(field).map_err(selection_error)?;
         }
-        return Err(FlaggingError::MutateFlags {
-            path: display_ms_path(ms),
-            reason: "MSSelectionNullSelection : The selected table has zero rows.".to_string(),
-        });
+        // An agent can have valid local time intervals that match no
+        // records. Keep it in the list, including its empty summary.
+        if !(request.casa_row_selection && timerange.is_some() && agent_default_row.is_some()) {
+            return Err(FlaggingError::MutateFlags {
+                path: display_ms_path(ms),
+                reason: "MSSelectionNullSelection : The selected table has zero rows.".to_string(),
+            });
+        }
     }
     Ok(SelectedFlagRows {
         rows,

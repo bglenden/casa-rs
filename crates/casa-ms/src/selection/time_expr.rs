@@ -317,6 +317,22 @@ impl TimeSelection {
         self.terms.iter().map(|term| term.time_list_entry)
     }
 
+    pub(crate) fn holds_agent_time(&self, time_s: f64) -> bool {
+        self.selects_all()
+            || self
+                .time_list()
+                .any(|entry| time_s >= entry.start_s && time_s <= entry.end_s)
+    }
+
+    pub(super) fn use_agent_intervals(&mut self) {
+        for term in &mut self.terms {
+            term.condition = TimeCondition::Within {
+                lower_s: term.time_list_entry.start_s,
+                upper_s: term.time_list_entry.end_s,
+            };
+        }
+    }
+
     /// Heap bytes the selection holds: exactly one [`TimeTerm`] per term, and
     /// nothing for an empty expression.
     #[must_use]
