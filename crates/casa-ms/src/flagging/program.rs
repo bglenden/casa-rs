@@ -34,6 +34,12 @@ pub fn validate_calibration_flag_averaging<'a>(
         .clone()
         .map(|(mode, _, _)| mode)
         .find(|mode| !automatic(mode) && !matches!(*mode, "extend" | "display" | "antint"));
+    let multiple_automatic = configs
+        .clone()
+        .filter(|(mode, _, _)| automatic(mode))
+        .take(2)
+        .count()
+        > 1;
     for (mode, channelavg, timeavg) in configs {
         if !(channelavg || timeavg) {
             continue;
@@ -48,6 +54,11 @@ pub fn validate_calibration_flag_averaging<'a>(
             return Err(FlaggingError::CalibrationAgentConfiguration(format!(
                 "Cannot use {mode} mode with timeavg=True or channelavg=True and additional modes other than extend, display, and antint. timeavg={timeavg}, channelavg={channelavg}, and the following mode has been set up: {other}. Refusing to accept this configuration."
             )));
+        }
+        if multiple_automatic {
+            return Err(FlaggingError::CalibrationAgentConfiguration(
+                "Averaging with multiple automatic flagging agents requires a shared averaged visibility iterator (#978).".into(),
+            ));
         }
     }
     Ok(())

@@ -592,8 +592,63 @@ def main():
         c2 = check_sequential_all_modes(libraries)
         c3 = check_savepars_history_backup_display_cli(libraries)
         c4 = check_skips_and_refusals(libraries)
+        c4 += check_averaging_admission(libraries)
     print(f"{c1} input/selector cases, {c2} multi-mode/ntime/rflag cases, {c3} metadata/interop cases, "
           f"and {c4} skip/refusal cases verified against CASA 6.7.6.14.")
+
+
+def check_averaging_admission(libraries):
+    make_list_fixture("averaging-admission.ms", with_corrected=False)
+    make_list_fixture("averaging-shared.ms")
+    with table("averaging-shared.ms", ack=False, readonly=False) as main:
+        values = main.getcol("DATA")
+        values[:, 0::2, :] = 2
+        values[:, 1::2, :] = 8
+        main.putcol("DATA", values)
+        for column in ("FLAG", "FLAG_ROW"):
+            main.putcol(column, np.zeros_like(main.getcol(column)))
+    for name, task in libraries:
+        invalid = f"invalid-averaging-{name}.ms"
+        copytree("averaging-admission.ms", invalid)
+        before = flags(invalid)
+        result = outcome(
+            task, vis=invalid, mode="list", flagbackup=False,
+            inpfile=["mode='manual'", "mode='display' datacolumn='DATA' timeavg=True"],
+        )
+        assert result == (
+            "ERR", "RuntimeError",
+            "Cannot use timeavg or channelavg in mode display. timeavg=1, channelavg=0. "
+            "These averaging options are only allowed for auto-flagging methods. "
+            "Refusing this configuration.",
+        ), (name, result)
+        for original, current in zip(before, flags(invalid), strict=True):
+            np.testing.assert_array_equal(current, original)
+        assert task(
+            vis=invalid, mode="list", flagbackup=False,
+            inpfile=["mode='manual'", "mode='antint' datacolumn='CORRECTED' timeavg=True "
+                     "antint_ref_antenna='A0'"],
+        ) == {}
+        assert flags(invalid)[0].all()
+
+        shared = f"shared-averaging-{name}.ms"
+        copytree("averaging-shared.ms", shared)
+        before = flags(shared)
+        result = outcome(
+            task, vis=shared, mode="list", flagbackup=False,
+            inpfile=["mode='clip' clipminmax=[0,100] channelavg=True chanbin=2",
+                     "mode='clip' clipminmax=[0,6]"],
+        )
+        if name == "casa":
+            assert result == ("OK", {}), result
+        else:
+            assert result == (
+                "ERR", "RuntimeError",
+                "Averaging with multiple automatic flagging agents requires a shared "
+                "averaged visibility iterator (#978).",
+            ), result
+        for original, current in zip(before, flags(shared), strict=True):
+            np.testing.assert_array_equal(current, original)
+    return 3
 
 
 if __name__ == "__main__":
