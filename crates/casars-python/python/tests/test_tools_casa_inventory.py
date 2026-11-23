@@ -56,6 +56,8 @@ IMPLEMENTED["msmetadata"] = {
     "fieldsforintent", "scansforintent", "spwsforintent", "timesforintent",
     "fieldsforsource", "fieldsforsources", "sourcedirs", "sourcetimes",
     "propermotions", "restfreqs", "transitions",
+    "antennadiameter", "antennaids", "antennaoffset", "antennaposition",
+    "antennastations", "observatoryposition", "schedule", "timerangeforobs",
 }
 IMPLEMENTED["atmosphere"] = set(casa_signatures("atmosphere")["methods"])
 IMPLEMENTED["wvr"] = {"gcal"}
