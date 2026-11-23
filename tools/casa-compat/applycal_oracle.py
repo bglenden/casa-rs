@@ -914,7 +914,9 @@ def run(root, native_bin, only=None):
         ('all', 'mscal.help() != "" AND ANTENNA1 == 0'),
         ('stokes', 'derivedmscal.help("STOKES") != mscal.help("selection") AND ANTENNA1 == 0'),
         ('subtable-alias', 'mscal.help("subtable") == mscal.help("subtables") AND ANTENNA1 == 0'),
-        ('row-dependent', 'mscal.help(mscal.ant1name()) != "" AND ANTENNA1 == 0'),
+        ('constant-comparison', 'mscal.help(mscal.ant1name()) == mscal.help("A0") AND ANTENNA1 == 1'),
+        ('row-dependent-comparison',
+         'mscal.help(mscal.ant1name()) == iif(ANTENNA1 == 0,mscal.help("A0"),mscal.help("A1"))'),
         ('invalid-topic', 'mscal.help(3) != ""'),
         ('too-many-topics', 'mscal.help("derived","stokes") != ""'),
     ]:

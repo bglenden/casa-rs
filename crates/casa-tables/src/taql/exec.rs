@@ -184,6 +184,7 @@ pub(super) fn select_row_indices(
     let mut row_indices: Vec<usize> = if let Some(ref where_clause) = sel.where_clause {
         let mut where_clause = where_clause.clone();
         super::mscal_lookup::bind(&mut where_clause, table, style)?;
+        super::mscal_help::fold_filter(&mut where_clause, table, style)?;
         let mut indices = Vec::new();
         for i in 0..row_count {
             let row = table

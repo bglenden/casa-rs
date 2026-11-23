@@ -3,7 +3,77 @@
 //! Text from casacore derivedmscal/DerivedMC/Register.cc.
 //! Copyright (C) 2010 Associated Universities, Inc. Washington DC, USA.
 
-use super::{TaqlError, eval::ExprValue};
+use crate::Table;
+
+use super::{
+    TaqlError,
+    ast::{Expr, IndexStyle, Literal},
+    eval::{EvalContext, ExprValue, eval_expr, reads_current_row},
+};
+
+#[derive(PartialEq, Eq)]
+enum Constant {
+    No,
+    Yes,
+    Help,
+}
+
+/// Casacore marks the help UDF constant but leaves the UDF node itself in the
+/// tree. It folds an enclosing constant expression at row zero and evaluates
+/// the original UDF on each row when the enclosing expression reads a column.
+pub(super) fn fold_filter(
+    expr: &mut Expr,
+    table: &Table,
+    style: IndexStyle,
+) -> Result<(), TaqlError> {
+    fold(expr, table, style).map(|_| ())
+}
+
+fn fold(expr: &mut Expr, table: &Table, style: IndexStyle) -> Result<Constant, TaqlError> {
+    let is_help = matches!(expr, Expr::FunctionCall { name, .. }
+        if ["mscal.help", "derivedmscal.help"].iter().any(|key| name.eq_ignore_ascii_case(key)));
+    let mut constant = !reads_current_row(expr);
+    let mut contains_help = is_help;
+    expr.try_for_each_child_mut(&mut |child| {
+        let child = fold(child, table, style)?;
+        constant &= child != Constant::No;
+        contains_help |= child == Constant::Help;
+        Ok::<_, TaqlError>(())
+    })?;
+    if is_help {
+        return Ok(Constant::Help);
+    }
+    if !constant {
+        return Ok(Constant::No);
+    }
+    if !contains_help {
+        return Ok(Constant::Yes);
+    }
+    if table.row_count() != 0 {
+        let row = table
+            .row_accessor()
+            .row(0)
+            .map_err(super::mscal_lookup::table_error)?;
+        let ctx = EvalContext {
+            row,
+            row_index: 0,
+            style,
+            measures: table.measures_provider(),
+        };
+        let literal = match eval_expr(expr, &ctx)? {
+            ExprValue::String(value) => Some(Literal::String(value)),
+            ExprValue::Bool(value) => Some(Literal::Bool(value)),
+            ExprValue::Int(value) => Some(Literal::Int(value)),
+            ExprValue::Float(value) => Some(Literal::Float(value)),
+            _ => None,
+        };
+        if let Some(literal) = literal {
+            *expr = Expr::Literal(literal);
+            return Ok(Constant::Yes);
+        }
+    }
+    Ok(Constant::Help)
+}
 
 pub(super) fn help(name: &str, args: &[ExprValue]) -> Result<ExprValue, TaqlError> {
     let topic = match args {

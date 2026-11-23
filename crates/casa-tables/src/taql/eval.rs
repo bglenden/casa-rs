@@ -464,28 +464,8 @@ pub fn eval_constant(
     }
 
     fn check(expr: &mut Expr, name: &str) -> Result<(), TaqlError> {
-        match expr {
-            Expr::ColumnRef(_)
-            | Expr::RowNumber
-            | Expr::Subquery(_)
-            | Expr::Aggregate { .. }
-            | Expr::BoundRowLookup { .. }
-            | Expr::BoundRowFunction(_) => return Err(error(name)),
-            Expr::FunctionCall { name: func, .. }
-                if [
-                    "rownumber",
-                    "rownr",
-                    "rowid",
-                    "iscolumn",
-                    "iskeyword",
-                    "rand",
-                ]
-                .iter()
-                .any(|key| func.eq_ignore_ascii_case(key)) =>
-            {
-                return Err(error(name));
-            }
-            _ => {}
+        if reads_current_row(expr) {
+            return Err(error(name));
         }
         expr.try_for_each_child_mut(&mut |child| check(child, name))
     }
@@ -498,6 +478,28 @@ pub fn eval_constant(
         measures: None,
     };
     eval_expr(expr, &ctx)
+}
+
+pub(super) fn reads_current_row(expr: &Expr) -> bool {
+    match expr {
+        Expr::ColumnRef(_)
+        | Expr::RowNumber
+        | Expr::Subquery(_)
+        | Expr::Aggregate { .. }
+        | Expr::BoundRowLookup { .. }
+        | Expr::BoundRowFunction(_) => true,
+        Expr::FunctionCall { name, .. } => [
+            "rownumber",
+            "rownr",
+            "rowid",
+            "iscolumn",
+            "iskeyword",
+            "rand",
+        ]
+        .iter()
+        .any(|key| name.eq_ignore_ascii_case(key)),
+        _ => false,
+    }
 }
 
 /// Evaluate an expression against a row context.
