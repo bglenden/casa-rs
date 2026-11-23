@@ -119,9 +119,11 @@ fn canonical_restored_coordinate(
     original: &RecordValue,
     model: &CoordinateModel,
 ) -> PyResult<Option<RecordValue>> {
-    if !matches!(model, CoordinateModel::Spectral(_))
-        || !matches!(original.get("system"),
-            Some(Value::Scalar(ScalarValue::String(system))) if system == "LSR")
+    let CoordinateModel::Spectral(spectral) = model else {
+        return linear_transform::normalize_restored_matrix(original, model);
+    };
+    if !matches!(original.get("system"),
+        Some(Value::Scalar(ScalarValue::String(system))) if system == "LSR")
     {
         return linear_transform::normalize_restored_matrix(original, model);
     }
@@ -135,10 +137,13 @@ fn canonical_restored_coordinate(
     if let Some(unit) = original
         .get("velUnit")
         .or_else(|| original.get("prefVelUnit"))
+        .filter(|unit| matches!(unit, Value::Scalar(ScalarValue::String(name)) if !name.is_empty()))
     {
         normalized.upsert("velUnit", unit.clone());
     }
-    if normalized.get("conversion").is_none() {
+    if normalized.get("conversion").is_none()
+        || spectral.conversion_frequency_ref() == Some(spectral.frequency_ref())
+    {
         let mut conversion = default_spectral_conversion();
         if let Some(system) = normalized.get("system") {
             conversion.upsert("system", system.clone());
