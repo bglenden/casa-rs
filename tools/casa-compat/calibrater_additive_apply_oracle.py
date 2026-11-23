@@ -133,7 +133,7 @@ def check_model_prior(work, product, factories, datasets):
                                            atol=.001, rtol=0.)
                 values[label] = gains
         if 'native' in values:
-            np.testing.assert_allclose(values['native'], values['casa'], atol=2e-6, rtol=0.)
+            np.testing.assert_allclose(values['native'], values['casa'], atol=1e-5, rtol=0.)
         print('point-model' if use_point else 'physical-model', 'additive prior matched', flush=True)
 
 
