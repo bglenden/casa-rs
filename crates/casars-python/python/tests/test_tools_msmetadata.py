@@ -397,3 +397,44 @@ def test_msmetadata_safe_time_selection_boundaries(native_dataset):
             metadata.timesforspws(4096)
     finally:
         assert metadata.done()
+
+
+def test_msmetadata_window_name_and_numpy_time_selector_forms(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = casatools.table()
+    assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+    assert table.nrows() == 1
+    assert table.addrows(1)
+    for column in table.colnames():
+        if table.iscelldefined(column, 0):
+            table.putcell(column, 1, table.getcell(column, 0))
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            for selector in (np.array("L"), np.array([["L", "missing"]]),
+                             np.array([b"L", b"missing"]), [b"L"]):
+                selected = metadata.spwsfornames(selector)
+                assert list(selected) == ["L"]
+                np.testing.assert_array_equal(selected["L"], np.array([0, 1]), strict=True)
+            np.testing.assert_array_equal(metadata.spwsforfield(b"F"), np.array([0]), strict=True)
+            all_times = metadata.timesforspws()
+            assert set(all_times) == {"0", "1"}
+            assert set(metadata.timesforspws(np.bool_(False))) == set(all_times)
+            for spw in (np.int32(0), np.array([0], dtype=np.uint32)):
+                np.testing.assert_array_equal(metadata.timesforspws(spw), all_times["0"], strict=True)
+            scan = int(metadata.scannumbers()[0])
+            for scans in (np.int32(scan), np.array([scan], dtype=np.uint32)):
+                np.testing.assert_array_equal(metadata.timesforscans(scans), all_times["0"], strict=True)
+            with pytest.raises(RuntimeError):
+                metadata.timesforscans(np.uint32(scan))
+            unsigned = metadata.timesforspws(np.uint32(0))
+            if module is casatools:
+                assert set(unsigned) == set(all_times)
+            else:
+                np.testing.assert_array_equal(unsigned, all_times["0"], strict=True)
+        finally:
+            assert metadata.done()

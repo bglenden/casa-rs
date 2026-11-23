@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyComplex, PyComplexMethods, PyFloat, PyInt, PyList, PyString};
 
 use super::PyMsMetadata;
+use super::names::selector_text;
 use super::scan_index::{Scan, ScanIndex, ScanKey};
 use crate::convert::{nested_sequence_items, value::CasaValue};
 
@@ -99,8 +100,8 @@ impl<'a, 'py> FromPyObject<'a, 'py> for FieldSelector {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        if let Ok(name) = object.cast::<PyString>() {
-            return Ok(Self::Name(name.to_str()?.to_owned()));
+        if let Some(name) = selector_text(&object)? {
+            return Ok(Self::Name(name));
         }
         let signed = if object.is_instance_of::<PyInt>() {
             !object.is_instance_of::<PyBool>()

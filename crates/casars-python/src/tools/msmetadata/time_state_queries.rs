@@ -12,6 +12,29 @@ use super::scan_index::Time;
 use super::scan_queries::{int_array, matching_scan};
 use crate::convert::value::CasaValue;
 
+enum TimeSelector {
+    Indices(Indices),
+    UnsignedScalar(Indices),
+    BooleanScalar,
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for TimeSelector {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let numpy = value.py().import("numpy")?;
+        if value.is_instance(&numpy.getattr("bool_")?)? {
+            return Ok(Self::BooleanScalar);
+        }
+        let indices = Indices::capture(Some(&value))?;
+        if value.is_instance(&numpy.getattr("unsignedinteger")?)? {
+            Ok(Self::UnsignedScalar(indices))
+        } else {
+            Ok(Self::Indices(indices))
+        }
+    }
+}
+
 fn interval(center: f64, tolerance: f64) -> MsResult<RangeInclusive<f64>> {
     if tolerance < 0.0 {
         return Err(MsError::InvalidInput(
@@ -124,18 +147,18 @@ impl PyMsMetadata {
         .into_python(py)
     }
 
-    #[pyo3(signature = (scans = Indices::Scalar(0), obsid = -1, arrayid = -1), text_signature = "($self, scans=0, obsid=-1, arrayid=-1)")]
+    #[pyo3(signature = (scans = TimeSelector::Indices(Indices::Scalar(0)), obsid = -1, arrayid = -1), text_signature = "($self, scans=0, obsid=-1, arrayid=-1)")]
     fn timesforscans(
         &self,
         py: Python<'_>,
-        scans: Indices,
+        scans: TimeSelector,
         obsid: i64,
         arrayid: i64,
     ) -> PyResult<Py<PyAny>> {
         self.with_scan_index(py, |ms, index| {
             let scans = match scans {
-                Indices::Scalar(id) => vec![id],
-                Indices::Vector(ids) => ids,
+                TimeSelector::Indices(Indices::Scalar(id)) => vec![id],
+                TimeSelector::Indices(Indices::Vector(ids)) => ids,
                 _ => {
                     return Err(MsError::InvalidInput(
                         "scans must either be an int or an array of ints".into(),
@@ -174,14 +197,18 @@ impl PyMsMetadata {
         .into_python(py)
     }
 
-    #[pyo3(signature = (spw = Indices::Scalar(-1)), text_signature = "($self, spw=-1)")]
-    fn timesforspws(&self, py: Python<'_>, spw: Indices) -> PyResult<Py<PyAny>> {
+    #[pyo3(signature = (spw = TimeSelector::Indices(Indices::Scalar(-1))), text_signature = "($self, spw=-1)")]
+    fn timesforspws(&self, py: Python<'_>, spw: TimeSelector) -> PyResult<Py<PyAny>> {
         self.with_scan_index(py, |ms, index| {
             let count = ms.spectral_window()?.row_count();
             let ids = match spw {
-                Indices::Scalar(id) if id < 0 => Indices::Empty,
-                Indices::BooleanVector => Indices::Empty,
-                selection => selection,
+                TimeSelector::Indices(Indices::Scalar(id)) if id < 0 => Indices::Empty,
+                TimeSelector::Indices(Indices::BooleanVector) | TimeSelector::BooleanScalar => {
+                    Indices::Empty
+                }
+                TimeSelector::Indices(selection) | TimeSelector::UnsignedScalar(selection) => {
+                    selection
+                }
             }
             .rows(count, "Spectral window ID")?;
             let collapsed = ids.len() == 1;

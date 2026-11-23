@@ -9190,6 +9190,15 @@ bounds check.
 casa-rs interprets the empty integer vector as the full in-scope set
 and raises `RuntimeError` for the out-of-range spectral window (#1029).
 
+## An unsigned scalar can widen a spectral-window time selection
+
+In CASA 6.7.6.14, open a MeasurementSet with more than one spectral
+window. `msmetadata.timesforspws(numpy.uint32(0))` returns a dictionary
+covering all windows. A Python integer, signed NumPy integer, or
+one-element unsigned integer array returns the requested window.
+casa-rs treats the unsigned scalar as the requested window too, so its
+numeric value cannot be lost and the selection widened (#1029).
+
 ## Image coordinate frequency conversion can use the wrong physical direction
 
 Create a CASA 6.7.6.14 image with shape `[20,20,20]` and the default J2000

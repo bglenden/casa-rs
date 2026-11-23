@@ -5,13 +5,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use casa_ms::{MeasurementSet, MsError, MsResult};
 use numpy::{IntoPyArray, PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBool, PyDict, PyList, PyTuple};
 
 use super::PyMsMetadata;
-use super::names::Indices;
+use super::names::selector_text;
 use super::scan_queries::{FieldSelector, int_array, matching_scan};
 use super::spectral::spw_row;
-use crate::convert::{Variant, value::CasaValue};
+use crate::convert::{nested_sequence_items, value::CasaValue};
 
 fn checked_spw(ms: &MeasurementSet, id: i64) -> MsResult<i32> {
     spw_row(&ms.spectral_window()?, id).map(|id| id as i32)
@@ -30,27 +30,51 @@ fn unsigned_group_dict(
 }
 
 fn window_names(spwids: Option<&Bound<'_, PyAny>>) -> PyResult<Option<BTreeSet<String>>> {
+    let invalid = || {
+        pyo3::exceptions::PyRuntimeError::new_err(
+            "Spectral window names must be a string or an array of strings",
+        )
+    };
     let Some(spwids) = spwids.filter(|value| !value.is_none()) else {
         return Ok(None);
     };
-    if let Ok(array) = spwids.cast::<PyUntypedArray>()
-        && array.len() == 0
-        && array.dtype().kind() != b'b'
-    {
-        return Ok(Some(BTreeSet::new()));
+    if let Some(name) = selector_text(spwids)? {
+        return Ok((!name.is_empty()).then(|| BTreeSet::from([name])));
     }
-    if matches!(Indices::capture(Some(spwids))?, Indices::BooleanVector) {
-        return Ok(None);
-    }
-    match spwids.extract::<Variant>()? {
-        Variant::Empty => Ok(None),
-        Variant::Text(name) if name.is_empty() => Ok(None),
-        Variant::Text(name) => Ok(Some(BTreeSet::from([name]))),
-        Variant::Texts(names) => Ok(Some(names.into_iter().collect())),
-        _ => Err(pyo3::exceptions::PyRuntimeError::new_err(
-            "Spectral window names must be a string or an array of strings",
-        )),
-    }
+    let items = if let Ok(array) = spwids.cast::<PyUntypedArray>() {
+        let kind = array.dtype().kind();
+        if kind == b'b' {
+            return Ok(None);
+        }
+        if array.len() == 0 {
+            return Ok(Some(BTreeSet::new()));
+        }
+        if !matches!(kind, b'S' | b'U') {
+            return Err(invalid());
+        }
+        array
+            .call_method1("ravel", ("F",))?
+            .call_method0("tolist")?
+            .try_iter()?
+            .collect::<PyResult<Vec<_>>>()?
+    } else if spwids.is_instance_of::<PyList>() || spwids.is_instance_of::<PyTuple>() {
+        let items = if let Some((_, items)) = nested_sequence_items(spwids)? {
+            items
+        } else {
+            spwids.try_iter()?.collect::<PyResult<Vec<_>>>()?
+        };
+        if items.iter().all(|item| item.is_instance_of::<PyBool>()) {
+            return Ok(None);
+        }
+        items
+    } else {
+        return Err(invalid());
+    };
+    items
+        .iter()
+        .map(|item| selector_text(item)?.ok_or_else(invalid))
+        .collect::<PyResult<BTreeSet<_>>>()
+        .map(Some)
 }
 
 #[pymethods]
