@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
 
@@ -30,7 +31,44 @@ pub(super) struct ScanKey {
 pub(super) struct Scan {
     pub(super) fields: BTreeSet<i32>,
     pub(super) antennas: BTreeSet<i32>,
+    pub(super) samples: BTreeSet<Sample>,
 }
+
+/// One distinct field/window/state/time tuple within a MAIN scan.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct Sample {
+    pub(super) time: Time,
+    pub(super) field: i32,
+    pub(super) spw: i32,
+    pub(super) state: i32,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct Time(pub(super) f64);
+
+impl Ord for Time {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.0 == other.0 {
+            Ordering::Equal
+        } else {
+            self.0.total_cmp(&other.0)
+        }
+    }
+}
+
+impl PartialOrd for Time {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Time {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for Time {}
 
 /// MAIN scan membership cached per attached MeasurementSet. Chunk buffers
 /// read only scalar keys and never touch visibility or flag cells.
@@ -44,6 +82,10 @@ pub(super) struct ScanIndex {
 impl ScanIndex {
     pub(super) fn read(ms: &MeasurementSet) -> MsResult<Self> {
         let main = ms.main_table();
+        let descriptions = ms.data_description()?;
+        let windows = (0..descriptions.row_count())
+            .map(|row| descriptions.spectral_window_id(row))
+            .collect::<MsResult<Vec<_>>>()?;
         let root = ms.path().expect("an attached MS has a path");
         let direct =
             !main.is_reference_table()? && Table::concatenated_source_paths(root)?.is_none();
@@ -56,7 +98,10 @@ impl ScanIndex {
             mut fields,
             mut ant1,
             mut ant2,
+            mut dd_ids,
+            mut states,
         ] = std::array::from_fn(|_| Vec::new());
+        let mut times = Vec::new();
         let mut last_max_array = -1;
         for start in (0..main.row_count()).step_by(CHUNK_ROWS) {
             rows.clear();
@@ -68,14 +113,21 @@ impl ScanIndex {
                 ("FIELD_ID", &mut fields),
                 ("ANTENNA1", &mut ant1),
                 ("ANTENNA2", &mut ant2),
+                ("DATA_DESC_ID", &mut dd_ids),
+                ("STATE_ID", &mut states),
             ];
             if direct {
-                let mut destinations = columns.map(|(name, values)| {
+                let destinations = columns.map(|(name, values)| {
                     RequiredScalarColumnDestination::new(
                         name,
                         RequiredScalarColumnValuesMut::Int32(values),
                     )
                 });
+                let mut destinations = Vec::from(destinations);
+                destinations.push(RequiredScalarColumnDestination::new(
+                    "TIME",
+                    RequiredScalarColumnValuesMut::Float64(&mut times),
+                ));
                 main.required_scalar_columns_for_rows_into(&rows, &mut destinations)?;
             } else {
                 // Reference and concatenation descriptors resolve row identity
@@ -94,8 +146,21 @@ impl ScanIndex {
                         values.push(value);
                     }
                 }
+                times.clear();
+                for cell in main
+                    .column_accessor("TIME")?
+                    .scalar_cells_owned_for_rows(&rows)?
+                {
+                    let Some(ScalarValue::Float64(value)) = cell else {
+                        return Err(MsError::InvalidInput(
+                            "MAIN column TIME has a missing or non-floating-point value".into(),
+                        ));
+                    };
+                    times.push(value);
+                }
             }
             let mut previous_scan = None;
+            let mut previous_sample = None;
             let mut scan = None;
             for index in 0..rows.len() {
                 let [first, second] = [ant1[index], ant2[index]];
@@ -107,11 +172,25 @@ impl ScanIndex {
                 if previous_scan != Some(key) {
                     last_max_array = last_max_array.max(key.array);
                     previous_scan = Some(key);
+                    previous_sample = None;
                     scan = Some(result.scans.entry(key).or_default());
                 }
                 let scan = scan.as_deref_mut().expect("the current scan was inserted");
                 scan.fields.insert(fields[index]);
                 scan.antennas.extend([first, second]);
+                let spw = *windows.get(dd_ids[index] as usize).ok_or_else(|| {
+                    MsError::InvalidInput(format!("Unknown data description ID {}", dd_ids[index]))
+                })?;
+                let sample = Sample {
+                    time: Time(times[index]),
+                    field: fields[index],
+                    spw,
+                    state: states[index],
+                };
+                if previous_sample != Some(sample) {
+                    scan.samples.insert(sample);
+                    previous_sample = Some(sample);
+                }
                 result
                     .baselines
                     .insert([first.min(second), first.max(second)]);
@@ -132,8 +211,13 @@ impl ScanIndex {
                 total
                     .saturating_add(tree_bytes(scan.fields.len(), size_of::<i32>()))
                     .saturating_add(tree_bytes(scan.antennas.len(), size_of::<i32>()))
+                    .saturating_add(tree_bytes(scan.samples.len(), size_of::<Sample>()))
             },
         )
+    }
+
+    pub(super) fn samples(&self) -> impl Iterator<Item = &Sample> {
+        self.scans.values().flat_map(|scan| scan.samples.iter())
     }
 
     pub(super) fn matching(

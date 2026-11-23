@@ -9,6 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyComplex, PyComplexMethods, PyFloat, PyInt, PyList, PyString};
 
 use super::PyMsMetadata;
+use super::names::selector_text;
 use super::scan_index::{Scan, ScanIndex, ScanKey};
 use crate::convert::{nested_sequence_items, value::CasaValue};
 
@@ -89,7 +90,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ScanList {
     }
 }
 
-enum FieldSelector {
+pub(super) enum FieldSelector {
     Name(String),
     Id(i64),
     Unsupported,
@@ -99,8 +100,8 @@ impl<'a, 'py> FromPyObject<'a, 'py> for FieldSelector {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        if let Ok(name) = object.cast::<PyString>() {
-            return Ok(Self::Name(name.to_str()?.to_owned()));
+        if let Some(name) = selector_text(&object)? {
+            return Ok(Self::Name(name));
         }
         let signed = if object.is_instance_of::<PyInt>() {
             !object.is_instance_of::<PyBool>()
@@ -114,7 +115,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for FieldSelector {
     }
 }
 
-fn matching_scan<'a>(
+pub(super) fn matching_scan<'a>(
     index: &'a ScanIndex,
     ms: &MeasurementSet,
     scan: i64,
@@ -146,7 +147,7 @@ fn field_ids(ms: &MeasurementSet, name: &str) -> MsResult<BTreeSet<i32>> {
     Ok(ids)
 }
 
-fn int_array(ids: impl IntoIterator<Item = i32>) -> CasaValue {
+pub(super) fn int_array(ids: impl IntoIterator<Item = i32>) -> CasaValue {
     let values: Vec<i64> = ids.into_iter().map(i64::from).collect();
     CasaValue::Ints {
         shape: vec![values.len()],

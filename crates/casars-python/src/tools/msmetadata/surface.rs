@@ -228,7 +228,7 @@ const METHODS: &[Method] = &[
             param("asnames", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fieldsfortimes",
@@ -237,7 +237,7 @@ const METHODS: &[Method] = &[
             param("tol", K::Float, Float(0.0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("intents", &[], R::Any, No),
     method(
@@ -434,7 +434,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "scansforspws",
@@ -443,7 +443,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "scansforstate",
@@ -453,7 +453,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "scansfortimes",
@@ -464,7 +464,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("schedule", &[param("obsid", K::Int, Int(-1))], R::Any, No),
     method("sideband", &[param("spw", K::Any, Required)], R::Any, Yes),
@@ -497,9 +497,9 @@ const METHODS: &[Method] = &[
         "spwsforfield",
         &[param("field", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
-    method("spwsforfields", &[], R::Any, No),
+    method("spwsforfields", &[], R::Any, Yes),
     method(
         "spwsforintent",
         &[param("intent", K::Text, Text(""))],
@@ -510,7 +510,7 @@ const METHODS: &[Method] = &[
         "spwsfornames",
         &[param("spwids", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "spwsforscan",
@@ -520,7 +520,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "spwsforscans",
@@ -529,7 +529,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "statesforscan",
@@ -539,7 +539,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "statesforscans",
@@ -548,7 +548,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "subwindows",
@@ -568,7 +568,7 @@ const METHODS: &[Method] = &[
         "timesforfield",
         &[param("field", K::Int, Int(-1))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "timesforintent",
@@ -585,7 +585,7 @@ const METHODS: &[Method] = &[
             param("perspw", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "timesforscans",
@@ -595,9 +595,14 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("timesforspws", &[param("spw", K::Int, Int(-1))], R::Any, No),
+    method(
+        "timesforspws",
+        &[param("spw", K::Int, Int(-1))],
+        R::Any,
+        Yes,
+    ),
     method(
         "transitions",
         &[
