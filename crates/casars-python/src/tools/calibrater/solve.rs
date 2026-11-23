@@ -253,6 +253,7 @@ fn standard_request(
         "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
         "T" | "T JONES" | "T NOISE" => CalibrationSolveRequest::Gain(standard.gain(GainType::T)),
         "K" | "K JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::K)),
+        "KMBD" | "KMBD JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::KMbd)),
         "KCROSS" | "KCROSS JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::KCross)),
         "KANTPOS" | "KANTPOS JONES" => {
             CalibrationSolveRequest::Gain(standard.gain(GainType::KAntPos))
@@ -260,7 +261,7 @@ fn standard_request(
         "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
             standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
         ),
-        "BPOLY" => return Err(setup_error()),
+        "BPOLY" | "P" | "P JONES" => return Err(setup_error()),
         "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
             let frequency_dependent = family.starts_with("MF");
             CalibrationSolveRequest::Baseline {

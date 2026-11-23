@@ -203,6 +203,21 @@ def test_sigma_inverse_variance(casa, tmp_path, form):
         np.testing.assert_allclose(model, expected, atol=3e-7)
 
 
+def test_constant_polynomial_produces_zero_native_residuals(casa, tmp_path):
+    data = _cube(np.ones(128), shape=(3, 4))
+    for writer in (casa, tools):
+        model = tmp_path / f"{writer.__name__}.model"
+        residual = tmp_path / f"{writer.__name__}.residual"
+        fit = _fit(writer, data, ngauss=0, poly=0, axis=2, model=str(model), residual=str(residual))
+        assert fit["valid"].all()
+        for reader in (casa, tools):
+            model_pixels, model_mask, *_ = _read(reader, model)
+            residual_pixels, residual_mask, *_ = _read(reader, residual)
+            np.testing.assert_array_equal(model_pixels, data)
+            np.testing.assert_array_equal(residual_pixels, np.zeros_like(data))
+            assert model_mask.all() and residual_mask.all()
+
+
 def _freq_cube(api):
     frequencies = 1.3e9 + np.arange(41) * 15e6
     x = frequencies / 1e9
