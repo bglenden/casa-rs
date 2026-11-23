@@ -294,9 +294,6 @@ fn standard_request(
                 active_phase,
             }
         }
-        _ if casa_calibration::CalibraterLifecycle::recognizes_calibration_type(family) => {
-            return crate::tools::not_yet_implemented_in("calibrater", "setsolve", 1528);
-        }
         _ => return Err(setup_error()),
     })
 }
