@@ -11,7 +11,7 @@ use casa_tables::RequiredScalarColumnValues;
 use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
-use crate::bandpass::BandpassSolveControls;
+use crate::bandpass::{BandpassFrequencyInterval, BandpassSolveControls, GatherFrequencyLayout};
 use crate::execute::{ApplyTermCounts, LibraryApplyRegistration};
 use crate::listing::{CalibrationListingReport, list_calibration, publish_listing};
 
@@ -89,10 +89,13 @@ enum ConfiguredSolve {
     },
     LegacyEp(Box<LegacyEpSolver>),
     SingleDish(Box<crate::single_dish::tool::Solver>),
-    Opacity {
+    GatherOnly {
         request: Box<crate::GainSolveRequest>,
         mode: CalibrationOutputMode,
+        subtype: &'static str,
         channelized: bool,
+        parameters: usize,
+        frequency: Option<BandpassFrequencyInterval>,
     },
     Polarization {
         request: Box<crate::solve::grouping::leakage::LeakageSolveRequest>,
@@ -167,6 +170,9 @@ pub enum CalibraterLifecycleError {
     /// The pinned opacity types configure but cannot produce a solve product.
     #[error("The configured opacity type cannot solve a calibration table.")]
     OpacityCannotSolve,
+    /// A gathered direct solve reached an unavailable fitting stage.
+    #[error("The configured {0} type cannot solve a calibration table.")]
+    GatherOnlyCannotSolve(&'static str),
     /// The polarization solve could not be configured or completed.
     #[error("{0}")]
     LeakageSolve(String),
@@ -890,7 +896,7 @@ impl CalibraterLifecycle {
                 ConfiguredSolve::Task { .. }
                 | ConfiguredSolve::Polarization { .. }
                 | ConfiguredSolve::SingleDish(_)
-                | ConfiguredSolve::Opacity { .. },
+                | ConfiguredSolve::GatherOnly { .. },
             ) => {
                 return Err(CalibraterLifecycleError::ImageNeedsEp);
             }
@@ -959,16 +965,50 @@ impl CalibraterLifecycle {
     /// Returns an error without an attached MeasurementSet.
     pub fn set_tool_opacity_solve(
         &mut self,
-        mut request: crate::GainSolveRequest,
+        request: crate::GainSolveRequest,
         mode: CalibrationOutputMode,
         channelized: bool,
     ) -> Result<(), CalibraterLifecycleError> {
+        self.set_tool_gather_only_solve(
+            if channelized { "TfOpac" } else { "TOpac" },
+            request,
+            mode,
+            None,
+        )
+    }
+
+    /// Resolve the canonical CASA factory name for a gather-only solve.
+    #[must_use]
+    pub fn gather_only_solve_type(name: &str) -> Option<(&'static str, bool)> {
+        let subtype = traditional_apply::calibration_factory_type(name)?;
+        gather_only_shape(subtype).map(|(channelized, _)| (subtype, channelized))
+    }
+
+    /// Configure the gather stage of a direct calibration family whose
+    /// fitting stage does not produce a calibration table.
+    /// # Errors
+    /// Returns an error for an unsupported type, iterator, or attachment.
+    pub fn set_tool_gather_only_solve(
+        &mut self,
+        subtype: &'static str,
+        mut request: crate::GainSolveRequest,
+        mode: CalibrationOutputMode,
+        frequency: Option<BandpassFrequencyInterval>,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let (channelized, parameters) = gather_only_shape(subtype)
+            .ok_or(CalibraterLifecycleError::GatherOnlyCannotSolve(subtype))?;
+        if subtype == "EPowerCurve" && !self.legacy_iterator {
+            return Err(CalibraterLifecycleError::GatherOnlyCannotSolve(subtype));
+        }
         let equation = self.equation_mut()?;
         request.gain_type = crate::GainType::T;
-        equation.solve = Some(ConfiguredSolve::Opacity {
+        equation.solve = Some(ConfiguredSolve::GatherOnly {
             request: Box::new(request),
             mode,
+            subtype,
             channelized,
+            parameters,
+            frequency,
         });
         equation.solve_description = None;
         Ok(())
@@ -1019,10 +1059,8 @@ impl CalibraterLifecycle {
                         "execute a direct single-dish configuration with solve_tool".into(),
                     ));
                 }
-                Some(ConfiguredSolve::Opacity { .. }) => {
-                    // Both real opacity classes reach the pinned complex
-                    // Jones solver, which terminates without a product.
-                    return Err(CalibraterLifecycleError::OpacityCannotSolve);
+                Some(ConfiguredSolve::GatherOnly { subtype, .. }) => {
+                    return Err(gather_only_failure(subtype));
                 }
                 Some(ConfiguredSolve::Polarization { .. }) => {
                     return Err(CalibraterLifecycleError::LeakageSolve(
@@ -1107,11 +1145,11 @@ impl CalibraterLifecycle {
             }
             return self.solve_single_dish_tool();
         }
-        if matches!(equation.solve, Some(ConfiguredSolve::Opacity { .. })) {
+        if matches!(equation.solve, Some(ConfiguredSolve::GatherOnly { .. })) {
             if !self.legacy_iterator {
                 self.last_solve_stats = None;
             }
-            return self.solve_opacity_tool();
+            return self.solve_gather_only_tool();
         }
         if matches!(equation.solve, Some(ConfiguredSolve::Polarization { .. })) {
             self.last_solve_stats = None;
@@ -1192,10 +1230,18 @@ impl CalibraterLifecycle {
         }
     }
 
-    fn solve_opacity_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
+    fn solve_gather_only_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
-        let Some(ConfiguredSolve::Opacity { request, .. }) = &equation.solve else {
-            unreachable!("opacity dispatch requires a configured opacity solver");
+        let Some(ConfiguredSolve::GatherOnly {
+            request,
+            mode,
+            subtype,
+            parameters,
+            channelized,
+            frequency,
+        }) = &equation.solve
+        else {
+            unreachable!("gather-only dispatch requires a configured solver");
         };
         let mut request = (**request).clone();
         request.selection = equation.attachment.selection().clone();
@@ -1211,8 +1257,24 @@ impl CalibraterLifecycle {
             equation.check_opacity_parameters()?;
             let ms =
                 MeasurementSet::open(equation.attachment.path()).map_err(AttachmentError::from)?;
-            crate::solve::gather_opacity_solve(&ms, &request, &mut activity)
-                .map_err(|_| CalibraterLifecycleError::OpacityCannotSolve)
+            crate::solve::gather_only_tool_solve(
+                &ms,
+                &request,
+                &mut activity,
+                crate::solve::GatherOnlySolveSettings {
+                    parameters: *parameters,
+                    check_append: !self.legacy_iterator && *mode == CalibrationOutputMode::Append,
+                    legacy: self.legacy_iterator,
+                    layout: if *channelized {
+                        GatherFrequencyLayout::Channelized(*frequency)
+                    } else if *subtype == "F Jones" {
+                        GatherFrequencyLayout::WidthWeighted
+                    } else {
+                        GatherFrequencyLayout::Collapsed
+                    },
+                },
+            )
+            .map_err(|_| gather_only_failure(subtype))
         })();
         match gathered {
             Ok(stats) => {
@@ -1239,6 +1301,26 @@ impl CalibraterLifecycle {
         self.equation
             .as_mut()
             .ok_or(CalibraterLifecycleError::Unattached)
+    }
+}
+
+fn gather_only_shape(subtype: &str) -> Option<(bool, usize)> {
+    Some(match subtype {
+        "TOpac" | "F Jones" => (false, 1),
+        "TfOpac" => (true, 1),
+        "J Jones" => (false, 4),
+        "Jf Jones" | "A Noise" => (true, 4),
+        "B TSYS" => (true, 2),
+        "EGainCurve" | "EPowerCurve" => (false, 8),
+        _ => return None,
+    })
+}
+
+fn gather_only_failure(subtype: &'static str) -> CalibraterLifecycleError {
+    if subtype.ends_with("Opac") {
+        CalibraterLifecycleError::OpacityCannotSolve
+    } else {
+        CalibraterLifecycleError::GatherOnlyCannotSolve(subtype)
     }
 }
 
