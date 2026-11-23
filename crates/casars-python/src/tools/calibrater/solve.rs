@@ -108,6 +108,17 @@ fn setsolve_mode(value: &str, phase_only: bool) -> (String, GainSolveMode, bool)
     (apmode, mode, invalid)
 }
 
+fn setsolve_normalization(value: &str) -> PyResult<GainNormalization> {
+    let value = value.to_ascii_uppercase();
+    if value.contains("MEAN") {
+        Ok(GainNormalization::Mean)
+    } else if value.contains("MED") {
+        Ok(GainNormalization::Median)
+    } else {
+        Err(setup_error())
+    }
+}
+
 fn single_dish_controls(
     family: &str,
     fraction: Option<&Bound<'_, PyAny>>,
@@ -433,14 +444,7 @@ impl super::PyCalibrater {
                     (time, Some(frequency))
                 });
             let (apmode, solve_mode_value, invalid_mode) = setsolve_mode(&apmode, phase_only);
-            let normtype = normtype.to_ascii_uppercase();
-            let normalization = if normtype.contains("MEAN") {
-                GainNormalization::Mean
-            } else if normtype.contains("MED") {
-                GainNormalization::Median
-            } else {
-                return Err(setup_error());
-            };
+            let normalization = setsolve_normalization(&normtype)?;
             let standard = StandardSolver {
                 output_table: table,
                 solve_interval: GainSolveInterval::from_casa(time).ok_or_else(setup_error)?,
