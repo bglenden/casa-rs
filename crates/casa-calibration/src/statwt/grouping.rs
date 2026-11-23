@@ -94,10 +94,16 @@ pub(super) fn groups<'a>(
         let mut start = 0;
         for index in 1..rows.len() {
             let boundary_changed = rows[index].1 != rows[start].1;
+            let start_time = rows[start].0.time_mjd_seconds;
+            let time = rows[index].0.time_mjd_seconds;
+            // casacore's MSInterval anchors the comparison 10 ms before
+            // the first timestamp and resets that anchor for each chunk.
+            let anchor = start_time - 0.01;
             let duration_elapsed = matches!(time_bin, StatWtTimeBin::Seconds(width)
-                if !sliding && rows[index].0.time_mjd_seconds - rows[start].0.time_mjd_seconds >= width);
-            let single_timestamp_bin_elapsed = matches!(time_bin, StatWtTimeBin::Timestamps(1))
-                && rows[index].0.time_mjd_seconds != rows[start].0.time_mjd_seconds;
+                if !sliding && ((time - anchor) / width).floor()
+                    > ((start_time - anchor) / width).floor());
+            let single_timestamp_bin_elapsed =
+                matches!(time_bin, StatWtTimeBin::Timestamps(1)) && time != start_time;
             if boundary_changed || duration_elapsed || single_timestamp_bin_elapsed {
                 baseline_groups(&rows[start..index], &mut ordered);
                 start = index;

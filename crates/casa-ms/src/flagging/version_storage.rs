@@ -182,7 +182,7 @@ pub fn restore_flag_version(
             break;
         }
         let main = ms.main_table();
-        let saved = clip_time::read_flags(&table, &rows, &display_path)?;
+        let saved = read_version_flags(&table, &rows, &display_path)?;
         let flags = restore_flag_arrays(main, &rows, &display_path, saved, merge)?;
         let mut columns = vec![MeasurementSetMutationColumnBatch {
             name: FLAG_COLUMN.to_string(),
@@ -222,6 +222,28 @@ pub fn restore_flag_version(
             reason: format!("finish restored flags: {source}"),
         })?;
     Ok(())
+}
+
+fn read_version_flags(
+    table: &Table,
+    rows: &[usize],
+    path: &str,
+) -> Result<Vec<ArrayD<bool>>, FlaggingError> {
+    let packed = table
+        .column_accessor(FLAG_COLUMN)
+        .and_then(|column| column.packed_2d_cells_uncached(rows))
+        .map_err(|error| FlaggingError::MutateFlags {
+            path: path.into(),
+            reason: error.to_string(),
+        })?;
+    if let Some(ArrayValue::Bool(flags)) = packed {
+        Ok(flags
+            .axis_iter(ndarray::Axis(2))
+            .map(|row| row.to_owned())
+            .collect())
+    } else {
+        clip_time::read_flags(table, rows, path)
+    }
 }
 
 fn restore_flag_arrays(
