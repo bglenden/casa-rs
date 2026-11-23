@@ -663,41 +663,52 @@ fn for_each_apply_row(
     if has_sigma_spectrum {
         columns.push("SIGMA_SPECTRUM");
     }
-    let mut main_rows = ms
-        .main_table()
-        .row_accessor()
-        .prepare(&columns)
-        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-            path: ms_path.clone(),
-            source: MsError::from(source),
-        })?;
-    let data_index = main_rows.column_index(observed_column);
-    let flag_index = main_rows
-        .column_index("FLAG")
-        .expect("prepared apply reader includes FLAG");
-    let sigma_slots = main_rows
-        .column_index("SIGMA")
-        .map(|scalar| (scalar, main_rows.column_index("SIGMA_SPECTRUM")));
+    let read_error = |source| ApplyExecutionError::MutateMeasurementSet {
+        path: ms_path.clone(),
+        source: MsError::from(source),
+    };
+    let readers = columns
+        .iter()
+        .map(|name| ms.main_table().column_accessor(name))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(&read_error)?;
+    let data_index = (!forward_model).then_some(1);
+    let sigma_slots = columns
+        .iter()
+        .position(|&name| name == "SIGMA")
+        .map(|slot| (slot, has_sigma_spectrum.then_some(slot + 1)));
+    let batch_rows = preview_batch_rows(plan, &correlation_types_by_ddid);
+    let mut arrays = Vec::new();
     let mut geometry_cache = RowGeometryCache::default();
-    for row in &plan.selected_rows {
+    for (index, row) in plan.selected_rows.iter().enumerate() {
+        let offset = index % batch_rows;
+        if offset == 0 {
+            let end = (index + batch_rows).min(plan.selected_rows.len());
+            let indices: Vec<_> = plan.selected_rows[index..end]
+                .iter()
+                .map(|row| row.row_index)
+                .collect();
+            arrays = readers
+                .iter()
+                .map(|column| column.array_cells_owned_uncached(&indices))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(&read_error)?;
+        }
         let correlation_types = correlation_types_by_ddid
             .get(&row.data_desc_id)
             .ok_or_else(|| ApplyExecutionError::UnsupportedCorrelationLayout {
                 data_desc_id: row.data_desc_id,
                 correlation_types: Vec::new(),
             })?;
-        main_rows.load(row.row_index).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            }
-        })?;
-        let input_flags = main_rows.array_at(flag_index).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.clone(),
-                source: MsError::from(source),
-            }
-        })?;
+        let read = |slot: usize| {
+            arrays[slot][offset].as_ref().ok_or_else(|| {
+                read_error(casa_tables::TableError::ColumnNotFound {
+                    row_index: row.row_index,
+                    column: columns[slot].to_owned(),
+                })
+            })
+        };
+        let input_flags = read(0)?;
         let shared;
         let original_flags =
             if share_input_flags && let Some(flags) = shared_channel_flags(input_flags) {
@@ -708,12 +719,7 @@ fn for_each_apply_row(
             };
         let units;
         let data = if let Some(index) = data_index {
-            main_rows.array_at(index).map_err(|source| {
-                ApplyExecutionError::MutateMeasurementSet {
-                    path: ms_path.clone(),
-                    source: MsError::from(source),
-                }
-            })?
+            read(index)?
         } else {
             units = ArrayValue::Complex32(ArrayD::from_elem(
                 IxDyn(original_flags.shape()).f(),
@@ -729,7 +735,7 @@ fn for_each_apply_row(
             data
         };
         let plot_weights = sigma_slots
-            .map(|slots| read_plot_weights(&main_rows, slots, &ms_path))
+            .map(|slots| read_plot_weights(read, slots))
             .transpose()?;
         if !availability::available(row, plan) {
             if plan.apply_mode == ApplyMode::Trial {
@@ -820,6 +826,21 @@ fn for_each_apply_row(
     Ok(())
 }
 
+fn preview_batch_rows(plan: &ApplyPlan, correlations: &HashMap<i32, Vec<i32>>) -> usize {
+    const BATCH_BYTES: usize = 8 * 1024 * 1024;
+    const MAX_ROWS: usize = 256;
+    let channels = plan
+        .measurement_set_spectral_windows
+        .iter()
+        .filter_map(|window| usize::try_from(window.num_chan).ok())
+        .max()
+        .unwrap_or(0);
+    let correlations = correlations.values().map(Vec::len).max().unwrap_or(0);
+    // Bound storage for the data, flags and an optional sigma spectrum.
+    let row_bytes = channels.saturating_mul(correlations).saturating_mul(16);
+    (BATCH_BYTES / row_bytes.max(1)).clamp(1, MAX_ROWS)
+}
+
 fn applies_preview_weights(plan: &ApplyPlan, chain: &ApplyChain) -> bool {
     plan.apply_mode.writes_corrected_data()
         && plan
@@ -845,20 +866,11 @@ fn shared_channel_flags(flags: &ArrayValue) -> Option<ArrayValue> {
     Some(ArrayValue::Bool(flags))
 }
 
-fn read_plot_weights(
-    main_rows: &casa_tables::PreparedTableRow<'_>,
+fn read_plot_weights<'a>(
+    read_array: impl Fn(usize) -> Result<&'a ArrayValue, ApplyExecutionError>,
     (scalar, spectrum): (usize, Option<usize>),
-    ms_path: &str,
 ) -> Result<PlotWeights, ApplyExecutionError> {
-    let read = |slot, name| {
-        let values = main_rows.array_at(slot).map_err(|source| {
-            ApplyExecutionError::MutateMeasurementSet {
-                path: ms_path.to_owned(),
-                source: MsError::from(source),
-            }
-        })?;
-        weights::from_sigma(values.clone(), name)
-    };
+    let read = |slot, name| weights::from_sigma(read_array(slot)?.clone(), name);
     Ok(PlotWeights {
         scalar: read(scalar, "SIGMA")?,
         spectrum: spectrum
