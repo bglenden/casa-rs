@@ -1001,6 +1001,17 @@ impl CalibraterLifecycle {
             return Err(CalibraterLifecycleError::GatherOnlyCannotSolve(subtype));
         }
         let equation = self.equation_mut()?;
+        if subtype == "G EVLASWPOW" {
+            let path = equation.attachment.path();
+            let ms = MeasurementSet::open(path).map_err(AttachmentError::from)?;
+            let setup_error = |_| CalibraterLifecycleError::GatherOnlyCannotSolve(subtype);
+            let (power, device) =
+                crate::gencal::switched_power_input_paths(&ms, path).map_err(setup_error)?;
+            for extension in [power, device] {
+                casa_tables::Table::open(casa_tables::TableOptions::new(extension))
+                    .map_err(|_| CalibraterLifecycleError::GatherOnlyCannotSolve(subtype))?;
+            }
+        }
         request.gain_type = crate::GainType::T;
         equation.solve = Some(ConfiguredSolve::GatherOnly {
             request: Box::new(request),
@@ -1308,7 +1319,7 @@ fn gather_only_shape(subtype: &str) -> Option<(bool, usize)> {
     Some(match subtype {
         "TOpac" | "F Jones" => (false, 1),
         "TfOpac" => (true, 1),
-        "J Jones" => (false, 4),
+        "J Jones" | "G EVLASWPOW" => (false, 4),
         "Jf Jones" | "A Noise" => (true, 4),
         "B TSYS" => (true, 2),
         "EGainCurve" | "EPowerCurve" => (false, 8),
