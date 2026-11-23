@@ -2724,7 +2724,12 @@ fn apply_row_all_channels(
             } else {
                 &cal_spw.channel_frequencies_hz
             },
-            cal_ref_frequency_hz: cal_spw_reference_frequency_hz(cal_spw),
+            cal_ref_frequency_hz: if subtype == "KMBD Jones" && loaded_table.callibrary.is_none() {
+                // KMBD's traditional setApply uses an absolute frequency pivot.
+                0.
+            } else {
+                cal_spw_reference_frequency_hz(cal_spw)
+            },
             // Prepared solutions already occupy the full MS grid. Temporal
             // interpolation happened at lookup; sample original bins directly.
             interp: if resample_frequency {
