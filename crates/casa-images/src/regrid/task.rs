@@ -109,7 +109,9 @@ pub(crate) fn regrid_task<T: RegridPixel>(
             }
             validate_omitted_coordinate(
                 ours.coordinate_type(),
-                !all_axes && chosen[first],
+                // The image tool keeps a selected input coordinate when the
+                // template has no matching coordinate to replace it.
+                options.image_tool.is_none() && !all_axes && chosen[first],
                 &axes,
                 input_shape,
                 &shape,

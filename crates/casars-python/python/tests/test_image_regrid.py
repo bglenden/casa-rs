@@ -54,6 +54,40 @@ def _compare(actual, expected, *, tolerance=2e-5):
     assert actual[5:] == expected[5:]
 
 
+def test_regrid_retains_selected_spectral_axis_without_a_template_coordinate(casa):
+    square = np.arange(8**3, dtype=np.float32).reshape(8, 8, 8)
+    sky = casa.coordsys().newcoordsys(direction=True).torecord()
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=square)
+            expected = _read(source)
+            for template in ({}, sky):
+                result = source.regrid(csys=template, axes=[2], method="cubic", decimate=1)
+                try:
+                    _compare(_read(result), expected, tolerance=0)
+                finally:
+                    result.done()
+        finally:
+            source.done()
+
+    # CASA compares the selected spectral length to the first output dimension
+    # for axes=[2]. Check the correct axis on a rectangular cube.
+    source = tools.image()
+    try:
+        assert source.fromarray(pixels=square[:, :, :5])
+        expected = _read(source)
+        result = source.regrid(axes=[2], method="cubic", decimate=1)
+        try:
+            _compare(_read(result), expected, tolerance=0)
+        finally:
+            result.done()
+        with pytest.raises(RuntimeError, match="must keep its input length"):
+            source.regrid(axes=[2], shape=[8, 8, 6], decimate=1)
+    finally:
+        source.done()
+
+
 @pytest.mark.parametrize("kind", ["f", "d", "c", "cd"])
 def test_regrid_defaults_preserve_four_pixel_types_and_native_writer_readers(casa, tmp_path, kind):
     data = _ramp().astype(np.float64)
