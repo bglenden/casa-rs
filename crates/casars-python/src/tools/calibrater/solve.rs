@@ -387,6 +387,9 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
+        let family = casa_calibration::CalibraterLifecycle::direct_solve_factory_alias(&family)
+            .map(str::to_owned)
+            .unwrap_or(family);
         let single_dish = single_dish_controls(&family, fraction, numedge, radius, smooth)?;
         let polarization =
             casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);
