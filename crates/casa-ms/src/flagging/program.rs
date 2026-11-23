@@ -2,7 +2,9 @@
 //! Shared MeasurementSet flagging execution and sequential multi-agent programs.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
+use casa_tables::{Table, TableOptions};
 use casa_types::ScalarValue;
 
 use crate::ms::MeasurementSet;
@@ -17,6 +19,13 @@ use super::{
     persist_changed_flags, report_after, save_next_casa_flag_backup, save_next_flag_backup,
     selected_flag_row_policy, selected_rows, set_selected_flags, shadow, summary,
 };
+
+#[derive(Clone, Copy)]
+struct AgentStage<'a> {
+    calculate: bool,
+    model_factory: Option<FlagDataModelFactory>,
+    antint_flags: Option<&'a Table>,
+}
 
 /// Validate CASA's allowed time and channel averaging in a list of agents.
 ///
@@ -114,8 +123,11 @@ pub(super) fn run_ms_single(
         channel_selections.as_ref(),
         correlations.as_ref(),
         request,
-        !persist,
-        model_factory,
+        AgentStage {
+            calculate: !persist,
+            model_factory,
+            antint_flags: None,
+        },
     )?;
     if persist && !changes.changed_row_indices.is_empty() {
         persist_changed_flags(ms, &changes, &ms_path)?;
@@ -134,7 +146,8 @@ pub(super) fn run_ms_single(
 }
 
 /// Execute a sequence of MeasurementSet flagging agents on one opened table view.
-/// Earlier agents' staged edits are visible to later agents and summaries.
+/// Earlier agents' staged edits are visible to later summary and propagation
+/// passes. CASA's antenna-integration prepass reads the original input flags.
 /// When `write_flags` is `false`, staged flags are discarded without mutating
 /// the MeasurementSet on disk; when `true`, changed rows are written once at
 /// the end. When `local_selection` is `true` (multiple commands in CASA's
@@ -154,17 +167,26 @@ pub fn flagdata_ms_program(
         });
     }
     let ms_path = display_ms_path(&ms);
+    let original_antint_flags = if local_selection
+        && requests
+            .iter()
+            .skip(1)
+            .any(|request| request.casa_row_selection && request.mode == FlagDataMode::Antint)
+    {
+        ms.path().map(open_source_flags).transpose()?
+    } else {
+        None
+    };
+    let stage = AgentStage {
+        calculate: !write_flags,
+        model_factory,
+        antint_flags: original_antint_flags.as_ref(),
+    };
     let mut reports = Vec::with_capacity(requests.len());
     let mut touched = BTreeSet::new();
     let mut changed_flag_row_rows = 0usize;
     for request in requests {
-        match stage_ms_program_request(
-            &mut ms,
-            request,
-            !write_flags,
-            local_selection,
-            model_factory,
-        ) {
+        match stage_ms_program_request(&mut ms, request, local_selection, stage) {
             Ok(Some((report, changed_rows, changed_flag_rows))) => {
                 touched.extend(changed_rows);
                 changed_flag_row_rows += changed_flag_rows;
@@ -180,6 +202,7 @@ pub fn flagdata_ms_program(
             Err(error) => return Err(error),
         }
     }
+    drop(original_antint_flags);
     if write_flags && !touched.is_empty() {
         let changes = ChangeSet {
             changed_row_indices: touched.into_iter().collect(),
@@ -191,12 +214,26 @@ pub fn flagdata_ms_program(
     Ok(reports)
 }
 
+fn open_source_flags(path: &Path) -> Result<Table, FlaggingError> {
+    let options = TableOptions::new(path);
+    #[cfg(unix)]
+    let source = Table::open_with_lock(
+        options,
+        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait).read_only(true),
+    );
+    #[cfg(not(unix))]
+    let source = Table::open(options);
+    source.map_err(|error| FlaggingError::MutateFlags {
+        path: path.display().to_string(),
+        reason: format!("open original antenna-integration flags: {error}"),
+    })
+}
+
 fn stage_ms_program_request(
     ms: &mut MeasurementSet,
     request: &FlagDataRequest,
-    calculate: bool,
     local_selection: bool,
-    model_factory: Option<FlagDataModelFactory>,
+    stage: AgentStage<'_>,
 ) -> Result<Option<(FlagDataReport, Vec<usize>, usize)>, FlaggingError> {
     let selection = match selected_rows(ms, request) {
         Ok(selection) => selection,
@@ -234,8 +271,7 @@ fn stage_ms_program_request(
         channel_selections.as_ref(),
         correlations.as_ref(),
         request,
-        calculate,
-        model_factory,
+        stage,
     )?;
     if changes.agent_skipped {
         return Ok(None);
@@ -312,8 +348,7 @@ fn stage_selected_ms_request(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     request: &FlagDataRequest,
-    calculate: bool,
-    model_factory: Option<FlagDataModelFactory>,
+    stage: AgentStage<'_>,
 ) -> Result<ChangeSet, FlaggingError> {
     let ms_path = display_ms_path(ms);
     // The manual agent filters baselines after full MS selection, including
@@ -341,7 +376,7 @@ fn stage_selected_ms_request(
             channel_selections,
             correlations,
             request,
-            model_factory,
+            stage.model_factory,
         ),
         FlagDataMode::Quack => {
             apply_quack_flags(ms, selected_rows, channel_selections, correlations, request)
@@ -369,21 +404,22 @@ fn stage_selected_ms_request(
             channel_selections,
             correlations,
             &ms_path,
+            stage.antint_flags,
         ),
         FlagDataMode::Tfcrop => apply_tfcrop_flags(
             ms,
             selected_rows,
             channel_selections,
             request,
-            model_factory,
+            stage.model_factory,
         ),
         FlagDataMode::Rflag => apply_rflag_flags(
             ms,
             selected_rows,
             channel_selections,
             request,
-            calculate,
-            model_factory,
+            stage.calculate,
+            stage.model_factory,
         ),
         FlagDataMode::Extend => extend::apply(
             ms,

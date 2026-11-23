@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::mem::size_of;
 
+use casa_tables::Table;
 use casa_types::ArrayValue;
 use casa_types::quanta::format::{YMD, format_time};
 
@@ -44,6 +45,7 @@ pub(super) fn apply(
     channels: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     path: &str,
+    original_flags: Option<&Table>,
 ) -> Result<ChangeSet, FlaggingError> {
     let fail = |reason: String| FlaggingError::MutateFlags {
         path: path.to_owned(),
@@ -97,8 +99,8 @@ pub(super) fn apply(
     let budget = MsSelectionIoBudget::from_system_memory(2, bytes_per_row, None)
         .map_err(|error| fail(error.to_string()))?;
     let plan = MsReadPlan::new(timed.len(), budget).map_err(|error| fail(error.to_string()))?;
-    let column = ms
-        .main_table()
+    let column = original_flags
+        .unwrap_or_else(|| ms.main_table())
         .column_accessor(FLAG_COLUMN)
         .map_err(|error| fail(error.to_string()))?;
     let mut affected = IntegrationScan {
