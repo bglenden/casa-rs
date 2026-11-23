@@ -19,6 +19,8 @@ pub(super) struct ProfileAxis<'a> {
     spectral: Option<&'a SpectralCoordinate>,
     rest_hz: f64,
     speed_scale: f64,
+    pub(super) source_start: f64,
+    pub(super) source_stride: f64,
     pub(super) unit: String,
 }
 
@@ -68,6 +70,8 @@ impl<'a> ProfileAxis<'a> {
             spectral,
             rest_hz,
             speed_scale,
+            source_start: selection.plan.selection.start[pixel_axis] as f64,
+            source_stride: selection.stride[pixel_axis] as f64,
             unit,
         })
     }

@@ -217,12 +217,14 @@ pub struct ProfileLineReport {
     pub peak: [f64; 2],
     /// Center and standard error in world units.
     pub center: [f64; 2],
-    /// Center and standard error in selected channel pixels.
+    /// Center and standard error in original image pixels.
     pub pixel_center: [f64; 2],
     /// Width and standard error in world units.
     pub fwhm: [f64; 2],
-    /// Width and standard error in selected channel pixels.
+    /// Width and standard error in original image pixels.
     pub pixel_fwhm: [f64; 2],
+    /// Width in fitted channels, accounting for the selection's stride.
+    pub channel_fwhm: f64,
     /// Line integral and standard error in brightness times world units.
     pub integral: [f64; 2],
     /// Fixed flags for peak, center and width.

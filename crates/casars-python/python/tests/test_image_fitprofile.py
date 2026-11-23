@@ -397,7 +397,7 @@ def test_fit_log_append_and_replace(casa, tmp_path):
     for api in (casa, tools):
         logfile = tmp_path / f"{api.__name__}.log"
         logfile.write_text("previous fit\n")
-        common = dict(pampest=5., pcenterest=14., pfwhmest=4., logfile=str(logfile))
+        common = dict(chans="2~22", pampest=5., pcenterest=12., pfwhmest=4., logfile=str(logfile))
         data = _cube(_line(np.arange(27.), 5., 14., 4.5))
         assert _fit(api, data, **common)["valid"].all()
         first = logfile.read_text()

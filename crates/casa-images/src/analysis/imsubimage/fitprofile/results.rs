@@ -183,9 +183,16 @@ impl ProfileResults {
                     kind,
                     peak: [peak, peak_error],
                     center: center_world,
-                    pixel_center: [center, center_error],
+                    pixel_center: [
+                        axis.source_start + center * axis.source_stride,
+                        center_error * axis.source_stride,
+                    ],
                     fwhm: fwhm_world,
-                    pixel_fwhm: [width.abs(), width_error],
+                    pixel_fwhm: [
+                        width.abs() * axis.source_stride,
+                        width_error * axis.source_stride,
+                    ],
+                    channel_fwhm: width.abs(),
                     integral,
                     fixed: line.fixed(&curve.fixed),
                 });

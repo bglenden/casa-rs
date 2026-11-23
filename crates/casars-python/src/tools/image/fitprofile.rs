@@ -485,7 +485,7 @@ fn write_profile_line(
             );
         }
     }
-    if line.pixel_fwhm[0] <= 3. {
+    if line.channel_fwhm <= 3. {
         let _ = writeln!(
             text,
             "        WARNING: The FWHM is at most three channel widths."
