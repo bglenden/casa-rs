@@ -4,9 +4,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use casa_ms::{MeasurementSetBuilder, MsError};
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
+use casa_ms::{MeasurementSetBuilder, MsError};
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
