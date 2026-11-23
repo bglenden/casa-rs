@@ -20,7 +20,7 @@ use casa_task_runtime::{
     ParameterSession, TaskCompletion, TaskOutputValue, decode_task_completion,
     project_provider_invocation,
 };
-use common::create_msexplore_fixture_ms;
+use common::{NUM_CHAN, NUM_CORR, TIME_BASE_SECONDS, create_msexplore_fixture_ms};
 use tempfile::tempdir;
 
 fn text(value: &str) -> ParameterValue {
@@ -213,7 +213,18 @@ fn casa_plotms_names_export_existing_measurement_set_plots() {
         panic!("{reply:?}");
     };
     assert_eq!(value, casa_provider_contracts::CasaValue::None);
-    assert!(is_fixture_summary(&result["summary"]));
+    let path = workspace.path().join("plot.txt");
+    let reported = result["text_file"].as_str().expect("PlotMS text file");
+    assert_eq!(workspace.path().join(reported), path);
+    let export = fs::read_to_string(&path).expect("PlotMS text export");
+    assert!(export.lines().any(|line| line.starts_with("# Time Amp ")));
+    let mut points = export.lines().filter(|line| !line.starts_with('#'));
+    let first = points.next().expect("first visibility point");
+    assert!(
+        first.starts_with(&format!("{TIME_BASE_SECONDS:.3} 0 ")),
+        "{first}"
+    );
+    assert_eq!(points.count() + 1, 4 * NUM_CORR * NUM_CHAN);
     assert_eq!(completion.products.len(), 1);
     assert_eq!(completion.products[0].id, "plotfile:1");
     assert!(completion.products[0].exists);
