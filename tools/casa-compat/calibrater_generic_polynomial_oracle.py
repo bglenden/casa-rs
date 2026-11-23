@@ -139,12 +139,15 @@ def disconnected_spline(work, vis, factories):
         assert tool.setsolve('GSPLINE', 'inf', str(product), apmode='A', refant='A0')
         assert tool.solve() and tool.close()
         with opened(product) as table:
+            antennas = table.getcol('ANTENNA1')
+            coefficients = table.getcol('POLY_COEFF_AMP')
             if label == 'casa':
-                np.testing.assert_array_equal(table.getcol('ANTENNA1'), list(range(5))*2)
+                np.testing.assert_array_equal(antennas, list(range(5))*2)
+                assert not np.isfinite(coefficients[..., antennas == 4]).all()
                 continue
-            np.testing.assert_array_equal(table.getcol('ANTENNA1'), list(range(4))*2)
+            np.testing.assert_array_equal(antennas, list(range(4))*2)
             np.testing.assert_array_equal(table.getcol('FIELD_ID'), [0]*4 + [1]*4)
-            assert np.isfinite(table.getcol('POLY_COEFF_AMP')).all()
+            assert np.isfinite(coefficients).all()
         from casars.tasks import applycal as native_apply
 
         for reader, task in [('casa', casatasks.applycal), ('native', native_apply)]:
