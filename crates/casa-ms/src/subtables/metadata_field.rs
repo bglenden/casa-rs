@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Native phase and reference directions for MeasurementSet metadata.
+//! Native FIELD directions for MeasurementSet metadata.
+
+use std::path::{Path, PathBuf};
 
 use casa_measures_data::CometTable;
 use casa_tables::Table;
@@ -13,9 +15,29 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 use crate::ephemeris::find_ephemeris_in_field;
 use crate::{MeasurementSet, MsError, MsResult, SubTable, open_measures_runtime};
 
+use super::MsField;
 use super::metadata_measure::{
     MetadataDirection, direction_components, direction_with_reference, field_epoch_reference,
 };
+
+/// The FIELD direction to evaluate at an epoch.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FieldDirectionColumn {
+    /// The delay direction, with its FIELD offset when attached to an ephemeris.
+    Delay,
+    /// The phase centre, with its FIELD offset when attached to an ephemeris.
+    Phase,
+    /// The reference direction, with its FIELD offset when attached to an ephemeris.
+    Reference,
+    /// The apparent ephemeris direction without a FIELD offset, or the
+    /// reference direction when the field has no ephemeris.
+    Ephemeris,
+}
+
+enum DirectionTime<'a> {
+    Epoch(Option<&'a MEpoch>),
+    FieldSeconds(f64),
+}
 
 impl MeasurementSet {
     /// Evaluate the FIELD phase centre or reference direction as a metadata
@@ -34,52 +56,78 @@ impl MeasurementSet {
         reference: bool,
         epoch: Option<&MEpoch>,
     ) -> MsResult<MetadataDirection> {
-        let field = self.field()?;
-        if row >= field.row_count() {
+        let column = if reference {
+            FieldDirectionColumn::Reference
+        } else {
+            FieldDirectionColumn::Phase
+        };
+        self.field()?
+            .metadata_direction(row, column, DirectionTime::Epoch(epoch))
+    }
+}
+
+impl MsField<'_> {
+    /// Return the FIELD direction at `seconds` in the row's FIELD.TIME frame.
+    /// A zero epoch uses the stored FIELD time. Coefficients and measure
+    /// references follow the chosen direction column.
+    ///
+    /// # Errors
+    /// The row or measure is invalid, or the requested epoch has no
+    /// ephemeris sample.
+    pub fn metadata_direction_at_seconds(
+        &self,
+        row: usize,
+        column: FieldDirectionColumn,
+        seconds: f64,
+    ) -> MsResult<MetadataDirection> {
+        self.metadata_direction(row, column, DirectionTime::FieldSeconds(seconds))
+    }
+
+    fn metadata_direction(
+        &self,
+        row: usize,
+        kind: FieldDirectionColumn,
+        time: DirectionTime<'_>,
+    ) -> MsResult<MetadataDirection> {
+        if row >= self.row_count() {
             return Err(MsError::InvalidIndex {
                 context: "FIELD".into(),
                 index: row,
-                max: field.row_count(),
+                max: self.row_count(),
             });
         }
-        let column = if reference {
-            "REFERENCE_DIR"
-        } else {
-            "PHASE_DIR"
-        };
-        let values = if reference {
-            field.reference_dir(row)?
-        } else {
-            field.phase_dir(row)?
-        };
-        let coefficient = |index| {
-            let angles = direction_components(field.table(), column, values, index)?;
-            direction_with_reference(field.table(), column, row, index, angles)
-        };
-        let mut direction = coefficient(0)?;
-        let order = usize::try_from(field.num_poly(row)?).map_err(|_| {
+        let order = usize::try_from(self.num_poly(row)?).map_err(|_| {
             MsError::InvalidInput("FIELD polynomial order must be nonnegative".into())
         })?;
-        let ephemeris_id = field.ephemeris_id(row)?.filter(|&id| id >= 0);
-        if order == 0 && ephemeris_id.is_none() {
+        let ephemeris = if order == 0 || kind == FieldDirectionColumn::Ephemeris {
+            self.ephemeris_path(row)?
+        } else {
+            None
+        };
+        if kind == FieldDirectionColumn::Ephemeris
+            && let Some(path) = ephemeris.as_ref()
+        {
+            let (seconds, origin, reference) = self.direction_time(row, time)?;
+            return ephemeris_direction(path, seconds, origin, reference)
+                .map(MetadataDirection::new);
+        }
+
+        let (column, values) = match kind {
+            FieldDirectionColumn::Delay => ("DELAY_DIR", self.delay_dir(row)?),
+            FieldDirectionColumn::Phase => ("PHASE_DIR", self.phase_dir(row)?),
+            FieldDirectionColumn::Reference | FieldDirectionColumn::Ephemeris => {
+                ("REFERENCE_DIR", self.reference_dir(row)?)
+            }
+        };
+        let coefficient = |index| {
+            let angles = direction_components(self.table(), column, values, index)?;
+            direction_with_reference(self.table(), column, row, index, angles)
+        };
+        let mut direction = coefficient(0)?;
+        if order == 0 && ephemeris.is_none() {
             return Ok(direction);
         }
-        let time_reference = field_epoch_reference(field.table(), row)?;
-        let origin = field.time(row)?;
-        let seconds = match epoch {
-            Some(epoch)
-                if epoch.refer() == time_reference
-                    && epoch.offset().is_none()
-                    && !epoch.is_razing() =>
-            {
-                epoch.value().as_mjd() * 86400.
-            }
-            Some(epoch) => {
-                let frame = MeasFrame::new().with_measures(open_measures_runtime()?);
-                epoch.convert_to(time_reference, &frame)?.value().as_mjd() * 86400.
-            }
-            None => 0.,
-        };
+        let (seconds, origin, reference) = self.direction_time(row, time)?;
         if order != 0 {
             if seconds < 1. || (seconds - origin).abs() <= 1e-13 {
                 return Ok(direction);
@@ -97,35 +145,74 @@ impl MeasurementSet {
                 MDirection::from_angles(angles[0], angles[1], direction.direction.refer());
             return Ok(direction);
         }
-        let id = ephemeris_id.expect("constant field without ephemeris already returned");
-        let field_path = field.table().path().ok_or_else(|| {
-            MsError::InvalidInput("field ephemeris requires an on-disk MeasurementSet".into())
-        })?;
-        let path = find_ephemeris_in_field(field_path, id)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        let table =
-            CometTable::open(&path).map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        let time = if seconds == 0. { origin } else { seconds };
-        let utc_mjd = if time_reference == EpochRef::UTC {
-            time / 86400.
-        } else {
-            let frame = MeasFrame::new().with_measures(open_measures_runtime()?);
-            MEpoch::from_mjd_seconds(time, time_reference)
-                .convert_to(EpochRef::UTC, &frame)?
-                .value()
-                .as_mjd()
-        };
-        let sample = table
-            .direction_at(utc_mjd)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?
-            .ok_or_else(|| {
-                MsError::InvalidInput(format!("No valid field ephemeris entry for MJD {utc_mjd}"))
-            })?;
+        let path = ephemeris.expect("a constant field without ephemeris already returned");
+        let sample = ephemeris_direction(&path, seconds, origin, reference)?;
         Ok(MetadataDirection::new(offset_true_angle(
-            &sample.direction,
+            &sample,
             signed_angles(&direction.direction),
         )?))
     }
+
+    fn ephemeris_path(&self, row: usize) -> MsResult<Option<PathBuf>> {
+        let Some(id) = self.ephemeris_id(row)?.filter(|&id| id >= 0) else {
+            return Ok(None);
+        };
+        let field_path = self.table().path().ok_or_else(|| {
+            MsError::InvalidInput("field ephemeris requires an on-disk MeasurementSet".into())
+        })?;
+        find_ephemeris_in_field(field_path, id)
+            .map(Some)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))
+    }
+
+    fn direction_time(
+        &self,
+        row: usize,
+        time: DirectionTime<'_>,
+    ) -> MsResult<(f64, f64, EpochRef)> {
+        let reference = field_epoch_reference(self.table(), row)?;
+        let origin = self.time(row)?;
+        let seconds = match time {
+            DirectionTime::FieldSeconds(seconds) => seconds,
+            DirectionTime::Epoch(Some(epoch))
+                if epoch.refer() == reference && epoch.offset().is_none() && !epoch.is_razing() =>
+            {
+                epoch.value().as_mjd() * 86400.
+            }
+            DirectionTime::Epoch(Some(epoch)) => {
+                let frame = MeasFrame::new().with_measures(open_measures_runtime()?);
+                epoch.convert_to(reference, &frame)?.value().as_mjd() * 86400.
+            }
+            DirectionTime::Epoch(None) => 0.,
+        };
+        Ok((seconds, origin, reference))
+    }
+}
+
+fn ephemeris_direction(
+    path: &Path,
+    seconds: f64,
+    origin: f64,
+    reference: EpochRef,
+) -> MsResult<MDirection> {
+    let table = CometTable::open(path).map_err(|error| MsError::InvalidInput(error.to_string()))?;
+    let time = if seconds == 0. { origin } else { seconds };
+    let utc_mjd = if reference == EpochRef::UTC {
+        time / 86400.
+    } else {
+        let frame = MeasFrame::new().with_measures(open_measures_runtime()?);
+        MEpoch::from_mjd_seconds(time, reference)
+            .convert_to(EpochRef::UTC, &frame)?
+            .value()
+            .as_mjd()
+    };
+    table
+        .direction_at(utc_mjd)
+        .map_err(|error| MsError::InvalidInput(error.to_string()))?
+        .map(|sample| sample.direction)
+        .ok_or_else(|| {
+            MsError::InvalidInput(format!("No valid field ephemeris entry for MJD {utc_mjd}"))
+        })
 }
 
 pub(super) fn signed_angles(direction: &MDirection) -> [f64; 2] {

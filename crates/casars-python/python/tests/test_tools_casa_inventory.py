@@ -70,7 +70,8 @@ IMPLEMENTED["singledishms"] = {
     "subtract_baseline_variable", "apply_baseline_table",
 }
 IMPLEMENTED["ms"] = {
-    "close", "done", "getreferencedtables", "ismultims", "iswritable",
+    "close", "done", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
+    "ismultims", "iswritable",
     "msselect", "name", "nrow", "open", "statwt", "uvsub",
 }
 IMPLEMENTED["agentflagger"] = {

@@ -36,6 +36,7 @@ use crate::subtables::{
 };
 use crate::validate::{self, ValidationIssue};
 
+mod linked_subtables;
 mod optional_subtables;
 
 /// The MS version number written by this crate.

@@ -89,7 +89,13 @@ pub enum TablePartNames {
     /// A reference table reports its directly referenced parent.
     Reference(PathBuf),
     /// A concatenation reports its constituent tables in descriptor order.
-    Concatenation(Vec<PathBuf>),
+    Concatenation {
+        /// The immediate member tables.
+        parts: Vec<PathBuf>,
+        /// Subtable keywords whose values concatenate the same-named
+        /// subtables of all members. Other keywords come from the first part.
+        subtable_names: Vec<String>,
+    },
 }
 
 impl Table {
@@ -112,9 +118,10 @@ impl Table {
                 &name,
             ))
             .map(TablePartNames::Reference),
-            TableDatResult::Concat(concat) => {
-                immediate_names(&name, &concat.table_paths).map(TablePartNames::Concatenation)
-            }
+            TableDatResult::Concat(concat) => Ok(TablePartNames::Concatenation {
+                parts: immediate_names(&name, &concat.table_paths)?,
+                subtable_names: concat.sub_table_names,
+            }),
         }
     }
 
