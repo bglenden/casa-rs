@@ -564,7 +564,7 @@ pub(crate) struct SolveAccumulator {
     /// Correlation counts of the buffers gathered for an M/Mf solution.
     pub(super) baseline_correlation_counts: BTreeSet<usize>,
     /// A single parallel hand in channelized G solves occupies parameter zero.
-    pub(crate) scalar_bandpass: bool,
+    pub(crate) single_parallel_hand: bool,
     pub(crate) polynomial: Option<polynomial::PolynomialAccumulation>,
     /// `[solution channel][receptor]`, filled by [`Self::finalize_for_solve`].
     pub(crate) channel_graphs: Vec<Vec<SolveGraph>>,
@@ -629,7 +629,7 @@ impl SolveAccumulator {
             unique_time_bits: BTreeSet::new(),
             solution_channels: 1,
             baseline_correlation_counts: BTreeSet::new(),
-            scalar_bandpass: false,
+            single_parallel_hand: false,
             polynomial: None,
             channel_graphs: Vec::new(),
             solution_time: 0.0,
@@ -856,11 +856,10 @@ impl SolveAccumulator {
         }
 
         let baseline_solve = options.input_rows.is_baseline();
-        let scalar_bandpass = !baseline_solve
-            && options.channelized
-            && options.gain_type == GainType::G
-            && correlation_types.len() == 1;
-        self.scalar_bandpass = scalar_bandpass && (self.sample_rows == 0 || self.scalar_bandpass);
+        let single_parallel_hand =
+            !baseline_solve && options.gain_type == GainType::G && correlation_types.len() == 1;
+        self.single_parallel_hand =
+            single_parallel_hand && (self.sample_rows == 0 || self.single_parallel_hand);
         let graph_count = match options.gain_type {
             GainType::G | GainType::K | GainType::KMbd | GainType::KAntPos | GainType::GSpline => 2,
             GainType::T | GainType::KCross => {
@@ -926,12 +925,14 @@ impl SolveAccumulator {
             if no_weighted_data {
                 continue;
             }
-            let graph_index =
-                if graph_count == 1 || scalar_bandpass || delay && correlation_types.len() == 1 {
-                    0
-                } else {
-                    receptors.0
-                };
+            let graph_index = if graph_count == 1
+                || single_parallel_hand
+                || delay && correlation_types.len() == 1
+            {
+                0
+            } else {
+                receptors.0
+            };
             let point = if let Some(rotated) = samples.point_model {
                 rotated[corr_index]
             } else {
