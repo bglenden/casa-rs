@@ -547,6 +547,20 @@ def compare_default_model(root, native):
         np.testing.assert_array_equal(table.getcol("DATA"), observed)
         np.testing.assert_array_equal(table.getcol("FLAG"), flags)
 
+    corrected_only = root / "corrected-only-model.ms"
+    copy_ms(vis, corrected_only)
+    casa.clearcal(str(corrected_only), addmodel=False)
+    with opened(corrected_only, True) as table:
+        assert "CORRECTED_DATA" in table.colnames()
+        table.removecols([column for column in ("DATA", "MODEL_DATA") if column in table.colnames()])
+    controls = request(corrected_only) | dict(xaxis="amp", xdatacolumn="model", yaxis="amp",
+                                              ydatacolumn="corrected", expformat="txt")
+    expected, actual = (root / f"unit-with-corrected-only.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    assert {float(point[0]) for point in rows(expected)} == {1.0}
+
     from casars.tasks import TaskExecutionError
 
     virtual = root / "virtual-model.ms"

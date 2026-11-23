@@ -7011,8 +7011,9 @@ impl<'a> PreparedSelectedDataSource<'a> {
                 && calibration.is_some_and(|input| input.rows.is_none())
                 && ms.main_table().schema().is_some_and(|schema| {
                     schema.column("MODEL_DATA").is_none()
-                        && schema.column("DATA").is_some()
                         && schema.column("FLOAT_DATA").is_none()
+                        && (schema.column("DATA").is_some()
+                            || schema.column("CORRECTED_DATA").is_some())
                 })
             {
                 return Ok(SelectedArrayColumn {
