@@ -180,3 +180,74 @@ def test_transpose_keeps_a_sampled_tabular_coordinate_live():
     reloaded = tools.coordsys()
     assert reloaded.fromrecord(cs.torecord())
     np.testing.assert_array_equal(reloaded.toworld([1.0, 5.0])["numeric"], [14.0, 5.0])
+
+
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+def test_ragged_order_stops_before_writing_the_incompatible_row(backend):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    coords = api.coordsys().newcoordsys(direction=True, spectral=True)
+    try:
+        before = coords.torecord()
+        with pytest.raises(RuntimeError, match="length 2"):
+            coords.reorder([[1], [0, 2]])
+        _assert_value(coords.torecord(), before)
+        assert coords.reorder([b"\v1", 0])
+        assert coords.coordinatetype() == ["Spectral", "Direction"]
+    finally:
+        coords.done()
+
+    coords = api.coordsys().newcoordsys(linear=4)
+    try:
+        assert coords.setnames(["zero", "one", "two", "three"])
+        with pytest.raises(RuntimeError, match="nelements"):
+            coords.transpose([np.array([2, 1]), np.array([3, 0])])
+        assert coords.names() == ["zero", "one", "two", "three"]
+        assert coords.transpose([[2, 1], [3, 0]])
+        assert coords.names() == ["two", "three", "one", "zero"]
+    finally:
+        coords.done()
+
+
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+def test_subimage_observes_integer_vector_dtype_and_overflow_precedence(backend):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    coords = api.coordsys().newcoordsys(stokes="I,Q,U,V")
+    try:
+        for shape in ([np.ulonglong(1)], [np.longdouble(1)], np.array([1], dtype="f2")):
+            np.testing.assert_array_equal(
+                coords.subimage([0.], shape)["stokes0"]["stokes"], ["I", "Q", "U", "V"]
+            )
+        for shape in (np.array([1], dtype="u8"), [[1], [2, 4]]):
+            np.testing.assert_array_equal(coords.subimage([0.], shape)["stokes0"]["stokes"], ["I"])
+        before = coords.torecord()
+        for shape in (2**72, [2**72], [[-(2**72)]]):
+            with pytest.raises(SystemError, match="returned a result with an exception set") as error:
+                coords.subimage([0.], shape)
+            assert isinstance(error.value.__cause__, OverflowError)
+        with pytest.raises(RuntimeError, match="nShape"):
+            coords.subimage([0.], [2**72, 2])
+        with pytest.raises(RuntimeError, match="Illegal origin shift"):
+            coords.subimage([9.], [2**72])
+        _assert_value(coords.torecord(), before)
+    finally:
+        coords.done()
+
+
+@pytest.mark.parametrize("method", ["transpose", "reorder"])
+def test_bare_nonfinite_order_uses_checked_axis_conversion(method):
+    coords = tools.coordsys().newcoordsys(linear=1)
+    try:
+        before = coords.torecord()
+        apply = getattr(coords, method)
+        if platform.machine() in ("aarch64", "arm64"):
+            with pytest.raises(RuntimeError, match="which"):
+                apply(float("inf"))
+        else:
+            assert apply(float("inf"))
+        _assert_value(coords.torecord(), before)
+    finally:
+        coords.done()
