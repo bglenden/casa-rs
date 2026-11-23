@@ -380,6 +380,31 @@ impl AbsorptionProfile<ChannelAbsorption> {
         );
         Self::assemble(atmosphere, grid, channels)
     }
+
+    /// Extend the profile without recalculating any existing channel.
+    pub(crate) fn append_regular_window(
+        &mut self,
+        channels: usize,
+        reference_channel: usize,
+        reference_frequency_hz: f64,
+        separation_hz: f64,
+    ) -> Result<usize, AtmosphereError> {
+        let index = self.grid.add_regular(
+            channels,
+            reference_channel,
+            reference_frequency_hz,
+            separation_hz,
+        )?;
+        self.channels.reserve_exact(channels);
+        self.channels.extend(
+            self.grid.windows()[index]
+                .frequencies_hz()
+                .iter()
+                .map(|&frequency| channel_absorption(&self.atmosphere, frequency)),
+        );
+        self.grid.shrink_to_fit();
+        Ok(index)
+    }
 }
 
 impl AbsorptionProfile<ChannelTotals> {

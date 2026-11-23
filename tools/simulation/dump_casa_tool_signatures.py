@@ -38,6 +38,7 @@ TOOLS = (
     "msmetadata",
     "ms",
     "calanalysis",
+    "atmosphere",
     "calibrater",
     "imager",
     "agentflagger",

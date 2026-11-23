@@ -76,11 +76,13 @@
 pub mod absorption;
 mod profile;
 pub mod refractivity;
+mod session;
 mod sky;
 mod spectral_grid;
 
 pub use absorption::{AbsorptionProfile, ChannelAbsorption, ChannelTotals};
 pub use profile::{AtmosphereProfile, AtmosphereType, Layer, ProfileParameters};
+pub use session::{AtmosphereSession, AtmosphereSpectrum};
 pub use sky::{Sky, SkyColumn};
 pub use spectral_grid::{SpectralGrid, SpectralWindow};
 
