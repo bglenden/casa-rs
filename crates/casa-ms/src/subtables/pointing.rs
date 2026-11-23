@@ -11,6 +11,7 @@ use crate::derived::engine::resolve_direction_reference;
 use crate::schema::{self, SubtableId};
 use crate::{MsError, MsResult};
 
+mod metadata;
 mod single_dish;
 
 crate::subtables::define_generic_subtable!(
@@ -31,14 +32,6 @@ impl MsPointing<'_> {
     /// # Errors
     /// A pointing is missing or its direction or time samples are invalid.
     pub fn metadata_directions(&self, requests: &[(usize, i32, f64)]) -> MsResult<Vec<MDirection>> {
-        self.metadata_directions_with_interval(requests, None)
-    }
-
-    fn metadata_directions_with_interval(
-        &self,
-        requests: &[(usize, i32, f64)],
-        interval: Option<f64>,
-    ) -> MsResult<Vec<MDirection>> {
         let mut antennas: BTreeMap<_, Vec<_>> = requests
             .iter()
             .map(|&(_, antenna, _)| (antenna, Vec::new()))
@@ -57,7 +50,7 @@ impl MsPointing<'_> {
             .map(|&(guess, antenna, time)| {
                 let samples = &antennas[&antenna];
                 let start = samples.partition_point(|&(row, _, _)| row < guess);
-                let &(row, center, _) = samples[start..]
+                let &(row, _, _) = samples[start..]
                     .iter()
                     .chain(&samples[..start])
                     .find(|&&(_, epoch, interval)| {
@@ -71,92 +64,11 @@ impl MsPointing<'_> {
                 if let Some(direction) = directions.get(&row) {
                     return Ok(MDirection::clone(direction));
                 }
-                let direction = if let Some(interval) = interval {
-                    let pointing_interval = self.f64(row, "INTERVAL")?;
-                    if interval < pointing_interval {
-                        self.metadata_interpolation(samples, row, center, time, pointing_interval)?
-                    } else {
-                        self.read_direction(row, None)?
-                    }
-                } else {
-                    self.read_direction(row, None)?
-                };
+                let direction = self.read_direction(row, None)?;
                 directions.insert(row, direction.clone());
                 Ok(direction)
             })
             .collect()
-    }
-
-    /// Read the two pointing directions associated with one MAIN row.
-    ///
-    /// Use the MAIN integration interval to enable interpolation only when
-    /// it is shorter than the matched POINTING interval. Start lookup at the
-    /// requested POINTING row and wrap once through the subtable.
-    ///
-    /// # Errors
-    ///
-    /// A required column or pointing sample is missing or malformed, or an
-    /// adjacent sample is unavailable when interpolation is requested.
-    pub fn metadata_baseline_directions(
-        &self,
-        antennas: [i32; 2],
-        time: f64,
-        main_interval: f64,
-        initial_row: usize,
-        interpolate: bool,
-    ) -> MsResult<[MDirection; 2]> {
-        let requests = [
-            (initial_row, antennas[0], time),
-            (initial_row, antennas[1], time),
-        ];
-        let mut directions = self
-            .metadata_directions_with_interval(&requests, interpolate.then_some(main_interval))?
-            .into_iter();
-        Ok([
-            directions.next().expect("first requested direction"),
-            directions.next().expect("second requested direction"),
-        ])
-    }
-
-    fn metadata_interpolation(
-        &self,
-        samples: &[(usize, f64, f64)],
-        row: usize,
-        center: f64,
-        time: f64,
-        pointing_interval: f64,
-    ) -> MsResult<MDirection> {
-        let after = || select_buffer_pointing(samples, row + 1, center + pointing_interval);
-        let before = || select_buffer_pointing(samples, 0, center - pointing_interval);
-        let distinct = |candidate: &usize| *candidate != row;
-        let neighbor = if time >= center {
-            after()
-                .filter(distinct)
-                .or_else(|| before().filter(distinct))
-        } else {
-            before()
-                .filter(distinct)
-                .or_else(|| after().filter(distinct))
-        };
-        let neighbor = neighbor.ok_or_else(|| {
-            MsError::InvalidInput("Failed to find pointing index to interpolate direction".into())
-        })?;
-        let neighbor_time = self.f64(neighbor, "TIME")?;
-        if neighbor_time == center {
-            return Err(MsError::InvalidInput(
-                "Pointing interpolation needs distinct times".into(),
-            ));
-        }
-        let left = self.read_direction(row, None)?;
-        let right = self.read_direction(neighbor, None)?;
-        let a = super::metadata_field::signed_angles(&left);
-        let b = super::metadata_field::signed_angles(&right);
-        let delta = (time - center) / (neighbor_time - center);
-        Ok(MDirection::from_angles(
-            a[0] + (b[0] - a[0]) * delta,
-            a[1] + (b[1] - a[1]) * delta,
-            left.refer(),
-        ))
     }
 
     /// Read the pointing used by CASA's legacy visibility buffer for an
@@ -264,7 +176,19 @@ impl MsPointing<'_> {
         column: &str,
         polynomial: Option<(i32, f64)>,
     ) -> MsResult<MDirection> {
-        let ArrayValue::Float64(values) = self.array(row, column)? else {
+        let angles = self.direction_angles(self.array(row, column)?, row, column, polynomial)?;
+        let reference = resolve_direction_reference(self.table(), "POINTING", column, row)?;
+        Ok(MDirection::from_angles(angles[0], angles[1], reference))
+    }
+
+    fn direction_angles(
+        &self,
+        values: &ArrayValue,
+        row: usize,
+        column: &str,
+        polynomial: Option<(i32, f64)>,
+    ) -> MsResult<[f64; 2]> {
+        let ArrayValue::Float64(values) = values else {
             return Err(MsError::InvalidInput(format!(
                 "POINTING {column} must be double"
             )));
@@ -303,14 +227,9 @@ impl MsPointing<'_> {
         } else {
             [lon, lat]
         };
-        let reference = resolve_direction_reference(self.table(), "POINTING", column, row)?;
         let [lon_scale, lat_scale] =
             super::metadata_field::direction_radians(self.table(), column)?;
-        Ok(MDirection::from_angles(
-            lon * lon_scale,
-            lat * lat_scale,
-            reference,
-        ))
+        Ok([lon * lon_scale, lat * lat_scale])
     }
 }
 
