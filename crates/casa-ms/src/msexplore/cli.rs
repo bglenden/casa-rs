@@ -1240,7 +1240,7 @@ fn options_from_plotms(
     let derived_column_plot = data_column.is_derived()
         || x_data_column.is_some_and(MsDataColumn::is_derived)
         || secondary_y_data_column.is_some_and(MsDataColumn::is_derived);
-    let normalize_zero_average = derived_column_plot || secondary_y_data_column.is_some();
+    let normalize_zero_average = derived_column_plot || y_axis2.is_some();
     let visibility_document = visibility_document
         || y_axis2.is_some()
         || derived_column_plot

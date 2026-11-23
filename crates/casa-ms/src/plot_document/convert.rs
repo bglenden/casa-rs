@@ -332,14 +332,14 @@ fn secondary_axis_scatter_document(
     metadata: &PayloadMetadata,
     preset: MsPlotPreset,
 ) -> PlotDocument {
-    let primary_bounds = payload.fixed_y_bounds.or_else(|| {
-        Some(series_y_bounds(
-            payload
-                .series
-                .iter()
-                .filter(|series| series.y_index == 0)
-                .flat_map(|series| series.points.iter().map(|(_, y)| *y)),
-        ))
+    let primary_bounds = payload.fixed_y_bounds.unwrap_or_else(|| {
+        payload
+            .series
+            .iter()
+            .filter(|series| series.y_index == 0)
+            .flat_map(|series| series.points.iter().map(|(_, y)| *y))
+            .fold(None, bounds_accumulator)
+            .unwrap_or((0.0, 1.0))
     });
     let mut axes = axes_for_ranges(
         "x",
@@ -347,7 +347,7 @@ fn secondary_axis_scatter_document(
         "y",
         &payload.y_label,
         payload.fixed_x_bounds,
-        primary_bounds,
+        Some(primary_bounds),
         payload
             .series
             .iter()
