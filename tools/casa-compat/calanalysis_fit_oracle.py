@@ -130,7 +130,7 @@ def compare_narrow_band(native, reference):
     assert list(native) == list(reference)
     # A nearly singular 100 GHz normal equation affects these diagnostics.
     # Apply the calibration science bound and check a stable law separately.
-    sensitive = {'vars', 'covars', 'res', 'resMean'}
+    sensitive = {'vars', 'covars', 'res', 'resMean', 'redChi2'}
     for key in reference:
         if key not in sensitive:
             compare_records(native[key], reference[key])
@@ -152,6 +152,10 @@ def check_narrow_band(record, weighted, *, native):
         design = np.stack((np.ones(len(x)), centered), axis=-1)
         params = np.linalg.lstsq(design[use]/sigma[:, None], y[use]/sigma, rcond=None)[0]
         np.testing.assert_allclose(record['model'], design@params, rtol=1e-5, atol=1e-6)
+        if native:
+            residual = (y[use]-record['model'][use])/sigma
+            expected = (residual@residual)/(sum(use)-1)
+            np.testing.assert_allclose(record['redChi2'], expected, rtol=1e-5, atol=1e-9)
         return
     x_scale = abs(x[use].min())+abs(x[use].max())
     y_scale = abs(y[use].min())+abs(y[use].max())
