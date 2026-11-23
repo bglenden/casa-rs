@@ -8,6 +8,147 @@ mod keys;
 pub(super) use keys::PatchGroup;
 pub(super) type PlannedTable = (ApplyCalibrationTablePlan, Vec<PatchGroup>);
 
+/// The physical MS scan to use for a registered slice's calibration lookup.
+pub(crate) type LegacyScanOverrides = HashMap<(usize, usize), i32>;
+
+/// VI1 queries CLPatchPanel with wildcard scan and intent IDs. A library
+/// contributes one registered context for each visibility buffer.
+pub(super) fn choose_legacy_slices(
+    tables: &mut [PlannedTable],
+    rows: &[ApplyRowPlan],
+    registrations: &[crate::execute::LibraryApplyRegistration],
+) -> LegacyScanOverrides {
+    let mut overrides = LegacyScanOverrides::new();
+    for registration in registrations
+        .iter()
+        .filter(|library| library.tables.len() > 1)
+    {
+        let slices = &mut tables[registration.tables.clone()];
+        let mut assigned = vec![Vec::new(); slices.len()];
+        let mut unavailable = vec![Vec::new(); slices.len()];
+        let mut priorities = HashMap::new();
+        for row in rows {
+            let context = (
+                row.calibration_observation_id,
+                row.observation_id,
+                row.field_id,
+                row.data_spw_id,
+            );
+            let preferred = *priorities
+                .entry(context)
+                .or_insert_with(|| legacy_priority(row, slices));
+            if let Some((index, [scan, _])) = preferred {
+                assigned[index].push(row.row_index);
+                if scan >= 0
+                    && scan != row.scan_number
+                    && slices[index]
+                        .0
+                        .spec
+                        .callibrary
+                        .as_ref()
+                        .is_some_and(|library| library.scan_map.active())
+                {
+                    overrides.insert((registration.tables.start + index, row.row_index), scan);
+                }
+            } else if let Some((index, (fallback, _))) = slices
+                .iter()
+                .enumerate()
+                .find(|(_, (table, _))| table.applies_to(row))
+            {
+                assigned[index].push(row.row_index);
+                if fallback
+                    .unavailable_row_indices
+                    .binary_search(&row.row_index)
+                    .is_ok()
+                {
+                    unavailable[index].push(row.row_index);
+                }
+            }
+        }
+        for (((table, _), mut rows), mut missing) in
+            slices.iter_mut().zip(assigned).zip(unavailable)
+        {
+            rows.sort_unstable();
+            missing.sort_unstable();
+            table.applicable_selected_row_count = rows.len();
+            table.applicable_row_indices = Some(rows);
+            table.unavailable_row_indices = missing;
+        }
+    }
+    overrides
+}
+
+// Observation, field and SPW already match the buffer. Only the scan and
+// intent contribute to ordering the candidate keys.
+type LegacyPriority = (usize, [i32; 2]);
+
+fn legacy_priority(row: &ApplyRowPlan, slices: &[PlannedTable]) -> Option<LegacyPriority> {
+    let matches = |values: &[i32], id| values.contains(&id) || values.contains(&-1);
+    let mut candidates = Vec::new();
+    for (index, (table, groups)) in slices.iter().enumerate() {
+        if !table.spec.apply_to.matches(row) {
+            continue;
+        }
+        let before = candidates.len();
+        candidates.extend(groups.iter().filter_map(|keys| {
+            if matches(&keys[0], row.calibration_observation_id)
+                && matches(&keys[2], row.field_id)
+                && matches(&keys[4], row.data_spw_id)
+            {
+                Some((index, [*keys[1].iter().min()?, *keys[3].iter().min()?]))
+            } else {
+                None
+            }
+        }));
+        candidates[before..].sort_unstable();
+    }
+    let has_wildcard_scan = candidates.iter().any(|(_, key)| key[0] < 0);
+    let has_concrete_scan = candidates.iter().any(|(_, key)| key[0] >= 0);
+    let has_intent = candidates.iter().any(|(_, key)| key[1] >= 0);
+    if has_wildcard_scan && has_concrete_scan && has_intent {
+        first_registered_key(&candidates)
+    } else {
+        candidates
+            .into_iter()
+            .min_by(|(_, left), (_, right)| compare_legacy_keys(left, right))
+    }
+}
+
+fn first_registered_key(candidates: &[LegacyPriority]) -> Option<LegacyPriority> {
+    // A wildcard in a stored key can make the comparator non-transitive.
+    // Respect registration order when constructing a single buffer lookup.
+    // A CASA index with cyclic keys can also update more than one result.
+    let mut children = vec![[None; 2]; candidates.len()];
+    for (index, (_, key)) in candidates.iter().enumerate().skip(1) {
+        let mut node = 0;
+        loop {
+            let right = !compare_legacy_keys(key, &candidates[node].1).is_lt();
+            let next = &mut children[node][usize::from(right)];
+            match *next {
+                Some(child) => node = child,
+                None => {
+                    *next = Some(index);
+                    break;
+                }
+            }
+        }
+    }
+    let mut first = 0;
+    while let Some(child) = children[first][0] {
+        first = child;
+    }
+    candidates.get(first).copied()
+}
+
+fn compare_legacy_keys(left: &[i32; 2], right: &[i32; 2]) -> std::cmp::Ordering {
+    left.iter()
+        .zip(right)
+        .find_map(|(&left, &right)| {
+            (left >= 0 && right >= 0 && left != right).then(|| left.cmp(&right))
+        })
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
 pub(super) fn selected_rows(
     ms: &MeasurementSet,
     spec: &ApplyCalibrationTableSpec,
