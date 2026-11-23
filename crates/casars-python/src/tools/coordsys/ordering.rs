@@ -1,10 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::num::IntErrorKind;
+
 use casa_coordinates::CoordinateSystem;
 use numpy::PyUntypedArray;
 use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
+use pyo3::types::{
+    PyBytes, PyComplex, PyComplexMethods, PyFloat, PyInt, PyList, PyString, PyTuple, PyTypeMethods,
+};
 
 use crate::convert::{double_vector_element, numeric_text};
 
@@ -19,24 +23,56 @@ fn is_array(value: &Bound<'_, PyAny>) -> bool {
     value.is_instance_of::<PyList>() || value.cast::<PyUntypedArray>().is_ok()
 }
 
-fn integer(value: &Bound<'_, PyAny>) -> PyResult<i32> {
-    if let Ok(integer) = value.extract::<i64>() {
-        return Ok(integer as i32);
-    }
-    if let Some(text) = numeric_text(value)? {
-        let text = text.to_string_lossy();
-        let trimmed = text.trim_start();
-        let number = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
-        let count = number.bytes().take_while(u8::is_ascii_digit).count();
-        let end = trimmed.len() - number.len() + count;
-        return Ok(trimmed[..end].parse::<i64>().unwrap_or(0) as i32);
-    }
-    let number = double_vector_element(value).unwrap_or(0.0);
-    Ok(if (i64::MIN as f64..-(i64::MIN as f64)).contains(&number) {
+fn narrow_real(number: f64) -> i32 {
+    // CASA converts to a native long and then takes its low 32 bits.
+    // ARM's FCVTZS saturates; x86-64's CVTTSD2SI yields INT64_MIN on overflow.
+    if cfg!(target_arch = "aarch64") || (i64::MIN as f64..-(i64::MIN as f64)).contains(&number) {
         number as i64 as i32
     } else {
         0
-    })
+    }
+}
+
+fn integer(value: &Bound<'_, PyAny>) -> PyResult<i32> {
+    if value.is_instance_of::<PyInt>() {
+        // PyLong_AsLong returns -1 when the Python integer exceeds C long.
+        return Ok(value.extract::<i64>().unwrap_or(-1) as i32);
+    }
+    if let Ok(number) = value.cast::<PyComplex>() {
+        return Ok(narrow_real(number.real()));
+    }
+    if let Some(text) = numeric_text(value)? {
+        let text = text.to_string_lossy();
+        let trimmed = text.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+        let number = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
+        let count = number.bytes().take_while(u8::is_ascii_digit).count();
+        let end = trimmed.len() - number.len() + count;
+        let parsed = match trimmed[..end].parse::<i64>() {
+            Ok(value) => value,
+            Err(error) => match error.kind() {
+                IntErrorKind::PosOverflow => i64::MAX,
+                IntErrorKind::NegOverflow => i64::MIN,
+                _ => 0,
+            },
+        };
+        return Ok(parsed as i32);
+    }
+    if value.is_instance_of::<PyFloat>() {
+        return value.extract::<f64>().map(narrow_real);
+    }
+    // The list typemap recognizes signed integer and floating NumPy scalars.
+    // Unsigned, bool and narrow complex scalars leave the initialized zero.
+    let name = value.get_type().fully_qualified_name()?;
+    let name = name.to_str()?;
+    if name.starts_with("numpy.uint")
+        || matches!(name, "numpy.bool" | "numpy.bool_" | "numpy.complex64")
+    {
+        return Ok(0);
+    }
+    if let Ok(integer) = value.extract::<i64>() {
+        return Ok(integer as i32);
+    }
+    Ok(narrow_real(double_vector_element(value).unwrap_or(0.0)))
 }
 
 pub(super) fn integer_vector(
@@ -65,16 +101,35 @@ pub(super) fn integer_vector(
         return list.iter().map(|item| integer(&item)).collect();
     }
     if is_array(value) {
-        let array = value
-            .py()
-            .import("numpy")?
-            .call_method1("asarray", (value,))?;
+        let numpy = value.py().import("numpy")?;
+        let nested_list = value.is_instance_of::<PyList>();
+        let array = if nested_list {
+            // Keep each Python list element's type when flattening it.
+            numpy.call_method1("asarray", (value, "object"))?
+        } else {
+            numpy.call_method1("asarray", (value,))?
+        };
+        let kind = array.getattr("dtype")?.getattr("kind")?;
+        let kind = kind.extract::<String>()?;
+        if !nested_list && kind == "O" {
+            return Ok(Vec::new());
+        }
         let flat = array
             .call_method1("ravel", ("F",))?
             .call_method0("tolist")?;
+        if kind == "u" {
+            return flat
+                .try_iter()?
+                .map(|item| item?.extract::<u64>().map(|number| number as i32))
+                .collect();
+        }
         return flat.try_iter()?.map(|item| integer(&item?)).collect();
     }
-    Ok(vec![integer(value)?])
+    if value.is_instance_of::<PyInt>() || value.is_instance_of::<PyFloat>() {
+        Ok(vec![integer(value)?])
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 fn transpose(state: &mut CoordinateState, order: Vec<i32>) -> PyResult<bool> {
