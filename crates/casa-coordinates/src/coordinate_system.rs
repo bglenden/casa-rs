@@ -191,49 +191,6 @@ impl CoordinateSystem {
         Ok(())
     }
 
-    /// Convert a matrix of pixel vectors with one point per column.
-    /// The output rows follow the system's world axes, with columns contiguous.
-    ///
-    /// # Errors
-    /// Returns an error for a wrong pixel-axis count, an unrepresentable
-    /// output size, or the first point that cannot be converted.
-    pub fn to_world_columns(
-        &self,
-        pixels: ArrayView2<'_, f64>,
-    ) -> Result<Array2<f64>, CoordinateError> {
-        let n_pixel = self.n_pixel_axes();
-        if pixels.nrows() != n_pixel {
-            return Err(CoordinateError::DimensionMismatch {
-                expected: n_pixel,
-                got: pixels.nrows(),
-            });
-        }
-        let n_world = self.n_world_axes();
-        let size = n_world.checked_mul(pixels.ncols()).ok_or_else(|| {
-            CoordinateError::ConversionFailed("world coordinate matrix size overflow".into())
-        })?;
-        let mut world = Vec::with_capacity(size);
-        let mut input = Vec::new();
-        let maps = self.nonconsecutive_maps();
-        for column in pixels.axis_iter(Axis(1)) {
-            let column = match column.as_slice() {
-                Some(column) => column,
-                None => {
-                    input.clear();
-                    input.extend(column.iter().copied());
-                    &input
-                }
-            };
-            if let Some(maps) = maps {
-                world.extend(maps.to_world(&self.coordinates, column)?);
-            } else {
-                self.append_consecutive_world(column, &mut world)?;
-            }
-        }
-        Array2::from_shape_vec((n_world, pixels.ncols()).f(), world)
-            .map_err(|error| CoordinateError::ConversionFailed(error.to_string()))
-    }
-
     /// Converts a full world coordinate vector to pixel coordinates.
     ///
     /// The world vector must have length [`n_world_axes`](Self::n_world_axes).
