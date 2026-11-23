@@ -4,6 +4,7 @@
 use std::f64::consts::{PI, TAU};
 use std::sync::{Arc, Mutex};
 
+use casa_measures_data::PlanetaryEphemeris;
 use casa_tables::taql::ast::Expr;
 use casa_tables::taql::eval::{ArrayValue, EvalContext, ExprValue, eval_constant};
 use casa_tables::taql::{BoundRowFunction, IndexStyle, TaqlError, UvwWavelengthScale};
@@ -401,6 +402,7 @@ enum Source {
     Field(Vec<MDirection>),
     Fixed(MDirection),
     Named(String),
+    Planet(Box<PlanetaryEphemeris>),
 }
 
 impl Source {
@@ -422,6 +424,11 @@ impl Source {
             Some(ExprValue::String(name)) => {
                 if let Some(column) = name.strip_prefix('\\') {
                     return Self::field(ms, column);
+                }
+                if name.eq_ignore_ascii_case("PLUTO") {
+                    let planet = PlanetaryEphemeris::open_discovered(&name)
+                        .map_err(|error| MsError::MeasuresRuntime(error.to_string()))?;
+                    return Ok(Self::Planet(Box::new(planet)));
                 }
                 let frame = MeasFrame::new().with_measures(Arc::clone(measures));
                 match MDirection::check_source_name(&name, &frame) {
@@ -466,6 +473,9 @@ impl Source {
     ) -> Result<MDirection, TaqlError> {
         let direction = match self {
             Self::Fixed(direction) => direction.clone(),
+            Self::Planet(planet) => planet
+                .direction(frame)
+                .map_err(|error| TaqlError::Table(error.to_string()))?,
             Self::Named(name) => {
                 MDirection::from_source_name(name, frame).map_err(measure_error)?
             }

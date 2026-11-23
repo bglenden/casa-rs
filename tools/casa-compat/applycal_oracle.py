@@ -24,7 +24,7 @@ import time
 
 import numpy as np
 import casatasks as casa
-from casatools import table
+from casatools import measures, table
 
 from calibration_lifecycle_oracle import contents, equal, snapshot
 from record_casa_returns import make_cal_ms
@@ -51,6 +51,49 @@ def copy_ms(source, destination, endian='aipsrc'):
     copied.close()
     tool.close()
 
+
+def geometry_measure_fixtures(base, root):
+    field_ms=root/'source-mscal-direction.ms'
+    copy_ms(base, field_ms)
+    t=table()
+    t.open(str(field_ms/'FIELD'), nomodify=False)
+    for name in ('CUSTOM_DIR', 'NO_DIRECTION', 'PLUTO'):
+        t.addcols({name: {'valueType': 'double', 'ndim': 2, 'shape': [2, 1]}})
+        t.putcol(name, np.broadcast_to(np.array([10., -20.])[:,None,None], (2, 1, t.nrows())).copy())
+        if name != 'NO_DIRECTION':
+            t.putcolkeyword(name, 'MEASINFO', {'type': 'direction', 'Ref': 'J2000'})
+            t.putcolkeyword(name, 'QuantumUnits', ['deg', 'deg'])
+    t.close()
+
+    time_ms=root/'source-mscal-time-ref.ms'
+    copy_ms(base, time_ms)
+    t=table()
+    t.open(str(time_ms), nomodify=False)
+    t.addcols({'TIME_FRAME': {'valueType': 'int'}})
+    time=t.getcol('TIME')
+    times=np.unique(time)
+    codes=np.where(np.isin(time, times[::2]), 7, 6).astype(np.int32)
+    t.putcol('TIME_FRAME', codes)
+    t.putcolkeyword('TIME', 'MEASINFO', {'type':'epoch', 'VarRefCol':'TIME_FRAME',
+                  'TabRefTypes':['UTC','TAI'], 'TabRefCodes':np.array([6,7],dtype=np.uint32)})
+    t.close()
+
+    antenna_ms=root/'source-mscal-antenna-ref.ms'
+    copy_ms(base, antenna_ms)
+    tool = measures()
+    t=table()
+    t.open(str(antenna_ms/'ANTENNA'), nomodify=False)
+    positions=t.getcol('POSITION')
+    for i in range(t.nrows()):
+        coord = tool.position('ITRF', *(f'{value}m' for value in positions[:,i]))
+        wgs=tool.measure(coord, 'WGS84')
+        lon, lat, height = (wgs[key]['value'] for key in ('m0', 'm1', 'm2'))
+        positions[:,i] = height*np.array([np.cos(lat)*np.cos(lon),np.cos(lat)*np.sin(lon),np.sin(lat)])
+    t.putcol('POSITION', positions)
+    t.putcolkeyword('POSITION', 'MEASINFO', {'type': 'position', 'Ref': 'WGS84'})
+    t.close()
+    tool.done()
+    return field_ms, time_ms, antenna_ms
 
 def isolated_applycal(arguments):
     return subprocess.run([sys.executable, '-c',
@@ -797,8 +840,31 @@ def run(root, native_bin, only=None):
         ('solar-direction', 'mscal.azel("SUN")[1] < -1rad AND ANTENNA1 == 0'),
         ('row-dependent-direction', 'mscal.ha(FIELD_ID) < -0.256'),
         ('wrong-length-direction', 'mscal.ha([10deg]) < -0.256'),
+        ('absolute-delay', 'abs(mscal.delay()) > 10ns'),
+        ('absolute-uvw', 'any(abs(mscal.uvwj2000()) > 35m)'),
+        ('sine-hour-angle', 'sin(mscal.ha()) < -0.253'),
+        ('cosine-hour-angle', 'cos(mscal.ha()) > 0.9675'),
+        ('tangent-elevation', 'tan(mscal.azel()[2]) > 3.78'),
+        ('sine-delay-time-as-angle', 'sin(mscal.delay()) < 0'),
+        ('sine-array', 'any(sin(mscal.azel()) > 0.965)'),
+        ('invalid-trig-units', 'sin(mscal.uvwj2000()[1]) > 0'),
     ]:
         case(f'api-select-mscal-geometry-{label}', dict(msselect=predicate), input_vis=observation_source)
+
+    if only is None or any(re.search(only, f'api-select-mscal-geometry-{label}') for label in (
+            'degree-field-direction', 'not-direction-column', 'time-reference-column',
+            'wgs84-antenna-uvw', 'wgs84-antenna-delay', 'pluto', 'explicit-field-name')):
+        field_ms, time_ms, antenna_ms = geometry_measure_fixtures(observation_source, root)
+        for label, vis, predicate in [
+            ('degree-field-direction', field_ms, 'mscal.ha("CUSTOM_DIR") < -0.169rad'),
+            ('not-direction-column', field_ms, 'mscal.ha("NO_DIRECTION") < -0.169rad'),
+            ('pluto', field_ms, 'mscal.ha("PLUTO") < 1.156rad'),
+            ('explicit-field-name', field_ms, r'mscal.ha("\PLUTO") < -0.169rad'),
+            ('time-reference-column', time_ms, 'mscal.ha() < -0.257rad'),
+            ('wgs84-antenna-uvw', antenna_ms, 'mscal.uvwapp()[2] > 15m'),
+            ('wgs84-antenna-delay', antenna_ms, 'mscal.delay1() > 10ns'),
+        ]:
+            case(f'api-select-mscal-geometry-{label}', dict(msselect=predicate), input_vis=vis)
 
     for label, arguments in [
         ('scalar-map', dict(spwmap=0, flagbackup=True)),
