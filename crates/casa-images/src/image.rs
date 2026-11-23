@@ -4897,7 +4897,8 @@ mod tests {
         image.save().unwrap();
         drop(image);
 
-        let mut image = PagedImage::<f32>::open(&path).unwrap();
+        let cache_bytes = 2 * tile_shape.iter().product::<usize>() * size_of::<f32>();
+        let mut image = PagedImage::<f32>::open_with_cache(&path, cache_bytes).unwrap();
         image.reset_tiled_io_stats();
         let start = [1, 1, 0, 1];
         let step = [3, 2, 1, 4];
@@ -4921,6 +4922,7 @@ mod tests {
             })
             .product::<usize>();
         let stats = image.tiled_io_stats().unwrap();
+        assert_eq!(stats.flat_allocated_bytes, 0);
         assert_eq!(stats.lru_misses, selected_tiles);
         assert_eq!(stats.lru_hits, 0);
     }
