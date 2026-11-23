@@ -10584,3 +10584,7 @@ With a one-channel selection in each of two combined spectral windows, flagging 
 ## Generic BPOLY setup can terminate Python
 
 CASA 6.7.6.14 can terminate with SIGSEGV during `calibrater.setsolve(type='BPOLY')` on an attached MeasurementSet in either visibility iterator. Casa-rs raises a recoverable setup error. The dedicated `setsolvebandpoly` entry point supplies the polynomial controls and supports the legacy fit. [Generic polynomial oracle](../tools/casa-compat/calibrater_generic_polynomial_oracle.py)
+
+## Generic GSPLINE phase wrapping can vary between CASA processes
+
+With the same data and generic `calibrater.setsolve(type='GSPLINE')` arguments, CASA 6.7.6.14 produced different phase coefficients in separate processes. One process was terminated during phase fitting under the local memory limit. The dedicated `setsolvegainspline` call uses explicit wrapping controls. Casa-rs uses 7,200-second spacing, two phase points, and a zero wrap threshold for the generic path. These controls reproduced the pinned phase coefficients in the dedicated reference and in three isolated generic preaveraged fits. [Generic polynomial oracle](../tools/casa-compat/calibrater_generic_polynomial_oracle.py)

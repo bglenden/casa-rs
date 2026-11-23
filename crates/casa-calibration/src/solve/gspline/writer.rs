@@ -13,6 +13,7 @@ use super::SplineCoefficients;
 use crate::bandpass::bpoly::{
     legacy_polynomial_columns, write_legacy_cal_desc, write_legacy_history,
 };
+use crate::output::CalibrationOutput;
 use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, set_fixed_unit_keyword,
     set_measinfo_keyword,
@@ -23,7 +24,7 @@ pub(super) fn write(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     coefficients: &SplineCoefficients,
-    mode: CalibrationOutputMode,
+    (mode, refresh_existing): (CalibrationOutputMode, bool),
     fields: &BTreeSet<i32>,
     (reference, antennas, frequency): (i32, &BTreeSet<usize>, f64),
     poly_mode: &str,
@@ -43,7 +44,22 @@ pub(super) fn write(
         .and_then(|path| path.file_name())
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    let mut writer = CalibrationTableWriter::with_mode(
+    let output = CalibrationOutput::prepare(&request.output_table, mode)?;
+    let table_mode = if refresh_existing && mode == CalibrationOutputMode::Append {
+        if output.destination.exists() {
+            let existing = crate::output_merge::open(&output.destination)?;
+            if existing.info().sub_type != "GSPLINE" {
+                return Err(GainSolveError::Baseline(
+                    "append destination is not a GSPLINE table".into(),
+                ));
+            }
+        }
+        // Generic GSPLINE refreshes existing antenna/field entries.
+        CalibrationOutputMode::Replace
+    } else {
+        mode
+    };
+    let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
             output: &request.output_table,
@@ -54,8 +70,9 @@ pub(super) fn write(
             include_polarization_basis: false,
             time_extra_precision_column: Some("TIME_EXTRA_PREC"),
         },
-        mode,
-    )?;
+        output,
+        table_mode,
+    );
     writer.preserve_row_order();
     let table = writer.table_mut();
     *table.keywords_mut() = RecordValue::new(vec![

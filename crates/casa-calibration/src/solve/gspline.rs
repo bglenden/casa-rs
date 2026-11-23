@@ -26,13 +26,21 @@ use crate::CalibrationOutputMode;
 use crate::execute::PreappliedRows;
 use crate::session::prepare_calibration_solve;
 
+#[derive(Clone, Copy)]
+pub(crate) struct ToolOptions<'a> {
+    pub(crate) mode: &'a str,
+    pub(crate) all_fields: bool,
+}
+
 pub(crate) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     controls: GainSplineControls,
     mode: CalibrationOutputMode,
-    tool_mode: Option<&str>,
+    tool: Option<ToolOptions<'_>>,
 ) -> Result<GainSolveReport, GainSolveError> {
+    let tool_mode = tool.map(|settings| settings.mode);
+    let all_fields = tool.is_some_and(|settings| settings.all_fields);
     let input = crate::timing::Phase::start("gspline_select_average");
     let context = prepare_calibration_solve(
         ms,
@@ -81,11 +89,24 @@ pub(crate) fn solve(
     if groups.is_empty() {
         return Err(GainSolveError::EmptySelection);
     }
-    let fields = context
-        .rows
-        .iter()
-        .map(|row| row.field_id)
-        .collect::<BTreeSet<_>>();
+    let fields = if all_fields {
+        let count = ms
+            .field()
+            .map_err(|source| GainSolveError::OpenMeasurementSet {
+                path: ms
+                    .path()
+                    .map_or_else(|| "<in-memory>".into(), |path| path.display().to_string()),
+                source,
+            })?
+            .row_count();
+        (0..count as i32).collect()
+    } else {
+        context
+            .rows
+            .iter()
+            .map(|row| row.field_id)
+            .collect::<BTreeSet<_>>()
+    };
     let windows = context
         .rows
         .iter()
@@ -141,16 +162,24 @@ pub(crate) fn solve(
     let output = crate::timing::Phase::start("gspline_write");
     let solution_row_count = if let Some(coefficients) = &coefficients {
         let frequency = reference_frequency(ms, &context.rows, context.preapplied_rows.as_ref())?;
-        let solved_antennas = series
-            .iter()
-            .filter(|baseline| baseline.samples.iter().flatten().copied().any(usable))
-            .flat_map(|baseline| baseline.antennas)
-            .collect::<BTreeSet<_>>();
+        let solved_antennas = if all_fields {
+            context
+                .available_antennas
+                .iter()
+                .map(|&antenna| antenna as usize)
+                .collect()
+        } else {
+            series
+                .iter()
+                .filter(|baseline| baseline.samples.iter().flatten().copied().any(usable))
+                .flat_map(|baseline| baseline.antennas)
+                .collect::<BTreeSet<_>>()
+        };
         let count = writer::write(
             ms,
             request,
             coefficients,
-            mode,
+            (mode, all_fields),
             &fields,
             (context.refant_id, &solved_antennas, frequency),
             poly_mode,

@@ -170,7 +170,7 @@ pub fn solve_calibration_with_output_mode(
 #[derive(Default)]
 pub(crate) struct ToolSolveOptions<'a> {
     pub bandpass: BandpassSolveControls,
-    pub spline_mode: Option<&'a str>,
+    pub spline_mode: Option<gspline::ToolOptions<'a>>,
     pub legacy_iterator: bool,
     pub invalid_mode: bool,
     pub tf: Option<crate::solve::TfSolveSettings>,

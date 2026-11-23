@@ -84,7 +84,7 @@ enum ConfiguredSolve {
         mode: CalibrationOutputMode,
         invalid_mode: bool,
         bandpass: BandpassSolveControls,
-        spline_mode: Option<String>,
+        spline_mode: Option<SplineMode>,
         tf: Option<crate::solve::TfSolveSettings>,
     },
     LegacyEp(Box<LegacyEpSolver>),
@@ -98,6 +98,21 @@ enum ConfiguredSolve {
         request: Box<crate::solve::grouping::leakage::LeakageSolveRequest>,
         invalid_mode: bool,
     },
+}
+
+enum SplineMode {
+    SelectedFields(String),
+    AllFields(String),
+}
+
+impl SplineMode {
+    fn options(&self) -> crate::solve::gspline::ToolOptions<'_> {
+        let (mode, all_fields) = match self {
+            Self::SelectedFields(mode) => (mode.as_str(), false),
+            Self::AllFields(mode) => (mode.as_str(), true),
+        };
+        crate::solve::gspline::ToolOptions { mode, all_fields }
+    }
 }
 
 #[derive(Default)]
@@ -695,7 +710,32 @@ impl CalibraterLifecycle {
             Some(GainSolveMode::AmplitudePhase),
             GainNormalization::Mean,
             -1.,
-            Some(spline_mode),
+            Some(SplineMode::SelectedFields(spline_mode)),
+        )
+    }
+
+    /// Configure the generic GSPLINE solver. Its legacy output includes all
+    /// FIELD IDs in the attached MS, using only the selected inputs for fitting.
+    /// # Errors
+    /// Returns an error when no MeasurementSet is open.
+    pub fn set_tool_generic_spline(
+        &mut self,
+        gain: crate::GainSolveRequest,
+        mode: CalibrationOutputMode,
+        spline_mode: String,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let controls = crate::GainSplineControls {
+            splinetime: 7200.,
+            npointaver: 2,
+            phasewrap: 0.,
+        };
+        self.configure_solve(
+            CalibrationSolveRequest::GainSpline { gain, controls },
+            mode,
+            Some(GainSolveMode::AmplitudePhase),
+            GainNormalization::Mean,
+            -1.,
+            Some(SplineMode::AllFields(spline_mode)),
         )
     }
 
@@ -769,7 +809,7 @@ impl CalibraterLifecycle {
         visibility_mode: Option<GainSolveMode>,
         normalization: GainNormalization,
         preaverage_seconds: f64,
-        spline_mode: Option<String>,
+        spline_mode: Option<SplineMode>,
     ) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation_mut()?;
         equation.solve = Some(ConfiguredSolve::Task {
@@ -959,7 +999,7 @@ impl CalibraterLifecycle {
                         (**request).clone(),
                         *mode,
                         *bandpass,
-                        spline_mode.as_deref(),
+                        spline_mode.as_ref().map(SplineMode::options),
                         *invalid_mode,
                         *tf,
                     )

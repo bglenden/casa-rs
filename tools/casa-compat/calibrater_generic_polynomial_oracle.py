@@ -20,15 +20,22 @@ from calibrater_state_oracle import casa_log, native_log
 from gspline_oracle import compare_tables, source
 
 
-def casa_spline_fit(vis, product, legacy, options, outcome):
+def casa_spline_fit(vis, product, legacy, options, outcome, phase_control):
     child = """
 from casatools import calibrater
 import json, sys
-legacy, vis, product, arguments = sys.argv[1:]
+legacy, vis, product, arguments, controlled = sys.argv[1:]
 t = calibrater()
 assert t.setvi(legacy == 'True', True) and t.open(vis)
 assert t.selectvis(field='FLUX', spw='0:1~10') and t.setptmodel([1, 0, 0, 0])
-assert t.setsolve(type='GSPLINE', table=product, **json.loads(arguments))
+args = json.loads(arguments)
+if controlled == 'True':
+    mode = 'P' if args.get('phaseonly', False) else args.get('apmode', 'AP')
+    assert t.setsolvegainspline(product, mode=mode, splinetime=7200., npointaver=2,
+                              phasewrap=0., preavg=args.get('preavg', -1.),
+                              refant=args.get('refant', []))
+else:
+    assert t.setsolve(type='GSPLINE', table=product, **args)
 try:
     result = t.solve(), None
 except RuntimeError as failure:
@@ -36,7 +43,8 @@ except RuntimeError as failure:
 print('SOLVE RESULT', json.dumps([result, t.returndict()['solve_tables'].tolist()]), flush=True)
 assert not t.activityrec() and t.close()
 """
-    process = run([sys.executable, '-c', child, str(legacy), str(vis), str(product), json.dumps(options)],
+    process = run([sys.executable, '-c', child, str(legacy), str(vis), str(product),
+                   json.dumps(options), str(phase_control)],
                   capture_output=True, text=True, check=False)
     assert process.returncode == 0, (product.name, process.returncode, process.stderr[-4000:])
     marker = 'SOLVE RESULT '
@@ -60,7 +68,9 @@ def spline_case(work, vis, factories, name, legacy, options, poly_mode, outcome=
         state = state[0], [line.replace(str(product), '<table>') for line in state[1]]
         if label == 'casa':
             assert tool.close()
-            casa_spline_fit(vis, product, legacy, options, outcome)
+            # CASA's implicit wrapping controls produced different phase
+            # coefficients for repeated generic input. Pin them for science.
+            casa_spline_fit(vis, product, legacy, options, outcome, 'PHAS' in poly_mode)
             records[label] = state, {}
         else:
             solved = result(tool.solve)
@@ -84,6 +94,30 @@ def spline_case(work, vis, factories, name, legacy, options, poly_mode, outcome=
             for product in products.values():
                 verify_readers(product, ('POLY_MODE', 'SPLINE_KNOTS_PHASE', 'POLY_COEFF_PHASE'))
     print(name, 'matched' if 'native' in records else 'reference', flush=True)
+
+
+def append_spline(work, vis, factories):
+    products = {}
+    for name, factory in factories.items():
+        out = products[name] = work/f'append-{name}.cal'
+        tool = factory()
+        assert tool.setvi(True, True) and tool.open(str(vis))
+        for field, append in (('FLUX', False), ('PHASE', True)):
+            assert tool.selectvis(field=field, spw='0:1~10') and tool.setptmodel([1, 0, 0, 0])
+            assert tool.setsolve('GSPLINE', 'inf', str(out), apmode='A', append=append)
+            assert tool.solve()
+            with opened(out) as table:
+                assert list(table.getcol('FIELD_ID')) == [0] * 5 + [1] * 5
+                epoch = table.getcell('TIME', 0)
+                if append:
+                    assert epoch > initial_epoch
+                else:
+                    initial_epoch = epoch
+        assert tool.close()
+    if 'native' in products:
+        rows = list(range(10))
+        compare_tables(products['casa'], products['native'], (rows, rows), logical_splines=True)
+    print('generic append refreshes the published fields', flush=True)
 
 
 def bpoly_setup(work, vis, factories, legacy):
@@ -134,6 +168,7 @@ def compare(work, reference_only):
             ('modern', False, dict(apmode='AP'), '', 'error'),
         ):
             spline_case(work, vis, factories, name, legacy, options, mode, outcome)
+        append_spline(work, vis, factories)
         for legacy in (True, False):
             bpoly_setup(work, vis, factories, legacy)
 

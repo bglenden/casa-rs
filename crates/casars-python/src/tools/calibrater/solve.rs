@@ -303,18 +303,8 @@ fn configure_generic_spline(
     mode: casa_calibration::CalibrationOutputMode,
     apmode: &str,
 ) -> PyResult<()> {
-    let controls = casa_calibration::GainSplineControls {
-        splinetime: 7200.,
-        npointaver: 2,
-        phasewrap: 0.,
-    };
     state
-        .set_tool_spline(
-            standard.gain(GainType::GSpline),
-            controls,
-            mode,
-            apmode.into(),
-        )
+        .set_tool_generic_spline(standard.gain(GainType::GSpline), mode, apmode.into())
         .map_err(|_| setup_error())
 }
 
