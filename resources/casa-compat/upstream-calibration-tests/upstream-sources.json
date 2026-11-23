@@ -46,6 +46,11 @@
       "sha256": "2d5df1c9dbed40cc52825b8f7aac33ddeff2e0eddacfe0decebff2bdbb2eebca",
       "size": 9068
     },
+    "test_task_initweights.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_initweights.py",
+      "sha256": "5d5177a986f96c8711233d6e447b53c2731a98d5e81fe574b76e653ba586fdf0",
+      "size": 27310
+    },
     "test_task_polfromgain.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_polfromgain.py",
       "sha256": "b67b9a25f52a7d0143699943d49c985b25940c4828e96b8717647c73733130fa",
