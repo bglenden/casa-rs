@@ -130,10 +130,16 @@ fn describe(
             "\nRestoring Beam   : {major} {width_unit}, {minor} {width_unit}, {pa} deg"
         )
         .unwrap();
-        fields.push(("restoringbeam", restoring_beam(beam_view, -1, -1, "list")?));
+        fields.push((
+            "restoringbeam",
+            restoring_beam(beam_view, || record.clone(), -1, -1, "list")?,
+        ));
     } else if beams.is_multi() {
         plane_beams::append(&mut header, &record, &coords, &beams, list && verbose)?;
-        fields.push(("perplanebeams", restoring_beam(beam_view, -1, -1, "list")?));
+        fields.push((
+            "perplanebeams",
+            restoring_beam(beam_view, || record.clone(), -1, -1, "list")?,
+        ));
     }
 
     let mut messages = vec![
