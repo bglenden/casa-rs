@@ -16,4 +16,5 @@ python tools/casa-compat/upstream_calibration_suite.py applycal \
 
 The `applycal` suite uses `unittest/applycal` from casatestdata commit
 [`5e48637233019176f328ab4552e96395ab967581`](https://open-bitbucket.nrao.edu/projects/CASA/repos/casatestdata/browse/unittest/applycal?at=5e48637233019176f328ab4552e96395ab967581).
-Hydrate its Git LFS objects and preserve the fixture aliases before running.
+Hydrate its Git LFS objects and preserve its symbolic links before running.
+The Multi-MS shares its POINTING subtable through links between partitions.
