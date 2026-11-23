@@ -9,6 +9,7 @@ use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
 thread_local! {
     pub(super) static INDEX_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static BDF_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Clone, Copy)]
@@ -140,11 +141,13 @@ fn crossed_baselines_are_reordered_and_materialize_independently() {
         let mut table = Table::open(TableOptions::new(&source)).unwrap();
 
         let rows = [5, 2, 0, 2, 3, 1, 4];
+        BDF_READS.with(|count| count.set(0));
         let cells = table
             .column_accessor("DATA")
             .unwrap()
             .array_cells_owned_uncached(&rows)
             .unwrap();
+        assert_eq!(BDF_READS.with(std::cell::Cell::get), 1);
         let physical_rows = [0, 1, 3, 2, 4, 5];
         for (&row, cell) in rows.iter().zip(cells) {
             let cell = cell.unwrap();

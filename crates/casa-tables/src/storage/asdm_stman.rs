@@ -188,15 +188,30 @@ impl Index {
         rows: impl IntoIterator<Item = usize>,
     ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
         let mut reader = self.reader();
-        rows.into_iter()
-            .map(|row| reader.cell(column, row).map(Some))
-            .collect()
+        let rows = rows.into_iter().collect::<Vec<_>>();
+        let mut cells = Vec::with_capacity(rows.len());
+        let mut remaining = rows.as_slice();
+        while let Some((&first, tail)) = remaining.split_first() {
+            let descriptor = self.descriptor(first)?;
+            let count = 1 + tail
+                .iter()
+                .take_while(|&&row| (descriptor.start..descriptor.end).contains(&(row as u64)))
+                .count();
+            let (block, rest) = remaining.split_at(count);
+            reader.prepare_block(column, descriptor, count)?;
+            for &row in block {
+                cells.push(Some(reader.decode_cell(column, descriptor, row)?));
+            }
+            remaining = rest;
+        }
+        Ok(cells)
     }
 
     pub(super) fn reader(&self) -> Reader<'_> {
         Reader {
             index: self,
             open: None,
+            cached_block: None,
             bytes: Vec::new(),
         }
     }
@@ -426,17 +441,61 @@ struct Bdf {
     id: usize,
     file: File,
     len: u64,
+    preferred_read_bytes: u64,
 }
 
 pub(super) struct Reader<'a> {
     index: &'a Index,
     open: Option<Bdf>,
+    cached_block: Option<(usize, u64, u64)>,
     bytes: Vec<u8>,
 }
 
 impl Reader<'_> {
     pub(super) fn cell(&mut self, column: Column, row: usize) -> Result<ArrayValue, StorageError> {
         let descriptor = self.index.descriptor(row)?;
+        self.decode_cell(column, descriptor, row)
+    }
+
+    fn prepare_block(
+        &mut self,
+        column: Column,
+        descriptor: &Descriptor,
+        count: usize,
+    ) -> Result<(), StorageError> {
+        if count < 2 || !matches!(column, Column::Data | Column::FloatData) {
+            return Ok(());
+        }
+        let block = (
+            descriptor.file,
+            descriptor.block_start,
+            descriptor.block_end,
+        );
+        if self.cached_block == Some(block) {
+            return Ok(());
+        }
+        let size = descriptor.block_end - descriptor.block_start;
+        if size > super::STREAMING_TILED_COLUMN_BUFFER_BYTES as u64 {
+            return Ok(());
+        }
+        let bdf = self.open_bdf(descriptor)?;
+        // A sparse selection can seek directly to its cells. If loading the
+        // integration reads no more than the estimated file I/O of individual
+        // cells, load it once and decode in the requested row order.
+        let read_bytes = bdf.preferred_read_bytes.max(descriptor.row_bytes);
+        if size <= read_bytes.saturating_mul(count as u64) {
+            self.read_payload(descriptor.block_start, size)?;
+            self.cached_block = Some(block);
+        }
+        Ok(())
+    }
+
+    fn decode_cell(
+        &mut self,
+        column: Column,
+        descriptor: &Descriptor,
+        row: usize,
+    ) -> Result<ArrayValue, StorageError> {
         let shape = descriptor.shape(column)?;
         let layout = IxDyn(&shape).f();
         match column {
@@ -444,6 +503,37 @@ impl Reader<'_> {
             Column::Weight => return Ok(ArrayValue::Float32(ArrayD::from_elem(layout, 1.))),
             Column::Data | Column::FloatData => {}
         }
+        let offset = descriptor.offset(row);
+        let order = self.index.order;
+        let bytes = if self.cached_block
+            == Some((
+                descriptor.file,
+                descriptor.block_start,
+                descriptor.block_end,
+            )) {
+            let start = (offset - descriptor.block_start) as usize;
+            &self.bytes[start..start + descriptor.row_bytes as usize]
+        } else {
+            self.open_bdf(descriptor)?;
+            self.read_payload(offset, descriptor.row_bytes)?;
+            &self.bytes
+        };
+        let value = if matches!(column, Column::FloatData) {
+            let values = bytes
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|bytes| float32(bytes, order))
+                .collect();
+            ArrayValue::Float32(ArrayD::from_shape_vec(layout, values).map_err(shape_error)?)
+        } else {
+            let values = decode_complex(descriptor, bytes, order);
+            ArrayValue::Complex32(ArrayD::from_shape_vec(layout, values).map_err(shape_error)?)
+        };
+        Ok(value)
+    }
+
+    fn open_bdf(&mut self, descriptor: &Descriptor) -> Result<&Bdf, StorageError> {
         let name = &self.index.bdfs[descriptor.file];
         if self
             .open
@@ -456,39 +546,39 @@ impl Reader<'_> {
                     format!("open ASDM BDF {}: {error}", name.display()),
                 )
             })?;
+            let metadata = file.metadata()?;
+            #[cfg(unix)]
+            let preferred_read_bytes = std::os::unix::fs::MetadataExt::blksize(&metadata);
+            #[cfg(not(unix))]
+            let preferred_read_bytes = 0;
             self.open = Some(Bdf {
                 id: descriptor.file,
-                len: file.metadata()?.len(),
+                len: metadata.len(),
                 file,
+                preferred_read_bytes,
             });
         }
-        let bdf = self.open.as_mut().expect("opened BDF");
+        let bdf = self.open.as_ref().expect("opened BDF");
         if descriptor.block_end > bdf.len {
             return Err(invalid(format!(
-                "block for row {row} extends beyond BDF {}",
+                "block for row {} extends beyond BDF {}",
+                descriptor.start,
                 name.display()
             )));
         }
-        let bytes =
-            usize::try_from(descriptor.row_bytes).map_err(|_| invalid("cell size overflows"))?;
+        Ok(bdf)
+    }
+
+    fn read_payload(&mut self, offset: u64, bytes: u64) -> Result<(), StorageError> {
+        let bytes = usize::try_from(bytes).map_err(|_| invalid("payload size overflows"))?;
+        self.cached_block = None;
         self.bytes.resize(bytes, 0);
-        bdf.file.seek(SeekFrom::Start(descriptor.offset(row)))?;
+        let bdf = self.open.as_mut().expect("opened BDF");
+        bdf.file.seek(SeekFrom::Start(offset))?;
+        #[cfg(test)]
+        tests::BDF_READS.with(|count| count.set(count.get() + 1));
         bdf.file.read_exact(&mut self.bytes)?;
-        let order = self.index.order;
-        let value = if matches!(column, Column::FloatData) {
-            let values = self
-                .bytes
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|bytes| float32(bytes, order))
-                .collect();
-            ArrayValue::Float32(ArrayD::from_shape_vec(layout, values).map_err(shape_error)?)
-        } else {
-            let values = decode_complex(descriptor, &self.bytes, order);
-            ArrayValue::Complex32(ArrayD::from_shape_vec(layout, values).map_err(shape_error)?)
-        };
-        Ok(value)
+        Ok(())
     }
 }
 

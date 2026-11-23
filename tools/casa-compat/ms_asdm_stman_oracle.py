@@ -48,6 +48,15 @@ def product(path, visibility):
         reader.done()
 
 
+def antenna_names(ms):
+    reader = table()
+    try:
+        assert reader.open(str(ms / "ANTENNA"))
+        return reader.getcol("NAME")
+    finally:
+        reader.done()
+
+
 def main(casatestdata):
     assert casatasks.version() == [6, 7, 6, 14]
     fixture = casatestdata / "unittest" / "split" / ASDM
@@ -60,6 +69,7 @@ def main(casatestdata):
                            flagbackup=False, process_syspower=False, lazy=True, scans="1",
                            savecmds=True, outfile=str(root / "flag-commands.txt"))
         source_binding(source, "DATA", 414450)
+        input_antennas = antenna_names(source)
         float_source = root / "lazy-auto-only.ms"
         casatasks.importasdm(str(asdm), vis=str(float_source), ocorr_mode="ao",
                            convert_ephem2geo=False, flagbackup=False, process_syspower=False,
@@ -83,8 +93,9 @@ def main(casatestdata):
         (asdm / "ASDMBinary").rename(asdm / "offline")
         for label, visibility, pair, (reference, native) in products:
             expected, actual = product(reference, visibility), product(native, visibility)
-            assert np.all(actual["ANTENNA1"] == pair[0])
-            assert np.all(actual["ANTENNA2"] == pair[1])
+            output_antennas = antenna_names(native)
+            assert np.all(output_antennas[actual["ANTENNA1"]] == input_antennas[pair[0]]), label
+            assert np.all(output_antennas[actual["ANTENNA2"]] == input_antennas[pair[1]]), label
             assert actual[visibility].shape[1] == 8
             for column in (visibility, *COLUMNS):
                 np.testing.assert_array_equal(actual[column], expected[column],
