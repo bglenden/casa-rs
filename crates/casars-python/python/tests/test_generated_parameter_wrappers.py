@@ -94,6 +94,10 @@ def test_importvla_wrapper_preserves_the_archive_path_list(monkeypatch) -> None:
 
     assert captured["task"] == "importvla"
     assert captured["overrides"] == {"archivefiles": archivefiles, "vis": "target.ms"}
+    default = inspect.signature(tasks.importvla).parameters["frequencytol"].default
+    assert repr(default) == "'150000.0Hz'"
+    tasks.importvla(archivefiles=archivefiles, vis="target.ms", frequencytol="150000.0Hz")
+    assert captured["overrides"]["frequencytol"] == "150000.0Hz"
 
 
 def test_generated_tclean_wrapper_preserves_vlass_awproject_controls(monkeypatch) -> None:

@@ -57,6 +57,9 @@ pub(super) fn write_flag_snapshot(
         .save(options.clone())
         .map_err(|source| error(source.to_string()))?;
     let row_count = ms.row_count();
+    if row_count == 0 {
+        return Ok(());
+    }
     let tile_rows = shapes
         .iter()
         .filter_map(|shape| shape.tile_shape.last().copied())

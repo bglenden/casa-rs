@@ -242,7 +242,7 @@ fn read_version_flags(
             .map(|row| row.to_owned())
             .collect())
     } else {
-        clip_time::read_flags(table, rows, path)
+        clip_time::read_flags_uncached(table, rows, path)
     }
 }
 
@@ -271,7 +271,7 @@ fn restore_flag_arrays(
         return Ok(saved.into_iter().map(ArrayValue::Bool).collect());
     }
 
-    let current = clip_time::read_flags(main, rows, path)?;
+    let current = clip_time::read_flags_uncached(main, rows, path)?;
     saved
         .into_iter()
         .zip(current)

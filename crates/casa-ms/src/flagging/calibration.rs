@@ -111,7 +111,11 @@ fn stage(
             return Err(FlaggingError::UnsupportedCalibrationAgent("elevation"));
         }
         FlagDataMode::Shadow => return Err(FlaggingError::UnsupportedCalibrationAgent("shadow")),
-        FlagDataMode::Antint if has_calibration_column(table, request.data_column) => {
+        // CASA does not run the antint worker on an empty local selection.
+        // A selected calibration row would enter its unsupported buffer path.
+        FlagDataMode::Antint
+            if !selected.rows.is_empty() && has_calibration_column(table, request.data_column) =>
+        {
             return Err(FlaggingError::CalibrationAntint);
         }
         FlagDataMode::Antint => return Err(FlaggingError::UnsupportedCalibrationAgent("antint")),
@@ -147,7 +151,7 @@ fn stage(
     };
     for rows in selected.rows.chunks(256) {
         let main = table.main_table();
-        let flags = clip_time::read_flags(main, rows, &path)?;
+        let flags = clip_time::read_flags_uncached(main, rows, &path)?;
         let data = clip
             .as_ref()
             .map(|_| {

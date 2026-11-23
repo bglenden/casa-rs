@@ -15,8 +15,7 @@ use casa_ms::flagging::{
     validate_calibration_flag_averaging,
 };
 use casa_ms::{
-    FlagDataMode, FlagDataReport, FlagDataRequest, MeasurementSet, MsSelection,
-    flagdata_named_summary_record,
+    FlagDataReport, FlagDataRequest, MeasurementSet, MsSelection, flagdata_named_summary_record,
 };
 use casa_provider_contracts::{CasaFloat, CasaValue, FloatDtype, ParameterValue};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
@@ -217,16 +216,13 @@ impl PyAgentFlagger {
     #[pyo3(signature = (writeflags = true, sequential = true), text_signature = "($self, writeflags=True, sequential=True)")]
     fn run(&self, py: Python<'_>, writeflags: bool, sequential: bool) -> PyResult<Py<PyAny>> {
         let value = self.with_session(py, |session| {
-            let mut agents = std::mem::take(&mut session.initialized);
+            let agents = std::mem::take(&mut session.initialized);
             let Some(attached) = &session.attached else {
                 return Ok(empty_record());
             };
             let Some(selection) = &attached.selection else {
                 return Ok(empty_record());
             };
-            // CASA initializes antint on a calibration table, but its
-            // calibration buffer supplies no antenna count for that agent.
-            agents.retain(|agent| agent.request.mode != FlagDataMode::Antint);
             if agents.is_empty() {
                 return Ok(empty_record());
             }

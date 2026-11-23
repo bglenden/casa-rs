@@ -19,6 +19,10 @@ StrPath: TypeAlias = str | PathLike[str]
 _UNSET = object()
 
 
+class _ImplicitStringDefault(str):
+    """A default that keeps the signature text and distinguishes explicit strings."""
+
+
 def _explicit(values: Mapping[str, object], names: tuple[str, ...]) -> dict[str, ParameterData]:
     return {name: values[name] for name in names if values[name] is not _UNSET}  # type: ignore[misc]
 
@@ -158,7 +162,7 @@ def importvla(
     archivefiles: StrPath | list[StrPath] | tuple[StrPath, ...] = [],
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = '',
     bandname: Literal['', '4', 'C', 'K', 'Ka', 'L', 'P', 'Q', 'S', 'U', 'X'] = '',
-    frequencytol: str | int | float = '150000.0Hz',
+    frequencytol: str | int | float = _ImplicitStringDefault('150000.0Hz'),
     project: str = '',
     starttime: str = '',
     stoptime: str = '',
