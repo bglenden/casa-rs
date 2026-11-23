@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import shutil
 import threading
 from unittest.mock import patch
 from urllib.parse import parse_qs
@@ -17,6 +18,7 @@ import casatasks
 import casatools
 from casars import tasks, tools
 import numpy as np
+from record_casa_returns import make_cal_ms
 
 
 @contextmanager
@@ -110,6 +112,38 @@ def compare_case(work, raw, objectname, asis, timerange, interval, expected):
     return len(oracle[1]["MJD"][1])
 
 
+def compare_moving_field(work):
+    source = work / "source.ms"
+    make_cal_ms(str(source))
+    measure = casatools.measures()
+    snapshots = []
+    for label in ("casa", "native"):
+        vis = work / f"{label}.ms"
+        shutil.copytree(source, vis)
+        attachment = casatools.ms()
+        assert attachment.open(str(vis), nomodify=False)
+        try:
+            assert attachment.addephemeris(0, str(work / f"{label}.tab"), "Titan", [0])
+        finally:
+            assert attachment.done()
+        for reader in (casatools, tools):
+            metadata = reader.msmetadata()
+            assert metadata.open(str(vis))
+            try:
+                centres = []
+                for day in (60189.083333333336, 60190.083333333336, 60191.083333333336):
+                    epoch = measure.epoch("UTC", {"value": day, "unit": "d"})
+                    centre = measure.measure(metadata.phasecenter(0, epoch), "J2000")
+                    centres.append([centre[key]["value"] for key in ("m0", "m1")])
+                snapshots.append(centres)
+            finally:
+                assert metadata.done()
+    measure.done()
+    assert np.max(np.ptp(snapshots[0], axis=0)) > 1e-3
+    for result in snapshots[1:]:
+        np.testing.assert_allclose(result, snapshots[0], atol=2e-8, rtol=0)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("work", type=Path)
@@ -132,6 +166,9 @@ def main():
         expected = {key: [value] for key, value in (common | dict(START_TIME=start, STOP_TIME=stop)).items()}
         rows = compare_case(case, raw, objectname, asis, timerange, "1 d", expected)
         print(f"{name}: {rows} ephemeris rows matched across both writers and both readers")
+        if name == "calendar":
+            compare_moving_field(case)
+            print("Three moving J2000 phase centres agree through both MeasurementSet readers")
 
 
 if __name__ == "__main__":
