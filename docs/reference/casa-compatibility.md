@@ -1935,7 +1935,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `xframe` | `''` | `''`; `xframe` → `xframe` | Default only | Coordinate frame to use for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `icrs`, `azelgeo`, `b1950`, `galactic`, ``, `j2000`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `xinterp` | `''` | `''`; `xinterp` → `xinterp` | Default only | Interpolation method for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: ``, `nearest`, `cubic spline`, `spline`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yaxis` | `''` | `''`; `yaxis` → `yaxis` | Partial | Plot y-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
-| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. A blank selector defaults to DATA for a new plot. Per-ordinate lists and additional column forms remain open. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary) |
+| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Two unaveraged ordinates can choose independent columns, including ordinates of the same axis type. Missing column list entries default to DATA. Additional column forms and more than two ordinates remain open. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-ordinate-columns](#plotms-evidence-ms-ordinate-columns), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary) |
 | `yframe` | `''` | `''`; `yframe` → `yframe` | Default only | Coordinate frame to use for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yinterp` | `''` | `''`; `yinterp` → `yinterp` | Default only | Interpolation method for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yaxislocation` | `''` | `''`; `yaxislocation` → `yaxislocation` | Partial | Location of the y-axis (blank for default: left) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
@@ -2049,11 +2049,11 @@ Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-select
 <a id="plotms-behavior-coordinates"></a>
 ##### Project axes and flags
 
-**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet.
+**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Keep the requested order and column identity for two independent unaveraged ordinates.
 
-Pointing-coordinate axes, per-ordinate column lists and additional MS column forms are open.
+Pointing-coordinate axes, more than two ordinates, averaged independent ordinate columns and additional MS column forms are open.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-ordinate-columns](#plotms-evidence-ms-ordinate-columns), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-averaging"></a>
 ##### Average solution points
@@ -2243,6 +2243,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `7e76bfb30ed55f3f70c9d619f1f4d2a01de7104f`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-model-ratios-20261123.json`.
+
+<a id="plotms-evidence-ms-ordinate-columns"></a>
+##### ms-ordinate-columns
+
+**Same-input independent MeasurementSet ordinate columns — passed.** Nine paired text exports matched 216 selected points with exact source metadata and requested ordinate order. Two 500 by 360 pixel PNGs matched both labeled artist layers and their 48 coordinates. Cases cover repeated axis types with different columns, short lists, an abscissa sharing a column, and missing CORRECTED_DATA. Both tasks refused six duplicate or malformed selections before writing any output. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on identical selected unaveraged MeasurementSet requests for two ordinate columns.
+
+- [https://github.com/bglenden/casa-rs/pull/2134](https://github.com/bglenden/casa-rs/pull/2134)
+- Revision: `1449df981cab58408b7b58db777c66da90982b49`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-ordinate-columns-20261123.json`.
 
 <a id="plotms-evidence-ms-corrected-fallback"></a>
 ##### ms-corrected-fallback
