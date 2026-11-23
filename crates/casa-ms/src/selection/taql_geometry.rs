@@ -2,24 +2,26 @@
 //! Observer and antenna geometry used by the MSCAL TaQL predicates.
 
 use std::f64::consts::{PI, TAU};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use casa_tables::taql::ast::Expr;
 use casa_tables::taql::eval::{ArrayValue, EvalContext, ExprValue, eval_constant};
 use casa_tables::taql::{BoundRowFunction, IndexStyle, TaqlError, UvwWavelengthScale};
 use casa_types::measures::baseline::{baseline_rotation, j2000_baseline_uvw};
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::epoch::{EpochRef, MEpoch};
+use casa_types::measures::epoch::EpochRef;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::position::MPosition;
 use casa_types::measures::{MeasureError, MeasuresProvider};
 use casa_types::quanta::{Quantity, Unit, constants};
-use casa_types::{ArrayValue as CellArray, ScalarValue, Value};
+use casa_types::{ScalarValue, Value};
 
 use super::taql_selection::taql_error;
-use crate::derived::engine::{detect_epoch_reference, resolve_direction_reference};
 use crate::subtables::SubTable;
 use crate::{MeasurementSet, MsError, MsResult};
+
+mod measured;
+use measured::TimeColumn;
 
 pub(super) struct GeometryBinder<'a> {
     ms: &'a MeasurementSet,
@@ -168,7 +170,8 @@ struct Geometry {
     antennas: Vec<MPosition>,
     alt_az: Vec<bool>,
     observatory: MPosition,
-    epoch_ref: EpochRef,
+    time: TimeColumn,
+    projections: [Mutex<Option<Projection>>; 2],
     measures: Arc<dyn MeasuresProvider>,
 }
 
@@ -176,11 +179,9 @@ impl Geometry {
     fn read(ms: &MeasurementSet) -> MsResult<Self> {
         let measures = crate::open_measures_runtime()?;
         let antenna = ms.antenna()?;
-        let mut antennas = Vec::with_capacity(antenna.row_count());
+        let antennas = measured::antenna_positions(antenna.table())?;
         let mut alt_az = Vec::with_capacity(antenna.row_count());
         for row in 0..antenna.row_count() {
-            let [x, y, z] = antenna.position(row)?;
-            antennas.push(MPosition::new_itrf(x, y, z));
             alt_az.push(
                 antenna
                     .mount(row)?
@@ -209,7 +210,8 @@ impl Geometry {
             alt_az,
             observatory,
             measures,
-            epoch_ref: detect_epoch_reference(ms.main_table(), "TIME", EpochRef::UTC),
+            time: TimeColumn::read(ms.main_table())?,
+            projections: Default::default(),
         })
     }
 
@@ -222,12 +224,7 @@ impl Geometry {
         unit: &Unit,
         scale: Option<&UvwWavelengthScale>,
     ) -> Result<ExprValue, TaqlError> {
-        let Some(Value::Scalar(ScalarValue::Float64(time))) = context.row.get("TIME") else {
-            return Err(TaqlError::Table(
-                "MSCAL requires a double TIME column".into(),
-            ));
-        };
-        let epoch = MEpoch::from_mjd_seconds(*time, self.epoch_ref);
+        let epoch = self.time.epoch(context.row)?;
         let antenna = site.antenna(context)?;
         let position = if kind == Kind::Delay {
             &self.observatory
@@ -305,14 +302,26 @@ impl Geometry {
         if baseline == [0.0; 3] {
             return Ok(baseline);
         }
-        let rotation = baseline_rotation(DirectionRef::ITRF, DirectionRef::J2000, frame, false)
-            .map_err(measure_error)?;
-        let mut uvw = j2000_baseline_uvw(rotate(rotation, baseline), direction);
-        if apparent {
-            let rotation = baseline_rotation(DirectionRef::J2000, DirectionRef::APP, frame, true)
-                .map_err(measure_error)?;
-            uvw = rotate(rotation, uvw);
+        let epoch = frame
+            .epoch()
+            .expect("MSCAL projection requires its row epoch");
+        let key = ProjectionKey {
+            epoch_ref: epoch.refer(),
+            day: epoch.value().day(),
+            fraction: epoch.value().frac(),
+            direction: direction.cosines(),
+        };
+        let mut cached = self.projections[usize::from(apparent)]
+            .lock()
+            .map_err(|err| TaqlError::Table(err.to_string()))?;
+        if let Some(projection) = cached.as_ref()
+            && projection.key == key
+        {
+            return Ok(projection.apply(baseline, direction));
         }
+        let projection = Projection::read(key, frame, apparent)?;
+        let uvw = projection.apply(baseline, direction);
+        *cached = Some(projection);
         Ok(uvw)
     }
 
@@ -351,6 +360,43 @@ impl Geometry {
     }
 }
 
+/// The position is the query's fixed observatory. Keep one entry per
+/// projection so a comparison of J2000 and APP can reuse both rotations.
+#[derive(PartialEq)]
+struct ProjectionKey {
+    epoch_ref: EpochRef,
+    day: f64,
+    fraction: f64,
+    direction: [f64; 3],
+}
+
+struct Projection {
+    key: ProjectionKey,
+    to_j2000: [[f64; 3]; 3],
+    to_apparent: Option<[[f64; 3]; 3]>,
+}
+
+impl Projection {
+    fn read(key: ProjectionKey, frame: &MeasFrame, apparent: bool) -> Result<Self, TaqlError> {
+        let to_j2000 = baseline_rotation(DirectionRef::ITRF, DirectionRef::J2000, frame, false)
+            .map_err(measure_error)?;
+        let to_apparent = apparent
+            .then(|| baseline_rotation(DirectionRef::J2000, DirectionRef::APP, frame, true))
+            .transpose()
+            .map_err(measure_error)?;
+        Ok(Self {
+            key,
+            to_j2000,
+            to_apparent,
+        })
+    }
+
+    fn apply(&self, baseline: [f64; 3], direction: &MDirection) -> [f64; 3] {
+        let uvw = j2000_baseline_uvw(rotate(self.to_j2000, baseline), direction);
+        self.to_apparent.map_or(uvw, |matrix| rotate(matrix, uvw))
+    }
+}
+
 enum Source {
     Field(Vec<MDirection>),
     Fixed(MDirection),
@@ -374,11 +420,15 @@ impl Source {
                 },
             ),
             Some(ExprValue::String(name)) => {
-                let frame = MeasFrame::new().with_measures(Arc::clone(measures));
-                if !name.starts_with('\\') && MDirection::check_source_name(&name, &frame).is_ok() {
-                    return Ok(Self::Named(name));
+                if let Some(column) = name.strip_prefix('\\') {
+                    return Self::field(ms, column);
                 }
-                Self::field(ms, name.strip_prefix('\\').unwrap_or(&name))
+                let frame = MeasFrame::new().with_measures(Arc::clone(measures));
+                match MDirection::check_source_name(&name, &frame) {
+                    Ok(()) => Ok(Self::Named(name)),
+                    Err(MeasureError::UnknownSourceName { .. }) => Self::field(ms, &name),
+                    Err(error) => Err(MsError::InvalidInput(error.to_string())),
+                }
             }
             Some(ExprValue::Array(values)) if values.data.len() == 2 => {
                 let radians =
@@ -406,29 +456,7 @@ impl Source {
 
     fn field(ms: &MeasurementSet, column: &str) -> MsResult<Self> {
         let field = ms.field()?;
-        let table = field.table();
-        let column_data = table.column_accessor(column)?;
-        let mut directions = Vec::with_capacity(field.row_count());
-        for row in 0..field.row_count() {
-            let CellArray::Float64(angles) = column_data.array_cell(row)? else {
-                return Err(MsError::InvalidInput(format!(
-                    "FIELD {column} requires a double array"
-                )));
-            };
-            let shape = angles.shape();
-            if shape.len() != 2 || shape[0] != 2 || shape[1] == 0 {
-                return Err(MsError::InvalidInput(format!(
-                    "FIELD {column} requires shape [2, ncoeff]"
-                )));
-            }
-            let reference = resolve_direction_reference(table, "FIELD", column, row)?;
-            directions.push(MDirection::from_angles(
-                angles[[0, 0]],
-                angles[[1, 0]],
-                reference,
-            ));
-        }
-        Ok(Self::Field(directions))
+        Ok(Self::Field(measured::directions(field.table(), column)?))
     }
 
     fn direction(
