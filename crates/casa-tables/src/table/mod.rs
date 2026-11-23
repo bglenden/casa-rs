@@ -43,7 +43,7 @@ mod streamed_scalar;
 mod structure;
 mod virtual_columns;
 
-pub use cache_paths::table_cache_name;
+pub use cache_paths::{TablePartNames, table_cache_name};
 pub use description::StoredTableDescription;
 pub use generated_array::{GeneratedArrayColumn, GeneratedArrayValueRun};
 pub use incremental_check::{IncrementalCorruption, IncrementalLayoutCheck};

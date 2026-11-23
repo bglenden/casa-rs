@@ -10881,13 +10881,33 @@ CASA reports −13.5 unflagged cross-correlation rows and −22.5 s on an
 casa-rs uses channel-width magnitudes, so either ordering gives the same
 positive count and duration (#1029).
 
+## MS selection can reopen subtables through a retargeted symlink
+
+In CASA 6.7.6.14, open an MS through a directory symlink. Retarget the
+symlink to a reference view without a local `ANTENNA` subdirectory, then
+call `msselect` with a baseline present in the original MAIN. CASA tries
+to open `ANTENNA/table.f0` through the new target and returns `False`.
+casa-rs keeps the public link name and resolves reads and writes against
+the MS captured at open, so changing the link cannot redirect an
+attached operation (#1030).
+
+## An MS opened read-only can start writing through another handle
+
+In CASA 6.7.6.14, open an MS with `ms.open(path, nomodify=True)` and
+call `hanningsmooth("data")`. It initially returns `False` and asks for
+`nomodify=False`. Open and close the same path for update with a second
+`ms` or `table` tool. The first handle now reports `iswritable() == True`
+and `hanningsmooth("data")` writes to MAIN, even after the writer closed.
+casa-rs retains the requested access mode per handle. A read-only handle
+continues to report `False` and refuses writes (#1030).
+
 ## PlotMS can lose its backend on the real axis of FLOAT_DATA
 
 In CASA 6.7.6.14 with casaplotms 2.9.1, select real versus channel on a
 float-only MeasurementSet using `ydatacolumn="float"`. The headless backend
 can close its RPC stream during export, producing no file. The cache fills
-the floating amplitude array, while the real axis indexer reads the separate
-real array. The explicit axis validation permits real-valued plots.
+the floating amplitude array. The real axis indexer reads a separate array
+that the cache leaves empty. The explicit axis validation permits real-valued plots.
 [Pinned cache](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 [Pinned indexer](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/PlotMSIndexer.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 

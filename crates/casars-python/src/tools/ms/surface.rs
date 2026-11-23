@@ -213,7 +213,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("getreferencedtables", &[], R::Any, No),
+    method("getreferencedtables", &[], R::Any, Yes),
     method("getscansummary", &[], R::Any, No),
     method("getspectralwindowinfo", &[], R::Any, No),
     method(
@@ -222,8 +222,8 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("ismultims", &[], R::Any, No),
-    method("iswritable", &[], R::Any, No),
+    method("ismultims", &[], R::Any, Yes),
+    method("iswritable", &[], R::Any, Yes),
     method("iterend", &[], R::Any, No),
     method("iterendold", &[], R::Any, No),
     method(
@@ -316,7 +316,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("name", &[], R::Any, No),
+    method("name", &[], R::Any, Yes),
     method(
         "ngetdata",
         &[
@@ -347,7 +347,7 @@ const METHODS: &[Method] = &[
         "nrow",
         &[param("selected", K::Bool, Bool(false))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "nrowold",

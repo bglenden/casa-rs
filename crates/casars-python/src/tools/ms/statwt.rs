@@ -35,6 +35,12 @@ impl PyMsTool {
             let Ok(resolved) = ms.select(&request) else {
                 return Ok(false);
             };
+            if resolved.is_empty()
+                && let Some(field) = &request.field
+                && !ms.has_matching_field(field)
+            {
+                return Ok(false);
+            }
             if onlyparse {
                 return Ok(true);
             }

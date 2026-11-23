@@ -75,19 +75,56 @@ fn visit(
     Ok(())
 }
 
+fn immediate_names(path: &Path, parts: &[String]) -> Result<Vec<PathBuf>, TableError> {
+    parts
+        .iter()
+        .map(|part| table_cache_name(&add_directory_for_link(part, path)))
+        .collect()
+}
+
+/// A persisted table's immediate parts, as reported by casacore.
+pub enum TablePartNames {
+    /// A plain table reports its own name.
+    Plain(PathBuf),
+    /// A reference table reports its directly referenced parent.
+    Reference(PathBuf),
+    /// A concatenation reports its constituent tables in descriptor order.
+    Concatenation(Vec<PathBuf>),
+}
+
 impl Table {
+    /// Read the direct part names reported by casacore's `Table::getPartNames`.
+    ///
+    /// Read the descriptor at `path` and resolve relative links against the
+    /// public `name`. This lets an already captured path remain authoritative
+    /// for I/O while preserving symlinks in the reported names.
+    ///
+    /// # Errors
+    ///
+    /// The control file cannot be read or its descriptor is malformed.
+    pub fn immediate_part_names(path: &Path, name: &Path) -> Result<TablePartNames, TableError> {
+        let control = read_table_dat_dispatch(&path.join(crate::storage::TABLE_CONTROL_FILE))?;
+        let name = table_cache_name(name)?;
+        match control {
+            TableDatResult::Plain(_) => Ok(TablePartNames::Plain(name)),
+            TableDatResult::Ref(reference) => table_cache_name(&add_directory_for_link(
+                &reference.parent_relative_path,
+                &name,
+            ))
+            .map(TablePartNames::Reference),
+            TableDatResult::Concat(concat) => {
+                immediate_names(&name, &concat.table_paths).map(TablePartNames::Concatenation)
+            }
+        }
+    }
+
     /// Read a concatenation's immediate table paths in its stored row order.
     /// Plain and reference tables return `None`. No table cells are opened.
     pub fn concatenated_source_paths(path: &Path) -> Result<Option<Vec<PathBuf>>, TableError> {
         let path = table_cache_name(path)?;
         let control = read_table_dat_dispatch(&path.join(crate::storage::TABLE_CONTROL_FILE))?;
         match control {
-            TableDatResult::Concat(concat) => concat
-                .table_paths
-                .iter()
-                .map(|part| table_cache_name(&add_directory_for_link(part, &path)))
-                .collect::<Result<Vec<_>, _>>()
-                .map(Some),
+            TableDatResult::Concat(concat) => immediate_names(&path, &concat.table_paths).map(Some),
             _ => Ok(None),
         }
     }

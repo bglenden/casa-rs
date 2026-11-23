@@ -69,7 +69,10 @@ IMPLEMENTED["singledishms"] = {
     "subtract_baseline", "subtract_baseline_cspline", "subtract_baseline_sinusoid",
     "subtract_baseline_variable", "apply_baseline_table",
 }
-IMPLEMENTED["ms"] = {"open", "close", "done", "uvsub", "msselect", "statwt"}
+IMPLEMENTED["ms"] = {
+    "close", "done", "getreferencedtables", "ismultims", "iswritable",
+    "msselect", "name", "nrow", "open", "statwt", "uvsub",
+}
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",
     "parsemanualparameters", "parseclipparameters", "parsequackparameters", "parseelevationparameters",
