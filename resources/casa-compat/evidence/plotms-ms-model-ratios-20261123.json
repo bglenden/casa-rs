@@ -1,21 +1,31 @@
 {
   "schema_version": 1,
   "execution_date": "2026-11-23",
-  "revision": "5aebd8b1961eae493ec96e37354cb22f023cc340",
+  "revision": "7e76bfb30ed55f3f70c9d619f1f4d2a01de7104f",
   "baseline_revision": "2d99052dbee09db7c73b31179a8fc9a4af095fa1",
   "casa_version": "6.7.6.14",
   "casaplotms_version": "2.9.1",
   "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
-  "scope": "Unaveraged vector and scalar MeasurementSet model ratios, with independent column selectors, axis-specific projection, corrected fallback and zero-model samples.",
+  "scope": "Unaveraged vector and scalar MeasurementSet model ratios, with independent column selectors, axis-specific projection, corrected fallback and zero-model samples. The finite-input extremes cover float overflow and underflow and overflow during phase conversion.",
   "result": "passed",
   "baseline_result": "CASA exported 12 selected points for the implicit vector ratio. casa-rs refused the independent derived column selectors.",
-  "text_exports": 12,
-  "points": 144,
+  "text_exports": 14,
+  "points": 168,
   "figures": 3,
   "artist_coordinate_pairs": 36,
   "finite_figure_points": 34,
-  "figure_size_px": [500, 360],
-  "pointwise_relative_tolerance": 1.2e-5,
-  "pointwise_absolute_tolerance": 1e-7,
-  "source_columns_preserved": ["DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_ROW"]
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07,
+  "source_columns_preserved": [
+    "DATA",
+    "CORRECTED_DATA",
+    "MODEL_DATA",
+    "FLAG",
+    "FLAG_ROW"
+  ],
+  "precision_baseline_result": "Before the precision fix, the native vector ratio returned 4.47214e38 and 26.5651 degrees where CASA returned inf and 0 degrees. CASA also reports inf when the intermediate Float multiplication by 180 overflows during phase conversion."
 }

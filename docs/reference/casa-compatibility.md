@@ -2237,10 +2237,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-model-ratios"></a>
 ##### ms-model-ratios
 
-**Same-input MeasurementSet model ratios — passed.** Twelve paired text exports matched 144 selected points, metadata and headers, including corrected fallback and nonfinite coordinates where the model is zero. Three 500 by 360 pixel PNGs matched 36 artist coordinate pairs and default labels. Scalar amplitude divides magnitudes, scalar phase divides observed phase by model magnitude, and scalar real and imaginary ordinates subtract the model component as in CASA. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on identical unaveraged MeasurementSet requests for explicit and implicit vector ratios and scalar ratios.
+**Same-input MeasurementSet model ratios — passed.** Fourteen paired text exports matched 168 selected points, metadata and headers, including corrected fallback, zero models, and overflow and underflow at CASA's float precision. Three 500 by 360 pixel PNGs matched 36 artist coordinate pairs and default labels. Scalar amplitude divides magnitudes, scalar phase divides observed phase by model magnitude, and scalar real and imaginary ordinates subtract the model component as in CASA. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on identical unaveraged MeasurementSet requests for explicit and implicit vector ratios and scalar ratios.
 
 - [https://github.com/bglenden/casa-rs/pull/2133](https://github.com/bglenden/casa-rs/pull/2133)
-- Revision: `5aebd8b1961eae493ec96e37354cb22f023cc340`; CASA: `6.7.6.14`.
+- Revision: `7e76bfb30ed55f3f70c9d619f1f4d2a01de7104f`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-model-ratios-20261123.json`.
 
