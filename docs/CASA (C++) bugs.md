@@ -9143,6 +9143,22 @@ J2000 direction agree within 0.001 Hz on 1,416,697,167.835 Hz,
 frequency context uses the physical position, independently of the
 direction chosen for the returned record.
 
+## The 45-degree image rotation fixture assumes prior floating-point rounding
+
+The CASA 6.7.6.14 upstream `ia_rotate_test.test_basic` rotates `prerot.im`
+by 45 degrees and compares every pixel with the archived `postrot.im`.
+It requires a maximum absolute difference below 1e-21. Pinned CASA
+reproduced the archive within 4.24e-22 on the validation host.
+
+Both backends preserve the float32 image pixel type, 200-by-200 shape,
+float64 Python chunk dtype, and exact 33,272-pixel validity mask. On
+valid pixels, casa-rs differs from the archive by 9.52e-9 normalized
+RMS and at most 5.96e-8. The largest difference is between adjacent
+float32 values near 0.64. Returning those values in a float64 array
+does not increase the accuracy of the stored pixels. The companion
+test checks the image types, dimensions, mask, and numerical agreement
+at float32 precision. The upstream assertion remains unchanged.
+
 ## Image statistics can report an extremum outside the sampled pixels
 
 In CASA 6.7.6.14, `ia.statistics(region=...)` on a box starting at

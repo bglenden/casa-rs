@@ -1,5 +1,9 @@
 """Pinned CASA parity and native image interop for rotation."""
 
+import os
+import shutil
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -444,3 +448,49 @@ def test_rotate_region_and_stretched_input_mask(casa, tmp_path):
             source.done()
     np.testing.assert_array_equal(products[1][0], products[0][0])
     np.testing.assert_allclose(products[1][1], products[0][1], rtol=2e-5, atol=2e-5)
+
+
+def test_rotate_45_degree_upstream_fixture_to_float32_precision(casa, tmp_path):
+    testdata = os.environ.get("CASA_RS_IMAGE_FIXTURE_DIR")
+    root = Path(testdata if testdata else casa.ctsys.resolve("unittest/image"))
+    source_path = root / "prerot.im"
+    expected_path = root / "postrot.im"
+    if not source_path.is_dir() or not expected_path.is_dir():
+        pytest.skip("CASA image-tool rotation fixtures are unavailable")
+    for fixture in (source_path, expected_path):
+        shutil.copytree(fixture, tmp_path / fixture.name)
+    source_path = tmp_path / source_path.name
+    expected_path = tmp_path / expected_path.name
+    stored = casa.image()
+    try:
+        assert stored.open(str(expected_path))
+        stored_pixel_type = stored.pixeltype()
+        assert stored_pixel_type == "float"
+        values = stored.getchunk()
+        mask = stored.getchunk(getmask=True)
+        assert values.shape == (200, 200)
+        assert values.dtype == np.float64
+        assert mask.sum() == 33272
+    finally:
+        stored.done()
+
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.open(str(source_path))
+            assert source.pixeltype() == stored_pixel_type
+            product = source.rotate(pa="45deg")
+            try:
+                assert product.pixeltype() == stored_pixel_type
+                rotated = product.getchunk()
+                assert rotated.shape == values.shape
+                assert rotated.dtype == values.dtype
+                np.testing.assert_array_equal(product.getchunk(getmask=True), mask)
+            finally:
+                product.done()
+        finally:
+            source.done()
+        delta = (rotated - values)[mask]
+        relative_rms = np.linalg.norm(delta) / np.linalg.norm(values[mask])
+        assert relative_rms < np.finfo(np.float32).eps
+        assert np.max(np.abs(delta)) <= np.finfo(np.float32).eps * np.max(np.abs(values))
