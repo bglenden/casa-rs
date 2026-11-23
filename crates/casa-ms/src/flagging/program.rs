@@ -7,8 +7,8 @@ use casa_types::ScalarValue;
 
 use crate::ms::MeasurementSet;
 use crate::schema::SubtableId;
-use crate::selection::first_unflagged_time_row;
 use crate::selection::syntax::ChannelSelection;
+use crate::selection::{TimeSelection, compile_flagdata_agent_time, first_unflagged_time_row};
 
 use super::{
     ChangeSet, CorrelationSelection, FlagDataAction, FlagDataMode, FlagDataModelFactory,
@@ -23,6 +23,7 @@ struct AgentSelection {
     rows: Vec<usize>,
     channels: Option<BTreeMap<i32, ChannelSelection>>,
     correlations: Option<CorrelationSelection>,
+    averaged_time: Option<TimeSelection>,
 }
 
 struct AntintPlan {
@@ -121,15 +122,13 @@ pub(super) fn run_ms_single(
     if persist && request.flagbackup && !early_backup && !selected.is_empty() {
         backup_version = Some(save_next_flag_backup(ms, "flagdata")?);
     }
-    let changes = stage_selected_ms_request(
-        ms,
-        &selected,
-        channel_selections.as_ref(),
-        correlations.as_ref(),
-        request,
-        !persist,
-        model_factory,
-    )?;
+    let selection = AgentSelection {
+        rows: selected,
+        channels: channel_selections,
+        correlations,
+        averaged_time: None,
+    };
+    let changes = stage_selected_ms_request(ms, &selection, request, !persist, model_factory)?;
     if persist && !changes.changed_row_indices.is_empty() {
         persist_changed_flags(ms, &changes, &ms_path)?;
     }
@@ -137,7 +136,7 @@ pub(super) fn run_ms_single(
     let report = report_after(
         ms,
         request,
-        &selected,
+        &selection.rows,
         changes,
         backup_version,
         thresholds,
@@ -281,18 +280,49 @@ fn select_agent(
     local_selection: bool,
     time_selection: FlagTimeSelection,
 ) -> Result<Option<AgentSelection>, FlaggingError> {
-    let time_selection = if request.clip_time_bin.is_some()
+    let averages_time = request.clip_time_bin.is_some()
         && matches!(
             request.mode,
             FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
-        ) {
-        // Averaged automatic agents need to test the output timestamps of
-        // their shared iterator (#978). Preserve their input row selection.
+        );
+    let mut averaged_time = None;
+    let mut unfiltered;
+    let input = if request.casa_row_selection
+        && averages_time
+        && request.selection.selectdata
+        && request
+            .selection
+            .timerange
+            .as_deref()
+            .is_some_and(|text| !text.is_empty() && !text.starts_with('\0'))
+        && let FlagTimeSelection::Agent {
+            initial_default_row,
+        } = time_selection
+    {
+        match compile_flagdata_agent_time(ms, &request.selection, initial_default_row) {
+            Ok(filter) => averaged_time = filter,
+            Err(_) if local_selection => return Ok(None),
+            Err(source) => {
+                return Err(FlaggingError::MutateFlags {
+                    path: display_ms_path(ms),
+                    reason: format!("select rows: {source}"),
+                });
+            }
+        }
+        // The local agent filters the output TIME of the averaging iterator.
+        // Every contributing integration must still reach the averaging step.
+        unfiltered = request.clone();
+        unfiltered.selection.timerange = None;
+        &unfiltered
+    } else {
+        request
+    };
+    let input_time_selection = if averages_time {
         FlagTimeSelection::Global
     } else {
         time_selection
     };
-    let selection = match selected_rows(ms, request, time_selection) {
+    let selection = match selected_rows(ms, input, input_time_selection) {
         Ok(selection) => selection,
         Err(_) if local_selection => return Ok(None),
         Err(error) => return Err(error),
@@ -310,6 +340,7 @@ fn select_agent(
         rows: selection.rows,
         channels,
         correlations,
+        averaged_time,
     }))
 }
 
@@ -358,15 +389,7 @@ fn stage_ms_program_request(
             selection.correlations.as_ref(),
         )?
     } else {
-        stage_selected_ms_request(
-            ms,
-            &selection.rows,
-            selection.channels.as_ref(),
-            selection.correlations.as_ref(),
-            request,
-            calculate,
-            model_factory,
-        )?
+        stage_selected_ms_request(ms, &selection, request, calculate, model_factory)?
     };
     if changes.agent_skipped {
         return Ok(None);
@@ -447,13 +470,15 @@ fn select_autocorrelations(
 
 fn stage_selected_ms_request(
     ms: &mut MeasurementSet,
-    selected_rows: &[usize],
-    channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
-    correlations: Option<&CorrelationSelection>,
+    selection: &AgentSelection,
     request: &FlagDataRequest,
     calculate: bool,
     model_factory: Option<FlagDataModelFactory>,
 ) -> Result<ChangeSet, FlaggingError> {
+    let selected_rows = &selection.rows;
+    let channel_selections = selection.channels.as_ref();
+    let correlations = selection.correlations.as_ref();
+    let averaged_time = selection.averaged_time.as_ref();
     let ms_path = display_ms_path(ms);
     // The manual agent filters baselines after full MS selection, including
     // the rows that supply the default date for a partial time selector.
@@ -481,6 +506,7 @@ fn stage_selected_ms_request(
             correlations,
             request,
             model_factory,
+            averaged_time,
         ),
         FlagDataMode::Quack => {
             apply_quack_flags(ms, selected_rows, channel_selections, correlations, request)
@@ -515,6 +541,7 @@ fn stage_selected_ms_request(
             channel_selections,
             request,
             model_factory,
+            averaged_time,
         ),
         FlagDataMode::Rflag => apply_rflag_flags(
             ms,
@@ -523,6 +550,7 @@ fn stage_selected_ms_request(
             request,
             calculate,
             model_factory,
+            averaged_time,
         ),
         FlagDataMode::Extend => extend::apply(
             ms,
