@@ -1,6 +1,7 @@
 """Spectral fitting and native image products against CASA 6.7.6.14."""
 
 import os
+import re
 import subprocess
 import sys
 
@@ -403,6 +404,13 @@ def test_fit_log_append_and_replace(casa, tmp_path):
         assert first.startswith("previous fit")
         assert "Number valid" in first
         assert "Fit" in first
+        assert all(field in first for field in ("Peak", "Center", "FWHM", "Integral"))
+        pixel_values = re.findall(
+            r"^\s+([-+\d.eE]+)\s+\+/-\s+[-+\d.eE]+\s+pixel\s*$", first, re.MULTILINE
+        )
+        assert len(pixel_values) >= 2
+        np.testing.assert_allclose([float(value) for value in pixel_values[:2]], [14., 4.5],
+                                   atol=1e-6)
         assert _fit(api, data, append=False, **common)["valid"].all()
         assert "previous fit" not in logfile.read_text()
 

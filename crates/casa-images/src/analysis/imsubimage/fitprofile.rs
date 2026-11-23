@@ -98,8 +98,8 @@ pub struct ProfileFitOptions<'a> {
     pub other_artifact: Option<&'a Path>,
     /// Attachment-local restoring beams, if different from the native table metadata.
     pub beam_record: Option<&'a RecordValue>,
-    /// Keep ordinary polynomial coefficients for the detailed fit log.
-    pub log_polynomials: bool,
+    /// Keep line parameters and ordinary polynomial coefficients for the detailed log.
+    pub log_details: bool,
 }
 
 /// Region expression applied before fitting profiles.
@@ -205,6 +205,28 @@ pub struct ImageProfileFitResult {
     pub summary: [String; 5],
     /// Ordinary polynomial coefficients and errors keyed by the profile pixel.
     pub polynomials: BTreeMap<Vec<usize>, ProfilePolynomialFit>,
+    /// Line-component report data keyed by the selected profile pixel.
+    pub line_reports: BTreeMap<Vec<usize>, Vec<ProfileLineReport>>,
+}
+
+/// Fitted line parameters and marginal errors for the detailed profile report.
+pub struct ProfileLineReport {
+    /// Reported component type.
+    pub kind: &'static str,
+    /// Peak and standard error in input brightness units.
+    pub peak: [f64; 2],
+    /// Center and standard error in world units.
+    pub center: [f64; 2],
+    /// Center and standard error in selected channel pixels.
+    pub pixel_center: [f64; 2],
+    /// Width and standard error in world units.
+    pub fwhm: [f64; 2],
+    /// Width and standard error in selected channel pixels.
+    pub pixel_fwhm: [f64; 2],
+    /// Line integral and standard error in brightness times world units.
+    pub integral: [f64; 2],
+    /// Fixed flags for peak, center and width.
+    pub fixed: [bool; 3],
 }
 
 /// Continuum polynomial coefficients in the fitted and displayed coordinates.
@@ -344,6 +366,7 @@ impl<'a> ImageProfileFit<'a> {
             &self.models,
             self.automatic,
             self.options.polynomial.is_some(),
+            self.options.log_details,
         );
         let lanes = if self.options.multifit {
             self.selection.lanes
@@ -379,7 +402,7 @@ impl<'a> ImageProfileFit<'a> {
                         outcome.valid,
                     )?;
                     if outcome.valid
-                        && self.options.log_polynomials
+                        && self.options.log_details
                         && let Some(terms) = &curve.polynomial
                     {
                         let origin = axis.world(&world_pixel, 0.)?;
@@ -413,6 +436,7 @@ impl<'a> ImageProfileFit<'a> {
             format!("Number converged         = {converged}"),
             format!("Number valid             = {valid}"),
         ];
+        let line_reports = results.line_reports.take().unwrap_or_default();
         let record = results.finish(&axis.unit, self.source.units(), axis.has_direction());
         products.finish(
             &self,
@@ -426,6 +450,7 @@ impl<'a> ImageProfileFit<'a> {
             record,
             summary,
             polynomials,
+            line_reports,
         })
     }
 

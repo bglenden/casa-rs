@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::BTreeMap;
+
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::IxDyn;
 
+use super::ProfileLineReport;
 use super::axis::ProfileAxis;
 use super::curve::Curve;
 use super::models::{LineKind, ProfileModels, SpectralPolynomial};
@@ -32,6 +35,7 @@ pub(super) struct ProfileResults {
     lorentzian: LineResults,
     multiplets: Vec<LineResults>,
     spectral: Option<(SpectralPolynomial, ArrayD<f64>, ArrayD<f64>)>,
+    pub(super) line_reports: Option<BTreeMap<Vec<usize>, Vec<ProfileLineReport>>>,
 }
 
 impl ProfileResults {
@@ -40,6 +44,7 @@ impl ProfileResults {
         models: &ProfileModels,
         automatic: usize,
         polynomial: bool,
+        log_details: bool,
     ) -> Self {
         let count = models.singlets.len()
             + models.multiplets.len()
@@ -90,6 +95,7 @@ impl ProfileResults {
             lorentzian,
             multiplets,
             spectral,
+            line_reports: log_details.then(BTreeMap::new),
         }
     }
 
@@ -121,6 +127,7 @@ impl ProfileResults {
         let mut lorentzian = 0;
         let mut last_group = None;
         let mut multi_index = 0;
+        let mut report = self.line_reports.is_some().then(Vec::new);
         for line in &curve.lines {
             let (field, kind) = if let Some(group) = line.multiplet {
                 if last_group != Some(group) {
@@ -155,19 +162,39 @@ impl ProfileResults {
                 .hypot(line.integral(peak, width_error))
                 * increment;
             *index.last_mut().expect("parameter index") = field;
+            let center_world = [axis.world(world_pixel, center)?, center_error * increment];
+            let fwhm_world = [width.abs() * increment, width_error * increment];
+            let integral = [line.integral(peak, width) * increment, integral_error];
             record.set(
                 &index,
                 [
                     peak,
                     peak_error,
-                    axis.world(world_pixel, center)?,
-                    center_error * increment,
-                    width.abs() * increment,
-                    width_error * increment,
-                    line.integral(peak, width) * increment,
-                    integral_error,
+                    center_world[0],
+                    center_world[1],
+                    fwhm_world[0],
+                    fwhm_world[1],
+                    integral[0],
+                    integral[1],
                 ],
             );
+            if let Some(report) = &mut report {
+                report.push(ProfileLineReport {
+                    kind,
+                    peak: [peak, peak_error],
+                    center: center_world,
+                    pixel_center: [center, center_error],
+                    fwhm: fwhm_world,
+                    pixel_fwhm: [width.abs(), width_error],
+                    integral,
+                    fixed: line.fixed(&curve.fixed),
+                });
+            }
+        }
+        if let Some((reports, report)) = self.line_reports.as_mut().zip(report)
+            && !report.is_empty()
+        {
+            reports.insert(pixel.to_vec(), report);
         }
         if let Some((kind, range)) = &curve.spectral {
             if let Some((_, values, errors)) = &mut self.spectral {
