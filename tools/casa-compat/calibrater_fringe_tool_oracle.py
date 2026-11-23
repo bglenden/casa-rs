@@ -98,6 +98,7 @@ def main():
         ('extra-rate-window-value', {'ratewindow': [2e-13, 1.2e-12, 999.], 'globalsolve': False}),
         ('threshold', {'minsnr': 1e8}),
         ('alias', {'type': 'Fringe Jones'}),
+        ('globalfringe-alias', {'type': 'GLOBALFRINGE'}),
     ]:
         paths = solve_case(work, engines, vis, name, options=options)
         if name in ('direct', 'zero-rates'):

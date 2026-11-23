@@ -235,7 +235,7 @@ fn standard_request(
         }
         "ACCOR" | "ACCOR JONES" => CalibrationSolveRequest::Accor(standard.gain(GainType::G)),
         "A" | "A MUELLER" => CalibrationSolveRequest::AdditiveMueller(standard.gain(GainType::G)),
-        "FRINGE" | "FRINGE JONES" => {
+        "FRINGE" | "FRINGE JONES" | "GLOBALFRINGE" => {
             let (controls, active_phase) = fringe.expect("parsed fringe controls");
             CalibrationSolveRequest::FringeTool {
                 gain: standard.gain(GainType::K),
@@ -334,7 +334,7 @@ impl super::PyCalibrater {
             "M" | "M MUELLER" | "MF" | "MF MUELLER" | "A" | "A MUELLER"
         );
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
-        let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
+        let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES" | "GLOBALFRINGE") {
             let active = paramactive
                 .map(|value| value.extract::<Vec<bool>>())
                 .transpose()?
