@@ -14,6 +14,7 @@ use casa_observation::FieldEphemeris;
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::radial_velocity::RadialVelocityRef;
+use casa_types::quanta::Unit;
 use casa_types::{ScalarValue, Value};
 use thiserror::Error;
 
@@ -304,8 +305,11 @@ impl AttachedFieldEphemeris {
             Self::Inertial(series) => {
                 let sample = evaluate(series, mjd)
                     .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+                // The series holds SI values decoded with the IAU astronomical
+                // unit. MSFieldColumns::radVelMeas uses casacore's older AU/d.
+                let casacore_au = Unit::new("AU").expect("astronomical unit").val().factor;
                 Ok(MRadialVelocity::new(
-                    sample.radial_velocity_m_per_s,
+                    sample.radial_velocity_m_per_s * (casacore_au / AU_METRES),
                     sample.velocity_reference,
                 ))
             }

@@ -68,6 +68,8 @@ struct Frame {
     source_velocity: Option<f64>,
 }
 
+const MIN_SOURCE_VELOCITY_M_PER_S: f64 = 1e-6;
+
 impl Plan {
     pub(super) fn new(
         input: &MeasurementSet,
@@ -390,13 +392,23 @@ impl Window {
         let needs_weight_scaling =
             conversion.is_some_and(|target| frame != target.target_reference);
         let converted_frame = conversion
-            .map(|target| target.reference_conversion(frame, true))
+            .map(|target| target.prepare(frame, &target.target))
             .transpose()?;
-        let convert = |frequency| {
+        let source_shift = conversion
+            .and_then(|target| target.source_velocity)
+            .filter(|velocity| velocity.abs() > MIN_SOURCE_VELOCITY_M_PER_S)
+            .map(|velocity| radial_shift(-velocity));
+        let into_frame = |frequency| {
             converted_frame
                 .as_ref()
-                .map_or(frequency, |convert| convert(frequency))
+                .map_or(frequency, |convert| convert.convert_hz(frequency))
         };
+        let shifted = |frequency| {
+            source_shift
+                .as_ref()
+                .map_or(frequency, |shift| shift.shift_frequency_hz(frequency))
+        };
+        let convert = |frequency| shifted(into_frame(frequency));
         let (mut frequencies, widths) = averaged_axis(source_frequencies, source_widths, bins);
         let converted = frequencies.iter().copied().map(convert).collect::<Vec<_>>();
         let converted_widths = frequencies
@@ -404,7 +416,9 @@ impl Window {
             .zip(widths.iter())
             .map(|(&f, &width)| {
                 if converted_frame.is_some() {
-                    convert(f + width / 2.) - convert(f - width / 2.)
+                    // CASA converts the two edges into the frame, differences
+                    // them, then Doppler-scales the width as an interval.
+                    shifted(into_frame(f + width / 2.) - into_frame(f - width / 2.))
                 } else {
                     width
                 }
@@ -439,14 +453,11 @@ impl Window {
                 (sample_grid, channel_map) = fine_grid(&axis, frequencies.len());
             }
         }
-        let reference_frequencies = if method == Method::FftShift
-            && let Some(frame_conversion) = conversion
-        {
-            let unshifted = frame_conversion.reference_conversion(frame, false)?;
+        let reference_frequencies = if method == Method::FftShift {
             frequencies
                 .iter()
                 .copied()
-                .map(unshifted)
+                .map(into_frame)
                 .collect::<Vec<_>>()
         } else {
             frequencies.iter().copied().map(convert).collect::<Vec<_>>()
@@ -625,20 +636,6 @@ impl Frame {
         .map_err(ms_error)
     }
 
-    fn reference_conversion(
-        &self,
-        source: FrequencyRef,
-        apply_radial_correction: bool,
-    ) -> Result<impl Fn(f64) -> f64 + use<>, MsTransformError> {
-        let conversion = self.prepare(source, &self.target)?;
-        let shift = radial_shift(if apply_radial_correction {
-            -self.source_velocity.unwrap_or_default()
-        } else {
-            0.
-        });
-        Ok(move |frequency| shift.shift_frequency_hz(conversion.convert_hz(frequency)))
-    }
-
     fn row_conversion(
         &self,
         source: FrequencyRef,
@@ -655,7 +652,7 @@ impl Frame {
                 .attached_radial_velocity(time, field)
                 .map_err(ms_error)?
                 .map(|velocity| velocity.ms())
-                .filter(|velocity| velocity.abs() > 1e-6)
+                .filter(|velocity| velocity.abs() > MIN_SOURCE_VELOCITY_M_PER_S)
                 .map_or(0., |velocity| velocity - 2. * offset)
         } else {
             0.
