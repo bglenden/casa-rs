@@ -282,7 +282,7 @@ fn standard_request(
                 }
             }
         }
-        "FRINGE" | "FRINGE JONES" => {
+        "FRINGE" | "FRINGE JONES" | "GLOBALFRINGE" => {
             let (controls, active_phase) = fringe.expect("parsed fringe controls");
             CalibrationSolveRequest::FringeTool {
                 gain: standard.gain(GainType::K),
@@ -393,7 +393,7 @@ impl super::PyCalibrater {
         );
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
         let additive_order = additive_fit_order(&family, fitorder)?;
-        let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
+        let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES" | "GLOBALFRINGE") {
             let active = paramactive
                 .map(|value| value.extract::<Vec<bool>>())
                 .transpose()?
