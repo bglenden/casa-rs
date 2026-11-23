@@ -135,7 +135,8 @@ fn copy_sparse(source: &Path, target: &Path, metadata: &Metadata) -> io::Result<
     use std::io::{Read, Seek, SeekFrom};
 
     let mut input = File::open(source)?;
-    let mut data = next_extent(&input, 0, libc::SEEK_DATA);
+    let mut offset = 0;
+    let mut data = next_extent(&input, offset, libc::SEEK_DATA);
     if matches!(&data, Err(error) if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOTSUP)))
     {
         return Ok(false);
@@ -151,11 +152,43 @@ fn copy_sparse(source: &Path, target: &Path, metadata: &Metadata) -> io::Result<
                 "Table extent changed during copy",
             ));
         }
-        data = next_extent(&input, end, libc::SEEK_DATA);
+        #[cfg(target_os = "macos")]
+        preserve_sparse_gap(&output, offset, start)?;
+        offset = end;
+        data = next_extent(&input, offset, libc::SEEK_DATA);
     }
     output.set_len(metadata.len())?;
     output.set_permissions(metadata.permissions())?;
     Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn preserve_sparse_gap(file: &std::fs::File, start: u64, end: u64) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    if start == end {
+        return Ok(());
+    }
+    // APFS can allocate skipped ranges when the copied file is closed.
+    // Punch only ranges that the source filesystem reported as holes.
+    let gap = libc::fpunchhole_t {
+        fp_flags: 0,
+        reserved: 0,
+        fp_offset: start as libc::off_t,
+        fp_length: (end - start) as libc::off_t,
+    };
+    // SAFETY: the descriptor is live and the argument uses Darwin's ABI.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_PUNCHHOLE, &gap) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::EINVAL | libc::ENOTSUP | libc::ENOTTY)
+    ) {
+        return Ok(());
+    }
+    Err(error)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
