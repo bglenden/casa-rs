@@ -620,13 +620,14 @@ fn parse_spectral_endpoint(
     text_origin: Option<&CoordinateSystem>,
 ) -> Result<isize, ImageError> {
     let lower = text.trim().to_ascii_lowercase();
-    let pixel = if let Some(position) = channel_position(&lower) {
-        Some(position.parse::<f64>().map_err(|e| {
-            ImageError::InvalidMetadata(format!("invalid channel {text:?}: {e}"))
-        })?)
-    } else {
-        lower.parse::<isize>().ok().map(|channel| channel as f64)
-    };
+    let pixel =
+        if let Some(position) = channel_position(&lower) {
+            Some(position.parse::<f64>().map_err(|e| {
+                ImageError::InvalidMetadata(format!("invalid channel {text:?}: {e}"))
+            })?)
+        } else {
+            lower.parse::<isize>().ok().map(|channel| channel as f64)
+        };
     if let Some(pixel) = pixel
         && text_origin.is_none()
     {
