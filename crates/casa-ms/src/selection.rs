@@ -43,6 +43,7 @@ pub(crate) use row_grammar::{
 };
 pub mod spw_expr;
 pub mod syntax;
+mod taql_selection;
 pub mod time_expr;
 mod uv_expr;
 pub(crate) use uv_expr::UvDistanceSelection;
@@ -960,12 +961,10 @@ impl CompiledMsSelection {
         };
 
         let taql_started_at = Instant::now();
-        let view = ms.main_table().query(&taql)?;
-        let rows = if first_only {
-            view.row_numbers().first().copied().into_iter().collect()
-        } else {
-            view.row_numbers().to_vec()
-        };
+        let mut rows = taql_selection::select_rows(ms, &taql, structured_rows_per_block)?;
+        if first_only {
+            rows.truncate(1);
+        }
         log_selection_profile(
             "apply_taql",
             apply_started_at.elapsed().as_nanos() as u64,

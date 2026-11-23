@@ -367,7 +367,7 @@ def run(root, native_bin, only=None):
     result = dict(casa_version=casa.version_string(), signature=str(reference), case_filter=only, cases={}, failures=[],
                   timing_scope='Small-fixture public-task latency and CPU only; not dataset-scale acceptance')
 
-    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None, positional=False, vis_as_list=False):
+    def case(name, extra=None, gain=constant, precorrected=False, repetitions=1, weight_seed=None, spectral_sigma=False, endian='aipsrc', descending_ms=False, input_vis=None, casa_control_callib=None, positional=False, vis_as_list=False, casa_control_msselect=None):
         if only is not None and re.search(only, name) is None:
             return
         records, paths = {}, {}
@@ -414,6 +414,8 @@ def run(root, native_bin, only=None):
             before = history(path)['TIME'].size
             arguments = dict(vis=[str(path)] if vis_as_list else str(path), gaintable=[str(gain)], flagbackup=False)
             arguments.update(deepcopy(extra or {}))
+            if casa_control_msselect is not None and engine == 'casa':
+                arguments['msselect'] = casa_control_msselect
             captured = io.StringIO()
             preload = os.environ.pop('LD_PRELOAD', None) if engine == 'native' else None
             cpu_start = sum(resource.getrusage(kind).ru_utime+resource.getrusage(kind).ru_stime
@@ -503,6 +505,12 @@ def run(root, native_bin, only=None):
                 assert np.all((times >= bounds[0]-1.) & (times <= bounds[1]+1.)), (engine, times, bounds)
                 messages = []
                 for message in record['history']['MESSAGE']:
+                    if casa_control_msselect is not None:
+                        key, sep, value = message.partition(' = ')
+                        if key.strip() == 'msselect':
+                            selector = casa_control_msselect if engine == 'casa' else extra['msselect']
+                            assert value == f'"{selector}"', message
+                            message = key + sep + '<equivalent MS predicate>'
                     if message.startswith('version: '):
                         assert message.startswith('version: 6.7.6-14 ' if engine == 'casa' else 'version: casa-rs '), message
                         message = '<implementation version>'
@@ -534,6 +542,8 @@ def run(root, native_bin, only=None):
         if casa_control_callib is not None:
             result['cases'][name]['casa_bug_correction'] = 'CLPatchPanel records an absent scan for all requested observations rather than its current observation. Native retains valid joint contexts; explicit obs/scan CASA slices give an independent reference.'
             result['cases'][name]['casa_control_callib'] = str(casa_control_callib)
+        if casa_control_msselect is not None:
+            result['cases'][name]['casa_control_msselect'] = casa_control_msselect
         (root/'results.json').write_text(json.dumps(result, indent=2)+'\n')
         print(name, 'FAILED' if any(item['case'] == name for item in result['failures']) else 'passed', flush=True)
 
@@ -704,6 +714,33 @@ def run(root, native_bin, only=None):
         case('api-select-mscal-processor-array-invalid-id',
              dict(msselect='mscal.proccol("EXTENSION_COEFF")[1] == 0 OR ANTENNA1 == 0'),
              input_vis=processor_source)
+
+    for label, predicate in [
+        ('baseline', 'mscal.baseline("A0&A1")'),
+        ('baseline-unmatched', 'mscal.baseline("DOES_NOT_EXIST") OR ANTENNA1 == 0'),
+        ('combined', 'NOT derivedmscal.baseline("A0&A1") AND mscal.obs("0")'),
+        ('field', 'mscal.field(upper("phase")) AND ANTENNA1 == 0'),
+        ('field-unmatched', 'mscal.field("DOES_NOT_EXIST") OR ANTENNA1 == 0'),
+        ('spw-channels', 'mscal.spw("0:1~2")'),
+        ('array-bound', 'mscal.array("<1")'),
+        ('array-unmatched', 'mscal.array("999") OR ANTENNA1 == 0'),
+        ('uvdist', 'mscal.uvdist("<40m")'),
+        ('uvdist-wavelength', 'mscal.uvdist("<0.2klambda") OR ANTENNA1 == 0'),
+        ('state', 'mscal.state("DOES_NOT_EXIST,*") AND ANTENNA1 == 0'),
+        ('state-unmatched', 'mscal.state("DOES_NOT_EXIST") OR ANTENNA1 == 0'),
+        ('observation', 'mscal.obs(">0")'),
+        ('observation-unmatched', 'mscal.obs("999") OR ANTENNA1 == 0'),
+        ('empty', 'mscal.obs("")'),
+        ('row-dependent', 'mscal.baseline(ANTENNA1)'),
+    ]:
+        case(f'api-select-mscal-selector-{label}', dict(msselect=predicate), input_vis=observation_source)
+    # Pinned CASA crashes in the scan and time UDF grammars. Its ordinary TaQL
+    # predicates still supply independent numerical and mutation controls.
+    case('api-select-mscal-selector-scan', dict(msselect='mscal.scan("2")'),
+         input_vis=observation_source, casa_control_msselect='SCAN_NUMBER == 2')
+    time_bound = float(np.datetime64('2019-12-31T21:53:15', 's').astype(np.int64)) + 40587. * 86400.
+    case('api-select-mscal-selector-time', dict(msselect='mscal.time(">2019/12/31/21:53:15")'),
+         input_vis=observation_source, casa_control_msselect=f'TIME >= {time_bound}')
 
     for label, arguments in [
         ('scalar-map', dict(spwmap=0, flagbackup=True)),
