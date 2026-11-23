@@ -937,6 +937,7 @@ impl CalibraterLifecycle {
             | CalibrationSolveRequest::Fringe { gain, .. }
             | CalibrationSolveRequest::FringeTool { gain, .. }
             | CalibrationSolveRequest::Accor(gain)
+            | CalibrationSolveRequest::AdditiveMueller(gain)
             | CalibrationSolveRequest::Baseline { gain, .. } => {
                 gain.selection = selection;
                 gain.model_source = model_source;

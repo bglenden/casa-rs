@@ -13,23 +13,51 @@ use super::grouping::{
 use super::kernel::SolutionRow;
 use super::writer::{GainChannelGrid, write_baseline_caltable};
 use super::{
-    GainNormalization, GainSolveError, GainSolveMode, GainSolveReport, GainSolveRequest, GainType,
-    RefAntSelector, SolvedGains,
+    GainNormalization, GainSolveError, GainSolveMode, GainSolveModelSource, GainSolveReport,
+    GainSolveRequest, GainType, RefAntSelector, SolvedGains,
 };
 use crate::bandpass::solution_frequency_bin_widths;
 use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 use crate::{ApplyPlanError, BandpassFrequencyInterval, CalibrationOutputMode, SelectedData};
 
+pub(crate) enum Family {
+    Multiplicative {
+        frequency_dependent: bool,
+        frequency_interval: Option<BandpassFrequencyInterval>,
+    },
+    Additive,
+}
+
 pub(crate) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
-    frequency_dependent: bool,
-    frequency_interval: Option<BandpassFrequencyInterval>,
+    family: Family,
     mode: CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
     legacy_iterator: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
+    let additive = matches!(family, Family::Additive);
+    if additive && !legacy_iterator {
+        return Err(GainSolveError::Baseline(
+            "Can't do selfGatherAndSolve for A Mueller".into(),
+        ));
+    }
+    let (frequency_dependent, frequency_interval, subtype) = match family {
+        Family::Additive => (false, None, "A Mueller"),
+        Family::Multiplicative {
+            frequency_dependent,
+            frequency_interval,
+        } => (
+            frequency_dependent,
+            frequency_interval,
+            if frequency_dependent {
+                "Mf Mueller"
+            } else {
+                "M Mueller"
+            },
+        ),
+    };
     super::validate_solve_interval(request.solve_interval)?;
     let direct = activity.is_some();
     // The legacy self-gather does not use the modern per-hand flag controls
@@ -44,8 +72,12 @@ pub(crate) fn solve(
         &request.prior_calibration_tables,
         request.parang,
         true,
-        PriorCalibrationMode::Baseline {
-            share_input_flags: !corrdepflags,
+        if additive {
+            PriorCalibrationMode::Data
+        } else {
+            PriorCalibrationMode::Baseline {
+                share_input_flags: !corrdepflags,
+            }
         },
     )
     .map_err(setup_error)?;
@@ -68,6 +100,12 @@ pub(crate) fn solve(
     } else {
         None
     };
+    let (model_source, point_stokes) = if additive {
+        // The legacy baseline gather with a unit model averages the calibrated DATA.
+        (GainSolveModelSource::PointSource, [1., 0., 0., 0.])
+    } else {
+        (request.model_source, request.smodel)
+    };
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -76,8 +114,8 @@ pub(crate) fn solve(
         SolveGroupOptions {
             input_rows: SolveInputRows::baseline(direct, legacy_iterator),
             gain_type: GainType::G,
-            model_source: request.model_source,
-            point_stokes: request.smodel,
+            model_source,
+            point_stokes,
             rotate_model: false,
             solve_interval: request.solve_interval,
             combine: request.combine,
@@ -167,6 +205,7 @@ pub(crate) fn solve(
         request,
         &solved,
         mode,
+        subtype,
         channels,
         direct && legacy_iterator,
     )

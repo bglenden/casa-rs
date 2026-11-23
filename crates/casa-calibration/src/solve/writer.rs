@@ -115,6 +115,7 @@ pub(super) fn write_baseline_caltable(
     request: &GainSolveRequest,
     solved: &SolvedGains,
     mode: crate::CalibrationOutputMode,
+    subtype: &'static str,
     channels: Option<GainChannelGrid<'_>>,
     legacy: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
@@ -122,11 +123,6 @@ pub(super) fn write_baseline_caltable(
         || "<in-memory>".to_owned(),
         |path| path.display().to_string(),
     );
-    let subtype = if channels.is_some() {
-        "Mf Mueller"
-    } else {
-        "M Mueller"
-    };
     let spectrum = if legacy {
         GainTableSpectrum::LegacyMueller(channels)
     } else {
@@ -155,8 +151,11 @@ fn write_gain_table(
         GainTableSpectrum::LegacyMueller(grid) => (grid, true),
     };
     let delay = request.gain_type.is_delay();
-    let legacy_gain_metadata =
-        !delay && !matches!(subtype, "Accor Jones" | "M Mueller" | "Mf Mueller");
+    let legacy_gain_metadata = !delay
+        && !matches!(
+            subtype,
+            "Accor Jones" | "M Mueller" | "Mf Mueller" | "A Mueller"
+        );
     let (parameter_column, parameter_type) = if delay {
         (COL_FPARAM, casa_types::PrimitiveType::Float32)
     } else {
