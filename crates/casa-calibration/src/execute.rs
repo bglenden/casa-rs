@@ -2624,6 +2624,14 @@ fn apply_row_all_channels(
                     forward_model && chain.legacy_corruption,
                     &mut output,
                 )?;
+            } else if subtype == baseline::NOISE_SUBTYPE {
+                baseline::apply_noise(
+                    grid.as_deref(),
+                    &loaded_table.path,
+                    antenna1 > antenna2,
+                    forward_model,
+                    &mut output,
+                )?;
             } else {
                 baseline::apply(
                     grid.as_deref(),
@@ -5122,10 +5130,10 @@ fn load_parameters(
                 row_index,
                 &table_plan.spec.path,
                 flags,
-                if baseline && table_plan.summary.table_subtype != "A Mueller" {
-                    Some((2, "baseline calibration"))
-                } else {
-                    matrix.map(polarization::JonesMatrix::parameter_shape)
+                match table_plan.summary.table_subtype.as_str() {
+                    baseline::NOISE_SUBTYPE => Some((4, "additive noise")),
+                    "M Mueller" | "Mf Mueller" if baseline => Some((2, "baseline calibration")),
+                    _ => matrix.map(polarization::JonesMatrix::parameter_shape),
                 },
                 cross_hand_phase,
                 reversed,

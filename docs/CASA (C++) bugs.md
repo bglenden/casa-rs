@@ -5012,6 +5012,14 @@ wide. casa-rs follows this, measured with CASA 6.7.6.14 on
 for 20 ranges, in the unit test
 `compile::domains::tests::a_spectral_range_masks_the_channels_casa_masks`.
 
+## Explicit channel-zero range can terminate Python
+
+On a `[3, 4, 8]` image, CASA 6.7.6.14 can terminate with SIGSEGV
+when `image.collapse("mean", axes=2, chans="range=[0pix,0pix]")`
+reads the spectral bounds. `AnnotationBase::setFrequencyLimits` treats two
+numeric zeros as an absent range, while the caller indexes both bounds.
+Casa-rs selects channel zero for the explicitly unit-bearing range.
+
 ## A mask string of several lines is an empty mask in `tclean`
 
 - Date noted: 2026-11-03
@@ -8780,6 +8788,21 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## Mixed averaged flagdata can leave row flags clear
+
+On the public `Four_ants_3C286.ms` fixture, CASA 6.7.6.14's stock mixed
+Clip, TFCrop, RFlag, and antint list test starts from cleared flags. The
+shared iterator averages pairs of integrations and groups channels in
+bins of eight. The task flags 591,808 samples and leaves `FLAG_ROW` false
+for 26 of the 486 rows whose samples are all flagged in the repeated
+stock replay. The same 26 rows occur with the Clip, TFCrop, and RFlag
+prefix alone. An interleaved timing replay returned another row mask
+with identical sample flags. CASA's
+`AveragingTvi2::writeFlag` derives the row flag from the propagated
+sample mask. Casa-rs preserves that rule after projecting the final
+shared mask to the input rows. The stock test passes and every sample
+flag agrees with CASA.
+
 ## Calibration quack can flag the whole scan when times are out of order
 
 With CASA 6.7.6.14, two Tsys time blocks in the same scan stored in reverse
@@ -10610,3 +10633,11 @@ The selected slice uses its registered calibration scan even when the current vi
 ## Some direct calibration factories gather data without a usable fitting stage
 
 CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones, B TSYS, gain curve, and legacy power curve. With all input flagged, the tool reports the expected intervals and does not produce a table. When four-correlation usable data reaches the fitting stage, the pinned legacy J/Jf and both B TSYS iterators terminate. The tested modern J/Jf, A Noise, F Jones and curve configurations return a solve error. Modern power curve returns a setup error. Casa-rs retains the available gather stage and uses a recoverable error for the unavailable fit. These limits concern solving. Existing table application and specification are separate operations. [Paired factory oracle](../tools/casa-compat/calibrater_gather_only_oracle.py)
+
+## Direct KAntPos can abort when a solution combines multiple buffers
+
+CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. Both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. Two overlapping windows with `combine='spw'` or two fields with `combine='field'` terminated in both iterators when the multi-buffer fitter assigned two terms to a three-term array. Casa-rs reports a recoverable error when this fit is reached. Windows separated into single-buffer scan or integration intervals produce tables. [Paired antenna-position oracle](../tools/casa-compat/calibrater_antenna_position_oracle.py)
+
+## A Noise baseline indexing assumes ordered antenna columns
+
+With eight antennas, both CASA 6.7.6.14 calibrater iterators applied the `A Noise` coefficients of `(0, 7)` to a deliberately reversed `(1, 0)` visibility. Casa-rs uses the coefficients of `(0, 1)`, conjugates them, and exchanges the cross hands to preserve the visibility's orientation. The ordinary ordered-baseline inputs agree with CASA. [Paired A Noise oracle](../tools/casa-compat/calibrater_anoise_oracle.py)

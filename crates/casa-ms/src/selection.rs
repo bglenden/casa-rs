@@ -45,6 +45,7 @@ pub mod spw_expr;
 pub mod syntax;
 pub mod time_expr;
 mod uv_expr;
+pub(crate) use uv_expr::UvDistanceSelection;
 
 pub use antenna_expr::{AntennaRow, BaselineSelection, resolve_antenna_selector};
 pub use edit::{MsSelectorEditContext, validate_ms_selector_edit};

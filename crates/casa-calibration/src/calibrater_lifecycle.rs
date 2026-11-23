@@ -678,7 +678,7 @@ impl CalibraterLifecycle {
     ) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
         if let CalibrationSolveRequest::Gain(gain) = &request
-            && matches!(gain.gain_type, crate::GainType::K | crate::GainType::KCross)
+            && gain.gain_type.is_delay()
         {
             let ms =
                 MeasurementSet::open(equation.attachment.path()).map_err(AttachmentError::from)?;
