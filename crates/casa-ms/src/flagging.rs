@@ -72,7 +72,7 @@ use clip_time::{TimeClip, time_bin_seconds};
 pub use command::{append_flag_command, append_flag_commands};
 use correlation::{ClipMetric, ClipProjection, CorrelationSelection, TfcropCorrelations};
 pub use initial_version::save_initial_flag_version;
-pub use program::flagdata_ms_program;
+pub use program::{flagdata_ms_program, validate_calibration_flag_averaging};
 pub use shadow::{ShadowAntenna, ShadowOptions};
 mod version_backup;
 mod version_storage;
@@ -774,26 +774,6 @@ fn ensure_calibration_program(table: &MeasurementSet) -> Result<(), FlaggingErro
             path: display_ms_path(table),
             reason: "calibration flag commands require a calibration table".to_owned(),
         });
-    }
-    Ok(())
-}
-
-/// CASA rejects mixing an averaged automatic agent with most other modes.
-/// Each config carries its mode, channel-average switch and time-average switch.
-pub fn validate_calibration_flag_averaging<'a>(
-    configs: impl Iterator<Item = (&'a str, bool, bool)> + Clone,
-) -> Result<(), FlaggingError> {
-    let mut configs = configs.enumerate();
-    if let Some((index, (mode, channelavg, timeavg))) = configs.clone().find(|(_, config)| {
-        matches!(config.0, "clip" | "tfcrop" | "rflag") && (config.1 || config.2)
-    }) && let Some((_, (other, _, _))) = configs.find(|(other_index, (other, _, _))| {
-        *other_index != index && !matches!(*other, "extend" | "display" | "antint")
-    }) {
-        return Err(FlaggingError::CalibrationAgentConfiguration(format!(
-            "Cannot use {mode} mode with timeavg=True or channelavg=True and additional modes other than extend, display, and antint. timeavg={}, channelavg={}, and the following mode has been set up: {other}. Refusing to accept this configuration.",
-            u8::from(timeavg),
-            u8::from(channelavg),
-        )));
     }
     Ok(())
 }
@@ -2689,23 +2669,6 @@ fn load_i32_cells(
             }),
         })
         .collect()
-}
-
-fn select_autocorrelations(
-    ms: &MeasurementSet,
-    rows: &[usize],
-    path: &str,
-) -> Result<Vec<usize>, FlaggingError> {
-    let table = ms.main_table();
-    let first = load_i32_cells(table, rows, "ANTENNA1", path)?;
-    let second = load_i32_cells(table, rows, "ANTENNA2", path)?;
-    Ok(rows
-        .iter()
-        .copied()
-        .zip(first)
-        .zip(second)
-        .filter_map(|((row, first), second)| (first == second).then_some(row))
-        .collect())
 }
 
 enum SampleData<'a> {
