@@ -15,7 +15,7 @@ from casaplotms import plotms as reference
 import numpy as np
 from PIL import Image
 
-from calibration_smoothcal_oracle import opened
+from calibration_smoothcal_oracle import copy_ms, opened
 from plotms_calibration_oracle import compare_text, plotms_launcher
 from record_casa_returns import make_cal_ms
 
@@ -147,6 +147,35 @@ def compare(root, vis, native):
     pending_cases(root, native, vis)
 
 
+def compare_missing_corrected(root, vis, source, native):
+    fallback = root / "missing-corrected.ms"
+    copy_ms(vis, fallback)
+    with opened(fallback, True) as table:
+        table.removecols(["CORRECTED_DATA"])
+    cases = {
+        "corrected-on-y": {},
+        "corrected-on-x": dict(xdatacolumn="corrected", ydatacolumn="model"),
+        "residual-on-x": dict(xdatacolumn="residual", ydatacolumn="data"),
+        "residual-on-y": dict(ydatacolumn="corrected-model_vector"),
+        "corrected-vs-time": dict(xaxis="time", xdatacolumn=""),
+    }
+    for name, options in cases.items():
+        controls = request(fallback) | options | dict(expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        assert native(**controls, plotfile=str(actual)) is None
+        count = compare_text(actual, expected)
+        assert count == 12
+        print(f"{name}: {count} matches with no stored CORRECTED_DATA", flush=True)
+    compare_figure(root, native, request(fallback), root / "corrected-on-y.casa.txt",
+                   ("Phase vs. Amp", "Amp", "Phase (degrees)"))
+    with opened(fallback) as table:
+        assert "CORRECTED_DATA" not in table.colnames()
+        for name, values in source.items():
+            if name != "CORRECTED_DATA":
+                np.testing.assert_array_equal(table.getcol(name), values, err_msg=name)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -166,6 +195,7 @@ def main():
         with opened(vis) as table:
             for name, values in source.items():
                 np.testing.assert_array_equal(table.getcol(name), values, err_msg=name)
+        compare_missing_corrected(root, vis, source, native)
 
 
 if __name__ == "__main__":

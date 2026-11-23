@@ -259,10 +259,13 @@ fn run_task(
 
 impl CliOptions {
     fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 2]> {
-        (self.x_data_column.is_some() || self.data_column.is_vector_residual()).then_some([
-            self.x_data_column.unwrap_or(self.data_column),
-            self.data_column,
-        ])
+        (self.x_data_column.is_some()
+            || self.data_column.is_vector_residual()
+            || self.data_column == MsDataColumn::Corrected)
+            .then_some([
+                self.x_data_column.unwrap_or(self.data_column),
+                self.data_column,
+            ])
     }
 }
 
@@ -316,6 +319,26 @@ fn run_visibility_plot(
             options.ms_path.display()
         ))
     })?;
+    let mut axis_columns = options.plotms_axis_columns();
+    if calibration.is_none()
+        && let Some(columns) = &mut axis_columns
+        && ms.main_table().schema().is_some_and(|schema| {
+            schema.column("CORRECTED_DATA").is_none() && schema.column("DATA").is_some()
+        })
+    {
+        let adjusted = columns.map(|column| match column {
+            MsDataColumn::Corrected => MsDataColumn::Data,
+            MsDataColumn::CorrectedMinusModel => MsDataColumn::DataMinusModel,
+            other => other,
+        });
+        if adjusted != *columns {
+            tracing::warn!("CORRECTED_DATA is unavailable. Using DATA for PlotMS.");
+            let [x, y] = adjusted;
+            options.data_column = y;
+            options.x_data_column = (x != y).then_some(x);
+            *columns = adjusted;
+        }
+    }
     if !options.selection.selectdata {
         options.selection = MsSelection::default();
     }
@@ -370,9 +393,7 @@ fn run_visibility_plot(
                 figure_file,
                 show,
                 &overlays,
-                options
-                    .plotms_axis_columns()
-                    .filter(|_| calibrated.is_none()),
+                axis_columns.filter(|_| calibrated.is_none()),
             )?;
         }
         if let Some(path) = text_file {
@@ -1197,7 +1218,10 @@ fn options_from_plotms(
         (x_axis.is_visibility_math() && x_column != data_column).then_some(x_column);
     let residual_plot = data_column.is_vector_residual()
         || x_data_column.is_some_and(MsDataColumn::is_vector_residual);
-    let visibility_document = visibility_document || residual_plot || x_data_column.is_some();
+    let visibility_document = visibility_document
+        || residual_plot
+        || x_data_column.is_some()
+        || data_column == MsDataColumn::Corrected;
     let plot_format = if visibility_document {
         MsExportFormat::Txt
     } else {
