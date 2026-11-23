@@ -10808,3 +10808,14 @@ a replacement that refers to a nonexistent regex capture, dropping
 characters such as `+`. casa-rs treats `*` as the wildcard and matches
 all other characters literally in field, scan, and spectral-window
 intent selectors (#1029).
+
+## An unobserved antenna name can return every antenna station
+
+With CASA 6.7.6.14, attach a MeasurementSet whose ANTENNA table includes
+`A4` but whose observation 0 uses only `A1` through `A3`.
+`msmetadata.antennastations("A4", obsid=0)` and
+`antennastations(["A4"], obsid=0)` return every station. The name-selection
+branch passes its empty intersection to an accessor where an omitted ID
+list means every station. The numeric selection of the same antenna
+returns an empty list. casa-rs returns an empty list for both forms
+because no selected antenna participated in the observation (#1029).

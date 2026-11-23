@@ -40,7 +40,7 @@ const METHODS: &[Method] = &[
         "antennadiameter",
         &[param("antenna", K::Int, Int(-1))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "antennaids",
@@ -51,7 +51,7 @@ const METHODS: &[Method] = &[
             param("obsid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "antennanames",
@@ -63,13 +63,13 @@ const METHODS: &[Method] = &[
         "antennaoffset",
         &[param("which", K::Int, Int(0))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "antennaposition",
         &[param("which", K::Int, Int(0))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "antennasforscan",
@@ -88,7 +88,7 @@ const METHODS: &[Method] = &[
             param("obsid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("bandwidths", &[param("spw", K::Int, Int(-1))], R::Any, Yes),
     method("baseband", &[param("spw", K::Any, Required)], R::Any, Yes),
@@ -324,7 +324,7 @@ const METHODS: &[Method] = &[
         "observatoryposition",
         &[param("which", K::Int, Int(0))],
         R::Any,
-        No,
+        Yes,
     ),
     method("observers", &[], R::Any, Yes),
     method(
@@ -466,7 +466,7 @@ const METHODS: &[Method] = &[
         R::Any,
         Yes,
     ),
-    method("schedule", &[param("obsid", K::Int, Int(-1))], R::Any, No),
+    method("schedule", &[param("obsid", K::Int, Int(-1))], R::Any, Yes),
     method("sideband", &[param("spw", K::Any, Required)], R::Any, Yes),
     method("sourcedirs", &[], R::Any, Yes),
     method(
@@ -562,7 +562,7 @@ const METHODS: &[Method] = &[
         "timerangeforobs",
         &[param("obsid", K::Int, Int(-1))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "timesforfield",

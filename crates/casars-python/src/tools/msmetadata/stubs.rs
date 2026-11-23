@@ -15,46 +15,6 @@ use super::{PyMsMetadata, stub};
 )]
 impl PyMsMetadata {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (antenna = None), text_signature = "($self, antenna=-1)")]
-    fn antennadiameter(&self, antenna: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("antennadiameter")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (name = None, mindiameter = None, maxdiameter = None, obsid = None), text_signature = "($self, name='', mindiameter='0m', maxdiameter='1pc', obsid=-1)")]
-    fn antennaids(
-        &self,
-        name: Option<&Bound<'_, PyAny>>,
-        mindiameter: Option<&Bound<'_, PyAny>>,
-        maxdiameter: Option<&Bound<'_, PyAny>>,
-        obsid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("antennaids")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (which = None), text_signature = "($self, which=0)")]
-    fn antennaoffset(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("antennaoffset")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (which = None), text_signature = "($self, which=0)")]
-    fn antennaposition(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("antennaposition")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (which = None, obsid = None), text_signature = "($self, which=-1, obsid=-1)")]
-    fn antennastations(
-        &self,
-        which: Option<&Bound<'_, PyAny>>,
-        obsid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("antennastations")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn effexposuretime(&self) -> PyResult<Py<PyAny>> {
         stub("effexposuretime")
@@ -81,12 +41,6 @@ impl PyMsMetadata {
         flagged: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("nrows")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (which = None), text_signature = "($self, which=0)")]
-    fn observatoryposition(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("observatoryposition")
     }
 
     /// Not yet implemented in casa-rs.
@@ -121,20 +75,8 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (obsid = None), text_signature = "($self, obsid=-1)")]
-    fn schedule(&self, obsid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("schedule")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn summary(&self) -> PyResult<Py<PyAny>> {
         stub("summary")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (obsid = None), text_signature = "($self, obsid=-1)")]
-    fn timerangeforobs(&self, obsid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("timerangeforobs")
     }
 }

@@ -3,9 +3,11 @@
 //! with its signature (ADR-0017, #1025). A method casa-rs does not implement
 //! yet raises `NotImplementedError` naming #1029 (`stubs.rs`).
 
+mod antenna_metadata;
 mod data_description;
 mod intents;
 mod names;
+mod observation_metadata;
 mod scan_index;
 mod scan_queries;
 mod source_metadata;
