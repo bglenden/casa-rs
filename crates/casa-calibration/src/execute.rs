@@ -2759,7 +2759,10 @@ fn apply_row_all_channels(
         let first_receptor_only = (is_bandpass
             || is_switched_power
             || polarization::is_cross_hand_phase(subtype)
-            || matches!(subtype, "GSPLINE" | "GlinXph Jones" | "GlinXphf Jones"))
+            || matches!(
+                subtype,
+                "G Jones" | "GSPLINE" | "GlinXph Jones" | "GlinXphf Jones"
+            ))
             && correlation_types.len() == 1;
         let (ant1_transient, ant2_transient) = (
             bounded_frequency_cache && ant1.interpolated,

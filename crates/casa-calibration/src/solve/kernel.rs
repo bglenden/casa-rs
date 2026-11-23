@@ -294,7 +294,7 @@ pub(crate) fn solve_group(
                     snrs: Vec::with_capacity(receptors.len()),
                     weights: Vec::with_capacity(receptors.len()),
                 };
-                for receptor in receptors {
+                for (index, receptor) in receptors.iter().enumerate() {
                     let snr = receptor.snr.get(&antenna_id).copied().unwrap_or_default();
                     let param_error = receptor
                         .param_error
@@ -308,6 +308,14 @@ pub(crate) fn solve_group(
                     row.gains.push(
                         if fitted && (!flagged || solve_mode == GainSolveMode::AmplitudePhase) {
                             receptor.gains[&antenna_id]
+                        } else if index == 1
+                            && group.single_parallel_hand
+                            && solve_mode == GainSolveMode::AmplitudePhase
+                            && receptors[0].solved.contains(&antenna_id)
+                        {
+                            // An antenna solved from one hand has an empty
+                            // second parameter in CASA's AP gain table.
+                            Complex32::new(0.0, 0.0)
                         } else {
                             Complex32::new(1.0, 0.0)
                         },
