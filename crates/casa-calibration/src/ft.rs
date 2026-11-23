@@ -253,9 +253,6 @@ impl Prediction<'_> {
             } else {
                 None
             };
-            let coordinates = uvw[offset]
-                .as_ref()
-                .ok_or_else(|| invalid("UVW must contain three real coordinates"))?;
             let sampled = self
                 .models
                 .predict_scratch(
@@ -264,7 +261,7 @@ impl Prediction<'_> {
                     correlation,
                     flags,
                     starting,
-                    Some(coordinates),
+                    uvw[offset].as_ref(),
                 )
                 .map_err(invalid)?
                 .ok_or_else(|| invalid("the selected row is absent from the prediction"))?;

@@ -15,6 +15,7 @@ import numpy as np
 
 from calibration_ft_oracle import component, coordinates
 from calibration_scratch_oracle import MAIN, prepare, state
+from calibration_smoothcal_oracle import opened
 from gaincal_oracle import relative_rms, solve
 from imager_prediction_options_oracle import write_model
 from record_casa_returns import make_cal_ms
@@ -50,6 +51,29 @@ def unchanged(actual, original, columns):
     for col in columns:
         if col in original:
             np.testing.assert_array_equal(actual[col], original[col], err_msg=col)
+
+
+def check_undefined_uvw(seed, path):
+    shutil.copytree(seed, path)
+    missing = 3
+    with opened(path, True) as handle:
+        uvw = handle.getcol("UVW")
+        keywords = handle.getcolkeywords("UVW")
+        handle.renamecol("UVW", "ORIGINAL_UVW")
+        assert handle.addcols({"UVW": {"valueType": "double", "ndim": 1}})
+        for key, value in keywords.items():
+            handle.putcolkeyword("UVW", key, value)
+        for row in range(handle.nrows()):
+            if row != missing:
+                handle.putcell("UVW", row, uvw[:, row])
+        assert not handle.iscelldefined("UVW", missing)
+    try:
+        native.setjy(str(path), field="0", standard="manual", fluxdensity=[2., 0., 0., 0.], usescratch=True)
+    except RuntimeError as error:
+        assert f'column "UVW" not found in row {missing}' in str(error), error
+    else:
+        raise AssertionError("Scratch prediction accepted an undefined UVW cell")
+    print("Scratch prediction reports the missing UVW cell's row", flush=True)
 
 
 def publish(scenario, api, seed, path, models, fields):
@@ -143,6 +167,7 @@ def run(root):
                 evidence[label] = {"gains": gains["CPARAM"].size, "gain_nrms": gain_nrms,
                                    "model_samples": measured.size, "model_nrms": model_nrms}
                 print(label, evidence[label], flush=True)
+    check_undefined_uvw(seed, root / "undefined-uvw.ms")
     return evidence
 
 
