@@ -93,16 +93,20 @@ impl SolveGraph {
         weighted_sample: Complex32,
         edge_stats: SolveEdgeStats,
     ) {
-        for (baseline, value) in [
-            ((antenna1, antenna2), weighted_sample),
-            ((antenna2, antenna1), weighted_sample.conj()),
+        let mut reverse_stats = edge_stats;
+        if let Some(sample) = &mut reverse_stats.single_sample {
+            sample.value = sample.value.conj();
+        }
+        for (baseline, value, stats) in [
+            ((antenna1, antenna2), weighted_sample, edge_stats),
+            ((antenna2, antenna1), weighted_sample.conj(), reverse_stats),
         ] {
             *self.edges.entry(baseline).or_default() += value;
             *self.weights.entry(baseline).or_default() += weight;
             self.stats
                 .entry(baseline)
-                .and_modify(|stats| stats.add(edge_stats))
-                .or_insert(edge_stats);
+                .and_modify(|previous| previous.add(stats))
+                .or_insert(stats);
         }
     }
 
@@ -294,7 +298,7 @@ pub(crate) fn solve_group(
                     snrs: Vec::with_capacity(receptors.len()),
                     weights: Vec::with_capacity(receptors.len()),
                 };
-                for receptor in receptors {
+                for (index, receptor) in receptors.iter().enumerate() {
                     let snr = receptor.snr.get(&antenna_id).copied().unwrap_or_default();
                     let param_error = receptor
                         .param_error
@@ -308,6 +312,14 @@ pub(crate) fn solve_group(
                     row.gains.push(
                         if fitted && (!flagged || solve_mode == GainSolveMode::AmplitudePhase) {
                             receptor.gains[&antenna_id]
+                        } else if index == 1
+                            && group.single_parallel_hand
+                            && solve_mode == GainSolveMode::AmplitudePhase
+                            && receptors[0].solved.contains(&antenna_id)
+                        {
+                            // An antenna solved from one hand has an empty
+                            // second parameter in CASA's AP gain table.
+                            Complex32::new(0.0, 0.0)
                         } else {
                             Complex32::new(1.0, 0.0)
                         },
@@ -1164,11 +1176,19 @@ fn chi_square_for_errors(graph: &SolveGraph, gains: &HashMap<i32, Complex32>) ->
             .get(&(antenna1, antenna2))
             .copied()
             .unwrap_or_default();
-        let weight = f64::from(graph.weight((antenna1, antenna2)));
+        let weight = graph.weight((antenna1, antenna2));
         let model = gain1 * gain2.conj();
-        let cross = (model.conj() * observed).re;
-        let contribution = stat.weighted_sample_power - 2.0 * f64::from(cross)
-            + weight * f64::from(model.norm_sqr());
+        let contribution = if let Some(sample) = stat.single_sample {
+            // CASA subtracts the fitted visibility before squaring. Keep the
+            // original averaged sample so rounding in the weighted sum does
+            // not create or erase a small residual.
+            let residual = sample.value - model * sample.model;
+            f64::from(sample.weight) * f64::from(residual.norm_sqr())
+        } else {
+            let cross = (model.conj() * observed).re;
+            stat.weighted_sample_power - 2.0 * f64::from(cross)
+                + f64::from(weight) * f64::from(model.norm_sqr())
+        };
         total += contribution.max(0.0);
     }
     total
@@ -1213,6 +1233,7 @@ fn reachable_antennas(graph: &SolveGraph, refant_id: i32) -> BTreeSet<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solve::grouping::CollapsedVisibility;
 
     fn add_edge(
         graph: &mut SolveGraph,
@@ -1230,7 +1251,29 @@ mod tests {
                 raw_weighted_sample_power: f64::from(weight) * f64::from(value.norm_sqr()),
                 sample_count: 1,
                 collapsed_count: 1,
+                single_sample: Some(CollapsedVisibility {
+                    value,
+                    weight,
+                    model: 1.0,
+                }),
             },
+        );
+    }
+
+    #[test]
+    fn singleton_error_uses_the_input_sample_before_weighting() {
+        let observed = Complex32::new(1.45, 0.0);
+        let mut graph = SolveGraph::default();
+        add_edge(&mut graph, 0, 1, 3.0, observed);
+        let mut gains = HashMap::from([(0, observed), (1, Complex32::new(1.0, 0.0))]);
+        assert_eq!(chi_square_for_errors(&graph, &gains), 0.0);
+
+        let next = f32::from_bits(observed.re.to_bits() + 1);
+        gains.insert(0, Complex32::new(next, 0.0));
+        let residual = f64::from(next - observed.re);
+        assert_eq!(
+            chi_square_for_errors(&graph, &gains),
+            3.0 * residual * residual
         );
     }
 

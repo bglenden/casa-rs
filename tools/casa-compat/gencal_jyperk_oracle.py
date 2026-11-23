@@ -312,6 +312,18 @@ def compare_services(root, vis, engines):
             assert len(records) == 1 and records[0][:2] == ('/asdm/', {'uid': 'uid://A002/X85c183/X36f'})
             np.testing.assert_allclose(gains(via_web)[:, 0], 1./6., rtol=2e-7)
 
+        with database(send) as (url, records), patch.object(JyPerKDatabaseClient, 'DEFAULT_BASE_URL', f'{url}/rejected'):
+            os.environ['JYPERKDB_URL'] = f'{url}/rejected'
+            rejected = root/f'{label}-gencal-service-rejected.cal'
+            try:
+                api.gencal(str(vis), str(rejected), 'jyperk', retry=1)
+            except RuntimeError as error:
+                assert str(error) == 'Failed to get Jy/K factors from DB: not found'
+            else:
+                raise AssertionError('expected the Jy/K service rejection')
+            assert len(records) == 1 and records[0][0] == '/rejected/asdm/'
+            assert not rejected.exists()
+
         for case, host_path, backups, use_file, gain, paths in (
             ('retry', 'retry', [], False, 1./6., ['retry/asdm']*2),
             ('progress', 'progress', [], True, 1./6., ['progress/asdm']),

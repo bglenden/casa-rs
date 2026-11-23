@@ -245,22 +245,31 @@ pub(crate) fn evaluate_solve_priors(
         .calibration_tables
         .iter()
         .any(|table| table.summary.table_subtype == "TfOpac");
+    let gain_boundary = matches!(
+        boundary,
+        PriorSolveBoundary::Gain | PriorSolveBoundary::ScalarGain
+    );
+    let solve_order = boundary.viscal_order();
+    // VisEquation::collapse2 corrupts MODEL_DATA with any prior at or after
+    // the solved term. Its weights then come from division by that model,
+    // regardless of those priors' calwt settings.
+    let gain_model_prior = gain_boundary
+        && plan
+            .calibration_tables
+            .iter()
+            .any(|table| viscal_order(&table.summary.table_subtype) >= solve_order);
     let type_ordered = polarized
         || baseline
         || spectral_opacity
+        || gain_model_prior
         || matches!(
             boundary,
             PriorSolveBoundary::Accor
                 | PriorSolveBoundary::Baseline
                 | PriorSolveBoundary::GainSpline
         );
-    if !type_ordered
-        && matches!(
-            boundary,
-            PriorSolveBoundary::Gain | PriorSolveBoundary::ScalarGain
-        )
-    {
-        return evaluate_apply_rows(ms, &plan, false).map(Into::into);
+    if !type_ordered && gain_boundary {
+        return evaluate_apply_rows(ms, &plan, share_input_flags).map(Into::into);
     }
     // The measurement equation corrects DATA with earlier terms and corrupts
     // MODEL_DATA with the remaining terms. The channel-dependent opacity
@@ -271,7 +280,7 @@ pub(crate) fn evaluate_solve_priors(
             .partition(|table| {
                 let subtype = table.summary.table_subtype.as_str();
                 if type_ordered {
-                    return viscal_order(subtype) < boundary.viscal_order();
+                    return viscal_order(subtype) < solve_order;
                 }
                 match subtype {
                     "KAntPos Jones" => true,
@@ -279,8 +288,7 @@ pub(crate) fn evaluate_solve_priors(
                     _ => false,
                 }
             });
-    let forward_parang =
-        type_ordered && plan.parang && viscal_order("P Jones") >= boundary.viscal_order();
+    let forward_parang = type_ordered && plan.parang && viscal_order("P Jones") >= solve_order;
     plan.parang &= !forward_parang;
     plan.calibration_tables = data_tables;
     let data_prior = (deferred_data && (!plan.calibration_tables.is_empty() || plan.parang))
@@ -314,7 +322,7 @@ pub(crate) fn evaluate_solve_priors(
                 ms,
                 plan,
                 true,
-                share_input_flags,
+                share_input_flags && !gain_boundary,
                 parang_terms,
             )?),
             polarized,

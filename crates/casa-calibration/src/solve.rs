@@ -34,8 +34,8 @@ use std::path::PathBuf;
 use casa_ms::ms::MeasurementSet;
 use casa_ms::selection::MsSelection;
 use casa_ms::{ChannelSelection, MsError};
-use casa_tables::{Table, TableError};
-use casa_types::{Complex32, ScalarValue};
+use casa_tables::{Table, TableError, TableOptions};
+use casa_types::{Complex32, ScalarValue, Value};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -45,7 +45,9 @@ use crate::session::prepare_calibration_solve;
 use crate::solve_stats::{
     AntennaSolution, IntervalStages, SolveStats, SolveStatsBuilder, ToolSolveActivity,
 };
-use crate::{ApplyExecutionError, ApplyPlanError, BandpassFrequencyInterval};
+use crate::{
+    ApplyExecutionError, ApplyPlanError, BandpassFrequencyInterval, CalibrationOutputMode,
+};
 use grouping::{SolveGroupOptions, build_solve_groups};
 use kernel::solve_group;
 use writer::write_gain_caltable;
@@ -561,7 +563,7 @@ pub(crate) fn solve_gain(
         if legacy_iterator && matches!(request.gain_type, GainType::KMbd | GainType::KAntPos) {
             delay::solve(ms, request, activity, true)?
         } else {
-            solve_gain_rows(ms, request, activity)?
+            solve_gain_rows(ms, request, activity, mode)?
         };
     write_gain_caltable(ms, request, &solved, mode)
 }
@@ -579,7 +581,7 @@ pub(crate) fn solve_tf(
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let (solved, spectrum) =
-        solve_gain_rows_with_settings(ms, request, activity, Some(settings), None)?;
+        solve_gain_rows_with_settings(ms, request, activity, Some(settings), None, false)?;
     let spectrum = spectrum.expect("Tf prepared its spectral grid");
     writer::write_tf_caltable(
         ms,
@@ -643,11 +645,31 @@ pub(crate) fn solve_gain_rows(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     activity: Option<&mut ToolSolveActivity>,
+    mode: CalibrationOutputMode,
 ) -> Result<SolvedGains, GainSolveError> {
     if request.gain_type.is_delay() {
         return delay::solve(ms, request, activity, false);
     }
-    solve_gain_rows_with_settings(ms, request, activity, None, None).map(|(solved, _)| solved)
+    let legacy_g_receptors = if request.gain_type == GainType::G
+        && mode == CalibrationOutputMode::Append
+        && request.output_table.exists()
+    {
+        let output = Table::open(TableOptions::new(&request.output_table)).map_err(|error| {
+            GainSolveError::PrepareOutput {
+                path: request.output_table.display().to_string(),
+                reason: error.to_string(),
+            }
+        })?;
+        matches!(
+            output.keywords().get(crate::constants::KEY_CASA_VERSION),
+            Some(Value::Scalar(ScalarValue::String(tag)))
+                if tag == crate::constants::LEGACY_NATIVE_G_VERSION
+        )
+    } else {
+        false
+    };
+    solve_gain_rows_with_settings(ms, request, activity, None, None, legacy_g_receptors)
+        .map(|(solved, _)| solved)
 }
 
 pub(crate) struct GatherOnlySolveSettings {
@@ -663,8 +685,29 @@ pub(crate) fn gather_only_tool_solve(
     activity: &mut ToolSolveActivity,
     settings: GatherOnlySolveSettings,
 ) -> Result<SolveStats, GainSolveError> {
-    solve_gain_rows_with_settings(ms, request, Some(activity), None, Some(settings))
+    solve_gain_rows_with_settings(ms, request, Some(activity), None, Some(settings), false)
         .map(|(solved, _)| solved.solve_stats)
+}
+
+fn solve_point_stokes(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+) -> Result<[f32; 4], GainSolveError> {
+    match request.model_source {
+        GainSolveModelSource::PointSource => {
+            validate_smodel(request.smodel, true)?;
+            Ok(request.smodel)
+        }
+        GainSolveModelSource::ModelColumn
+            if !ms
+                .main_table()
+                .schema()
+                .is_some_and(|schema| schema.contains_column("MODEL_DATA")) =>
+        {
+            Err(GainSolveError::MissingModelColumn)
+        }
+        _ => Ok([1.0, 0.0, 0.0, 0.0]),
+    }
 }
 
 fn solve_gain_rows_with_settings(
@@ -673,17 +716,9 @@ fn solve_gain_rows_with_settings(
     activity: Option<&mut ToolSolveActivity>,
     tf: Option<TfSolveSettings>,
     gather_only: Option<GatherOnlySolveSettings>,
+    legacy_g_receptors: bool,
 ) -> Result<(SolvedGains, Option<TfSpectrum>), GainSolveError> {
-    if matches!(request.model_source, GainSolveModelSource::PointSource) {
-        validate_smodel(request.smodel, true)?;
-    } else if request.model_source == GainSolveModelSource::ModelColumn
-        && !ms
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
-    {
-        return Err(GainSolveError::MissingModelColumn);
-    }
+    let point_stokes = solve_point_stokes(ms, request)?;
     validate_solve_interval(request.solve_interval)?;
     // P Jones is later in CASA's Jones chain than G, so the rotation
     // corrupts the MeasurementSet model or a polarized explicit point
@@ -691,11 +726,6 @@ fn solve_gain_rows_with_settings(
     let rotate_model = request.parang
         && request.gain_type == GainType::G
         && request.model_source.needs_model_rotation(request.smodel);
-    let point_stokes = if request.model_source == GainSolveModelSource::PointSource {
-        request.smodel
-    } else {
-        [1.0, 0.0, 0.0, 0.0]
-    };
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
@@ -744,6 +774,13 @@ fn solve_gain_rows_with_settings(
             activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T),
         )
     };
+    // CalSolvingVi2 shares raw flags before applying priors. The solver
+    // keeps flags introduced by a prior on their corresponding receptors
+    // through reference selection, which may need another antenna.
+    let correlation_dependent_flags = request.correlation_dependent_flags
+        || (context.preapplied_rows.is_some()
+            && gather_only.is_none()
+            && matches!(request.gain_type, GainType::G | GainType::T));
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -764,12 +801,13 @@ fn solve_gain_rows_with_settings(
             ),
             // Polarized preapply combines raw flags before applying priors.
             // A newly flagged cross-hand must not invalidate parallel hands.
-            correlation_dependent_flags: request.correlation_dependent_flags
+            correlation_dependent_flags: correlation_dependent_flags
                 || context
                     .preapplied_rows
                     .as_ref()
                     .is_some_and(|rows| rows.polarized),
             robust_seed: request.robustness.enabled(),
+            legacy_g_receptors,
             channelized: false,
             polynomial_bandpass: false,
         },
@@ -816,6 +854,7 @@ fn solve_gain_rows_with_settings(
             &context.available_antennas,
             request,
             context.refant_id,
+            correlation_dependent_flags,
         ) else {
             continue;
         };
@@ -956,6 +995,7 @@ pub(crate) fn solve_closed_group(
     available_antennas: &BTreeSet<i32>,
     request: &GainSolveRequest,
     refant_id: i32,
+    correlation_dependent_flags: bool,
 ) -> Option<Vec<kernel::SolutionRow>> {
     solve_group(
         group,
@@ -967,7 +1007,7 @@ pub(crate) fn solve_closed_group(
             refant_id,
             min_baselines_per_antenna: request.min_baselines_per_antenna,
             group_seed: None,
-            correlation_dependent_flags: request.correlation_dependent_flags,
+            correlation_dependent_flags,
             defer_reference: true,
             robustness: request.robustness.enabled().then_some(&request.robustness),
         },
