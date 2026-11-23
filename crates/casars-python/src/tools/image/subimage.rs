@@ -219,6 +219,7 @@ impl Request<'_> {
         &self,
         source: &dyn ImageInterface<T>,
         coordinates: Option<RecordValue>,
+        beams: &RecordValue,
         path: Option<&Path>,
         logs: &mut Vec<LogLine>,
     ) -> PyResult<Storage<T>> {
@@ -227,7 +228,8 @@ impl Request<'_> {
             dropdeg: self.dropdeg,
             keepaxes: &self.keepaxes,
         };
-        let plan = SubimagePlan::new(source, coordinates, options).map_err(raised)?;
+        let plan = SubimagePlan::new_preserving_beams(source, coordinates, options, beams)
+            .map_err(raised)?;
         if self.list {
             let (blc, trc) = plan.bounds();
             logs.push(LogLine::info(format!(
@@ -256,6 +258,7 @@ impl Request<'_> {
     fn build<T: ImagePixel + Copy>(
         &self,
         source: &Storage<T>,
+        beams: &RecordValue,
         path: Option<&Path>,
         logs: &mut Vec<LogLine>,
     ) -> PyResult<Storage<T>> {
@@ -267,7 +270,7 @@ impl Request<'_> {
             Storage::Temp { record, .. } => Some(record.clone()),
         };
         let mut result = with_storage!(
-            source, image => self.copy_selection(image.as_ref(), coordinates, path, logs)
+            source, image => self.copy_selection(image.as_ref(), coordinates, beams, path, logs)
         )?;
         let rows = match source {
             Storage::Paged(image) => {
@@ -337,22 +340,23 @@ impl PyImageTool {
                 // Release the source handle before publication takes the image registry lock.
                 let mut original = attached.lock();
                 attached.require_pixel_read_lock(&mut original)?;
+                let beams = attached.beam_view().clone();
                 if !outfile.is_empty() && let Some(source) = original.path() {
                     ensure_outfile_does_not_alias_input(Path::new(outfile), source).map_err(raised)?;
                 }
                 let mut copy = match &*original {
                     ImageHandle::Float(Storage::Temp { image, record, fits: Some(fits) }) => {
                         let source = fits.image_view(image);
-                        let mut storage = request.copy_selection(&source, Some(record.clone()), path, &mut logs)?;
+                        let mut storage = request.copy_selection(&source, Some(record.clone()), beams.record(), path, &mut logs)?;
                         with_storage!(&mut storage, product =>
                             product.append_history_entries(&image.history_rows().map_err(raised)?)
                         ).map_err(raised)?;
                         ImageHandle::Float(storage)
                     }
-                    ImageHandle::Float(source) => ImageHandle::Float(request.build(source, path, &mut logs)?),
-                    ImageHandle::Double(source) => ImageHandle::Double(request.build(source, path, &mut logs)?),
-                    ImageHandle::Complex(source) => ImageHandle::Complex(request.build(source, path, &mut logs)?),
-                    ImageHandle::DComplex(source) => ImageHandle::DComplex(request.build(source, path, &mut logs)?),
+                    ImageHandle::Float(source) => ImageHandle::Float(request.build(source, beams.record(), path, &mut logs)?),
+                    ImageHandle::Double(source) => ImageHandle::Double(request.build(source, beams.record(), path, &mut logs)?),
+                    ImageHandle::Complex(source) => ImageHandle::Complex(request.build(source, beams.record(), path, &mut logs)?),
+                    ImageHandle::DComplex(source) => ImageHandle::DComplex(request.build(source, beams.record(), path, &mut logs)?),
                 };
                 if state.history {
                     copy.record_history("subimage", request.history())?;

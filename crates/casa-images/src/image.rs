@@ -641,6 +641,12 @@ pub trait MutableImageInterface<T: ImagePixel>: ImageInterface<T> + LatticeMut<T
     /// Replaces the image info record.
     fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError>;
 
+    /// Replaces image info from its native record. Native storage can retain
+    /// saved quantity values and units alongside the numerical model.
+    fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+        self.set_image_info(&ImageInfo::from_record(&record)?)
+    }
+
     /// Replaces the misc-info record.
     fn set_misc_info(&mut self, rec: RecordValue) -> Result<(), ImageError>;
 
@@ -1617,18 +1623,7 @@ impl<T: ImagePixel> PagedImage<T> {
         let Value::Record(info) = self.table.keywords().get("imageinfo")? else {
             return None;
         };
-        // ImageInfo::fromRecord restores per-plane beams last when both
-        // records exist, so they take precedence over the single beam.
-        if let Some(per_plane) = self.per_plane_beam_record() {
-            return match per_plane.get("*0") {
-                Some(Value::Record(beam)) => Some(beam),
-                _ => None,
-            };
-        }
-        match info.get("restoringbeam") {
-            Some(Value::Record(beam)) => Some(beam),
-            _ => None,
-        }
+        ImageInfo::first_beam_record(info)
     }
 
     pub(crate) fn per_plane_beam_record(&self) -> Option<&RecordValue> {
@@ -3038,6 +3033,10 @@ impl<T: ImagePixel> MutableImageInterface<T> for PagedImage<T> {
 
     fn set_image_info(&mut self, info: &ImageInfo) -> Result<(), ImageError> {
         PagedImage::set_image_info(self, info)
+    }
+
+    fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+        PagedImage::set_image_info_record(self, record)
     }
 
     fn set_misc_info(&mut self, rec: RecordValue) -> Result<(), ImageError> {

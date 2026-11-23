@@ -240,6 +240,18 @@ impl ImageInfo {
             object_name,
         })
     }
+
+    /// Return the first saved beam, with the same grid precedence as `from_record`.
+    pub(crate) fn first_beam_record(rec: &RecordValue) -> Option<&RecordValue> {
+        let (record, keys): (_, &[_]) = match rec.get("perplanebeams") {
+            Some(Value::Record(grid)) => (grid, &["*0", "*0_0"]),
+            _ => (rec, &["restoringbeam"]),
+        };
+        keys.iter().find_map(|key| match record.get(key) {
+            Some(Value::Record(beam)) => Some(beam),
+            _ => None,
+        })
+    }
 }
 
 #[cfg(test)]
