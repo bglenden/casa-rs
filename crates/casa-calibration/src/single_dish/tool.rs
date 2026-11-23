@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use casa_ms::MeasurementSet;
+use casa_tables::TableWriteLock;
 use casa_types::quanta::{Quantity, Unit};
 
 use super::{edges, gain, position_switch};
@@ -117,6 +118,12 @@ impl Solver {
         if overlaps_measurement_set(&ms, output)? {
             return Err("The MeasurementSet and output calibration table overlap.".into());
         }
+        let _output_lock = output
+            .join("table.dat")
+            .is_file()
+            .then(|| TableWriteLock::acquire_to_reread(output, 1))
+            .transpose()
+            .map_err(|error| error.to_string())?;
         let selection = resolve_casa_calibration_selection(&ms, &apply.selection)
             .map_err(|error| error.to_string())?;
         if let Kind::Gain(mut controls) = self.kind {

@@ -1023,7 +1023,10 @@ impl CalibraterLifecycle {
     /// Returns an error if the current equation cannot be solved.
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
-        if matches!(equation.solve, Some(ConfiguredSolve::SingleDish(_))) {
+        if let Some(ConfiguredSolve::SingleDish(solver)) = &equation.solve {
+            if !self.legacy_iterator && solver.gain_controls().is_some() {
+                self.last_solve_stats = None;
+            }
             return self.solve_single_dish_tool();
         }
         if matches!(equation.solve, Some(ConfiguredSolve::Polarization { .. })) {

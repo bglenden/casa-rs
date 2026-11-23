@@ -6,7 +6,10 @@ import argparse
 from contextlib import chdir
 from itertools import product
 from pathlib import Path
+from select import select
 from shutil import copytree
+import subprocess
+import sys
 
 import casatasks
 from casatools import calibrater as casa_calibrater
@@ -21,6 +24,18 @@ from sdgaincal_oracle import compare_and_read, generated_map
 
 
 FAMILIES = ('SDSKY_PS', 'SDSKY_OTF', 'SDSKY_RASTER', 'SDGAIN_OTFD')
+SOLVE_ERROR = (False, ('RuntimeError', 'Error in Calibrater::solve.'))
+HOLD_OUTPUT_LOCK = '''
+import sys
+from casatools import table
+tool = table()
+assert tool.open(sys.argv[1], nomodify=False, lockoptions={'option': 'user'})
+tool.lock(write=True, nattempts=1)
+assert tool.haslock(write=True)
+print('locked', flush=True)
+sys.stdin.readline()
+assert tool.close()
+'''
 
 
 def fixture(work, kind):
@@ -60,7 +75,7 @@ def solve(factory, log, kind, old, vis, product, selection, controls,
             recorded = [str(product)] if kind.startswith('SDSKY') else []
             assert list(tool.returndict()['solve_tables']) == recorded
         else:
-            assert result(tool.solve) == (False, ('RuntimeError', 'Error in Calibrater::solve.'))
+            assert result(tool.solve) == SOLVE_ERROR
             assert not product.exists() and list(tool.returndict()['solve_tables']) == []
         return state, tool.activityrec(), tool.returndict().get('solvestats')
     finally:
@@ -126,6 +141,55 @@ def gain_cases(work, engines, kind, vis, selection, seed):
     for corrdep in (False, True):
         compare_case(work, engines, f'flagged-{corrdep}', kind, False, flagged,
                      selection, {'radius': '65arcsec'}, corrdep=corrdep)
+    for engine, factory in engines.items():
+        clear_stats_after_failure(factory, work, engine, vis)
+
+
+def clear_stats_after_failure(factory, work, engine, vis):
+    with chdir(work):
+        tool = factory()
+        assert tool.open(str(vis)) and tool.selectvis(field='0', spw='0')
+        try:
+            seed = work/f'stats-{engine}.cal'
+            assert tool.setsolve('SDGAIN_OTFD', 'inf', str(seed), radius='65arcsec')
+            assert tool.solve() and seed.exists()
+            assert 'solvestats' in tool.returndict()
+            activity = tool.activityrec()
+            failed = work/f'failed-{engine}.cal'
+            assert tool.setsolve('SDGAIN_OTFD', 'inf', str(failed), radius='65arcsec', apmode='unknown')
+            assert result(tool.solve) == SOLVE_ERROR and not failed.exists()
+            record = tool.returndict()
+            assert 'solvestats' not in record and list(record['solve_tables']) == []
+            same_record(tool.activityrec(), activity)
+        finally:
+            assert tool.close()
+
+
+def protect_busy_output(work, engines, kind, old, vis, selection, controls, paths):
+    with chdir(work):
+        for engine, factory in engines.items():
+            output = paths[engine]
+            before = columns(output)
+            command = [sys.executable, '-c', HOLD_OUTPUT_LOCK, str(output)]
+            with subprocess.Popen(command, text=True, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE) as peer:
+                try:
+                    assert select([peer.stdout], [], [], 15.)[0]
+                    assert peer.stdout.readline().strip() == 'locked'
+                    tool = factory()
+                    assert tool.setvi(old, True) and tool.open(str(vis))
+                    try:
+                        assert tool.selectvis(field='0', **({'spw': '0'} | selection))
+                        for append in (False, True):
+                            assert tool.setsolve(kind, 'inf', str(output), append=append, **controls)
+                            assert result(tool.solve) == SOLVE_ERROR
+                    finally:
+                        assert tool.close()
+                finally:
+                    peer.communicate('\n', timeout=15)
+                assert peer.returncode == 0
+            compare_mapping(columns(output), before, False)
+    print(kind, 'busy replace and append protected', flush=True)
 
 
 def run(args):
@@ -142,6 +206,8 @@ def run(args):
             continue
         vis, selection, controls = fixture(args.work/label, kind)
         paths = compare_case(args.work, engines, label, kind, old, vis, selection, controls)
+        if (kind, old) in (('SDSKY_PS', True), ('SDGAIN_OTFD', False)):
+            protect_busy_output(args.work, engines, kind, old, vis, selection, controls, paths)
         if kind == 'SDGAIN_OTFD' and not old:
             gain_cases(args.work, engines, kind, vis, selection, paths)
         if kind == 'SDSKY_PS' and old:
