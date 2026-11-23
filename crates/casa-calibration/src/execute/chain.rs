@@ -123,7 +123,7 @@ pub(crate) fn has_polarization_matrix(plan: &ApplyPlan) -> bool {
     plan.calibration_tables.iter().any(|table| {
         let subtype = table.summary.table_subtype.as_str();
         matches!(subtype, "PosAng Jones" | "F Jones")
-            || polarization::Leakage::from_subtype(subtype).is_some()
+            || polarization::JonesMatrix::from_subtype(subtype).is_some()
     })
 }
 

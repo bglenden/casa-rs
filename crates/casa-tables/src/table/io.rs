@@ -224,6 +224,7 @@ impl Table {
     ///
     /// Returns [`TableError::Storage`] on I/O failure.
     pub fn save(&self, options: TableOptions) -> Result<(), TableError> {
+        self.require_full_save_destination(&options.path)?;
         self.validate()?;
         self.persist_all(options)
     }
@@ -241,6 +242,7 @@ impl Table {
     /// Callers that are unsure whether the table state is valid should keep
     /// using [`save`](Table::save).
     pub(crate) fn persist_all(&self, options: TableOptions) -> Result<(), TableError> {
+        self.require_full_save_destination(&options.path)?;
         tracing::info!(
             path = %options.path.display(),
             rows = self.inner.row_count(),
@@ -282,6 +284,31 @@ impl Table {
             rows = self.inner.row_count(),
             "saved CASA table"
         );
+        Ok(())
+    }
+
+    fn require_full_save_destination(&self, target: &Path) -> Result<(), TableError> {
+        if !self
+            .source_path
+            .as_deref()
+            .is_some_and(|path| super::locking::same_directory(path, target))
+        {
+            return Ok(());
+        }
+        let control = target.join(crate::storage::TABLE_CONTROL_FILE);
+        let persisted_asdm = control.is_file()
+            && matches!(
+                crate::storage::read_table_dat_dispatch(&control)?,
+                crate::storage::TableDatResult::Plain(table)
+                    if table.column_set.data_managers.iter().any(|manager| {
+                        manager.type_name == crate::storage::asdm_stman::TYPE
+                    })
+            );
+        if persisted_asdm || self.has_asdm_manager() {
+            return Err(TableError::Storage(
+                "AsdmStMan is read-only. Materialize the table at a new path.".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -399,6 +426,7 @@ impl Table {
         options: TableOptions,
         bindings: &std::collections::HashMap<String, ColumnBinding>,
     ) -> Result<(), TableError> {
+        self.require_full_save_destination(&options.path)?;
         self.validate()?;
         self.persist_with_bindings(options, bindings)
     }
@@ -420,6 +448,7 @@ impl Table {
         options: TableOptions,
         bindings: &std::collections::HashMap<String, ColumnBinding>,
     ) -> Result<(), TableError> {
+        self.require_full_save_destination(&options.path)?;
         let mut profiler = StorageProfiler::start(format!(
             "Table::save_with_bindings path={}",
             options.path.display()
@@ -649,6 +678,14 @@ impl Table {
             })
             .cloned()
             .collect();
+        if affected_groups
+            .iter()
+            .any(|group| group.dm_type == crate::storage::asdm_stman::TYPE)
+        {
+            return Err(TableError::Storage(
+                "AsdmStMan columns are read-only".into(),
+            ));
+        }
         if affected_groups.is_empty() {
             return Ok(());
         }
@@ -1944,6 +1981,7 @@ impl Table {
     ///
     /// `TableCopy::makeEmptyTable(name, ..., noRows=True)`.
     pub fn shallow_copy(&self, opts: TableOptions) -> Result<(), TableError> {
+        self.require_full_save_destination(&opts.path)?;
         self.validate()?;
         self.note_persisted_write(&opts.path);
         let storage = CompositeStorage;
@@ -1972,8 +2010,7 @@ impl Table {
 impl TableWritePlan<'_> {
     /// Validate the complete table and save it to `options.path()`.
     pub fn save(&mut self, options: TableOptions) -> Result<(), TableError> {
-        self.table.validate()?;
-        self.table.persist_all(options)
+        self.table.save(options)
     }
 
     /// Validate the table and per-column bindings, then save it.
@@ -1983,8 +2020,7 @@ impl TableWritePlan<'_> {
         bindings: &std::collections::HashMap<String, ColumnBinding>,
     ) -> Result<(), TableError> {
         self.validate_bindings(bindings)?;
-        self.table.validate()?;
-        self.table.persist_with_bindings(options, bindings)
+        self.table.save_with_bindings(options, bindings)
     }
 
     /// Validate bindings and column overrides, then save without materializing
@@ -1995,6 +2031,7 @@ impl TableWritePlan<'_> {
         bindings: &std::collections::HashMap<String, ColumnBinding>,
         overrides: &ColumnOverrides,
     ) -> Result<(), TableError> {
+        self.table.require_full_save_destination(&options.path)?;
         self.validate_bindings(bindings)?;
         let _ = overrides.effective_row_count(self.table.row_count())?;
         if let Some(schema) = self.table.schema() {
