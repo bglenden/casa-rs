@@ -1983,7 +1983,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `symbolfill` | `'fill'` | `'fill'`; `symbolfill` → `symbolfill` | Partial | Fill type of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `symboloutline` | `False` | `False`; `symboloutline` → `symboloutline` | Partial | Outline plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `coloraxis` | `''` | `''`; `coloraxis` → `coloraxis` | Partial | Selects data axis for colorizing [presentation](#plotms-behavior-presentation)<br>Catalog domain: `baseline`, `Antenna1`, `Baseline`, `ant1`, `corr`, `observation`, `Intent`, `antpos`, `Observation`, `Poln`, `Channel`, `AntPos`, `Scan`, `polarization`, `intent`, `channel`, `correlation`, `Time`, `antenna2`, `Antenna2`, `spw`, `chan`, `Field`, `poln`, `ant2`, `Corr`, ``, `antenna1`, `time`, `field`, `Spw`, `scan` | [paired](#plotms-evidence-paired) |
-| `customflaggedsymbol` | `False` | `False`; `customflaggedsymbol` → `customflaggedsymbol` | Partial | Enable custom symbol(s) for flagged points [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `customflaggedsymbol` | `False` | `False`; `customflaggedsymbol` → `customflaggedsymbol` | Partial | Enable custom symbols for flagged calibration solutions. Visible flagged points with independent stored MeasurementSet columns are refused under #1032. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `flaggedsymbolshape` | `'circle'` | `'circle'`; `flaggedsymbolshape` → `flaggedsymbolshape` | Partial | Shape of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `flaggedsymbolsize` | `2` | `2`; `flaggedsymbolsize` → `flaggedsymbolsize` | Partial | Size of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `flaggedsymbolcolor` | `'ff0000'` | `'ff0000'`; `flaggedsymbolcolor` → `flaggedsymbolcolor` | Partial | Color (name or hex code) of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
@@ -2207,10 +2207,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-columns"></a>
 ##### ms-columns
 
-**Same-input MeasurementSet visibility columns — passed.** Four text exports matched 48 visible points with their source metadata, including independently defaulted axes. A 500 by 360 pixel PNG had 12 Matplotlib coordinates matching the CASA text export. The input data and flags remained unchanged. Public Python tasks in CASA 6.7.6.14 with casaplotms 2.9.1 and casa-rs on one identical MeasurementSet with stored DATA, CORRECTED_DATA and MODEL_DATA.
+**Same-input MeasurementSet visibility columns — passed.** Four text exports matched 48 visible points with their source metadata, including independently defaulted axes. Two 500 by 360 pixel PNGs had 24 Matplotlib coordinates matching the CASA text exports, with column names and units in the default labels. Two unsupported mixed-column requests produced issue-linked refusals and no native outputs. The input data and flags remained unchanged. Public Python tasks in CASA 6.7.6.14 with casaplotms 2.9.1 and casa-rs on one identical MeasurementSet with stored DATA, CORRECTED_DATA and MODEL_DATA.
 
 - [https://github.com/bglenden/casa-rs/pull/2125](https://github.com/bglenden/casa-rs/pull/2125)
-- Revision: `3dff59bd788187374b7b05c29fa615b2528da09f`; CASA: `6.7.6.14`.
+- Revision: `18e142cc9d6f64785beffb36b081f2dfa78c2d1c`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-columns-20261123.json`.
 

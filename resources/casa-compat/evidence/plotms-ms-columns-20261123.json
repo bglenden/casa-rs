@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "execution_date": "2026-11-23",
-  "revision": "3dff59bd788187374b7b05c29fa615b2528da09f",
+  "revision": "18e142cc9d6f64785beffb36b081f2dfa78c2d1c",
   "baseline_revision": "3fb98cbc1119fba6eb02228938a04f6b7269258f",
   "casa_version": "6.7.6.14",
   "casaplotms_version": "2.9.1",
@@ -11,9 +11,10 @@
   "baseline_result": "CASA exported the first case with 12 points. casa-rs refused distinct MeasurementSet X and Y data columns.",
   "text_exports": 4,
   "points": 48,
-  "figures": 1,
-  "rendered_coordinates": 12,
+  "figures": 2,
+  "rendered_coordinates": 24,
   "figure_size_px": [500, 360],
+  "native_issue_linked_refusals": ["scalar residual with another visibility column", "visible flagged symbols with distinct stored columns"],
   "pointwise_relative_tolerance": 1.2e-5,
   "pointwise_absolute_tolerance": 1e-7,
   "source_columns_preserved": ["DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_ROW"]
