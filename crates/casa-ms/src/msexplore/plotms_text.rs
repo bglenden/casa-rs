@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Text coordinates and provenance for PlotMS on-the-fly calibration.
+//! Text coordinates and provenance for MeasurementSet PlotMS.
 
 use std::collections::{HashMap, hash_map::Entry};
 use std::io::{BufWriter, Write};
@@ -134,11 +134,18 @@ fn write_header(
             }
         }
     }
-    let average = averaging::options(task)?;
+    let mut average = averaging::options(task)?;
     let requested_channels = if task.flag("averagedata")? {
+        // CASA records the original request even when zero disables binning.
+        if average.avgtime.is_none() {
+            average.avgtime = task
+                .text("avgtime")?
+                .and_then(|value| value.parse::<f64>().ok())
+                .filter(|&value| value == 0.0);
+        }
         task.text("avgchannel")?
             .and_then(|value| value.parse::<f64>().ok())
-            .filter(|&value| value > 0.0)
+            .filter(|&value| value >= 0.0)
     } else {
         None
     };
