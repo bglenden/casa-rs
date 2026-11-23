@@ -560,6 +560,50 @@ mod tests {
     }
 
     #[test]
+    fn projected_reference_reads_keep_physical_incremental_scalar_values() {
+        use crate::schema::ColumnOptions;
+        use crate::table::{DataManagerKind, TableOptions};
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("parent.tbl");
+        let view = dir.path().join("view.tbl");
+        let column = ColumnSchema::scalar("probe", PrimitiveType::Int32)
+            .with_options(ColumnOptions {
+                undefined: true,
+                ..ColumnOptions::default()
+            })
+            .unwrap();
+        let mut base = Table::with_schema(TableSchema::new(vec![column]).unwrap());
+        for value in [0, 4] {
+            base.add_row(RecordValue::new(vec![RecordField::new(
+                "probe",
+                Value::Scalar(ScalarValue::Int32(value)),
+            )]))
+            .unwrap();
+        }
+        base.save(TableOptions::new(&parent).with_data_manager(DataManagerKind::IncrementalStMan))
+            .unwrap();
+        let base = Table::open(TableOptions::new(&parent)).unwrap();
+        base.select_rows(&[1, 0])
+            .unwrap()
+            .save(TableOptions::new(&view))
+            .unwrap();
+
+        let storage = CompositeStorage;
+        let parent_values = storage
+            .load_scalar_column_rows_with_row_hint(&parent, "probe", &[1, 0], None)
+            .unwrap();
+        assert_eq!(parent_values, [Some(ScalarValue::Int32(4)), None]);
+        let reference_values = storage
+            .load_scalar_column_rows_with_row_hint(&view, "probe", &[0, 1], None)
+            .unwrap();
+        assert_eq!(
+            reference_values,
+            [4, 0].map(|value| Some(ScalarValue::Int32(value)))
+        );
+    }
+
+    #[test]
     fn reference_metadata_writes_keep_parent_table_and_column_keyword_links() {
         use crate::table::TableOptions;
         use crate::table_path::add_directory;

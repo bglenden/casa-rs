@@ -1370,6 +1370,17 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+        self.load_scalar_column_rows_in_layout(table_path, column, selected_rows, row_hint, false)
+    }
+
+    fn load_scalar_column_rows_in_layout(
+        &self,
+        table_path: &Path,
+        column: &str,
+        selected_rows: &[usize],
+        row_hint: Option<u64>,
+        preserve_ism_defaults: bool,
+    ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
         if selected_rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -1383,16 +1394,23 @@ impl CompositeStorage {
         }
 
         match read_table_dat_dispatch(&control_path)? {
-            TableDatResult::Plain(table_dat) => self.load_plain_scalar_column_rows(
+            TableDatResult::Plain(table_dat) => self.load_plain_scalar_column_rows_in_layout(
                 table_path,
                 &table_dat,
                 column,
                 selected_rows,
                 row_hint,
+                preserve_ism_defaults,
             ),
             TableDatResult::Concat(concat) => {
                 self.load_concat_rows(table_path, &concat, selected_rows, |path, local| {
-                    self.load_scalar_column_rows_with_row_hint(path, column, local, None)
+                    self.load_scalar_column_rows_in_layout(
+                        path,
+                        column,
+                        local,
+                        None,
+                        preserve_ism_defaults,
+                    )
                 })
             }
             TableDatResult::Ref(reference) => {
@@ -1410,11 +1428,15 @@ impl CompositeStorage {
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                self.load_scalar_column_rows_with_row_hint(
+                // A full reference-row read retains the on-disk IncrementalStMan
+                // scalar values, including zero when the descriptor default is
+                // a different value. Projected reads keep that contract.
+                self.load_scalar_column_rows_in_layout(
                     &parent,
                     reference.parent_column(column),
                     &parents,
                     None,
+                    true,
                 )
             }
         }
@@ -2708,6 +2730,25 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+        self.load_plain_scalar_column_rows_in_layout(
+            table_path,
+            table_dat,
+            column,
+            selected_rows,
+            row_hint,
+            false,
+        )
+    }
+
+    fn load_plain_scalar_column_rows_in_layout(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        column: &str,
+        selected_rows: &[usize],
+        row_hint: Option<u64>,
+        preserve_ism_defaults: bool,
+    ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
         if selected_rows.is_empty() {
             return Ok(Vec::new());
         }
@@ -2814,6 +2855,7 @@ impl CompositeStorage {
                     &group_col_descs,
                     target_col_idx,
                     selected_rows,
+                    preserve_ism_defaults,
                 )? {
                     return Ok(values);
                 }
