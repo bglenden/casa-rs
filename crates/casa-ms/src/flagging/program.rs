@@ -3,17 +3,55 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_types::ScalarValue;
+
 use crate::ms::MeasurementSet;
+use crate::schema::SubtableId;
 use crate::selection::syntax::ChannelSelection;
 
 use super::{
     ChangeSet, CorrelationSelection, FlagDataAction, FlagDataMode, FlagDataModelFactory,
     FlagDataReport, FlagDataRequest, FlaggingError, SelectedFlagRowPolicy, antint,
     apply_clip_flags, apply_quack_flags, apply_rflag_flags, apply_tfcrop_flags, display_ms_path,
-    elevation, extend, flagging_channels, is_calibration_table, persist_changed_flags,
-    report_after, save_next_casa_flag_backup, save_next_flag_backup, select_autocorrelations,
+    elevation, extend, flagging_channels, is_calibration_table, load_i32_cells,
+    persist_changed_flags, report_after, save_next_casa_flag_backup, save_next_flag_backup,
     selected_flag_row_policy, selected_rows, set_selected_flags, shadow, summary,
 };
+
+/// Validate CASA's allowed time and channel averaging in a list of agents.
+///
+/// Each config provides the mode, channel-average switch, and time-average
+/// switch, in list order.
+///
+/// # Errors
+/// An agent requests averaging in an unsupported mode or alongside an agent
+/// that cannot run with an averaged automatic agent.
+pub fn validate_calibration_flag_averaging<'a>(
+    configs: impl Iterator<Item = (&'a str, bool, bool)> + Clone,
+) -> Result<(), FlaggingError> {
+    let automatic = |mode: &str| matches!(mode, "clip" | "tfcrop" | "rflag");
+    let incompatible = configs
+        .clone()
+        .map(|(mode, _, _)| mode)
+        .find(|mode| !automatic(mode) && !matches!(*mode, "extend" | "display" | "antint"));
+    for (mode, channelavg, timeavg) in configs {
+        if !(channelavg || timeavg) {
+            continue;
+        }
+        let (timeavg, channelavg) = (u8::from(timeavg), u8::from(channelavg));
+        if !automatic(mode) {
+            return Err(FlaggingError::CalibrationAgentConfiguration(format!(
+                "Cannot use timeavg or channelavg in mode {mode}. timeavg={timeavg}, channelavg={channelavg}. These averaging options are only allowed for auto-flagging methods. Refusing this configuration."
+            )));
+        }
+        if let Some(other) = incompatible {
+            return Err(FlaggingError::CalibrationAgentConfiguration(format!(
+                "Cannot use {mode} mode with timeavg=True or channelavg=True and additional modes other than extend, display, and antint. timeavg={timeavg}, channelavg={channelavg}, and the following mode has been set up: {other}. Refusing to accept this configuration."
+            )));
+        }
+    }
+    Ok(())
+}
 
 pub(super) fn run_ms_single(
     ms: &mut MeasurementSet,
@@ -215,6 +253,46 @@ fn resolve_correlations(
         }
         None => Ok(None),
     }
+}
+
+fn select_autocorrelations(
+    ms: &MeasurementSet,
+    rows: &[usize],
+    path: &str,
+) -> Result<Vec<usize>, FlaggingError> {
+    let main = ms.main_table();
+    let first = load_i32_cells(main, rows, "ANTENNA1", path)?;
+    let second = load_i32_cells(main, rows, "ANTENNA2", path)?;
+    let autocorrelations: Vec<_> = rows
+        .iter()
+        .copied()
+        .zip(first)
+        .zip(second)
+        .filter_map(|((row, first), second)| (first == second).then_some(row))
+        .collect();
+    let Some(processor) = ms
+        .subtable(SubtableId::Processor)
+        .filter(|table| table.row_count() > 0 && !autocorrelations.is_empty())
+    else {
+        return Ok(autocorrelations);
+    };
+    let types = processor
+        .column_accessor("TYPE")
+        .and_then(|column| column.scalar_cells_owned())
+        .map_err(|error| FlaggingError::MutateFlags {
+            path: path.to_string(),
+            reason: error.to_string(),
+        })?;
+    let processor_ids = load_i32_cells(main, &autocorrelations, "PROCESSOR_ID", path)?;
+    Ok(autocorrelations
+        .into_iter()
+        .zip(processor_ids)
+        .filter_map(|(row, id)| {
+            let index = usize::try_from(id).ok()?;
+            matches!(types.get(index), Some(Some(ScalarValue::String(kind))) if kind == "CORRELATOR")
+                .then_some(row)
+        })
+        .collect())
 }
 
 fn stage_selected_ms_request(
