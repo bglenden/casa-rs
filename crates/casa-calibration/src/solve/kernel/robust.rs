@@ -8,6 +8,7 @@ use num_complex::{Complex32, Complex64};
 use super::{
     GainSolveRobustness, RobustSample, SolveEdgeStats, SolveGraph, SolveIteration, solve_lm,
 };
+use crate::solve::grouping::CollapsedVisibility;
 
 const L1_CLAMPS: [f32; 3] = [5e-3, 5e-4, 5e-5];
 
@@ -184,6 +185,11 @@ impl RobustSample {
                     * f64::from(self.visibility.norm_sqr()),
                 sample_count: 1,
                 collapsed_count: 1,
+                single_sample: Some(CollapsedVisibility {
+                    value: self.visibility,
+                    weight,
+                    model: self.model,
+                }),
             },
         );
     }

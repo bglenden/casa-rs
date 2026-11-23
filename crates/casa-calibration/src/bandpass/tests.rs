@@ -20,6 +20,7 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
         rotate_model: false,
         solve_interval: GainSolveInterval::Infinite,
         combine: GainSolveCombine::default(),
+        legacy_g_receptors: false,
         channelized: true,
         polynomial_bandpass: false,
         preaverage_max_span: None,
