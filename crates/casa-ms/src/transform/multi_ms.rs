@@ -196,47 +196,57 @@ fn install_shared_subtables(
     members: &[PathBuf],
     first_keywords: &RecordValue,
 ) -> Result<(), MsTransformError> {
-    let first = &members[0];
-    let first_name = first.file_name().expect("relative member has a name");
     for id in SubtableId::ALL_REQUIRED
         .iter()
         .chain(SubtableId::ALL_OPTIONAL.iter())
     {
-        let first_table = first.join(id.name());
-        if !root.join(&first_table).exists() {
-            continue;
-        }
-        link_directory(&first_table, &root.join(id.name()))?;
-        for member in &members[1..] {
-            let destination = root.join(member).join(id.name());
-            if !destination.exists() {
-                continue;
-            }
-            if matches!(id, SubtableId::History | SubtableId::Source) {
-                fs::remove_dir_all(&destination)
-                    .map_err(|error| write_error(&destination, error))?;
-                copy_dir_recursive(&root.join(&first_table), &destination)
-                    .map_err(|error| write_error(&destination, error))?;
-            } else {
-                fs::remove_dir_all(&destination)
-                    .map_err(|error| write_error(&destination, error))?;
-                link_directory(
-                    &Path::new("..").join(first_name).join(id.name()),
-                    &destination,
-                )?;
-            }
-        }
+        install_shared_subtable(
+            root,
+            members,
+            Path::new(id.name()),
+            matches!(id, SubtableId::History | SubtableId::Source),
+        )?;
     }
-    let first_path = casa_tables::lexical_absolute(&root.join(first));
+    let first_path = casa_tables::lexical_absolute(&root.join(&members[0]));
     for field in first_keywords.fields() {
         let Value::TableRef(reference) = &field.value else {
             continue;
         };
-        if let Some(name) = attached_subtable_name(&first_path, &field.name, reference) {
-            let destination = root.join(&name);
-            if !destination.exists() {
-                link_directory(&first.join(name), &destination)?;
-            }
+        if let Some(name) = attached_subtable_name(&first_path, &field.name, reference)
+            && !root.join(&name).exists()
+        {
+            install_shared_subtable(root, members, &name, false)?;
+        }
+    }
+    Ok(())
+}
+
+fn install_shared_subtable(
+    root: &Path,
+    members: &[PathBuf],
+    name: &Path,
+    copy_to_members: bool,
+) -> Result<(), MsTransformError> {
+    let first = &members[0];
+    let first_table = first.join(name);
+    let source = root.join(&first_table);
+    if !source.exists() {
+        return Ok(());
+    }
+    link_directory(&first_table, &root.join(name))?;
+    let first_name = first.file_name().expect("relative member has a name");
+    let member_link = Path::new("..").join(first_name).join(name);
+    for member in &members[1..] {
+        let destination = root.join(member).join(name);
+        if !destination.exists() {
+            continue;
+        }
+        fs::remove_dir_all(&destination).map_err(|error| write_error(&destination, error))?;
+        if copy_to_members {
+            copy_dir_recursive(&source, &destination)
+                .map_err(|error| write_error(&destination, error))?;
+        } else {
+            link_directory(&member_link, &destination)?;
         }
     }
     Ok(())

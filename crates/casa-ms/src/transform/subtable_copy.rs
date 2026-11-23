@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use casa_tables::{Table, add_directory, lexical_absolute, strip_directory};
+use casa_tables::{Table, TableOptions, add_directory, lexical_absolute, strip_directory};
 use casa_types::Value;
 
 use super::{MsTransformError, SubtableId};
@@ -14,17 +14,14 @@ pub(super) fn copy_subtables(
     output_path: &Path,
     main: &mut Table,
 ) -> Result<(), MsTransformError> {
-    let copy_error = |source: std::io::Error| MsTransformError::PrepareOutput {
-        path: output_path.display().to_string(),
-        reason: source.to_string(),
-    };
     for id in SubtableId::ALL_REQUIRED
         .iter()
         .chain(SubtableId::ALL_OPTIONAL)
     {
         let source = input_path.join(id.name());
         if source.exists() {
-            copy_dir_recursive(&source, &output_path.join(id.name())).map_err(copy_error)?;
+            copy_dir_recursive(&source, &output_path.join(id.name()))
+                .map_err(|error| copy_error(output_path, error))?;
         }
     }
 
@@ -41,18 +38,60 @@ pub(super) fn copy_subtables(
         };
         let source = owner.join(&name);
         let destination = output_path.join(&name);
-        if output_path.starts_with(&source) {
-            return Err(copy_error(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("output is inside input subtable {}", source.display()),
-            )));
-        }
         if !destination.exists() {
-            copy_dir_recursive(&source, &destination).map_err(copy_error)?;
+            copy_attached_subtable(&source, &output_path, &destination)?;
         }
         *reference = strip_directory(&destination, &output_path);
     }
     Ok(())
+}
+
+fn copy_attached_subtable(
+    source: &Path,
+    output_root: &Path,
+    destination: &Path,
+) -> Result<(), MsTransformError> {
+    let io_error = |error| copy_error(output_root, error);
+    let source = source.canonicalize().map_err(io_error)?;
+    if output_root
+        .canonicalize()
+        .map_err(io_error)?
+        .starts_with(&source)
+    {
+        return Err(MsTransformError::PrepareOutput {
+            path: output_root.display().to_string(),
+            reason: format!("output is inside input subtable {}", source.display()),
+        });
+    }
+    let table_error = |error| MsTransformError::MutateMeasurementSet {
+        path: source.display().to_string(),
+        source: Box::new(error),
+    };
+    let options = TableOptions::new(&source);
+    #[cfg(unix)]
+    let table = Table::open_with_lock(
+        options,
+        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait).read_only(true),
+    )
+    .map_err(table_error)?;
+    #[cfg(not(unix))]
+    let table = Table::open(options).map_err(table_error)?;
+    if table.is_reference_table().map_err(table_error)? {
+        // A reference descriptor still names the input backing table. Write
+        // its selected rows to an independent output table.
+        table
+            .deep_copy(TableOptions::new(destination))
+            .map_err(table_error)
+    } else {
+        casa_tables::publication::copy_locked_table_tree(&source, destination).map_err(io_error)
+    }
+}
+
+fn copy_error(output_path: &Path, source: std::io::Error) -> MsTransformError {
+    MsTransformError::PrepareOutput {
+        path: output_path.display().to_string(),
+        reason: source.to_string(),
+    }
 }
 
 pub(super) fn attached_subtable_name(
