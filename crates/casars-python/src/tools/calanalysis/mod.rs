@@ -5,13 +5,14 @@ pub(crate) mod surface;
 
 use std::sync::{Mutex, PoisonError};
 
-use casa_calibration::{CalAnalysis, CalAnalysisIds::*};
+use casa_calibration::{CalAnalysis, CalAnalysisIds::*, CalAnalysisQuery};
 use numpy::PyArray1;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict};
 
-use crate::tools::{LogLine, emit, not_yet_implemented_in};
+use crate::convert::{Variant, reply_value::reply_value};
+use crate::tools::{LogLine, calibrater::selector, emit, not_yet_implemented_in};
 
 const LOGGER: &str = "casars.tools.calanalysis";
 
@@ -203,24 +204,53 @@ impl PyCalAnalysis {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (field = None, antenna = None, timerange = None, spw = None, feed = None, axis = "TIME", ap = "AMPLITUDE", norm = false, unwrap = false, jumpmax = 0.), text_signature = "($self, field=[], antenna=[], timerange=[], spw=[], feed=[], axis='TIME', ap='AMPLITUDE', norm=False, unwrap=False, jumpmax=0.0)")]
+    #[pyo3(signature = (field = Variant::Empty, antenna = Variant::Empty, timerange = Variant::Empty, spw = Variant::Empty, feed = Variant::Empty, axis = "TIME", ap = "AMPLITUDE", norm = false, unwrap = false, jumpmax = 0.), text_signature = "($self, field=[], antenna=[], timerange=[], spw=[], feed=[], axis='TIME', ap='AMPLITUDE', norm=False, unwrap=False, jumpmax=0.0)")]
     fn get(
         &self,
-        field: Option<&Bound<'_, PyAny>>,
-        antenna: Option<&Bound<'_, PyAny>>,
-        timerange: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        feed: Option<&Bound<'_, PyAny>>,
+        py: Python<'_>,
+        field: Variant,
+        antenna: Variant,
+        timerange: Variant,
+        spw: Variant,
+        feed: Variant,
         axis: &str,
         ap: &str,
         norm: bool,
         unwrap: bool,
         jumpmax: f64,
     ) -> PyResult<Py<PyAny>> {
-        let _ = (
-            field, antenna, timerange, spw, feed, axis, ap, norm, unwrap, jumpmax,
-        );
-        not_yet_implemented_in("calanalysis", "get", 1529)
+        let result = py.detach(|| {
+            let attachment = self
+                .attachment
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let table = attachment
+                .as_ref()
+                .ok_or_else(|| String::from("Open calibration analysis tool first"))?;
+            let field = selector(&field).unwrap_or_default();
+            let antenna = selector(&antenna).unwrap_or_default();
+            let spw = selector(&spw).unwrap_or_default();
+            let feed = selector(&feed).unwrap_or_default();
+            table.get(CalAnalysisQuery {
+                field: &field,
+                antenna: &antenna,
+                time_range: time_limits(&timerange)?,
+                spw: &spw,
+                feed: &feed,
+                axis,
+                amplitude_or_phase: ap,
+                normalize: norm,
+                unwrap,
+                jump_max: jumpmax,
+            })
+        });
+        match result {
+            Ok(result) => reply_value(py, &result),
+            Err(error) => {
+                emit(py, LOGGER, &[LogLine::warning(error)])?;
+                Ok(PyDict::new(py).into_any().unbind())
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -246,6 +276,19 @@ impl PyCalAnalysis {
             weight,
         );
         not_yet_implemented_in("calanalysis", "fit", 1529)
+    }
+}
+
+fn time_limits(value: &Variant) -> Result<Option<[f64; 2]>, String> {
+    let values = match value {
+        Variant::Empty => return Ok(None),
+        Variant::Text(value) if value.trim().is_empty() => return Ok(None),
+        Variant::Numbers(values) | Variant::Array { values, .. } => values,
+        _ => return Err("Invalid analysis time range".into()),
+    };
+    match values.as_slice() {
+        [start, stop] => Ok(Some([*start, *stop])),
+        _ => Err("Invalid analysis time range".into()),
     }
 }
 

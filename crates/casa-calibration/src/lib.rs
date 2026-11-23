@@ -122,7 +122,7 @@ pub use attachment::{
     AttachmentError, AttachmentMode, AttachmentOptions, CalibrationAttachment, ImagerAttachments,
     ImagerChannelSelection,
 };
-pub use calanalysis::{CalAnalysis, CalAnalysisIds};
+pub use calanalysis::{CalAnalysis, CalAnalysisIds, CalAnalysisQuery};
 pub use calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
 pub use cli::{ImagerSetJyRequest, imager_setjy};
 pub use listing::CalibrationListingReport;

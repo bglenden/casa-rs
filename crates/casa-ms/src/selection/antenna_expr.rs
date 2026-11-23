@@ -206,6 +206,49 @@ pub fn resolve_antenna_selector(
     resolve_antenna_expression(antennas, text, true)
 }
 
+/// Resolve the two antenna lists of an MSSelection expression. A consumer
+/// that selects calibration rows by antenna membership can use these lists
+/// independently of the visibility-baseline predicate.
+///
+/// # Errors
+/// The same antenna expression and lookup errors as [`resolve_antenna_selector`].
+pub fn resolve_antenna_lists(
+    antennas: &[AntennaRow<'_>],
+    text: &str,
+) -> MsResult<(Vec<i32>, Vec<i32>)> {
+    use std::collections::BTreeSet;
+
+    let mut first = BTreeSet::new();
+    let mut second = BTreeSet::new();
+    for clause in antenna_clauses(antennas, text, true)? {
+        let signed = |id: usize| {
+            if clause.negate {
+                -(id as i32)
+            } else {
+                id as i32
+            }
+        };
+        match clause.term {
+            Term::Cross(ids) | Term::AutoOnly(ids) => {
+                first.extend(ids.into_iter().map(signed));
+                second.extend((0..antennas.len()).map(signed));
+            }
+            Term::Pair {
+                first: left,
+                second: right,
+                ..
+            } => {
+                first.extend(left.into_iter().map(signed));
+                second.extend(right.into_iter().map(signed));
+            }
+            // Ordered predicates from baseline patterns and lengths do not
+            // publish named antenna indices in CASA's selection lists.
+            Term::Ordered(_) => (),
+        }
+    }
+    Ok((first.into_iter().collect(), second.into_iter().collect()))
+}
+
 fn resolve_antenna_expression(
     antennas: &[AntennaRow<'_>],
     text: &str,

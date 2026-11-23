@@ -45,7 +45,7 @@ const METHODS: &[Method] = &[
     method("field", NAMES, R::Texts, S::Implemented),
     method("fit", FIT, R::Record, S::NotYetImplemented),
     method("freq", &[], R::Record, S::Implemented),
-    method("get", &GET, R::Record, S::NotYetImplemented),
+    method("get", &GET, R::Record, S::Implemented),
     method("msname", &[], R::Text, S::Implemented),
     method("numantenna", &[], R::Int, S::Implemented),
     method("numantenna1", &[], R::Int, S::Implemented),

@@ -11,6 +11,9 @@ use crate::constants::{
     KEY_POL_BASIS, KEY_VIS_CAL,
 };
 
+mod query;
+pub use query::CalAnalysisQuery;
+
 /// A named axis of an attached calibration table.
 #[derive(Clone, Copy)]
 pub enum CalAnalysisIds {
