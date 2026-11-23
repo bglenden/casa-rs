@@ -5012,6 +5012,14 @@ wide. casa-rs follows this, measured with CASA 6.7.6.14 on
 for 20 ranges, in the unit test
 `compile::domains::tests::a_spectral_range_masks_the_channels_casa_masks`.
 
+## Explicit channel-zero range can terminate Python
+
+On a `[3, 4, 8]` image, CASA 6.7.6.14 can terminate with SIGSEGV
+when `image.collapse("mean", axes=2, chans="range=[0pix,0pix]")`
+reads the spectral bounds. `AnnotationBase::setFrequencyLimits` treats two
+numeric zeros as an absent range, while the caller indexes both bounds.
+Casa-rs selects channel zero for the explicitly unit-bearing range.
+
 ## A mask string of several lines is an empty mask in `tclean`
 
 - Date noted: 2026-11-03
@@ -9133,6 +9141,16 @@ The selected channel is degenerate, and the beam lookup assigns the
 polarization index to the channel dimension. casa-rs maps each result to
 its original channel and Stokes beam.
 
+## Image statistics can remove channels when selecting polarizations
+
+In CASA 6.7.6.14, call `statistics(axes=[0, 1], region=...)` on a
+`[3, 4, 8, 4]` direction, spectral and Stokes image. Select all eight
+channels and only Stokes I and V with `regionmanager.frombcs`. CASA returns
+arrays of shape `(6, 4)` because it removes channel planes 1 and 2 while
+leaving the excluded polarizations in the result. Casa-rs returns shape
+`(8, 2)` with the eight original channels and only I and V. It applies
+each region exclusion to the corresponding display axis.
+
 ## Setting the pixels of a complex image can terminate CASA
 
 On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
@@ -10601,10 +10619,6 @@ The selected slice uses its registered calibration scan even when the current vi
 
 CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones, B TSYS, gain curve, and legacy power curve. With all input flagged, the tool reports the expected intervals and does not produce a table. When four-correlation usable data reaches the fitting stage, the pinned legacy J/Jf and both B TSYS iterators terminate. The tested modern J/Jf, A Noise, F Jones and curve configurations return a solve error. Modern power curve returns a setup error. Casa-rs retains the available gather stage and uses a recoverable error for the unavailable fit. These limits concern solving. Existing table application and specification are separate operations. [Paired factory oracle](../tools/casa-compat/calibrater_gather_only_oracle.py)
 
-## Explicit channel-zero range can terminate Python
+## Direct KAntPos can abort when a solution combines multiple buffers
 
-On a `[3, 4, 8]` image, CASA 6.7.6.14 can terminate with SIGSEGV
-when `image.collapse("mean", axes=2, chans="range=[0pix,0pix]")`
-reads the spectral bounds. `AnnotationBase::setFrequencyLimits` treats two
-numeric zeros as an absent range, while the caller indexes both bounds.
-Casa-rs selects channel zero for the explicitly unit-bearing range.
+CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. Both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. Two overlapping windows with `combine='spw'` or two fields with `combine='field'` terminated in both iterators when the multi-buffer fitter assigned two terms to a three-term array. Casa-rs reports a recoverable error when this fit is reached. Windows separated into single-buffer scan or integration intervals produce tables. [Paired antenna-position oracle](../tools/casa-compat/calibrater_antenna_position_oracle.py)
