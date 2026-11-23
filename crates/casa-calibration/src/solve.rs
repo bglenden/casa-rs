@@ -346,6 +346,9 @@ pub struct GainSolveReport {
 /// Errors returned by the limited `gaincal` solver.
 #[derive(Debug, Error)]
 pub enum GainSolveError {
+    /// A real opacity solve reached the unavailable fitting stage.
+    #[error("The configured opacity type cannot solve a calibration table.")]
+    OpacityCannotFit,
     /// Shared calibration-table persistence failed.
     #[error(transparent)]
     CalibrationTable(#[from] crate::CalibrationTableWriteError),
@@ -558,7 +561,8 @@ pub(crate) fn solve_tf(
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<GainSolveReport, GainSolveError> {
-    let (solved, spectrum) = solve_gain_rows_with_settings(ms, request, activity, Some(settings))?;
+    let (solved, spectrum) =
+        solve_gain_rows_with_settings(ms, request, activity, Some(settings), false)?;
     let spectrum = spectrum.expect("Tf prepared its spectral grid");
     writer::write_tf_caltable(
         ms,
@@ -626,7 +630,16 @@ pub(crate) fn solve_gain_rows(
     if request.gain_type.is_delay() {
         return delay::solve(ms, request, activity);
     }
-    solve_gain_rows_with_settings(ms, request, activity, None).map(|(solved, _)| solved)
+    solve_gain_rows_with_settings(ms, request, activity, None, false).map(|(solved, _)| solved)
+}
+
+pub(crate) fn gather_opacity_solve(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    activity: &mut ToolSolveActivity,
+) -> Result<SolveStats, GainSolveError> {
+    solve_gain_rows_with_settings(ms, request, Some(activity), None, true)
+        .map(|(solved, _)| solved.solve_stats)
 }
 
 fn solve_gain_rows_with_settings(
@@ -634,6 +647,7 @@ fn solve_gain_rows_with_settings(
     request: &GainSolveRequest,
     activity: Option<&mut ToolSolveActivity>,
     tf: Option<TfSolveSettings>,
+    reject_opacity_fit: bool,
 ) -> Result<(SolvedGains, Option<TfSpectrum>), GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel, true)?;
@@ -728,6 +742,11 @@ fn solve_gain_rows_with_settings(
         &context.available_antennas,
     );
     for ((base_key, bucket_key), mut group) in groups {
+        if reject_opacity_fit && (group.attempted || group.gather_attempted()) {
+            // The pinned real opacity families cannot run the Jones fit.
+            // An unusable interval still contributes to the gather record.
+            return Err(GainSolveError::OpacityCannotFit);
+        }
         if (group.attempted || group.gather_attempted())
             && (multi_bin_windows.contains(&group.spw_id)
                 || (request.combine.spectral_windows && !multi_bin_windows.is_empty()))

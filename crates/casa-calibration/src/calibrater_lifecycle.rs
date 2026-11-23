@@ -1021,6 +1021,9 @@ impl CalibraterLifecycle {
     /// Returns an error if the current equation cannot be solved.
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
+        if matches!(equation.solve, Some(ConfiguredSolve::Opacity { .. })) {
+            return self.solve_opacity_tool();
+        }
         if matches!(equation.solve, Some(ConfiguredSolve::Polarization { .. })) {
             self.last_solve_stats = None;
             return match self.solve_polarization_tool() {
@@ -1056,6 +1059,43 @@ impl CalibraterLifecycle {
             self.last_activity = Some(record);
         }
         Ok(())
+    }
+
+    fn solve_opacity_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation()?;
+        let Some(ConfiguredSolve::Opacity { request, .. }) = &equation.solve else {
+            unreachable!("opacity dispatch requires a configured opacity solver");
+        };
+        let mut request = (**request).clone();
+        request.selection = equation.attachment.selection().clone();
+        request.prior_calibration_tables = equation.apply.tables.clone();
+        request.parang = equation.apply.parang_terms > 0;
+        request.correlation_dependent_flags = self.correlation_dependent_flags.unwrap_or_default();
+        if let CalibraterModel::Point(stokes) = equation.model {
+            request.model_source = GainSolveModelSource::PointSource;
+            request.smodel = stokes;
+        }
+        let mut activity = crate::solve_stats::ToolSolveActivity::default();
+        let gathered = (|| {
+            equation.check_opacity_parameters()?;
+            let ms =
+                MeasurementSet::open(equation.attachment.path()).map_err(AttachmentError::from)?;
+            crate::solve::gather_opacity_solve(&ms, &request, &mut activity)
+                .map_err(|_| CalibraterLifecycleError::OpacityCannotSolve)
+        })();
+        match gathered {
+            Ok(stats) => {
+                if !self.legacy_iterator {
+                    self.last_solve_stats = Some(crate::casa_return::solvestats(&stats));
+                }
+                self.last_activity = activity.record();
+                Ok(())
+            }
+            Err(error) => {
+                self.reset(true, true)?;
+                Err(error)
+            }
+        }
     }
 
     fn equation(&self) -> Result<&VisibilityEquation, CalibraterLifecycleError> {
