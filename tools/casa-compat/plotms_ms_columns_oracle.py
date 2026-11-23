@@ -72,6 +72,8 @@ def compare_figure(root, native, controls, expected, labels):
     assert (title, xlabel, ylabel) == labels, (title, xlabel, ylabel)
     coordinates = np.array([point[:2] for point in rows(expected)], dtype=float)
     np.testing.assert_allclose(points, coordinates, rtol=1.2e-5, atol=1e-7)
+    if controls["xaxis"] == "time":
+        np.testing.assert_allclose(points[:, 0], coordinates[:, 0], rtol=0, atol=0.00051)
     visible = points[np.isfinite(points).all(axis=1)]
     for values, limits in zip(visible.T, (xlim, ylim), strict=True):
         assert min(limits) <= min(values) <= max(values) <= max(limits), (values, limits)
@@ -110,6 +112,11 @@ def compare(root, vis, native):
     base = request(vis)
     cases = {
         "data-and-corrected": {},
+        "ordinary-amp-phase": {"ydatacolumn": ""},
+        "ordinary-channel-amp": {"xaxis": "channel", "yaxis": "amp",
+                                 "xdatacolumn": "", "ydatacolumn": ""},
+        "ordinary-time-amp": {"xaxis": "time", "yaxis": "amp",
+                              "xdatacolumn": "", "ydatacolumn": ""},
         "model-and-default": {"xdatacolumn": "model", "ydatacolumn": ""},
         "default-and-corrected": {"xdatacolumn": ""},
         "same-axis-distinct-columns": {"xaxis": "real", "yaxis": "real", "xdatacolumn": "model"},
@@ -153,6 +160,12 @@ def compare(root, vis, native):
               flush=True)
     compare_figure(root, native, base, root / "data-and-corrected.casa.txt",
                    ("Phase:corrected vs. Amp", "Amp", "Phase:corrected (degrees)"))
+    compare_figure(root, native, base | cases["ordinary-amp-phase"], root / "ordinary-amp-phase.casa.txt",
+                   ("Phase vs. Amp", "Amp", "Phase (degrees)"))
+    compare_figure(root, native, base | cases["ordinary-channel-amp"], root / "ordinary-channel-amp.casa.txt",
+                   ("Amp vs. Channel", "Channel", "Amp"))
+    compare_figure(root, native, base | cases["ordinary-time-amp"], root / "ordinary-time-amp.casa.txt",
+                   ("Amp vs. Time", "Time (MJD seconds)", "Amp"))
     real = base | cases["same-axis-distinct-columns"] | dict(xlabel="Model real part")
     compare_figure(root, native, real, root / "same-axis-distinct-columns.casa.txt",
                    ("Real:corrected vs. Real:model", "Model real part", "Real:corrected"))
