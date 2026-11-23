@@ -26,8 +26,11 @@ use super::region_read::{read_region_argument, read_region_section};
 use super::subimage::Region;
 
 mod flux;
+mod region_planes;
 mod report;
 mod sampled;
+
+use self::region_planes::RegionPlanes;
 
 const BASIC: [(&str, Statistic); 8] = [
     ("npts", Statistic::Npts),
@@ -475,6 +478,7 @@ impl PyImageTool {
                 }
                 let axes = collapse_axes(&axes, shape.len())?;
                 let (chunk, membership) = read_region_section(&image, region.as_ref().map(Region::as_region), true)?;
+                let planes = membership.as_ref().and_then(|mask| RegionPlanes::from_membership(mask, &axes));
                 let expression = if mask.is_empty() {
                     None
                 } else {
@@ -518,10 +522,10 @@ impl PyImageTool {
                     }
                     _ => unreachable!("complex statistics were rejected"),
                 };
-                Ok::<_, PyErr>((value?, chunk, axes, units))
+                Ok::<_, PyErr>((value?, chunk, axes, units, planes))
             })();
             let released = image.release_requested_lock();
-            let ((value, iterations), chunk, axes, units) = result?;
+            let ((mut value, iterations), chunk, axes, units, planes) = result?;
             released?;
             let mut log = Vec::new();
             if verbose {
@@ -543,6 +547,9 @@ impl PyImageTool {
                     algorithm,
                 }
                 .publish(logfile, append, list, verbose, &mut log);
+            }
+            if let Some(planes) = planes {
+                planes.compact(&mut value);
             }
             if robust && matches!(algorithm, StatisticsAlgorithm::Biweight { .. }) {
                 log.push(LogLine::warning(

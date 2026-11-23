@@ -9133,6 +9133,16 @@ The selected channel is degenerate, and the beam lookup assigns the
 polarization index to the channel dimension. casa-rs maps each result to
 its original channel and Stokes beam.
 
+## Image statistics can remove channels when selecting polarizations
+
+In CASA 6.7.6.14, call `statistics(axes=[0, 1], region=...)` on a
+`[3, 4, 8, 4]` direction, spectral and Stokes image. Select all eight
+channels and only Stokes I and V with `regionmanager.frombcs`. CASA returns
+arrays of shape `(6, 4)` because it removes channel planes 1 and 2 while
+leaving the excluded polarizations in the result. Casa-rs returns shape
+`(8, 2)` with the eight original channels and only I and V. It applies
+each region exclusion to the corresponding display axis.
+
 ## Setting the pixels of a complex image can terminate CASA
 
 On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
