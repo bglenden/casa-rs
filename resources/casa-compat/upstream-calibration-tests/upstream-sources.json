@@ -31,6 +31,11 @@
       "sha256": "7aab2215d9fdd44a7d9ae053e6837abb1e1db7156d8ba48381031a56da4d9b69",
       "size": 40165
     },
+    "test_task_ft.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_ft.py",
+      "sha256": "975972380cb5098f3b1c0a008c84c08554a8ae5233b81c334a71a9fcf3e3bb66",
+      "size": 14792
+    },
     "test_task_getantposalma.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_getantposalma.py",
       "sha256": "2a7a6c77e008aab411351e8a49eac96d93205c36d2f4da7a1f9a304719953177",
@@ -40,6 +45,11 @@
       "upstream_path": "casatasks/tests/tasks/test_task_getcalmodvla.py",
       "sha256": "2d5df1c9dbed40cc52825b8f7aac33ddeff2e0eddacfe0decebff2bdbb2eebca",
       "size": 9068
+    },
+    "test_task_polfromgain.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_polfromgain.py",
+      "sha256": "b67b9a25f52a7d0143699943d49c985b25940c4828e96b8717647c73733130fa",
+      "size": 5328
     },
     "test_tool_calanalysis.py": {
       "upstream_path": "casatools/tests/tools/calanalysis/test_tool_calanalysis.py",
