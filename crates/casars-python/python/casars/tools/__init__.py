@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from .._core import (
     agentflagger,
+    calanalysis,
     calibrater,
     imager,
     componentlist,
@@ -36,6 +37,7 @@ from .._core import (
 
 __all__ = [
     "agentflagger",
+    "calanalysis",
     "calibrater",
     "imager",
     "componentlist",

@@ -27,10 +27,15 @@ from _casa_tools import (
 
 #: Each tool, and the issue its refused methods name.
 ISSUES = {"image": 1027, "coordsys": 1027, "table": 1028, "msmetadata": 1029, "ms": 1030,
-          "calibrater": 1528, "agentflagger": 1527, "wvr": 1531, "singledishms": 1532}
+          "calibrater": 1528, "calanalysis": 1529, "agentflagger": 1527, "wvr": 1531, "singledishms": 1532}
 
 #: The methods each tool implements.
 IMPLEMENTED: dict[str, set[str]] = {tool: set() for tool in ISSUES}
+IMPLEMENTED["calanalysis"] = {
+    "antenna", "antenna1", "antenna2", "calname", "close", "feed", "field", "freq",
+    "msname", "numantenna", "numantenna1", "numantenna2", "numchannel", "numfeed",
+    "numfield", "numspw", "numtime", "open", "partype", "polbasis", "spw", "time", "viscal",
+}
 IMPLEMENTED["wvr"] = {"gcal"}
 IMPLEMENTED["singledishms"] = {
     "importasap", "importnro", "atmcor", "fit_line",
