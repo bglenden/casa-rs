@@ -136,8 +136,9 @@ fn read_contents(path: &Path) -> Result<String, CallibError> {
 fn parse_entries(
     source_name: &str,
     contents: &str,
+    allow_empty_maps: bool,
 ) -> Result<(Vec<parser::Entry>, bool), CallibError> {
-    parser::parse(contents)
+    parser::parse(contents, allow_empty_maps)
         .map_err(|(line_number, reason)| line_error(source_name, contents, line_number, reason))
 }
 
@@ -163,7 +164,7 @@ pub(crate) fn parse_apply_specs(
     source_name: &str,
     contents: &str,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
-    let specs = collect_apply_specs(source_name, contents)?;
+    let specs = collect_apply_specs(source_name, contents, false)?;
     if specs.is_empty() {
         return Err(CallibError::ParseLine {
             path: source_name.to_owned(),
@@ -179,13 +180,15 @@ pub(crate) fn load_transform_apply_specs(
     path: &Path,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
     let contents = read_contents(path)?;
-    // mstransform leaves calibration inactive for an empty callibrary.
-    collect_apply_specs(&path.display().to_string(), &contents)
+    // mstransform accepts empty mapping arrays and leaves calibration inactive
+    // for an empty callibrary.
+    collect_apply_specs(&path.display().to_string(), &contents, true)
 }
 
 fn collect_apply_specs(
     source_name: &str,
     contents: &str,
+    allow_empty_maps: bool,
 ) -> Result<Vec<ApplyCalibrationTableSpec>, CallibError> {
     // CASA resolves relative table names against the process working
     // directory for both text and file callibraries.
@@ -196,7 +199,7 @@ fn collect_apply_specs(
     let mut specs = Vec::new();
     let mut calwt_by_table = BTreeMap::<String, bool>::new();
 
-    let (entries, _) = parse_entries(source_name, contents)?;
+    let (entries, _) = parse_entries(source_name, contents, allow_empty_maps)?;
     for entry in entries {
         let mut spec = parse_callib_entry(entry.values, &base_dir)
             .map_err(|reason| line_error(source_name, contents, entry.line, reason))?;

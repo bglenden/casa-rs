@@ -23,7 +23,7 @@ pub fn load_callibrary_record(path: impl AsRef<Path>) -> Result<RecordValue, Cal
     let path = path.as_ref();
     let contents = read_contents(path)?;
     let path = path.display().to_string();
-    let (entries, has_statement) = parse_entries(&path, &contents)?;
+    let (entries, has_statement) = parse_entries(&path, &contents, false)?;
     if !has_statement {
         return Err(line_error(
             &path,

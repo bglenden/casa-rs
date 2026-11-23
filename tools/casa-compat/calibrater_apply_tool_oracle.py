@@ -69,6 +69,8 @@ def parse_libraries(work, tools):
         'raw-fields': "caltable='A.cal' spwmap='self' tinterp='bad' unknown='ignored'\n",
         'missing-assignment': "caltable 'A.cal'\n",
         'array-prefix': "caltable='A.cal' spwmap=[1,two]\n",
+        'quoted-empty-map': "caltable='A.cal' antmap='[]' spwmap='[]'\n",
+        'syntax-before-empty-map': "caltable 'A.cal'\ncaltable='B.cal' spwmap=[]\n",
     }
     for name, text in cases.items():
         path.write_text(text)
@@ -79,6 +81,14 @@ def parse_libraries(work, tools):
             assert tuple(value) == ('A.cal', 'Z.cal')
             assert tuple(value['Z.cal'])[:4] == ('0', '1', '10', '11')
             assert value['Z.cal']['calwt'] is False
+    for mapping in ('antmap=[]', 'fldmap=[]', 'obsmap=[]', 'scanmap=[]',
+                    'spwmap=[]', 'spwmap=[ ]'):
+        path.write_text(f"caltable='A.cal' {mapping}\n")
+        assert compare_calls(tools, 'parsecallibfile', str(path)) == (
+            False, ('RuntimeError', 'Cal Library file: Parse error on line 1: syntax error')
+        )
+        print('library', mapping, 'rejected', flush=True)
+    path.write_text(cases['array-prefix'])
     for path_arg in (bytes(path), str(path) + '\0ignored'):
         assert compare_calls(tools, 'parsecallibfile', path_arg)[0]
     for path_arg in ('', str(work/'does-not-exist.callib'), None, 123, path):

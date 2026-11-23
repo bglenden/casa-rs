@@ -20,7 +20,10 @@ const PARAMETERS: &[&str] = &[
     "obsmap", "scanmap", "spwmap",
 ];
 
-pub(super) fn parse(contents: &str) -> Result<(Vec<Entry>, bool), (usize, String)> {
+pub(super) fn parse(
+    contents: &str,
+    allow_empty_maps: bool,
+) -> Result<(Vec<Entry>, bool), (usize, String)> {
     let tokens = lex(contents)?;
     let mut entries = Vec::new();
     let mut has_statement = false;
@@ -48,10 +51,13 @@ pub(super) fn parse(contents: &str) -> Result<(Vec<Entry>, bool), (usize, String
         if !matches!(tokens.get(index + 1), Some((_, Token::Equals))) {
             return Err((*line, "expected '=' after parameter name".into()));
         }
-        let Some((_, value)) = tokens.get(index + 2) else {
+        let Some((value_line, value)) = tokens.get(index + 2) else {
             return Err((*line, "missing parameter value".into()));
         };
         match value {
+            Token::Array(ids) if ids.is_empty() && !allow_empty_maps => {
+                return Err((*value_line, "empty mapping array".into()));
+            }
             Token::String(value) if key == "caltable" || PARAMETERS.contains(&key.as_str()) => {
                 // addStringParam changes embedded single quotes to double quotes.
                 values.insert(
