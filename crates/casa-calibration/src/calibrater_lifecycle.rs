@@ -11,7 +11,7 @@ use casa_tables::RequiredScalarColumnValues;
 use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
-use crate::bandpass::BandpassSolveControls;
+use crate::bandpass::{BandpassFrequencyInterval, BandpassSolveControls};
 use crate::execute::{ApplyTermCounts, LibraryApplyRegistration};
 use crate::listing::{CalibrationListingReport, list_calibration, publish_listing};
 
@@ -95,6 +95,7 @@ enum ConfiguredSolve {
         subtype: &'static str,
         channelized: bool,
         parameters: usize,
+        frequency: Option<BandpassFrequencyInterval>,
     },
     Polarization {
         request: Box<crate::solve::grouping::leakage::LeakageSolveRequest>,
@@ -968,14 +969,19 @@ impl CalibraterLifecycle {
         mode: CalibrationOutputMode,
         channelized: bool,
     ) -> Result<(), CalibraterLifecycleError> {
-        self.set_tool_gather_only_solve(if channelized { "TfOpac" } else { "TOpac" }, request, mode)
+        self.set_tool_gather_only_solve(
+            if channelized { "TfOpac" } else { "TOpac" },
+            request,
+            mode,
+            None,
+        )
     }
 
     /// Resolve the canonical CASA factory name for a gather-only solve.
     #[must_use]
-    pub fn gather_only_solve_type(name: &str) -> Option<&'static str> {
+    pub fn gather_only_solve_type(name: &str) -> Option<(&'static str, bool)> {
         let subtype = traditional_apply::calibration_factory_type(name)?;
-        gather_only_shape(subtype).map(|_| subtype)
+        gather_only_shape(subtype).map(|(channelized, _)| (subtype, channelized))
     }
 
     /// Configure the gather stage of a direct calibration family whose
@@ -987,6 +993,7 @@ impl CalibraterLifecycle {
         subtype: &'static str,
         mut request: crate::GainSolveRequest,
         mode: CalibrationOutputMode,
+        frequency: Option<BandpassFrequencyInterval>,
     ) -> Result<(), CalibraterLifecycleError> {
         let (channelized, parameters) = gather_only_shape(subtype)
             .ok_or(CalibraterLifecycleError::GatherOnlyCannotSolve(subtype))?;
@@ -1001,6 +1008,7 @@ impl CalibraterLifecycle {
             subtype,
             channelized,
             parameters,
+            frequency,
         });
         equation.solve_description = None;
         Ok(())
@@ -1226,9 +1234,11 @@ impl CalibraterLifecycle {
         let equation = self.equation()?;
         let Some(ConfiguredSolve::GatherOnly {
             request,
+            mode,
             subtype,
             parameters,
-            ..
+            channelized,
+            frequency,
         }) = &equation.solve
         else {
             unreachable!("gather-only dispatch requires a configured solver");
@@ -1247,8 +1257,18 @@ impl CalibraterLifecycle {
             equation.check_opacity_parameters()?;
             let ms =
                 MeasurementSet::open(equation.attachment.path()).map_err(AttachmentError::from)?;
-            crate::solve::gather_only_tool_solve(&ms, &request, &mut activity, *parameters)
-                .map_err(|_| gather_only_failure(subtype))
+            crate::solve::gather_only_tool_solve(
+                &ms,
+                &request,
+                &mut activity,
+                crate::solve::GatherOnlySolveSettings {
+                    parameters: *parameters,
+                    check_append: !self.legacy_iterator && *mode == CalibrationOutputMode::Append,
+                    channelized: *channelized,
+                    frequency: *frequency,
+                },
+            )
+            .map_err(|_| gather_only_failure(subtype))
         })();
         match gathered {
             Ok(stats) => {

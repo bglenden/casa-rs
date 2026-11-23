@@ -637,13 +637,20 @@ pub(crate) fn solve_gain_rows(
     solve_gain_rows_with_settings(ms, request, activity, None, None).map(|(solved, _)| solved)
 }
 
+pub(crate) struct GatherOnlySolveSettings {
+    pub(crate) parameters: usize,
+    pub(crate) check_append: bool,
+    pub(crate) channelized: bool,
+    pub(crate) frequency: Option<crate::BandpassFrequencyInterval>,
+}
+
 pub(crate) fn gather_only_tool_solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     activity: &mut ToolSolveActivity,
-    parameters: usize,
+    settings: GatherOnlySolveSettings,
 ) -> Result<SolveStats, GainSolveError> {
-    solve_gain_rows_with_settings(ms, request, Some(activity), None, Some(parameters))
+    solve_gain_rows_with_settings(ms, request, Some(activity), None, Some(settings))
         .map(|(solved, _)| solved.solve_stats)
 }
 
@@ -652,7 +659,7 @@ fn solve_gain_rows_with_settings(
     request: &GainSolveRequest,
     activity: Option<&mut ToolSolveActivity>,
     tf: Option<TfSolveSettings>,
-    gather_only_parameters: Option<usize>,
+    gather_only: Option<GatherOnlySolveSettings>,
 ) -> Result<(SolvedGains, Option<TfSpectrum>), GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel, true)?;
@@ -701,7 +708,20 @@ fn solve_gain_rows_with_settings(
         .map(|widths| tf_multi_bin_windows(ms, &context.rows, widths))
         .transpose()?
         .unwrap_or_default();
-    let input_rows = if gather_only_parameters.is_some() {
+    if let Some(settings) = &gather_only
+        && settings.check_append
+    {
+        crate::bandpass::check_gather_append(
+            ms,
+            &request.output_table,
+            &context.rows,
+            settings.channelized,
+            settings.frequency,
+            request.combine.spectral_windows,
+        )
+        .map_err(|error| GainSolveError::FrequencyScalar(error.to_string()))?;
+    }
+    let input_rows = if gather_only.is_some() {
         grouping::SolveInputRows::GatherOnlyTool
     } else {
         grouping::SolveInputRows::gain(
@@ -748,7 +768,10 @@ fn solve_gain_rows_with_settings(
     let mut solution_rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
     let mut solve_stats = SolveStatsBuilder::new(
-        gather_only_parameters.unwrap_or_else(|| request.gain_type.polarizations()),
+        gather_only.map_or_else(
+            || request.gain_type.polarizations(),
+            |settings| settings.parameters,
+        ),
         spectral_window_ids(ms)?,
         &context.available_antennas,
     );

@@ -73,33 +73,9 @@ pub(crate) fn write(
         )
     };
     let aggregate = if combine_windows && selections.len() > 1 {
-        let mut selected = selections.keys().copied();
-        let reference = selected.next().expect("nonempty windows");
-        let mut combined = grid(&table, reference)?;
-        let frequency_offset = combined.frequencies[0];
-        let width_scale = combined.widths[0];
-        for index in 0..combined.frequencies.len() {
-            let width = combined.widths[index] / width_scale;
-            combined.frequencies[index] = (combined.frequencies[index] - frequency_offset) * width;
-            combined.effective_bandwidths[index] = width;
-            combined.widths[index] = width * width;
-        }
-        for spw in selected {
-            combined.accumulate(&grid(&table, spw)?, frequency_offset, width_scale)?;
-        }
-        for index in 0..combined.frequencies.len() {
-            let bandwidth = combined.effective_bandwidths[index];
-            if !bandwidth.is_finite() || bandwidth <= 0.0 {
-                return Err(metadata_error(
-                    "Cannot combine windows with invalid channel widths",
-                ));
-            }
-            combined.frequencies[index] =
-                combined.frequencies[index] / bandwidth + frequency_offset;
-            combined.widths[index] = combined.widths[index] / bandwidth * width_scale;
-            combined.effective_bandwidths[index] *= width_scale;
-        }
-        Some((reference, combined))
+        Some(combine_grids(selections.keys().copied(), |spw| {
+            grid(&table, spw)
+        })?)
     } else {
         None
     };
@@ -119,6 +95,105 @@ pub(crate) fn write(
         }
     }
     table.save(TableOptions::new(path)).map_err(metadata_error)
+}
+
+/// Check the frequency grid CASA would use before attempting a direct append.
+pub(crate) fn check_gather_append(
+    ms: &MeasurementSet,
+    path: &Path,
+    rows: &[SelectedSolveRow],
+    channelized: bool,
+    interval: Option<BandpassFrequencyInterval>,
+    combine_windows: bool,
+) -> Result<(), BandpassSolveError> {
+    let existing =
+        Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW"))).map_err(metadata_error)?;
+    let source = ms
+        .subtable(casa_ms::schema::SubtableId::SpectralWindow)
+        .ok_or_else(|| metadata_error("missing MeasurementSet SPECTRAL_WINDOW"))?;
+    let selections = rows
+        .iter()
+        .map(|row| (row.data_spw_id, row.channel_selection.as_ref()))
+        .collect::<BTreeMap<_, _>>();
+    let widths = bin_widths(ms, rows, interval)?;
+    let grid = |spw| {
+        select_grid(
+            source,
+            spw as usize,
+            selections[&spw],
+            if channelized {
+                widths.get(&spw).copied().unwrap_or(1)
+            } else {
+                usize::MAX
+            },
+        )
+    };
+    let compare = |spw: i32, grid: ChannelGrid| -> Result<(), BandpassSolveError> {
+        let row = spw as usize;
+        let scalar = |column| {
+            existing
+                .cell_accessor(row, column)
+                .and_then(|cell| cell.scalar())
+                .map_err(metadata_error)
+        };
+        if matches!(scalar("FLAG_ROW")?, ScalarValue::Bool(true)) {
+            return Ok(());
+        }
+        let count = scalar("NUM_CHAN")?;
+        let frequencies = existing
+            .cell_accessor(row, "CHAN_FREQ")
+            .and_then(|cell| cell.array())
+            .map_err(metadata_error)?;
+        let matches_grid = matches!(count, ScalarValue::Int32(n) if *n as usize == grid.frequencies.len())
+            && matches!(frequencies, ArrayValue::Float64(values) if values.iter().copied().eq(grid.frequencies));
+        if matches_grid {
+            Ok(())
+        } else {
+            Err(metadata_error(format!(
+                "frequency metadata differs for appended SPW {spw}"
+            )))
+        }
+    };
+    if combine_windows && selections.len() > 1 {
+        let (spw, combined) = combine_grids(selections.keys().copied(), grid)?;
+        compare(spw, combined)
+    } else {
+        for spw in selections.keys().copied() {
+            compare(spw, grid(spw)?)?;
+        }
+        Ok(())
+    }
+}
+
+fn combine_grids(
+    mut selected: impl Iterator<Item = i32>,
+    grid: impl Fn(i32) -> Result<ChannelGrid, BandpassSolveError>,
+) -> Result<(i32, ChannelGrid), BandpassSolveError> {
+    let reference = selected.next().expect("nonempty windows");
+    let mut combined = grid(reference)?;
+    let frequency_offset = combined.frequencies[0];
+    let width_scale = combined.widths[0];
+    for index in 0..combined.frequencies.len() {
+        let width = combined.widths[index] / width_scale;
+        combined.frequencies[index] = (combined.frequencies[index] - frequency_offset) * width;
+        combined.effective_bandwidths[index] = width;
+        combined.widths[index] = width * width;
+    }
+    for spw in selected {
+        combined.accumulate(&grid(spw)?, frequency_offset, width_scale)?;
+    }
+    for index in 0..combined.frequencies.len() {
+        let bandwidth = combined.effective_bandwidths[index];
+        if !bandwidth.is_finite() || bandwidth <= 0.0 {
+            return Err(metadata_error(
+                "Cannot combine windows with invalid channel widths",
+            ));
+        }
+        combined.frequencies[index] = combined.frequencies[index] / bandwidth + frequency_offset;
+        combined.widths[index] = combined.widths[index] / bandwidth * width_scale;
+        combined.effective_bandwidths[index] *= width_scale;
+    }
+    Ok((reference, combined))
 }
 
 struct ChannelGrid {
