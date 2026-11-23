@@ -391,6 +391,63 @@ def compare_ordinate_columns(root, vis, native):
                 assert image.size == (500, 360), (output, image.size)
 
 
+def compare_float_columns(root, vis, source, native):
+    float_only = root / "float-only.ms"
+    mixed = root / "float-and-complex.ms"
+    floating = source["DATA"].real.astype(np.float32) - 6
+    for destination in (float_only, mixed):
+        copy_ms(vis, destination)
+        with opened(destination, True) as table:
+            desc = table.getcoldesc("DATA")
+            desc.update(name="FLOAT_DATA", valueType="float",
+                        dataManagerType="StandardStMan", dataManagerGroup="FloatVis")
+            table.addcols({"FLOAT_DATA": desc})
+            table.putcol("FLOAT_DATA", floating)
+            if destination == float_only:
+                table.removecols(["DATA", "CORRECTED_DATA", "MODEL_DATA"])
+
+    cases = (
+        ("float-explicit", float_only, {}, (1, -4)),
+        ("float-default", float_only, {"ydatacolumn": ""}, (1, -4)),
+        ("float-corrected-fallback", float_only, {"ydatacolumn": "corrected"}, (1, -4)),
+        ("float-x", float_only, dict(xaxis="amp", yaxis="channel",
+                                     xdatacolumn="float", ydatacolumn=""), (-4, 1)),
+        ("float-mixed-explicit", mixed, {}, (1, -4)),
+        ("float-mixed-observed", mixed, {"ydatacolumn": "data"}, (1, -4)),
+        ("float-mixed-with-corrected", mixed,
+         dict(xaxis="amp", xdatacolumn="float", ydatacolumn="corrected"), (-4, 4.47214)),
+        ("float-mixed-default-with-corrected", mixed,
+         dict(xaxis="amp", xdatacolumn="", ydatacolumn="corrected"), (-4, 4.47214)),
+        ("float-mixed-data-phase", mixed, dict(yaxis="phase", ydatacolumn="data"), (1, 180)),
+        ("float-mixed-vector-residual", mixed,
+         dict(xaxis="amp", xdatacolumn="data-model_vector"), (12.8062, -4)),
+    )
+    for name, destination, overrides, first in cases:
+        controls = request(destination) | dict(xaxis="channel", yaxis="amp",
+                                                xdatacolumn="", ydatacolumn="float") | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        np.testing.assert_allclose(np.array(rows(expected)[0][:2], dtype=float), first, rtol=1.2e-5, atol=1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: 12 matching points", flush=True)
+
+    for name, column in (("float-explicit", "float"), ("float-default", "")):
+        controls = request(float_only) | dict(xaxis="channel", yaxis="amp",
+                                               xdatacolumn="", ydatacolumn=column)
+        compare_figure(root, native, controls, root / f"{name}.casa.txt",
+                       ("Amp:float vs. Channel", "Channel", "Amp:float"))
+
+    for destination in (float_only, mixed):
+        with opened(destination) as table:
+            np.testing.assert_array_equal(table.getcol("FLOAT_DATA"), floating)
+            if destination == float_only:
+                assert {"DATA", "CORRECTED_DATA", "MODEL_DATA"}.isdisjoint(table.colnames())
+            for name, expected in source.items():
+                if name in table.colnames():
+                    np.testing.assert_array_equal(table.getcol(name), expected, err_msg=name)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -415,6 +472,7 @@ def main():
         compare_zero_model(root, vis, source, native)
         compare_ratio_float_range(root, vis, source, native)
         compare_ordinate_columns(root, vis, native)
+        compare_float_columns(root, vis, source, native)
 
 
 if __name__ == "__main__":
