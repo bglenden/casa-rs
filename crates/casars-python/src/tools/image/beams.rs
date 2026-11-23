@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::HashMap;
+
 use casa_coordinates::{CoordinateSystem, CoordinateType};
-use casa_images::{GaussianBeam, ImageBeamSet, ImageError, ImageInfo, StoredGaussianBeam};
+use casa_images::{
+    BeamComponent, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, StoredGaussianBeam,
+};
 use casa_types::quanta::{Unit, casacore};
 use casa_types::{RecordValue, Value};
 use pyo3::prelude::*;
@@ -80,11 +84,10 @@ pub(super) fn subset_beam_record(
     Ok(())
 }
 
-fn beam_matrix(
+fn beam_matrix_planes(
     beams: &ImageBeamSet,
     stokes_first: bool,
-    value: impl Fn(&GaussianBeam) -> Result<f64, ImageError>,
-) -> PyResult<CasaValue> {
+) -> ([usize; 2], impl Iterator<Item = (usize, usize)>) {
     let channels = beams.n_channels();
     let stokes = beams.n_stokes();
     let (rows, columns) = if stokes_first {
@@ -92,25 +95,103 @@ fn beam_matrix(
     } else {
         (channels, stokes)
     };
-    let mut values = Vec::with_capacity(rows * columns);
-    for column in 0..columns {
-        for row in 0..rows {
-            let (channel, polarization) = if stokes_first {
+    let planes = (0..columns).flat_map(move |column| {
+        (0..rows).map(move |row| {
+            if stokes_first {
                 (column, row)
             } else {
                 (row, column)
-            };
-            values.push(value(beams.beam(channel, polarization)).map_err(raised)?);
-        }
+            }
+        })
+    });
+    ([rows, columns], planes)
+}
+
+fn beam_matrix(
+    beams: &ImageBeamSet,
+    stokes_first: bool,
+    value: impl Fn(&GaussianBeam) -> Result<f64, ImageError>,
+) -> PyResult<CasaValue> {
+    let (shape, planes) = beam_matrix_planes(beams, stokes_first);
+    let mut values = Vec::with_capacity(beams.nelements());
+    for (channel, polarization) in planes {
+        values.push(value(beams.beam(channel, polarization)).map_err(raised)?);
     }
     Ok(CasaValue::Floats {
-        shape: vec![rows, columns],
+        shape: shape.to_vec(),
         values,
     })
 }
 
+fn beam_parameter_matrices(
+    coordinates: &CoordinateSystem,
+    info: &RecordValue,
+    beams: &ImageBeamSet,
+) -> PyResult<Vec<(&'static str, CasaValue)>> {
+    let pixel_axis = |kind| {
+        coordinates
+            .find_coordinate(kind)
+            .and_then(|index| coordinates.coordinate_pixel_axes(index))
+            .and_then(|axes| axes.into_iter().flatten().next())
+    };
+    let stokes_first = pixel_axis(CoordinateType::Stokes).is_some_and(|stokes| {
+        pixel_axis(CoordinateType::Spectral)
+            .is_none_or(|spectral| spectral == 0 || spectral >= stokes)
+    });
+    let (shape, planes) = beam_matrix_planes(beams, stokes_first);
+    let grid = subrecord(info, "perplanebeams").ok_or_else(|| raised("Missing per-plane beams"))?;
+    let mut stored_grid = HashMap::with_capacity(beams.nelements());
+    for field in grid.fields() {
+        stored_grid
+            .entry(field.name.as_str())
+            .or_insert(&field.value);
+    }
+    let parameters = [
+        ("major", BeamComponent::Major, "arcsec"),
+        ("minor", BeamComponent::Minor, "arcsec"),
+        ("pa", BeamComponent::PositionAngle, "deg"),
+    ];
+    let units = parameters.map(|(_, _, unit)| Unit::new(unit).expect("built-in angular unit"));
+    let mut arrays: [Vec<f64>; 3] = std::array::from_fn(|_| Vec::with_capacity(beams.nelements()));
+    for (channel, polarization) in planes {
+        if beams.beam(channel, polarization).is_null() {
+            return Err(raised("Invalid per plane beam found"));
+        }
+        let linear_index = polarization * beams.n_channels() + channel;
+        let lookup = |name: &str| match stored_grid.get(name) {
+            Some(Value::Record(record)) => Some(record),
+            _ => None,
+        };
+        let stored = lookup(&format!("*{linear_index}"))
+            .or_else(|| lookup(&format!("*{channel}_{polarization}")))
+            .ok_or_else(|| raised("Missing per-plane beam"))?;
+        let beam = StoredGaussianBeam::from_record(stored).map_err(raised)?;
+        for (index, (_, component, _)) in parameters.iter().enumerate() {
+            arrays[index].push(
+                casacore::get_conformant_value(beam.component(*component), &units[index])
+                    .map_err(raised)?,
+            );
+        }
+    }
+    Ok(parameters
+        .into_iter()
+        .zip(arrays)
+        .map(|((name, _, unit), values)| {
+            let array = CasaValue::Floats {
+                shape: shape.to_vec(),
+                values,
+            };
+            (
+                name,
+                CasaValue::record([("unit", CasaValue::Text(unit.into())), ("value", array)]),
+            )
+        })
+        .collect())
+}
+
 pub(super) fn restoring_beam(
     view: &super::beam_view::BeamView,
+    coordinates: &CoordinateSystem,
     channel: i64,
     polarization: i64,
     mode: &str,
@@ -180,26 +261,7 @@ pub(super) fn restoring_beam(
         ("nStokes", CasaValue::Int(stokes)),
     ];
     if matrix {
-        for (field, unit, value) in [
-            (
-                "major",
-                "arcsec",
-                GaussianBeam::major_in as fn(&GaussianBeam, &str) -> _,
-            ),
-            ("minor", "arcsec", GaussianBeam::minor_in),
-            ("pa", "deg", GaussianBeam::position_angle_in),
-        ] {
-            result.push((
-                field,
-                CasaValue::record([
-                    ("unit", CasaValue::Text(unit.into())),
-                    (
-                        "value",
-                        beam_matrix(&beams, true, |beam| value(beam, unit))?,
-                    ),
-                ]),
-            ));
-        }
+        result.extend(beam_parameter_matrices(coordinates, view.record(), &beams)?);
     } else {
         let by_channel = (0..beams.n_channels()).map(|channel| {
             let by_stokes = (0..beams.n_stokes())
@@ -358,7 +420,16 @@ impl PyImageTool {
         py.detach(|| {
             self.state().image.as_ref().map_or_else(
                 || Ok(CasaValue::empty_record()),
-                |image| restoring_beam(&image.beam_view(), channel, polarization, mbret),
+                |image| {
+                    let handle = image.lock();
+                    restoring_beam(
+                        &image.beam_view(),
+                        handle.coordinates(),
+                        channel,
+                        polarization,
+                        mbret,
+                    )
+                },
             )
         })?
         .into_python(py)

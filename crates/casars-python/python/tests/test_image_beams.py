@@ -43,7 +43,7 @@ def test_single_restoring_beam_preserves_stored_units(tmp_path, casa, kind):
         assert backend.done()
 
 
-@pytest.mark.parametrize("shape", [[2, 2, 2, 3], [2, 2, 3], [2, 2, 2, 1], [2, 2, 1, 3]])
+@pytest.mark.parametrize("shape", [[2, 2, 2, 3], [2, 2, 5, 4], [2, 2, 3], [2, 2, 2, 1], [2, 2, 1, 3]])
 def test_per_plane_beam_list_matrix_and_areas(tmp_path, casa, shape):
     path = str(tmp_path / "per-plane.im")
     source = casa.image()
