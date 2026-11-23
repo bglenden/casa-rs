@@ -547,6 +547,33 @@ def compare_default_model(root, native):
         np.testing.assert_array_equal(table.getcol("DATA"), observed)
         np.testing.assert_array_equal(table.getcol("FLAG"), flags)
 
+    from casars.tasks import TaskExecutionError
+
+    virtual = root / "virtual-model.ms"
+    copy_ms(vis, virtual)
+    casa.setjy(str(virtual), field="PHASE", standard="manual", fluxdensity=[7.25, 0, 0, 0], usescratch=False)
+    with opened(virtual) as table:
+        assert "MODEL_DATA" not in table.colnames()
+    controls = request(virtual) | dict(xaxis="channel", xdatacolumn="", yaxis="amp", ydatacolumn="model",
+                                       expformat="txt")
+    expected, actual = (root / f"unit-with-other-virtual-field.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    assert {float(point[1]) for point in rows(expected)} == {1.0}
+
+    controls |= dict(field="PHASE")
+    expected, actual = (root / f"selected-virtual-model.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert {float(point[1]) for point in rows(expected)} == {7.25}
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "virtual MeasurementSet models are pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS substituted a unit model for a selected virtual definition")
+    assert not actual.exists()
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
