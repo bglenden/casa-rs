@@ -1,6 +1,7 @@
 """Spectral fitting and native image products against CASA 6.7.6.14."""
 
 import os
+import re
 import subprocess
 import sys
 
@@ -179,6 +180,47 @@ def test_native_product_matrix_and_minimum_masked_points(casa, tmp_path):
             assert history[-1] == "Number valid             = 4"
 
 
+@pytest.mark.parametrize("first,last", [(2, 22), (4, 4)])
+def test_profile_solution_images_use_the_collapsed_spectral_grid(casa, tmp_path, first, last):
+    if first == last:
+        pixels = np.full((3, 2, 31), 7., dtype=np.float32)
+        arguments = dict(chans=str(first), pampest=7., pcenterest=0., pfwhmest=4., pfix="pcf")
+    else:
+        pixels = _cube(_line(np.arange(31.), 7., 13., 4.7), (3, 2))
+        arguments = dict(chans=f"{first}~{last}", pampest=7., pcenterest=11., pfwhmest=4.7)
+    for writer in (casa, tools):
+        source = writer.image()
+        name = str(tmp_path / f"{writer.__name__}-amp")
+        try:
+            assert source.fromarray(pixels=pixels)
+            start = source.toworld([0, 0, first])["numeric"][2]
+            end = source.toworld([2, 1, last])["numeric"][2]
+            result = source.fitprofile(
+                axis=2, multifit=True, logresults=False, amp=name, **arguments,
+            )
+            assert result["valid"].all()
+        finally:
+            source.done()
+
+        for reader in (casa, tools):
+            product = reader.image()
+            try:
+                assert product.open(name + "_0")
+                coords = product.coordsys()
+                try:
+                    assert coords.referencepixel()["numeric"][2] == 0
+                    assert coords.referencevalue()["numeric"][2] == (start + end) / 2
+                finally:
+                    coords.done()
+                assert product.shape().tolist() == [3, 2, 1]
+                values = product.getchunk()
+                assert values.dtype == np.float64
+                np.testing.assert_allclose(values, 7., atol=2e-6)
+                assert product.getchunk(getmask=True).all()
+            finally:
+                product.done()
+
+
 @pytest.mark.parametrize("form", ["vector", "array", "native"])
 def test_sigma_inverse_variance(casa, tmp_path, form):
     n = 51
@@ -201,6 +243,21 @@ def test_sigma_inverse_variance(casa, tmp_path, form):
         model, _, _, _, _ = _read(tools, path)
         expected = np.dot(values, 1 / weights**2) / np.sum(1 / weights**2)
         np.testing.assert_allclose(model, expected, atol=3e-7)
+
+
+def test_constant_polynomial_produces_zero_native_residuals(casa, tmp_path):
+    data = _cube(np.ones(128), shape=(3, 4))
+    for writer in (casa, tools):
+        model = tmp_path / f"{writer.__name__}.model"
+        residual = tmp_path / f"{writer.__name__}.residual"
+        fit = _fit(writer, data, ngauss=0, poly=0, axis=2, model=str(model), residual=str(residual))
+        assert fit["valid"].all()
+        for reader in (casa, tools):
+            model_pixels, model_mask, *_ = _read(reader, model)
+            residual_pixels, residual_mask, *_ = _read(reader, residual)
+            np.testing.assert_array_equal(model_pixels, data)
+            np.testing.assert_array_equal(residual_pixels, np.zeros_like(data))
+            assert model_mask.all() and residual_mask.all()
 
 
 def _freq_cube(api):
@@ -381,15 +438,88 @@ def test_fit_log_append_and_replace(casa, tmp_path):
     for api in (casa, tools):
         logfile = tmp_path / f"{api.__name__}.log"
         logfile.write_text("previous fit\n")
-        common = dict(pampest=5., pcenterest=14., pfwhmest=4., logfile=str(logfile))
+        common = dict(chans="2~22", pampest=5., pcenterest=12., pfwhmest=4., logfile=str(logfile))
         data = _cube(_line(np.arange(27.), 5., 14., 4.5))
         assert _fit(api, data, **common)["valid"].all()
         first = logfile.read_text()
         assert first.startswith("previous fit")
         assert "Number valid" in first
         assert "Fit" in first
+        assert all(field in first for field in ("Peak", "Center", "FWHM", "Integral"))
+        pixel_values = _logged_pixel_values(first)
+        assert len(pixel_values) >= 2
+        np.testing.assert_allclose(pixel_values[:2], [14., 4.5], atol=1e-6)
         assert _fit(api, data, append=False, **common)["valid"].all()
         assert "previous fit" not in logfile.read_text()
+
+
+def _logged_pixel_values(report):
+    return [float(value) for value in re.findall(
+        r"^\s+([-+\d.eE]+)\s+\+/-\s+[-+\d.eE]+\s+pixel\s*$", report, re.MULTILINE
+    )]
+
+
+def test_fit_log_uses_local_optical_velocity_scale(casa, tmp_path):
+    data = _cube(_line(np.arange(51.), 5., 30., 4.))
+    reports = []
+    for api in (casa, tools):
+        source = api.image()
+        logfile = tmp_path / f"{api.__name__}.log"
+        try:
+            assert source.fromarray(pixels=data)
+            coords = source.coordsys()
+            try:
+                record = coords.torecord()
+            finally:
+                coords.done()
+            spectral = next(value for key, value in record.items() if key.startswith("spectral"))
+            spectral["velType"] = 1
+            spectral["wcs"]["cdelt"] = 1e7
+            assert source.setcoordsys(record)
+            result = source.fitprofile(
+                axis=2, multifit=True, logresults=False, logfile=str(logfile),
+                pampest=5., pcenterest=30., pfwhmest=4.,
+            )
+            assert result["valid"].all()
+            np.testing.assert_allclose(result["gs"]["fwhm"], 12443.12100631, rtol=1e-7)
+        finally:
+            source.done()
+        reports.append(_logged_pixel_values(logfile.read_text())[:2])
+    np.testing.assert_allclose(reports, [[30., 6.3143091955]] * 2, rtol=1e-7)
+
+
+def test_fit_log_preserves_multiplet_grouping(casa, tmp_path):
+    x = np.arange(55.)
+    data = _cube(_line(x, 6., 21., 4.) + _line(x, 3., 37., 6.), (1, 1))
+    for api in (casa, tools):
+        logfile = tmp_path / f"{api.__name__}.log"
+        fit = _fit(
+            api, data, ngauss=0, gmncomps=2, gmampest=[5., 2.5],
+            gmcenterest=[20., 36.], gmfwhmest=[3.7, 5.6],
+            gmampcon=[.5], gmcentercon=[16.], gmfwhmcon=[1.5], logfile=str(logfile),
+        )
+        assert fit["valid"].item() and fit["ncomps"].item() == 1
+        report = logfile.read_text()
+        assert len(re.findall(r"Type\s+: GAUSSIAN MULTIPLET", report)) == 1
+        assert "Results for subcomponent 0" in report
+        assert "Results for subcomponent 1" in report
+        assert "Results for component 1:" not in report
+
+
+def test_fit_log_uses_source_location_and_reports_rejected_iterations(casa, tmp_path):
+    data = _cube(_line(np.arange(55.), 5., 20., 4.), (3, 3))
+    for api in (casa, tools):
+        logfile = tmp_path / f"{api.__name__}.log"
+        fit = _fit(
+            api, data, box="1,1,1,1", pampest=5., pcenterest=20., pfwhmest=4.,
+            goodamprange=[0., 1.], logfile=str(logfile),
+        )
+        assert fit["converged"].item() and not fit["valid"].item()
+        assert fit["niter"].item() == -1
+        report = logfile.read_text()
+        source_location = re.search(r"Pixel\s*:\s*\[\s*1,\s*1,\s*\*\s*\]", report)
+        iterations = re.search(r"Iterations\s*:\s*[1-9]\d*", report)
+        assert (source_location is not None, iterations is not None) == (True, True)
 
 
 def test_output_failure_preserves_inputs_and_existing_image(tmp_path):
@@ -493,8 +623,12 @@ def test_profile_direction_reports_the_frame_used_for_the_angles(casa, frame):
         _compare_records(native, expected)
 
 
-@pytest.mark.parametrize("amplitude", [1., 1e-15])
-def test_fixed_width_line_is_invariant_under_amplitude_scaling(casa, tmp_path, amplitude):
+@pytest.mark.parametrize("amplitude,reference_stops_early", [
+    (1., False), (1.1e-4, True), (9.9e-5, True), (1e-15, True),
+])
+def test_fixed_width_line_is_invariant_under_amplitude_scaling(
+    casa, tmp_path, amplitude, reference_stops_early,
+):
     x = np.arange(31.)
     data = _cube(_line(x, amplitude, 15., 4.), (1, 1))
     fits = []
@@ -504,16 +638,39 @@ def test_fixed_width_line_is_invariant_under_amplitude_scaling(casa, tmp_path, a
                    model=str(path))
         assert fit["valid"].item()
         model = _read(tools, path)[0]
-        if api is casa and amplitude < 1e-10:
+        if api is casa and reference_stops_early:
             error = np.linalg.norm((model - data) / amplitude) / np.linalg.norm(data / amplitude)
             assert error > .01
         else:
             np.testing.assert_allclose(model / amplitude, data / amplitude, atol=2e-6)
         fits.append(fit["gs"]["center"].item())
-    if amplitude < 1e-10:
+    if reference_stops_early:
         assert abs(fits[0] - fits[1]) > .01
     else:
         assert fits[0] == pytest.approx(fits[1], abs=2e-6)
+
+
+def test_profile_convergence_uses_only_free_parameters(casa):
+    amplitude = 1e10
+    data = _cube(_line(np.arange(55.), amplitude, 20., 5.), (1, 1))
+    arguments = dict(pampest=amplitude, pcenterest=16., pfwhmest=8., pfix="p")
+    expected = _fit(casa, data, **arguments)
+    actual = _fit(tools, data, **arguments)
+    assert expected["valid"].item() and actual["valid"].item()
+    assert actual["niter"].item() > 1
+    for key in ("amp", "center", "fwhm"):
+        np.testing.assert_allclose(actual["gs"][key], expected["gs"][key], rtol=1e-7)
+
+
+def test_profile_corrects_dependent_free_amplitudes(casa):
+    data = _cube(_line(np.arange(55.), 8., 20., 5.), (1, 1))
+    arguments = dict(pampest=[3., 3.], pcenterest=[20., 20.], pfwhmest=[5., 5.],
+                     pfix=["cf", "cf"])
+    expected = _fit(casa, data, **arguments)
+    actual = _fit(tools, data, **arguments)
+    assert expected["valid"].item() and actual["valid"].item()
+    np.testing.assert_allclose(actual["gs"]["amp"], 4., atol=2e-6)
+    _compare_records(actual, expected)
 
 
 @pytest.mark.parametrize("model,parameters,message", [

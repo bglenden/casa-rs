@@ -66,6 +66,7 @@ pub(super) fn prepare(
     cache: Option<&mut RowGeometryCache>,
     table: &LoadedCalibrationTable,
     transient_grid: bool,
+    ordered_gain: bool,
 ) -> Result<Arc<CalibrationGrid>, ApplyExecutionError> {
     let interpolation = table.interp;
     let path = &table.path;
@@ -96,33 +97,43 @@ pub(super) fn prepare(
     if let Some(prepared) = cache.as_ref().and_then(|grids| grids.get(&key)) {
         return Ok(prepared.clone());
     }
-    let prepared = resample(
-        gain,
-        input,
-        &output.channel_frequencies_hz,
-        if matches!(table.time_parameter_family, Some(TimeParameterFamily::Sky)) {
-            interpolation.sky_frequency_mode()
-        } else {
-            interpolation.frequency_mode()
-        },
-        matches!(
-            interpolation,
-            ApplyInterpolationMode::Casa {
-                relative_frequency: true,
-                ..
-            }
-        ),
-        if opacity {
-            Some(TimeParameterFamily::SpectralOpacity)
-        } else {
-            table.time_parameter_family
-        },
-    )?;
-    let prepared = Arc::new(if opacity {
-        CalibrationGrid::SpectralOpacity(prepared)
+    // A scalar is broadcast during application. On an aligned, unflagged
+    // axis CASA copies the time interpolation result without reconstructing
+    // it again. In both cases the ordered applicator can reuse this grid.
+    let unchanged = ordered_gain
+        && (gain.channel_count == 1
+            || (input == output.channel_frequencies_hz && gain.flags.iter().all(|flag| !flag)));
+    let prepared = if unchanged {
+        grid
     } else {
-        CalibrationGrid::Complex(prepared)
-    });
+        let sampled = resample(
+            gain,
+            input,
+            &output.channel_frequencies_hz,
+            if matches!(table.time_parameter_family, Some(TimeParameterFamily::Sky)) {
+                interpolation.sky_frequency_mode()
+            } else {
+                interpolation.frequency_mode()
+            },
+            matches!(
+                interpolation,
+                ApplyInterpolationMode::Casa {
+                    relative_frequency: true,
+                    ..
+                }
+            ),
+            if opacity {
+                Some(TimeParameterFamily::SpectralOpacity)
+            } else {
+                table.time_parameter_family
+            },
+        )?;
+        Arc::new(if opacity {
+            CalibrationGrid::SpectralOpacity(sampled)
+        } else {
+            CalibrationGrid::Complex(sampled)
+        })
+    };
     if let Some(cache) = cache {
         cache.insert(key, prepared.clone());
     }
@@ -352,8 +363,16 @@ mod tests {
                 )
                 .unwrap();
             assert!(Arc::ptr_eq(&selected, &raw));
-            let sampled =
-                prepare(selected, &input, &output, Some(&mut cache), &table, false).unwrap();
+            let sampled = prepare(
+                selected,
+                &input,
+                &output,
+                Some(&mut cache),
+                &table,
+                false,
+                false,
+            )
+            .unwrap();
             if let Some(first) = &first {
                 assert!(Arc::ptr_eq(first, &sampled));
             } else {
@@ -379,6 +398,7 @@ mod tests {
                 Some(&mut cache),
                 &table,
                 true,
+                false,
             )
             .unwrap();
             assert_eq!(cache.transient_lookups.len(), 1);

@@ -173,6 +173,16 @@ impl Curve {
         self.lines.is_empty() && !matches!(self.spectral, Some((SpectralPolynomial::PowerLog, _)))
     }
 
+    pub(super) fn fits_only_line_shapes(&self) -> bool {
+        self.polynomial.is_none()
+            && self.spectral.is_none()
+            && !self.lines.is_empty()
+            && self
+                .lines
+                .iter()
+                .all(|line| self.fixed[line.values[0].index])
+    }
+
     pub(super) fn valid_widths(&self, parameters: &[f64]) -> bool {
         self.lines
             .iter()
@@ -181,6 +191,10 @@ impl Curve {
 }
 
 impl Line {
+    pub(super) fn fixed(&self, fixed: &[bool]) -> [bool; 3] {
+        self.values.map(|binding| fixed[binding.index])
+    }
+
     pub(super) fn parameters(&self, values: &[f64]) -> [f64; 3] {
         self.values.map(|binding| binding.value(values))
     }

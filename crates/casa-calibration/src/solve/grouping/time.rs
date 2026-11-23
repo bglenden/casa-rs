@@ -47,6 +47,8 @@ pub(crate) enum SolveInputRows {
     AccorTool,
     /// Gather ACCOR rows using CASA's older interval boundaries.
     LegacyAccor,
+    /// Use the original iterator's restarting time intervals for a delay fit.
+    LegacyDelay,
     /// Retain all antenna pairs for a baseline Mueller solve.
     Baselines,
     /// Retain all antenna pairs and the direct tool's baseline gather counts.
@@ -277,7 +279,9 @@ impl super::SolveGroupOptions {
         self.legacy_chan_selection()
             || matches!(
                 self.input_rows,
-                SolveInputRows::LegacyAccor | SolveInputRows::GatherOnlyTool { legacy: true }
+                SolveInputRows::LegacyAccor
+                    | SolveInputRows::LegacyDelay
+                    | SolveInputRows::GatherOnlyTool { legacy: true }
             )
     }
 

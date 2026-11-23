@@ -43,7 +43,7 @@ def test_single_restoring_beam_preserves_stored_units(tmp_path, casa, kind):
         assert backend.done()
 
 
-@pytest.mark.parametrize("shape", [[2, 2, 2, 3], [2, 2, 3], [2, 2, 2, 1], [2, 2, 1, 3]])
+@pytest.mark.parametrize("shape", [[2, 2, 2, 3], [2, 2, 5, 4], [2, 2, 3], [2, 2, 2, 1], [2, 2, 1, 3]])
 def test_per_plane_beam_list_matrix_and_areas(tmp_path, casa, shape):
     path = str(tmp_path / "per-plane.im")
     source = casa.image()
@@ -78,6 +78,56 @@ def test_per_plane_beam_list_matrix_and_areas(tmp_path, casa, shape):
         assert backend.done()
 
 
+def test_beam_matrix_uses_first_created_spectral_axis(casa, tmp_path):
+    path = str(tmp_path / "transposed.im")
+    coords = casa.coordsys().newcoordsys(direction=True, stokes="I Q U", spectral=True)
+    assert coords.addcoordinate(spectral=True)
+    record = coords.torecord()
+    assert coords.done()
+    image = casa.image()
+    assert image.fromshape(shape=[2, 2, 3, 5, 7], csys=record)
+    try:
+        transposed = image.transpose(path, order="01423")
+        try:
+            assert transposed.setrestoringbeam("5arcsec", "2arcsec", "6deg", channel=0, polarization=0)
+            assert transposed.setrestoringbeam("7arcsec", "3arcsec", "35deg", channel=4, polarization=2)
+        finally:
+            transposed.done()
+    finally:
+        image.done()
+
+    matrices = []
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.open(path)
+            matrix = image.restoringbeam(mbret="matrix")
+            assert matrix["major"]["value"].shape == (3, 5)
+            assert matrix["major"]["value"][2, 4] == 7.0
+            matrices.append(matrix)
+        finally:
+            image.done()
+    _assert_value(matrices[1], matrices[0])
+
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    try:
+        record = table.getkeyword("coords")
+        for index, kind in enumerate(("Direction", "Stokes", "Spectral", "Spectral")):
+            coordinate = record.pop(f"{kind.lower()}{index}")
+            coordinate["coordinate_type"] = kind
+            record[f"coordinate{index}"] = coordinate
+        table.putkeyword("coords", record)
+    finally:
+        table.done()
+    image = tools.image()
+    try:
+        assert image.open(path)
+        _assert_value(image.restoringbeam(mbret="matrix"), matrices[0])
+    finally:
+        image.done()
+
+
 def test_beam_queries_on_an_image_without_a_beam():
     image = tools.image()
     assert image.fromshape(shape=[2, 2])
@@ -86,6 +136,43 @@ def test_beam_queries_on_an_image_without_a_beam():
         with pytest.raises(RuntimeError, match=r"This image has no beam\(s\)"):
             query()
     assert image.done()
+
+
+def test_selected_beams_keep_saved_quantities_after_native_reopen(casa, tmp_path):
+    region = casa.regionmanager().box([1, 1, 2, 1], [3, 3, 5, 2])
+    expected = {
+        "major": {"value": 0.125, "unit": "arcmin"},
+        "minor": {"value": 3.5, "unit": "arcsec"},
+        "positionangle": {"value": 11., "unit": "deg"},
+    }
+    for writer in (casa, tools):
+        source = writer.image()
+        try:
+            assert source.fromshape(shape=[6, 5, 8, 4])
+            assert source.setrestoringbeam("7arcsec", "3arcsec", "6deg", channel=0, polarization=0)
+            assert source.setrestoringbeam(
+                "0.125arcmin", "3.5arcsec", "11deg", channel=2, polarization=1,
+            )
+            paths = {
+                name: str(tmp_path / f"{writer.__name__}-{name}.im")
+                for name in ("subimage", "collapsed", "line", "continuum")
+            }
+            source.subimage(paths["subimage"], region=region).done()
+            source.collapse("mean", [2], paths["collapsed"], region=region).done()
+            source.continuumsub(
+                outline=paths["line"], outcont=paths["continuum"], region=region,
+            ).done()
+        finally:
+            source.done()
+        for name, path in paths.items():
+            for reader in (casa, tools):
+                image = reader.image()
+                try:
+                    assert image.open(path)
+                    beam = image.restoringbeam() if name == "collapsed" else image.restoringbeam(0, 0)
+                    assert beam == expected, (writer.__name__, name, reader.__name__)
+                finally:
+                    image.done()
 
 
 @pytest.mark.parametrize("writer", ["casa", "casars"])

@@ -25,6 +25,7 @@ mod antpos_vla;
 mod appendantab;
 mod attachment;
 mod bandpass;
+mod calanalysis;
 mod calibrater_lifecycle;
 mod calibration_service;
 mod callib;
@@ -121,6 +122,7 @@ pub use attachment::{
     AttachmentError, AttachmentMode, AttachmentOptions, CalibrationAttachment, ImagerAttachments,
     ImagerChannelSelection,
 };
+pub use calanalysis::{CalAnalysis, CalAnalysisFit, CalAnalysisIds, CalAnalysisQuery};
 pub use calibrater_lifecycle::{CalibraterLifecycle, CalibraterLifecycleError};
 pub use cli::{ImagerSetJyRequest, imager_setjy};
 pub use listing::CalibrationListingReport;

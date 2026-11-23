@@ -139,6 +139,60 @@ def irregular_spectra(root, gain):
     print("passed undefined sigma spectrum and retry", flush=True)
 
 
+def diagonal_edge_case(root, source, label):
+    interpolated = label == "interpolated-bandpass"
+    bandpass = label != "unflagged-zero-gain"
+    callib = library(root, source, label, calwt=not bandpass)
+    cal = callib.with_suffix(".cal")
+    if interpolated:
+        callib.write_text(callib.read_text().replace("tinterp='nearest'", "tinterp='linear'"))
+        with (
+            table(str(source), ack=False) as ms,
+            table(str(source / "SPECTRAL_WINDOW"), ack=False) as spw,
+            table(str(cal / "SPECTRAL_WINDOW"), ack=False, readonly=False) as target,
+        ):
+            start = ms.getcol("TIME").min() - 10
+            for column in ("NUM_CHAN", "CHAN_FREQ", "CHAN_WIDTH",
+                           "EFFECTIVE_BW", "RESOLUTION", "TOTAL_BANDWIDTH"):
+                target.putcell(column, 0, spw.getcell(column, 0))
+            channels = int(spw.getcell("NUM_CHAN", 0))
+    tool = casa_table()
+    try:
+        tool.open(str(cal), nomodify=False)
+        if bandpass:
+            tool.putinfo(tool.info() | {"subType": "B Jones"})
+            tool.putkeyword("VisCal", "B Jones")
+        if interpolated:
+            rows = tool.nrows()
+            tool.copyrows(str(cal))
+            assert tool.nrows() == 2 * rows
+            for row in range(2 * rows):
+                lower = row < rows
+                first_gain = 0.25j if lower else 0.25 + 2j
+                gain = first_gain if tool.getcell("ANTENNA1", row) == 0 else 1
+                tool.putcell("TIME", row, start if lower else start + 20)
+                tool.putcell("CPARAM", row, np.full((2, channels), gain, np.complex64))
+                tool.putcell("FLAG", row, np.zeros((2, channels), bool))
+        else:
+            antenna = tool.getcol("ANTENNA1")
+            gain = 1 + 1j if bandpass else 0
+            values = np.broadcast_to(np.where(antenna == 0, gain, 1),
+                                     tool.getcol("CPARAM").shape)
+            tool.putcol("CPARAM", values.astype(np.complex64))
+    finally:
+        tool.done()
+    reference, native = paired(root, source, label, callib, spw="0")
+    with table(str(reference), ack=False) as expected, table(str(native), ack=False) as actual:
+        if bandpass:
+            np.testing.assert_allclose(actual.getcol("DATA"), expected.getcol("DATA"),
+                                       rtol=0, atol=1e-6)
+        else:
+            weight = expected.getcol("WEIGHT")
+            assert np.any(weight == 0)
+            np.testing.assert_array_equal(actual.getcol("WEIGHT"), weight)
+    print(f"passed exact {label}", flush=True)
+
+
 def main(cases):
     assert casatasks.version() == [6, 7, 6, 14]
     with TemporaryDirectory(prefix="mstransform-callib-") as scratch:
@@ -181,6 +235,14 @@ def main(cases):
             paired(root, source, "unmapped-chain", unmapped)
         if selected("irregular-spectra"):
             irregular_spectra(root, gain)
+        diagonal = ("one-channel-bandpass", "interpolated-bandpass", "unflagged-zero-gain")
+        if selected(*diagonal):
+            edge = make_pair(root, "diagonal-edge", 7, counts=(7, 7), spectra=True)
+            with table(str(edge), ack=False, readonly=False) as ms:
+                ms.putcol("DATA", np.full_like(ms.getcol("DATA"), 32 + 1j))
+            for case in diagonal:
+                if selected(case):
+                    diagonal_edge_case(root, edge, case)
         if selected("virtual"):
             virtual = make_pair(root, "virtual", 7, counts=(7, 7), spectra=False)
             tool = casa_table()

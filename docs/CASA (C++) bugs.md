@@ -3385,6 +3385,15 @@ casa-rs treats that channel as it treats the others: it is not regridded,
 and the output keeps the input's (`casa_images::regrid`). Converting the
 frame of an axis that is never regridded serves no purpose.
 
+## `image.regrid` can compare the lengths of different unchanged axes
+
+CASA 6.7.6.14 preserves the native spectral coordinate and pixels for
+`image.regrid(axes=[2], method="cubic")` on a direction and spectral cube
+when the template has no spectral coordinate. But on a cube of shape
+`[8, 9, 5]` the same call fails because the shape check compares spectral
+length 5 to the first output length 8. Casa-rs checks the shape of the
+unchanged spectral axis and keeps the image's original grid and samples.
+
 ## `tsdimaging`'s theoretical beam models the kernels, not the gridder's
 
 - Date noted: 2026-10-28
@@ -8788,6 +8797,21 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## Mixed averaged flagdata can leave row flags clear
+
+On the public `Four_ants_3C286.ms` fixture, CASA 6.7.6.14's stock mixed
+Clip, TFCrop, RFlag, and antint list test starts from cleared flags. The
+shared iterator averages pairs of integrations and groups channels in
+bins of eight. The task flags 591,808 samples and leaves `FLAG_ROW` false
+for 26 of the 486 rows whose samples are all flagged in the repeated
+stock replay. The same 26 rows occur with the Clip, TFCrop, and RFlag
+prefix alone. An interleaved timing replay returned another row mask
+with identical sample flags. CASA's
+`AveragingTvi2::writeFlag` derives the row flag from the propagated
+sample mask. Casa-rs preserves that rule after projecting the final
+shared mask to the input rows. The stock test passes and every sample
+flag agrees with CASA.
+
 ## Calibration quack can flag the whole scan when times are out of order
 
 With CASA 6.7.6.14, two Tsys time blocks in the same scan stored in reverse
@@ -9121,15 +9145,19 @@ direction chosen for the returned record.
 
 ## The 45-degree image rotation fixture assumes prior floating-point rounding
 
-The CASA 6.7.6.14 upstream `ia_rotate_test.test_basic` compares the result
-of rotating `prerot.im` by 45 degrees to archived `postrot.im` at a
-maximum absolute error of 1e-21. Both backends preserve the 200-by-200
-shape, the Python result dtype and the exact 33,272-pixel validity mask.
-With the archived case the native image differs by 9.52e-9 normalized
-RMS and at most 5.96e-8 on valid pixels. This is float32 interpolation
-rounding. The companion comparison checks the stored image's dimensions,
-dtype, mask and agreement at float32 precision. The upstream test and
-its tolerance remain unchanged.
+The CASA 6.7.6.14 upstream `ia_rotate_test.test_basic` rotates `prerot.im`
+by 45 degrees and compares every pixel with the archived `postrot.im`.
+It requires a maximum absolute difference below 1e-21. Pinned CASA
+reproduced the archive within 4.24e-22 on the validation host.
+
+Both backends preserve the float32 image pixel type, 200-by-200 shape,
+float64 Python chunk dtype, and exact 33,272-pixel validity mask. On
+valid pixels, casa-rs differs from the archive by 9.52e-9 normalized
+RMS and at most 5.96e-8. The largest difference is between adjacent
+float32 values near 0.64. Returning those values in a float64 array
+does not increase the accuracy of the stored pixels. The companion
+test checks the image types, dimensions, mask, and numerical agreement
+at float32 precision. The upstream assertion remains unchanged.
 
 ## Image statistics can report an extremum outside the sampled pixels
 
@@ -10653,3 +10681,44 @@ CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones,
 ## Direct KAntPos can abort when a solution combines multiple buffers
 
 CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. Both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. Two overlapping windows with `combine='spw'` or two fields with `combine='field'` terminated in both iterators when the multi-buffer fitter assigned two terms to a three-term array. Casa-rs reports a recoverable error when this fit is reached. Windows separated into single-buffer scan or integration intervals produce tables. [Paired antenna-position oracle](../tools/casa-compat/calibrater_antenna_position_oracle.py)
+
+## A Noise baseline indexing assumes ordered antenna columns
+
+With eight antennas, both CASA 6.7.6.14 calibrater iterators applied the `A Noise` coefficients of `(0, 7)` to a deliberately reversed `(1, 0)` visibility. Casa-rs uses the coefficients of `(0, 1)`, conjugates them, and exchanges the cross hands to preserve the visibility's orientation. The ordinary ordered-baseline inputs agree with CASA. [Paired A Noise oracle](../tools/casa-compat/calibrater_anoise_oracle.py)
+
+## Direct EVLASWP can gather data and fail at fitting
+
+CASA 6.7.6.14 accepts direct `calibrater.setsolve(type='EVLASWP')` when the MeasurementSet links readable `SYSPOWER` and `CALDEVICE` tables. Both iterators record expected intervals and write no table for fully flagged input. Both terminate on the isolated usable visibility fit. Casa-rs retains the gather stage and returns a recoverable solve error for usable data. [Paired switched-power and KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+
+## Joint KMBD fitting can abort with single-correlation buffers
+
+When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 iterators refuse a mix of single- and dual-hand buffers. Two single-hand buffers instead terminate when the one-hand answer is assigned to the two-hand table array. Casa-rs reports a recoverable solve error in each case. [Paired KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+
+## A calibrater gain matrix can keep its correction direction during corruption
+
+In CASA 6.7.6.14, a VI2 session that calls `correct` and then `corrupt` with the same single-slot gain table can apply the inverse gain to both visibility columns. Casa-rs applies the inverse gain to `CORRECTED_DATA` and the forward gain to `MODEL_DATA`. The same planted session with VI1 terminates during its direct amplitude G fit in an isolated CASA process. The native VI1 session completes the fit and both visibility operations. [Paired session oracle](../tools/casa-compat/calibrater_session_oracle.py)
+
+## `calanalysis.get` can terminate on a restricted feed
+
+In CASA 6.7.6.14, open one of the two-feed, multi-window tables in the [selected-series oracle](../tools/casa-compat/calanalysis_get_oracle.py) and call `get(feed='1')`. On both complex and real tables, the reference process terminates with SIGSEGV after opening the table successfully. Casa-rs filters the selected feed by its table index and verifies that the returned records equal the same feed's series from the unrestricted query.
+
+## `calanalysis.fit` can terminate on an empty or singleton fit input
+
+In CASA 6.7.6.14, use the [fit oracle](../tools/casa-compat/calanalysis_fit_oracle.py) to fit a fully flagged channel with `type='ROBUST'`. Both AVERAGE and LINEAR terminate when the robust estimator asks for a median of an empty array. With one timestamp and `axis='F'`, a successful AVERAGE fit can also terminate while calculating the variance of one residual. Casa-rs returns the input series with an invalid fit when every sample is flagged and reports zero residual variance for a successful singleton fit.
+
+## `calanalysis.get` can invent phase wraps on descending frequencies
+
+In CASA 6.7.6.14, the [group-delay oracle](../tools/casa-compat/calanalysis_get_oracle.py) supplies eight descending channels with constant complex gains. Default group-delay unwrapping searches a signed interval away from zero and inserts wraps into a zero-delay solution. Casa-rs searches a symmetric interval using positive spacing between distinct frequencies. It removes the common carrier from the power calculation and refines peaks at the bandwidth scale, preserving the original channel order. The oracle checks ascending and descending zero-delay and planted-delay series, including 1 kHz channels at 100 GHz.
+
+## `calanalysis.fit` can overestimate a nearly exact fit's reduced chi-square
+
+In CASA 6.7.6.14, the [fit oracle](../tools/casa-compat/calanalysis_fit_oracle.py) supplies an almost exact linear series over eight channels near 100 GHz with uncertainty 0.001. CASA reports a reduced chi-square of about 0.0365. Its returned residuals and uncertainties imply about `2.33e-8`. The normal-equation calculation subtracts much larger quadratic terms. Casa-rs sums the squared, weighted residuals directly, after the existing flags and uncertainty exclusion, and uses that metric for reduced chi-square and unweighted covariance.
+
+## Layer absorption queries can terminate Python on an invalid layer
+
+With CASA 6.7.6.14, initialize a profile and spectral window, then call
+`getAbsTotalDry(getNumLayers(), 0)`. The C++ wrapper checks the window and
+channel but lets the layer's `std::out_of_range` escape, terminating Python.
+casa-rs raises `RuntimeError` for an invalid layer and preserves the tool state.
+The paired atmosphere oracle isolates the CASA call and checks all nine native
+layer getters, including a valid query after each error.

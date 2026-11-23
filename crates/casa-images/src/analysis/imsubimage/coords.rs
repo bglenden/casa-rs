@@ -124,6 +124,24 @@ pub(in crate::analysis) fn beam_section_indices(
     shape: &[usize],
     stride: Option<&[usize]>,
 ) -> [Vec<usize>; 2] {
+    beam_section_indices_for_shape(
+        [beam_set.n_channels(), beam_set.n_stokes()],
+        input_coords,
+        ndim,
+        start,
+        shape,
+        stride,
+    )
+}
+
+pub(super) fn beam_section_indices_for_shape(
+    [channels, stokes]: [usize; 2],
+    input_coords: &CoordinateSystem,
+    ndim: usize,
+    start: &[usize],
+    shape: &[usize],
+    stride: Option<&[usize]>,
+) -> [Vec<usize>; 2] {
     let indices = |kind, length: usize| match find_system_axis(input_coords, kind) {
         Some(axis) if axis < ndim && length > 1 => {
             let step = stride.map_or(1, |stride| stride[axis]);
@@ -134,8 +152,8 @@ pub(in crate::analysis) fn beam_section_indices(
         _ => vec![0],
     };
     [
-        indices(CoordinateType::Spectral, beam_set.n_channels()),
-        indices(CoordinateType::Stokes, beam_set.n_stokes()),
+        indices(CoordinateType::Spectral, channels),
+        indices(CoordinateType::Stokes, stokes),
     ]
 }
 

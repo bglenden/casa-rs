@@ -203,6 +203,14 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertAlmostEqual(worst["o3_path"][0], 1e-3, places=12)
 
+    def test_the_python_gate_refuses_a_changed_component_path(self):
+        off = rust()
+        off["profiles"][0]["windows"][0]["o3_path"][0] *= 1 + 1e-3
+        _, problems = at_tool_check.compare(
+            CONFIG, casa(), off, gated_quantities=at_tool_check.CHANNEL_QUANTITIES,
+        )
+        self.assertTrue(any("o3_path: 1.000e-03" in problem for problem in problems), problems)
+
     def test_a_result_differing_within_tolerance_passes(self):
         close = copy.deepcopy(rust())
         close["profiles"][1]["windows"][1]["tebb"][2] *= 1 + 1e-9

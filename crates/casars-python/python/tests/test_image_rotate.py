@@ -464,6 +464,8 @@ def test_rotate_45_degree_upstream_fixture_to_float32_precision(casa, tmp_path):
     stored = casa.image()
     try:
         assert stored.open(str(expected_path))
+        stored_pixel_type = stored.pixeltype()
+        assert stored_pixel_type == "float"
         values = stored.getchunk()
         mask = stored.getchunk(getmask=True)
         assert values.shape == (200, 200)
@@ -476,8 +478,10 @@ def test_rotate_45_degree_upstream_fixture_to_float32_precision(casa, tmp_path):
         source = api.image()
         try:
             assert source.open(str(source_path))
+            assert source.pixeltype() == stored_pixel_type
             product = source.rotate(pa="45deg")
             try:
+                assert product.pixeltype() == stored_pixel_type
                 rotated = product.getchunk()
                 assert rotated.shape == values.shape
                 assert rotated.dtype == values.dtype

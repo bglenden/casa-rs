@@ -11,6 +11,8 @@
 //! WARN messages at WARNING.
 
 pub(crate) mod agentflagger;
+pub(crate) mod atmosphere;
+pub(crate) mod calanalysis;
 pub(crate) mod calibrater;
 pub(crate) mod casacore_path;
 pub(crate) mod componentlist;
@@ -38,7 +40,7 @@ use pyo3::prelude::*;
 /// bundle builds every tool entry from this one list
 /// (`crate::object_contract`). `casars.simutil` is not a CASA tool and is
 /// not listed.
-pub(crate) const TOOLS: [&surface::ToolSurface; 14] = [
+pub(crate) const TOOLS: [&surface::ToolSurface; 16] = [
     &simulator::surface::SURFACE,
     &measures::surface::SURFACE,
     &quanta::surface::SURFACE,
@@ -53,6 +55,8 @@ pub(crate) const TOOLS: [&surface::ToolSurface; 14] = [
     &agentflagger::surface::SURFACE,
     &wvr::surface::SURFACE,
     &singledishms::surface::SURFACE,
+    &calanalysis::surface::SURFACE,
+    &atmosphere::surface::SURFACE,
 ];
 
 /// A Python logging level for a CASA log message.

@@ -1,0 +1,242 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Installed CASA 6.7.6.14 atmosphere signatures.
+
+use crate::tools::surface::{
+    CasaDefault as D, Kind as K, Method, Parameter, Returns as R, Status as S, ToolSurface, method,
+    param,
+};
+
+const WINDOW: &[Parameter] = &[param("spwid", K::Int, D::Int(0))];
+const CHANNEL: &[Parameter] = &[
+    param("nc", K::Int, D::Int(-1)),
+    param("spwid", K::Int, D::Int(0)),
+];
+const LAYER: &[Parameter] = &[
+    param("nl", K::Int, D::Required),
+    param("nf", K::Int, D::Int(0)),
+    param("spwid", K::Int, D::Int(0)),
+];
+const CHANNEL_SKY: &[Parameter] = &[
+    param("nc", K::Int, D::Int(-1)),
+    param("spwid", K::Int, D::Int(0)),
+    param("wh2o", K::Quantity, D::Quantity(-1.0, "mm")),
+];
+const SPECTRAL_SKY: &[Parameter] = &[
+    param("spwid", K::Int, D::Int(0)),
+    param("wh2o", K::Quantity, D::Quantity(-1.0, "mm")),
+];
+
+const METHODS: &[Method] = &[
+    method(
+        "addSpectralWindow",
+        &[
+            param("fCenter", K::Quantity, D::Quantity(350.0, "GHz")),
+            param("fWidth", K::Quantity, D::Quantity(0.008, "GHz")),
+            param("fRes", K::Quantity, D::Quantity(0.002, "GHz")),
+        ],
+        R::Int,
+        S::Implemented,
+    ),
+    method("close", &[], R::Bool, S::Implemented),
+    method("done", &[], R::Bool, S::Implemented),
+    method("getAbsCOLines", LAYER, R::Record, S::Implemented),
+    method("getAbsDryCont", LAYER, R::Record, S::Implemented),
+    method("getAbsH2OCont", LAYER, R::Record, S::Implemented),
+    method("getAbsH2OLines", LAYER, R::Record, S::Implemented),
+    method("getAbsN2OLines", LAYER, R::Record, S::Implemented),
+    method("getAbsO2Lines", LAYER, R::Record, S::Implemented),
+    method("getAbsO3Lines", LAYER, R::Record, S::Implemented),
+    method("getAbsTotalDry", LAYER, R::Record, S::Implemented),
+    method("getAbsTotalWet", LAYER, R::Record, S::Implemented),
+    method("getAirMass", &[], R::Float, S::Implemented),
+    method("getAtmVersion", &[], R::Text, S::Implemented),
+    method("getAverageTebbSky", SPECTRAL_SKY, R::Record, S::Implemented),
+    method("getAverageTrjSky", SPECTRAL_SKY, R::Record, S::Implemented),
+    method("getBandwidth", WINDOW, R::Record, S::Implemented),
+    method("getBasicAtmParms", &[], R::Any, S::Implemented),
+    method("getCOLinesOpacity", CHANNEL, R::Float, S::Implemented),
+    method("getCOLinesPathLength", CHANNEL, R::Record, S::Implemented),
+    method(
+        "getChanFreq",
+        &[
+            param("chanNum", K::Int, D::Int(0)),
+            param("spwid", K::Int, D::Int(0)),
+        ],
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getChanNum",
+        &[
+            param("freq", K::Quantity, D::Required),
+            param("spwid", K::Int, D::Int(0)),
+        ],
+        R::Float,
+        S::Implemented,
+    ),
+    method("getChanSep", WINDOW, R::Record, S::Implemented),
+    method(
+        "getDispersivePathLength",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getDispersivePhaseDelay",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getDispersiveWetPathLength",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getDispersiveWetPhaseDelay",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method("getDryContOpacity", CHANNEL, R::Float, S::Implemented),
+    method("getDryOpacity", CHANNEL, R::Float, S::Implemented),
+    method("getDryOpacitySpec", WINDOW, R::Any, S::Implemented),
+    method("getGroundWH2O", &[], R::Record, S::Implemented),
+    method("getH2OContOpacity", CHANNEL, R::Float, S::Implemented),
+    method("getH2OLinesOpacity", CHANNEL, R::Float, S::Implemented),
+    method("getMaxFreq", WINDOW, R::Record, S::Implemented),
+    method("getMinFreq", WINDOW, R::Record, S::Implemented),
+    method("getN2OLinesOpacity", CHANNEL, R::Float, S::Implemented),
+    method("getN2OLinesPathLength", CHANNEL, R::Record, S::Implemented),
+    method(
+        "getNonDispersiveDryPathLength",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getNonDispersiveDryPhaseDelay",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getNonDispersivePathLength",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getNonDispersivePhaseDelay",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getNonDispersiveWetPathLength",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method(
+        "getNonDispersiveWetPhaseDelay",
+        CHANNEL,
+        R::Record,
+        S::Implemented,
+    ),
+    method("getNumChan", WINDOW, R::Int, S::Implemented),
+    method("getNumLayers", &[], R::Int, S::Implemented),
+    method("getNumSpectralWindows", &[], R::Int, S::Implemented),
+    method("getO2LinesOpacity", CHANNEL, R::Float, S::Implemented),
+    method("getO2LinesPathLength", CHANNEL, R::Record, S::Implemented),
+    method("getO3LinesOpacity", CHANNEL, R::Float, S::Implemented),
+    method("getO3LinesPathLength", CHANNEL, R::Record, S::Implemented),
+    method("getProfile", &[], R::Any, S::Implemented),
+    method("getRefChan", WINDOW, R::Int, S::Implemented),
+    method("getRefFreq", WINDOW, R::Record, S::Implemented),
+    method(
+        "getSkyBackgroundTemperature",
+        &[],
+        R::Record,
+        S::Implemented,
+    ),
+    method("getSpectralWindow", WINDOW, R::Record, S::Implemented),
+    method("getTebbSky", CHANNEL_SKY, R::Record, S::Implemented),
+    method("getTebbSkySpec", SPECTRAL_SKY, R::Any, S::Implemented),
+    method("getTrjSky", CHANNEL_SKY, R::Record, S::Implemented),
+    method("getTrjSkySpec", SPECTRAL_SKY, R::Any, S::Implemented),
+    method("getUserWH2O", &[], R::Record, S::Implemented),
+    method("getWetOpacity", CHANNEL, R::Record, S::Implemented),
+    method("getWetOpacitySpec", WINDOW, R::Any, S::Implemented),
+    method(
+        "initAtmProfile",
+        &[
+            param("altitude", K::Quantity, D::Quantity(5000.0, "m")),
+            param("temperature", K::Quantity, D::Quantity(270.0, "K")),
+            param("pressure", K::Quantity, D::Quantity(560.0, "mbar")),
+            param("maxAltitude", K::Quantity, D::Quantity(48.0, "km")),
+            param("humidity", K::Float, D::Float(20.0)),
+            param("dTem_dh", K::Quantity, D::Quantity(-5.6, "K/km")),
+            param("dP", K::Quantity, D::Quantity(10.0, "mbar")),
+            param("dPm", K::Float, D::Float(1.2)),
+            param("h0", K::Quantity, D::Quantity(2.0, "km")),
+            param("atmType", K::Int, D::Int(1)),
+            param("layerBoundaries", K::Floats, D::Empty),
+            param("layerTemperature", K::Floats, D::Empty),
+        ],
+        R::Any,
+        S::Implemented,
+    ),
+    method(
+        "initSpectralWindow",
+        &[
+            param("nbands", K::Int, D::Int(1)),
+            param("fCenter", K::Quantity, D::Quantity(90.0, "GHz")),
+            param("fWidth", K::Quantity, D::Quantity(0.64, "GHz")),
+            param("fRes", K::Quantity, D::Quantity(0.0, "GHz")),
+        ],
+        R::Int,
+        S::Implemented,
+    ),
+    method("listAtmosphereTypes", &[], R::Texts, S::Implemented),
+    method(
+        "setAirMass",
+        &[param("airmass", K::Float, D::Required)],
+        R::Bool,
+        S::Implemented,
+    ),
+    method(
+        "setSkyBackgroundTemperature",
+        &[param("tbgr", K::Quantity, D::Quantity(2.73, "K"))],
+        R::Bool,
+        S::Implemented,
+    ),
+    method(
+        "setUserWH2O",
+        &[param("wh2o", K::Quantity, D::Quantity(0.0, "mm"))],
+        R::Bool,
+        S::Implemented,
+    ),
+    method(
+        "updateAtmProfile",
+        &[
+            param("altitude", K::Quantity, D::Quantity(5000.0, "m")),
+            param("temperature", K::Quantity, D::Quantity(270.0, "K")),
+            param("pressure", K::Quantity, D::Quantity(560.0, "mbar")),
+            param("humidity", K::Float, D::Float(20.0)),
+            param("dTem_dh", K::Quantity, D::Quantity(-5.6, "K/km")),
+            param("h0", K::Quantity, D::Quantity(2.0, "km")),
+        ],
+        R::Any,
+        S::Implemented,
+    ),
+];
+
+pub(crate) const SURFACE: ToolSurface = ToolSurface {
+    name: "atmosphere",
+    module: "casars.tools",
+    constructor: &[],
+    methods: METHODS,
+    lifecycle: &["initAtmProfile", "close", "done"],
+};

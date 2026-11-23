@@ -5407,6 +5407,8 @@ Each CASA class casa-rs presents in Python, against the signatures recorded from
 | Class | Python | CASA methods | Reviewed | Implemented | Partial | Not implemented | Disabled in CASA | Deprecated in CASA | Unassessed |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|
 | [agentflagger](#agentflagger) | `casars.tools` | 19 | yes | 19 | 0 | 0 | 0 | 0 | 0 |
+| atmosphere | `casars.tools` | 69 | no | | | | | | |
+| calanalysis | `casars.tools` | 25 | no | | | | | | |
 | calibrater | `casars.tools` | 37 | no | | | | | | |
 | [componentlist](#componentlist) | `casars.tools` | 61 | yes | 61 | 0 | 0 | 0 | 0 | 0 |
 | coordsys | `casars.tools` | 69 | no | | | | | | |
