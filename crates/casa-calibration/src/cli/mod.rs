@@ -273,13 +273,22 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         history::record_applycal(task, &request.measurement_set);
     }
     let value = casa_value(task.surface(), &applied, &result);
-    let compact_kind = match &result {
+    report_success(task.surface(), &report, &result, value)
+}
+
+fn report_success(
+    surface: &str,
+    report: &read::Report,
+    result: &CalibrationTaskResult,
+    value: CasaValue,
+) -> Result<TaskSuccess, TaskFailure> {
+    let compact_kind = match result {
         CalibrationTaskResult::Apply(_) => Some("apply"),
         CalibrationTaskResult::ApplyMultiMs(_) => Some("apply_multi_ms"),
         _ => None,
     };
     if let Some(kind) = compact_kind
-        && task.surface() == "applycal"
+        && surface == "applycal"
         && report.output.is_none()
         && std::env::var_os("CASARS_APPLYCAL_VALUE_ONLY").is_some_and(|value| value == "1")
     {
@@ -288,14 +297,6 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         crate::timing::report_process_memory();
         return TaskSuccess::new(value, &serde_json::json!({ "kind": kind }));
     }
-    report_success(&report, &result, value)
-}
-
-fn report_success(
-    report: &read::Report,
-    result: &CalibrationTaskResult,
-    value: CasaValue,
-) -> Result<TaskSuccess, TaskFailure> {
     let rendered = render::render(report.format, result).map_err(TaskFailure::execution)?;
     let text = match report.output.as_deref() {
         Some(path) => {
