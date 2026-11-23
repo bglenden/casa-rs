@@ -402,6 +402,12 @@ def compare_multiple_ordinates(root, vis, native):
     base = request(vis) | dict(xaxis="channel", xdatacolumn="", yaxis=["real", "phase", "amp"],
                               ydatacolumn=["model", "data", "corrected"],
                               yaxislocation=["left", "right", "left"])
+    virtual = root / "multiple-ordinates-virtual.ms"
+    copy_ms(vis, virtual)
+    with opened(virtual, True) as table:
+        table.removecols(["MODEL_DATA"])
+    assert casa.setjy(str(virtual), field="FLUX", standard="manual", usescratch=False,
+                      fluxdensity=[7.25, 0, 0, 0]) is not None
     cases = (
         ("three-ordinates", {}, [(1, 6), (1, 0), (1, 4.47213595)]),
         ("three-ordinates-short-columns",
@@ -411,6 +417,9 @@ def compare_multiple_ordinates(root, vis, native):
               ydatacolumn=["model", "data", "corrected", "data"],
               yaxislocation=["left", "left", "right", "right"]),
          [(4.47213595, 6), (4.47213595, 2), (4.47213595, 4.47213595), (4.47213595, 0)]),
+        ("virtual-model-on-third-ordinate",
+         dict(vis=str(virtual), yaxis=["amp", "phase", "real"], ydatacolumn=["data", "data", "model"]),
+         [(1, 2), (1, 0), (1, 7.25)]),
     )
     for name, options, first in cases:
         controls = base | options
@@ -451,6 +460,8 @@ def compare_multiple_ordinates(root, vis, native):
     for output in (expected, actual):
         with Image.open(output) as image:
             assert image.size == (500, 360)
+    with opened(virtual) as table:
+        assert "MODEL_DATA" not in table.colnames()
 
     duplicate = base | dict(yaxis=["real", "amp", "real"], ydatacolumn=["model", "data", "model"])
     for engine, task in (("casa", reference), ("native", native)):
@@ -462,6 +473,20 @@ def compare_multiple_ordinates(root, vis, native):
         else:
             raise AssertionError(f"{engine} accepted duplicate ordinate and column pairs")
         assert not output.exists()
+
+    from casars.tasks import TaskParameterError
+
+    averaged = base | dict(avgchannel="2", expformat="txt")
+    expected, actual = (root / f"three-ordinate-averaged.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**averaged, plotfile=str(expected)) is None
+    assert len(rows(expected)) == 18
+    try:
+        native(**averaged, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "more than two MeasurementSet ordinates with averaging" in str(error), error
+    else:
+        raise AssertionError("PlotMS used the unaveraged ordinate path for an averaged request")
+    assert not actual.exists()
 
 
 def compare_averaged_columns(root, native):
