@@ -4,13 +4,16 @@
 //! yet raises `NotImplementedError` naming #1029 (`stubs.rs`).
 
 mod data_description;
+mod intents;
 mod names;
 mod scan_index;
 mod scan_queries;
 mod spectral;
 mod spectral_classes;
+mod spw_membership;
 mod stubs;
 pub(crate) mod surface;
+mod time_state_queries;
 
 use std::path::Path;
 use std::sync::Mutex;

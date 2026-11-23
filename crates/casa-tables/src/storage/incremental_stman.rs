@@ -76,6 +76,7 @@ struct IsmSelectedScalarRowsCacheKey {
     file_modified: Option<SystemTime>,
     selected_rows: Vec<usize>,
     column_names: Vec<String>,
+    preserve_defaults: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -758,6 +759,7 @@ pub(crate) fn read_ism_scalar_column_rows(
     col_descs: &[&ColumnDescContents],
     target_col_idx: usize,
     selected_rows: &[usize],
+    preserve_defaults: bool,
 ) -> Result<Option<Vec<Option<ScalarValue>>>, StorageError> {
     if selected_rows.is_empty() {
         return Ok(Some(Vec::new()));
@@ -773,15 +775,21 @@ pub(crate) fn read_ism_scalar_column_rows(
         return Ok(None);
     }
 
-    let cache_key = ism_selected_scalar_rows_cache_key(file_path, col_descs, selected_rows)?;
+    let cache_key =
+        ism_selected_scalar_rows_cache_key(file_path, col_descs, selected_rows, preserve_defaults)?;
     if let Some(values) =
         cached_ism_selected_scalar_column(&cache_key, target_col_idx, selected_rows.len())
     {
         return Ok(Some(values));
     }
 
-    let values_by_column =
-        read_ism_scalar_columns_rows_uncached(file_path, dm_blob, col_descs, selected_rows)?;
+    let values_by_column = read_ism_scalar_columns_rows_uncached(
+        file_path,
+        dm_blob,
+        col_descs,
+        selected_rows,
+        preserve_defaults,
+    )?;
     let values = values_by_column
         .get(target_col_idx)
         .cloned()
@@ -1206,6 +1214,7 @@ pub(crate) fn read_ism_scalar_column(
             scalar_dt,
             rows_in_bucket,
             big_endian,
+            false,
         )?);
     }
 
@@ -1220,6 +1229,7 @@ fn ism_selected_scalar_rows_cache_key(
     file_path: &Path,
     col_descs: &[&ColumnDescContents],
     selected_rows: &[usize],
+    preserve_defaults: bool,
 ) -> Result<IsmSelectedScalarRowsCacheKey, StorageError> {
     let metadata = std::fs::metadata(file_path)?;
     Ok(IsmSelectedScalarRowsCacheKey {
@@ -1227,6 +1237,7 @@ fn ism_selected_scalar_rows_cache_key(
         file_len: metadata.len(),
         file_modified: metadata.modified().ok(),
         selected_rows: selected_rows.to_vec(),
+        preserve_defaults,
         column_names: col_descs
             .iter()
             .map(|col_desc| col_desc.col_name.clone())
@@ -1267,6 +1278,7 @@ fn read_ism_scalar_columns_rows_uncached(
     dm_blob: &[u8],
     col_descs: &[&ColumnDescContents],
     selected_rows: &[usize],
+    preserve_defaults: bool,
 ) -> Result<Vec<Vec<Option<ScalarValue>>>, StorageError> {
     let _dm_name = parse_ism_dm_blob(dm_blob)?;
     let mut file = File::open(file_path)?;
@@ -1339,6 +1351,7 @@ fn read_ism_scalar_columns_rows_uncached(
                         *scalar_dt,
                         rows_in_bucket,
                         big_endian,
+                        preserve_defaults,
                     ),
                     None => Ok(vec![None; rows_in_bucket]),
                 })
@@ -2210,6 +2223,7 @@ fn load_scalar_bucket_column_values(
     dt: CasacoreDataType,
     rows_in_bucket: usize,
     big_endian: bool,
+    preserve_defaults: bool,
 ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
     if col_idx >= bucket.col_indices.len() {
         let value = default_value(dt, false, col_desc);
@@ -2222,7 +2236,8 @@ fn load_scalar_bucket_column_values(
                 )));
             }
         };
-        let value = if (col_desc.option & 2) != 0
+        let value = if !preserve_defaults
+            && (col_desc.option & 2) != 0
             && scalar_value_is_default(
                 &casa_types::Value::Scalar(scalar.clone()),
                 col_desc.require_primitive_type()?,
@@ -2249,7 +2264,8 @@ fn load_scalar_bucket_column_values(
                 )));
             }
         };
-        if (col_desc.option & 2) != 0
+        if !preserve_defaults
+            && (col_desc.option & 2) != 0
             && scalar_value_is_default(
                 &casa_types::Value::Scalar(scalar.clone()),
                 col_desc.require_primitive_type()?,
@@ -2759,6 +2775,7 @@ mod tests {
             &dm_blob,
             &[&scalar_desc, &array_sibling_desc],
             &[3, 0, 2],
+            false,
         )
         .expect("read scalar column beside array sibling");
 

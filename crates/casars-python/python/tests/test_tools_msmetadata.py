@@ -312,9 +312,7 @@ def test_msmetadata_reads_selected_rows_from_casa_reference_ms(native_dataset, t
     assert 0 < selected.nrows() < table.nrows()
     selected.done()
     assert table.done()
-    for subtable in native_dataset.iterdir():
-        if subtable.is_dir():
-            (reference / subtable.name).symlink_to(subtable, target_is_directory=True)
+    assert not (reference / "FIELD").exists()
 
     results = []
     for module in (casatools, tools):
@@ -340,3 +338,158 @@ def test_msmetadata_rejects_unsupported_scan_dtypes_instead_of_selecting_all(nat
                 metadata.fieldsforscans(np.array([99], dtype=dtype))
     finally:
         assert metadata.done()
+
+
+def test_msmetadata_scan_time_state_and_spectral_associations(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    results = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            scans = metadata.scannumbers()
+            scan = int(scans[0])
+            times = metadata.timesforscan(scan)
+            np.testing.assert_array_equal(metadata.fieldsfortimes(times[0]), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.scansfortimes(times[0]), scans, strict=True)
+            np.testing.assert_array_equal(metadata.timesforscan(scan, perspw=True)["0"], times, strict=True)
+            np.testing.assert_array_equal(metadata.timesforscans(scans), times, strict=True)
+            np.testing.assert_array_equal(metadata.timesforspws(), times, strict=True)
+            np.testing.assert_array_equal(metadata.timesforspws([0, 0])["0"], times, strict=True)
+            np.testing.assert_array_equal(metadata.timesforfield(0), times, strict=True)
+            np.testing.assert_array_equal(metadata.spwsforfields()["0"], np.array([0], dtype=np.uint64), strict=True)
+            np.testing.assert_array_equal(metadata.spwsfornames("L")["L"], np.array([0], dtype=np.uint64), strict=True)
+            np.testing.assert_array_equal(metadata.spwsforscan(scan), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.spwsforscans()[str(scan)], np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.scansforspws()["0"], scans, strict=True)
+            np.testing.assert_array_equal(metadata.scansforspw(0), scans, strict=True)
+            assert set(metadata.spwsfornames(["L", "missing"])) == {"L"}
+            assert metadata.statesforscan(scan + 100).size == 0
+            np.testing.assert_array_equal(metadata.statesforscans()[str(scan)], metadata.statesforscan(scan), strict=True)
+            with pytest.raises(RuntimeError):
+                metadata.fieldsfortimes(times[0], -1)
+            with pytest.raises(RuntimeError):
+                metadata.scansforstate(-1)
+            results.append((times, metadata.statesforscan(scan), metadata.scansforstate(0),
+                            metadata.spwsforfield("F"), metadata.fieldsforspw(0, asnames=True)))
+        finally:
+            assert metadata.done()
+    for expected, actual in zip(*results):
+        np.testing.assert_array_equal(actual, expected, strict=True)
+
+
+def test_msmetadata_safe_time_selection_boundaries(native_dataset):
+    metadata = tools.msmetadata()
+    assert metadata.open(str(native_dataset))
+    try:
+        scans = metadata.scannumbers()
+        times = metadata.timesforscan(int(scans[0]))
+        assert times[0] > 1.0
+        np.testing.assert_array_equal(metadata.fieldsfortimes(0), np.array([], dtype=np.int64), strict=True)
+        empty = np.array([], dtype=np.int64)
+        np.testing.assert_array_equal(metadata.timesforscans(empty), times, strict=True)
+        np.testing.assert_array_equal(metadata.timesforspws(empty), times, strict=True)
+        np.testing.assert_array_equal(metadata.timesforscans(scans, obsid=0, arrayid=0), times, strict=True)
+        with pytest.raises(RuntimeError):
+            metadata.timesforspws(4096)
+    finally:
+        assert metadata.done()
+
+
+def test_msmetadata_window_name_and_numpy_time_selector_forms(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = casatools.table()
+    assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+    assert table.nrows() == 1
+    assert table.addrows(1)
+    for column in table.colnames():
+        if table.iscelldefined(column, 0):
+            table.putcell(column, 1, table.getcell(column, 0))
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            for selector in (np.array("L"), np.array([["L", "missing"]]),
+                             np.array([b"L", b"missing"]), [b"L"]):
+                selected = metadata.spwsfornames(selector)
+                assert list(selected) == ["L"]
+                np.testing.assert_array_equal(selected["L"], np.array([0, 1]), strict=True)
+            np.testing.assert_array_equal(metadata.spwsforfield(b"F"), np.array([0]), strict=True)
+            all_times = metadata.timesforspws()
+            assert set(all_times) == {"0", "1"}
+            assert set(metadata.timesforspws(np.bool_(False))) == set(all_times)
+            for spw in (np.int32(0), np.array([0], dtype=np.uint32)):
+                np.testing.assert_array_equal(metadata.timesforspws(spw), all_times["0"], strict=True)
+            scan = int(metadata.scannumbers()[0])
+            for scans in (np.int32(scan), np.array([scan], dtype=np.uint32)):
+                np.testing.assert_array_equal(metadata.timesforscans(scans), all_times["0"], strict=True)
+            with pytest.raises(RuntimeError):
+                metadata.timesforscans(np.uint32(scan))
+            unsigned = metadata.timesforspws(np.uint32(0))
+            if module is casatools:
+                assert set(unsigned) == set(all_times)
+            else:
+                np.testing.assert_array_equal(unsigned, all_times["0"], strict=True)
+        finally:
+            assert metadata.done()
+
+
+def test_msmetadata_intents_keep_the_actual_state_time_relationship(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "STATE"), nomodify=False)
+    assert table.nrows() == 1
+    assert table.addrows(2)
+    for row, mode in enumerate(("OBSERVE+TARGET#ON_SOURCE,CALIBRATE_WVR#ON_SOURCE",
+                                "CALIBRATE_PHASE#ON_SOURCE", "UNUSED")):
+        assert table.putcell("OBS_MODE", row, mode)
+    assert table.done()
+    assert table.open(str(native_dataset), nomodify=False)
+    times = table.getcol("TIME")
+    assert len(np.unique(times)) > 1
+    state = (times > times.min()).astype(np.int32)
+    assert table.putcol("STATE_ID", state)
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            scans = metadata.scannumbers()
+            expected = ["CALIBRATE_PHASE#ON_SOURCE", "CALIBRATE_WVR#ON_SOURCE",
+                        "OBSERVE+TARGET#ON_SOURCE"]
+            assert metadata.intents() == [*expected, "UNUSED"]
+            assert metadata.intentsforfield("F") == expected
+            assert metadata.intentsforfield("f") == []
+            for field in (b"F", np.bytes_("F"), np.str_("F"), np.int32(0)):
+                assert metadata.intentsforfield(field) == expected
+            for invalid in (99, -1, np.uint32(0), False, None, [0]):
+                with pytest.raises(RuntimeError):
+                    metadata.intentsforfield(invalid)
+            assert metadata.intentsforscan(int(scans[0])) == expected
+            assert metadata.intentsforspw(0) == expected
+            for pattern in ("OBSERVE*", b"OBSERVE*", np.str_("OBSERVE*"), np.bytes_("OBSERVE*")):
+                np.testing.assert_array_equal(metadata.fieldsforintent(pattern, asnames=True),
+                                              np.array(["F"]), strict=True)
+            with pytest.raises(TypeError):
+                metadata.fieldsforintent(None)
+            literal = metadata.fieldsforintent("OBSERVE+*", asnames=True)
+            expected_literal = np.array([], dtype="U5") if module is casatools else np.array(["F"])
+            np.testing.assert_array_equal(literal, expected_literal, strict=True)
+            np.testing.assert_array_equal(metadata.scansforintent("*WVR*"), scans, strict=True)
+            np.testing.assert_array_equal(metadata.spwsforintent("CALIBRATE*"), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.timesforintent("CALIBRATE_PHASE#ON_SOURCE"),
+                                          np.unique(times[state == 1]), strict=True)
+            np.testing.assert_array_equal(metadata.timesforintent("OBSERVE+TARGET#ON_SOURCE"),
+                                          np.unique(times[state == 0]), strict=True)
+            assert metadata.timesforintent("CALIBRATE*").size == 0
+            assert metadata.scansforintent("UNUSED").size == 0
+            with pytest.raises(RuntimeError):
+                metadata.scansforintent("missing")
+        finally:
+            assert metadata.done()

@@ -9141,7 +9141,8 @@ the same result as the corresponding omitted argument (#1029).
 
 On an attached CASA 6.7.6.14 `msmetadata` tool, get a valid scan number
 from `scannumbers(0, 0)` and call
-`fieldsforscans([scan], obsid=0, arrayid=0)`. The vector selection
+`fieldsforscans([scan], obsid=0, arrayid=0)` or
+`timesforscans([scan], obsid=0, arrayid=0)`. The vector selection
 initializes the scan number but leaves the observation and array IDs
 uninitialized. CASA can report an unknown scan with unrelated IDs. The
 single-scan and `asmap=True` variants do use the supplied IDs.
@@ -9167,6 +9168,36 @@ With CASA 6.7.6.14, pass a nonempty `numpy.float16` or `object` array to
 the supplied scan numbers, and returns fields for every scan. casa-rs
 raises `TypeError` so the unsupported array type cannot silently widen
 the selection (#1029).
+
+## Field time selection can include the first field after the time window
+
+In CASA 6.7.6.14, open a MeasurementSet whose first MAIN time is after
+zero and call `msmetadata.fieldsfortimes(0.0, 0.0)`. The result includes
+the first observed field because the loop collects fields before testing
+the upper bound. casa-rs includes only fields with an observation time
+inside the requested inclusive interval (#1029).
+
+## Empty or out-of-range time selectors can terminate CASA
+
+For an attached CASA 6.7.6.14 `msmetadata` tool, passing
+`numpy.array([], dtype=numpy.int64)` to `timesforscans` can segfault
+because the binding dereferences the minimum of an empty vector.
+Passing the same array to `timesforspws` can abort with an empty-array
+exception. In `timesforspws`, a positive scalar outside the spectral
+window table can also segfault because that path indexes without a
+bounds check.
+
+casa-rs interprets the empty integer vector as the full in-scope set
+and raises `RuntimeError` for the out-of-range spectral window (#1029).
+
+## An unsigned scalar can widen a spectral-window time selection
+
+In CASA 6.7.6.14, open a MeasurementSet with more than one spectral
+window. `msmetadata.timesforspws(numpy.uint32(0))` returns a dictionary
+covering all windows. A Python integer, signed NumPy integer, or
+one-element unsigned integer array returns the requested window.
+casa-rs treats the unsigned scalar as the requested window too, so its
+numeric value cannot be lost and the selection widened (#1029).
 
 ## Image coordinate frequency conversion can use the wrong physical direction
 
@@ -10766,3 +10797,14 @@ channel but lets the layer's `std::out_of_range` escape, terminating Python.
 casa-rs raises `RuntimeError` for an invalid layer and preserves the tool state.
 The paired atmosphere oracle isolates the CASA call and checks all nine native
 layer getters, including a valid query after each error.
+
+## Intent wildcards can lose literal punctuation
+
+In CASA 6.7.6.14, give a STATE row the intent
+`OBSERVE+TARGET#ON_SOURCE` and use that row in MAIN.
+`msmetadata.fieldsforintent("OBSERVE+*")` then returns no fields, although
+the exact intent and `"OBSERVE*"` match. The shared wildcard helper uses
+a replacement that refers to a nonexistent regex capture, dropping
+characters such as `+`. casa-rs treats `*` as the wildcard and matches
+all other characters literally in field, scan, and spectral-window
+intent selectors (#1029).

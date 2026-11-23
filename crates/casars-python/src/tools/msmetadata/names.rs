@@ -5,10 +5,20 @@ use std::collections::BTreeSet;
 use casa_ms::{MsError, MsResult};
 use numpy::{IntoPyArray, PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyList, PyString, PyTuple};
+use pyo3::types::{PyBool, PyBytes, PyList, PyString, PyTuple};
 
 use super::PyMsMetadata;
 use crate::convert::{nested_sequence_items, value::CasaValue};
+
+pub(super) fn selector_text(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    if let Ok(text) = value.cast::<PyString>() {
+        return Ok(Some(text.to_str()?.to_owned()));
+    }
+    Ok(value
+        .cast::<PyBytes>()
+        .ok()
+        .map(|text| String::from_utf8_lossy(text.as_bytes()).into_owned()))
+}
 
 pub(super) enum Indices {
     Empty,

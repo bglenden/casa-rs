@@ -65,6 +65,21 @@ pub(crate) struct RefTableDatContents {
     pub row_map: Vec<u64>,
 }
 
+impl RefTableDatContents {
+    pub(crate) fn parent_column<'a>(&'a self, column: &'a str) -> &'a str {
+        self.column_name_map
+            .iter()
+            .find(|(view, _)| view == column)
+            .map_or(column, |(_, parent)| parent.as_str())
+    }
+
+    pub(crate) fn parent_row(&self, row: usize) -> Option<usize> {
+        self.row_map
+            .get(row)
+            .and_then(|&parent| usize::try_from(parent).ok())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TableDatContents {
     pub nrrow: u64,

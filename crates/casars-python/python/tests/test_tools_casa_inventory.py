@@ -48,6 +48,12 @@ IMPLEMENTED["msmetadata"] = {
     "rxbands", "spwsforbaseband", "subwindows", "tdmspws",
     "narrays", "nscans", "scannumbers", "fieldsforname", "fieldsforscan", "fieldsforscans",
     "scansforfield", "scansforfields", "antennasforscan", "nbaselines", "baselines",
+    "fieldsforspw", "spwsforfield", "spwsforfields", "spwsfornames", "spwsforscan",
+    "spwsforscans", "scansforspw", "scansforspws", "fieldsfortimes", "scansfortimes",
+    "timesforfield", "timesforscan", "timesforscans", "timesforspws", "scansforstate",
+    "statesforscan", "statesforscans",
+    "intents", "intentsforfield", "intentsforscan", "intentsforspw",
+    "fieldsforintent", "scansforintent", "spwsforintent", "timesforintent",
 }
 IMPLEMENTED["atmosphere"] = set(casa_signatures("atmosphere")["methods"])
 IMPLEMENTED["wvr"] = {"gcal"}
