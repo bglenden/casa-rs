@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "execution_date": "2026-11-23",
-  "revision": "a84af50a5f5d6b0b92712ece91a30f4ab1679705",
+  "revision": "e0c5ccb1135f7b6cf89d5cdec8129a22d82c9a0a",
   "baseline_revision": "735f9d68e9a8584f0f8d92e26856e281d2e00e9d",
   "casa_version": "6.7.6.14",
   "casaplotms_version": "2.9.1",
@@ -12,10 +12,14 @@
   "text_exports": 10,
   "points": 120,
   "additional_real_points_against_casa_signed_amplitude": 12,
-  "paired_refusals": 2,
+  "paired_refusals": 4,
   "figures": 2,
   "rendered_coordinates": 24,
-  "figure_size_px": [500, 360],
-  "pointwise_relative_tolerance": 1.2e-5,
-  "pointwise_absolute_tolerance": 1e-7
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07,
+  "pending_averaging": "CASA exported six negative FLOAT_DATA points on the mixed input at avgchannel=2. Native reports the pending support and writes no file."
 }

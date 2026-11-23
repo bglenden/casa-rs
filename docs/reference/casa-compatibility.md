@@ -2278,10 +2278,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-float-data"></a>
 ##### ms-float-data
 
-**Same-input MeasurementSet FLOAT_DATA plotting — passed.** Ten paired texts matched 120 selected points, including signed values, default and corrected fallback, channel ordinates, and independent complex axes on mixed input. Two 500 by 360 pixel PNGs matched 24 artist coordinates. The native real axis matched the reference signed-amplitude coordinates after the CASA real-axis backend closed its RPC connection. Both tasks refused an absent FLOAT_DATA column and an explicit FLOAT_DATA phase request. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with unaveraged float-only and mixed float/complex MeasurementSets.
+**Same-input MeasurementSet FLOAT_DATA plotting — passed.** Ten paired texts matched 120 selected points, including signed values, default and corrected fallback, channel ordinates, and independent complex axes on mixed input. Two 500 by 360 pixel PNGs matched 24 artist coordinates. The native real axis matched the reference signed-amplitude coordinates after the CASA real-axis backend closed its RPC connection. Both tasks refused an absent FLOAT_DATA column, an explicit phase request and two residual requests on float-plus-model storage without DATA. A mixed-input average is refused with a #1032 diagnostic while support remains open. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with unaveraged float-only and mixed float/complex MeasurementSets.
 
 - [https://github.com/bglenden/casa-rs/pull/2139](https://github.com/bglenden/casa-rs/pull/2139)
-- Revision: `a84af50a5f5d6b0b92712ece91a30f4ab1679705`; CASA: `6.7.6.14`.
+- Revision: `e0c5ccb1135f7b6cf89d5cdec8129a22d82c9a0a`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-float-data-20261123.json`.
 
