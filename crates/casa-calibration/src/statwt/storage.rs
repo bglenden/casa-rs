@@ -97,6 +97,15 @@ impl StatWtMs {
         Ok(rows)
     }
 
+    /// Whether the expression names a FIELD in any constituent MS, independent
+    /// of whether that field has any MAIN rows matching the other selectors.
+    #[doc(hidden)]
+    pub fn has_matching_field(&self, expression: &str) -> bool {
+        self.parts
+            .iter()
+            .any(|part| part.ms.resolve_field_selector(expression).is_ok())
+    }
+
     pub(super) fn metadata(&self) -> &MeasurementSet {
         &self.parts[0].ms
     }
