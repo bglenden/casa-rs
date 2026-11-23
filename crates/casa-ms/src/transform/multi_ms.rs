@@ -6,10 +6,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{Table, TableError, TableInfo, TableOptions};
+use casa_types::{RecordValue, Value};
 
+use super::subtable_copy::{attached_subtable_name, copy_dir_recursive};
 use super::{
     MsTransformError, MsTransformReport, MsTransformRequest, MsTransformTaskOptions, RowGrammar,
-    copy_dir_recursive, scalar_f64, scalar_i32, transform_product,
+    scalar_f64, scalar_i32, transform_product,
 };
 use crate::SubtableId;
 use crate::selection::syntax::parse_numeric_row_id_ranges;
@@ -91,7 +93,7 @@ pub(super) fn retain(
     let Some(mut report) = report else {
         return Ok(None);
     };
-    install_shared_subtables(destination, &outputs)?;
+    install_shared_subtables(destination, &outputs, tables[0].keywords())?;
     let info = container_info(partition_axis(&request.input_ms).as_deref(), &outputs);
     let concat = Table::concat(tables).map_err(|source| table_error(destination, source))?;
     concat
@@ -189,7 +191,11 @@ fn container_info(axis: Option<&str>, members: &[PathBuf]) -> TableInfo {
     }
 }
 
-fn install_shared_subtables(root: &Path, members: &[PathBuf]) -> Result<(), MsTransformError> {
+fn install_shared_subtables(
+    root: &Path,
+    members: &[PathBuf],
+    first_keywords: &RecordValue,
+) -> Result<(), MsTransformError> {
     let first = &members[0];
     let first_name = first.file_name().expect("relative member has a name");
     for id in SubtableId::ALL_REQUIRED
@@ -218,6 +224,18 @@ fn install_shared_subtables(root: &Path, members: &[PathBuf]) -> Result<(), MsTr
                     &Path::new("..").join(first_name).join(id.name()),
                     &destination,
                 )?;
+            }
+        }
+    }
+    let first_path = casa_tables::lexical_absolute(&root.join(first));
+    for field in first_keywords.fields() {
+        let Value::TableRef(reference) = &field.value else {
+            continue;
+        };
+        if let Some(name) = attached_subtable_name(&first_path, &field.name, reference) {
+            let destination = root.join(&name);
+            if !destination.exists() {
+                link_directory(&first.join(name), &destination)?;
             }
         }
     }
