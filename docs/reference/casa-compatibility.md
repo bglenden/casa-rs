@@ -2328,10 +2328,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-channel-columns"></a>
 ##### ms-channel-columns
 
-**Same-input channel-averaged MeasurementSet visibility columns — passed.** Eight paired text exports matched 168 averaged coordinates and their source metadata. Tests cover mixed flags, the separate DATA and CORRECTED_DATA weights, MODEL_DATA with and without additional columns, missing spectra, a shared abscissa column and an ignored scalar request. One 500 by 360 pixel PNG matched both ordinate layers and their 24 coordinates. Twelve additional model abscissa coordinates match with a weight ordinate. Independent time averaging remains pending. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with independent stored visibility columns, selected channel bins and nonuniform spectral weights.
+**Same-input channel-averaged MeasurementSet visibility columns — passed.** Eleven paired text exports matched 228 averaged coordinates and their source metadata. Tests cover mixed flags, the separate DATA and CORRECTED_DATA weights, MODEL_DATA with and without additional columns, missing and undefined spectra, zero-weight bins, a shared abscissa column and an ignored scalar request. One 500 by 360 pixel PNG matched both ordinate layers and their 24 coordinates. Twelve additional model abscissa coordinates match with a weight ordinate. Independent time averaging remains pending. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with independent stored visibility columns, selected channel bins and nonuniform spectral weights.
 
 - [https://github.com/bglenden/casa-rs/pull/2150](https://github.com/bglenden/casa-rs/pull/2150)
-- Revision: `c9dc8f6a13281c8e8ada4a27b96d194e2065b9e6`; CASA: `6.7.6.14`.
+- Revision: `33caea79f77e79e183d1fd07e095f18b0caed403`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-channel-columns-20261123.json`.
 
