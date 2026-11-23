@@ -25,7 +25,7 @@ use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 pub(super) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
-    activity: Option<&mut ToolSolveActivity>,
+    mut activity: Option<&mut ToolSolveActivity>,
     legacy_iterator: bool,
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.refant, RefAntSelector::Unspecified) {
@@ -99,11 +99,13 @@ pub(super) fn solve(
     let mut rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
     let parameters = request.gain_type.polarizations();
-    let mut stats = SolveStatsBuilder::new(
-        parameters,
-        spectral_window_ids(ms)?,
-        &context.available_antennas,
-    );
+    let window_ids = spectral_window_ids(ms)?;
+    if combined_output_spw.is_some()
+        && let Some(activity) = activity.as_deref_mut()
+    {
+        activity.initialize(window_ids.len());
+    }
+    let mut stats = SolveStatsBuilder::new(parameters, window_ids, &context.available_antennas);
     for mut group in groups.into_values() {
         group.finalize_for_solve(request.solve_mode, false);
         let mut stages = IntervalStages::of(&group, 0);
@@ -117,6 +119,16 @@ pub(super) fn solve(
         }
         stages.constrained.clear();
         stats.interval(&stages);
+        if let Some(output_spw) = combined_output_spw
+            && let Some(activity) = activity.as_deref_mut()
+        {
+            activity.count_mapped_interval(
+                group.spw_id,
+                output_spw,
+                group.attempted,
+                group.attempted,
+            );
+        }
         if !group.attempted {
             continue;
         }
@@ -165,7 +177,9 @@ pub(super) fn solve(
         }));
     }
     let tool_solve = activity.is_some();
-    stats.track_activity(activity);
+    if combined_output_spw.is_none() {
+        stats.track_activity(activity);
+    }
     let mut solve_stats = stats.finish();
     if !cross_hand && !tool_solve {
         // task_gaincal.resultsDictGaintypeExcept copies the unflagged

@@ -122,7 +122,7 @@ impl ToolSolveActivity {
         self.windows.resize(windows, IntervalActivity::default());
     }
 
-    pub(crate) fn count_polynomial_interval(
+    pub(crate) fn count_mapped_interval(
         &mut self,
         input_window: i32,
         output_window: i32,
