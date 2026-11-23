@@ -919,20 +919,12 @@ impl SolveAccumulator {
             if no_weighted_data {
                 continue;
             }
-            let graph_index = match options.gain_type {
-                GainType::K | GainType::KMbd | GainType::KAntPos
-                    if correlation_types.len() == 1 =>
-                {
+            let graph_index =
+                if graph_count == 1 || scalar_bandpass || delay && correlation_types.len() == 1 {
                     0
-                }
-                GainType::G if scalar_bandpass => 0,
-                GainType::G
-                | GainType::K
-                | GainType::KMbd
-                | GainType::KAntPos
-                | GainType::GSpline => receptors.0,
-                GainType::T | GainType::KCross => 0,
-            };
+                } else {
+                    receptors.0
+                };
             let point = if let Some(rotated) = samples.point_model {
                 rotated[corr_index]
             } else {
@@ -957,17 +949,7 @@ impl SolveAccumulator {
                     true,
                 );
             }
-            if !parallel_hand
-                && !baseline_solve
-                && matches!(
-                    options.gain_type,
-                    GainType::G
-                        | GainType::K
-                        | GainType::KMbd
-                        | GainType::KAntPos
-                        | GainType::GSpline
-                )
-            {
+            if !parallel_hand && !baseline_solve && graph_count == 2 {
                 // CASA can use cross-hand weights for the averaged baseline's
                 // time even though only parallel hands enter these solves.
                 if !delay && !legacy_spline {
