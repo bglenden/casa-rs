@@ -128,26 +128,28 @@ def test_cross_device_move_preserves_sparse_tile_storage(tmp_path, other_filesys
 
 @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
                     reason="requires ordinary Unix directory permissions")
-def test_cross_device_cleanup_failure_reports_recovery(tmp_path, other_filesystem):
+def test_cross_device_removal_preflight_preserves_both_tables(tmp_path, other_filesystem):
     source = tmp_path / "source.im"
     target = other_filesystem / "target.im"
-    image = tools.image()
+    image, previous = tools.image(), tools.image()
+    locked = source / "extra"
     try:
         assert image.fromarray(str(source), np.full((3, 4), 7, dtype=np.float32))
-        locked = source / "extra"
+        assert previous.fromarray(str(target), np.full((3, 4), 9, dtype=np.float32))
+        assert previous.done()
         locked.mkdir()
         (locked / "keep").write_text("recovery data")
         locked.chmod(0o575)
-        with pytest.raises(RuntimeError, match="Image was moved.*cleanup failed.*Inspect") as error:
-            image.rename(str(target))
-        assert not source.exists()
-        recovery = next(tmp_path.glob(".tmp*/source/extra"))
-        assert str(recovery.parent.parent) in str(error.value)
-        assert (recovery / "keep").read_text() == "recovery data"
-        assert image.open(str(target))
+        with pytest.raises(RuntimeError, match="Cannot move native image.*Permission denied"):
+            image.rename(str(target), overwrite=True)
+        assert not image.isopen()
+        assert (locked / "keep").read_text() == "recovery data"
+        assert image.open(str(source))
+        assert previous.open(str(target))
         np.testing.assert_array_equal(image.getchunk(), 7.0)
+        np.testing.assert_array_equal(previous.getchunk(), 9.0)
     finally:
+        if locked.exists():
+            locked.chmod(0o755)
         image.done()
-        for parent in (tmp_path, other_filesystem):
-            for extra in parent.glob("**/extra"):
-                extra.chmod(0o755)
+        previous.done()

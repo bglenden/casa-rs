@@ -2,10 +2,12 @@
 //! LEL mask evaluation, `image:maskname` resolution, and `stretch` handling
 //! for image tasks.
 
+mod composed;
 mod geometry;
 pub(super) use geometry::validate_mask;
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -21,13 +23,14 @@ use crate::analysis::mask_error_wording;
 use crate::expr_parser::{
     HashMapResolver, ImageToolPixelExpression, ReplacementPixels, compile_image_tool_pixels,
     evaluate_real_scalar, evaluate_replacement, image_tool_mask_builder, parse_image_tool_mask,
-    parse_subimage_mask_expr, referenced_images,
+    referenced_images, subimage_mask_builder,
 };
 use crate::fits_read::{FitsToolImport, SharedFitsSectionReader};
 use crate::image_expr::{
     ImageExprMeta, ImageExprValue, MaskExpression, bounded_read_cursor, validate_slice_request,
 };
 use crate::image_expr_lel::broadcast_array;
+use crate::miriad_read::MiriadImage;
 use crate::{
     AnyPagedImage, ComponentListImage, ImageError, ImageExprBuilder, ImageExpression,
     ImageInterface, ImagePixel, PagedImage,
@@ -95,6 +98,9 @@ pub struct ImageToolExpressionInputs<'a> {
     operands: Vec<ResolvedOperand>,
 }
 
+/// Pre-opened numeric operands keyed by resolved image path.
+pub type BoundImageToolOperands = HashMap<PathBuf, (ImageToolPixelExpression, bool)>;
+
 impl<'a> ImageToolExpressionInputs<'a> {
     /// Resolve the operand paths relative to the current working directory.
     /// # Errors
@@ -113,6 +119,19 @@ impl<'a> ImageToolExpressionInputs<'a> {
         expression: impl Into<Cow<'a, str>>,
         directory: &Path,
     ) -> Result<Self, ImageError> {
+        Self::resolve_with_image_paths(expression, directory, |_| None)
+    }
+
+    /// Resolve image names in a directory, allowing a caller to substitute a
+    /// staged image for an operand before the new image is published.
+    ///
+    /// # Errors
+    /// Returns an error for a missing operand or invalid expression.
+    pub fn resolve_with_image_paths(
+        expression: impl Into<Cow<'a, str>>,
+        directory: &Path,
+        substitute: impl Fn(&Path) -> Option<PathBuf>,
+    ) -> Result<Self, ImageError> {
         let expression = expression.into();
         if expression.is_empty() {
             return Err(ImageError::CasaSelection(
@@ -121,7 +140,7 @@ impl<'a> ImageToolExpressionInputs<'a> {
         }
         let operands = referenced_images(&expression)?
             .into_iter()
-            .map(|name| resolve_named_operand(directory, name))
+            .map(|name| resolve_named_operand_with(directory, name, &substitute))
             .collect::<Result<_, _>>()?;
         Ok(Self {
             expression,
@@ -165,7 +184,7 @@ impl<'a> ImageToolExpressionInputs<'a> {
         self.compile_with_source_locks(true)
     }
 
-    /// Compile a lazy numeric expression with resolved saved expression operands.
+    /// Compile a numeric expression with supplied operands and a source lock policy.
     ///
     /// Callers supply already validated expressions keyed by resolved path. Each
     /// saved operand is captured as a section reader with its original precision
@@ -173,22 +192,47 @@ impl<'a> ImageToolExpressionInputs<'a> {
     ///
     /// # Errors
     /// Returns an error for an unreadable operand or an invalid expression.
-    pub fn compile_with_saved_operands(
+    pub fn compile_with_bound_operands(
         &self,
-        saved: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
+        bound: &BoundImageToolOperands,
+        temporary_source_locks: bool,
     ) -> Result<(ImageToolPixelExpression, bool), ImageError> {
-        let opened = self
-            .operands
+        let opened = self.open_bound_operands(bound, temporary_source_locks)?;
+        self.compile_opened(&opened)
+    }
+
+    /// Evaluate a Boolean mask using supplied saved or virtual image operands.
+    ///
+    /// # Errors
+    /// Returns an error for invalid expressions, operands, or target shapes.
+    pub fn evaluate_mask_with_bound_operands(
+        &self,
+        bound: &BoundImageToolOperands,
+        target_shape: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        let opened = self.open_bound_operands(bound, false)?;
+        evaluate_image_tool_mask_opened(&self.expression, target_shape, &opened)
+    }
+
+    fn open_bound_operands(
+        &self,
+        bound: &BoundImageToolOperands,
+        temporary_source_locks: bool,
+    ) -> Result<Vec<(String, Operand)>, ImageError> {
+        self.operands
             .iter()
             .map(|operand| {
-                let source = match saved.get(&operand.path) {
+                let source = match bound.get(&operand.path) {
                     Some((pixels, single_precision)) => saved_operand(pixels, *single_precision)?,
-                    None => open_path_with_mask_name(&operand.path, operand.mask.clone(), true)?,
+                    None => open_path_with_mask_name(
+                        &operand.path,
+                        operand.mask.clone(),
+                        temporary_source_locks,
+                    )?,
                 };
                 Ok((operand.name.clone(), source))
             })
-            .collect::<Result<Vec<_>, ImageError>>()?;
-        self.compile_opened(&opened)
+            .collect()
     }
 
     fn compile_with_source_locks(
@@ -254,9 +298,17 @@ pub fn evaluate_image_tool_mask(
     target_shape: &[usize],
 ) -> Result<ArrayD<bool>, ImageError> {
     let opened = image_operands(expression)?;
-    let (real, complex) = operand_resolvers(&opened);
+    evaluate_image_tool_mask_opened(expression, target_shape, &opened)
+}
+
+fn evaluate_image_tool_mask_opened(
+    expression: &str,
+    target_shape: &[usize],
+    opened: &[(String, Operand)],
+) -> Result<ArrayD<bool>, ImageError> {
+    let (real, complex) = operand_resolvers(opened);
     let parsed = parse_image_tool_mask(expression, &real, &complex, &|name| {
-        is_single_precision(&opened, name)
+        is_single_precision(opened, name)
     })?;
     if parsed.shape().is_empty() && !parsed.is_shape_polymorphic() {
         return Ok(ArrayD::from_elem(
@@ -385,7 +437,15 @@ fn resolve_named_operands(names: Vec<String>) -> Result<Vec<ResolvedOperand>, Im
 }
 
 fn resolve_named_operand(base: &Path, name: String) -> Result<ResolvedOperand, ImageError> {
-    let (entry, mask) = operand_path(base, &name).ok_or_else(|| ImageError::CasaSelection(format!(
+    resolve_named_operand_with(base, name, &|_| None)
+}
+
+fn resolve_named_operand_with(
+    base: &Path,
+    name: String,
+    substitute: &impl Fn(&Path) -> Option<PathBuf>,
+) -> Result<ResolvedOperand, ImageError> {
+    let (entry, mask) = operand_path(base, &name, substitute).ok_or_else(|| ImageError::CasaSelection(format!(
         "Input mask specification is incorrect: ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"
     )))?;
     let path = entry
@@ -403,14 +463,29 @@ fn open_operands(
     operands: &[ResolvedOperand],
     temporary_source_locks: bool,
 ) -> Result<Vec<(String, Operand)>, ImageError> {
+    open_operands_for_outputs(operands, temporary_source_locks, &[])
+}
+
+fn open_operands_for_outputs(
+    operands: &[ResolvedOperand],
+    temporary_source_locks: bool,
+    destinations: &[&Path],
+) -> Result<Vec<(String, Operand)>, ImageError> {
     operands
         .iter()
         .map(|operand| {
-            let image = open_path_with_mask_name(
-                &operand.path,
-                operand.mask.clone(),
-                temporary_source_locks,
-            )?;
+            let image = if composed::recognizes(&operand.path) {
+                let (image, dependencies) =
+                    composed::open(&operand.path, &operand.entry, temporary_source_locks)?;
+                check_mask_outputs(destinations, &dependencies)?;
+                image
+            } else {
+                open_path_with_mask_name(
+                    &operand.path,
+                    operand.mask.clone(),
+                    temporary_source_locks,
+                )?
+            };
             Ok((operand.name.clone(), image))
         })
         .collect()
@@ -515,6 +590,53 @@ fn mask_expression(raw: &str) -> String {
     }
 }
 
+thread_local! {
+    static MASK_OUTPUTS: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+}
+
+struct MaskOutputScope(usize);
+
+impl Drop for MaskOutputScope {
+    fn drop(&mut self) {
+        MASK_OUTPUTS.with_borrow_mut(|paths| paths.truncate(self.0));
+    }
+}
+
+/// Check composed mask operands opened by a synchronous image build against
+/// its pending output paths. The scope is local to the current thread.
+pub fn with_mask_output_paths<'a, R>(
+    outputs: impl IntoIterator<Item = &'a Path>,
+    build: impl FnOnce() -> R,
+) -> R {
+    let outputs: Vec<_> = outputs.into_iter().map(Path::to_path_buf).collect();
+    if outputs.is_empty() {
+        return build();
+    }
+    let previous = MASK_OUTPUTS.with_borrow_mut(|paths| {
+        let previous = paths.len();
+        paths.extend(outputs);
+        previous
+    });
+    let _scope = MaskOutputScope(previous);
+    build()
+}
+
+fn check_mask_outputs(
+    destinations: &[&Path],
+    dependencies: &composed::Dependencies,
+) -> Result<(), ImageError> {
+    MASK_OUTPUTS.with_borrow(|pending| {
+        let pending_overwrites = pending.iter().map(PathBuf::as_path).filter(|path| {
+            // A fresh child cannot remove an existing graph dependency.
+            path.symlink_metadata().is_ok()
+        });
+        for output in destinations.iter().copied().chain(pending_overwrites) {
+            dependencies.check_output(output)?;
+        }
+        Ok(())
+    })
+}
+
 pub(super) struct PreparedMask<'a> {
     expression: MaskExpression<f64>,
     target_shape: &'a [usize],
@@ -560,25 +682,41 @@ impl<'a> PreparedMask<'a> {
         let expr = mask_expression(raw);
         let names = referenced_images(&expr).map_err(mask_parse_error)?;
         let operands = resolve_named_operands(names)?;
-        for destination in destinations {
+        let destinations: Vec<_> = destinations.into_iter().collect();
+        for destination in &destinations {
             for operand in &operands {
                 super::ensure_outfile_does_not_alias_input(destination, &operand.path)?;
                 super::ensure_artifacts_do_not_overlap(destination, &operand.path)?;
             }
         }
-        let opened = open_operands(&operands, false)?;
+        let opened = open_operands_for_outputs(&operands, false, &destinations)?;
         let (real, complex) = operand_resolvers(&opened);
-        let expression =
-            parse_subimage_mask_expr(&expr, &real, &complex).map_err(mask_parse_error)?;
-        let mask_shape = expression.shape();
-        let mapped_axes = if mask_shape != target_shape && !mask_shape.is_empty() {
-            if !stretch {
-                return Err(ImageError::CasaSelection(format!(
-                    "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) \
-                     are different, and it was specified that the mask should not be extended, \
-                     so the mask cannot be applied to the (sub)image"
-                )));
-            }
+        let has_composed = operands
+            .iter()
+            .any(|operand| composed::recognizes(&operand.path));
+        let precision = |name: &str| is_single_precision(&opened, name);
+        let builder = subimage_mask_builder(
+            &expr,
+            &real,
+            &complex,
+            has_composed.then_some(&precision as &dyn Fn(&str) -> bool),
+        )
+        .map_err(mask_parse_error)?;
+        let mask_shape = builder.shape();
+        let extends = mask_shape != target_shape && !mask_shape.is_empty();
+        if extends && !stretch {
+            return Err(ImageError::CasaSelection(format!(
+                "The input image shape ({target_shape:?}) and mask shape ({mask_shape:?}) are different, and it was specified that the mask should not be extended, so the mask cannot be applied to the (sub)image"
+            )));
+        }
+        let mapped_axes = if has_composed && !mask_shape.is_empty() {
+            Some(geometry::image_tool_mask_axes(
+                builder.expression_coordinates(),
+                mask_shape,
+                target_coordinates,
+                target_shape,
+            )?)
+        } else if extends {
             opened
                 .iter()
                 .map(|(_, image)| image.geometry())
@@ -587,10 +725,16 @@ impl<'a> PreparedMask<'a> {
                     stretch_axes(coordinates, target_coordinates, mask_shape, target_shape)
                 })
                 .transpose()?
-                .filter(|axes| axes.iter().copied().ne(0..axes.len()))
         } else {
             None
-        };
+        }
+        .filter(|axes| axes.iter().copied().ne(0..axes.len()));
+        let expression = builder.compile().map_err(|error| {
+            mask_parse_error(crate::expr_parser::ExprParseError {
+                message: error.to_string(),
+                position: 0,
+            })
+        })?;
         Ok(Some(Self {
             expression,
             target_shape,
@@ -693,19 +837,21 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
     ))
 }
 
-fn operand_path(base: &Path, spec: &str) -> Option<(PathBuf, Option<String>)> {
-    let direct_path = base.join(spec);
-    if direct_path.exists() {
+fn operand_path(
+    base: &Path,
+    spec: &str,
+    substitute: &impl Fn(&Path) -> Option<PathBuf>,
+) -> Option<(PathBuf, Option<String>)> {
+    let existing = |path: PathBuf| substitute(&path).or_else(|| path.exists().then_some(path));
+    if let Some(direct_path) = existing(base.join(spec)) {
         return Some((direct_path, None));
     }
     if let Some((left, right)) = spec.rsplit_once(':')
         && !left.is_empty()
         && !right.trim().is_empty()
+        && let Some(source) = existing(base.join(left))
     {
-        let source = base.join(left);
-        if source.exists() {
-            return Some((source, Some(right.trim().to_owned())));
-        }
+        return Some((source, Some(right.trim().to_owned())));
     }
     None
 }
@@ -779,6 +925,28 @@ fn open_path_with_mask_name(
             )));
         }
         let expression = open_fits_expression(path, !ignore_default)?;
+        return Ok(Operand::Real(
+            MaskSource::Sections(Box::new(expression)),
+            true,
+        ));
+    }
+    if MiriadImage::recognizes_input(path, path) {
+        if mask_name.is_some() && !ignore_default {
+            return Err(ImageError::CasaSelection(format!(
+                "MIRIADImage {} has no named masks",
+                path.display(),
+            )));
+        }
+        let source = Arc::new(MiriadImage::open(path)?);
+        let meta = ImageExprMeta::from_image(source.as_ref())?;
+        let expression = ImageExprBuilder::from_section_readers(
+            meta,
+            Arc::new(move |start, count, stride| {
+                Ok(source.get_slice(start, count, stride)?.mapv(f64::from))
+            }),
+            None,
+        )
+        .compile()?;
         return Ok(Operand::Real(
             MaskSource::Sections(Box::new(expression)),
             true,

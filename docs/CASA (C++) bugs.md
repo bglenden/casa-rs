@@ -303,8 +303,10 @@ On CASA 6.7.6.14, `AT166_1` produces eight spectral windows with
 `frequencytol='3000000000.0Hz'` and five with `frequencytol=3000000000.0`.
 The filler reads the magnitude of a parsed quantity and can use the channel
 width when string extraction yields zero. casa-rs interprets quantity
-strings in Hz and checks both forms against CASA's numeric tolerance. The
-original argument remains in `HISTORY`.
+strings in Hz when supplied explicitly and checks both forms against CASA's
+numeric tolerance. Calls that omit the tolerance use the first CDA channel
+width, matching CASA's default on the AS758 archive. The original argument
+remains in `HISTORY`.
 
 ## `mstransform` channel-mode transformed-grid inconsistency
 
@@ -8449,6 +8451,16 @@ but can retain the write lock on the earlier native table. Casa-rs restores
 each member's physical lease independently of the MIRIAD advisory flags.
 See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
+### A virtual concatenation beam edit can abort when a member cannot publish
+
+Concatenate two native images with `tempclose=False`. Remove `table.lock`
+from the second image and make its directory read-only while keeping the
+table files writable. CASA 6.7.6.14 reports success from
+`setrestoringbeam`, then aborts on `done()` when casacore cannot create
+`table.dat_tmp`. Casa-rs checks every native member's write access before
+the beam edit, so the call returns an error and the earlier member keeps
+its original beam. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ### A null field in saved image-expression metadata can crash `image.open`
 
 Create a saved Float expression with `"MiscInfo": {"unknown": null}` in
@@ -8473,6 +8485,8 @@ Create two saved image-expression directories whose `ImageExpr` fields
 refer to each other, then open either directory. CASA 6.7.6.14 recurses
 until the Python process segfaults. Casa-rs resolves aliases to the same
 directory and raises an error on the cycle before publishing an output.
+The same active path check covers a saved expression reached through a
+virtual concatenation.
 See [#1959](https://github.com/bglenden/casa-rs/issues/1959).
 
 ### Copying a saved expression can delete one of its manifests
@@ -8689,6 +8703,32 @@ an unrelated image, the same failed call replaces its original pixels.
 casa-rs validates the metadata source and stages the product before
 publication. The failed call preserves an existing output and leaves a new
 output path absent. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
+
+The same staging protects inputs of a saved metadata expression. For
+`out.im` containing `leaf.im`, use a saved `imagemd` expression that reads
+`out.im/leaf.im` and request `imagecalc(..., outfile='out.im', overwrite=True)`.
+CASA deletes the nested input before failing to open the metadata. Casa-rs
+rejects the overlap and keeps both tables. An exact reference to `out.im`
+is valid and reads the new staged output.
+
+## An analysis output can remove an entry needed by its mask expression
+
+Use a saved expression as the `mask` operand of `subimage` and replace an
+existing native `out.im`. In CASA 6.7.6.14, the replacement can delete a
+symbolic link inside `out.im` used to reach the saved image or one of its
+leaves. It can also delete the referent of a linked `imageexpr.json` inside
+`out.im`. A leaf read can then fail after the original directory is gone.
+Casa-rs checks the entries used by the mask before publication and keeps
+the original table. A disjoint sibling reached through the same directory
+link is still writable. See [#1627](https://github.com/bglenden/casa-rs/issues/1627).
+
+## A saved `imagecalc` operand can return a stale cached section
+
+With `imagecalc(pixels='"expr.im" + 1')`, where the saved `expr.im` contains
+`"leaf.im" * 3`, read a one-pixel section, unlock the result, and add 50 to
+the underlying `leaf.im` with another tool. CASA 6.7.6.14 can return its
+previous value on the next read of the same section. Casa-rs returns the
+updated value on that read. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
 
 ## `imagecalc` can read a different FITS operand after a directory change
 
@@ -9151,6 +9191,15 @@ pixels. For example, `(2, 152)` contains 150 instead of the original value
 1661 from `(1, 151)`. The cursor writes overlap pixels that a subsequent
 cursor reads. casa-rs snapshots the selected pixels and validity before
 writing, using scratch storage when the overlap exceeds its memory budget.
+
+## A non-finite scalar coordinate order can terminate CASA
+
+Create a one-axis Linear coordinate system and pass a bare `float("inf")`
+to `transpose` or `reorder`. Both calls terminate the CASA 6.7.6.14 process
+on macOS arm64. With `[float("inf")]`, CASA raises its ordinary axis error.
+Casa-rs applies the arm64 axis conversion to either form and rejects the
+axis with an ordinary Python exception, preserving the coordinate system.
+See [#1626](https://github.com/bglenden/casa-rs/issues/1626).
 
 ## `coordsys.setrestfrequency` can store an infinite frequency
 

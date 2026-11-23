@@ -548,8 +548,13 @@ pub(crate) fn interpolate_time_linear(
         {
             let fraction = ((time_seconds - lower.time_seconds)
                 / (upper.time_seconds - lower.time_seconds)) as f32;
+            let opacity = matches!(lower.grid.as_ref(), CalibrationGrid::SpectralOpacity(_));
             match (lower.grid.as_ref(), upper.grid.as_ref()) {
-                (CalibrationGrid::Complex(lower), CalibrationGrid::Complex(upper)) => {
+                (CalibrationGrid::Complex(lower), CalibrationGrid::Complex(upper))
+                | (
+                    CalibrationGrid::SpectralOpacity(lower),
+                    CalibrationGrid::SpectralOpacity(upper),
+                ) => {
                     if lower.values.shape() != upper.values.shape() {
                         return Err(ApplyExecutionError::UnsupportedInterpolation {
                             path: path.display().to_string(),
@@ -560,18 +565,27 @@ pub(crate) fn interpolate_time_linear(
                     }
                     let mut values = lower.values.clone();
                     for (value, upper_value) in values.iter_mut().zip(upper.values.iter()) {
-                        *value = interpolate_gain_amplitude_phase(*value, *upper_value, fraction);
+                        *value = if opacity {
+                            *value + (*upper_value - *value) * fraction
+                        } else {
+                            interpolate_gain_amplitude_phase(*value, *upper_value, fraction)
+                        };
                     }
                     let mut flags = lower.flags.clone();
                     for (flag, upper_flag) in flags.iter_mut().zip(upper.flags.iter()) {
                         *flag = *flag || *upper_flag;
                     }
-                    Ok(Arc::new(CalibrationGrid::Complex(GainGrid {
+                    let grid = GainGrid {
                         receptor_count: lower.receptor_count,
                         channel_count: lower.channel_count,
                         values,
                         flags,
-                    })))
+                    };
+                    Ok(Arc::new(if opacity {
+                        CalibrationGrid::SpectralOpacity(grid)
+                    } else {
+                        CalibrationGrid::Complex(grid)
+                    }))
                 }
                 (CalibrationGrid::Delay(lower), CalibrationGrid::Delay(upper)) => {
                     if lower.values_ns.shape() != upper.values_ns.shape() {

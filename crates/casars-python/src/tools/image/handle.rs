@@ -11,7 +11,6 @@ use casa_images::{
     fits_read::{FitsSectionReader, FitsToolImport, fits_section_image},
     miriad_read::MiriadImage,
 };
-use casa_tables::{Table, TableOptions};
 use casa_types::{RecordValue, Value};
 use ndarray::ArrayD;
 use num_complex::{Complex32, Complex64};
@@ -253,11 +252,7 @@ impl ImageHandle {
     }
 
     pub(super) fn recognizes_miriad(probe: &Path, resolved: &Path) -> bool {
-        MiriadImage::recognizes(probe)
-            && !casa_images::concat_file::is_image_concat(probe)
-            && !casa_images::expr_file::is_image_expr(probe)
-            && (!resolved.join("table.dat").is_file()
-                || Table::open_metadata_only(TableOptions::new(resolved)).is_err())
+        MiriadImage::recognizes_input(probe, resolved)
     }
 
     pub(super) fn has_native_control(path: &Path) -> bool {
@@ -298,6 +293,14 @@ impl ImageHandle {
         with_pixels!(self, storage => match storage {
             Storage::Temp { image, .. } => image.concat_source()
                 .map_or_else(Vec::new, |source| source.expression_operands().cloned().collect()),
+            Storage::Paged(_) => Vec::new(),
+        })
+    }
+
+    pub(super) fn concat_operands(&self) -> Vec<PathBuf> {
+        with_pixels!(self, storage => match storage {
+            Storage::Temp { image, .. } => image.concat_source()
+                .map_or_else(Vec::new, |source| source.operand_paths().map(Path::to_path_buf).collect()),
             Storage::Paged(_) => Vec::new(),
         })
     }

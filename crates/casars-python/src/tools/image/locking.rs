@@ -70,17 +70,37 @@ impl ImageHandle {
 }
 
 impl AttachedImage {
+    pub(super) fn lock_expression_operand(
+        &self,
+        kind: LockType,
+        attempts: u32,
+        section_read: bool,
+    ) -> PyResult<bool> {
+        let mut source = self.lock();
+        self.check_bound_name(&source)?;
+        if section_read
+            && with_pixels!(&*source, storage => match storage {
+                Storage::Temp { image, .. } => image.concat_source().is_some_and(|concat| !concat.temp_close()),
+                Storage::Paged(_) => false,
+            })
+        {
+            // A retained concatenation acquires each member's read lease as
+            // its requested section is evaluated.
+            return Ok(true);
+        }
+        source.lock_storage(kind, attempts)
+    }
+
     fn lock_with_inputs(
         &self,
         handle: &mut ImageHandle,
         kind: LockType,
         attempts: u32,
+        section_read: bool,
     ) -> PyResult<bool> {
         self.check_bound_name(handle)?;
         for input in self.expression_inputs() {
-            let mut source = input.lock();
-            input.check_bound_name(&source)?;
-            if !source.lock_storage(kind, attempts)? {
+            if !input.lock_expression_operand(kind, attempts, section_read)? {
                 return Ok(false);
             }
         }
@@ -89,6 +109,17 @@ impl AttachedImage {
 
     pub(super) fn require_lock(&self, handle: &mut ImageHandle, kind: LockType) -> PyResult<()> {
         self.check_bound_name(handle)?;
+        if kind == LockType::Write
+            && with_pixels!(&*handle, storage => matches!(storage, Storage::Paged(image) if !image.is_writable()))
+        {
+            let path = handle
+                .path()
+                .expect("a read-only paged image has a table path");
+            return Err(raised(format!(
+                "Table {} cannot be opened for read/write",
+                path.display()
+            )));
+        }
         let implicit_concat = with_pixels!(&*handle, storage => match storage {
             Storage::Temp { image, .. } => image.concat_source().is_some_and(|source|
                 kind == LockType::Read || source.temp_close()),
@@ -108,7 +139,7 @@ impl AttachedImage {
         if handle.image_type_name() == "ImageConcat" {
             return self.check_bound_name(handle);
         }
-        if self.lock_with_inputs(handle, LockType::Read, 0)? {
+        if self.lock_with_inputs(handle, LockType::Read, 0, true)? {
             Ok(())
         } else {
             Err(raised("Could not acquire the image Read lock"))
@@ -167,7 +198,7 @@ impl PyImageTool {
             } else {
                 LockType::Read
             };
-            attachment.lock_with_inputs(&mut handle, kind, nattempts.max(0) as u32)
+            attachment.lock_with_inputs(&mut handle, kind, nattempts.max(0) as u32, false)
         })
     }
 

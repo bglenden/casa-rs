@@ -104,10 +104,14 @@ def creation_and_repair(work, vis, source, engines):
                 if condition in ('subtable', 'both'):
                     shutil.rmtree(destination / 'OBSERVATION')
             inode = (destination / 'table.dat').stat().st_ino
+            storage = {file: file.read_bytes() for file in destination.glob('table.f*')
+                       if file.is_file()} if name == 'native' else {}
             tool = factory()
             assert tool.updatecaltable(caltable=str(destination)) and tool.done()
             if condition == 'complete':
                 assert (destination / 'table.dat').stat().st_ino == inode
+            for file, contents in storage.items():
+                assert file.read_bytes() == contents, file.name
             outputs.append(destination)
         compare_tables(outputs[1], outputs[0])
     return 8

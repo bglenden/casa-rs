@@ -18,6 +18,7 @@ use super::attachment::AttachedImage;
 use super::beams::{image_info, image_info_record};
 use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+use super::saved_expression::{self, StagedOutput};
 
 fn no_coordinates() -> PyErr {
     raised("Exception: Images in expression have no coordinates.")
@@ -55,18 +56,37 @@ impl Metadata {
                 "Exception: Cannot access {name} so cannot copy its metadata to output image."
             )));
         }
-        let image = ImageHandle::open(path).map_err(raised)?;
+        if casa_images::expr_file::is_image_expr(path) {
+            let source = super::saved_expression::open(path)?;
+            return Self::from_image(&source.lock());
+        }
+        Self::from_image(&ImageHandle::open(path).map_err(raised)?)
+    }
+
+    fn read_staged(name: &Path, output: &StagedOutput<'_>) -> PyResult<Self> {
+        let entry = casa_tables::lexical_absolute(name);
+        let referent = name.canonicalize().map_err(raised)?;
+        saved_expression::check_output_dependencies(output.target, &[entry, referent], false)?;
+        let image = if casa_images::concat_file::is_image_concat(name) {
+            super::concatenate::virtual_image::open_metadata(name, output)?
+        } else {
+            saved_expression::open_metadata(name, output)?
+        };
+        Self::from_image(&image)
+    }
+
+    fn from_image(image: &ImageHandle) -> PyResult<Self> {
         if !matches!(
             image.kind(),
             ImagePixelType::Float32 | ImagePixelType::Complex32
         ) {
             return Err(raised("Exception: Unsupported image pixel data type."));
         }
-        let info = match image_info_record(&image) {
+        let info = match image_info_record(image) {
             Some(record) => record.clone(),
-            None => image_info(&image).map_err(raised)?.to_record(),
+            None => image_info(image).map_err(raised)?.to_record(),
         };
-        let (misc_info, units) = with_pixels!(&image, storage => with_storage!(storage, image =>
+        let (misc_info, units) = with_pixels!(image, storage => with_storage!(storage, image =>
             (image.misc_info(), image.units().to_owned())
         ));
         Ok(Self {
@@ -190,27 +210,43 @@ impl PyImageTool {
                 _ => return Err(raised("Exception: Unsupported value for type, it must be 'float' or 'double'.")),
             };
             let inputs = ImageToolExpressionInputs::resolve(pixels).map_err(raised)?;
-            let retained = AttachedImage::open_expression_inputs(inputs.paths())?;
-            let expression = if outfile.is_empty() {
-                inputs.compile_lazy()
+            let has_sources = inputs.paths().next().is_some();
+            let uses_bound_sources = saved_expression::has_manifest_operands(&inputs);
+            let (expression, retained, paths) = if uses_bound_sources {
+                saved_expression::compile_inline(&inputs, outfile.is_empty())?
             } else {
-                inputs.compile()
-            }
-            .map_err(raised)?;
+                let retained = AttachedImage::open_expression_inputs(inputs.paths())?;
+                let expression = if outfile.is_empty() { inputs.compile_lazy() } else { inputs.compile() }
+                    .map_err(raised)?;
+                (expression, retained, inputs.paths().map(Path::to_path_buf).collect())
+            };
             if !outfile.is_empty() && !overwrite && Path::new(outfile).symlink_metadata().is_ok() {
                 return Err(raised(format!("Exception: File {outfile} exists, and the user does not want to remove it..")));
             }
-            check_geometry(&expression, inputs.paths().next().is_some())?;
+            check_geometry(&expression, has_sources)?;
             if !outfile.is_empty() {
-                for input in inputs.paths() {
-                    ensure_outfile_does_not_alias_input(Path::new(outfile), input).map_err(|_| raised(
-                        "Exception: Caught TableError. This often means the table you are trying to overwrite has been opened by another method and so cannot be overwritten at this time. Try closing it and rerunning."
-                    ))?;
+                let output = Path::new(outfile);
+                let overlap_error = || raised(
+                    "Exception: Caught TableError. This often means the table you are trying to overwrite has been opened by another method and so cannot be overwritten at this time. Try closing it and rerunning."
+                );
+                if uses_bound_sources {
+                    saved_expression::check_output_dependencies(output, &paths, false)
+                        .map_err(|_| overlap_error())?;
+                } else {
+                    for input in &paths {
+                        ensure_outfile_does_not_alias_input(output, input).map_err(|_| overlap_error())?;
+                    }
                 }
             }
-            let metadata = if imagemd.is_empty() {
+            let metadata_path = Path::new(imagemd);
+            let output_path = Path::new(outfile);
+            let same_output = !outfile.is_empty() && same_file_path(output_path, metadata_path);
+            let staged_metadata = !outfile.is_empty() && !same_output
+                && (casa_images::expr_file::is_image_expr(metadata_path)
+                    || casa_images::concat_file::is_image_concat(metadata_path));
+            let metadata = if imagemd.is_empty() || staged_metadata {
                 None
-            } else if !outfile.is_empty() && same_file_path(Path::new(outfile), Path::new(imagemd)) {
+            } else if same_output {
                 if !as_float {
                     return Err(raised("Exception: Unsupported image pixel data type."));
                 }
@@ -231,7 +267,10 @@ impl PyImageTool {
                     ImageToolPixelExpression::Complex(expression) => ImageHandle::DComplex(storage_from_expression(expression, path)?),
                     ImageToolPixelExpression::Boolean(_) => unreachable!("numeric expression checked"),
                 };
-                if let Some(metadata) = metadata {
+                if staged_metadata {
+                    let staged = StagedOutput::new(output_path, path.expect("named staged image"))?;
+                    Metadata::read_staged(metadata_path, &staged)?.apply(&mut output)?;
+                } else if let Some(metadata) = metadata {
                     metadata.apply(&mut output)?;
                 }
                 apply_expression_metadata(&mut output, pixels)?;
@@ -245,10 +284,7 @@ impl PyImageTool {
                 Ok(output)
             })?;
             if outfile.is_empty() {
-                result.retain_expression_inputs(
-                    retained,
-                    inputs.paths().map(Path::to_path_buf).collect(),
-                );
+                result.retain_expression_inputs(retained, paths);
             }
             Ok(result)
         })?;

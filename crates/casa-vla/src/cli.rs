@@ -7,7 +7,7 @@
 
 use casa_ms::TransformTaskHistory;
 use casa_provider_contracts::{ParameterValue, python_repr};
-use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
+use casa_task_runtime::{ParameterOrigin, TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 
 use crate::importer::import_archive_with_history;
 use crate::task_contract::{ImportVlaTaskResult, importvla_task_schema_bundle};
@@ -101,16 +101,25 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<ImportVlaOptions, TaskFailu
             .map(|text| text.parse())
             .transpose()
             .map_err(failure)?,
-        frequencytol_hz: match frequency_tolerance(task)? {
-            ParameterValue::String(text) => {
-                ImportVlaOptions::parse_frequencytol(text).map_err(failure)?
-            }
-            ParameterValue::Integer(value) => *value as f64,
-            ParameterValue::Float(value) => *value,
-            _ => {
-                return Err(
-                    TaskFailure::validation("expected a frequency or quantity").at("frequencytol")
-                );
+        frequencytol_hz: if task
+            .session()
+            .states()
+            .get("frequencytol")
+            .is_some_and(|state| state.origin == ParameterOrigin::Default)
+        {
+            // CASA's default adopts the first CDA channel width.
+            0.0
+        } else {
+            match frequency_tolerance(task)? {
+                ParameterValue::String(text) => {
+                    ImportVlaOptions::parse_frequencytol(text).map_err(failure)?
+                }
+                ParameterValue::Integer(value) => *value as f64,
+                ParameterValue::Float(value) => *value,
+                _ => {
+                    return Err(TaskFailure::validation("expected a frequency or quantity")
+                        .at("frequencytol"));
+                }
             }
         },
         project: task.text("project")?,

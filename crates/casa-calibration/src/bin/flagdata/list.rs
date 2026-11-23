@@ -75,36 +75,65 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
     }
     let mut requests = Vec::new();
     let mut agents = Vec::new();
+    let mut configured = Vec::new();
     for (index, values) in commands.iter().enumerate() {
+        let mode = match values.get("mode") {
+            Some(ParameterValue::String(mode)) if !matches!(mode.as_str(), "" | "manualflag") => {
+                mode
+            }
+            _ => "manual",
+        };
+        let enabled = |name| matches!(values.get(name), Some(ParameterValue::Bool(true)));
+        let averaging = (mode, enabled("channelavg"), enabled("timeavg"));
+        if mode == "display" {
+            let column = match values.get("datacolumn") {
+                Some(ParameterValue::String(column)) => column,
+                None => "DATA",
+                _ => continue,
+            };
+            if let Ok(column) = data_column(column, FlagDataMode::Clip, calibration)
+                && data_column_available(&table, column, calibration)
+            {
+                configured.push(averaging);
+            }
+            continue;
+        }
         if let Some(request) = prepare(task, values, action, calibration, top_time_chunk)? {
+            let available = agent_column_available(&table, &request, calibration);
+            if available
+                && !(calibration
+                    && matches!(request.mode, FlagDataMode::Elevation | FlagDataMode::Shadow))
+            {
+                configured.push(averaging);
+            }
+            if request.mode == FlagDataMode::Antint && !available {
+                continue;
+            }
             requests.push(request);
             agents.push((index, values));
         }
     }
-    let configured = requests
-        .iter()
-        .zip(&agents)
-        .filter_map(|(request, &(_, values))| {
-            if calibration && matches!(request.mode, FlagDataMode::Elevation | FlagDataMode::Shadow)
-            {
-                return None;
-            }
-            if !agent_column_available(&table, request, calibration) {
-                return None;
-            }
-            let mode = match values.get("mode") {
-                Some(ParameterValue::String(mode))
-                    if !matches!(mode.as_str(), "" | "manualflag") =>
-                {
-                    mode
-                }
-                _ => "manual",
-            };
-            let enabled = |name| matches!(values.get(name), Some(ParameterValue::Bool(true)));
-            Some((mode, enabled("channelavg"), enabled("timeavg")))
-        });
-    validate_calibration_flag_averaging(configured)
+    validate_calibration_flag_averaging(configured.into_iter())
         .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
+    let incremental_quack =
+        |request: &FlagDataRequest| request.mode == FlagDataMode::Quack && request.quackincrement;
+    if requests.iter().skip(1).any(incremental_quack) {
+        (requests, agents) = requests
+            .into_iter()
+            .zip(agents)
+            .enumerate()
+            .filter_map(|(index, (request, agent))| {
+                if index > 0 && incremental_quack(&request) {
+                    tracing::warn!(
+                        "Cannot have quackincrement=True in list mode. Agent quack will be ignored!"
+                    );
+                    None
+                } else {
+                    Some((request, agent))
+                }
+            })
+            .unzip();
+    }
     let program = if calibration {
         flagdata_calibration_program(table, &requests, write_flags, commands.len() > 1)
     } else {
@@ -164,10 +193,18 @@ fn agent_column_available(
 ) -> bool {
     if !matches!(
         request.mode,
-        FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
+        FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag | FlagDataMode::Antint
     ) {
         return true;
     }
+    data_column_available(table, request.data_column, calibration)
+}
+
+fn data_column_available(
+    table: &MeasurementSet,
+    column: FlagDataColumn,
+    calibration: bool,
+) -> bool {
     let has_column = |name| {
         table
             .main_table()
@@ -176,15 +213,15 @@ fn agent_column_available(
     };
     if calibration {
         return matches!(
-            request.data_column,
+            column,
             FlagDataColumn::Cparam | FlagDataColumn::Fparam | FlagDataColumn::Snr
-        ) && has_column(request.data_column.name());
+        ) && has_column(column.name());
     }
     let has_model = || {
         has_column("MODEL_DATA")
             || !casa_ms::scratch_columns::virtual_model_fields(table).is_empty()
     };
-    match request.data_column {
+    match column {
         FlagDataColumn::Residual => has_column("CORRECTED_DATA") && has_model(),
         FlagDataColumn::ResidualData => {
             (has_column("DATA") || has_column("FLOAT_DATA")) && has_model()
@@ -345,10 +382,13 @@ fn prepare(
     if mode == "quack" && request.quackmode == casa_ms::flagging::QuackMode::Disabled {
         return Ok(None);
     }
+    if mode == "antint" {
+        let Ok(column) = data_column(column, FlagDataMode::Clip, calibration) else {
+            return Ok(None);
+        };
+        request.data_column = column;
+    }
     if calibration {
-        if mode == "antint" {
-            request.data_column = data_column(column, FlagDataMode::Clip, true).unwrap_or_default();
-        }
         if mode == "tfcrop"
             && matches!(task.session().given("correlation"), Some(ParameterValue::String(value)) if value.is_empty())
         {

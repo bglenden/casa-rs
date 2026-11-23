@@ -98,8 +98,9 @@ pub use self::extrema::imhead_extrema;
 pub use self::importfits::importfits;
 pub use self::imsubimage::ImageNoise;
 pub use self::lel_mask::{
-    ImageToolExpressionInputs, compile_image_tool_expression, evaluate_image_tool_mask,
-    evaluate_image_tool_mask_section, evaluate_pixel_expression, open_fits_expression,
+    BoundImageToolOperands, ImageToolExpressionInputs, compile_image_tool_expression,
+    evaluate_image_tool_mask, evaluate_image_tool_mask_section, evaluate_pixel_expression,
+    open_fits_expression, with_mask_output_paths,
 };
 pub use crate::expr_parser::ImageToolPixelExpression;
 mod lel_pixels;

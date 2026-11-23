@@ -55,6 +55,7 @@ mod regrid;
 mod selection_metadata;
 mod single_dish_polarization;
 mod spectral_metadata;
+mod subtable_copy;
 mod task_history;
 mod time_average;
 mod time_projection;
@@ -71,6 +72,7 @@ pub use input_view::{PreparedTransformInputView, TransformInputColumns, Transfor
 use main_arrays::MainArrayBlock;
 use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
+use subtable_copy::copy_subtables;
 pub use task_history::{TransformTaskHistory, append_task_history};
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
@@ -326,6 +328,13 @@ pub enum MsTransformError {
         path: String,
     },
 
+    /// A pre-existing flag-version directory belongs to a different output.
+    #[error("The flagversions {path} for the output MS already exists. Please delete it.")]
+    OutputFlagVersionsExist {
+        /// Existing flag-version directory.
+        path: String,
+    },
+
     /// The requested source column is absent.
     #[error("MeasurementSet {path} does not contain {column}")]
     MissingDataColumn {
@@ -469,6 +478,12 @@ fn materialize_transform(
     if request.output_ms.exists() {
         return Err(MsTransformError::OutputExists {
             path: request.output_ms.display().to_string(),
+        });
+    }
+    let flagversions = crate::flagging::flagversions_dir(&request.output_ms);
+    if flagversions.exists() {
+        return Err(MsTransformError::OutputFlagVersionsExist {
+            path: flagversions.display().to_string(),
         });
     }
     let target =
@@ -1046,8 +1061,9 @@ fn mstransform_staged(
         .checked_mul(copies_per_row)
         .ok_or_else(|| MsTransformError::Spectrum("Too many partitioned output rows.".into()))?;
     prepare_output_root(&request.output_ms)?;
+    let metadata_path = metadata_template.unwrap_or(&request.input_ms);
     let mut output_main = materialize_empty_main_table(
-        metadata_template.unwrap_or(&request.input_ms),
+        metadata_path,
         output_rows,
         &request.output_ms,
         &visibility,
@@ -1060,7 +1076,12 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    copy_subtables(&request.input_ms, &request.output_ms)?;
+    copy_subtables(
+        &request.input_ms,
+        metadata_path,
+        &request.output_ms,
+        &mut output_main,
+    )?;
     if grammar == RowGrammar::Transform
         && (task_average || !matches!(request.spw.as_str(), "" | "*"))
     {
@@ -3086,6 +3107,7 @@ fn materialize_empty_main_table(
         })?;
     if grammar == RowGrammar::Transform {
         table.keywords_mut().remove("SORTED_TABLE");
+        table.keywords_mut().remove("SORT_COLUMNS");
         table.set_info(TableInfo {
             table_type: "Measurement Set".into(),
             sub_type: "UVFITS".into(),
@@ -3396,46 +3418,6 @@ pub(crate) fn open_staged_subtable_for_write(path: &Path) -> Result<Table, Table
     );
     #[cfg(not(unix))]
     Table::open(options)
-}
-
-fn copy_subtables(input_path: &Path, output_path: &Path) -> Result<(), MsTransformError> {
-    for id in SubtableId::ALL_REQUIRED
-        .iter()
-        .chain(SubtableId::ALL_OPTIONAL.iter())
-    {
-        let source = input_path.join(id.name());
-        if !source.exists() {
-            continue;
-        }
-        let destination = output_path.join(id.name());
-        copy_dir_recursive(&source, &destination).map_err(|source| {
-            MsTransformError::PrepareOutput {
-                path: output_path.display().to_string(),
-                reason: source.to_string(),
-            }
-        })?;
-    }
-    Ok(())
-}
-
-fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &destination_path)?;
-        } else if file_type.is_symlink() {
-            let target = fs::read_link(&source_path)?;
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(target, &destination_path)?;
-        }
-    }
-    Ok(())
 }
 
 struct CompactSpectralMetadata {

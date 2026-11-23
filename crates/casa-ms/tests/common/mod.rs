@@ -35,8 +35,25 @@ pub fn create_msexplore_fixture_ms_with_flags(
         MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
     )
     .expect("create MS");
-    populate_subtables(&mut ms);
+    populate_msexplore_baselines(&mut ms, flagged_samples);
+    ms.save().expect("save MS");
+    ms_path
+}
 
+pub fn create_msexplore_fixture_in_memory() -> MeasurementSet {
+    let mut ms = MeasurementSet::create_memory(
+        MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
+    )
+    .expect("create memory MS");
+    populate_msexplore_baselines(&mut ms, &[]);
+    ms
+}
+
+fn populate_msexplore_baselines(
+    ms: &mut MeasurementSet,
+    flagged_samples: &[(usize, usize, usize)],
+) {
+    populate_subtables(ms);
     for row in 0..4usize {
         // The FLAG cell is built column-major (`.f()` below), so its
         // (corr, chan) element is `corr + chan * NUM_CORR`.
@@ -47,7 +64,7 @@ pub fn create_msexplore_fixture_ms_with_flags(
             }
         }
         add_main_row(
-            &mut ms,
+            ms,
             &[
                 ("ANTENNA1", Value::Scalar(ScalarValue::Int32(0))),
                 ("ANTENNA2", Value::Scalar(ScalarValue::Int32(1))),
@@ -109,8 +126,6 @@ pub fn create_msexplore_fixture_ms_with_flags(
             ],
         );
     }
-    ms.save().expect("save MS");
-    ms_path
 }
 
 /// The [`create_msexplore_fixture_ms_with_flags`] fixture with a second

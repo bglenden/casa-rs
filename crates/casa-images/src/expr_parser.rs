@@ -1968,26 +1968,11 @@ where
     result.into_mask(0)
 }
 
-pub(crate) fn parse_subimage_mask_expr<'a, T, R>(
-    expression: &str,
-    real: &R,
-    complex: &dyn ImageResolver<'a, Complex64>,
-) -> Result<MaskExpression<T>, ExprParseError>
-where
-    T: ImageExprValue + PartialOrd + ExprValueConvert,
-    R: ImageResolver<'a, T>,
-{
-    let mask = subimage_mask_builder(expression, real, complex)?;
-    mask.compile().map_err(|error| ExprParseError {
-        message: error.to_string(),
-        position: 0,
-    })
-}
-
 pub(crate) fn subimage_mask_builder<'a, T, R>(
     expression: &str,
     real: &R,
     complex: &dyn ImageResolver<'a, Complex64>,
+    single_precision: Option<&dyn Fn(&str) -> bool>,
 ) -> Result<MaskExprBuilder<'a, T>, ExprParseError>
 where
     T: ImageExprValue + PartialOrd + ExprValueConvert,
@@ -1995,6 +1980,9 @@ where
 {
     let mut parser = Parser::new(expression, real)?;
     parser.complex_resolver = Some(complex);
+    parser.casa_scalar_literals = single_precision.is_some();
+    parser.check_lattice_geometry = single_precision.is_some();
+    parser.single_precision_sources = single_precision;
     let result = parser.parse_expression()?;
     parser.expect(&Token::Eof)?;
     Ok(match result {

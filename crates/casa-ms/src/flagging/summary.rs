@@ -13,18 +13,22 @@
 
 use std::collections::BTreeMap;
 
+use casa_types::ArrayValue;
+use ndarray::ArrayD;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ChannelSelection, CorrelationSelection, FlagDataMode, FlagDataReport, FlaggingError,
-    clone_flag_matrix, data_description_spw_map, display_ms_path, load_i32_cells,
+    ChannelSelection, CorrelationSelection, FLAG_COLUMN, FlagDataMode, FlagDataReport,
+    FlaggingError, data_description_spw_map, display_ms_path, load_i32_cells,
 };
 use crate::listobs::stokes_name;
 use crate::ms::MeasurementSet;
 
 /// Rows read at once; the summary holds a block's ids, never all of them.
 const BLOCK_ROWS: usize = 65_536;
+// Read smaller FLAG batches because each row may contain many channels.
+const FLAG_BATCH_ROWS: usize = 512;
 
 /// The flagged and total samples of one summary entry.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -270,7 +274,16 @@ impl BlockIds {
                 column("ARRAY_ID")?
             },
             field: column("FIELD_ID")?,
-            observation: column("OBSERVATION_ID")?,
+            // CASA's pre-v4.1 calibration table reader supplies observation 0.
+            observation: if calibration
+                && table
+                    .schema()
+                    .is_some_and(|schema| !schema.contains_column("OBSERVATION_ID"))
+            {
+                vec![0; rows.len()]
+            } else {
+                column("OBSERVATION_ID")?
+            },
             scan: column("SCAN_NUMBER")?,
             ddid: column(if calibration {
                 "SPECTRAL_WINDOW_ID"
@@ -330,19 +343,53 @@ fn summarize(
     let lookup = Lookup::read(ms, correlations)?;
     let mut summary = FlagSummaryBreakdown::with_options(options);
     let mut fields = options.fieldcnt.then(BTreeMap::new);
+    let flags = ms
+        .main_table()
+        .column_accessor(FLAG_COLUMN)
+        .map_err(|source| invalid(ms, source.to_string()))?;
     for block in rows.chunks(BLOCK_ROWS) {
         let ids = BlockIds::read(ms, block, lookup.calibration)?;
-        for (slot, &row) in block.iter().enumerate() {
-            if correlations.is_some_and(|selection| selection.planes(ids.ddid[slot]).is_empty()) {
+        for (batch_index, batch) in block.chunks(FLAG_BATCH_ROWS).enumerate() {
+            let start = batch_index * FLAG_BATCH_ROWS;
+            let (slots, selected): (Vec<_>, Vec<_>) = batch
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(offset, row)| (start + offset, row))
+                .filter(|&(slot, _)| {
+                    correlations
+                        .is_none_or(|selection| !selection.planes(ids.ddid[slot]).is_empty())
+                })
+                .unzip();
+            if selected.is_empty() {
                 continue;
             }
-            let target = match &mut fields {
-                Some(fields) => fields
-                    .entry(lookup.field_name(ms, row, ids.field[slot])?)
-                    .or_insert_with(|| FlagSummaryBreakdown::with_options(options)),
-                None => &mut summary,
-            };
-            add_row(ms, &lookup, &ids, slot, row, channel_selections, target)?;
+            let cells = flags
+                .array_cells_owned_uncached(&selected)
+                .map_err(|source| invalid(ms, source.to_string()))?;
+            for ((slot, row), cell) in slots.into_iter().zip(selected).zip(cells) {
+                let Some(ArrayValue::Bool(flags)) = cell else {
+                    return Err(invalid(
+                        ms,
+                        format!("FLAG row {row} must be a Boolean array"),
+                    ));
+                };
+                let target = match &mut fields {
+                    Some(fields) => fields
+                        .entry(lookup.field_name(ms, row, ids.field[slot])?)
+                        .or_insert_with(|| FlagSummaryBreakdown::with_options(options)),
+                    None => &mut summary,
+                };
+                add_row(
+                    ms,
+                    &lookup,
+                    &ids,
+                    (slot, row),
+                    &flags,
+                    channel_selections,
+                    target,
+                )?;
+            }
         }
     }
     if let Some(fields) = fields {
@@ -377,12 +424,11 @@ fn add_row(
     ms: &MeasurementSet,
     lookup: &Lookup<'_>,
     ids: &BlockIds,
-    slot: usize,
-    row: usize,
+    (slot, row): (usize, usize),
+    flags: &ArrayD<bool>,
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     summary: &mut FlagSummaryBreakdown,
 ) -> Result<(), FlaggingError> {
-    let flags = clone_flag_matrix(ms, row)?;
     let shape = flags.shape();
     let (correlations, channels) = (shape[0], shape.get(1).copied().unwrap_or(1));
     let ddid = ids.ddid[slot];
