@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! FIELD and spectral-window metadata on the current MS view.
 
+use std::cell::{Ref, RefCell};
 use std::collections::BTreeSet;
 
 use casa_ms::subtables::{
@@ -8,14 +9,61 @@ use casa_ms::subtables::{
     MsSpectralWindow,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, SubtableId};
-use casa_tables::{Table, TableOptions};
+use casa_tables::{Table, TableOptions, TablePartNames};
 use casa_types::ScalarValue;
 use pyo3::prelude::*;
 
+use super::attachment_info::{TableFiles, TableStamp};
 use super::{AttachedMs, PyMsTool, runtime_error};
 use crate::convert::value::CasaValue;
 use crate::tools::msmetadata::direction_record;
 use crate::tools::{LogLine, emit};
+
+#[derive(Default)]
+pub(super) struct Subtables {
+    field: Subtable,
+    data_description: Subtable,
+    spectral_window: Subtable,
+    polarization: Subtable,
+}
+
+#[derive(Default)]
+struct Subtable(RefCell<Option<SubtableSnapshot>>);
+
+struct SubtableSnapshot {
+    table: Table,
+    files: TableFiles,
+    stamp: Option<TableStamp>,
+}
+
+impl Subtable {
+    fn read(&self, main: &Table, id: SubtableId) -> MsResult<Ref<'_, Table>> {
+        let current = self.0.borrow().as_ref().is_some_and(|snapshot| {
+            snapshot.stamp.is_some() && snapshot.files.stamp() == snapshot.stamp
+        });
+        if !current {
+            let path = MeasurementSet::linked_subtable_path(main, id)
+                .ok_or_else(|| MsError::MissingSubtable(id.name().to_string()))?;
+            let files = TableFiles::new(&path);
+            let stamp = files.stamp();
+            let table = Table::open(TableOptions::new(&path))?;
+            // A reference or concatenation may see writes to a constituent
+            // while its own descriptor and sync file both stay unchanged.
+            let plain = matches!(
+                Table::immediate_part_names(&path, &path)?,
+                TablePartNames::Plain(_)
+            );
+            *self.0.borrow_mut() = Some(SubtableSnapshot {
+                table,
+                files,
+                stamp: if plain { stamp } else { None },
+            });
+        }
+        Ok(Ref::map(self.0.borrow(), |snapshot| {
+            &snapshot.as_ref().expect("subtable was opened").table
+        }))
+    }
+}
 
 impl AttachedMs {
     fn field_direction(&self, column: &str, field: i64, time: f64) -> MsResult<MetadataDirection> {
@@ -32,14 +80,23 @@ impl AttachedMs {
         };
         let field = usize::try_from(field)
             .map_err(|_| MsError::InvalidInput(format!("Invalid FIELD row {field}")))?;
-        let table = MeasurementSet::open_linked_subtable(&self.main, SubtableId::Field)?;
+        let table = self.subtables.field.read(&self.main, SubtableId::Field)?;
         MsField::new(&table).metadata_direction_at_seconds(field, column, time)
     }
 
     fn spectral_window_info(&self) -> MsResult<CasaValue> {
-        let dd = MeasurementSet::open_linked_subtable(&self.main, SubtableId::DataDescription)?;
-        let spw = MeasurementSet::open_linked_subtable(&self.main, SubtableId::SpectralWindow)?;
-        let pol = MeasurementSet::open_linked_subtable(&self.main, SubtableId::Polarization)?;
+        let dd = self
+            .subtables
+            .data_description
+            .read(&self.main, SubtableId::DataDescription)?;
+        let spw = self
+            .subtables
+            .spectral_window
+            .read(&self.main, SubtableId::SpectralWindow)?;
+        let pol = self
+            .subtables
+            .polarization
+            .read(&self.main, SubtableId::Polarization)?;
         let (dd, spw, pol) = (
             MsDataDescription::new(&dd),
             MsSpectralWindow::new(&spw),
@@ -81,11 +138,21 @@ impl AttachedMs {
 
     fn used_data_descriptions(&self) -> MsResult<BTreeSet<usize>> {
         const ROWS_PER_BATCH: usize = 128 * 1024;
-        // A different tool may have published additional MAIN rows since open.
-        let main = Table::open(TableOptions::new(&self.path))?;
+        let mut row_count = self.main.row_count();
+        let refreshed;
+        let main = if let Some(plain) = &self.plain_rows
+            && plain.count(&self.path)? != row_count
+        {
+            // Selected column reads need a descriptor that admits new rows.
+            refreshed = Table::open(TableOptions::new(&self.path))?;
+            row_count = refreshed.row_count();
+            &refreshed
+        } else {
+            &self.main
+        };
         let column = main.column_accessor("DATA_DESC_ID")?;
         let selection = self.selected_rows.as_deref();
-        let size = selection.map_or(main.row_count(), <[usize]>::len);
+        let size = selection.map_or(row_count, <[usize]>::len);
         let mut row_numbers = Vec::with_capacity(size.min(ROWS_PER_BATCH));
         let mut ids = BTreeSet::new();
         for start in (0..size).step_by(ROWS_PER_BATCH) {

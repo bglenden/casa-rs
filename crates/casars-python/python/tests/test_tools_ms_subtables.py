@@ -50,7 +50,17 @@ def test_ms_field_direction_polynomial_and_defaults(native_dataset):
             assert ms.getfielddirmeas("phase")["m1"]["value"] == np.pi / 2
         else:
             np.testing.assert_array_equal(ms.getfielddirmeas("phase"), empty, strict=True)
+        field = native_dataset / "FIELD"
+        changed = values["PHASE_DIR"].copy()
+        changed[0, 0] = -0.17
+        assert table.open(str(field), nomodify=False)
+        assert table.putcell("PHASE_DIR", 0, changed)
+        assert table.done()
+        assert ms.getfielddirmeas()["m0"]["value"] == pytest.approx(-0.17, abs=1e-13)
         assert ms.done()
+        assert table.open(str(field), nomodify=False)
+        assert table.putcell("PHASE_DIR", 0, values["PHASE_DIR"])
+        assert table.done()
 
 
 def test_ms_field_ephemeris_on_casa_reference_view(ephemeris_dataset):
@@ -125,6 +135,11 @@ def test_ms_spectral_window_info_tracks_used_descriptions(tmp_path, measures):
         assert ms.getspectralwindowinfo() == info
         assert ms.msselect({"spw": "1"})
         assert ms.getspectralwindowinfo() == {"1": info["1"]}
+        spw = dataset / "SPECTRAL_WINDOW"
+        assert table.open(str(spw), nomodify=False)
+        assert table.putcell("CHAN_WIDTH", 1, np.full(3, -3e6))
+        assert table.done()
+        assert ms.getspectralwindowinfo()["1"]["ChanWidth"] == -3e6
         assert ms.msselect({"taql": "ANTENNA1 < 0"}) is False
         if module is casa:
             with pytest.raises(RuntimeError, match="whichField"):
@@ -132,6 +147,9 @@ def test_ms_spectral_window_info_tracks_used_descriptions(tmp_path, measures):
         else:
             assert ms.getspectralwindowinfo() == {}
         assert ms.done()
+        assert table.open(str(spw), nomodify=False)
+        assert table.putcell("CHAN_WIDTH", 1, np.full(3, -2e6))
+        assert table.done()
         results.append(info)
     assert results[0] == results[1]
     for dd in results[0]:

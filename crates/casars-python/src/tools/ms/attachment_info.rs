@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-#[cfg(unix)]
 use std::cell::Cell;
 #[cfg(unix)]
 use std::io;
@@ -10,7 +9,7 @@ use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
 
-use casa_tables::{Table, TablePartNames};
+use casa_tables::{Table, TableError, TablePartNames};
 use pyo3::prelude::*;
 
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -39,21 +38,23 @@ impl FileStamp {
 
 #[cfg(unix)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct RowStamp {
+pub(super) struct TableStamp {
     control: FileStamp,
     lock: Option<FileStamp>,
 }
 
-pub(super) struct PlainRows {
+#[cfg(not(unix))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct TableStamp;
+
+pub(super) struct TableFiles {
     #[cfg(unix)]
     control: PathBuf,
     #[cfg(unix)]
     lock: PathBuf,
-    #[cfg(unix)]
-    cached: Cell<Option<(RowStamp, usize)>>,
 }
 
-impl PlainRows {
+impl TableFiles {
     pub(super) fn new(path: &Path) -> Self {
         #[cfg(not(unix))]
         let _ = path;
@@ -62,26 +63,47 @@ impl PlainRows {
             control: path.join("table.dat"),
             #[cfg(unix)]
             lock: path.join("table.lock"),
-            #[cfg(unix)]
-            cached: Cell::new(None),
+        }
+    }
+
+    pub(super) fn stamp(&self) -> Option<TableStamp> {
+        #[cfg(unix)]
+        {
+            self.read_stamp().ok()
+        }
+        #[cfg(not(unix))]
+        {
+            None
         }
     }
 
     #[cfg(unix)]
-    fn stamp(&self) -> io::Result<RowStamp> {
+    fn read_stamp(&self) -> io::Result<TableStamp> {
         let control = FileStamp::read(&self.control)?;
         let lock = match FileStamp::read(&self.lock) {
             Ok(stamp) => Some(stamp),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
         };
-        Ok(RowStamp { control, lock })
+        Ok(TableStamp { control, lock })
+    }
+}
+
+pub(super) struct PlainRows {
+    files: TableFiles,
+    cached: Cell<Option<(TableStamp, usize)>>,
+}
+
+impl PlainRows {
+    pub(super) fn new(path: &Path) -> Self {
+        Self {
+            files: TableFiles::new(path),
+            cached: Cell::new(None),
+        }
     }
 
-    fn count(&self, path: &Path) -> PyResult<usize> {
-        #[cfg(unix)]
-        let stamp = self.stamp().ok();
-        #[cfg(unix)]
+    pub(super) fn count(&self, path: &Path) -> Result<usize, TableError> {
+        let stamp = self.files.stamp();
         if let (Some(stamp), Some((cached, count))) = (stamp, self.cached.get())
             && stamp == cached
         {
@@ -91,8 +113,7 @@ impl PlainRows {
         // casacore can publish new rows in table.lock before rewriting table.dat.
         // Record the stamp from before reading so concurrent publication forces
         // the next query to check the persisted count again.
-        let count = Table::rows_on_disk(path).map_err(runtime_error)?;
-        #[cfg(unix)]
+        let count = Table::rows_on_disk(path)?;
         self.cached.set(stamp.map(|stamp| (stamp, count)));
         Ok(count)
     }
@@ -104,7 +125,7 @@ impl AttachedMs {
             return Ok(rows.len());
         }
         if let Some(rows) = &self.plain_rows {
-            return rows.count(&self.path);
+            return rows.count(&self.path).map_err(runtime_error);
         }
         // A reference or concatenation has its row order fixed by the
         // descriptor read at attachment time.
