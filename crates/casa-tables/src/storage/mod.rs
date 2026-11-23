@@ -56,7 +56,7 @@ use crate::table::{
     SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape,
     SelectedReadFootprint,
 };
-use crate::table_path::add_directory_for_link;
+use crate::table_path::{add_directory_for_link, rebase_table_keywords};
 
 use self::array_sources::generated_array_group_sources;
 use self::incremental_stman::{
@@ -3797,6 +3797,8 @@ impl CompositeStorage {
                 TableSchema::new(columns).map_err(StorageError::from)
             })
             .transpose()?;
+        let mut keywords = parent.keywords;
+        rebase_table_keywords(&mut keywords, &parent_path, path);
         let column_keywords = names
             .iter()
             .filter_map(|&(name, base)| {
@@ -3804,7 +3806,10 @@ impl CompositeStorage {
                     .column_keywords
                     .get(base)
                     .cloned()
-                    .map(|keywords| (name.clone(), keywords))
+                    .map(|mut keywords| {
+                        rebase_table_keywords(&mut keywords, &parent_path, path);
+                        (name.clone(), keywords)
+                    })
             })
             .collect();
         let dm_info = parent
@@ -3825,7 +3830,7 @@ impl CompositeStorage {
             row_count: reference.row_map.len(),
             rows,
             undefined_cells,
-            keywords: parent.keywords,
+            keywords,
             column_keywords,
             schema,
             table_info: load_table_info(path),
