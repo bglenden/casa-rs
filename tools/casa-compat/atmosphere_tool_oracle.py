@@ -3,6 +3,7 @@
 """Exercise the installed atmosphere API and the corrected ATM layer oracle."""
 
 import argparse
+import inspect
 import json
 from pathlib import Path
 import signal
@@ -141,6 +142,17 @@ def shape_state(factory):
     print(factory.__module__, 'profile/window/sky state and quantity forms passed',flush=True)
 
 
+def constructor(factory):
+    assert str(inspect.signature(factory)) == '(*args, **kwargs)'
+    tool = factory('unused', altitude='7km', swig_object=None)
+    independent = factory()
+    assert tool.getNumLayers() == independent.getNumLayers() == -1
+    assert tool.initAtmProfile()[0] and tool.getNumLayers() == 27
+    alias = factory(swig_object=tool)
+    assert alias.getNumLayers() == 27 and independent.getNumLayers() == -1
+    assert alias.close() and tool.getNumLayers() == -1
+
+
 def update_thresholds(factory):
     # Each tuple gives the argument, reported record slot, canonical unit,
     # initial value, and changes below and above the native ATM threshold.
@@ -231,11 +243,13 @@ if __name__ == '__main__':
     parser.add_argument('--reference-only',action='store_true')
     args = parser.parse_args()
     assert casatools.version_string() == '6.7.6-14'
+    constructor(casa_atmosphere)
     shape_state(casa_atmosphere)
     update_thresholds(casa_atmosphere)
     invalid_layer_reference()
     if not args.reference_only:
         from casars.tools import atmosphere
+        constructor(atmosphere)
         shape_state(atmosphere)
         update_thresholds(atmosphere)
         invalid_layer(atmosphere)

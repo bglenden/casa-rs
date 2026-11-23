@@ -8,13 +8,13 @@ mod sky;
 pub(crate) mod surface;
 mod windows;
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use casa_atmosphere::AtmosphereSession;
 use casa_provider_contracts::CasaValue;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyDict, PyTuple};
 
 use crate::convert::reply_value::reply_value;
 use crate::tools::{LogLine, emit};
@@ -31,14 +31,25 @@ const TYPE_NAMES: [&str; 5] = [
 #[pyclass(name = "atmosphere", module = "casars.tools", frozen)]
 #[derive(Default)]
 pub(crate) struct PyAtmosphere {
-    session: Mutex<AtmosphereSession>,
+    session: Arc<Mutex<AtmosphereSession>>,
 }
 
 #[pymethods]
 impl PyAtmosphere {
     #[new]
-    fn new() -> Self {
-        Self::default()
+    #[pyo3(signature = (*_args, **kwargs), text_signature = "(*args, **kwargs)")]
+    fn new(_args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        // CASA consumes only the existing object hook in its variadic wrapper.
+        if let Some(kwargs) = kwargs
+            && let Some(existing) = kwargs.get_item("swig_object")?
+            && !existing.is_none()
+        {
+            let tool = existing.extract::<PyRef<'_, Self>>()?;
+            return Ok(Self {
+                session: Arc::clone(&tool.session),
+            });
+        }
+        Ok(Self::default())
     }
 
     fn close(&self, py: Python<'_>) -> bool {

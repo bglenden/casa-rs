@@ -17,66 +17,66 @@ pub(super) const INVALID_CHANNEL: f64 = -999.0;
 
 #[pymethods]
 impl PyAtmosphere {
-    #[pyo3(name = "getDryOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getDryOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_dry_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<f64> {
         self.channel_value(py, nc, spwid, |s, c| s.absorption.dry_opacity(c))
     }
 
-    #[pyo3(name = "getDryContOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getDryContOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_dry_cont_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<f64> {
         self.channel_value(py, nc, spwid, |s, c| s.absorption.dry_continuum_opacity(c))
     }
 
-    #[pyo3(name = "getO2LinesOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getO2LinesOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_o2_lines_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<f64> {
         self.channel_value(py, nc, spwid, |s, c| {
             s.absorption.absorber_opacity(c, Absorber::O2Lines)
         })
     }
 
-    #[pyo3(name = "getO3LinesOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getO3LinesOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_o3_lines_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<f64> {
         self.channel_value(py, nc, spwid, |s, c| {
             s.absorption.absorber_opacity(c, Absorber::O3Lines)
         })
     }
 
-    #[pyo3(name = "getCOLinesOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getCOLinesOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_co_lines_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<f64> {
         self.channel_value(py, nc, spwid, |s, c| {
             s.absorption.absorber_opacity(c, Absorber::CoLines)
         })
     }
 
-    #[pyo3(name = "getN2OLinesOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getN2OLinesOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_n2_o_lines_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<f64> {
         self.channel_value(py, nc, spwid, |s, c| {
             s.absorption.absorber_opacity(c, Absorber::N2oLines)
         })
     }
 
-    #[pyo3(name = "getH2OLinesOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getH2OLinesOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_h2_o_lines_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<f64> {
         self.channel_value(py, nc, spwid, |s, c| {
             s.absorption.h2o_lines_opacity(c, s.sky.water_column_m)
         })
     }
 
-    #[pyo3(name = "getH2OContOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getH2OContOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_h2_o_cont_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<f64> {
         self.channel_value(py, nc, spwid, |s, c| {
             s.absorption.h2o_continuum_opacity(c, s.sky.water_column_m)
         })
     }
 
-    #[pyo3(name = "getWetOpacity", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getWetOpacity", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_wet_opacity(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<Py<PyAny>> {
         self.channel_quantity(py, nc, spwid, "neper", |s, c| {
             s.absorption.wet_opacity(c, s.sky.water_column_m)
         })
     }
 
-    #[pyo3(name = "getDispersivePhaseDelay", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getDispersivePhaseDelay", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_dispersive_phase_delay(
         &self,
         py: Python<'_>,
@@ -89,7 +89,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getDispersiveWetPhaseDelay", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getDispersiveWetPhaseDelay", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_dispersive_wet_phase_delay(
         &self,
         py: Python<'_>,
@@ -102,7 +102,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getNonDispersiveWetPhaseDelay", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getNonDispersiveWetPhaseDelay", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_non_dispersive_wet_phase_delay(
         &self,
         py: Python<'_>,
@@ -115,7 +115,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getNonDispersiveDryPhaseDelay", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getNonDispersiveDryPhaseDelay", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_non_dispersive_dry_phase_delay(
         &self,
         py: Python<'_>,
@@ -127,7 +127,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getNonDispersivePhaseDelay", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getNonDispersivePhaseDelay", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_non_dispersive_phase_delay(
         &self,
         py: Python<'_>,
@@ -140,7 +140,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getDispersivePathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getDispersivePathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_dispersive_path_length(
         &self,
         py: Python<'_>,
@@ -153,7 +153,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getDispersiveWetPathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getDispersiveWetPathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_dispersive_wet_path_length(
         &self,
         py: Python<'_>,
@@ -166,7 +166,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getNonDispersiveWetPathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getNonDispersiveWetPathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_non_dispersive_wet_path_length(
         &self,
         py: Python<'_>,
@@ -179,7 +179,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getNonDispersiveDryPathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getNonDispersiveDryPathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_non_dispersive_dry_path_length(
         &self,
         py: Python<'_>,
@@ -191,7 +191,7 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getNonDispersivePathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getNonDispersivePathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_non_dispersive_path_length(
         &self,
         py: Python<'_>,
@@ -204,28 +204,28 @@ impl PyAtmosphere {
         })
     }
 
-    #[pyo3(name = "getO2LinesPathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getO2LinesPathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_o2_lines_path_length(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<Py<PyAny>> {
         self.channel_quantity(py, nc, spwid, "m", |s, c| {
             s.absorption.absorber_path_length_m(c, Absorber::O2Lines)
         })
     }
 
-    #[pyo3(name = "getO3LinesPathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getO3LinesPathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_o3_lines_path_length(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<Py<PyAny>> {
         self.channel_quantity(py, nc, spwid, "m", |s, c| {
             s.absorption.absorber_path_length_m(c, Absorber::O3Lines)
         })
     }
 
-    #[pyo3(name = "getCOLinesPathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getCOLinesPathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_co_lines_path_length(&self, py: Python<'_>, nc: i64, spwid: i64) -> PyResult<Py<PyAny>> {
         self.channel_quantity(py, nc, spwid, "m", |s, c| {
             s.absorption.absorber_path_length_m(c, Absorber::CoLines)
         })
     }
 
-    #[pyo3(name = "getN2OLinesPathLength", signature = (nc=-1, spwid=0))]
+    #[pyo3(name = "getN2OLinesPathLength", signature = (nc=-1, spwid=0), text_signature = "($self, nc=-1, spwid=0)")]
     fn get_n2_o_lines_path_length(
         &self,
         py: Python<'_>,
