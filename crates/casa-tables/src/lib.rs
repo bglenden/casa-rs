@@ -305,6 +305,6 @@ pub use table::{
     SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
     StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,
     Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
-    TableOptions, TableRow, TableRowMut, TableWritePlan, table_cache_name,
+    TableOptions, TablePartNames, TableRow, TableRowMut, TableWritePlan, table_cache_name,
 };
 pub use table_path::{add_directory, lexical_absolute, strip_directory};

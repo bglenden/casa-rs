@@ -2051,11 +2051,11 @@ Evidence: [paired](#plotms-evidence-paired), [legacy-calibration](#plotms-eviden
 <a id="plotms-behavior-selection"></a>
 ##### Select solution samples
 
-**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC.
+**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC. Route ordinary MeasurementSet visibility plots through native row, baseline, channel, correlation and flag selection.
 
 Remaining MeasurementSet selection paths are open under #1032 and #215.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [legacy-calibration](#plotms-evidence-legacy-calibration).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [ms-ordinary-visibility](#plotms-evidence-ms-ordinary-visibility), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-coordinates"></a>
 ##### Project axes and flags
@@ -2096,11 +2096,11 @@ Evidence: [paired](#plotms-evidence-paired), [calibration-controls](#plotms-evid
 <a id="plotms-behavior-export"></a>
 ##### Save and publish selected plot products
 
-**Partial** — Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export MeasurementSet text and figures for independent stored visibility columns, and calibrated MeasurementSet text and paginated figures, including atmospheric curves.
+**Partial** — Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export ordinary MeasurementSet visibility coordinates and independent stored visibility columns as text and figures. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.
 
 More export, multi-plot state and interactive display forms remain open.
 
-Evidence: [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
+Evidence: [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-ordinary-visibility](#plotms-evidence-ms-ordinary-visibility), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
@@ -2264,6 +2264,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1449df981cab58408b7b58db777c66da90982b49`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-ordinate-columns-20261123.json`.
+
+<a id="plotms-evidence-ms-ordinary-visibility"></a>
+##### ms-ordinary-visibility
+
+**Same-input ordinary MeasurementSet visibility plots — passed.** Amplitude/phase, amplitude/channel and amplitude/time matched across three text exports with 36 coordinate pairs and exact source metadata. Three 500 by 360 pixel PNGs matched the artist data and axis labels. Exported and rendered times matched CASA text to its 1 ms precision. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on one MeasurementSet using default observed visibility columns, a named baseline, selected channels and correlation, and mixed flags.
+
+- [https://github.com/bglenden/casa-rs/pull/2137](https://github.com/bglenden/casa-rs/pull/2137)
+- Revision: `f4cafb891082b56ab3fbd31d7387328a505a8894`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-ordinary-visibility-20261123.json`.
 
 <a id="plotms-evidence-ms-corrected-fallback"></a>
 ##### ms-corrected-fallback

@@ -265,15 +265,14 @@ fn run_task(
 
 impl CliOptions {
     fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 3]> {
-        (self.x_data_column.is_some()
-            || self.y_axis2.is_some()
-            || self.data_column.is_derived()
-            || self.data_column == MsDataColumn::Corrected)
-            .then_some([
-                self.x_data_column.unwrap_or(self.data_column),
-                self.data_column,
-                self.secondary_y_data_column.unwrap_or(self.data_column),
-            ])
+        (self.x_axis.is_some_and(MsAxis::is_visibility_math)
+            || self.y_axis.is_some_and(MsAxis::is_visibility_math)
+            || self.y_axis2.is_some())
+        .then_some([
+            self.x_data_column.unwrap_or(self.data_column),
+            self.data_column,
+            self.secondary_y_data_column.unwrap_or(self.data_column),
+        ])
     }
 }
 
@@ -1237,15 +1236,9 @@ fn options_from_plotms(
     };
     let secondary_y_data_column =
         (y_axis2 == Some(y_axis) || secondary_y != data_column).then_some(secondary_y);
-    let derived_column_plot = data_column.is_derived()
-        || x_data_column.is_some_and(MsDataColumn::is_derived)
-        || secondary_y_data_column.is_some_and(MsDataColumn::is_derived);
-    let normalize_zero_average = derived_column_plot || y_axis2.is_some();
-    let visibility_document = visibility_document
-        || y_axis2.is_some()
-        || derived_column_plot
-        || x_data_column.is_some()
-        || data_column == MsDataColumn::Corrected;
+    let visibility_axes =
+        x_axis.is_visibility_math() || y_axis.is_visibility_math() || y_axis2.is_some();
+    let visibility_document = visibility_document || visibility_axes;
     let plot_format = if visibility_document {
         MsExportFormat::Txt
     } else {
@@ -1297,12 +1290,12 @@ fn options_from_plotms(
             .map(|value| number::<usize>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&width| !normalize_zero_average || width != 0),
+            .filter(|&width| !visibility_axes || width != 0),
         avgtime: average_text("avgtime")?
             .map(|value| number::<f64>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&interval| !normalize_zero_average || interval != 0.0),
+            .filter(|&interval| !visibility_axes || interval != 0.0),
         avgscan: average("avgscan")?,
         avgfield: average("avgfield")?,
         avgbaseline: average("avgbaseline")?,
