@@ -26,6 +26,7 @@ mod casa_read;
 mod ft;
 mod getantposalma;
 mod getcalmodvla;
+mod getephemtable;
 pub(crate) mod history;
 mod initweights;
 mod jyperk;
@@ -77,6 +78,7 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     match task.surface() {
         "appendantab" => return crate::appendantab::run(task),
         "pccor" => return crate::pccor::run(task),
+        "getephemtable" => return getephemtable::run(task),
         "sdcal" => return crate::single_dish::sdcal(task),
         "sdgaincal" => return crate::single_dish::gain::run(task),
         _ => {}
