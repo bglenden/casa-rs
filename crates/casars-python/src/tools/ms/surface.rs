@@ -211,11 +211,11 @@ const METHODS: &[Method] = &[
             param("format", K::Text, Text("measure")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("getreferencedtables", &[], R::Any, Yes),
     method("getscansummary", &[], R::Any, No),
-    method("getspectralwindowinfo", &[], R::Any, No),
+    method("getspectralwindowinfo", &[], R::Any, Yes),
     method(
         "hanningsmooth",
         &[param("datacolumn", K::Text, Text("corrected"))],

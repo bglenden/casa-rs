@@ -6,6 +6,7 @@
 mod attachment_info;
 mod statwt;
 mod stubs;
+mod subtable_queries;
 pub(crate) mod surface;
 
 use std::collections::btree_map::Entry;
@@ -38,6 +39,7 @@ pub(crate) struct PyMsTool {
 struct AttachedMs {
     name: PathBuf,
     path: PathBuf,
+    main: Table,
     writable: bool,
     original_rows: usize,
     plain_rows: Option<attachment_info::PlainRows>,
@@ -63,6 +65,7 @@ impl AttachedMs {
         let mut attached = Self {
             name,
             path,
+            main,
             writable,
             original_rows,
             plain_rows,

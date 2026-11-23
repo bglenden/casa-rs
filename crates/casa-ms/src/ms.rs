@@ -110,6 +110,20 @@ impl MeasurementSet {
         })
     }
 
+    /// Open one subtable of an already opened MAIN, following its table
+    /// keyword (including a reference view's inherited subtable links).
+    /// This is useful for a metadata query that needs no other subtables.
+    ///
+    /// # Errors
+    /// The MAIN has no path, or the requested subtable is absent or unreadable.
+    pub fn open_linked_subtable(main: &Table, id: SubtableId) -> MsResult<Table> {
+        let path = main
+            .path()
+            .and_then(|path| subtable_path_from_main(main, path, id))
+            .ok_or_else(|| MsError::MissingSubtable(id.name().to_string()))?;
+        Ok(Table::open(TableOptions::new(path))?)
+    }
+
     /// Open and retain read locks on MAIN and every present subtable.
     ///
     /// Tables are opened in canonical MAIN-then-subtable order. Row payloads

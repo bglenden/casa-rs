@@ -232,6 +232,7 @@ pub mod freq_offset;
 pub mod history;
 mod metadata_field;
 mod metadata_measure;
+pub use metadata_field::FieldDirectionColumn;
 pub use metadata_measure::MetadataDirection;
 pub mod observation;
 pub mod pointing;

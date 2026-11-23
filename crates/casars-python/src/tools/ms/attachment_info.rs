@@ -113,7 +113,7 @@ impl AttachedMs {
 }
 
 impl PyMsTool {
-    fn attachment_info<T: Send>(
+    pub(super) fn attachment_info<T: Send>(
         &self,
         py: Python<'_>,
         read: impl FnOnce(Option<&AttachedMs>) -> PyResult<T> + Send,
