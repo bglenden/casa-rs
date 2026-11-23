@@ -317,7 +317,7 @@ pub(super) fn restore(mut record: RecordValue, parent_name: String) -> PyResult<
             canonical.into()
         } else if let Some(Value::Record(original)) = record.get(&field)
             && let Some(normalized) =
-                super::linear_transform::normalize_restored_matrix(original, model)?
+                super::canonical_restored_coordinate(original, model)?
         {
             Value::Record(normalized)
         } else {

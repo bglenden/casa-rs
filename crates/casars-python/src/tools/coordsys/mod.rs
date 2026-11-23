@@ -115,6 +115,39 @@ fn current_epoch(mut info: ObsInfo) -> ObsInfo {
     info
 }
 
+fn canonical_restored_coordinate(
+    original: &RecordValue,
+    model: &CoordinateModel,
+) -> PyResult<Option<RecordValue>> {
+    if !matches!(model, CoordinateModel::Spectral(_))
+        || !matches!(original.get("system"),
+            Some(Value::Scalar(ScalarValue::String(system))) if system == "LSR")
+    {
+        return linear_transform::normalize_restored_matrix(original, model);
+    }
+    // CASA reserializes the restored legacy axis as a current spectral record.
+    let mut normalized = model.to_record();
+    for field in ["coordinate_type", "formatUnit"] {
+        if let Some(value) = original.get(field) {
+            normalized.upsert(field, value.clone());
+        }
+    }
+    if let Some(unit) = original
+        .get("velUnit")
+        .or_else(|| original.get("prefVelUnit"))
+    {
+        normalized.upsert("velUnit", unit.clone());
+    }
+    if normalized.get("conversion").is_none() {
+        let mut conversion = default_spectral_conversion();
+        if let Some(system) = normalized.get("system") {
+            conversion.upsert("system", system.clone());
+        }
+        normalized.upsert("conversion", Value::Record(conversion));
+    }
+    Ok(Some(normalized))
+}
+
 impl CoordinateState {
     fn from_coordinates(coordinates: CoordinateSystem, mut record: RecordValue) -> PyResult<Self> {
         coordinates
@@ -126,36 +159,9 @@ impl CoordinateState {
             .into_iter()
             .enumerate()
         {
-            let Some(Value::Record(original)) = record.get(&placement.field) else {
-                continue;
-            };
-            let model = coordinates.coordinate(index);
-            if matches!(model, CoordinateModel::Spectral(_))
-                && matches!(original.get("system"),
-                    Some(Value::Scalar(ScalarValue::String(system))) if system == "LSR")
-            {
-                // CASA reserializes the restored legacy axis as a current spectral record.
-                let mut normalized = model.to_record();
-                for field in ["coordinate_type", "formatUnit", "velUnit"] {
-                    if let Some(value) = original.get(field) {
-                        normalized.upsert(field, value.clone());
-                    }
-                }
-                if original.get("velUnit").is_none()
-                    && let Some(unit) = original.get("prefVelUnit")
-                {
-                    normalized.upsert("velUnit", unit.clone());
-                }
-                if normalized.get("conversion").is_none() {
-                    let mut conversion = default_spectral_conversion();
-                    if let Some(system) = normalized.get("system") {
-                        conversion.upsert("system", system.clone());
-                    }
-                    normalized.upsert("conversion", Value::Record(conversion));
-                }
-                record.upsert(placement.field, Value::Record(normalized));
-            } else if let Some(normalized) =
-                linear_transform::normalize_restored_matrix(original, model)?
+            if let Some(Value::Record(original)) = record.get(&placement.field)
+                && let Some(normalized) =
+                    canonical_restored_coordinate(original, coordinates.coordinate(index))?
             {
                 record.upsert(placement.field, Value::Record(normalized));
             }
