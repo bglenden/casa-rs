@@ -61,6 +61,7 @@ fn smooth_table(
         "G JONES"
             | "T JONES"
             | "B JONES"
+            | "ACCOR JONES"
             | "TF JONES"
             | "K JONES"
             | "KCROSS JONES"
