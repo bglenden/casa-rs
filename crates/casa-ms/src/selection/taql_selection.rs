@@ -15,6 +15,34 @@ pub(super) fn select_rows(
     query: &str,
     rows_per_block: Option<usize>,
 ) -> MsResult<Vec<usize>> {
+    let statement = selection_query(ms, query, rows_per_block)?;
+    match taql::exec::execute_readonly(&statement, ms.main_table()).map_err(taql_error)? {
+        TaqlResult::Select { row_indices, .. } => Ok(row_indices),
+        _ => Err(MsError::InvalidInput(
+            "expected a TaQL SELECT statement".into(),
+        )),
+    }
+}
+
+pub(super) fn validate_predicate(
+    ms: &MeasurementSet,
+    query: &str,
+    rows_per_block: Option<usize>,
+) -> MsResult<()> {
+    if let Statement::Select(mut select) = selection_query(ms, query, rows_per_block)?
+        && let Some(predicate) = &mut select.where_clause
+    {
+        taql::calc::validate_calc_columns(predicate, ms.main_table()).map_err(taql_error)?;
+        validate_calls(predicate).map_err(taql_error)?;
+    }
+    Ok(())
+}
+
+fn selection_query(
+    ms: &MeasurementSet,
+    query: &str,
+    rows_per_block: Option<usize>,
+) -> MsResult<Statement> {
     let mut statement = taql::parse(query).map_err(taql_error)?;
     if let Statement::Select(select) = &mut statement
         && let Some(predicate) = &mut select.where_clause
@@ -22,12 +50,14 @@ pub(super) fn select_rows(
         let mut geometry = GeometryBinder::new(ms);
         bind_selectors(predicate, ms, select.style, rows_per_block, &mut geometry)?;
     }
-    match taql::exec::execute_readonly(&statement, ms.main_table()).map_err(taql_error)? {
-        TaqlResult::Select { row_indices, .. } => Ok(row_indices),
-        _ => Err(MsError::InvalidInput(
-            "expected a TaQL SELECT statement".into(),
-        )),
+    Ok(statement)
+}
+
+fn validate_calls(expr: &mut Expr) -> Result<(), TaqlError> {
+    if let Expr::FunctionCall { name, args } = expr {
+        taql::functions::validate_function_call(name, args.len())?;
     }
+    expr.try_for_each_child_mut(&mut validate_calls)
 }
 
 fn bind_selectors(

@@ -10838,6 +10838,17 @@ in `ngc5921_ut.ms` can keep returning all seven scans even though
 is removed or replaced, casa-rs reports an unavailable attachment on
 queries that need its data (#1030).
 
+## Out-of-range TaQL array indices can abort MS selection
+
+In CASA 6.7.6.14, open an MS with ordinary visibility arrays and pass
+`abs(DATA[999,1]) > 0` as `msselect`'s TaQL predicate.
+`msseltoindex` and `msselect(onlyparse=True)` accept the predicate
+without reading cells. Applying it can terminate the process with an
+uncaught array-slicing exception. casa-rs validates the expression
+without reading visibility cells and reports a failed selection when
+evaluation reaches an invalid index. The previously selected rows
+remain accessible (#1030).
+
 ## A Multi-MS metadata count can omit newly published member rows
 
 Open a genuine CASA Multi-MS and obtain its metadata with

@@ -163,3 +163,31 @@ def test_ms_selection_string_and_record_argument_forms(native_dataset, monkeypat
             strict=True,
         )
         assert ms.done()
+
+
+def test_ms_index_queries_parse_taql_without_reading_visibility_cells(native_dataset):
+    casa = pinned_casa()
+    dataset = str(native_dataset)
+    expression = "abs(DATA[999,1]) > 0"
+    for api in (casa, tools):
+        ms = api.ms()
+        empty = ms.msseltoindex(dataset)
+        same_record(ms.msseltoindex(dataset, taql=expression), empty)
+        same_record(ms.msseltoindex(dataset, taql="TIME"), empty)
+        for invalid in ("noSuchColumn > 0", "noSuchFunction(TIME) > 0"):
+            with pytest.raises(RuntimeError):
+                ms.msseltoindex(dataset, taql=invalid)
+
+        assert ms.open(dataset)
+        count = ms.nrow(True)
+        assert ms.msselect({"taql": expression}, onlyparse=True)
+        assert ms.nrow(True) == count
+        assert ms.msselect({"taql": "TIME"}, onlyparse=True)
+        assert not ms.msselect({"taql": "TIME"})
+        assert ms.nrow(True) == count
+        assert ms.msselectedindices()["field"].size == 0
+        if api is tools:
+            assert not ms.msselect({"taql": expression})
+            assert ms.nrow(True) == count
+            assert ms.msselectedindices()["field"].size == 0
+        assert ms.done()

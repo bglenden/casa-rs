@@ -81,7 +81,11 @@ impl ParsedMsToolSelection {
     /// The supplied predicate is invalid for this MS.
     pub fn validate_taql(&self, ms: &MeasurementSet) -> MsResult<()> {
         if !self.compiled.taql_exprs.is_empty() {
-            self.compiled.first_match(ms, Some(self.rows_per_block))?;
+            super::taql_selection::validate_predicate(
+                ms,
+                &self.compiled.to_taql(),
+                Some(self.rows_per_block),
+            )?;
         }
         Ok(())
     }

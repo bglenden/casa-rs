@@ -62,27 +62,24 @@ impl PyMsTool {
                 .snapshot(None)
                 .map_err(runtime_error)?;
             let ms = &snapshot.ms;
-            let selected = ms.parse_ms_tool_selection(&request).and_then(|parsed| {
-                let has_expression = parsed.has_row_expression();
-                let rows = if onlyparse {
-                    parsed.validate_taql(ms)?;
-                    None
-                } else if has_expression {
-                    Some(parsed.select_rows(ms)?)
-                } else {
-                    None
-                };
-                Ok((parsed.indices, has_expression, rows))
+            let parsed = ms.parse_ms_tool_selection(&request).and_then(|parsed| {
+                parsed.validate_taql(ms)?;
+                Ok(parsed)
             });
-            let (indices, has_expression, rows) = match selected {
-                Ok(result) => result,
+            let parsed = match parsed {
+                Ok(parsed) => parsed,
                 Err(error) => {
                     attached.selection_state = SelectionState::Invalid(error.to_string());
                     return Ok(false);
                 }
             };
-            attached.selection_state = SelectionState::Parsed(Box::new(indices));
-            if let Some(mut rows) = rows {
+            let has_expression = parsed.has_row_expression();
+            let rows = (!onlyparse && has_expression).then(|| parsed.select_rows(ms));
+            attached.selection_state = SelectionState::Parsed(Box::new(parsed.indices));
+            if let Some(rows) = rows {
+                let Ok(mut rows) = rows else {
+                    return Ok(false);
+                };
                 if let Some(previous) = &attached.selected_rows {
                     for row in &mut rows {
                         *row = previous[*row];
