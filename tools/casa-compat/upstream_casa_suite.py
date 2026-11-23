@@ -166,6 +166,7 @@ def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures
             "ms": ("ms", "mstool"),
             "ms_createmultims": ("ms", "mstool"),
             "ms_statwt": ("ms", "statwt"),
+            "calibrater": ("calibrater,table", "calibrater"),
         }.get(name, (task, CALIBRATION_FIXTURE_GROUPS.get(name, task)))
     source = casatestdata / "unittest" / fixture_group if fixture_group else None
     if source is not None and fixture_group != "exportfits" and not source.is_dir():
