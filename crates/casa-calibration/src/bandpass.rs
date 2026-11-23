@@ -8,7 +8,8 @@
 pub(crate) mod bpoly;
 mod metadata;
 pub(crate) use metadata::{
-    bin_widths as solution_frequency_bin_widths, write as write_solution_spectral_windows,
+    GatherFrequencyLayout, bin_widths as solution_frequency_bin_widths, check_gather_frequency,
+    write as write_solution_spectral_windows,
 };
 mod postprocess;
 

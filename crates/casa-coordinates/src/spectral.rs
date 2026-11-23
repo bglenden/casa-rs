@@ -658,8 +658,9 @@ impl SpectralCoordinate {
             }
             result
         };
-        if let Some(convention) =
-            get_optional_i32(rec, "velType").and_then(DopplerRef::from_casacore_code)
+        if let Some(convention) = get_optional_i32(rec, "velType")
+            .or_else(|| get_optional_i32(rec, "prefVelType"))
+            .and_then(DopplerRef::from_casacore_code)
         {
             coord = coord.with_velocity_convention(convention);
         }
@@ -705,7 +706,10 @@ impl SpectralCoordinate {
 }
 
 fn parse_frequency_ref_name(name: &str) -> Option<FrequencyRef> {
-    if name.eq_ignore_ascii_case("Undefined") {
+    if name == "LSR" {
+        // Older casacore image records used LSR for the kinematic frame.
+        Some(FrequencyRef::LSRK)
+    } else if name.eq_ignore_ascii_case("Undefined") {
         // CASA `specmode='cubedata'` serializes a valid native-frequency
         // axis with `system="Undefined"`; retain its established handling.
         Some(FrequencyRef::TOPO)
@@ -1324,6 +1328,18 @@ mod tests {
         assert_eq!(read.increment(), [0.0]);
         assert_eq!(read.to_world(&[-7.0]).unwrap(), [1.25e9]);
         assert_eq!(read.to_pixel(&[1.4e9]).unwrap(), [0.0]);
+    }
+
+    #[test]
+    fn restores_legacy_casa_lsr_system_as_lsrk() {
+        let axis = SpectralCoordinate::new(FrequencyRef::LSRK, 1.415e9, 1.0e6, 2.0, 1.42e9);
+        let mut record = axis.to_record();
+        record.upsert("system", Value::Scalar(ScalarValue::String("LSR".into())));
+
+        let restored = SpectralCoordinate::from_record(&record).unwrap();
+        assert_eq!(restored.frequency_ref(), FrequencyRef::LSRK);
+        assert_eq!(restored.to_world(&[3.0]).unwrap(), [1.416e9]);
+        assert_eq!(restored.to_record(), axis.to_record());
     }
 
     #[test]

@@ -59,6 +59,62 @@ def test_direct_and_context_dependent_direction_frames(casa):
         np.testing.assert_allclose(cs.toworld([0., 0.])["numeric"], [0., 0.], atol=1.e-12)
 
 
+def test_legacy_lsr_record_is_restored_and_written_as_lsrk(casa, tmp_path):
+    reference = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    record = reference.torecord()
+    axis = "spectral1"
+    assert record[axis]["system"] == "LSRK"
+    record[axis]["system"] = "LSR"
+    record[axis]["velUnit"] = "m/s"
+    pixel = [1.0, 2.0, 3.5]
+    frequency = reference.toworld(pixel)["numeric"][2]
+    for writer in (tools, casa):
+        coordinates = writer.coordsys()
+        assert coordinates.fromrecord(record)
+        restored = coordinates.torecord()
+        assert restored[axis]["system"] == "LSRK"
+        assert restored[axis]["velUnit"] == "m/s"
+        assert coordinates.referencecode("spectral")[0] == "LSRK"
+        path = str(tmp_path / f"{writer.__name__}.im")
+        image = writer.image()
+        assert image.fromshape(path, [5, 5, 6], restored)
+        image.done()
+        for reader in (tools, casa):
+            image = reader.image()
+            assert image.open(path)
+            try:
+                reopened = image.coordsys().torecord()[axis]
+                assert reopened["system"] == "LSRK"
+                assert reopened["velUnit"] == "m/s"
+                actual = image.toworld(pixel)["numeric"][2]
+                assert actual == pytest.approx(frequency, rel=0.0, abs=1.e-6)
+            finally:
+                image.done()
+
+
+@pytest.mark.parametrize("frame, velocity_unit", [("LSRK", "m/s"), ("BARY", "")])
+def test_legacy_lsr_default_velocity_unit_and_conversion_context(casa, frame, velocity_unit):
+    reference = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    record = reference.torecord()
+    spectral = record["spectral1"]
+    spectral["system"] = "LSR"
+    spectral["prefVelType"] = 1
+    spectral["prefVelUnit"] = velocity_unit
+    del spectral["velType"], spectral["velUnit"]
+    conversion = spectral["conversion"]
+    unset_epoch = conversion["epoch"]
+    epoch = {"type": "epoch", "refer": "UTC", "m0": {"value": 57890.0, "unit": "d"}}
+    conversion.update(system=frame, epoch=epoch)
+    for api in (casa, tools):
+        coordinates = api.coordsys()
+        assert coordinates.fromrecord(record)
+        restored = coordinates.torecord()["spectral1"]
+        assert restored["velType"] == 1
+        assert restored["velUnit"] == (velocity_unit or "km/s")
+        assert restored["conversion"]["system"] == frame
+        assert restored["conversion"]["epoch"] == (unset_epoch if frame == "LSRK" else epoch)
+
+
 def test_spectral_conversion_uses_observation_context_and_survives_native_io(casa, tmp_path, caplog):
     base = casa.coordsys().newcoordsys(direction=True, spectral=True)
     assert base.setunits(["rad", "rad", "Hz"])

@@ -10597,6 +10597,10 @@ In CASA 6.7.6.14, `calibrater.corrupt()` with the old iterator looks up a callib
 
 The selected slice uses its registered calibration scan even when the current visibility belongs to a different scan. Mixed scan and intent wildcards can also give the CASA ordered index a cyclic comparison. The one-antenna probe with three distinct gains found an insertion-order-dependent result. The native lookup uses one ordered context throughout a buffer. The oracle records the two registration orders where the pinned CASA result differs.
 
+## Some direct calibration factories gather data without a usable fitting stage
+
+CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones, B TSYS, gain curve, and legacy power curve. With all input flagged, the tool reports the expected intervals and does not produce a table. When four-correlation usable data reaches the fitting stage, the pinned legacy J/Jf and both B TSYS iterators terminate. The tested modern J/Jf, A Noise, F Jones and curve configurations return a solve error. Modern power curve returns a setup error. Casa-rs retains the available gather stage and uses a recoverable error for the unavailable fit. These limits concern solving. Existing table application and specification are separate operations. [Paired factory oracle](../tools/casa-compat/calibrater_gather_only_oracle.py)
+
 ## Direct KAntPos can abort when combining multiple spectral windows
 
 CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. On a single window, both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. A planted two-window solve with `combine='spw'` terminated in both iterators when its two fitted terms were assigned to a three-term array. Casa-rs reports a recoverable error when this unsupported fit is reached. [Paired antenna-position oracle](../tools/casa-compat/calibrater_antenna_position_oracle.py)

@@ -696,6 +696,24 @@ pub(crate) fn resolve_casa_row_indices(
     resolve_row_indices_with_grammar(ms, request, RowGrammar::Casa)
 }
 
+pub(crate) fn compile_flagdata_agent_time(
+    ms: &MeasurementSet,
+    request: &MsSelection,
+    initial_default_row: usize,
+) -> MsResult<Option<TimeSelection>> {
+    let rows_per_block = rows_per_block_for_budget(default_selection_budget()?)
+        .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+    request
+        .compile_with_row_grammar(
+            ms,
+            RowGrammar::FlagData {
+                agent_time_default_row: Some(initial_default_row),
+            },
+            Some(rows_per_block),
+        )
+        .map(|compiled| compiled.casa_time)
+}
+
 pub(crate) fn resolve_flagdata_selection_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,
@@ -724,18 +742,17 @@ fn resolve_selection_with_grammar(
     request: &MsSelection,
     grammar: RowGrammar,
 ) -> MsResult<ResolvedMsSelection> {
-    let budget = MsSelectionIoBudget::from_system_memory(
-        2,
-        std::mem::size_of::<ResolvedMsSelectionRow>(),
-        None,
-    )
-    .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-    ms.resolve_rows(request, budget, grammar)
+    ms.resolve_rows(request, default_selection_budget()?, grammar)
         .map(|(resolved, _)| resolved)
         .map_err(|error| match error {
             MsSelectionError::Domain(error) => error,
             other => MsError::InvalidInput(other.to_string()),
         })
+}
+
+fn default_selection_budget() -> MsResult<MsSelectionIoBudget> {
+    MsSelectionIoBudget::from_system_memory(2, std::mem::size_of::<ResolvedMsSelectionRow>(), None)
+        .map_err(|error| MsError::InvalidInput(error.to_string()))
 }
 
 impl CompiledMsSelection {
