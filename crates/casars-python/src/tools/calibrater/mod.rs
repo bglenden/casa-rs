@@ -19,7 +19,8 @@ use std::{
 use casa_calibration::{
     CalibraterLifecycle, CalibraterLifecycleError, VisibilityFitRequest, VisibilityFitShape,
 };
-use casa_ms::{MeasurementSet, MsSelection};
+use casa_ms::{MeasurementSet, MsError, MsSelection, SubtableId};
+use casa_tables::{Table, TableOptions};
 use casa_types::quanta::{Quantity, Unit};
 use numpy::{PyArray1, PyUntypedArray};
 use pyo3::{
@@ -46,14 +47,21 @@ struct CalibrationToolState {
 }
 
 fn measurement_set_cache_paths(path: &Path) -> PyResult<Vec<PathBuf>> {
-    let ms = MeasurementSet::open(path).map_err(runtime_error)?;
-    let mut paths = ms
-        .main_table()
-        .cache_plain_table_paths()
-        .map_err(runtime_error)?;
-    for id in ms.subtable_ids() {
-        let subtable = ms.subtable(id).expect("present MeasurementSet subtable");
-        paths.extend(subtable.cache_plain_table_paths().map_err(runtime_error)?);
+    let main = Table::open(TableOptions::new(path)).map_err(runtime_error)?;
+    let mut paths = main.cache_plain_table_paths().map_err(runtime_error)?;
+    for &id in SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(SubtableId::ALL_OPTIONAL)
+    {
+        let linked = match MeasurementSet::linked_subtable_paths(&main, id) {
+            Ok(linked) => linked,
+            Err(MsError::MissingSubtable(_)) => continue,
+            Err(error) => return Err(runtime_error(error)),
+        };
+        for path in linked {
+            let subtable = Table::open(TableOptions::new(path)).map_err(runtime_error)?;
+            paths.extend(subtable.cache_plain_table_paths().map_err(runtime_error)?);
+        }
     }
     Ok(paths)
 }
