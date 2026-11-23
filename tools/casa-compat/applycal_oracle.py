@@ -724,8 +724,6 @@ def run(root, native_bin, only=None):
         ('spw-channels', 'mscal.spw("0:1~2")'),
         ('array-bound', 'mscal.array("<1")'),
         ('array-unmatched', 'mscal.array("999") OR ANTENNA1 == 0'),
-        ('uvdist', 'mscal.uvdist("<40m")'),
-        ('uvdist-wavelength', 'mscal.uvdist("<0.2klambda") OR ANTENNA1 == 0'),
         ('state', 'mscal.state("DOES_NOT_EXIST,*") AND ANTENNA1 == 0'),
         ('state-unmatched', 'mscal.state("DOES_NOT_EXIST") OR ANTENNA1 == 0'),
         ('observation', 'mscal.obs(">0")'),
@@ -734,8 +732,21 @@ def run(root, native_bin, only=None):
         ('row-dependent', 'mscal.baseline(ANTENNA1)'),
     ]:
         case(f'api-select-mscal-selector-{label}', dict(msselect=predicate), input_vis=observation_source)
-    # Pinned CASA crashes in the scan and time UDF grammars. Its ordinary TaQL
-    # predicates still supply independent numerical and mutation controls.
+    # Pinned CASA crashes in the scan and time UDF grammars. Its UV-distance
+    # UDF works in a table query but hangs in applycal with the MS open for
+    # calibration. Ordinary TaQL predicates supply numeric and mutation controls.
+    distance_sq = '(SQUARE(UVW[1]) + SQUARE(UVW[2]))'
+    case('api-select-mscal-selector-uvdist', dict(msselect='mscal.uvdist("<40m")'),
+         input_vis=observation_source, casa_control_msselect=f'{distance_sq} <= 1600')
+    tool.open(str(observation_source/'SPECTRAL_WINDOW'))
+    try:
+        reference_freq_hz = float(tool.getcell('REF_FREQUENCY', 0))
+    finally:
+        tool.close()
+    radius_sq = float(np.float32(200. * 299792458. / reference_freq_hz) ** np.float32(2.))
+    case('api-select-mscal-selector-uvdist-wavelength',
+         dict(msselect='mscal.uvdist("<0.2klambda") OR ANTENNA1 == 0'),
+         input_vis=observation_source, casa_control_msselect=f'{distance_sq} <= {radius_sq} OR ANTENNA1 == 0')
     case('api-select-mscal-selector-scan', dict(msselect='mscal.scan("2")'),
          input_vis=observation_source, casa_control_msselect='SCAN_NUMBER == 2')
     time_bound = float(np.datetime64('2019-12-31T21:53:15', 's').astype(np.int64)) + 40587. * 86400.
