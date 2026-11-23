@@ -188,9 +188,16 @@ impl PyCalAnalysis {
 
     fn freq<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let frequencies = self.metadata(py, |table| Ok(table.frequencies.clone()))?;
+        let mut entries = frequencies
+            .into_iter()
+            .enumerate()
+            .map(|(index, frequency)| (index.to_string(), frequency))
+            .collect::<Vec<_>>();
+        // CASA converts its record with the decimal keys in lexical order.
+        entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
         let record = PyDict::new(py);
-        for (index, frequency) in frequencies.into_iter().enumerate() {
-            record.set_item(index.to_string(), PyArray1::from_vec(py, frequency))?;
+        for (key, frequency) in entries {
+            record.set_item(key, PyArray1::from_vec(py, frequency))?;
         }
         Ok(record)
     }

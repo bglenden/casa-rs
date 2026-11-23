@@ -6,6 +6,7 @@ import argparse
 from contextlib import chdir
 from itertools import product
 from pathlib import Path
+from shutil import copytree
 
 import casatasks
 from casatools import calanalysis as casa_calanalysis, table
@@ -98,6 +99,26 @@ def read_attachment(factory, path, other, kind):
     return before
 
 
+def check_window_order(source, readers):
+    more = Path('many-windows.cal')
+    copytree(source, more)
+    with opened(more/'SPECTRAL_WINDOW', True) as window:
+        original = {key: window.getcell(key, 0) for key in window.colnames()
+                    if window.iscelldefined(key, 0)}
+        assert window.addrows(10)
+        for row in range(2, 12):
+            for key, value in original.items():
+                assert window.putcell(key, row, value)
+    ids = [str(index) for index in range(12)]
+    for label, factory in readers.items():
+        tool = factory()
+        assert tool.open(str(more))
+        assert tool.spw(False) == ids
+        assert list(tool.freq()) == sorted(ids)
+        assert tool.close()
+        print(label, '12 spectral-window keys', flush=True)
+
+
 def run(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     readers = {'casa': casa_calanalysis}
@@ -121,6 +142,7 @@ def run(work, reference_only):
                 else:
                     same_record(record, expected)
                 print(label, kind, reader, record['partype'], record['feed'], flush=True)
+        check_window_order(Path('amp-casa.cal'), readers)
 
 
 if __name__ == '__main__':
