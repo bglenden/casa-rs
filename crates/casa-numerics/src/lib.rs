@@ -141,9 +141,27 @@ pub fn solve_complex_normal_equations(
 /// algorithms whose serialized results depend on exact rounding.
 #[must_use]
 pub fn solve_symmetric_ldlt_casacore<const N: usize>(
-    mut normal: [[f64; N]; N],
+    normal: [[f64; N]; N],
     known: [f64; N],
 ) -> Option<[f64; N]> {
+    solve_symmetric_ldlt_casacore_with_precision(normal, known, 1.0e-12)
+}
+
+/// Solve a symmetric system in casacore `LSQFit` order with a specified
+/// squared collinearity tolerance, as used by `LSQFit::invert`.
+///
+/// Only the upper triangle of `normal` is used. A pivot with
+/// `pivot² / original_diagonal <= precision` is rejected. A precision of
+/// zero matches the non-SVD `LinearFit` default.
+#[must_use]
+pub fn solve_symmetric_ldlt_casacore_with_precision<const N: usize>(
+    mut normal: [[f64; N]; N],
+    known: [f64; N],
+    precision: f64,
+) -> Option<[f64; N]> {
+    if !precision.is_finite() || precision < 0.0 {
+        return None;
+    }
     for row in 0..N {
         let (prior_rows, current_and_after) = normal.split_at_mut(row);
         let current_row = &mut current_and_after[0];
@@ -155,7 +173,7 @@ pub fn solve_symmetric_ldlt_casacore<const N: usize>(
         for (prior, prior_row) in prior_rows.iter().enumerate() {
             diagonal -= prior_row[row] * prior_row[row] / prior_row[prior];
         }
-        if !diagonal.is_finite() || diagonal * diagonal / original_diagonal <= 1.0e-12 {
+        if !diagonal.is_finite() || diagonal * diagonal / original_diagonal <= precision {
             return None;
         }
         current_row[row] = diagonal;

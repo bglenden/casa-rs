@@ -46,7 +46,7 @@ use crate::{
     MeasurementSetWriteSession, MsError, MsReadPlan, MsSelectionIoBudget,
     maximum_visibility_cell_elements,
 };
-use casa_numerics::{solve_symmetric_ldlt_casacore, solve_weighted_least_squares};
+use casa_numerics::{solve_symmetric_ldlt_casacore_with_precision, solve_weighted_least_squares};
 
 mod antint;
 mod calibration;
@@ -3979,9 +3979,6 @@ fn tfcrop_casa_poly_fit<const N: usize>(
     let mut count = 0;
     for index in (left..=right).filter(|&index| !flag[index]) {
         let sample = f64::from(data[index]);
-        if !sample.is_finite() {
-            return false;
-        }
         let x = index as f64 + 1.0;
         let powers = std::array::from_fn::<_, N, _>(|power| x.powi(power as i32));
         for (column, &value) in powers.iter().enumerate() {
@@ -3995,9 +3992,10 @@ fn tfcrop_casa_poly_fit<const N: usize>(
     if count < N {
         return false;
     }
-    let Some(solution) = solve_symmetric_ldlt_casacore(normal, known) else {
-        return false;
-    };
+    // Non-SVD LinearFit uses zero collinearity tolerance and returns its
+    // initial zero coefficients if inversion fails.
+    let solution =
+        solve_symmetric_ldlt_casacore_with_precision(normal, known, 0.0).unwrap_or([0.0; N]);
     for (index, value) in fit.iter_mut().enumerate().take(right + 1).skip(left) {
         let x = index as f64 + 1.0;
         // FlagAgentTimeFreqCrop::polyFit rounds each sum to Float.
@@ -5554,6 +5552,22 @@ mod tests {
                 .iter()
                 .any(|s| s.field == 2 && s.spw == 3 && s.amp == 5.0)
         );
+    }
+
+    #[test]
+    fn tfcrop_cubic_fits_narrow_support_at_high_channels() {
+        let mut data = [0.0; 103];
+        let mut flag = [true; 103];
+        let mut fitted = [0.0; 103];
+        data[99..].copy_from_slice(&[0.25, 1.75, 0.125, 0.5]);
+        flag[99..].fill(false);
+        tfcrop_poly_fit(&data, &flag, &mut fitted, 99, 102, 3, true);
+
+        // C++ casacore LinearFit followed by CASA's Float accumulation.
+        let expected = [0.201156, 1.80258, 0.216449, 0.567763];
+        for (actual, expected) in fitted[99..].iter().zip(expected) {
+            assert!((actual - expected).abs() < 2.0e-5, "{actual} != {expected}");
+        }
     }
 
     #[test]
