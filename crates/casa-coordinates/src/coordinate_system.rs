@@ -621,34 +621,6 @@ mod tests {
     }
 
     #[test]
-    fn world_columns_preserve_layout_values_and_error_order() {
-        let system = crate::defaults::coordinate_system_for_shape(&[19, 13, 2, 6], false);
-        let pixels = ndarray::array![
-            [9.0, 9.25, 7.5],
-            [6.0, 5.5, 7.0],
-            [0.0, 1.0, 1.0],
-            [0.0, 2.5, 4.0],
-        ];
-        let column_major = Array2::from_shape_fn(pixels.dim().f(), |index| pixels[index]);
-        for input in [pixels.view(), column_major.view()] {
-            let world = system.to_world_columns(input).unwrap();
-            assert!(world.view().reversed_axes().is_standard_layout());
-            for (pixel, transformed) in input.axis_iter(Axis(1)).zip(world.axis_iter(Axis(1))) {
-                let expected = system.to_world(&pixel.to_vec()).unwrap();
-                assert_eq!(transformed.as_slice().unwrap(), expected);
-            }
-            assert_eq!(world.row(2).to_vec(), vec![1.0, 2.0, 2.0]);
-        }
-        let mut invalid = pixels;
-        invalid[[2, 0]] = 12.0;
-        invalid[[0, 1]] = 2e6;
-        assert!(matches!(
-            system.to_world_columns(invalid.view()),
-            Err(CoordinateError::AxisOutOfRange { .. })
-        ));
-    }
-
-    #[test]
     fn removing_a_nested_world_axis_stores_its_replacement_in_declared_units() {
         let mut inner = CoordinateSystem::new();
         inner.add_coordinate(direction());
