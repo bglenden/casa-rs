@@ -10600,3 +10600,11 @@ The selected slice uses its registered calibration scan even when the current vi
 ## Some direct calibration factories gather data without a usable fitting stage
 
 CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones, B TSYS, gain curve, and legacy power curve. With all input flagged, the tool reports the expected intervals and does not produce a table. When four-correlation usable data reaches the fitting stage, the pinned legacy J/Jf and both B TSYS iterators terminate. The tested modern J/Jf, A Noise, F Jones and curve configurations return a solve error. Modern power curve returns a setup error. Casa-rs retains the available gather stage and uses a recoverable error for the unavailable fit. These limits concern solving. Existing table application and specification are separate operations. [Paired factory oracle](../tools/casa-compat/calibrater_gather_only_oracle.py)
+
+## Explicit channel-zero range can terminate Python
+
+On a `[3, 4, 8]` image, CASA 6.7.6.14 can terminate with SIGSEGV
+when `image.collapse("mean", axes=2, chans="range=[0pix,0pix]")`
+reads the spectral bounds. `AnnotationBase::setFrequencyLimits` treats two
+numeric zeros as an absent range, while the caller indexes both bounds.
+Casa-rs selects channel zero for the explicitly unit-bearing range.

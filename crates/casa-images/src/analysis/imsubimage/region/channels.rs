@@ -7,7 +7,7 @@ use casa_types::quanta::{Quantity, Unit};
 use crate::analysis::{ChannelSpan, parse_image_channel_spans};
 use crate::{ImageError, ImageInterface, ImagePixel};
 
-use super::crtf_spectral_bounds;
+use super::{channel_position, crtf_spectral_bounds};
 
 pub(super) fn resolve_channels<T: ImagePixel>(
     image: &dyn ImageInterface<T>,
@@ -100,12 +100,8 @@ fn channel_spans(
     // legacy integer selector above is the form for unitless channel bounds.
     let endpoint = |text: &str| -> Result<bool, ImageError> {
         let text = text.trim();
-        if let Some(value) = text
-            .strip_suffix("pix")
-            .or_else(|| text.strip_suffix("chan"))
-        {
+        if let Some(value) = channel_position(text) {
             value
-                .trim()
                 .parse::<f64>()
                 .ok()
                 .filter(|value| value.is_finite())
