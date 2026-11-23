@@ -123,6 +123,32 @@ def check_cases(work, source, noise, engines, slots, cases):
         print(work.name, noise.name, case, legacy, action, flush=True)
 
 
+def reversed_baseline(work, source, noise, engines):
+    """CASA's ordered index selects (0, 7) for a reversed (1, 0) row."""
+    with opened(source) as ms:
+        p, q, times = (ms.getcol(name) for name in ('ANTENNA1', 'ANTENNA2', 'TIME'))
+        row = int(np.flatnonzero((p == 0) & (q == 1))[0])
+        other = int(np.flatnonzero((p == 0) & (q == 7) & (times == times[row]))[0])
+        data = ms.getcell('DATA', row)
+    offsets = parameters_for_rows(source, noise)
+    for legacy, (label, factory) in product((True, False), engines.items()):
+        dataset = work/f'reversed-{legacy}-{label}.ms'
+        copytree(source, dataset)
+        with opened(dataset, True) as ms:
+            assert ms.putcell('ANTENNA1', row, 1) and ms.putcell('ANTENNA2', row, 0)
+        tool = factory()
+        assert tool.setvi(legacy, True) and tool.open(str(dataset), addcorr=True, addmodel=True)
+        assert tool.selectvis() and tool.setapply(table=str(noise), calwt=False)
+        assert tool.correct() and tool.close()
+        conjugated = offsets[row, [0, 2, 1, 3], :].conj()
+        expected = offsets[other] if label == 'casa' else conjugated
+        assert np.max(abs(offsets[other] - conjugated)) > .05
+        with opened(dataset) as ms:
+            np.testing.assert_allclose(ms.getcell('CORRECTED_DATA', row), data-expected,
+                                       atol=1e-6, rtol=0.)
+        print('reversed baseline', legacy, label, flush=True)
+
+
 def compare(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     engines, writers = {'casa': casa_calibrater}, {'casa': casa_simulator}
@@ -144,6 +170,8 @@ def compare(work, reference_only):
                 if label == 'casa' and layout == 'four':
                     cases.update({'nearest': noise, 'off-grid': noise}, **modified_tables(directory, noise))
                 check_cases(directory, source, noise, engines, slots, cases)
+                if label == 'casa' and layout == 'four':
+                    reversed_baseline(directory, source, noise, engines)
 
 
 if __name__ == '__main__':
