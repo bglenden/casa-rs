@@ -15,6 +15,20 @@ import tempfile
 from time import perf_counter_ns
 
 CASA_VERSION = "6.7.6.14"
+IMAGE_TOOL_FIXTURES = {
+    "coordsys": "coordsys",
+    "image": "image",
+    "image_collapse": "ia_collapse",
+    "image_deviation": "ia_deviation",
+    "image_fitprofile": "ia_fitprofile",
+    "image_pbcor": "ia_pbcor",
+    "image_pv": "ia_pv",
+    "image_rebin": None,
+    "image_regrid": "ia_regrid",
+    "image_statistics": "ia_statistics",
+    "image_subimage": None,
+    "image_transpose": "ia_transpose",
+}
 _fixture_errors = []
 
 
@@ -42,7 +56,8 @@ def pytest_configure():
     if tool := os.environ.get("CASARS_UPSTREAM_TEST_TOOL"):
         if implementation == "casa-rs":
             from casars import tools
-            setattr(casatools, tool, getattr(tools, tool))
+            for name in tool.split(","):
+                setattr(casatools, name, getattr(tools, name))
         return
     entry_point = getattr(casatasks, task)
     if implementation == "casa-rs":
@@ -129,20 +144,24 @@ def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures
               *, eager_asdm_fixtures=False):
     script_kind, name = suite.stem.removeprefix("test_").split("_", 1)
     task = name.removesuffix("_mms")
-    tool, fixture_group = {"ms_statwt": ("ms", "statwt")}.get(name, (task, task))
-    source = casatestdata / "unittest" / fixture_group
-    if fixture_group != "exportfits" and not source.is_dir():
+    if script_kind == "tool" and name in IMAGE_TOOL_FIXTURES:
+        tool, fixture_group = "image,coordsys", IMAGE_TOOL_FIXTURES[name]
+    else:
+        tool, fixture_group = {"ms_statwt": ("ms", "statwt")}.get(name, (task, task))
+    source = casatestdata / "unittest" / fixture_group if fixture_group else None
+    if source is not None and fixture_group != "exportfits" and not source.is_dir():
         raise FileNotFoundError(f"missing upstream fixtures: {source}")
     with tempfile.TemporaryDirectory(dir=output, prefix=f"{name}-{implementation}-") as directory:
         scratch = Path(directory)
         staged = scratch / "fixtures"
         staged.mkdir()
-        target = staged / "unittest" / fixture_group
-        if fixtures:
-            for fixture in fixtures:
-                copy_fixture(source / fixture, target / fixture)
-        elif source.is_dir():
-            copy_fixture(source, target)
+        if source is not None:
+            target = staged / "unittest" / source.name
+            if fixtures:
+                for fixture in fixtures:
+                    copy_fixture(source / fixture, target / fixture)
+            elif source.is_dir():
+                copy_fixture(source, target)
 
         work = scratch / "work"
         work.mkdir()
@@ -214,6 +233,8 @@ def main(family, description):
         parser.error("--trials must be positive")
     if args.trials and suites[args.task].stem.startswith("test_tool_"):
         parser.error("--trials measures public task calls")
+    if args.fixture and args.task in IMAGE_TOOL_FIXTURES and IMAGE_TOOL_FIXTURES[args.task] is None:
+        parser.error(f"{args.task} generates its own fixtures")
     if any(path.is_absolute() or ".." in path.parts for path in args.fixture):
         parser.error("--fixture paths must be relative to the suite's fixture directory")
     output = args.out.resolve()
