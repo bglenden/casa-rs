@@ -428,7 +428,7 @@ pub enum Expr {
     FunctionCall { name: String, args: Vec<Expr> },
     /// A zero-based row lookup bound to a metadata column when preparing a query.
     BoundRowLookup {
-        original: Box<Expr>,
+        original: Arc<String>,
         index: Box<Expr>,
         values: Arc<[ExprValue]>,
         missing: Option<ExprValue>,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bind the metadata lookup functions from casacore's UDFMSCal to stored table columns.
 
+use casa_types::quanta::{Quantity, Unit};
 use casa_types::{PrimitiveType, RecordValue, Value};
 
 use crate::{ColumnSchema, ColumnType, Table, TableError, TableOptions, add_directory};
@@ -102,10 +103,13 @@ fn bind_lookup(
     else {
         return Ok(None);
     };
-    let original = Expr::FunctionCall {
-        name: name.to_owned(),
-        args: args.to_vec(),
-    };
+    let original = format!(
+        "{name}({})",
+        args.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     let (subtable, column, index, allow_missing) = if function == "subcol" {
         check_arity(name, args, 3)?;
@@ -175,9 +179,16 @@ fn constant_string(expr: &Expr, name: &str, style: IndexStyle) -> Result<String,
             | Expr::Aggregate { .. }
             | Expr::BoundRowLookup { .. } => return Err(constant_string_error(name)),
             Expr::FunctionCall { name: func, .. }
-                if ["rownumber", "rownr", "rowid", "iscolumn"]
-                    .iter()
-                    .any(|key| func.eq_ignore_ascii_case(key)) =>
+                if [
+                    "rownumber",
+                    "rownr",
+                    "rowid",
+                    "iscolumn",
+                    "iskeyword",
+                    "rand",
+                ]
+                .iter()
+                .any(|key| func.eq_ignore_ascii_case(key)) =>
             {
                 return Err(constant_string_error(name));
             }
@@ -237,7 +248,7 @@ fn open_subtable(table: &Table, name: &str) -> Result<Table, TaqlError> {
 }
 
 fn bind_column(
-    original: &Expr,
+    original: &str,
     index: Expr,
     table: &Table,
     name: &str,
@@ -255,7 +266,7 @@ fn bind_column(
         });
     }
     let column = table.column_accessor(name).map_err(table_error)?;
-    let values = match schema.column_type() {
+    let mut values: Vec<_> = match schema.column_type() {
         ColumnType::Scalar => column
             .scalar_cells_owned()
             .map_err(table_error)?
@@ -263,24 +274,77 @@ fn bind_column(
             .map(|value| value.as_ref().map_or(ExprValue::Null, ExprValue::from))
             .collect(),
         _ => column
-            .cells()
+            .array_cells_owned(&(0..table.row_count()).collect::<Vec<_>>())
             .map_err(table_error)?
             .into_iter()
-            .map(|value| value.map_or(ExprValue::Null, ExprValue::from))
+            .map(|value| {
+                value.map_or(ExprValue::Null, |array| {
+                    ExprValue::from(&Value::Array(array))
+                })
+            })
             .collect(),
     };
+    let mut missing = (allow_missing && schema.column_type() == &ColumnType::Scalar)
+        .then(|| missing_value(schema));
+    if let Some(unit) = column_unit(table, name)? {
+        for value in values.iter_mut().chain(missing.iter_mut()) {
+            apply_unit(value, &unit);
+        }
+    }
     Ok(Expr::BoundRowLookup {
-        original: Box::new(original.clone()),
+        original: original.to_owned().into(),
         index: Box::new(index),
-        values,
-        missing: allow_missing.then(|| missing_value(schema)),
+        values: values.into(),
+        missing,
     })
 }
 
-fn missing_value(schema: &ColumnSchema) -> ExprValue {
-    if schema.column_type() != &ColumnType::Scalar {
-        return ExprValue::Null;
+fn column_unit(table: &Table, name: &str) -> Result<Option<Unit>, TaqlError> {
+    use casa_types::{ArrayValue, ScalarValue};
+
+    let Some(keywords) = table.column_keywords(name) else {
+        return Ok(None);
+    };
+    // TableExprNodeColumn uses the first fixed unit or the legacy UNIT keyword.
+    let unit = match keywords.get("QuantumUnits") {
+        Some(Value::Array(ArrayValue::String(units))) => units.iter().next(),
+        Some(_) => {
+            return Err(TaqlError::TypeError {
+                message: format!("QuantumUnits of metadata column {name:?} must be a string array"),
+            });
+        }
+        None => match keywords.get("UNIT") {
+            Some(Value::Scalar(ScalarValue::String(unit))) => Some(unit),
+            _ => None,
+        },
+    };
+    unit.filter(|unit| !unit.is_empty())
+        .map(|unit| {
+            Unit::new(unit).map_err(|err| TaqlError::TypeError {
+                message: err.to_string(),
+            })
+        })
+        .transpose()
+}
+
+fn apply_unit(value: &mut ExprValue, unit: &Unit) {
+    match value {
+        ExprValue::Float(number) => {
+            *value = ExprValue::Quantity(Quantity::with_unit(*number, unit.clone()));
+        }
+        ExprValue::Int(number) => {
+            *value = ExprValue::Quantity(Quantity::with_unit(*number as f64, unit.clone()));
+        }
+        ExprValue::Array(array) => {
+            for element in &mut array.data {
+                apply_unit(element, unit);
+            }
+        }
+        _ => {}
     }
+}
+
+fn missing_value(schema: &ColumnSchema) -> ExprValue {
     match schema.data_type() {
         Some(PrimitiveType::Bool) => ExprValue::Bool(false),
         Some(PrimitiveType::String) => ExprValue::String(String::new()),
