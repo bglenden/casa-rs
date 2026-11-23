@@ -107,6 +107,51 @@ def test_clearcal_yields_the_base_lock_of_a_reopened_saved_view(native_dataset, 
         assert view.done()
 
 
+def test_clearcal_hands_off_an_open_multi_ms_member(native_dataset, tmp_path):
+    casa = pinned_casa()
+    import casatasks
+
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    try:
+        times = table.getcol("TIME")
+        midpoint = np.unique(times)[1]
+        assert table.putcol("SCAN_NUMBER", np.where(times < midpoint, 1, 2).astype(np.int32))
+    finally:
+        assert table.done()
+
+    for label, backend, clearcal in (
+        ("casa", casa, casatasks.clearcal), ("native", tools, tasks.clearcal),
+    ):
+        ms = tmp_path / f"{label}.mms"
+        casatasks.partition(str(native_dataset), str(ms), separationaxis="scan",
+                            numsubms=2, disableparallel=True, flagbackup=False, datacolumn="all")
+        parts = sorted((ms / "SUBMSS").glob("*.ms"))
+        assert len(parts) == 2
+        aggregate = backend.table()
+        member = backend.table()
+        assert aggregate.open(str(ms))
+        assert member.open(str(parts[0]))
+        try:
+            assert member.haslock(write=False)
+            clearcal(str(ms), addmodel=True)
+            np.testing.assert_array_equal(member.getcol("CORRECTED_DATA"), member.getcol("DATA"))
+            # CASA's existing aggregate schema is a snapshot. Reopening
+            # the aggregate reloads its columns from the updated members.
+            assert "MODEL_DATA" not in aggregate.colnames()
+        finally:
+            assert member.done()
+            assert aggregate.done()
+        for reader in (casa, tools):
+            reopened = reader.table()
+            assert reopened.open(str(ms))
+            try:
+                np.testing.assert_array_equal(reopened.getcol("CORRECTED_DATA"), reopened.getcol("DATA"))
+                assert "MODEL_DATA" in reopened.colnames()
+            finally:
+                assert reopened.done()
+
+
 def test_clearcal_preserves_a_user_lock(native_dataset, tmp_path):
     casa = pinned_casa()
     import casatasks
