@@ -7,6 +7,7 @@ from contextlib import chdir
 from pathlib import Path
 import signal
 from subprocess import run
+from time import perf_counter
 import sys
 
 import casatasks
@@ -112,6 +113,43 @@ t.get(feed='1')
         assert tool.close()
 
 
+def check_group_delay(path, readers):
+    for descending in (False, True):
+        order = np.arange(8.)[::-1] if descending else np.arange(8.)
+        for carrier, spacing in ((1e9, 1e6), (1e11, 1e3)):
+            frequency = carrier + spacing*order
+            with opened(path/'SPECTRAL_WINDOW', True) as spw:
+                assert spw.putcell('CHAN_FREQ', 0, frequency)
+            for delay in (0., .18/spacing):
+                expected = 2.7 + 2*np.pi*delay*(frequency-frequency[0])
+                gain = np.exp(1j*expected).astype(np.complex64)
+                with opened(path, True) as cal:
+                    assert cal.putcell('CPARAM', 4, np.stack((gain,gain)))
+                    assert cal.putcell('FLAG', 4, np.zeros((2,8),bool))
+                options = dict(field='0', antenna='1', spw='0', timerange=[7.,7.], ap='P',unwrap=True)
+                for engine, factory in readers.items():
+                    # Pinned CASA would evaluate roughly 200 million trial
+                    # delays for the fine band. Use the analytic law there.
+                    if engine == 'casa' and spacing == 1e3:
+                        continue
+                    tool = factory()
+                    assert tool.open(str(path))
+                    start = perf_counter()
+                    output = tool.get(**options)
+                    duration = perf_counter()-start
+                    assert len(output)==2 and tool.close()
+                    for record in output.values():
+                        np.testing.assert_array_equal(record['frequency'], frequency)
+                        if engine == 'casa' and descending:
+                            if delay == 0.:
+                                assert np.max(np.abs(record['value']-expected)) > 2*np.pi
+                        else:
+                            np.testing.assert_allclose(record['value'],expected,atol=2e-6,rtol=0.)
+                    if engine == 'native' and spacing==1e3:
+                        assert duration < 5., duration
+                    print(engine, 'group delay', carrier, spacing, descending, delay, duration,flush=True)
+
+
 def compare(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     readers, writers = {'casa': casa_calanalysis}, {'casa': casatasks.gencal}
@@ -141,6 +179,8 @@ def compare(work, reference_only):
                 for tool in tools.values():
                     assert tool.close()
                 restricted_feed(path, readers)
+                if complex_values:
+                    check_group_delay(path, readers)
 
 
 if __name__ == '__main__':

@@ -97,7 +97,7 @@ fn median(values: &mut [f64]) -> Option<f64> {
     if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
         return None;
     }
-    let even = values.len() % 2 == 0;
+    let even = values.len().is_multiple_of(2);
     let (lower, middle, _) = values.select_nth_unstable_by(values.len() / 2, f64::total_cmp);
     Some(if even {
         (lower.iter().copied().fold(f64::NEG_INFINITY, f64::max) + *middle) / 2.

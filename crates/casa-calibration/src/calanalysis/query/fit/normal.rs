@@ -11,13 +11,11 @@ pub(super) struct System {
     terms: usize,
     matrix: Matrix,
     known: Coefficients,
-    sum_squares: f64,
 }
 
 pub(super) struct Solution {
     pub(super) coefficients: Vec<f64>,
     pub(super) covariance: Vec<Vec<f64>>,
-    pub(super) chi_square: f64,
 }
 
 impl System {
@@ -26,7 +24,6 @@ impl System {
             terms,
             matrix: [[0.; MAX_TERMS]; MAX_TERMS],
             known: [0.; MAX_TERMS],
-            sum_squares: 0.,
         }
     }
 
@@ -40,7 +37,6 @@ impl System {
         // deficient fit, the minimum-norm update preserves that initial
         // polynomial's component in the numerical null space.
         let delta = y - basis[..self.terms].iter().sum::<f64>();
-        self.sum_squares += weight * delta * delta;
         for (row, &value) in basis[..self.terms].iter().enumerate() {
             let weighted_value = weight * value;
             self.known[row] += weighted_value * delta;
@@ -94,12 +90,10 @@ impl System {
                 })
                 .collect()
         };
-        let chi_square = self.chi_square(&correction);
         let coefficients = correction.into_iter().map(|value| value + 1.).collect();
         Some(Solution {
             coefficients,
             covariance,
-            chi_square,
         })
     }
 
@@ -179,20 +173,5 @@ impl System {
             })
             .collect();
         Some(map)
-    }
-
-    fn chi_square(&self, correction: &[f64]) -> f64 {
-        let mut explained = 0.;
-        let mut error = 0.;
-        for (row, (&value, &known)) in correction.iter().zip(&self.known).enumerate() {
-            let model = self.matrix[row]
-                .iter()
-                .zip(correction)
-                .map(|(matrix, solution)| matrix * solution)
-                .sum::<f64>();
-            explained += value * known;
-            error += value * (model - known);
-        }
-        (self.sum_squares - explained + error).max(0.)
     }
 }

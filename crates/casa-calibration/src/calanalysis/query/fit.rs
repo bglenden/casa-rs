@@ -93,14 +93,24 @@ impl FitOptions {
         let x_scale = scale(active.iter().map(|&(x, _, _)| x))?;
         let y_scale = scale(active.iter().map(|&(_, y, _)| y))?;
         let mut system = normal::System::new(self.degree + 1);
-        for (x, y, error) in active {
-            let sigma = if self.weighted { error } else { 1. } / y_scale;
-            if sigma != 0. && sigma != -1. {
-                system.accumulate(x / x_scale, y / y_scale, sigma)?;
-            }
+        let samples = active
+            .into_iter()
+            .filter_map(|(x, y, error)| {
+                let sigma = if self.weighted { error } else { 1. } / y_scale;
+                (sigma != 0. && sigma != -1.).then_some((x / x_scale, y / y_scale, sigma))
+            })
+            .collect::<Vec<_>>();
+        for &(x, y, sigma) in &samples {
+            system.accumulate(x, y, sigma)?;
         }
         let solution = system.solve()?;
-        let metric = solution.chi_square / dof as f64;
+        // Form the small residuals directly. Subtracting the corresponding
+        // normal-equation quadratic forms can lose their entire sum.
+        let metric = samples
+            .iter()
+            .map(|&(x, y, sigma)| ((y - polynomial(&solution.coefficients, x)) / sigma).powi(2))
+            .sum::<f64>()
+            / dof as f64;
         let covariance_scale = if self.weighted { 1. } else { metric };
         let factors = [y_scale, y_scale / x_scale, y_scale / (x_scale * x_scale)];
         let coefficients = solution
@@ -168,13 +178,7 @@ impl Fit {
     ) -> Self {
         let model = x
             .iter()
-            .map(|&x| {
-                coefficients
-                    .iter()
-                    .enumerate()
-                    .map(|(power, coefficient)| coefficient * x.powi(power as i32))
-                    .sum::<f64>()
-            })
+            .map(|&x| polynomial(&coefficients, x))
             .collect::<Vec<_>>();
         let residuals = values
             .iter()
@@ -198,4 +202,12 @@ impl Fit {
             residual_variance,
         }
     }
+}
+
+fn polynomial(coefficients: &[f64], x: f64) -> f64 {
+    coefficients
+        .iter()
+        .enumerate()
+        .map(|(power, coefficient)| coefficient * x.powi(power as i32))
+        .sum()
 }

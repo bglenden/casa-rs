@@ -7,6 +7,8 @@ use casa_provider_contracts::CasaValue;
 use num_complex::Complex64;
 
 use super::fit::FitOptions;
+
+mod group_delay;
 use super::*;
 use crate::constants::{COL_CPARAM, COL_FLAG, COL_FPARAM, COL_PARAMERR};
 
@@ -378,7 +380,7 @@ fn unwrap(
     jump: f64,
 ) -> Result<(), String> {
     let delay = if matches!(iteration, Iteration::Time) && jump == 0. {
-        group_delay(values, flags, x)?
+        group_delay::estimate(values, flags, x)?
     } else {
         None
     };
@@ -405,63 +407,4 @@ fn unwrap(
         *value += shift;
     }
     Ok(())
-}
-
-fn group_delay(values: &[f64], flags: &[bool], freq: &[f64]) -> Result<Option<f64>, String> {
-    let samples = freq
-        .iter()
-        .zip(values)
-        .zip(flags)
-        .filter_map(|((&freq, &phase), &flag)| (!flag).then_some((freq, phase)))
-        .collect::<Vec<_>>();
-    if samples.len() <= 1 {
-        return Ok(None);
-    }
-    let spacing = samples
-        .windows(2)
-        .map(|pair| pair[1].0 - pair[0].0)
-        .filter(|spacing| *spacing != 0.)
-        .min_by(f64::total_cmp)
-        .ok_or_else(|| String::from("phase unwrapping needs distinct frequencies"))?;
-    let max = samples
-        .iter()
-        .map(|sample| sample.0)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let mut step = 0.5 / max;
-    let span = 1. / spacing;
-    let count = (span / step + 1.).abs();
-    if !count.is_finite() || count < 1. || !step.is_finite() || step <= 0. {
-        return Err("phase unwrapping has an invalid frequency grid".into());
-    }
-    let count = count as usize;
-    let mut delay = packet_peak(&samples, -0.5 * span, step, count);
-    for _ in 0..50 {
-        let finer = 5. * step / (count as f64 + 1.);
-        let refined = packet_peak(&samples, delay - 0.5 * step, finer, count);
-        if (refined - delay).abs() / step < 1e-8 {
-            break;
-        }
-        step = finer;
-        delay = refined;
-    }
-    Ok(Some(delay))
-}
-
-fn packet_peak(samples: &[(f64, f64)], start: f64, step: f64, count: usize) -> f64 {
-    let mut best = (f64::NEG_INFINITY, start);
-    for i in 0..count {
-        let delay = start + step * (i as f64);
-        let mut real = 0.;
-        let mut imag = 0.;
-        for &(frequency, phase) in samples {
-            let (sin, cos) = (TAU * frequency * delay - phase).sin_cos();
-            real += cos;
-            imag += sin;
-        }
-        let score = real * real + imag * imag;
-        if score > best.0 {
-            best = (score, delay);
-        }
-    }
-    best.1
 }

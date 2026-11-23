@@ -227,6 +227,31 @@ tool.fit(antenna='0', **json.loads(sys.argv[2]))
         print(path.name, 'isolated abort', options, failure, flush=True)
 
 
+def exercise_near_exact(path, readers, complex_values):
+    with opened(path, True) as cal:
+        data = np.float32(1.) + np.float32(.1)*np.arange(CHANNELS,dtype=np.float32)
+        if complex_values:
+            data = data.astype(np.complex64)
+        column = 'CPARAM' if complex_values else 'FPARAM'
+        for row in range(cal.nrows()):
+            assert cal.putcell(column,row,np.stack((data,data)))
+            assert cal.putcell('FLAG',row,np.zeros((2,CHANNELS),bool))
+            assert cal.putcell('PARAMERR',row,np.full((2,CHANNELS),.001,dtype=np.float32))
+    for engine, factory in readers.items():
+        tool = factory()
+        assert tool.open(str(path))
+        output = tool.fit(antenna='0',spw='0:0~7',order='LINEAR',weight=True)
+        assert len(output)==2 and tool.close()
+        for record in output.values():
+            assert record['validFit']
+            residual = (record['value']-record['model'])/record['valueErr']
+            expected = (residual@residual)/(len(residual)-1)
+            assert expected < 1e-4
+            if engine == 'native':
+                np.testing.assert_allclose(record['redChi2'],expected,rtol=5e-5,atol=1e-9)
+            print(path.name,engine,'nearly exact weighted chi-square',record['redChi2'],expected,flush=True)
+
+
 def compare(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     readers, writers = {'casa': casa_calanalysis}, {'casa': casatasks.gencal}
@@ -247,6 +272,7 @@ def compare(work, reference_only):
                 exercise(path, readers, complex_values)
                 exercise_narrow_band(path, readers)
                 exercise_degenerate(path, readers)
+                exercise_near_exact(path, readers, complex_values)
 
 
 if __name__ == '__main__':
