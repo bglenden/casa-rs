@@ -179,7 +179,7 @@ fn write_gain_table(
     let legacy_gain_metadata = !delay
         && !matches!(
             subtype,
-            "Accor Jones" | "M Mueller" | "Mf Mueller" | "A Mueller"
+            "G Jones" | "T Jones" | "Accor Jones" | "M Mueller" | "Mf Mueller" | "A Mueller"
         );
     let (parameter_column, parameter_type) = if delay {
         (COL_FPARAM, casa_types::PrimitiveType::Float32)
@@ -207,6 +207,7 @@ fn write_gain_table(
         ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(2)),
         ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(2)),
         ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(2)),
+        // CASA declares WEIGHT but leaves it undefined in ordinary G/T solutions.
         ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ]);
     let schema = TableSchema::new(columns).expect("valid gain caltable schema");

@@ -6,10 +6,25 @@
       "sha256": "aa0f868a7bc4a01bc3d177330c068e70b17bc3616baf69636f94b44c1182eba2",
       "size": 39043
     },
+    "test_task_bandpass.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_bandpass.py",
+      "sha256": "76c52418e3ecc5b38cd8dce3ed77bb10b6876d3eb2fd9176dfbb8986ff0a0fec",
+      "size": 6297
+    },
     "test_task_fluxscale.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_fluxscale.py",
       "sha256": "7aab2215d9fdd44a7d9ae053e6837abb1e1db7156d8ba48381031a56da4d9b69",
       "size": 40165
+    },
+    "test_task_getantposalma.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_getantposalma.py",
+      "sha256": "2a7a6c77e008aab411351e8a49eac96d93205c36d2f4da7a1f9a304719953177",
+      "size": 12365
+    },
+    "test_task_getcalmodvla.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_getcalmodvla.py",
+      "sha256": "2d5df1c9dbed40cc52825b8f7aac33ddeff2e0eddacfe0decebff2bdbb2eebca",
+      "size": 9068
     },
     "test_tool_calanalysis.py": {
       "upstream_path": "casatools/tests/tools/calanalysis/test_tool_calanalysis.py",
