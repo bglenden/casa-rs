@@ -513,10 +513,7 @@ impl super::PyCalibrater {
                         frequency,
                     )
                     .map_err(|_| setup_error())?;
-                state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
-                return Ok(true);
-            }
-            if matches!(family.as_str(), "TF" | "TF JONES" | "TF NOISE") {
+            } else if matches!(family.as_str(), "TF" | "TF JONES" | "TF NOISE") {
                 state
                     .set_tool_tf(
                         standard.gain(GainType::T),
@@ -525,10 +522,7 @@ impl super::PyCalibrater {
                         invalid_mode,
                     )
                     .map_err(|_| setup_error())?;
-                state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
-                return Ok(true);
-            }
-            if family == "GSPLINE" {
+            } else if family == "GSPLINE" {
                 configure_generic_spline(state, standard, mode, &apmode)?;
             } else {
                 let request = standard_request(
