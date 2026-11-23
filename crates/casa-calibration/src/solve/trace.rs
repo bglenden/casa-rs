@@ -281,7 +281,9 @@ fn gain_type_name(gain_type: GainType) -> &'static str {
         GainType::G => "G",
         GainType::T => "T",
         GainType::K => "K",
+        GainType::KMbd => "KMBD",
         GainType::KCross => "KCROSS",
+        GainType::KAntPos => "KANTPOS",
         GainType::GSpline => "GSPLINE",
     }
 }

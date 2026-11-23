@@ -165,6 +165,7 @@ pub(crate) fn supports_float_apply_subtype(subtype: &str) -> bool {
         || matches!(
             subtype,
             "K Jones"
+                | "KMBD Jones"
                 | "Kcross Jones"
                 | "KAntPos Jones"
                 | "EGainCurve"

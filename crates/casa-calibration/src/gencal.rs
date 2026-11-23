@@ -17,6 +17,7 @@ pub use specify_tool::CalibrationSpecification;
 use spectral_axis::write_prior_spectral_axis;
 pub(crate) use spectral_axis::write_spectral_axis;
 pub(crate) use switched_power::CORRELATOR_EFFICIENCY as EVLA_CORRELATOR_EFFICIENCY;
+pub(crate) use switched_power::input_paths as switched_power_input_paths;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;

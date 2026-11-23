@@ -153,7 +153,8 @@ pub(super) fn traditional_apply_description(
     let time = if time.is_empty() { "linear" } else { time };
     let interpolation = if matches!(
         subtype,
-        "B Jones"
+        "A Noise"
+            | "B Jones"
             | "B TSYS"
             | "BPOLY"
             | "Df Jones"
@@ -300,17 +301,15 @@ impl<'a> SolveState<'a> {
                     solver.mode == CalibrationOutputMode::Append,
                 )
             },
-            ConfiguredSolve::Opacity {
+            ConfiguredSolve::GatherOnly {
                 request,
                 mode,
+                subtype,
                 channelized,
+                ..
             } => Self {
                 frequency_dependent: *channelized,
-                ..Self::gain(
-                    request,
-                    if *channelized { "TfOpac" } else { "TOpac" },
-                    *mode == CalibrationOutputMode::Append,
-                )
+                ..Self::gain(request, subtype, *mode == CalibrationOutputMode::Append)
             },
             ConfiguredSolve::LegacyEp(solver) => Self {
                 subtype: "EP Jones",

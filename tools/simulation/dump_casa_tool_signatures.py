@@ -37,6 +37,7 @@ TOOLS = (
     "table",
     "msmetadata",
     "ms",
+    "calanalysis",
     "calibrater",
     "imager",
     "agentflagger",

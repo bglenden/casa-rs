@@ -59,9 +59,13 @@ pub enum GainType {
     T,
     /// Per-receptor delay in nanoseconds.
     K,
+    /// Multi-band K delay table.
+    KMbd,
     /// Shared cross-hand delay in nanoseconds.
     #[serde(rename = "KCROSS")]
     KCross,
+    /// Direct KAntPos table with the antenna delay fit in its first two terms.
+    KAntPos,
     /// Time-domain cubic-spline gains per receptor.
     #[serde(rename = "GSPLINE")]
     GSpline,
@@ -73,7 +77,9 @@ impl GainType {
             Self::G => "G Jones",
             Self::T => "T Jones",
             Self::K => "K Jones",
+            Self::KMbd => "KMBD Jones",
             Self::KCross => "Kcross Jones",
+            Self::KAntPos => "KAntPos Jones",
             Self::GSpline => "GSPLINE",
         }
     }
@@ -82,13 +88,14 @@ impl GainType {
     /// for both for T.
     pub(crate) fn polarizations(self) -> usize {
         match self {
-            Self::G | Self::K | Self::KCross | Self::GSpline => 2,
+            Self::G | Self::K | Self::KMbd | Self::KCross | Self::GSpline => 2,
+            Self::KAntPos => 3,
             Self::T => 1,
         }
     }
 
-    fn is_delay(self) -> bool {
-        matches!(self, Self::K | Self::KCross)
+    pub(crate) fn is_delay(self) -> bool {
+        matches!(self, Self::K | Self::KMbd | Self::KCross | Self::KAntPos)
     }
 }
 
@@ -350,6 +357,9 @@ pub enum GainSolveError {
     /// A real opacity solve reached the unavailable fitting stage.
     #[error("The configured opacity type cannot solve a calibration table.")]
     OpacityCannotFit,
+    /// A gather-only tool solve found data that would require fitting.
+    #[error("The configured calibration family does not implement fitting.")]
+    GatherOnlyCannotFit,
     /// Shared calibration-table persistence failed.
     #[error(transparent)]
     CalibrationTable(#[from] crate::CalibrationTableWriteError),
@@ -542,11 +552,17 @@ pub(crate) fn solve_gain(
     request: &GainSolveRequest,
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
+    legacy_iterator: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
     if request.gain_type == GainType::GSpline {
         return gspline::solve(ms, request, GainSplineControls::default(), mode, None);
     }
-    let solved = solve_gain_rows(ms, request, activity)?;
+    let solved =
+        if legacy_iterator && matches!(request.gain_type, GainType::KMbd | GainType::KAntPos) {
+            delay::solve(ms, request, activity, true)?
+        } else {
+            solve_gain_rows(ms, request, activity)?
+        };
     write_gain_caltable(ms, request, &solved, mode)
 }
 
@@ -563,7 +579,7 @@ pub(crate) fn solve_tf(
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<GainSolveReport, GainSolveError> {
     let (solved, spectrum) =
-        solve_gain_rows_with_settings(ms, request, activity, Some(settings), false)?;
+        solve_gain_rows_with_settings(ms, request, activity, Some(settings), None)?;
     let spectrum = spectrum.expect("Tf prepared its spectral grid");
     writer::write_tf_caltable(
         ms,
@@ -629,17 +645,25 @@ pub(crate) fn solve_gain_rows(
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<SolvedGains, GainSolveError> {
     if request.gain_type.is_delay() {
-        return delay::solve(ms, request, activity);
+        return delay::solve(ms, request, activity, false);
     }
-    solve_gain_rows_with_settings(ms, request, activity, None, false).map(|(solved, _)| solved)
+    solve_gain_rows_with_settings(ms, request, activity, None, None).map(|(solved, _)| solved)
 }
 
-pub(crate) fn gather_opacity_solve(
+pub(crate) struct GatherOnlySolveSettings {
+    pub(crate) parameters: usize,
+    pub(crate) check_append: bool,
+    pub(crate) legacy: bool,
+    pub(crate) layout: crate::bandpass::GatherFrequencyLayout,
+}
+
+pub(crate) fn gather_only_tool_solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     activity: &mut ToolSolveActivity,
+    settings: GatherOnlySolveSettings,
 ) -> Result<SolveStats, GainSolveError> {
-    solve_gain_rows_with_settings(ms, request, Some(activity), None, true)
+    solve_gain_rows_with_settings(ms, request, Some(activity), None, Some(settings))
         .map(|(solved, _)| solved.solve_stats)
 }
 
@@ -648,7 +672,7 @@ fn solve_gain_rows_with_settings(
     request: &GainSolveRequest,
     activity: Option<&mut ToolSolveActivity>,
     tf: Option<TfSolveSettings>,
-    reject_opacity_fit: bool,
+    gather_only: Option<GatherOnlySolveSettings>,
 ) -> Result<(SolvedGains, Option<TfSpectrum>), GainSolveError> {
     if matches!(request.model_source, GainSolveModelSource::PointSource) {
         validate_smodel(request.smodel, true)?;
@@ -697,8 +721,24 @@ fn solve_gain_rows_with_settings(
         .map(|widths| tf_multi_bin_windows(ms, &context.rows, widths))
         .transpose()?
         .unwrap_or_default();
-    let input_rows = if reject_opacity_fit {
-        grouping::SolveInputRows::OpacityTool
+    if let Some(settings) = &gather_only
+        && (settings.check_append || request.combine.spectral_windows)
+    {
+        crate::bandpass::check_gather_frequency(
+            ms,
+            settings
+                .check_append
+                .then_some(request.output_table.as_path()),
+            &context.rows,
+            settings.layout,
+            request.combine.spectral_windows,
+        )
+        .map_err(|error| GainSolveError::FrequencyScalar(error.to_string()))?;
+    }
+    let input_rows = if let Some(settings) = &gather_only {
+        grouping::SolveInputRows::GatherOnlyTool {
+            legacy: settings.legacy,
+        }
     } else {
         grouping::SolveInputRows::gain(
             activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T),
@@ -744,7 +784,10 @@ fn solve_gain_rows_with_settings(
     let mut solution_rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
     let mut solve_stats = SolveStatsBuilder::new(
-        request.gain_type.polarizations(),
+        gather_only.map_or_else(
+            || request.gain_type.polarizations(),
+            |settings| settings.parameters,
+        ),
         spectral_window_ids(ms)?,
         &context.available_antennas,
     );

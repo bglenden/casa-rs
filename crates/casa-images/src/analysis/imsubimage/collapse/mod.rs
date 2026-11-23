@@ -418,18 +418,32 @@ fn flux_units<T: CollapsePixel>(
 
 fn collapse_coordinates(section: &mut SubimagePlan, axes: &[usize]) -> Result<(), ImageError> {
     let coordinates = &section.coordinates;
-    let first = coordinates.to_world(&vec![0.0; section.shape.len()])?;
-    let end = section
-        .shape
+    let record = section
+        .coordinate_record
+        .take()
+        .unwrap_or_else(|| coordinates.to_record());
+    let record = collapsed_coordinate_record(coordinates, &section.shape, record, axes)?;
+    for &axis in axes {
+        section.shape[axis] = 1;
+    }
+    section.coordinates = CoordinateSystem::from_record(&record)?;
+    section.coordinate_record = Some(record);
+    Ok(())
+}
+
+pub(super) fn collapsed_coordinate_record(
+    coordinates: &CoordinateSystem,
+    shape: &[usize],
+    mut record: RecordValue,
+    axes: &[usize],
+) -> Result<RecordValue, ImageError> {
+    let first = coordinates.to_world(&vec![0.0; shape.len()])?;
+    let end = shape
         .iter()
         .map(|&length| (length - 1) as f64)
         .collect::<Vec<_>>();
     let last = coordinates.to_world(&end)?;
     let mut interior = None;
-    let mut record = section
-        .coordinate_record
-        .take()
-        .unwrap_or_else(|| coordinates.to_record());
     for &axis in axes {
         let world = coordinates
             .pixel_axis_to_world_axis(axis)
@@ -459,11 +473,8 @@ fn collapse_coordinates(section: &mut SubimagePlan, axes: &[usize]) -> Result<()
         };
         CoordinateSystem::set_reference_value_in_record(&mut record, axis, average)?;
         CoordinateSystem::set_reference_pixel_in_record(&mut record, axis, 0.0)?;
-        section.shape[axis] = 1;
     }
-    section.coordinates = CoordinateSystem::from_record(&record)?;
-    section.coordinate_record = Some(record);
-    Ok(())
+    Ok(record)
 }
 
 fn bounded_cursor(shape: &[usize], stride: &[usize], mut budget: usize) -> Vec<usize> {

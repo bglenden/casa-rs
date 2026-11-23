@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
 
+use crate::StoredGaussianBeam;
 use casa_coordinates::{
     Coordinate, CoordinateError, CoordinateModel, CoordinateSystem, FitsHeader, FitsValue,
     LinearCoordinate,
@@ -18,6 +19,7 @@ use casa_types::measures::{
     direction::{DirectionRef, MDirection},
     record::{direction_to_record, epoch_to_record, position_to_record},
 };
+use casa_types::quanta::Quantity;
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use fitsio::{
     FitsFile,
@@ -327,6 +329,8 @@ impl FitsToolImport {
                 }
                 info.upsert("perplanebeams", Value::Record(grid));
             }
+        } else if let Some(beam) = primary_restoring_beam(&source.header) {
+            info.upsert("restoringbeam", Value::Record(beam.to_record()));
         } else if info.get("restoringbeam").is_none()
             && let Some(beam) = restoring_beam_from_history(&history)
         {
@@ -474,6 +478,23 @@ impl FitsToolImport {
         }
         Ok(())
     }
+}
+
+fn primary_restoring_beam(header: &FitsHeader) -> Option<StoredGaussianBeam> {
+    let major = header.get_float("BMAJ")?;
+    let minor = header.get_float("BMIN")?;
+    let angle = header.get_float("BPA")?;
+    if !major.is_finite() || !minor.is_finite() || major <= 0. || minor <= 0. {
+        return None;
+    }
+    // The primary cards use degrees, while CASA's native beam record uses
+    // arcseconds for widths and keeps the angle in its original degrees.
+    StoredGaussianBeam::new(
+        Quantity::new(3600. * major.max(minor), "arcsec").ok()?,
+        Quantity::new(3600. * major.min(minor), "arcsec").ok()?,
+        Quantity::new(angle, "deg").ok()?,
+    )
+    .ok()
 }
 
 fn initial_record_error(path: &Path) -> ImageError {

@@ -1623,18 +1623,7 @@ impl<T: ImagePixel> PagedImage<T> {
         let Value::Record(info) = self.table.keywords().get("imageinfo")? else {
             return None;
         };
-        // ImageInfo::fromRecord restores per-plane beams last when both
-        // records exist, so they take precedence over the single beam.
-        if let Some(per_plane) = self.per_plane_beam_record() {
-            return match per_plane.get("*0") {
-                Some(Value::Record(beam)) => Some(beam),
-                _ => None,
-            };
-        }
-        match info.get("restoringbeam") {
-            Some(Value::Record(beam)) => Some(beam),
-            _ => None,
-        }
+        ImageInfo::first_beam_record(info)
     }
 
     pub(crate) fn per_plane_beam_record(&self) -> Option<&RecordValue> {
