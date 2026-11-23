@@ -14,7 +14,7 @@ use super::{
 };
 use crate::subtables::has_column;
 use crate::{ListObsOptions, MeasurementSet, MsError, MsResult};
-use casa_tables::{RequiredScalarColumnValues, Table};
+use casa_tables::Table;
 use casa_types::ScalarValue;
 
 pub(super) fn apply(
@@ -268,28 +268,28 @@ pub(super) fn with_time(
 fn time_defaults(table: &Table, first: usize) -> MsResult<TimeSelectorDefaults> {
     let rows = [first, 0];
     let rows = if first == 0 { &rows[..1] } else { &rows[..] };
-    let has_exposure = has_column(table, "EXPOSURE");
-    let columns: &[&str] = if has_exposure {
-        &["TIME", "EXPOSURE"]
-    } else {
-        &["TIME"]
-    };
-    let values = table.required_scalar_columns_owned_for_rows(columns, rows)?;
-    let float_column = |column: &str| match values.get(column) {
-        Some(RequiredScalarColumnValues::Float64(values)) => Ok(values.as_slice()),
-        _ => Err(MsError::InvalidInput(format!(
-            "MAIN {column} must contain double-precision scalars"
-        ))),
+    let float_column = |column: &str| {
+        table
+            .column_accessor(column)?
+            .scalar_cells_owned_for_rows(rows)?
+            .into_iter()
+            .map(|value| match value {
+                Some(ScalarValue::Float64(value)) => Ok(value),
+                _ => Err(MsError::InvalidInput(format!(
+                    "MAIN {column} must contain double-precision scalars"
+                ))),
+            })
+            .collect::<MsResult<Vec<_>>>()
     };
     let times = float_column("TIME")?;
-    let exposures = if has_exposure {
+    let exposures = if has_column(table, "EXPOSURE") {
         Some(float_column("EXPOSURE")?)
     } else {
         None
     };
     let at = |index| TimeDefaults {
         time_mjd_s: times[index],
-        exposure_s: exposures.map_or(0.1, |values| values[index]),
+        exposure_s: exposures.as_ref().map_or(0.1, |values| values[index]),
     };
     Ok(TimeSelectorDefaults {
         first_term: at(0),
