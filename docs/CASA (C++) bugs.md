@@ -9124,6 +9124,18 @@ pixels, the same call can terminate the process.
 casa-rs averages valid pixels over the requested axes and retains all
 other axes, for every supported image pixel type (#1627).
 
+## Empty integer selectors can abort MeasurementSet metadata queries
+
+On an attached `msmetadata` tool, CASA 6.7.6.14 aborts the process when
+`namesforfields`, `namesforspws`, or `bandwidths` receives a zero-length
+NumPy integer array, such as `numpy.array([], dtype=numpy.int64)`. Its
+integer-vector path computes a minimum on the empty array and the
+resulting casacore exception escapes the Python binding. An empty Python
+list selects all values through the default path.
+
+casa-rs treats an empty integer array as an empty selector and returns
+the same result as the corresponding omitted argument (#1029).
+
 ## Image coordinate frequency conversion can use the wrong physical direction
 
 Create a CASA 6.7.6.14 image with shape `[20,20,20]` and the default J2000

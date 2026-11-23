@@ -737,7 +737,9 @@ type NestedItems<'py> = (Vec<usize>, Vec<Bound<'py, PyAny>>);
 /// Flatten a nested Python `list` or `tuple` of two or more dimensions into
 /// `(shape, flat_items_in_fortran_order)`. Returns `None` if any list/tuple
 /// is empty or nesting depth is inconsistent.
-fn nested_sequence_items<'py>(object: &Bound<'py, PyAny>) -> PyResult<Option<NestedItems<'py>>> {
+pub(crate) fn nested_sequence_items<'py>(
+    object: &Bound<'py, PyAny>,
+) -> PyResult<Option<NestedItems<'py>>> {
     fn collect<'py>(seq: &Bound<'py, PyAny>, depth: usize) -> PyResult<Option<NestedItems<'py>>> {
         if depth >= 128 {
             return Err(PyValueError::new_err(
