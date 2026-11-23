@@ -45,17 +45,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (scan = None, obsid = None, arrayid = None), text_signature = "($self, scan=-1, obsid=-1, arrayid=-1)")]
-    fn antennasforscan(
-        &self,
-        scan: Option<&Bound<'_, PyAny>>,
-        obsid: Option<&Bound<'_, PyAny>>,
-        arrayid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("antennasforscan")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (which = None, obsid = None), text_signature = "($self, which=-1, obsid=-1)")]
     fn antennastations(
         &self,
@@ -63,12 +52,6 @@ impl PyMsMetadata {
         obsid: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("antennastations")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn baselines(&self) -> PyResult<Py<PyAny>> {
-        stub("baselines")
     }
 
     /// Not yet implemented in casa-rs.
@@ -98,37 +81,6 @@ impl PyMsMetadata {
         asnames: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("fieldsforintent")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (name = None), text_signature = "($self, name='')")]
-    fn fieldsforname(&self, name: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("fieldsforname")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (scan = None, asnames = None, obsid = None, arrayid = None), text_signature = "($self, scan=-1, asnames=False, obsid=-1, arrayid=-1)")]
-    fn fieldsforscan(
-        &self,
-        scan: Option<&Bound<'_, PyAny>>,
-        asnames: Option<&Bound<'_, PyAny>>,
-        obsid: Option<&Bound<'_, PyAny>>,
-        arrayid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fieldsforscan")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (scans = None, asnames = None, obsid = None, arrayid = None, asmap = None), text_signature = "($self, scans=[], asnames=False, obsid=-1, arrayid=-1, asmap=False)")]
-    fn fieldsforscans(
-        &self,
-        scans: Option<&Bound<'_, PyAny>>,
-        asnames: Option<&Bound<'_, PyAny>>,
-        obsid: Option<&Bound<'_, PyAny>>,
-        arrayid: Option<&Bound<'_, PyAny>>,
-        asmap: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fieldsforscans")
     }
 
     /// Not yet implemented in casa-rs.
@@ -197,18 +149,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn narrays(&self) -> PyResult<Py<PyAny>> {
-        stub("narrays")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (ac = None), text_signature = "($self, ac=False)")]
-    fn nbaselines(&self, ac: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("nbaselines")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (autoc = None, flagged = None), text_signature = "($self, autoc=True, flagged=True)")]
     fn nrows(
         &self,
@@ -216,12 +156,6 @@ impl PyMsMetadata {
         flagged: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("nrows")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn nscans(&self) -> PyResult<Py<PyAny>> {
-        stub("nscans")
     }
 
     /// Not yet implemented in casa-rs.
@@ -275,37 +209,6 @@ impl PyMsMetadata {
         spw: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("restfreqs")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (obsid = None, arrayid = None), text_signature = "($self, obsid=-1, arrayid=-1)")]
-    fn scannumbers(
-        &self,
-        obsid: Option<&Bound<'_, PyAny>>,
-        arrayid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("scannumbers")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (field = None, obsid = None, arrayid = None), text_signature = "($self, field='', obsid=-1, arrayid=-1)")]
-    fn scansforfield(
-        &self,
-        field: Option<&Bound<'_, PyAny>>,
-        obsid: Option<&Bound<'_, PyAny>>,
-        arrayid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("scansforfield")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (obsid = None, arrayid = None), text_signature = "($self, obsid=0, arrayid=0)")]
-    fn scansforfields(
-        &self,
-        obsid: Option<&Bound<'_, PyAny>>,
-        arrayid: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("scansforfields")
     }
 
     /// Not yet implemented in casa-rs.

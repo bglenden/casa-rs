@@ -5,6 +5,8 @@
 
 mod data_description;
 mod names;
+mod scan_index;
+mod scan_queries;
 mod spectral;
 mod spectral_classes;
 mod stubs;
@@ -19,6 +21,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use crate::tools::not_yet_implemented_in;
+use scan_index::ScanIndex;
 
 /// The issue that records the methods casa-rs refuses.
 const ISSUE: u32 = 1029;
@@ -31,21 +34,54 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 /// CASA's `msmetadata` tool.
 #[pyclass(name = "msmetadata", module = "casars.tools", frozen)]
 pub(crate) struct PyMsMetadata {
-    attached: Mutex<Option<MeasurementSet>>,
+    attached: Mutex<Option<Attachment>>,
+}
+
+struct Attachment {
+    ms: MeasurementSet,
+    max_cache_bytes: usize,
+    scans: Option<ScanIndex>,
 }
 
 impl PyMsMetadata {
+    fn with_attachment<T: Send>(
+        &self,
+        py: Python<'_>,
+        query: impl FnOnce(&mut Attachment) -> MsResult<T> + Send,
+    ) -> PyResult<T> {
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let attached = attached.as_mut().ok_or_else(|| {
+                PyRuntimeError::new_err("Tool is not attached to an MS. Use open()")
+            })?;
+            query(attached).map_err(runtime_error)
+        })
+    }
+
     fn with_ms<T: Send>(
         &self,
         py: Python<'_>,
         query: impl FnOnce(&MeasurementSet) -> MsResult<T> + Send,
     ) -> PyResult<T> {
-        py.detach(|| {
-            let attached = self.attached.lock().map_err(runtime_error)?;
-            let ms = attached.as_ref().ok_or_else(|| {
-                PyRuntimeError::new_err("Tool is not attached to an MS. Use open()")
-            })?;
-            query(ms).map_err(runtime_error)
+        self.with_attachment(py, |attached| query(&attached.ms))
+    }
+
+    fn with_scan_index<T: Send>(
+        &self,
+        py: Python<'_>,
+        query: impl FnOnce(&MeasurementSet, &ScanIndex) -> MsResult<T> + Send,
+    ) -> PyResult<T> {
+        self.with_attachment(py, |attached| {
+            if let Some(index) = &attached.scans {
+                return query(&attached.ms, index);
+            }
+            let index = ScanIndex::read(&attached.ms)?;
+            if index.cached_bytes() <= attached.max_cache_bytes {
+                let index = attached.scans.insert(index);
+                query(&attached.ms, index)
+            } else {
+                query(&attached.ms, &index)
+            }
         })
     }
 
@@ -75,13 +111,16 @@ impl PyMsMetadata {
     #[pyo3(signature = (msfile = "", maxcache = 50.0), text_signature = "($self, msfile='', maxcache=50.0)")]
     fn open(&self, py: Python<'_>, msfile: &str, maxcache: f64) -> PyResult<bool> {
         py.detach(|| {
-            // These queries need no derived metadata cache.
-            let _ = maxcache;
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let path = lexical_absolute(Path::new(if msfile.is_empty() { "." } else { msfile }));
             let ms = MeasurementSet::open(path).map_err(runtime_error)?;
             ms.check_referential_integrity().map_err(runtime_error)?;
-            *attached = Some(ms);
+            *attached = Some(Attachment {
+                ms,
+                // CASA measures its metadata cache in decimal megabytes.
+                max_cache_bytes: (maxcache * 1e6) as usize,
+                scans: None,
+            });
             Ok(true)
         })
     }
