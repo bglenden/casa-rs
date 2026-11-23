@@ -151,7 +151,11 @@ def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures
     if script_kind == "tool" and name in IMAGE_TOOL_FIXTURES:
         tool, fixture_group = "image,coordsys", IMAGE_TOOL_FIXTURES[name]
     else:
-        tool, fixture_group = {"ms_statwt": ("ms", "statwt")}.get(name, (task, task))
+        tool, fixture_group = {
+            "ms": ("ms", "mstool"),
+            "ms_createmultims": ("ms", "mstool"),
+            "ms_statwt": ("ms", "statwt"),
+        }.get(name, (task, task))
     source = casatestdata / "unittest" / fixture_group if fixture_group else None
     if source is not None and fixture_group != "exportfits" and not source.is_dir():
         raise FileNotFoundError(f"missing upstream fixtures: {source}")

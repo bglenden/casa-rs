@@ -13,11 +13,15 @@ and independently read outputs. Each run has its own fixture copy, working
 directory and JUnit report. Fixture copies preserve `table.lock`, which in
 some upstream datasets contains the current subtable row counts.
 
+The public tool modules are `msmetadata`, `ms`, `ms_createmultims`, and
+`ms_statwt`. The general `ms` and multi-MS modules use the `mstool`
+fixture group, and `msmetadata` uses its own group. For a focused run,
+use `--fixture` to stage only the files used by the selected cases.
+Open native tool behavior differences are tracked on #1029 and #1030.
+
 The native `agentflagger` currently supports calibration tables. Use
 `--only 'test_tsys or test_bpass'` for its two supported upstream groups.
-The remaining groups use the MeasurementSet or GUI tool surfaces. The
-`ms_statwt` suite exercises the supported `ms.statwt` method. General
-`ms` and `msmetadata` coverage follows those tools' public implementations.
+The remaining groups use the MeasurementSet or GUI tool surfaces.
 
 The stock `split::test_updateFlagcmd1` and
 `mstransform::test_split_update_flagcmd` use lazy ASDM-backed MeasurementSets.
