@@ -88,6 +88,7 @@ enum ConfiguredSolve {
         tf: Option<crate::solve::TfSolveSettings>,
     },
     LegacyEp(Box<LegacyEpSolver>),
+    SingleDish(Box<crate::single_dish::tool::Solver>),
     Opacity {
         request: Box<crate::GainSolveRequest>,
         mode: CalibrationOutputMode,
@@ -153,6 +154,9 @@ pub enum CalibraterLifecycleError {
     /// The polarization solve could not be configured or completed.
     #[error("{0}")]
     LeakageSolve(String),
+    /// A single-dish calibration could not be configured or completed.
+    #[error("{0}")]
+    SingleDishSolve(String),
     /// A point model must contain at most four finite CASA Stokes values.
     #[error("a point model requires up to four finite Stokes values")]
     InvalidPointModel,
@@ -844,6 +848,7 @@ impl CalibraterLifecycle {
             Some(
                 ConfiguredSolve::Task { .. }
                 | ConfiguredSolve::Polarization { .. }
+                | ConfiguredSolve::SingleDish(_)
                 | ConfiguredSolve::Opacity { .. },
             ) => {
                 return Err(CalibraterLifecycleError::ImageNeedsEp);
@@ -879,6 +884,32 @@ impl CalibraterLifecycle {
     /// when the solve fails.
     pub fn solve(&self) -> Result<CalibrationSolveResult, CalibraterLifecycleError> {
         self.solve_configured(None)
+    }
+
+    /// Configure a direct total-power sky or double-circle gain solve.
+    ///
+    /// # Errors
+    /// Returns an error for an invalid radius, unknown family, or a family
+    /// that CASA's active iterator rejects during setup.
+    pub fn set_tool_single_dish_solve(
+        &mut self,
+        family: &str,
+        request: crate::GainSolveRequest,
+        mode: CalibrationOutputMode,
+        controls: crate::SingleDishSolveControls,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let solver = crate::single_dish::tool::Solver::new(
+            family,
+            request,
+            mode,
+            controls,
+            self.legacy_iterator,
+        )
+        .map_err(CalibraterLifecycleError::SingleDishSolve)?;
+        let equation = self.equation_mut()?;
+        equation.solve = Some(ConfiguredSolve::SingleDish(Box::new(solver)));
+        equation.solve_description = None;
+        Ok(())
     }
 
     /// Retain the direct scalar or spectral opacity solve configuration.
@@ -941,6 +972,11 @@ impl CalibraterLifecycle {
                         output_table: solver.output_path().to_owned(),
                         solution_row_count,
                     });
+                }
+                Some(ConfiguredSolve::SingleDish(_)) => {
+                    return Err(CalibraterLifecycleError::SingleDishSolve(
+                        "execute a direct single-dish configuration with solve_tool".into(),
+                    ));
                 }
                 Some(ConfiguredSolve::Opacity { .. }) => {
                     // Both real opacity classes reach the pinned complex
@@ -1022,6 +1058,12 @@ impl CalibraterLifecycle {
     /// Returns an error if the current equation cannot be solved.
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
+        if let Some(ConfiguredSolve::SingleDish(solver)) = &equation.solve {
+            if !self.legacy_iterator && solver.gain_controls().is_some() {
+                self.last_solve_stats = None;
+            }
+            return self.solve_single_dish_tool();
+        }
         if matches!(equation.solve, Some(ConfiguredSolve::Opacity { .. })) {
             if !self.legacy_iterator {
                 self.last_solve_stats = None;
@@ -1063,6 +1105,48 @@ impl CalibraterLifecycle {
             self.last_activity = Some(record);
         }
         Ok(())
+    }
+
+    fn solve_single_dish_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation()?;
+        let Some(ConfiguredSolve::SingleDish(solver)) = &equation.solve else {
+            unreachable!("single-dish dispatch requires a configured solver");
+        };
+        let mut activity = crate::solve_stats::ToolSolveActivity::default();
+        let solve = (|| {
+            if !self.legacy_iterator && solver.gain_controls().is_some() {
+                equation.check_opacity_parameters()?;
+            }
+            solver
+                .solve(
+                    equation.attachment.path(),
+                    crate::ApplyPlanRequest {
+                        selection: equation.attachment.selection().clone(),
+                        apply_mode: crate::ApplyMode::CalFlag,
+                        parang: equation.apply.parang_terms > 0,
+                        calibration_tables: equation.apply.tables.clone(),
+                    },
+                    self.legacy_iterator,
+                    self.correlation_dependent_flags.unwrap_or_default(),
+                    &mut activity,
+                )
+                .map_err(CalibraterLifecycleError::SingleDishSolve)
+        })();
+        match solve {
+            Ok(stats) => {
+                if let Some(stats) = &stats {
+                    self.last_solve_stats = Some(crate::casa_return::solvestats(stats));
+                }
+                if let Some(record) = activity.record() {
+                    self.last_activity = Some(record);
+                }
+                Ok(())
+            }
+            Err(error) => {
+                self.reset(true, true)?;
+                Err(error)
+            }
+        }
     }
 
     fn solve_opacity_tool(&mut self) -> Result<(), CalibraterLifecycleError> {

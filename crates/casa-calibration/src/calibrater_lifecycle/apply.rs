@@ -283,9 +283,10 @@ impl CalibraterLifecycle {
         };
         let selected = SelectedData::of_rows(&ms, rows.iter())
             .map_err(|error| CalibrationError::Gain(Box::new(error)))?;
-        let output = equation.solve.as_ref().map(|configured| {
+        let output = equation.solve.as_ref().and_then(|configured| {
             let path = match configured {
                 ConfiguredSolve::LegacyEp(ep) => ep.output_path(),
+                ConfiguredSolve::SingleDish(solver) => solver.recorded_output()?,
                 ConfiguredSolve::Polarization { request, .. } => &request.output,
                 ConfiguredSolve::Opacity { request, .. } => &request.output_table,
                 ConfiguredSolve::Task { request, .. } => match request.as_ref() {
@@ -298,7 +299,7 @@ impl CalibraterLifecycle {
                     CalibrationSolveRequest::Bandpass(request) => &request.output_table,
                 },
             };
-            path.display().to_string()
+            Some(path.display().to_string())
         });
         let mut entries = vec![
             (

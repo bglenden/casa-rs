@@ -164,18 +164,13 @@ fn two_receptors<T: Clone>(one_or_two: ArrayD<T>, fill: T) -> ArrayD<T> {
 pub(super) fn write(
     ms: &MeasurementSet,
     destination: &Path,
-    overwrite: bool,
+    mode: CalibrationOutputMode,
     subtype: &str,
     average: ReferenceTimestamp,
     solutions: impl IntoIterator<Item = (i32, SkySpectrum)>,
 ) -> Result<usize, String> {
     let scans = ScanTiming::read(ms.main_table())?;
     let spectral = ms.spectral_window().map_err(error_text)?;
-    let mode = if overwrite {
-        CalibrationOutputMode::Replace
-    } else {
-        CalibrationOutputMode::Create
-    };
     let mut writer = CalibrationTableWriter::with_mode(
         ms,
         CalibrationTableDescriptor {

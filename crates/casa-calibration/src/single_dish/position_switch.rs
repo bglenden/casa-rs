@@ -9,6 +9,7 @@ use casa_tables::RequiredScalarColumnValues;
 use casa_types::ArrayValue;
 
 use super::spectrum::{self, ReferenceTimestamp, SkySpectrum};
+use crate::CalibrationOutputMode;
 use crate::constants::*;
 
 pub(super) const SUBTYPE: &str = "SDSKY_PS";
@@ -31,13 +32,13 @@ pub(super) fn generate(
     ms: &MeasurementSet,
     rows: &[usize],
     destination: &Path,
-    overwrite: bool,
+    mode: CalibrationOutputMode,
 ) -> Result<usize, String> {
     let solutions = solve(ms, rows)?;
     spectrum::write(
         ms,
         destination,
-        overwrite,
+        mode,
         SUBTYPE,
         ReferenceTimestamp::UnflaggedCells,
         solutions
