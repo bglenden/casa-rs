@@ -62,6 +62,8 @@ pub enum GainType {
     /// Shared cross-hand delay in nanoseconds.
     #[serde(rename = "KCROSS")]
     KCross,
+    /// Direct KAntPos table with the antenna delay fit in its first two terms.
+    KAntPos,
     /// Time-domain cubic-spline gains per receptor.
     #[serde(rename = "GSPLINE")]
     GSpline,
@@ -74,6 +76,7 @@ impl GainType {
             Self::T => "T Jones",
             Self::K => "K Jones",
             Self::KCross => "Kcross Jones",
+            Self::KAntPos => "KAntPos Jones",
             Self::GSpline => "GSPLINE",
         }
     }
@@ -83,12 +86,13 @@ impl GainType {
     pub(crate) fn polarizations(self) -> usize {
         match self {
             Self::G | Self::K | Self::KCross | Self::GSpline => 2,
+            Self::KAntPos => 3,
             Self::T => 1,
         }
     }
 
     fn is_delay(self) -> bool {
-        matches!(self, Self::K | Self::KCross)
+        matches!(self, Self::K | Self::KCross | Self::KAntPos)
     }
 }
 

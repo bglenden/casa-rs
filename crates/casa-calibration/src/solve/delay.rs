@@ -35,6 +35,7 @@ pub(super) fn solve(
         validate_smodel(request.smodel, true)?;
     }
     let cross_hand = request.gain_type == GainType::KCross;
+    let antenna_position = request.gain_type == GainType::KAntPos;
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
@@ -49,6 +50,8 @@ pub(super) fn solve(
         },
     )?;
     let windows = delay_windows(ms, &context.rows, cross_hand)?;
+    let unsupported_multiband =
+        antenna_position && request.combine.spectral_windows && windows.len() > 1;
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -93,22 +96,32 @@ pub(super) fn solve(
     let mut transforms = BTreeMap::new();
     let mut rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
-    let mut stats =
-        SolveStatsBuilder::new(2, spectral_window_ids(ms)?, &context.available_antennas);
+    let parameters = request.gain_type.polarizations();
+    let mut stats = SolveStatsBuilder::new(
+        parameters,
+        spectral_window_ids(ms)?,
+        &context.available_antennas,
+    );
     for mut group in groups.into_values() {
         group.finalize_for_solve(request.solve_mode, false);
         let mut stages = IntervalStages::of(&group, 0);
-        if cross_hand {
-            // CASA's cross-hand solver reports unflagged data in both
-            // terms and bypasses the iterative solver's two thresholds.
-            stages
-                .with_data
-                .resize(2, stages.with_data.first().cloned().unwrap_or_default());
+        if cross_hand || antenna_position {
+            // CASA reports data availability for the full output parameter
+            // shape and bypasses the iterative solver's two thresholds.
+            stages.with_data.resize(
+                parameters,
+                stages.with_data.first().cloned().unwrap_or_default(),
+            );
         }
         stages.constrained.clear();
         stats.interval(&stages);
         if !group.attempted {
             continue;
+        }
+        if unsupported_multiband {
+            return Err(delay_error(
+                "the KAntPos fit cannot combine multiple spectral windows",
+            ));
         }
         attempted_spw_ids.insert(group.spw_id);
         stats.record_success(group.spw_id, true);
@@ -125,6 +138,18 @@ pub(super) fn solve(
             } else {
                 solutions.get(&antenna).copied().unwrap_or_default()
             };
+            let mut gains = Vec::with_capacity(parameters);
+            let mut flags = Vec::with_capacity(parameters);
+            for delay in delays {
+                gains.push(Complex32::new(delay.unwrap_or_default(), 0.));
+                flags.push(delay.is_none());
+            }
+            if antenna_position {
+                // The inherited K solver fits the two parallel hands.
+                // Its reference row defines the unused third term as zero.
+                gains.push(Complex32::ZERO);
+                flags.push(antenna != context.refant_id);
+            }
             SolutionRow {
                 time_seconds: group.solution_time,
                 field_id: group.field_id,
@@ -133,13 +158,10 @@ pub(super) fn solve(
                 scan_number: group.scan_number(),
                 observation_id: group.observation_id,
                 refant_id: -1,
-                gains: delays
-                    .iter()
-                    .map(|delay| Complex32::new(delay.unwrap_or_default(), 0.))
-                    .collect(),
-                flags: delays.iter().map(Option::is_none).collect(),
-                param_errors: vec![0.; 2],
-                snrs: vec![0.; 2],
+                gains,
+                flags,
+                param_errors: vec![0.; parameters],
+                snrs: vec![0.; parameters],
                 weights: Vec::new(),
             }
         }));
