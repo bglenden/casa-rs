@@ -72,7 +72,8 @@ def compare_figure(root, native, controls, expected, labels):
     assert (title, xlabel, ylabel) == labels, (title, xlabel, ylabel)
     coordinates = np.array([point[:2] for point in rows(expected)], dtype=float)
     np.testing.assert_allclose(points, coordinates, rtol=1.2e-5, atol=1e-7)
-    for values, limits in zip(points.T, (xlim, ylim), strict=True):
+    visible = points[np.isfinite(points).all(axis=1)]
+    for values, limits in zip(visible.T, (xlim, ylim), strict=True):
         assert min(limits) <= min(values) <= max(values) <= max(limits), (values, limits)
     for output in outputs:
         with Image.open(output) as image:
@@ -241,6 +242,10 @@ def compare_zero_model(root, vis, source, native):
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == 12
         print(f"{name}: matched defined and nonfinite values for 12 selected points", flush=True)
+    controls = request(zero_model) | dict(xdatacolumn="data/model_vector", ydatacolumn="data/model_vector")
+    compare_figure(root, native, controls, root / "vector-zero-phase.casa.txt",
+                   ("Phase:data/model (vector) vs. Amp:data/model (vector)",
+                    "Amp:data/model (vector)", "Phase:data/model (vector) (degrees)"))
 
 
 def main():
