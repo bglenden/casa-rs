@@ -98,21 +98,14 @@ pub(crate) fn regrid_task<T: RegridPixel>(
         });
         let input_lengths: Vec<_> = axes.iter().map(|&axis| input_shape[axis]).collect();
         let Some((other, theirs)) = target else {
-            if options.image_tool.is_some()
-                && !all_axes
-                && chosen[first]
-                && ours.coordinate_type() == CoordinateType::Stokes
-            {
-                return Err(invalid(
-                    "cannot regrid a Stokes axis missing from the template",
-                ));
-            }
-            validate_omitted_coordinate(
-                ours.coordinate_type(),
-                !all_axes && chosen[first],
+            regrid_omitted_coordinate(
+                &mut result,
+                input,
+                ours,
                 &axes,
-                input_shape,
                 &shape,
+                !all_axes && chosen[first],
+                &options,
             )?;
             continue;
         };
@@ -297,17 +290,31 @@ fn regrid_one_axis<T: RegridPixel>(
     target.clone()
 }
 
-fn validate_omitted_coordinate(
-    kind: CoordinateType,
-    explicitly_selected: bool,
+fn regrid_omitted_coordinate<T: RegridPixel>(
+    result: &mut Regridded<T>,
+    input: &dyn ImageInterface<T>,
+    coordinate: &CoordinateModel,
     axes: &[usize],
-    input_shape: &[usize],
     output_shape: &[usize],
+    explicitly_selected: bool,
+    options: &TaskRegridOptions<'_>,
 ) -> Result<(), ImageError> {
-    if explicitly_selected && kind == CoordinateType::Spectral {
-        return Err(invalid(
-            "cannot regrid a spectral axis missing from the template",
-        ));
+    let input_shape = input.shape();
+    if explicitly_selected {
+        match (options.image_tool, coordinate) {
+            (None, CoordinateModel::Spectral(_)) => {
+                return Err(invalid(
+                    "cannot regrid a spectral axis missing from the template",
+                ));
+            }
+            (Some(_), CoordinateModel::Stokes(_)) => {
+                return Err(invalid(
+                    "cannot regrid a Stokes axis missing from the template",
+                ));
+            }
+            (Some(_), CoordinateModel::Spectral(_)) => require_single_regrid_beam(input)?,
+            _ => {}
+        }
     }
     if axes
         .iter()
@@ -315,6 +322,36 @@ fn validate_omitted_coordinate(
     {
         return Err(invalid(
             "an axis missing from the template must keep its input length",
+        ));
+    }
+    if explicitly_selected
+        && options.force()
+        && let CoordinateModel::Spectral(spectral) = coordinate
+    {
+        let axis = axes[0];
+        let length = input_shape[axis];
+        if length > 1 {
+            // The input grid and reference are used for forced sampling
+            // when no spectral template was supplied.
+            let positions = spectral_positions(
+                (spectral, spectral),
+                [length, length],
+                options.replicate,
+                None,
+                None,
+            )?;
+            apply_one_axis(result, axis, length, positions, options.method);
+        }
+    }
+    Ok(())
+}
+
+fn require_single_regrid_beam<T: ImagePixel>(
+    input: &dyn ImageInterface<T>,
+) -> Result<(), ImageError> {
+    if input.image_info()?.beam_set.is_multi() {
+        return Err(invalid(
+            "an image with multiple beams cannot be regridded along the spectral axis",
         ));
     }
     Ok(())
@@ -432,11 +469,7 @@ fn regrid_spectral_coordinate<T: RegridPixel>(
             "a spectral interpolation requires multiple output channels",
         ));
     }
-    if input.image_info()?.beam_set.is_multi() {
-        return Err(invalid(
-            "an image with multiple beams cannot be regridded along the spectral axis",
-        ));
-    }
+    require_single_regrid_beam(input)?;
     let (coordinate, velocity) = if options.as_velocity && old_length > 1 {
         let (coordinate, grids) = velocity_regrid(ours, theirs, dimensions)?;
         (coordinate, Some(grids))

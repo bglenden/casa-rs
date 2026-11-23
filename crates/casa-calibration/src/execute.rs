@@ -2732,7 +2732,7 @@ fn apply_row_all_channels(
             } else {
                 &cal_spw.channel_frequencies_hz
             },
-            cal_ref_frequency_hz: cal_spw_reference_frequency_hz(cal_spw),
+            cal_ref_frequency_hz: delay_reference_frequency(cal_spw, table_plan, loaded_table),
             // Prepared solutions already occupy the full MS grid. Temporal
             // interpolation happened at lookup; sample original bins directly.
             interp: if resample_frequency {
@@ -4171,7 +4171,7 @@ enum TimeParameterFamily {
 impl TimeParameterFamily {
     fn from_subtype(subtype: &str) -> Option<Self> {
         match subtype {
-            "K Jones" | "Kcross Jones" => Some(Self::Delay),
+            "K Jones" | "KMBD Jones" | "Kcross Jones" => Some(Self::Delay),
             "KAntPos Jones" => Some(Self::Antpos),
             "EGainCurve" => Some(Self::GainCurve { power: false }),
             "EPowerCurve" => Some(Self::GainCurve { power: true }),
@@ -5112,7 +5112,7 @@ fn load_parameters(
             CalibrationParameterFamily::Float
                 if matches!(
                     table_plan.summary.table_subtype.as_str(),
-                    "K Jones" | "Kcross Jones"
+                    "K Jones" | "KMBD Jones" | "Kcross Jones"
                 ) =>
             {
                 let delays = read_fparam()?;
@@ -5654,6 +5654,36 @@ fn infer_bpoly_receptor_count(
 }
 
 pub(crate) use casa_numerics::legacy_bpoly_chebyshev_value;
+
+fn delay_reference_frequency(
+    cal_spw: &crate::plan::SpectralWindowPlan,
+    plan: &ApplyCalibrationTablePlan,
+    loaded: &LoadedCalibrationTable,
+) -> f64 {
+    if plan.summary.table_subtype == "KMBD Jones" {
+        if loaded.callibrary.is_none() {
+            // The traditional KMBD applicator always uses an absolute pivot.
+            return 0.;
+        }
+        // A callibrary instead uses KJones's version-dependent frequency pivot.
+        if matches!(
+            plan.summary.keywords.casa_version.as_deref(),
+            None | Some(
+                "Unknown"
+                    | "5.3.0-100"
+                    | "5.3.0-101"
+                    | "5.3.0-102"
+                    | "5.3.0-103"
+                    | "5.3.0-104"
+                    | "5.3.0-105"
+                    | "5.3.0-106"
+            )
+        ) {
+            return cal_spw.ref_frequency_hz;
+        }
+    }
+    cal_spw_reference_frequency_hz(cal_spw)
+}
 
 fn cal_spw_reference_frequency_hz(cal_spw: &crate::plan::SpectralWindowPlan) -> f64 {
     cal_spw
