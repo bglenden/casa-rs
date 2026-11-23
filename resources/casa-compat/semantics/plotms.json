@@ -95,7 +95,8 @@
         "callibrary",
         "ms-default-model",
         "ms-virtual-model",
-        "ms-channel-columns"
+        "ms-channel-columns",
+        "ms-multiple-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -121,9 +122,10 @@
       ]
     },
     "yaxis": {
-      "scope": "Plot y-axis (blank for default/current)",
+      "scope": "Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-multiple-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -131,7 +133,7 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Two unaveraged or channel-averaged ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and more than two ordinates remain open. Channel averaging supports separately weighted stored visibility columns.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged visibility ordinates and up to two channel-averaged ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and mixed visibility and metadata ordinate lists remain open. Channel averaging supports separately weighted stored visibility columns.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -144,7 +146,8 @@
         "callibrary",
         "ms-default-model",
         "ms-virtual-model",
-        "ms-channel-columns"
+        "ms-channel-columns",
+        "ms-multiple-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -170,9 +173,10 @@
       ]
     },
     "yaxislocation": {
-      "scope": "Location of the y-axis (blank for default: left)",
+      "scope": "Choose the left or right side. PlotMS groups more than two unaveraged MeasurementSet visibility ordinates by side. An omitted position defaults to left. A scalar location does not apply to an ordinate list.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-multiple-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -1079,7 +1083,7 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for two independent unaveraged ordinates. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine.",
       "evidence": [
         "paired",
         "selectors",
@@ -1094,9 +1098,10 @@
         "legacy-calibration",
         "ms-default-model",
         "ms-virtual-model",
-        "ms-channel-columns"
+        "ms-channel-columns",
+        "ms-multiple-visibility-ordinates"
       ],
-      "gap": "Pointing-coordinate axes, more than two ordinates, time-averaged independent ordinate columns and additional MS column forms are open."
+      "gap": "Pointing-coordinate axes, mixed visibility and metadata ordinate masks, time-averaged independent ordinate columns and additional MS column forms are open."
     },
     {
       "id": "averaging",
@@ -1448,6 +1453,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-channel-columns-20261123.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2150"
+      ]
+    },
+    "ms-multiple-visibility-ordinates": {
+      "kind": "Same-input multiple MeasurementSet visibility ordinates",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs for unaveraged MeasurementSet plots with three or four independent visibility ordinates.",
+      "result": "Five paired text exports matched 246 selected coordinates and source metadata, including repeated axis kinds, short column lists, shared source cells and a virtual model used only on the third ordinate. Four 500 by 360 pixel PNGs matched left and right grouping, labels and 198 artist coordinates, including connector order with two correlations and scalar or short side settings. Both tasks refused duplicate ordinates and invalid side settings.",
+      "casa_version": "6.7.6.14",
+      "revision": "aa362fcb0cc9517990409ad4403ad7a5c4e64d7e",
+      "source_revision": "aa362fcb0cc9517990409ad4403ad7a5c4e64d7e",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-multiple-visibility-ordinates-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2154"
       ]
     }
   }
