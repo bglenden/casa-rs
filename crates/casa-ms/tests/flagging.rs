@@ -9,7 +9,8 @@ use casa_ms::{
     flagdata_ms_program, flagdata_path, list_flag_versions, rename_flag_version,
     restore_flag_version, save_flag_version,
 };
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
+use casa_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
+use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use std::process::Command;
 use tempfile::tempdir;
@@ -150,6 +151,36 @@ fn flagmanager_save_and_restore_round_trips_main_flags() {
 
     let versions = list_flag_versions(&ms).expect("list versions");
     assert!(versions.iter().any(|entry| entry.name == "before"));
+}
+
+#[test]
+fn flagmanager_can_save_an_empty_calibration_table_without_flag_row() {
+    let temp = tempdir().expect("tempdir");
+    let path = temp.path().join("empty.cal");
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "FLAG",
+        PrimitiveType::Bool,
+        Some(2),
+    )])
+    .expect("flag schema");
+    let mut table = Table::with_schema(schema.clone());
+    table.set_info(TableInfo {
+        table_type: "Calibration".to_string(),
+        ..TableInfo::default()
+    });
+    table
+        .save(TableOptions::new(&path))
+        .expect("save calibration table");
+    let ms = MeasurementSet::open(path).expect("open calibration table");
+
+    casa_ms::flagging::save_disk_flag_version(&ms, "empty", "no rows", FlagMerge::Replace)
+        .expect("save empty flag version");
+    let version = Table::open(TableOptions::new(
+        temp.path().join("empty.cal.flagversions/flags.empty"),
+    ))
+    .expect("read empty flag version");
+    assert_eq!(version.row_count(), 0);
+    assert_eq!(version.schema(), Some(&schema));
 }
 
 #[test]

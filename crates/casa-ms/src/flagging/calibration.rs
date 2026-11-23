@@ -111,7 +111,11 @@ fn stage(
             return Err(FlaggingError::UnsupportedCalibrationAgent("elevation"));
         }
         FlagDataMode::Shadow => return Err(FlaggingError::UnsupportedCalibrationAgent("shadow")),
-        FlagDataMode::Antint if has_calibration_column(table, request.data_column) => {
+        // CASA does not run the antint worker on an empty local selection.
+        // A selected calibration row would enter its unsupported buffer path.
+        FlagDataMode::Antint
+            if !selected.rows.is_empty() && has_calibration_column(table, request.data_column) =>
+        {
             return Err(FlaggingError::CalibrationAntint);
         }
         FlagDataMode::Antint => return Err(FlaggingError::UnsupportedCalibrationAgent("antint")),
@@ -145,31 +149,71 @@ fn stage(
         rflag_report: None,
         summary: None,
     };
-    for &row in &selected.rows {
-        let mut flags = clone_flag_matrix(table, row)?;
-        let changed = edit_row(
-            table,
-            request,
-            &selected,
-            row,
-            &path,
-            &mut flags,
-            clip.as_ref(),
-        )?;
-        report.flagged_samples += flags.iter().filter(|&&value| value).count();
-        report.total_samples += flags.len();
-        if changed > 0 {
-            changes.changed_row_indices.push(row);
-            report.changed_samples += changed;
-            table
-                .main_table_mut()
-                .cell_accessor_mut(row, FLAG_COLUMN)
-                .and_then(|mut cell| cell.set(Value::Array(ArrayValue::Bool(flags))))
+    for rows in selected.rows.chunks(256) {
+        let main = table.main_table();
+        let flags = clip_time::read_flags_uncached(main, rows, &path)?;
+        let data = clip
+            .as_ref()
+            .map(|_| {
+                main.column_accessor(request.data_column.name())?
+                    .array_cells_owned_uncached(rows)
+            })
+            .transpose()
+            .map_err(|error| flag_error(&path, error.to_string()))?;
+        let mut updates = Vec::new();
+        for (slot, (&row, mut flags)) in rows.iter().zip(flags).enumerate() {
+            let clip_input = clip
+                .as_ref()
+                .zip(data.as_ref())
+                .map(|(clip, values)| {
+                    values[slot]
+                        .as_ref()
+                        .map(|value| (clip, value))
+                        .ok_or_else(|| {
+                            flag_error(
+                                &path,
+                                format!("missing {} at row {row}", request.data_column.name()),
+                            )
+                        })
+                })
+                .transpose()?;
+            let changed = edit_row(
+                table, request, &selected, row, &path, &mut flags, clip_input,
+            )?;
+            report.flagged_samples += flags.iter().filter(|&&value| value).count();
+            report.total_samples += flags.len();
+            if changed > 0 {
+                changes.changed_row_indices.push(row);
+                report.changed_samples += changed;
+                updates.push((row, flags));
+            }
+        }
+        if !updates.is_empty() {
+            stage_flag_updates(table, updates)
                 .map_err(|error| flag_error(&path, error.to_string()))?;
         }
     }
     report.changed_rows = changes.changed_row_indices.len();
     Ok((report, changes))
+}
+
+fn stage_flag_updates(
+    table: &mut MeasurementSet,
+    updates: Vec<(usize, ArrayD<bool>)>,
+) -> Result<(), TableError> {
+    // Set the bound FLAG cells without materializing unrelated solution columns.
+    let mut writer = table
+        .main_table_mut()
+        .row_accessor_mut()
+        .prepare(&[FLAG_COLUMN])?;
+    let slot = writer
+        .column_index(FLAG_COLUMN)
+        .expect("prepared FLAG column");
+    for (row, flags) in updates {
+        writer.seek(row)?;
+        writer.set_value_at(slot, Value::Array(ArrayValue::Bool(flags)))?;
+    }
+    writer.flush()
 }
 
 fn grouped_flags(
@@ -235,7 +279,7 @@ fn edit_row(
     row: usize,
     path: &str,
     flags: &mut ArrayD<bool>,
-    clip: Option<&CalibrationClip>,
+    clip: Option<(&CalibrationClip, &ArrayValue)>,
 ) -> Result<usize, FlaggingError> {
     let index = |name| table_i32(table.main_table(), row, name, table.path());
     let &[receptors, count] = flags.shape() else {
@@ -275,14 +319,9 @@ fn edit_row(
         }
         return Ok(changed);
     }
-    let Some(clip) = clip else {
+    let Some((clip, data)) = clip else {
         return Ok(0);
     };
-    let data = table
-        .main_table()
-        .column_accessor(request.data_column.name())
-        .and_then(|column| column.array_cell(row))
-        .map_err(|error| flag_error(path, error.to_string()))?;
     if data.shape() != flags.shape() {
         return Err(flag_error(
             path,
@@ -501,8 +540,8 @@ fn projection(
         _ => None,
     };
     let explicit = expression
-        .split_once('_')
-        .and_then(|(name, product)| operator(name).map(|metric| (metric, product)))
+        .split_once(['_', ' '])
+        .and_then(|(name, product)| operator(name).map(|metric| (metric, product.trim())))
         .or_else(|| operator(expression).map(|metric| (metric, "")));
     let fallback = if real {
         ClipMetric::Real

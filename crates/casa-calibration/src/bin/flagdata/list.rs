@@ -105,6 +105,25 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
         });
     validate_calibration_flag_averaging(configured)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
+    let incremental_quack =
+        |request: &FlagDataRequest| request.mode == FlagDataMode::Quack && request.quackincrement;
+    if requests.iter().skip(1).any(incremental_quack) {
+        (requests, agents) = requests
+            .into_iter()
+            .zip(agents)
+            .enumerate()
+            .filter_map(|(index, (request, agent))| {
+                if index > 0 && incremental_quack(&request) {
+                    tracing::warn!(
+                        "Cannot have quackincrement=True in list mode. Agent quack will be ignored!"
+                    );
+                    None
+                } else {
+                    Some((request, agent))
+                }
+            })
+            .unzip();
+    }
     let program = if calibration {
         flagdata_calibration_program(table, &requests, write_flags, commands.len() > 1)
     } else {

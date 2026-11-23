@@ -326,6 +326,13 @@ pub enum MsTransformError {
         path: String,
     },
 
+    /// A pre-existing flag-version directory belongs to a different output.
+    #[error("The flagversions {path} for the output MS already exists. Please delete it.")]
+    OutputFlagVersionsExist {
+        /// Existing flag-version directory.
+        path: String,
+    },
+
     /// The requested source column is absent.
     #[error("MeasurementSet {path} does not contain {column}")]
     MissingDataColumn {
@@ -469,6 +476,12 @@ fn materialize_transform(
     if request.output_ms.exists() {
         return Err(MsTransformError::OutputExists {
             path: request.output_ms.display().to_string(),
+        });
+    }
+    let flagversions = crate::flagging::flagversions_dir(&request.output_ms);
+    if flagversions.exists() {
+        return Err(MsTransformError::OutputFlagVersionsExist {
+            path: flagversions.display().to_string(),
         });
     }
     let target =

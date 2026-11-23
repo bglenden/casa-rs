@@ -303,8 +303,10 @@ On CASA 6.7.6.14, `AT166_1` produces eight spectral windows with
 `frequencytol='3000000000.0Hz'` and five with `frequencytol=3000000000.0`.
 The filler reads the magnitude of a parsed quantity and can use the channel
 width when string extraction yields zero. casa-rs interprets quantity
-strings in Hz and checks both forms against CASA's numeric tolerance. The
-original argument remains in `HISTORY`.
+strings in Hz when supplied explicitly and checks both forms against CASA's
+numeric tolerance. Calls that omit the tolerance use the first CDA channel
+width, matching CASA's default on the AS758 archive. The original argument
+remains in `HISTORY`.
 
 ## `mstransform` channel-mode transformed-grid inconsistency
 

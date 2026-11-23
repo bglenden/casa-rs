@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Flag version snapshots and restoration for MeasurementSets and calibration tables.
 
+use super::initial_version::{read_flag_shapes, write_flag_snapshot};
 use super::*;
 
 fn calibration_table(ms: &MeasurementSet) -> bool {
@@ -38,7 +39,9 @@ pub fn save_flag_version(
 ) -> Result<(), FlaggingError> {
     validate_version_name(ms, versionname)?;
     let path = ms_path(ms)?;
-    publish_flag_version(path, capture_flags(ms)?, versionname, comment, merge)
+    publish_flag_snapshot(path, versionname, comment, merge, |snapshot| {
+        write_flag_snapshot(ms, snapshot, None, has_row_flags(ms))
+    })
 }
 
 /// Snapshot the current flags from disk under a retained casacore read lock.
@@ -73,93 +76,57 @@ fn snapshot_disk_flags(
     merge: FlagMerge,
 ) -> Result<(), FlaggingError> {
     let path = ms_path(ms)?;
-    let captured = {
-        #[cfg(unix)]
-        let source = MeasurementSet::open_retained_read(path);
-        #[cfg(not(unix))]
-        let source = MeasurementSet::open(path);
-        let source = source.map_err(|source| FlaggingError::OpenMeasurementSet {
-            path: path.display().to_string(),
-            source,
-        })?;
-        capture_flags(&source)?
-    };
-    publish_flag_version(path, captured, versionname, comment, merge)
+    publish_flag_snapshot(path, versionname, comment, merge, |snapshot| {
+        let source = open_flag_source(path)?;
+        write_flag_snapshot(&source, snapshot, None, has_row_flags(&source))
+    })
 }
 
-fn capture_flags(ms: &MeasurementSet) -> Result<Table, FlaggingError> {
-    let path = ms_path(ms)?;
-    let row_flags = has_row_flags(ms);
-    let mut table = Table::with_schema(flag_version_schema(row_flags).map_err(|source| {
-        FlaggingError::FlagVersion {
-            path: path.display().to_string(),
-            reason: format!("build flag-version schema: {source}"),
-        }
-    })?);
-    for row in 0..ms.row_count() {
-        let mut fields = vec![RecordField::new(
-            FLAG_COLUMN,
-            Value::Array(ArrayValue::Bool(clone_flag_matrix(ms, row)?)),
-        )];
-        if row_flags {
-            fields.push(RecordField::new(
-                FLAG_ROW_COLUMN,
-                Value::Scalar(ScalarValue::Bool(flag_row_value(ms, row)?)),
-            ));
-        }
-        table
-            .add_row(RecordValue::new(fields))
-            .map_err(|source| FlaggingError::FlagVersion {
-                path: path.display().to_string(),
-                reason: format!("add flag-version row: {source}"),
-            })?;
-    }
-    Ok(table)
-}
-
-fn publish_flag_version(
+fn publish_flag_snapshot(
     path: &Path,
-    table: Table,
     versionname: &str,
     comment: &str,
     merge: FlagMerge,
+    write: impl FnOnce(&Path) -> Result<(), FlaggingError>,
 ) -> Result<(), FlaggingError> {
-    let directory = ensure_flagversions_dir(path)?;
     let version_path = flag_version_table_path(path, versionname);
-    if version_path.exists() {
-        merge_flags_into_existing_version(path, &table, &version_path, merge)?;
-        if list_flag_versions_for_path(path)?
-            .iter()
-            .any(|entry| entry.name == versionname)
-        {
-            return update_flag_version_comment(path, versionname, comment);
-        }
-        return append_flag_version_entry(path, versionname, comment);
-    }
+    let existed = version_path.exists();
     let failure = |reason: String| FlaggingError::FlagVersion {
         path: path.display().to_string(),
         reason: format!("save flag version {versionname:?}: {reason}"),
     };
     let stage = tempfile::Builder::new()
         .prefix(".flag-version-")
-        .tempdir_in(directory)
+        .tempdir_in(ensure_flagversions_dir(path)?)
         .map_err(|error| failure(error.to_string()))?;
-    let table_path = stage.path().join("flags");
-    let bindings = HashMap::from([(
-        FLAG_COLUMN.to_string(),
-        ColumnBinding {
-            data_manager: DataManagerKind::TiledShapeStMan,
-            tile_shape: None,
-        },
-    )]);
-    table
-        .save_with_bindings(
-            TableOptions::new(&table_path).with_data_manager(DataManagerKind::StandardStMan),
-            &bindings,
-        )
-        .map_err(|error| failure(error.to_string()))?;
-    fs::rename(table_path, version_path).map_err(|error| failure(error.to_string()))?;
+    let snapshot = stage.path().join("flags");
+    write(&snapshot)?;
+    if existed {
+        let captured = open_flag_version_for_reading(&snapshot)
+            .map_err(|source| failure(source.to_string()))?;
+        merge_flags_into_existing_version(path, &captured, &version_path, merge)?;
+        if list_flag_versions_for_path(path)?
+            .iter()
+            .any(|entry| entry.name == versionname)
+        {
+            return update_flag_version_comment(path, versionname, comment);
+        }
+    } else {
+        casa_tables::publication::rename_without_replacing(&snapshot, &version_path)
+            .map_err(|source| failure(source.to_string()))?;
+    }
     append_flag_version_entry(path, versionname, comment)
+}
+
+fn open_flag_source(path: &Path) -> Result<MeasurementSet, FlaggingError> {
+    #[cfg(unix)]
+    let source = MeasurementSet::open_retained_read(path);
+    #[cfg(not(unix))]
+    let source = MeasurementSet::open(path);
+    source.map_err(|source| FlaggingError::OpenMeasurementSet {
+        path: path.display().to_string(),
+        source,
+    })
 }
 
 /// Restore a named flag version to MAIN.
@@ -195,6 +162,7 @@ pub fn restore_flag_version(
     }
     let row_flags = has_row_flags(ms);
     let plan = restore_plan(ms, &table, &path, row_flags)?;
+    let display_path = path.display().to_string();
     let mut session =
         MeasurementSetWriteSession::start_selected_row_mutation(ms, plan).map_err(|source| {
             FlaggingError::MutateFlags {
@@ -213,27 +181,22 @@ pub fn restore_flag_version(
         if rows.is_empty() {
             break;
         }
-        let mut flags = Vec::with_capacity(rows.len());
-        let mut flag_rows = Vec::new();
-        for &row in &rows {
-            let source = table_flag_matrix(&table, row, FLAG_COLUMN, Some(&path))?;
-            let dest = clone_flag_matrix(ms, row)?;
-            flags.push(ArrayValue::Bool(merge_bool_arrays(&source, &dest, merge)?));
-            if row_flags {
-                let source_flag_row = table_bool(&table, row, FLAG_ROW_COLUMN, Some(&path))?;
-                let dest_flag_row = flag_row_value(ms, row)?;
-                flag_rows.push(ScalarValue::Bool(merge_bool(
-                    source_flag_row,
-                    dest_flag_row,
-                    merge,
-                )));
-            }
-        }
+        let main = ms.main_table();
+        let saved = read_version_flags(&table, &rows, &display_path)?;
+        let flags = restore_flag_arrays(main, &rows, &display_path, saved, merge)?;
         let mut columns = vec![MeasurementSetMutationColumnBatch {
             name: FLAG_COLUMN.to_string(),
             values: MeasurementSetMutationColumnValues::Arrays(flags),
         }];
         if row_flags {
+            let mut saved = load_bool_cells(&table, &rows, FLAG_ROW_COLUMN, &display_path)?;
+            if merge != FlagMerge::Replace {
+                let current = load_bool_cells(main, &rows, FLAG_ROW_COLUMN, &display_path)?;
+                for (source, dest) in saved.iter_mut().zip(current) {
+                    *source = merge_bool(*source, dest, merge);
+                }
+            }
+            let flag_rows = saved.into_iter().map(ScalarValue::Bool).collect();
             columns.push(MeasurementSetMutationColumnBatch {
                 name: FLAG_ROW_COLUMN.to_string(),
                 values: MeasurementSetMutationColumnValues::Scalars(flag_rows),
@@ -259,6 +222,61 @@ pub fn restore_flag_version(
             reason: format!("finish restored flags: {source}"),
         })?;
     Ok(())
+}
+
+fn read_version_flags(
+    table: &Table,
+    rows: &[usize],
+    path: &str,
+) -> Result<Vec<ArrayD<bool>>, FlaggingError> {
+    let packed = table
+        .column_accessor(FLAG_COLUMN)
+        .and_then(|column| column.packed_2d_cells_uncached(rows))
+        .map_err(|error| FlaggingError::MutateFlags {
+            path: path.into(),
+            reason: error.to_string(),
+        })?;
+    if let Some(ArrayValue::Bool(flags)) = packed {
+        Ok(flags
+            .axis_iter(ndarray::Axis(2))
+            .map(|row| row.to_owned())
+            .collect())
+    } else {
+        clip_time::read_flags_uncached(table, rows, path)
+    }
+}
+
+fn restore_flag_arrays(
+    main: &Table,
+    rows: &[usize],
+    path: &str,
+    saved: Vec<ArrayD<bool>>,
+    merge: FlagMerge,
+) -> Result<Vec<ArrayValue>, FlaggingError> {
+    if merge == FlagMerge::Replace {
+        // Replacement needs the destination layout, but it does not use
+        // the flag values. Tiled managers answer this from shape headers.
+        let shapes = read_flag_shapes(main, rows).map_err(|error| FlaggingError::MutateFlags {
+            path: path.into(),
+            reason: error.to_string(),
+        })?;
+        for ((&row, source), dest) in rows.iter().zip(&saved).zip(shapes) {
+            if dest.as_deref() != Some(source.shape()) {
+                return Err(FlaggingError::MutateFlags {
+                    path: path.into(),
+                    reason: format!("FLAG shape differs or is undefined at row {row}"),
+                });
+            }
+        }
+        return Ok(saved.into_iter().map(ArrayValue::Bool).collect());
+    }
+
+    let current = clip_time::read_flags_uncached(main, rows, path)?;
+    saved
+        .into_iter()
+        .zip(current)
+        .map(|(source, dest)| merge_bool_arrays(&source, &dest, merge).map(ArrayValue::Bool))
+        .collect()
 }
 
 fn restore_plan(
@@ -289,7 +307,7 @@ fn restore_plan(
     if row_flags {
         columns.push(column(FLAG_ROW_COLUMN, 1));
     }
-    let resources = MeasurementSetWriteResources::from_system_memory(2)
+    let resources = MeasurementSetWriteResources::from_system_memory(3)
         .map_err(|error| failure(error.to_string()))?;
     MeasurementSetWritePlan::selected_row_mutation(rows, columns, resources)
         .map_err(|error| failure(error.to_string()))
@@ -300,20 +318,10 @@ fn matching_calibration_flag_size(
     version: &Table,
     rows: &[usize],
 ) -> Result<usize, String> {
-    let shapes = |table: &Table, batch: &[usize]| -> Result<Vec<Option<Vec<usize>>>, TableError> {
-        let column = table.column_accessor(FLAG_COLUMN)?;
-        column.array_shapes_uncached(batch).or_else(|_| {
-            Ok(column
-                .array_cells_owned_uncached(batch)?
-                .into_iter()
-                .map(|cell| cell.map(|array| array.shape().to_vec()))
-                .collect())
-        })
-    };
     let mut maximum = 1;
     for batch in rows.chunks(256) {
-        let dims = shapes(main, batch).map_err(|error| error.to_string())?;
-        let saved = shapes(version, batch).map_err(|error| error.to_string())?;
+        let dims = read_flag_shapes(main, batch).map_err(|error| error.to_string())?;
+        let saved = read_flag_shapes(version, batch).map_err(|error| error.to_string())?;
         for ((&row, original), stored) in batch.iter().zip(dims).zip(saved) {
             if let (Some(shape), Some(stored)) = (original, stored)
                 && shape == stored

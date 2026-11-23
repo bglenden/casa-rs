@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Native `importvla`-style MeasurementSet writer for disk archives.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::f64::consts::PI;
 use std::fs::{File, OpenOptions, create_dir_all};
@@ -1545,7 +1546,8 @@ struct VlaImportState {
     logical_records_skipped: usize,
     main_rows_written: usize,
     perf_summary: ImportPerfSummary,
-    antenna_rows: HashMap<String, i32>,
+    antenna_rows: HashMap<String, Vec<(i32, [f64; 3])>>,
+    last_antenna_rows: Vec<i32>,
     field_rows: HashMap<FieldKey, i32>,
     source_rows: HashMap<FieldKey, i32>,
     archive_observation: Option<ArchiveObservation>,
@@ -1609,6 +1611,7 @@ impl VlaImportState {
             main_rows_written: 0,
             perf_summary: ImportPerfSummary::default(),
             antenna_rows: HashMap::new(),
+            last_antenna_rows: Vec::new(),
             field_rows: HashMap::new(),
             source_rows: HashMap::new(),
             archive_observation: None,
@@ -1724,11 +1727,17 @@ impl VlaImportState {
         let time_seconds = record.time_seconds;
         let integration_seconds = record.integration_seconds;
         let antennas = record.antennas;
-        let mut sorted_antennas = antennas.iter().collect::<Vec<_>>();
-        sorted_antennas.sort_by_key(|antenna| antenna.antenna_id);
+        let mut sorted_antennas = antennas.iter().enumerate().collect::<Vec<_>>();
+        sorted_antennas.sort_by_key(|(_, antenna)| antenna.antenna_id);
+        if self.last_antenna_rows.len() != antennas.len() {
+            self.last_antenna_rows.clear();
+        }
+        let mut antenna_ids = vec![0; antennas.len()];
         let mut antenna_added = false;
-        for antenna in sorted_antennas {
-            let (_, inserted) = self.ensure_antenna(antenna)?;
+        for (archive_index, antenna) in sorted_antennas {
+            let preferred = self.last_antenna_rows.get(archive_index).copied();
+            let (id, inserted) = self.ensure_antenna(antenna, preferred)?;
+            antenna_ids[archive_index] = id;
             antenna_added |= inserted;
         }
         new_scan |= antenna_added;
@@ -1786,14 +1795,8 @@ impl VlaImportState {
 
         for (baselines, data_desc_id) in group_rows {
             for baseline in baselines {
-                let antenna1_id = *self
-                    .antenna_rows
-                    .get(antennas[baseline.antenna1_archive].name.as_str())
-                    .ok_or_else(|| VlaError::import("missing ANTENNA row for baseline ANTENNA1"))?;
-                let antenna2_id = *self
-                    .antenna_rows
-                    .get(antennas[baseline.antenna2_archive].name.as_str())
-                    .ok_or_else(|| VlaError::import("missing ANTENNA row for baseline ANTENNA2"))?;
+                let antenna1_id = antenna_ids[baseline.antenna1_archive];
+                let antenna2_id = antenna_ids[baseline.antenna2_archive];
                 self.add_main_row(
                     antenna1_id,
                     antenna2_id,
@@ -1808,6 +1811,7 @@ impl VlaImportState {
                 )?;
             }
         }
+        self.last_antenna_rows = antenna_ids;
 
         Ok(())
     }
@@ -1892,9 +1896,26 @@ impl VlaImportState {
         Ok(epoch)
     }
 
-    fn ensure_antenna(&mut self, antenna: &NormalizedAntenna) -> Result<(i32, bool), VlaError> {
-        if let Some(&row) = self.antenna_rows.get(&antenna.name) {
-            return Ok((row, false));
+    fn ensure_antenna(
+        &mut self,
+        antenna: &NormalizedAntenna,
+        preferred: Option<i32>,
+    ) -> Result<(i32, bool), VlaError> {
+        if let Some(entries) = self.antenna_rows.get(&antenna.name) {
+            let matches_position = |position: &[f64; 3]| {
+                position
+                    .iter()
+                    .zip(antenna.position_itrf_m)
+                    .all(|(stored, incoming)| (stored - incoming).abs() <= 1.0)
+            };
+            let previous = preferred.and_then(|id| entries.iter().find(|(row, _)| *row == id));
+            if let Some(&(row, _)) = previous
+                .into_iter()
+                .chain(entries.iter().rev())
+                .find(|(_, position)| matches_position(position))
+            {
+                return Ok((row, false));
+            }
         }
         let row = {
             let mut ant = self
@@ -1916,7 +1937,10 @@ impl VlaImportState {
             .map_err(|_| VlaError::import("ANTENNA row index does not fit in i32"))?
         };
         self.add_feed_row(row)?;
-        self.antenna_rows.insert(antenna.name.clone(), row);
+        self.antenna_rows
+            .entry(antenna.name.clone())
+            .or_default()
+            .push((row, antenna.position_itrf_m));
         Ok((row, true))
     }
 
@@ -2012,6 +2036,7 @@ impl VlaImportState {
         self.last_field_by_array.clear();
         self.last_data_desc_ids_by_array.clear();
         self.last_spectral_windows = [None; 4];
+        self.last_antenna_rows.clear();
         let Some(observation) = self.archive_observation.take() else {
             return Ok(());
         };
@@ -2680,19 +2705,12 @@ fn push_import_f32_row(
         .map_err(|error| VlaError::import(error.to_string()))
 }
 
-fn array_values_in_casa_order<T: Copy>(array: &ArrayD<T>) -> Vec<T> {
-    let shape = array.shape();
-    let mut values = Vec::with_capacity(array.len());
-    let mut position = vec![0usize; shape.len()];
-    for linear in 0..array.len() {
-        let mut remainder = linear;
-        for (axis, &extent) in shape.iter().enumerate() {
-            position[axis] = remainder % extent;
-            remainder /= extent;
-        }
-        values.push(array[IxDyn(&position)]);
+fn array_values_in_casa_order<T: Copy>(array: &ArrayD<T>) -> Cow<'_, [T]> {
+    let casa_order = array.view().reversed_axes();
+    match casa_order.to_slice() {
+        Some(values) => Cow::Borrowed(values),
+        None => Cow::Owned(casa_order.iter().copied().collect()),
     }
-    values
 }
 
 fn align_direction_for_epoch(

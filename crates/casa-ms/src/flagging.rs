@@ -5071,7 +5071,7 @@ fn ensure_flagversions_dir(path: &Path) -> Result<PathBuf, FlaggingError> {
     Ok(dir)
 }
 
-fn flagversions_dir(path: &Path) -> PathBuf {
+pub(crate) fn flagversions_dir(path: &Path) -> PathBuf {
     let mut os = OsString::from(path.as_os_str());
     os.push(".flagversions");
     PathBuf::from(os)
