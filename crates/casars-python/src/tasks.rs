@@ -265,6 +265,13 @@ pub(crate) fn task_executable(
         .map_err(PyFileNotFoundError::new_err)
 }
 
+/// Yield caller-owned automatic locks that would block the task subprocess.
+#[pyfunction]
+pub(crate) fn prepare_task_table_write(py: Python<'_>, path: PathBuf) -> PyResult<()> {
+    py.detach(|| crate::tools::table::prepare_provider_write(&path))?;
+    Ok(())
+}
+
 /// How a task process ended, with a success's products. Releases the GIL
 /// while it checks them.
 #[pyfunction]

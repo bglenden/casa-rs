@@ -315,10 +315,10 @@ impl State {
     /// tables locked by the user or permanently keep theirs. Always `True`,
     /// with or without a table. A tool busy in another thread is not asked.
     pub(super) fn clearlocks(&mut self) -> Reply {
-        let mut result = self.relinquish_auto_lock();
+        let mut result = self.relinquish_auto_lock(None);
         registry::for_each_other(self.id, |tool| {
             if let Some(tool) = tool {
-                let released = tool.relinquish_auto_lock();
+                let released = tool.relinquish_auto_lock(None);
                 if result.is_ok() {
                     result = released;
                 }
@@ -329,11 +329,12 @@ impl State {
     }
 
     /// Gives up the lock an automatic mode keeps between calls.
-    fn relinquish_auto_lock(&mut self) -> Result<(), Fail> {
+    pub(super) fn relinquish_auto_lock(&mut self, target: Option<&Path>) -> Result<(), Fail> {
         if let Some(open) = self.open.as_ref() {
             let mut root = open.root();
             if root.lock.automatic()
                 && (root.table.has_lock(LockType::Read) || root.table.has_lock(LockType::Write))
+                && target.is_none_or(|path| root.name.canonicalize().is_ok_and(|name| name == path))
             {
                 root.table.unlock_metadata_only()?;
             }

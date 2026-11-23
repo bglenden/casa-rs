@@ -1980,6 +1980,8 @@ def _execute_task(
         environment.pop("CASARS_BANDPASS_COMPLETED_PAGES", None)
         if bandpass_completed_pages is not None:
             environment["CASARS_BANDPASS_COMPLETED_PAGES"] = str(bandpass_completed_pages)
+    if task == "clearcal" and (vis := resolved.get("vis")):
+        _native().prepare_task_table_write(workspace / vis)
     try:
         # The task runs in its own session, so a terminal's Ctrl-C reaches
         # Python alone, which passes it on once, in a terminal as in a

@@ -80,6 +80,10 @@ def pytest_configure():
         from casars.tasks import _runner
         _runner._task_executable(task)
         entry_point = getattr(tasks, task)
+        if task == "clearcal":
+            # The stock suite keeps a table open while the task changes it.
+            from casars import tools
+            casatools.table = tools.table
     if timings := os.environ.get("CASARS_UPSTREAM_TEST_TIMINGS"):
         entry_point = _timed_task(entry_point, Path(timings))
     if implementation == "casa-rs":

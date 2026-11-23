@@ -981,6 +981,23 @@ pub fn table_holder(table_dir: &Path) -> io::Result<Option<TableHolder>> {
     Ok((!free).then_some(TableHolder::AnotherProcess))
 }
 
+/// Whether this process holds the data byte lock on `table_dir`.
+/// A table may remain open in this process with its data lock released.
+/// This does not inspect locks held by other processes.
+///
+/// # Errors
+/// The lock file metadata cannot be inspected.
+pub fn process_holds_table_lock(table_dir: &Path) -> io::Result<bool> {
+    let Some(key) = path_key(&table_dir.join(LOCK_FILE_NAME))? else {
+        return Ok(false);
+    };
+    let shared = registry().get(&key).map(|entry| Arc::clone(&entry.shared));
+    Ok(shared.is_some_and(|shared| {
+        let state = shared.state();
+        state.readers > 0 || state.writer.is_some()
+    }))
+}
+
 /// Read the sync data that follows the request list in an open lock file.
 fn read_sync_data_from_fd(fd: RawFd) -> io::Result<Option<SyncData>> {
     let mut len_buf = [0u8; SIZEINT];
