@@ -283,6 +283,12 @@ impl ModelInputs {
         &self.dynamic_fields
     }
 
+    pub(super) fn uses_virtual_model(&self, field: i32) -> bool {
+        self.virtual_models
+            .get(&field)
+            .is_some_and(|entries| !entries.is_empty())
+    }
+
     pub(super) fn uses_fourier(&self, field: i32) -> bool {
         self.virtual_models.get(&field).is_some_and(|entries| {
             entries.iter().any(|entry| {
@@ -482,8 +488,9 @@ impl ModelInputs {
         row: &SelectedSolveRow,
         correlations: &[i32],
         raw_flags: &ArrayD<bool>,
+        uvw_cell: Option<&ArrayValue>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
-        self.predict_model(ms, row, correlations, (raw_flags, None), false, None)
+        self.predict_model(ms, row, correlations, (raw_flags, None), false, uvw_cell)
     }
 
     pub(super) fn predict_model(

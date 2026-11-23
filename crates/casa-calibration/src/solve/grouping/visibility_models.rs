@@ -168,7 +168,7 @@ impl VisibilityModels {
         flags: &ArrayD<bool>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
         match self.rows.get(&row) {
-            Some(row) => self.models.predict(ms, row, correlations, flags),
+            Some(row) => self.models.predict(ms, row, correlations, flags, None),
             None => Ok(None),
         }
     }
