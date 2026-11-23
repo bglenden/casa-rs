@@ -9141,7 +9141,8 @@ the same result as the corresponding omitted argument (#1029).
 
 On an attached CASA 6.7.6.14 `msmetadata` tool, get a valid scan number
 from `scannumbers(0, 0)` and call
-`fieldsforscans([scan], obsid=0, arrayid=0)`. The vector selection
+`fieldsforscans([scan], obsid=0, arrayid=0)` or
+`timesforscans([scan], obsid=0, arrayid=0)`. The vector selection
 initializes the scan number but leaves the observation and array IDs
 uninitialized. CASA can report an unknown scan with unrelated IDs. The
 single-scan and `asmap=True` variants do use the supplied IDs.
@@ -9167,6 +9168,27 @@ With CASA 6.7.6.14, pass a nonempty `numpy.float16` or `object` array to
 the supplied scan numbers, and returns fields for every scan. casa-rs
 raises `TypeError` so the unsupported array type cannot silently widen
 the selection (#1029).
+
+## Field time selection can include the first field after the time window
+
+In CASA 6.7.6.14, open a MeasurementSet whose first MAIN time is after
+zero and call `msmetadata.fieldsfortimes(0.0, 0.0)`. The result includes
+the first observed field because the loop collects fields before testing
+the upper bound. casa-rs includes only fields with an observation time
+inside the requested inclusive interval (#1029).
+
+## Empty or out-of-range time selectors can terminate CASA
+
+For an attached CASA 6.7.6.14 `msmetadata` tool, passing
+`numpy.array([], dtype=numpy.int64)` to `timesforscans` can segfault
+because the binding dereferences the minimum of an empty vector.
+Passing the same array to `timesforspws` can abort with an empty-array
+exception. In `timesforspws`, a positive scalar outside the spectral
+window table can also segfault because that path indexes without a
+bounds check.
+
+casa-rs interprets the empty integer vector as the full in-scope set
+and raises `RuntimeError` for the out-of-range spectral window (#1029).
 
 ## Image coordinate frequency conversion can use the wrong physical direction
 

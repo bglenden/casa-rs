@@ -89,7 +89,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ScanList {
     }
 }
 
-enum FieldSelector {
+pub(super) enum FieldSelector {
     Name(String),
     Id(i64),
     Unsupported,
@@ -114,7 +114,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for FieldSelector {
     }
 }
 
-fn matching_scan<'a>(
+pub(super) fn matching_scan<'a>(
     index: &'a ScanIndex,
     ms: &MeasurementSet,
     scan: i64,
@@ -146,7 +146,7 @@ fn field_ids(ms: &MeasurementSet, name: &str) -> MsResult<BTreeSet<i32>> {
     Ok(ids)
 }
 
-fn int_array(ids: impl IntoIterator<Item = i32>) -> CasaValue {
+pub(super) fn int_array(ids: impl IntoIterator<Item = i32>) -> CasaValue {
     let values: Vec<i64> = ids.into_iter().map(i64::from).collect();
     CasaValue::Ints {
         shape: vec![values.len()],

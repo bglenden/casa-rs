@@ -340,3 +340,60 @@ def test_msmetadata_rejects_unsupported_scan_dtypes_instead_of_selecting_all(nat
                 metadata.fieldsforscans(np.array([99], dtype=dtype))
     finally:
         assert metadata.done()
+
+
+def test_msmetadata_scan_time_state_and_spectral_associations(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    results = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            scans = metadata.scannumbers()
+            scan = int(scans[0])
+            times = metadata.timesforscan(scan)
+            np.testing.assert_array_equal(metadata.fieldsfortimes(times[0]), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.scansfortimes(times[0]), scans, strict=True)
+            np.testing.assert_array_equal(metadata.timesforscan(scan, perspw=True)["0"], times, strict=True)
+            np.testing.assert_array_equal(metadata.timesforscans(scans), times, strict=True)
+            np.testing.assert_array_equal(metadata.timesforspws(), times, strict=True)
+            np.testing.assert_array_equal(metadata.timesforspws([0, 0])["0"], times, strict=True)
+            np.testing.assert_array_equal(metadata.timesforfield(0), times, strict=True)
+            np.testing.assert_array_equal(metadata.spwsforfields()["0"], np.array([0], dtype=np.uint64), strict=True)
+            np.testing.assert_array_equal(metadata.spwsfornames("L")["L"], np.array([0], dtype=np.uint64), strict=True)
+            np.testing.assert_array_equal(metadata.spwsforscan(scan), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.spwsforscans()[str(scan)], np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.scansforspws()["0"], scans, strict=True)
+            np.testing.assert_array_equal(metadata.scansforspw(0), scans, strict=True)
+            assert set(metadata.spwsfornames(["L", "missing"])) == {"L"}
+            assert metadata.statesforscan(scan + 100).size == 0
+            np.testing.assert_array_equal(metadata.statesforscans()[str(scan)], metadata.statesforscan(scan), strict=True)
+            with pytest.raises(RuntimeError):
+                metadata.fieldsfortimes(times[0], -1)
+            with pytest.raises(RuntimeError):
+                metadata.scansforstate(-1)
+            results.append((times, metadata.statesforscan(scan), metadata.scansforstate(0),
+                            metadata.spwsforfield("F"), metadata.fieldsforspw(0, asnames=True)))
+        finally:
+            assert metadata.done()
+    for expected, actual in zip(*results):
+        np.testing.assert_array_equal(actual, expected, strict=True)
+
+
+def test_msmetadata_safe_time_selection_boundaries(native_dataset):
+    metadata = tools.msmetadata()
+    assert metadata.open(str(native_dataset))
+    try:
+        scans = metadata.scannumbers()
+        times = metadata.timesforscan(int(scans[0]))
+        assert times[0] > 1.0
+        np.testing.assert_array_equal(metadata.fieldsfortimes(0), np.array([], dtype=np.int64), strict=True)
+        empty = np.array([], dtype=np.int64)
+        np.testing.assert_array_equal(metadata.timesforscans(empty), times, strict=True)
+        np.testing.assert_array_equal(metadata.timesforspws(empty), times, strict=True)
+        np.testing.assert_array_equal(metadata.timesforscans(scans, obsid=0, arrayid=0), times, strict=True)
+        with pytest.raises(RuntimeError):
+            metadata.timesforspws(4096)
+    finally:
+        assert metadata.done()
