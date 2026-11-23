@@ -6,6 +6,7 @@
 mod data_description;
 mod names;
 mod spectral;
+mod spectral_classes;
 mod stubs;
 pub(crate) mod surface;
 
