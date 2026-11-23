@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Schema-backed CLI support for `msexplore`.
 
+mod plotms_options;
+
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -250,7 +252,7 @@ fn run_task(
         {
             plotms_columns::check_averaging(
                 options.plotms_averaging_active(),
-                options.secondary_y_data_column.is_some(),
+                options.plotms_extended_averaging() && options.secondary_y_data_column.is_some(),
                 columns,
             )?;
             let symbols = task.value("customflaggedsymbol");
@@ -291,29 +293,6 @@ fn run_task(
         Some(note) => success.with_note(note),
         None => success,
     })
-}
-
-impl CliOptions {
-    fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 3]> {
-        (self.x_axis.is_some_and(MsAxis::is_visibility_math)
-            || self.y_axis.is_some_and(MsAxis::is_visibility_math)
-            || self.y_axis2.is_some())
-        .then_some([
-            self.x_data_column.unwrap_or(self.data_column),
-            self.data_column,
-            self.secondary_y_data_column.unwrap_or(self.data_column),
-        ])
-    }
-
-    fn plotms_averaging_active(&self) -> bool {
-        self.avgchannel.is_some_and(|width| width > 1)
-            || self.avgtime.is_some()
-            || self.avgscan
-            || self.avgfield
-            || self.avgbaseline
-            || self.avgantenna
-            || self.avgspw
-    }
 }
 
 fn run_visibility_plot(

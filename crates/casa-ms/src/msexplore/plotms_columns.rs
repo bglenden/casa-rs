@@ -4,8 +4,10 @@
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use super::{MsAxis, MsDataColumn};
+use super::{FloatGrid, MsAxis, MsDataColumn, MsPlotSpec, PlotMsInput};
 use crate::MeasurementSet;
+use crate::schema::main_table::OptionalMainColumn;
+use crate::transform::{WeightKind, visibility_weight_kind, weight_from_sigma};
 
 pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) -> bool {
     axes.into_iter()
@@ -15,12 +17,12 @@ pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) 
 
 pub(super) fn check_averaging(
     averaging: bool,
-    independent_ordinates: bool,
+    extended_averaging_with_independent_ordinates: bool,
     columns: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
-    if averaging && independent_ordinates {
+    if extended_averaging_with_independent_ordinates {
         return Err(TaskFailure::validation(
-            "averaging independent MeasurementSet ordinate columns is pending #1032",
+            "time, baseline, antenna and SPW averaging of independent MeasurementSet ordinate columns is pending #1032",
         ));
     }
     if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
@@ -29,6 +31,57 @@ pub(super) fn check_averaging(
         ));
     }
     Ok(())
+}
+
+pub(super) fn channel_weight_kinds(
+    ms: &MeasurementSet,
+    spec: &MsPlotSpec,
+    input: &PlotMsInput<'_>,
+) -> [WeightKind; 3] {
+    let primary = spec.data_column;
+    let columns = [
+        input.x_data_column.unwrap_or(primary),
+        primary,
+        input.secondary_y_data_column.unwrap_or(primary),
+    ];
+    let axes = [
+        Some(spec.x_axis),
+        Some(spec.y_axis()),
+        spec.secondary_y_axis(),
+    ];
+    let mut active = axes.into_iter().zip(columns).filter_map(|(axis, column)| {
+        axis.is_some_and(MsAxis::is_visibility_math)
+            .then_some(column)
+    });
+    // PlotMS configures the transform to load all columns for a mixed-column
+    // request, so a model uses the corrected or observed weighting when present.
+    let all = active
+        .next()
+        .is_some_and(|first| active.any(|column| column != first));
+    let schema = ms.main_table().schema();
+    let has = |name| all && schema.is_some_and(|schema| schema.contains_column(name));
+    columns.map(|column| {
+        let column = match column {
+            MsDataColumn::Data => OptionalMainColumn::Data,
+            MsDataColumn::Corrected => OptionalMainColumn::CorrectedData,
+            MsDataColumn::Model => OptionalMainColumn::ModelData,
+            _ => return WeightKind::Unit,
+        };
+        visibility_weight_kind(column, has("DATA"), has("CORRECTED_DATA"), false)
+    })
+}
+
+pub(super) fn inverse_variance(spectrum: &FloatGrid) -> FloatGrid {
+    FloatGrid {
+        corr_count: spectrum.corr_count,
+        chan_count: spectrum.chan_count,
+        values: spectrum
+            .values
+            .iter()
+            .copied()
+            .map(|sigma| f64::from(weight_from_sigma(sigma as f32)))
+            .collect(),
+    }
 }
 
 pub(super) fn ordinate_columns(

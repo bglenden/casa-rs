@@ -69,6 +69,7 @@ use crate::spectral_selection::{
 use crate::subtables::SubTable;
 use crate::subtables::data_description::MsDataDescription;
 use crate::subtables::polarization::MsPolarization;
+use crate::transform::WeightKind;
 use crate::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
 
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
@@ -3975,7 +3976,15 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
-    let selected_sigma_spectrum = if needs_sigma_spectrum {
+    let channel_weight_kinds = calibration
+        .filter(|_| {
+            project_plotms_columns && use_spectral_weights && selected_weight_spectrum.is_some()
+        })
+        .map_or([WeightKind::Calibrated; 3], |input| {
+            plotms_columns::channel_weight_kinds(ms, spec, input)
+        });
+    let needs_observed_weights = channel_weight_kinds.contains(&WeightKind::Observed);
+    let selected_sigma_spectrum = if needs_sigma_spectrum || needs_observed_weights {
         SigmaSpectrumColumn::new(ms.main_table())
             .ok()
             .map(|_| SelectedArrayColumn::load(ms.main_table(), "SIGMA_SPECTRUM", &row_numbers))
@@ -4092,22 +4101,24 @@ fn build_generic_visibility_scatter(
             .or_else(|| {
                 needs_weight_spectrum.then(|| scalar_values_to_grid(&weight_values, chan_count))
             });
-        let averaging_weight_grid = if use_spectral_weights {
-            weight_spectrum_grid.as_ref()
-        } else {
-            None
-        };
-        let sigma_spectrum_grid = if needs_sigma_spectrum {
-            Some(
-                selected_sigma_spectrum
-                    .as_ref()
-                    .map(|column| float_grid_from_array(column.get(row_slot)?, "SIGMA_SPECTRUM"))
-                    .transpose()?
-                    .unwrap_or_else(|| scalar_values_to_grid(&sigma_values, chan_count)),
-            )
-        } else {
-            None
-        };
+        let sigma_spectrum_grid = selected_sigma_spectrum
+            .as_ref()
+            .and_then(|column| column.find(row_slot))
+            .map(|cell| float_grid_from_array(cell, "SIGMA_SPECTRUM"))
+            .transpose()?
+            .or_else(|| {
+                needs_sigma_spectrum.then(|| scalar_values_to_grid(&sigma_values, chan_count))
+            });
+        let observed_weights = sigma_spectrum_grid
+            .as_ref()
+            .filter(|_| needs_observed_weights)
+            .map(plotms_columns::inverse_variance);
+        let [x_weight_grid, y_weight_grid, secondary_weight_grid] =
+            channel_weight_kinds.map(|kind| match kind {
+                WeightKind::Observed => observed_weights.as_ref(),
+                WeightKind::Calibrated if use_spectral_weights => weight_spectrum_grid.as_ref(),
+                _ => None,
+            });
         for (column_name, grid) in [
             ("WEIGHT_SPECTRUM", weight_spectrum_grid.as_ref()),
             ("SIGMA_SPECTRUM", sigma_spectrum_grid.as_ref()),
@@ -4252,6 +4263,7 @@ fn build_generic_visibility_scatter(
             let mut samples = Vec::<Complex64>::new();
             let mut visibility_weights = Vec::<f64>::new();
             let mut secondary_samples = Vec::<Complex64>::new();
+            let mut secondary_visibility_weights = Vec::<f64>::new();
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
@@ -4266,7 +4278,7 @@ fn build_generic_visibility_scatter(
                         flags,
                         *corr_index,
                         bin,
-                        averaging_weight_grid.map(|grid| (grid, &mut visibility_weights)),
+                        y_weight_grid.map(|grid| (grid, &mut visibility_weights)),
                         &mut samples,
                     );
                 } else {
@@ -4278,7 +4290,7 @@ fn build_generic_visibility_scatter(
                         flags.as_ref().expect("X visibility data loads flags"),
                         *corr_index,
                         bin,
-                        averaging_weight_grid.map(|grid| (grid, &mut x_visibility_weights)),
+                        x_weight_grid.map(|grid| (grid, &mut x_visibility_weights)),
                         &mut x_samples,
                     );
                 }
@@ -4290,7 +4302,7 @@ fn build_generic_visibility_scatter(
                             .expect("secondary visibility data loads flags"),
                         *corr_index,
                         bin,
-                        None,
+                        secondary_weight_grid.map(|grid| (grid, &mut secondary_visibility_weights)),
                         &mut secondary_samples,
                     );
                 }
@@ -4352,7 +4364,13 @@ fn build_generic_visibility_scatter(
                 let secondary_visibility = if secondary_uses_x {
                     x_visibility
                 } else if let Some(grid) = &secondary_grid {
-                    VisibilityBinSamples::new(Some(grid), &secondary_samples, &[], *corr_index, bin)
+                    VisibilityBinSamples::new(
+                        Some(grid),
+                        &secondary_samples,
+                        &secondary_visibility_weights,
+                        *corr_index,
+                        bin,
+                    )
                 } else {
                     y_visibility
                 };
@@ -6988,13 +7006,16 @@ impl<'a> SelectedArrayColumn<'a> {
         })
     }
 
-    fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
-        let value = match &self.values {
+    fn find(&self, row_slot: usize) -> Option<&ArrayValue> {
+        match &self.values {
             SelectedArrayValues::Stored(values) => values.get(row_slot).and_then(Option::as_ref),
             SelectedArrayValues::Projected(values) => values.get(row_slot).copied().flatten(),
             SelectedArrayValues::DefaultModel(values) => values.get(row_slot).map(Arc::as_ref),
-        };
-        value.ok_or_else(|| {
+        }
+    }
+
+    fn get(&self, row_slot: usize) -> Result<&ArrayValue, String> {
+        self.find(row_slot).ok_or_else(|| {
             format!(
                 "msexplore requires {} data for selected row slot {row_slot}",
                 self.column
