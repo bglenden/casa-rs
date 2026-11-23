@@ -165,30 +165,28 @@ def clear_stats_after_failure(factory, work, engine, vis):
             assert tool.close()
 
 
-def protect_busy_output(work, engines, kind, old, vis, selection, controls, paths):
+def protect_busy_output(work, factory, kind, old, vis, selection, controls, output):
     with chdir(work):
-        for engine, factory in engines.items():
-            output = paths[engine]
-            before = columns(output)
-            command = [sys.executable, '-c', HOLD_OUTPUT_LOCK, str(output)]
-            with subprocess.Popen(command, text=True, stdin=subprocess.PIPE,
-                                  stdout=subprocess.PIPE) as peer:
+        before = columns(output)
+        command = [sys.executable, '-c', HOLD_OUTPUT_LOCK, str(output)]
+        with subprocess.Popen(command, text=True, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE) as peer:
+            try:
+                assert select([peer.stdout], [], [], 15.)[0]
+                assert peer.stdout.readline().strip() == 'locked'
+                tool = factory()
+                assert tool.setvi(old, True) and tool.open(str(vis))
                 try:
-                    assert select([peer.stdout], [], [], 15.)[0]
-                    assert peer.stdout.readline().strip() == 'locked'
-                    tool = factory()
-                    assert tool.setvi(old, True) and tool.open(str(vis))
-                    try:
-                        assert tool.selectvis(field='0', **({'spw': '0'} | selection))
-                        for append in (False, True):
-                            assert tool.setsolve(kind, 'inf', str(output), append=append, **controls)
-                            assert result(tool.solve) == SOLVE_ERROR
-                    finally:
-                        assert tool.close()
+                    assert tool.selectvis(field='0', **({'spw': '0'} | selection))
+                    for append in (False, True):
+                        assert tool.setsolve(kind, 'inf', str(output), append=append, **controls)
+                        assert result(tool.solve) == SOLVE_ERROR
                 finally:
-                    peer.communicate('\n', timeout=15)
-                assert peer.returncode == 0
-            compare_mapping(columns(output), before, False)
+                    assert tool.close()
+            finally:
+                peer.communicate('\n', timeout=15)
+            assert peer.returncode == 0
+        compare_mapping(columns(output), before, False)
     print(kind, 'busy replace and append protected', flush=True)
 
 
@@ -206,8 +204,11 @@ def run(args):
             continue
         vis, selection, controls = fixture(args.work/label, kind)
         paths = compare_case(args.work, engines, label, kind, old, vis, selection, controls)
-        if (kind, old) in (('SDSKY_PS', True), ('SDGAIN_OTFD', False)):
-            protect_busy_output(args.work, engines, kind, old, vis, selection, controls, paths)
+        if 'native' in engines and (kind, old) in (('SDSKY_PS', True), ('SDGAIN_OTFD', False)):
+            # A separate CASA process holds the output. The CASA solver may
+            # wait for that lock and is covered by the ordinary solve cases.
+            protect_busy_output(args.work, engines['native'], kind, old, vis, selection,
+                                controls, paths['native'])
         if kind == 'SDGAIN_OTFD' and not old:
             gain_cases(args.work, engines, kind, vis, selection, paths)
         if kind == 'SDSKY_PS' and old:
