@@ -70,6 +70,16 @@ impl LazyRowsSource {
     fn plain_table_dat(&self) -> Result<&TableDatContents, TableError> {
         Ok(&self.read_metadata()?.table_dat)
     }
+
+    fn retained_asdm_dat(&self) -> Option<&TableDatContents> {
+        let table_dat = &self.read_metadata.get()?.table_dat;
+        table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|manager| manager.type_name == crate::storage::asdm_stman::TYPE)
+            .then_some(table_dat)
+    }
 }
 
 #[derive(Debug)]
@@ -530,14 +540,19 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
-        let snapshot = storage
-            .load_with_row_hint(&source.path, Some(source.row_count_hint as u64))
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to materialize rows for table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
+        let row_hint = Some(source.row_count_hint as u64);
+        let snapshot = match source.retained_asdm_dat() {
+            Some(table_dat) => {
+                storage.load_plain_table_filtered(&source.path, table_dat, row_hint, None)
+            }
+            None => storage.load_with_row_hint(&source.path, row_hint),
+        }
+        .map_err(|err| {
+            TableError::Storage(format!(
+                "failed to materialize rows for table {}: {err}",
+                source.path.display()
+            ))
+        })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
                 "storage_load_complete",
@@ -570,18 +585,19 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
-        let values = storage
-            .load_scalar_column_with_row_hint(
-                &source.path,
-                column,
-                Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load scalar column '{column}' for table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
+        let row_hint = Some(source.row_count_hint as u64);
+        let values = match source.retained_asdm_dat() {
+            Some(table_dat) => {
+                storage.load_plain_scalar_column(&source.path, table_dat, column, row_hint)
+            }
+            None => storage.load_scalar_column_with_row_hint(&source.path, column, row_hint),
+        }
+        .map_err(|err| {
+            TableError::Storage(format!(
+                "failed to load scalar column '{column}' for table {}: {err}",
+                source.path.display()
+            ))
+        })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
                 "storage_load_complete",
@@ -961,19 +977,20 @@ impl TableImpl {
         };
 
         let storage = CompositeStorage;
-        let mut rows = storage
-            .load_selected_columns_with_row_hint(
-                &source.path,
-                columns,
-                Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load prepared rows for table {}: {err}",
-                    source.path.display()
-                ))
-            })?
-            .rows;
+        let row_hint = Some(source.row_count_hint as u64);
+        let mut rows = match source.retained_asdm_dat() {
+            Some(table_dat) => {
+                storage.load_plain_selected_columns(&source.path, table_dat, columns, row_hint)
+            }
+            None => storage.load_selected_columns_with_row_hint(&source.path, columns, row_hint),
+        }
+        .map_err(|err| {
+            TableError::Storage(format!(
+                "failed to load prepared rows for table {}: {err}",
+                source.path.display()
+            ))
+        })?
+        .rows;
 
         for &column in columns {
             if let Some(cached_column) = self.loaded_scalar_columns.get(column)
