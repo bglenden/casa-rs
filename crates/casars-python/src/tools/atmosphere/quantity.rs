@@ -67,6 +67,12 @@ impl QuantityArg {
 }
 
 impl AtmosphereQuantity {
+    pub(super) fn validate_unit(&self) -> PyResult<()> {
+        casacore_unit(&self.unit)
+            .map(|_| ())
+            .map_err(PyRuntimeError::new_err)
+    }
+
     pub(super) fn scalar(&self) -> PyResult<f64> {
         self.values
             .first()

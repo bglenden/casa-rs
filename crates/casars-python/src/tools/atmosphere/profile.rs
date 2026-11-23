@@ -32,11 +32,16 @@ impl Weather {
         lapse_rate: QuantityArg,
         scale_height: QuantityArg,
     ) -> PyResult<Self> {
+        let humidity_fraction = humidity / 100.0;
         Ok(Self {
             altitude: altitude.read("altitude", (5000., "m"))?,
             temperature: temperature.read("temperature", (270., "K"))?,
             pressure: pressure.read("pressure", (560., "mbar"))?,
-            humidity,
+            humidity: if humidity_fraction <= 0.0 {
+                0.1
+            } else {
+                humidity_fraction * 100.0
+            },
             lapse_rate: lapse_rate.read("dTem_dh", (-5.6, "K/km"))?,
             scale_height: scale_height.read("h0", (2., "km"))?,
         })

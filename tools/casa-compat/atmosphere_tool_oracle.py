@@ -177,6 +177,46 @@ def update_thresholds(factory):
     print(factory.__module__, 'all six profile-update controls passed',flush=True)
 
 
+def window_units(factory):
+    tool = factory()
+    assert tool.initAtmProfile()[0]
+    assert tool.initSpectralWindow(1, q(90., 'GHz'), q(4., 'GHz'), q(1., 'GHz')) == 4
+    assert tool.setAirMass(1.8)
+    invalid = q(1., 'bogusunit')
+    fails(tool.initSpectralWindow, RuntimeError, fWidth=invalid)
+    fails(tool.addSpectralWindow, RuntimeError, fCenter=invalid)
+    fails(tool.addSpectralWindow, RuntimeError, fRes=q(0., 'bogusunit'))
+    assert tool.getNumSpectralWindows() == 1 and tool.getNumChan() == 4
+    assert tool.getAirMass() == 1.8
+    assert tool.initSpectralWindow(1, q(90., 'GHz'), q(3., 'GHz'), q(1., 'GHz')) == 3
+    assert tool.getChanNum(q(9e13, 'mHz')) == tool.getChanNum(q(90., 'GHz')) == 0.
+    print(factory.__module__, 'window unit errors preserve the profile and mHz converts to Hz', flush=True)
+
+
+def exact_weather_thresholds(factory):
+    for name, update, slot, effective, unit in (
+        ('pressure', q(560.99, 'mbar'), 3, 560., 'mbar'),
+        ('h0', q(2.02, 'km'), 9, 2., 'km'),
+        ('humidity', -100., 5, 20., None),
+    ):
+        tool = factory()
+        assert tool.initAtmProfile(layerBoundaries=[5100., 5500.], layerTemperature=[280., 290.])[0]
+        report = tool.updateAtmProfile(**{name: update})[0]
+        found = tool.getBasicAtmParms()[slot]
+        close(found if unit is None else quantity(found, unit), effective)
+        close(quantity(tool.getProfile()[2], 'K', tool.getNumLayers())[0], 280.)
+        if name == 'humidity':
+            assert '0.1 %' in report
+    tool = factory()
+    reference = tool.initAtmProfile(humidity=0.1)[0]
+    water = quantity(tool.getGroundWH2O(), 'mm').copy()
+    for humidity in (0., -100.):
+        assert tool.initAtmProfile(humidity=humidity)[0] == reference
+        close(tool.getBasicAtmParms()[5], 0.1)
+        close(quantity(tool.getGroundWH2O(), 'mm'), water)
+    print(factory.__module__, 'exact weather thresholds and humidity floor passed', flush=True)
+
+
 def invalid_layer_reference():
     # ATM's checked vector access throws std::out_of_range, which the pinned
     # wrapper does not catch. Isolate the failing reference call.
@@ -246,11 +286,15 @@ if __name__ == '__main__':
     constructor(casa_atmosphere)
     shape_state(casa_atmosphere)
     update_thresholds(casa_atmosphere)
+    window_units(casa_atmosphere)
+    exact_weather_thresholds(casa_atmosphere)
     invalid_layer_reference()
     if not args.reference_only:
         from casars.tools import atmosphere
         constructor(atmosphere)
         shape_state(atmosphere)
         update_thresholds(atmosphere)
+        window_units(atmosphere)
+        exact_weather_thresholds(atmosphere)
         invalid_layer(atmosphere)
         corrected_layers(atmosphere)

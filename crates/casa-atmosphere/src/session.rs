@@ -128,11 +128,18 @@ impl AtmosphereSession {
 }
 
 fn site_changed(current: &ProfileParameters, requested: &ProfileParameters) -> bool {
+    // ATM compares pressure in pascals, scale height in metres and
+    // humidity as a fraction. Convert both operands before subtracting.
     (requested.altitude_m - current.altitude_m).abs() > 1.0
-        || (requested.ground_pressure_hpa - current.ground_pressure_hpa).abs() > 0.99
+        || (requested.ground_pressure_hpa * 100.0 - current.ground_pressure_hpa * 100.0).abs()
+            > 99.0
         || (requested.ground_temperature_k - current.ground_temperature_k).abs() > 0.3
         || (requested.lapse_rate_k_per_km - current.lapse_rate_k_per_km).abs() > 0.01
-        || (requested.relative_humidity_percent - current.relative_humidity_percent).abs() > 100.0
-        || (requested.water_vapour_scale_height_km - current.water_vapour_scale_height_km).abs()
-            > 0.020
+        || (requested.relative_humidity_percent / 100.0 - current.relative_humidity_percent / 100.0)
+            .abs()
+            > 1.0
+        || (requested.water_vapour_scale_height_km * 1000.0
+            - current.water_vapour_scale_height_km * 1000.0)
+            .abs()
+            > 20.0
 }

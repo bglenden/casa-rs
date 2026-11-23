@@ -18,6 +18,12 @@ struct Window {
 }
 
 impl Window {
+    fn validate_units(quantities: [&AtmosphereQuantity; 3]) -> PyResult<()> {
+        quantities
+            .iter()
+            .try_for_each(|quantity| quantity.validate_unit())
+    }
+
     fn read(
         center: &AtmosphereQuantity,
         width: &AtmosphereQuantity,
@@ -84,6 +90,7 @@ impl PyAtmosphere {
             warn(py, "Dimensions of fCenter, fWidth and fRes != nbands!")?;
             return Ok(-1);
         }
+        Window::validate_units([&center, &width, &resolution])?;
         let mut grid = SpectralGrid::new();
         for index in 0..nbands {
             let window = Window::read(&center, &width, &resolution, index)?;
@@ -120,6 +127,7 @@ impl PyAtmosphere {
             )?;
             return Ok(-1);
         }
+        Window::validate_units([&center, &width, &resolution])?;
         if resolution.scalar()? == 0. {
             warn(py, "Resolution of band cannot be 0,0 GHz!")?;
             return Ok(-1);
@@ -202,15 +210,23 @@ impl PyAtmosphere {
 
     #[pyo3(name = "getChanNum", signature = (freq, spwid=0))]
     fn get_chan_num(&self, py: Python<'_>, freq: QuantityArg, spwid: i64) -> PyResult<f64> {
-        let frequency = freq.read("freq", (0., "Hz"))?.frequency_hz(0)?;
-        self.read_window(py, spwid, |window| {
-            Ok(if window.num_channels() == 1 {
-                1.
-            } else {
-                (frequency - window.reference_frequency_hz()) / window.channel_separation_hz()
-            })
+        let frequency = freq.read("freq", (0., "Hz"))?;
+        let Some((count, reference, separation)) = self.read_window(py, spwid, |window| {
+            Ok((
+                window.num_channels(),
+                window.reference_frequency_hz(),
+                window.channel_separation_hz(),
+            ))
+        })?
+        else {
+            return Ok(-1.);
+        };
+        let frequency = frequency.value_in("Hz")?;
+        Ok(if count == 1 {
+            1.
+        } else {
+            (frequency - reference) / separation
         })
-        .map(|value| value.unwrap_or(-1.))
     }
 
     #[pyo3(name = "getBandwidth", signature = (spwid=0))]
