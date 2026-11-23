@@ -926,6 +926,7 @@ fn averaged_list_clip_reports_only_members_of_selected_bins() {
             mode: FlagDataMode::Clip,
             casa_row_selection: true,
             clip_time_bin: Some("2s".into()),
+            clipminmax: Some([0.0, 0.0]),
             selection: MsSelection {
                 timerange: Some(timerange.into()),
                 ..MsSelection::default()
@@ -937,11 +938,15 @@ fn averaged_list_clip_reports_only_members_of_selected_bins() {
         None,
     )
     .expect("evaluate averaged Clip agents");
-    let selected = reports
-        .iter()
-        .map(|report| report.as_ref().expect("Clip report").selected_rows)
-        .collect::<Vec<_>>();
-    assert_eq!(selected, [2, 0]);
+    let first = reports[0].as_ref().expect("selected Clip report");
+    assert_eq!(first.selected_rows, 2);
+    assert_eq!(first.changed_samples, 2 * NUM_CORR * NUM_CHAN);
+    assert_eq!(first.flagged_samples, first.changed_samples);
+    assert_eq!(first.total_samples, first.changed_samples);
+    let empty = reports[1].as_ref().expect("empty Clip report");
+    assert_eq!(empty.selected_rows, 0);
+    assert_eq!(empty.flagged_samples, 0);
+    assert_eq!(empty.total_samples, 0);
 }
 
 #[test]

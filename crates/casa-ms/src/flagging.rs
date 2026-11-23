@@ -36,7 +36,7 @@ use crate::schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
 use crate::selection::{
     MsSelection, ResolvedMsSelectionRow, TimeDefaults, TimeSelection, TimeSelectorDefaults,
-    flagdata_c_string, resolve_flagdata_selection_with_system_budget,
+    UvDistanceSelection, flagdata_c_string, resolve_flagdata_selection_with_system_budget,
     resolve_row_indices_with_system_budget, resolve_time_selector,
 };
 use crate::{
@@ -63,6 +63,7 @@ mod geometry;
 mod initial_version;
 mod program;
 mod shadow;
+mod shared_average;
 mod summary;
 
 pub use antint::AntennaIntegrationOptions;
@@ -73,8 +74,11 @@ use clip_time::{TimeClip, time_bin_seconds};
 pub use command::{append_flag_command, append_flag_commands};
 use correlation::{ClipMetric, ClipProjection, CorrelationSelection, TfcropCorrelations};
 pub use initial_version::save_initial_flag_version;
-pub use program::{flagdata_ms_program, validate_calibration_flag_averaging};
+pub use program::{
+    flagdata_ms_program, validate_calibration_flag_averaging, validate_ms_flag_averaging,
+};
 pub use shadow::{ShadowAntenna, ShadowOptions};
+use shared_average::{SharedAgentSelection, SharedFlagView};
 mod version_backup;
 mod version_storage;
 pub use clip_models::{FlagDataModelFactory, FlagDataModelPredictor};
@@ -1085,6 +1089,13 @@ fn maximum_flag_elements(ms: &MeasurementSet) -> Result<usize, FlaggingError> {
     Ok(maximum_elements)
 }
 
+#[derive(Default)]
+struct AveragedAgentInput<'a> {
+    time: Option<&'a TimeSelection>,
+    uv: Option<&'a UvDistanceSelection>,
+    view: Option<&'a mut SharedFlagView>,
+}
+
 fn apply_clip_flags(
     ms: &mut MeasurementSet,
     selected_rows: &[usize],
@@ -1092,18 +1103,27 @@ fn apply_clip_flags(
     correlations: Option<&CorrelationSelection>,
     request: &FlagDataRequest,
     model_factory: Option<FlagDataModelFactory>,
-    averaged_time: Option<&TimeSelection>,
+    averaging: AveragedAgentInput<'_>,
 ) -> Result<ChangeSet, FlaggingError> {
+    let AveragedAgentInput {
+        time: averaged_time,
+        uv: averaged_uv,
+        view,
+    } = averaging;
     let path = display_ms_path(ms);
     let widths = request.clip_channel_bins.as_deref();
     let time_average = request.clip_time_bin.as_deref().map(time_bin_seconds);
-    let average = time_average.is_some_and(|interval| interval.is_some())
+    let average = view.is_some()
+        || time_average.is_some_and(|interval| interval.is_some())
         || widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
+    let operand_rows = view
+        .as_deref()
+        .map_or(selected_rows, SharedFlagView::input_rows);
     let models = if request.clipoutside.is_some() {
         clip_models::ClipModels::for_selection(
             ms,
             request.data_column,
-            selected_rows,
+            operand_rows,
             model_factory,
             &path,
         )?
@@ -1135,17 +1155,22 @@ fn apply_clip_flags(
     if let Some(widths) = widths {
         check_channel_bins(ms, widths, &path)?;
     }
-    let options = ClipOptions {
-        zeros: request.clipzeros,
-        signed_zeros: false,
-        // CASA's clipping agent stores its bounds as single-precision values.
-        bounds: request
-            .clipminmax
-            .map(|bounds| bounds.map(|limit| f64::from(limit as f32))),
-        outside,
-        projections: None,
-        metric: correlations.and_then(CorrelationSelection::clip_metric),
-    };
+    let options = clip_options(request, correlations, outside);
+    if let Some(view) = view {
+        view.prepare_column(ms, request.data_column, &mut columns, &path)?;
+        return view.clip(
+            SharedAgentSelection {
+                rows: Some(selected_rows),
+                channels: channel_selections,
+                correlations,
+                time: averaged_time,
+                uv: averaged_uv,
+            },
+            request,
+            options,
+            &path,
+        );
+    }
     // CASA flags non-finite data and, with clipzeros, near-zero samples.
     let ddid_to_spw = data_description_spw_map(ms)?;
     let mut changed = ChangeSet::default();
@@ -1252,31 +1277,12 @@ fn apply_clip_flags(
                             .iter()
                             .any(|item| matches!(item, ClipProjection::Stokes(..)))
                 });
-                let row_changed = if let Some(bins) = &bins {
-                    row_changes
-                        .iter()
-                        .map(|&(corr, bin)| {
-                            bins.original_channels(bin)
-                                .iter()
-                                .filter(|&&chan| {
-                                    !std::mem::replace(&mut flag_planes[(corr, chan)], true)
-                                })
-                                .count()
-                        })
-                        .sum()
-                } else if may_overlap {
-                    row_changes
-                        .iter()
-                        .filter(|&&(corr, chan)| {
-                            !std::mem::replace(&mut flag_planes[(corr, chan)], true)
-                        })
-                        .count()
-                } else {
-                    for &(corr, chan) in &row_changes {
-                        flag_planes[(corr, chan)] = true;
-                    }
-                    row_changes.len()
-                };
+                let row_changed = set_clip_coordinates(
+                    &mut flag_planes,
+                    &row_changes,
+                    bins.as_ref(),
+                    may_overlap,
+                );
                 changed.changed_samples += row_changed;
                 flagged_samples += row_changed;
                 updates.insert(row, updated_flags);
@@ -1291,6 +1297,53 @@ fn apply_clip_flags(
         total_samples,
     });
     Ok(changed)
+}
+
+fn set_clip_coordinates(
+    flag_planes: &mut ndarray::ArrayViewMut2<'_, bool>,
+    row_changes: &[(usize, usize)],
+    bins: Option<&ChannelBins<'_>>,
+    may_overlap: bool,
+) -> usize {
+    if let Some(bins) = bins {
+        row_changes
+            .iter()
+            .map(|&(corr, bin)| {
+                bins.original_channels(bin)
+                    .iter()
+                    .filter(|&&chan| !std::mem::replace(&mut flag_planes[(corr, chan)], true))
+                    .count()
+            })
+            .sum()
+    } else if may_overlap {
+        row_changes
+            .iter()
+            .filter(|&&(corr, chan)| !std::mem::replace(&mut flag_planes[(corr, chan)], true))
+            .count()
+    } else {
+        for &(corr, chan) in row_changes {
+            flag_planes[(corr, chan)] = true;
+        }
+        row_changes.len()
+    }
+}
+
+fn clip_options(
+    request: &FlagDataRequest,
+    correlations: Option<&CorrelationSelection>,
+    outside: bool,
+) -> ClipOptions<'static> {
+    ClipOptions {
+        zeros: request.clipzeros,
+        signed_zeros: false,
+        // CASA's clipping agent stores its bounds as single-precision values.
+        bounds: request
+            .clipminmax
+            .map(|bounds| bounds.map(|limit| f64::from(limit as f32))),
+        outside,
+        projections: None,
+        metric: correlations.and_then(CorrelationSelection::clip_metric),
+    }
 }
 
 fn clip_channel_selection(
@@ -1427,8 +1480,13 @@ fn apply_tfcrop_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
     model_factory: Option<FlagDataModelFactory>,
-    averaged_time: Option<&TimeSelection>,
+    averaging: AveragedAgentInput<'_>,
 ) -> Result<ChangeSet, FlaggingError> {
+    let AveragedAgentInput {
+        time: averaged_time,
+        uv: averaged_uv,
+        mut view,
+    } = averaging;
     let started = Instant::now();
     let column = request.data_column;
     let calibration = is_calibration_table(ms);
@@ -1451,13 +1509,15 @@ fn apply_tfcrop_flags(
             && corr_admitted
     });
     let widths = request.clip_channel_bins.as_deref().filter(|_| public_ms);
-    let average = time_average.flatten().is_some()
+    let average = view.is_some()
+        || time_average.flatten().is_some()
         || widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
     let (mut columns, configures_averaging) = if public_ms {
         tfcrop_columns(
             ms,
             column,
-            selected_rows,
+            view.as_deref()
+                .map_or(selected_rows, SharedFlagView::input_rows),
             model_factory,
             options.is_some(),
             average,
@@ -1478,36 +1538,23 @@ fn apply_tfcrop_flags(
     if let Some(widths) = widths {
         check_channel_bins(ms, widths, &display_ms_path(ms))?;
     }
-    let loaded = if let Some(seconds) = time_average.flatten().filter(|_| configures_averaging) {
-        load_time_averaged_tfcrop(
-            ms,
-            selected_rows,
-            channel_selections,
-            columns.as_mut(),
-            request,
-            clip_time::TimeAveraging {
-                seconds,
-                filter: averaged_time,
+    let loaded = load_automatic_samples(
+        ms,
+        selected_rows,
+        channel_selections,
+        request,
+        AutomaticSampleSource {
+            columns: columns.as_mut(),
+            fit: options.is_some(),
+            seconds: time_average.flatten().filter(|_| configures_averaging),
+            widths,
+            input: AveragedAgentInput {
+                time: averaged_time,
+                uv: averaged_uv,
+                view: view.as_deref_mut(),
             },
-            widths,
-        )?
-    } else {
-        load_samples(
-            ms,
-            selected_rows,
-            channel_selections,
-            options.map(|_| {
-                columns
-                    .as_mut()
-                    .map_or(SampleData::Stored(column), |operands| {
-                        SampleData::Visibility(column, operands)
-                    })
-            }),
-            None,
-            false,
-            widths,
-        )?
-    };
+        },
+    )?;
     let mut samples = loaded.samples;
     let calibration_projection = calibration
         .then(|| calibration::automatic_projection(request, &samples))
@@ -1522,7 +1569,12 @@ fn apply_tfcrop_flags(
     let mut freq_flags = vec![false; samples.len()];
     let mut time_flags = vec![false; samples.len()];
     let groups: Vec<_> = if request.casa_row_selection || calibration_projection.is_some() {
-        ordered_autoflag_groups(ms, selected_rows, &samples, request)?
+        let ordered = if let Some(view) = view.as_deref() {
+            view.groups(&samples)
+        } else {
+            ordered_autoflag_groups(ms, selected_rows, &samples, request)?
+        };
+        ordered
             .into_iter()
             .map(|(([_, _, _, _, description], _), group)| (Some(description), group))
             .collect()
@@ -1548,7 +1600,7 @@ fn apply_tfcrop_flags(
             },
         )?;
     }
-    if request.extendflags {
+    if request.extendflags && view.is_none() {
         let fit_flags = loaded
             .axes
             .flags_by_bin
@@ -1584,15 +1636,19 @@ fn apply_tfcrop_flags(
             },
         })
     });
-    let mut changes = apply_tfcrop_mask(
-        &samples,
-        &modified,
-        loaded.flags_by_row,
-        &loaded.axes,
-        ms,
-        !request.casa_row_selection,
-        request.action.value(),
-    )?;
+    let mut changes = if let Some(view) = view {
+        view.stage(&samples, &modified, request.action.value())
+    } else {
+        apply_tfcrop_mask(
+            &samples,
+            &modified,
+            loaded.flags_by_row,
+            &loaded.axes,
+            ms,
+            !request.casa_row_selection,
+            request.action.value(),
+        )?
+    };
     changes.selected_rows = loaded.axes.time_selected_rows(averaged_time);
     let applied_ms = started.elapsed().as_millis();
     trace_flagdata(|| {
@@ -1959,8 +2015,13 @@ fn apply_rflag_flags(
     request: &FlagDataRequest,
     calculate: bool,
     model_factory: Option<FlagDataModelFactory>,
-    averaged_time: Option<&TimeSelection>,
+    averaging: AveragedAgentInput<'_>,
 ) -> Result<ChangeSet, FlaggingError> {
+    let AveragedAgentInput {
+        time: averaged_time,
+        uv: averaged_uv,
+        mut view,
+    } = averaging;
     let started = Instant::now();
     let column = request.data_column;
     let calibration = is_calibration_table(ms);
@@ -1972,7 +2033,8 @@ fn apply_rflag_flags(
         .filter(|_| public_ms)
         .map(time_bin_seconds);
     let widths = request.clip_channel_bins.as_deref().filter(|_| public_ms);
-    let average = time_average.flatten().is_some()
+    let average = view.is_some()
+        || time_average.flatten().is_some()
         || widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
     let correlations = public_ms
         .then(|| correlation::RflagCorrelations::read(ms, request.correlation.as_deref(), column))
@@ -1983,7 +2045,8 @@ fn apply_rflag_flags(
         autoflag_columns(
             ms,
             column,
-            selected_rows,
+            view.as_deref()
+                .map_or(selected_rows, SharedFlagView::input_rows),
             model_factory,
             active,
             average,
@@ -2004,36 +2067,23 @@ fn apply_rflag_flags(
     if let Some(widths) = widths {
         check_channel_bins(ms, widths, &display_ms_path(ms))?;
     }
-    let loaded = if let Some(seconds) = time_average.flatten().filter(|_| configures_averaging) {
-        load_time_averaged_tfcrop(
-            ms,
-            selected_rows,
-            channel_selections,
-            columns.as_mut(),
-            request,
-            clip_time::TimeAveraging {
-                seconds,
-                filter: averaged_time,
+    let loaded = load_automatic_samples(
+        ms,
+        selected_rows,
+        channel_selections,
+        request,
+        AutomaticSampleSource {
+            columns: columns.as_mut(),
+            fit: active,
+            seconds: time_average.flatten().filter(|_| configures_averaging),
+            widths,
+            input: AveragedAgentInput {
+                time: averaged_time,
+                uv: averaged_uv,
+                view: view.as_deref_mut(),
             },
-            widths,
-        )?
-    } else {
-        load_samples(
-            ms,
-            selected_rows,
-            channel_selections,
-            active.then(|| {
-                columns
-                    .as_mut()
-                    .map_or(SampleData::Stored(column), |operands| {
-                        SampleData::Visibility(column, operands)
-                    })
-            }),
-            None,
-            false,
-            widths,
-        )?
-    };
+        },
+    )?;
     let samples = loaded.samples;
     let projection = calibration
         .then(|| calibration::automatic_projection(request, &samples))
@@ -2045,7 +2095,9 @@ fn apply_rflag_flags(
         model_roundoff: &loaded.model_roundoff,
     };
     let loaded_ms = started.elapsed().as_millis();
-    let groups = if casa_rflag {
+    let groups = if let Some(view) = view.as_deref() {
+        view.groups(&samples)
+    } else if casa_rflag {
         ordered_autoflag_groups(ms, selected_rows, &samples, request)?
     } else {
         group_samples(&samples)
@@ -2092,7 +2144,7 @@ fn apply_rflag_flags(
     } else {
         RflagFitOutcome::default()
     };
-    if request.extendflags {
+    if request.extendflags && view.is_none() {
         let fit_flags = loaded
             .axes
             .flags_by_bin
@@ -2132,15 +2184,19 @@ fn apply_rflag_flags(
             },
         })
     });
-    let mut changes = apply_tfcrop_mask(
-        &samples,
-        &modified,
-        loaded.flags_by_row,
-        &loaded.axes,
-        ms,
-        !request.casa_row_selection,
-        request.action.value(),
-    )?;
+    let mut changes = if let Some(view) = view {
+        view.stage(&samples, &modified, request.action.value())
+    } else {
+        apply_tfcrop_mask(
+            &samples,
+            &modified,
+            loaded.flags_by_row,
+            &loaded.axes,
+            ms,
+            !request.casa_row_selection,
+            request.action.value(),
+        )?
+    };
     changes.selected_rows = loaded.axes.time_selected_rows(averaged_time);
     let applied_ms = started.elapsed().as_millis();
     changes.thresholds = if casa_rflag {
@@ -2162,6 +2218,76 @@ fn apply_rflag_flags(
         })
     });
     Ok(changes)
+}
+
+struct AutomaticSampleSource<'a> {
+    columns: Option<&'a mut ClipColumns>,
+    fit: bool,
+    seconds: Option<f64>,
+    widths: Option<&'a [u32]>,
+    input: AveragedAgentInput<'a>,
+}
+
+fn load_automatic_samples(
+    ms: &MeasurementSet,
+    rows: &[usize],
+    channels: Option<&BTreeMap<i32, ChannelSelection>>,
+    request: &FlagDataRequest,
+    source: AutomaticSampleSource<'_>,
+) -> Result<LoadedSamples, FlaggingError> {
+    let AutomaticSampleSource {
+        mut columns,
+        fit,
+        seconds,
+        widths,
+        input,
+    } = source;
+    let column = request.data_column;
+    if let Some(view) = input.view {
+        let path = display_ms_path(ms);
+        if let Some(columns) = &mut columns {
+            view.prepare_column(ms, column, columns, &path)?;
+        }
+        return view.load_samples(
+            SharedAgentSelection {
+                rows: Some(rows),
+                channels,
+                correlations: None,
+                time: input.time,
+                uv: input.uv,
+            },
+            columns.map(|_| column),
+            request,
+            &path,
+        );
+    }
+    if let Some(seconds) = seconds {
+        return load_time_averaged_tfcrop(
+            ms,
+            rows,
+            channels,
+            columns,
+            request,
+            clip_time::TimeAveraging {
+                seconds,
+                filter: input.time,
+            },
+            widths,
+        );
+    }
+    load_samples(
+        ms,
+        rows,
+        channels,
+        fit.then(|| {
+            columns.map_or(SampleData::Stored(column), |operands| {
+                SampleData::Visibility(column, operands)
+            })
+        }),
+        None,
+        false,
+        widths,
+    )
 }
 
 fn time_selected_autoflag_groups<'a, K: Copy>(

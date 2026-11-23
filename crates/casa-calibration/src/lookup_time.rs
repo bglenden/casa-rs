@@ -250,7 +250,7 @@ impl TimePlan {
                 for (parameter, value) in output.values.iter_mut().enumerate() {
                     let phase = value.arg()
                         + self.cycles[key][index * output.receptors * output.channels + parameter];
-                    *value = Complex32::from_polar(value.norm(), phase * scale);
+                    *value = crate::lookup::complex_from_casa_polar(value.norm(), phase * scale);
                 }
             }
             return Ok(Some(output));
@@ -317,7 +317,17 @@ impl TimePlan {
             let result = if self.mode == TimeInterpolation::Cubic {
                 sample_polar(&points, time, Curve::Cubic, false, &[])
             } else if self.mode == TimeInterpolation::Linear {
-                sample_polar(&points[..2], time, Curve::Linear, false, &[])
+                // CTTimeInterp1 uses Interpolate1D<Float, Array<Float>>.
+                // Round the fraction and the array arithmetic to Float.
+                let [
+                    (low_time, low_amp, low_phase),
+                    (high_time, high_amp, high_phase),
+                    ..,
+                ] = points;
+                let low_time = low_time as f32;
+                let fraction = (time as f32 - low_time) / (high_time as f32 - low_time);
+                let blend = |low, high| low + fraction * (high - low);
+                Some((blend(low_amp, high_amp), blend(low_phase, high_phase)))
             } else {
                 let spline = spline.expect("spline coefficients");
                 let left = lower * receptors * channels + index;
@@ -339,7 +349,7 @@ impl TimePlan {
                 }
                 phase *= scale;
             }
-            values.push(Complex32::from_polar(amplitude, phase));
+            values.push(crate::lookup::complex_from_casa_polar(amplitude, phase));
             flags.push(value(base, index).1 || value(high, index).1);
         }
         Ok(Some(ComplexSolution {

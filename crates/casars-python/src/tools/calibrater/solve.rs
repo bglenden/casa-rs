@@ -253,11 +253,15 @@ fn standard_request(
         "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
         "T" | "T JONES" | "T NOISE" => CalibrationSolveRequest::Gain(standard.gain(GainType::T)),
         "K" | "K JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::K)),
+        "KMBD" | "KMBD JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::KMbd)),
         "KCROSS" | "KCROSS JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::KCross)),
+        "KANTPOS" | "KANTPOS JONES" => {
+            CalibrationSolveRequest::Gain(standard.gain(GainType::KAntPos))
+        }
         "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
             standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
         ),
-        "BPOLY" => return Err(setup_error()),
+        "BPOLY" | "P" | "P JONES" => return Err(setup_error()),
         "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
             let frequency_dependent = family.starts_with("MF");
             CalibrationSolveRequest::Baseline {
@@ -289,9 +293,6 @@ fn standard_request(
                 controls,
                 active_phase,
             }
-        }
-        _ if casa_calibration::CalibraterLifecycle::recognizes_calibration_type(family) => {
-            return crate::tools::not_yet_implemented_in("calibrater", "setsolve", 1528);
         }
         _ => return Err(setup_error()),
     })
@@ -384,6 +385,9 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
+        let family = casa_calibration::CalibraterLifecycle::direct_solve_factory_alias(&family)
+            .map(str::to_owned)
+            .unwrap_or(family);
         let single_dish = single_dish_controls(&family, fraction, numedge, radius, smooth)?;
         let polarization =
             casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);

@@ -15,8 +15,9 @@ pub(super) fn solve(
     reference: i32,
     mode: GainSolveMode,
     cross_hand: bool,
+    legacy: bool,
 ) -> Result<DelaySolutions, GainSolveError> {
-    let layout = CombinedSpectrum::new(&buffers, cross_hand)?;
+    let layout = CombinedSpectrum::new(&buffers, cross_hand || legacy)?;
     if cross_hand {
         let mut spectrum = layout.empty_spectrum()?;
         for (window, rows) in &buffers {
@@ -44,7 +45,16 @@ pub(super) fn solve(
             };
             let samples = row.channels().map(|(value, weight)| {
                 let (mean, weight) = constrain(value, weight, mode);
-                mean * weight
+                if legacy {
+                    let amplitude = mean.norm();
+                    if amplitude < f32::EPSILON {
+                        mean
+                    } else {
+                        mean / amplitude
+                    }
+                } else {
+                    mean * weight
+                }
             });
             layout.add(*window, samples, target)?;
         }
@@ -89,13 +99,13 @@ struct CombinedSpectrum {
     spacing_ghz: f64,
     padded_ghz: f64,
     size: usize,
-    cross_hand: bool,
+    wrap_before_shift: bool,
 }
 
 impl CombinedSpectrum {
-    fn new(buffers: &[Buffer<'_>], cross_hand: bool) -> Result<Self, GainSolveError> {
+    fn new(buffers: &[Buffer<'_>], wrap_before_shift: bool) -> Result<Self, GainSolveError> {
         let spacing = buffers.iter().map(|(window, _)| window.spacing_ghz);
-        let bandwidth = if cross_hand {
+        let bandwidth = if wrap_before_shift {
             let low = buffers
                 .iter()
                 .map(|(window, _)| window.start_ghz)
@@ -117,7 +127,7 @@ impl CombinedSpectrum {
             let widest = spacing.clone().map(f64::abs).fold(0., f64::max);
             (2. + (high - low) / widest).floor() * widest
         };
-        if !cross_hand
+        if !wrap_before_shift
             && spacing
                 .clone()
                 .any(|step| step.signum() != buffers[0].0.spacing_ghz.signum())
@@ -126,7 +136,7 @@ impl CombinedSpectrum {
                 "multi-window antenna delays require matching sidebands",
             ));
         }
-        let spacing_ghz = if cross_hand {
+        let spacing_ghz = if wrap_before_shift {
             spacing.fold(f64::INFINITY, f64::min)
         } else {
             spacing
@@ -140,7 +150,7 @@ impl CombinedSpectrum {
             spacing_ghz,
             padded_ghz,
             size,
-            cross_hand,
+            wrap_before_shift,
         })
     }
 
@@ -157,7 +167,7 @@ impl CombinedSpectrum {
         let size = fft_size(self.padded_ghz, window.spacing_ghz)?;
         if size < window.channels
             || size > self.size
-            || !self.cross_hand && !self.size.is_multiple_of(size)
+            || !self.wrap_before_shift && !self.size.is_multiple_of(size)
         {
             return Err(delay_error(
                 "combined delay windows have incompatible channel widths",
@@ -174,8 +184,12 @@ impl CombinedSpectrum {
             .map_err(delay_error)?;
         let shift = TAU * (self.origin_ghz - window.start_ghz) / window.spacing_ghz / size as f64;
         for (index, total) in target.iter_mut().enumerate() {
-            let mut phase_index = if self.cross_hand { index % size } else { index } as f64;
-            if !self.cross_hand && index >= self.size / 2 {
+            let mut phase_index = if self.wrap_before_shift {
+                index % size
+            } else {
+                index
+            } as f64;
+            if !self.wrap_before_shift && index >= self.size / 2 {
                 phase_index -= self.size as f64;
             }
             let phase = shift * phase_index;

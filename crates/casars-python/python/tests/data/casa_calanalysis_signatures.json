@@ -1,0 +1,196 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "antenna": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "antenna1": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "antenna2": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "calname": [],
+    "close": [],
+    "feed": [],
+    "field": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "fit": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timerange"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "feed"
+      },
+      {
+        "default": "'TIME'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "'AMPLITUDE'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ap"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "norm"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unwrap"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "jumpmax"
+      },
+      {
+        "default": "'AVERAGE'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "order"
+      },
+      {
+        "default": "'LSQ'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "type"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "weight"
+      }
+    ],
+    "freq": [],
+    "get": [
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "field"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "antenna"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "timerange"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spw"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "feed"
+      },
+      {
+        "default": "'TIME'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "axis"
+      },
+      {
+        "default": "'AMPLITUDE'",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "ap"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "norm"
+      },
+      {
+        "default": "False",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "unwrap"
+      },
+      {
+        "default": "0.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "jumpmax"
+      }
+    ],
+    "msname": [],
+    "numantenna": [],
+    "numantenna1": [],
+    "numantenna2": [],
+    "numchannel": [],
+    "numfeed": [],
+    "numfield": [],
+    "numspw": [],
+    "numtime": [],
+    "open": [
+      {
+        "default": "''",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "caltable"
+      }
+    ],
+    "partype": [],
+    "polbasis": [],
+    "spw": [
+      {
+        "default": "True",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "name"
+      }
+    ],
+    "time": [],
+    "viscal": []
+  },
+  "tool": "calanalysis"
+}
