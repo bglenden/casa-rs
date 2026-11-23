@@ -422,10 +422,7 @@ impl super::PyCalibrater {
             if matches!(family.as_str(), "TOPAC" | "TFOPAC") {
                 let channelized = family == "TFOPAC";
                 if channelized {
-                    casa_calibration::BandpassFrequencyInterval::from_casa(
-                        frequency.unwrap_or_default(),
-                    )
-                    .ok_or_else(setup_error)?;
+                    bandpass_frequency(frequency)?;
                 }
                 state
                     .set_tool_opacity_solve(standard.gain(GainType::T), mode, channelized)
