@@ -132,7 +132,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("close", &[], R::Any, No),
+    method("close", &[], R::Any, Yes),
     method("corrbit", &[param("spw", K::Int, Int(-1))], R::Any, No),
     method(
         "corrprodsforpol",
@@ -152,7 +152,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("done", &[], R::Any, No),
+    method("done", &[], R::Any, Yes),
     method("effexposuretime", &[], R::Any, No),
     method(
         "exposuretime",
@@ -167,7 +167,7 @@ const METHODS: &[Method] = &[
         No,
     ),
     method("fdmspws", &[], R::Any, No),
-    method("fieldnames", &[], R::Any, No),
+    method("fieldnames", &[], R::Any, Yes),
     method(
         "fieldsforintent",
         &[
@@ -271,7 +271,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("name", &[], R::Any, No),
+    method("name", &[], R::Any, Yes),
     method(
         "namesforfields",
         &[param("fieldids", K::Text, Text(""))],
@@ -284,7 +284,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("nantennas", &[], R::Any, No),
+    method("nantennas", &[], R::Any, Yes),
     method("narrays", &[], R::Any, No),
     method(
         "nbaselines",
@@ -299,8 +299,8 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("nfields", &[], R::Any, No),
-    method("nobservations", &[], R::Any, No),
+    method("nfields", &[], R::Any, Yes),
+    method("nobservations", &[], R::Any, Yes),
     method(
         "nrows",
         &[
@@ -318,15 +318,15 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("nstates", &[], R::Any, No),
-    method("observatorynames", &[], R::Any, No),
+    method("nstates", &[], R::Any, Yes),
+    method("observatorynames", &[], R::Any, Yes),
     method(
         "observatoryposition",
         &[param("which", K::Int, Int(0))],
         R::Any,
         No,
     ),
-    method("observers", &[], R::Any, No),
+    method("observers", &[], R::Any, Yes),
     method(
         "open",
         &[
@@ -334,7 +334,7 @@ const METHODS: &[Method] = &[
             param("maxcache", K::Float, Float(50.0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "phasecenter",
@@ -361,7 +361,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("projects", &[], R::Any, No),
+    method("projects", &[], R::Any, Yes),
     method("propermotions", &[], R::Any, No),
     method(
         "refdir",
