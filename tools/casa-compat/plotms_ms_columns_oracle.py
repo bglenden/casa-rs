@@ -255,9 +255,14 @@ def compare_ratio_float_range(root, vis, source, native):
     data[0, 1, 0], model[0, 1, 0] = 8 + 4j, 2e-38
     data[0, 3, 0], model[0, 3, 0] = 1e-30 + 2e-30j, 1e30
     with opened(bounded, True) as table:
+        second = np.flatnonzero((table.getcol("ANTENNA1") == 0)
+                                & (table.getcol("ANTENNA2") == 1)
+                                & (table.getcol("FIELD_ID") == 0))[1]
+        data[0, 1, second], model[0, 1, second] = 8 + 4j, 1e-37
         table.putcol("DATA", data)
         table.putcol("MODEL_DATA", model)
-    for method, large_phase, small_phase in (("vector", 0.0, 0.0), ("scalar", np.inf, 6.34349e-29)):
+    phases = (("vector", (0.0, 0.0, 26.5651)), ("scalar", (np.inf, 6.34349e-29, np.inf)))
+    for method, expected_phases in phases:
         name = f"{method}-ratio-float-range"
         column = f"data/model_{method}"
         controls = request(bounded) | dict(xdatacolumn=column, ydatacolumn=column, expformat="txt")
@@ -266,8 +271,8 @@ def compare_ratio_float_range(root, vis, source, native):
         assert native(**controls, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == 12
         for export in (expected, actual):
-            extremes = np.array([sample[:2] for sample in rows(export)[:2]], dtype=float)
-            np.testing.assert_allclose(extremes, [[np.inf, large_phase], [0.0, small_phase]],
+            extremes = np.array([sample[:2] for sample in rows(export)[:3]], dtype=float)
+            np.testing.assert_allclose(extremes, np.column_stack(([np.inf, 0.0, 8.94427e37], expected_phases)),
                                        rtol=1.2e-5, atol=0)
         print(f"{name}: matched the float range for 12 selected points", flush=True)
 

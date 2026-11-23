@@ -6086,6 +6086,8 @@ enum VisibilityColumnProjection {
 
 impl VisibilityColumnProjection {
     fn axis_value(self, axis: MsAxis, [observed, model]: [Complex64; 2]) -> Option<f64> {
+        let as_complex_float =
+            |value: Complex64| num_complex::Complex32::new(value.re as f32, value.im as f32);
         match self {
             Self::ScalarResidual => {
                 let value = match axis {
@@ -6104,9 +6106,9 @@ impl VisibilityColumnProjection {
                     Complex64::new(infinity * observed.re, infinity * observed.im)
                 } else {
                     observed / model
-                }
-                .map(|component| component as f32);
+                };
                 // CASA caches the complex float quotient before converting its axes.
+                let value = as_complex_float(value);
                 Some(f64::from(match axis {
                     MsAxis::Amplitude => value.norm(),
                     MsAxis::Phase => Self::float_phase_degrees(value.arg()),
@@ -6116,8 +6118,8 @@ impl VisibilityColumnProjection {
                 }))
             }
             Self::ScalarRatio => {
-                let observed = observed.map(|component| component as f32);
-                let model = model.map(|component| component as f32);
+                let observed = as_complex_float(observed);
+                let model = as_complex_float(model);
                 Some(f64::from(match axis {
                     MsAxis::Amplitude => observed.norm() / model.norm(),
                     MsAxis::Phase => Self::float_phase_degrees(observed.arg() / model.norm()),
@@ -6131,7 +6133,8 @@ impl VisibilityColumnProjection {
     }
 
     fn float_phase_degrees(radians: f32) -> f32 {
-        f64::from(radians).to_degrees() as f32
+        // The cache multiplies the Float array by 180 before dividing by pi.
+        (radians * 180.0) / std::f32::consts::PI
     }
 }
 
