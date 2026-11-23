@@ -611,8 +611,16 @@ pub enum MsDataColumn {
 }
 
 impl MsDataColumn {
-    fn is_vector_residual(self) -> bool {
+    fn is_residual(self) -> bool {
         matches!(self, Self::DataMinusModel | Self::CorrectedMinusModel)
+            || self.is_scalar_residual()
+    }
+
+    fn is_scalar_residual(self) -> bool {
+        matches!(
+            self,
+            Self::DataMinusModelScalar | Self::CorrectedMinusModelScalar
+        )
     }
 
     /// Stable machine-readable identifier.
@@ -3883,6 +3891,7 @@ fn build_generic_visibility_scatter(
     let use_spectral_weights = calibration.is_some()
         && needs_visibility_grid
         && spec.averaging.avgchannel.is_some_and(|width| width > 1);
+    let project_scalar_residual = calibration.is_some_and(|input| input.rows.is_none());
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
             .y_axes
@@ -3940,11 +3949,11 @@ fn build_generic_visibility_scatter(
         let row_grid_started = timing_enabled.then(Instant::now);
         let grid = data_source
             .as_ref()
-            .map(|source| source.row(row_slot))
+            .map(|source| source.row(row_slot, project_scalar_residual))
             .transpose()?;
         let x_grid = x_data_source
             .as_ref()
-            .map(|source| source.row(row_slot))
+            .map(|source| source.row(row_slot, project_scalar_residual))
             .transpose()?;
         if let (Some(x), Some(y)) = (&x_grid, &grid)
             && (x.corr_count, x.chan_count) != (y.corr_count, y.chan_count)
@@ -4214,18 +4223,27 @@ fn build_generic_visibility_scatter(
                     scatter_timing.bin_collect += started.elapsed();
                 }
                 let axis_started = timing_enabled.then(Instant::now);
+                let y_visibility = VisibilityBinSamples::new(
+                    grid.as_ref(),
+                    &samples,
+                    &visibility_weights,
+                    *corr_index,
+                    bin,
+                );
+                let x_visibility = if let Some(grid) = x_grid.as_ref() {
+                    VisibilityBinSamples::new(
+                        Some(grid),
+                        &x_samples,
+                        &x_visibility_weights,
+                        *corr_index,
+                        bin,
+                    )
+                } else {
+                    y_visibility
+                };
                 let Some(x_value) = compute_axis_value(
                     spec.x_axis,
-                    if x_grid.is_some() {
-                        &x_samples
-                    } else {
-                        &samples
-                    },
-                    if x_grid.is_some() {
-                        &x_visibility_weights
-                    } else {
-                        &visibility_weights
-                    },
+                    x_visibility,
                     &flag_samples,
                     &weight_spectrum_samples,
                     &sigma_spectrum_samples,
@@ -4250,8 +4268,7 @@ fn build_generic_visibility_scatter(
                 for (y_axis, series_key, series_label, color_group) in &series_identity {
                     let Some(y_value) = compute_axis_value(
                         *y_axis,
-                        &samples,
-                        &visibility_weights,
+                        y_visibility,
                         &flag_samples,
                         &weight_spectrum_samples,
                         &sigma_spectrum_samples,
@@ -4372,9 +4389,22 @@ fn build_generic_visibility_scatter(
         .clone()
         .unwrap_or_else(|| axis_label(spec.y_axis()));
     let secondary_y_label = spec.secondary_y_axis().map(axis_label);
-    let fixed_x_bounds = fixed_bounds(spec.x_axis);
-    let fixed_y_bounds = fixed_bounds(spec.y_axis());
-    let secondary_fixed_y_bounds = spec.secondary_y_axis().and_then(fixed_bounds);
+    let bounds_for_column = |axis, column: MsDataColumn| {
+        if project_scalar_residual && column.is_scalar_residual() {
+            // A difference of phases can extend beyond the principal phase range.
+            None
+        } else {
+            fixed_bounds(axis)
+        }
+    };
+    let x_column = calibration
+        .and_then(|input| input.x_data_column)
+        .unwrap_or(spec.data_column);
+    let fixed_x_bounds = bounds_for_column(spec.x_axis, x_column);
+    let fixed_y_bounds = bounds_for_column(spec.y_axis(), spec.data_column);
+    let secondary_fixed_y_bounds = spec
+        .secondary_y_axis()
+        .and_then(|axis| bounds_for_column(axis, spec.data_column));
     let mut panels = panel_order
         .into_iter()
         .filter_map(|panel_key| {
@@ -4885,11 +4915,11 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let grid = data_source
             .as_ref()
-            .map(|source| source.row(row_slot))
+            .map(|source| source.row(row_slot, false))
             .transpose()?;
         let x_grid = x_data_source
             .as_ref()
-            .map(|source| source.row(row_slot))
+            .map(|source| source.row(row_slot, false))
             .transpose()?;
         if let (Some(x), Some(y)) = (&x_grid, &grid)
             && (x.corr_count, x.chan_count) != (y.corr_count, y.chan_count)
@@ -5202,8 +5232,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             axis if !axis.is_visibility_math() => {
                                 if let Some(value) = compute_axis_value(
                                     axis,
-                                    &samples,
-                                    &[],
+                                    VisibilityBinSamples::default(),
                                     &flag_samples,
                                     &weight_spectrum_samples,
                                     &sigma_spectrum_samples,
@@ -5253,8 +5282,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             axis if !axis.is_visibility_math() => {
                                 if let Some(value) = compute_axis_value(
                                     axis,
-                                    &samples,
-                                    &[],
+                                    VisibilityBinSamples::default(),
                                     &flag_samples,
                                     &weight_spectrum_samples,
                                     &sigma_spectrum_samples,
@@ -6003,11 +6031,39 @@ fn resolve_spectral_context(
     }))
 }
 
+#[derive(Clone, Copy, Default)]
+struct VisibilityBinSamples<'a> {
+    values: &'a [Complex64],
+    weights: &'a [f64],
+    scalar_residual: Option<[Complex64; 2]>,
+}
+
+impl<'a> VisibilityBinSamples<'a> {
+    fn new(
+        grid: Option<&ComplexGrid>,
+        values: &'a [Complex64],
+        weights: &'a [f64],
+        corr_index: usize,
+        bin: &ChannelBin,
+    ) -> Self {
+        let scalar_residual = grid.and_then(|grid| {
+            let model = grid.scalar_residual_model.as_ref()?;
+            let observed = *values.first()?;
+            debug_assert_eq!(bin.channels().count(), 1);
+            Some([observed, model[corr_index * grid.chan_count + bin.start]])
+        });
+        Self {
+            values,
+            weights,
+            scalar_residual,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compute_axis_value(
     axis: MsAxis,
-    samples: &[Complex64],
-    visibility_weights: &[f64],
+    visibility: VisibilityBinSamples<'_>,
     flag_samples: &[bool],
     weight_spectrum_samples: &[f64],
     sigma_spectrum_samples: &[f64],
@@ -6024,10 +6080,20 @@ fn compute_axis_value(
     geometry_engine: Option<&MsCalEngine>,
 ) -> Result<Option<f64>, String> {
     if axis.is_visibility_math() {
+        if let Some([observed, model]) = visibility.scalar_residual {
+            let value = match axis {
+                MsAxis::Amplitude => observed.norm() - model.norm(),
+                MsAxis::Phase => (observed.arg() - model.arg()).to_degrees(),
+                MsAxis::Real => observed.re - model.re,
+                MsAxis::Imaginary => observed.im - model.im,
+                _ => unreachable!("scalar residuals require a visibility axis"),
+            };
+            return Ok(value.is_finite().then_some(value));
+        }
         return Ok(compute_weighted_visibility_math(
             axis,
-            samples,
-            visibility_weights,
+            visibility.values,
+            visibility.weights,
             scalar_average,
         ));
     }
@@ -6528,6 +6594,7 @@ struct ComplexGrid {
     corr_count: usize,
     chan_count: usize,
     values: Vec<Complex64>,
+    scalar_residual_model: Option<Vec<Complex64>>,
 }
 
 #[derive(Debug, Clone)]
@@ -6795,7 +6862,7 @@ impl<'a> PreparedSelectedDataSource<'a> {
         }
     }
 
-    fn row(&self, row_slot: usize) -> Result<ComplexGrid, String> {
+    fn row(&self, row_slot: usize, project_scalar_residual: bool) -> Result<ComplexGrid, String> {
         match self {
             Self::Single(column) => complex_grid_from_array(column.get(row_slot)?),
             Self::Difference {
@@ -6803,8 +6870,13 @@ impl<'a> PreparedSelectedDataSource<'a> {
                 right,
                 scalar,
             } => {
-                let left = complex_grid_from_array(left.get(row_slot)?)?;
+                let mut left = complex_grid_from_array(left.get(row_slot)?)?;
                 let right = complex_grid_from_array(right.get(row_slot)?)?;
+                if *scalar && project_scalar_residual {
+                    check_grid_shapes(&left, &right)?;
+                    left.scalar_residual_model = Some(right.values);
+                    return Ok(left);
+                }
                 combine_grids(left, right, |left, right| {
                     if *scalar {
                         Complex64::new(left.norm() - right.norm(), 0.0)
@@ -6852,6 +6924,7 @@ fn complex_grid_from_array(array: &ArrayValue) -> Result<ComplexGrid, String> {
                     .iter()
                     .map(|value| Complex64::new(value.re as f64, value.im as f64))
                     .collect(),
+                scalar_residual_model: None,
             })
         }
         ArrayValue::Complex64(values) => {
@@ -6863,6 +6936,7 @@ fn complex_grid_from_array(array: &ArrayValue) -> Result<ComplexGrid, String> {
                 corr_count: values.nrows(),
                 chan_count: values.ncols(),
                 values: values.iter().copied().collect(),
+                scalar_residual_model: None,
             })
         }
         other => Err(format!(
@@ -6912,6 +6986,16 @@ fn scalar_values_to_grid(values: &[f64], chan_count: usize) -> FloatGrid {
     }
 }
 
+fn check_grid_shapes(left: &ComplexGrid, right: &ComplexGrid) -> Result<(), String> {
+    if left.corr_count != right.corr_count || left.chan_count != right.chan_count {
+        return Err(format!(
+            "msexplore data columns have mismatched shapes [{}, {}] and [{}, {}]",
+            left.corr_count, left.chan_count, right.corr_count, right.chan_count
+        ));
+    }
+    Ok(())
+}
+
 fn combine_grids<F>(
     left: ComplexGrid,
     right: ComplexGrid,
@@ -6920,12 +7004,7 @@ fn combine_grids<F>(
 where
     F: FnMut(Complex64, Complex64) -> Complex64,
 {
-    if left.corr_count != right.corr_count || left.chan_count != right.chan_count {
-        return Err(format!(
-            "msexplore data columns have mismatched shapes [{}, {}] and [{}, {}]",
-            left.corr_count, left.chan_count, right.corr_count, right.chan_count
-        ));
-    }
+    check_grid_shapes(&left, &right)?;
     Ok(ComplexGrid {
         corr_count: left.corr_count,
         chan_count: left.chan_count,
@@ -6935,6 +7014,7 @@ where
             .zip(right.values)
             .map(|(left, right)| combine(left, right))
             .collect(),
+        scalar_residual_model: None,
     })
 }
 
@@ -8544,7 +8624,7 @@ mod tests {
             PreparedSelectedDataSource::new(&ms, MsDataColumn::CorrectedMinusModel, &[0, 1], None)
                 .unwrap();
         assert_eq!(
-            difference.row(0).unwrap().values[0],
+            difference.row(0, false).unwrap().values[0],
             Complex64::new(10.0, 0.0)
         );
 
@@ -8555,14 +8635,14 @@ mod tests {
             None,
         )
         .unwrap();
-        let scalar_ratio_row = scalar_ratio.row(0).unwrap();
+        let scalar_ratio_row = scalar_ratio.row(0, false).unwrap();
         assert_eq!(scalar_ratio_row.values[0], Complex64::new(6.0, 0.0));
-        assert!(scalar_ratio.row(1).unwrap().values[1].re.is_nan());
+        assert!(scalar_ratio.row(1, false).unwrap().values[1].re.is_nan());
 
         let direct_ratio =
             PreparedSelectedDataSource::new(&ms, MsDataColumn::DataDivModel, &[0], None).unwrap();
         assert_eq!(
-            direct_ratio.row(0).unwrap().values[1],
+            direct_ratio.row(0, false).unwrap().values[1],
             Complex64::new(5.0, 0.0)
         );
 
@@ -8597,11 +8677,13 @@ mod tests {
                     corr_count: 1,
                     chan_count: 2,
                     values: vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
+                    scalar_residual_model: None,
                 },
                 ComplexGrid {
                     corr_count: 2,
                     chan_count: 1,
                     values: vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
+                    scalar_residual_model: None,
                 },
                 |left, right| left + right,
             )

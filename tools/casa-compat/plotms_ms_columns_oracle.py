@@ -57,7 +57,8 @@ def compare_figure(root, native, controls, expected, labels):
 
     def record(*args, **kwargs):
         figure, axis = render(*args, **kwargs)
-        capture.append((axis.get_title(), axis.get_xlabel(), axis.get_ylabel(), axis.lines[0].get_xydata()))
+        capture.append((axis.get_title(), axis.get_xlabel(), axis.get_ylabel(),
+                        axis.lines[0].get_xydata(), axis.get_xlim(), axis.get_ylim()))
         return figure, axis
 
     outputs = [root / engine / expected.name.replace(".casa.txt", ".png") for engine in ("casa", "native")]
@@ -67,10 +68,12 @@ def compare_figure(root, native, controls, expected, labels):
     assert reference(**figure, plotfile=str(outputs[0])) is None
     with patch.object(_plot_document, "render_document", record):
         assert native(**figure, plotfile=str(outputs[1])) is None
-    [(title, xlabel, ylabel, points)] = capture
+    [(title, xlabel, ylabel, points, xlim, ylim)] = capture
     assert (title, xlabel, ylabel) == labels, (title, xlabel, ylabel)
     coordinates = np.array([point[:2] for point in rows(expected)], dtype=float)
     np.testing.assert_allclose(points, coordinates, rtol=1.2e-5, atol=1e-7)
+    for values, limits in zip(points.T, (xlim, ylim), strict=True):
+        assert min(limits) <= min(values) <= max(values) <= max(limits), (values, limits)
     for output in outputs:
         with Image.open(output) as image:
             assert image.size == (500, 360), (output, image.size)
@@ -183,6 +186,23 @@ def compare_missing_corrected(root, vis, source, native):
                 np.testing.assert_array_equal(table.getcol(name), values, err_msg=name)
 
 
+def compare_scalar_phase_boundary(root, vis, source, native):
+    boundary = root / "scalar-phase-boundary.ms"
+    copy_ms(vis, boundary)
+    with opened(boundary, True) as table:
+        table.putcol("CORRECTED_DATA", source["DATA"] * np.complex64(-1 + 0.125j))
+        table.putcol("MODEL_DATA", source["DATA"] * np.complex64(-1 - 0.125j))
+    controls = request(boundary) | dict(xdatacolumn="data-model_scalar", ydatacolumn="corrected-model_scalar")
+    expected, actual = (root / f"scalar-phase-boundary.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    assert all(float(sample[1]) > 180 for sample in rows(expected))
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 12
+    compare_figure(root, native, controls, expected,
+                   ("Phase:corrected-model (scalar) vs. Amp:data-model (scalar)",
+                    "Amp:data-model (scalar)", "Phase:corrected-model (scalar) (degrees)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -203,6 +223,7 @@ def main():
             for name, values in source.items():
                 np.testing.assert_array_equal(table.getcol(name), values, err_msg=name)
         compare_missing_corrected(root, vis, source, native)
+        compare_scalar_phase_boundary(root, vis, source, native)
 
 
 if __name__ == "__main__":

@@ -140,6 +140,8 @@ fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
         let label = match column {
             MsDataColumn::DataMinusModel => "data-model (vector)",
             MsDataColumn::CorrectedMinusModel => "corrected-model (vector)",
+            MsDataColumn::DataMinusModelScalar => "data-model (scalar)",
+            MsDataColumn::CorrectedMinusModelScalar => "corrected-model (scalar)",
             other => other.as_str(),
         };
         format!("{name}:{label}")
