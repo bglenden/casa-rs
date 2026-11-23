@@ -153,7 +153,8 @@ pub(super) fn traditional_apply_description(
     let time = if time.is_empty() { "linear" } else { time };
     let interpolation = if matches!(
         subtype,
-        "B Jones"
+        "A Noise"
+            | "B Jones"
             | "B TSYS"
             | "BPOLY"
             | "Df Jones"
