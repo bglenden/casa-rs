@@ -70,6 +70,7 @@ def parse_libraries(work, tools):
         'missing-assignment': "caltable 'A.cal'\n",
         'array-prefix': "caltable='A.cal' spwmap=[1,two]\n",
         'quoted-empty-map': "caltable='A.cal' antmap='[]' spwmap='[]'\n",
+        'syntax-before-empty-map': "caltable 'A.cal'\ncaltable='B.cal' spwmap=[]\n",
     }
     for name, text in cases.items():
         path.write_text(text)

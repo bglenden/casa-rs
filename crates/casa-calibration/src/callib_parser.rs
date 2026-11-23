@@ -24,7 +24,7 @@ pub(super) fn parse(
     contents: &str,
     allow_empty_maps: bool,
 ) -> Result<(Vec<Entry>, bool), (usize, String)> {
-    let tokens = lex(contents, allow_empty_maps)?;
+    let tokens = lex(contents)?;
     let mut entries = Vec::new();
     let mut has_statement = false;
     let mut values = BTreeMap::new();
@@ -51,10 +51,13 @@ pub(super) fn parse(
         if !matches!(tokens.get(index + 1), Some((_, Token::Equals))) {
             return Err((*line, "expected '=' after parameter name".into()));
         }
-        let Some((_, value)) = tokens.get(index + 2) else {
+        let Some((value_line, value)) = tokens.get(index + 2) else {
             return Err((*line, "missing parameter value".into()));
         };
         match value {
+            Token::Array(ids) if ids.is_empty() && !allow_empty_maps => {
+                return Err((*value_line, "empty mapping array".into()));
+            }
             Token::String(value) if key == "caltable" || PARAMETERS.contains(&key.as_str()) => {
                 // addStringParam changes embedded single quotes to double quotes.
                 values.insert(
@@ -109,7 +112,7 @@ pub(super) fn parse(
     Ok((entries, has_statement))
 }
 
-fn lex(contents: &str, allow_empty_maps: bool) -> Result<Vec<(usize, Token)>, (usize, String)> {
+fn lex(contents: &str) -> Result<Vec<(usize, Token)>, (usize, String)> {
     let chars = contents.chars().collect::<Vec<_>>();
     let mut tokens = Vec::new();
     let (mut index, mut line, mut beginning) = (0, 1, true);
@@ -186,9 +189,7 @@ fn lex(contents: &str, allow_empty_maps: bool) -> Result<Vec<(usize, Token)>, (u
                     }
                 }
                 if index == chars.len()
-                    || (ids.is_empty()
-                        && (!allow_empty_maps
-                            || chars[start..index].iter().any(|ch| !ch.is_whitespace())))
+                    || (ids.is_empty() && chars[start..index].iter().any(|ch| !ch.is_whitespace()))
                 {
                     return Err((start_line, "empty or unterminated mapping array".into()));
                 }
