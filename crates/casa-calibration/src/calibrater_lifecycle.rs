@@ -11,7 +11,7 @@ use casa_tables::RequiredScalarColumnValues;
 use casa_types::{ScalarValue, Value};
 
 use crate::attachment::OpenedMs;
-use crate::bandpass::{BandpassFrequencyInterval, BandpassSolveControls};
+use crate::bandpass::{BandpassFrequencyInterval, BandpassSolveControls, GatherFrequencyLayout};
 use crate::execute::{ApplyTermCounts, LibraryApplyRegistration};
 use crate::listing::{CalibrationListingReport, list_calibration, publish_listing};
 
@@ -1264,8 +1264,14 @@ impl CalibraterLifecycle {
                 crate::solve::GatherOnlySolveSettings {
                     parameters: *parameters,
                     check_append: !self.legacy_iterator && *mode == CalibrationOutputMode::Append,
-                    channelized: *channelized,
-                    frequency: *frequency,
+                    legacy: self.legacy_iterator,
+                    layout: if *channelized {
+                        GatherFrequencyLayout::Channelized(*frequency)
+                    } else if *subtype == "F Jones" {
+                        GatherFrequencyLayout::WidthWeighted
+                    } else {
+                        GatherFrequencyLayout::Collapsed
+                    },
                 },
             )
             .map_err(|_| gather_only_failure(subtype))

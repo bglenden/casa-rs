@@ -640,8 +640,8 @@ pub(crate) fn solve_gain_rows(
 pub(crate) struct GatherOnlySolveSettings {
     pub(crate) parameters: usize,
     pub(crate) check_append: bool,
-    pub(crate) channelized: bool,
-    pub(crate) frequency: Option<crate::BandpassFrequencyInterval>,
+    pub(crate) legacy: bool,
+    pub(crate) layout: crate::bandpass::GatherFrequencyLayout,
 }
 
 pub(crate) fn gather_only_tool_solve(
@@ -709,20 +709,23 @@ fn solve_gain_rows_with_settings(
         .transpose()?
         .unwrap_or_default();
     if let Some(settings) = &gather_only
-        && settings.check_append
+        && (settings.check_append || request.combine.spectral_windows)
     {
-        crate::bandpass::check_gather_append(
+        crate::bandpass::check_gather_frequency(
             ms,
-            &request.output_table,
+            settings
+                .check_append
+                .then_some(request.output_table.as_path()),
             &context.rows,
-            settings.channelized,
-            settings.frequency,
+            settings.layout,
             request.combine.spectral_windows,
         )
         .map_err(|error| GainSolveError::FrequencyScalar(error.to_string()))?;
     }
-    let input_rows = if gather_only.is_some() {
-        grouping::SolveInputRows::GatherOnlyTool
+    let input_rows = if let Some(settings) = &gather_only {
+        grouping::SolveInputRows::GatherOnlyTool {
+            legacy: settings.legacy,
+        }
     } else {
         grouping::SolveInputRows::gain(
             activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T),

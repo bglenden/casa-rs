@@ -97,17 +97,25 @@ pub(crate) fn write(
     table.save(TableOptions::new(path)).map_err(metadata_error)
 }
 
-/// Check the frequency grid CASA would use before attempting a direct append.
-pub(crate) fn check_gather_append(
+#[derive(Clone, Copy)]
+pub(crate) enum GatherFrequencyLayout {
+    Collapsed,
+    WidthWeighted,
+    Channelized(Option<BandpassFrequencyInterval>),
+}
+
+/// Check the frequency grid used by the gather and any append destination.
+pub(crate) fn check_gather_frequency(
     ms: &MeasurementSet,
-    path: &Path,
+    destination: Option<&Path>,
     rows: &[SelectedSolveRow],
-    channelized: bool,
-    interval: Option<BandpassFrequencyInterval>,
+    layout: GatherFrequencyLayout,
     combine_windows: bool,
 ) -> Result<(), BandpassSolveError> {
-    let existing =
-        Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW"))).map_err(metadata_error)?;
+    let existing = destination
+        .map(|path| Table::open(TableOptions::new(path.join("SPECTRAL_WINDOW"))))
+        .transpose()
+        .map_err(metadata_error)?;
     let source = ms
         .subtable(casa_ms::schema::SubtableId::SpectralWindow)
         .ok_or_else(|| metadata_error("missing MeasurementSet SPECTRAL_WINDOW"))?;
@@ -115,20 +123,27 @@ pub(crate) fn check_gather_append(
         .iter()
         .map(|row| (row.data_spw_id, row.channel_selection.as_ref()))
         .collect::<BTreeMap<_, _>>();
-    let widths = bin_widths(ms, rows, interval)?;
+    let widths = match layout {
+        GatherFrequencyLayout::Channelized(interval) => bin_widths(ms, rows, interval)?,
+        _ => BTreeMap::new(),
+    };
     let grid = |spw| {
-        select_grid(
-            source,
-            spw as usize,
-            selections[&spw],
-            if channelized {
-                widths.get(&spw).copied().unwrap_or(1)
-            } else {
-                usize::MAX
-            },
-        )
+        let width = match layout {
+            GatherFrequencyLayout::Collapsed => usize::MAX,
+            GatherFrequencyLayout::WidthWeighted => 1,
+            GatherFrequencyLayout::Channelized(_) => widths.get(&spw).copied().unwrap_or(1),
+        };
+        let grid = select_grid(source, spw as usize, selections[&spw], width)?;
+        if matches!(layout, GatherFrequencyLayout::WidthWeighted) {
+            grid.collapse_weighted()
+        } else {
+            Ok(grid)
+        }
     };
     let compare = |spw: i32, grid: ChannelGrid| -> Result<(), BandpassSolveError> {
+        let Some(existing) = &existing else {
+            return Ok(());
+        };
         let row = spw as usize;
         let scalar = |column| {
             existing
@@ -248,6 +263,29 @@ pub(super) fn average_frequencies(
 }
 
 impl ChannelGrid {
+    fn collapse_weighted(self) -> Result<Self, BandpassSolveError> {
+        let width = self.widths.iter().sum::<f64>();
+        let first = self
+            .frequencies
+            .first()
+            .copied()
+            .ok_or_else(|| metadata_error("empty frequency grid"))?;
+        if !width.is_finite() || width <= 0.0 {
+            return Err(metadata_error("invalid total channel width"));
+        }
+        let offset = self
+            .frequencies
+            .iter()
+            .zip(&self.widths)
+            .map(|(frequency, width)| (frequency - first) * width)
+            .sum::<f64>();
+        Ok(Self {
+            frequencies: vec![first + offset / width],
+            widths: vec![width],
+            effective_bandwidths: vec![width],
+        })
+    }
+
     fn accumulate(
         &mut self,
         other: &Self,

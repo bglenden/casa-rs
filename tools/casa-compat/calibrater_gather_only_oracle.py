@@ -15,6 +15,7 @@ import casatasks
 from casatools import calibrater as casa_calibrater
 import numpy as np
 
+from bpoly_oracle import multiwindow_data
 from calibration_smoothcal_oracle import opened
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_state_oracle import casa_log, native_log
@@ -141,6 +142,62 @@ def append_cases(work, vis, engines):
         print('append', legacy, family, target.name, flush=True)
 
 
+def gather_edges(work, vis, engines):
+    target = work/'empty.cal'
+    multiple = work/'multiple.ms'
+    multiwindow_data(vis, multiple)
+    for legacy in (False, True):
+        for family in ('J', 'TfOpac'):
+            for factory in engines.values():
+                tool = factory()
+                set_up(tool, vis, legacy)
+                assert tool.setsolve(family, '10s', str(target)) and tool.solve()
+                np.testing.assert_array_equal(tool.activityrec()['nExpected'], [7 if legacy else 8])
+                assert tool.close() and not target.exists()
+            print('finite intervals', legacy, family, flush=True)
+        for spw, accepted in (('0:0~3,1', False), ('0,1', True)):
+            for factory in engines.values():
+                tool = factory()
+                assert tool.setvi(legacy, True) and tool.open(str(multiple), addcorr=False, addmodel=False)
+                assert tool.selectvis(field='FLUX', spw=spw) and tool.setptmodel([1, 0, 0, 0])
+                assert tool.setsolve('Jf', 'int', str(target), combine='spw')
+                assert result(tool.solve) == ((True, True) if accepted else (
+                    False, ('RuntimeError', 'Error in Calibrater::solve.')))
+                if accepted:
+                    np.testing.assert_array_equal(tool.activityrec()['nExpected'], [20, 0])
+                assert tool.close() and not target.exists()
+            print('combined grids', legacy, spw, flush=True)
+    weighted_append(work, vis, engines)
+
+
+def weighted_append(work, vis, engines):
+    dataset = work/'uneven.ms'
+    copytree(vis, dataset)
+    with opened(dataset/'SPECTRAL_WINDOW', True) as table:
+        frequencies = table.getcell('CHAN_FREQ', 0)
+        widths = table.getcell('CHAN_WIDTH', 0) * np.arange(1, len(frequencies)+1)
+        for name in ('CHAN_WIDTH', 'EFFECTIVE_BW', 'RESOLUTION'):
+            assert table.putcell(name, 0, widths)
+    template = work/'uneven-template.cal'
+    casatasks.gencal(vis=str(dataset), caltable=str(template), caltype='amp', parameter=[1.])
+    weighted = frequencies[0] + np.average(frequencies-frequencies[0], weights=widths)
+    for name, center in (('mean', np.mean(frequencies)), ('weighted', weighted)):
+        target = work/f'uneven-{name}.cal'
+        copytree(template, target)
+        with opened(target/'SPECTRAL_WINDOW', True) as table:
+            assert table.putcell('CHAN_FREQ', 0, np.array([center]))
+        for family in ('J', 'TEC'):
+            for factory in engines.values():
+                tool = factory()
+                set_up(tool, dataset, False)
+                assert tool.setsolve(family, 'int', str(target), append=True)
+                accepted = (family == 'TEC') == (name == 'weighted')
+                assert result(tool.solve) == ((True, True) if accepted else (
+                    False, ('RuntimeError', 'Error in Calibrater::solve.')))
+                assert tool.close()
+            print('scalar append frequency', family, name, flush=True)
+
+
 def compare(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     engines = {'casa': casa_calibrater}
@@ -164,6 +221,7 @@ def compare(work, reference_only):
             empty_case(work, flagged, engines, family, subtype, count, legacy)
             useful_case(work, vis, engines, family, legacy)
         append_cases(work, flagged, engines)
+        gather_edges(work, flagged, engines)
 
 
 if __name__ == '__main__':
