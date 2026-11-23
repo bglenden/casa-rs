@@ -61,6 +61,31 @@ def test_fitsheader_matches_casa_at_date_obs_rounding_boundaries(casa, mjd, expe
         assert image.done()
 
 
+def test_fitsheader_preserves_stored_beam_angle_and_defaults_unset_epoch_to_utc(casa):
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.fromshape(shape=[5, 6])
+            assert image.setrestoringbeam("5arcsec", "4arcsec", "6deg")
+            coordinates = image.coordsys()
+            record = coordinates.torecord()
+            assert coordinates.done()
+            for mjd, system, date in [
+                (0., "UTC", None),
+                (51544., "LAST", "2000-01-01T00:00:00.000000"),
+            ]:
+                record["obsdate"] = {
+                    "type": "epoch", "refer": "LAST", "m0": {"value": mjd, "unit": "d"},
+                }
+                assert image.setcoordsys(record)
+                header = image.fitsheader(exclude="HISTORY")
+                assert header["TIMESYS"].strip() == system
+                assert header.get("DATE-OBS") == date
+                assert header["BPA"] == 6.0
+        finally:
+            image.done()
+
+
 def test_fitsheader_raw_cards_and_native_name(casa, tmp_path):
     path = str(tmp_path / ("native-" + "x" * 75 + ".im"))
     creator = tools.image()

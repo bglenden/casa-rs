@@ -23,7 +23,10 @@ use ndarray::IxDyn;
 
 use super::{FitsExportSummary, SPEED_OF_LIGHT_M_S, import_fits_for_reading};
 use crate::image::{ImageHistoryEntry, image_history_entries};
-use crate::{AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage};
+use crate::{
+    AnyPagedImage, ImageError, ImageInfo, ImageInterface, ImagePixel, PagedImage,
+    StoredGaussianBeam,
+};
 
 mod publication;
 mod tool_export;
@@ -166,12 +169,8 @@ fn export_paged<T: ExportFitsPixel>(
     {
         image
             .stored_restoring_beam()?
-            .map(|stored| {
-                let wrapped = stored.wrapped_position_angle()?;
-                let degrees = casa_types::quanta::Unit::new("deg").expect("built-in degrees");
-                casa_types::quanta::casacore::get_conformant_value(&wrapped, &degrees)
-                    .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
-            })
+            .as_ref()
+            .map(stored_position_angle_degrees)
             .transpose()?
     } else {
         None
@@ -183,6 +182,13 @@ fn export_paged<T: ExportFitsPixel>(
         stored_bpa,
         FitsWriteOptions::default(),
     )
+}
+
+fn stored_position_angle_degrees(stored: &StoredGaussianBeam) -> Result<f64, ImageError> {
+    let wrapped = stored.wrapped_position_angle()?;
+    let degrees = casa_types::quanta::Unit::new("deg").expect("built-in degrees");
+    casa_types::quanta::casacore::get_conformant_value(&wrapped, &degrees)
+        .map_err(|error| ImageError::InvalidMetadata(error.to_string()))
 }
 
 #[derive(Default)]

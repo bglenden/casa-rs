@@ -13,9 +13,12 @@ use casa_types::quanta::format::{FITS, format_time};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::image::ImageHistoryEntry;
-use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel, ImageType};
+use crate::{ImageError, ImageInfo, ImageInterface, ImagePixel, ImageType, StoredGaussianBeam};
 
-use super::{ExportAxisPlan, build_export_keywords, split_axis_keyword, visit_history_cards};
+use super::{
+    ExportAxisPlan, build_export_keywords, split_axis_keyword, stored_position_angle_degrees,
+    visit_history_cards,
+};
 
 /// Ordered FITS cards and CASA's grouped dictionary representation of them.
 pub struct ImageFitsHeader(Vec<HeaderCard>);
@@ -87,7 +90,7 @@ pub fn image_fits_header_with_beams(
     if let Some(record) = beam_info {
         info.beam_set = ImageInfo::from_record(record)?.beam_set;
     }
-    header.image_metadata(image.units(), &info)?;
+    header.image_metadata(image.units(), &info, beam_info)?;
     let standard = projection.is_some();
     header.axes(shape.len(), &mut wcs, projection);
     for (name, comment) in [
@@ -227,11 +230,21 @@ impl ImageFitsHeader {
         self.add(name, FitsValue::Integer(number), None);
     }
 
-    fn image_metadata(&mut self, units: &str, info: &ImageInfo) -> Result<(), ImageError> {
+    fn image_metadata(
+        &mut self,
+        units: &str,
+        info: &ImageInfo,
+        beam_info: Option<&RecordValue>,
+    ) -> Result<(), ImageError> {
         if let Some(beam) = info.beam_set.single_beam().filter(|beam| !beam.is_null()) {
             self.add("BMAJ", FitsValue::Float(beam.major_in("deg")?), None);
             self.add("BMIN", FitsValue::Float(beam.minor_in("deg")?), None);
-            let angle = wrapped_beam_position_angle(beam.position_angle_in("deg")?);
+            let angle = match beam_info.and_then(|record| record.get("restoringbeam")) {
+                Some(Value::Record(stored)) => {
+                    stored_position_angle_degrees(&StoredGaussianBeam::from_record(stored)?)?
+                }
+                _ => wrapped_beam_position_angle(beam.position_angle_in("deg")?),
+            };
             self.add("BPA", FitsValue::Float(angle), None);
         }
         let image_type = if info.image_type == ImageType::Undefined {
@@ -297,12 +310,20 @@ impl ImageFitsHeader {
         image: &dyn ImageInterface<T>,
         wcs: &mut BTreeMap<String, FitsValue>,
     ) -> Result<(), ImageError> {
+        let obs = image.coordinates().obs_info();
+        if obs
+            .date
+            .as_ref()
+            .is_none_or(|epoch| epoch.value().as_mjd() == 0.0)
+        {
+            wcs.remove("DATE-OBS");
+            wcs.insert("TIMESYS".into(), FitsValue::String("UTC".into()));
+        }
         for keyword in ["TELESCOP", "OBSERVER", "DATE-OBS", "TIMESYS"] {
             if let Some(value) = wcs.remove(keyword) {
                 self.add(keyword, value, None);
             }
         }
-        let obs = image.coordinates().obs_info();
         if let Some(position) = &obs.telescope_position {
             let xyz = position
                 .convert_to(PositionRef::ITRF)
