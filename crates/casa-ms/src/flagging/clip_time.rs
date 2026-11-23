@@ -34,6 +34,7 @@ const GROUP_COLUMNS: [&str; 7] = [
     "ANTENNA2",
 ];
 
+#[derive(Clone)]
 pub(super) struct ClipTimedRow {
     pub(super) row: usize,
     group: [i32; GROUP_COLUMNS.len()],
@@ -53,6 +54,14 @@ impl ClipTimedRow {
             group: [0, 0, 0, 0, 0, first, second],
             chunk: 0,
             seconds,
+        }
+    }
+
+    pub(super) fn projected(&self, row: usize, seconds: f64) -> Self {
+        Self {
+            row,
+            seconds,
+            ..self.clone()
         }
     }
 

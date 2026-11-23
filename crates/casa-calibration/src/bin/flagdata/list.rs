@@ -6,7 +6,7 @@ use std::path::Path;
 
 use casa_ms::flagging::{
     FlagDataColumn, FlagDataMode, FlaggingError, flagdata_calibration_program, flagdata_ms_program,
-    save_next_casa_flag_backup, validate_calibration_flag_averaging,
+    save_next_casa_flag_backup, validate_calibration_flag_averaging, validate_ms_flag_averaging,
 };
 use casa_ms::{
     FlagDataReport, FlagDataRequest, MeasurementSet, append_flag_commands, append_task_history,
@@ -113,8 +113,12 @@ pub(super) fn run(task: &TaskInvocation<'_>, action: &str) -> Result<TaskSuccess
             agents.push((index, values));
         }
     }
-    validate_calibration_flag_averaging(configured.into_iter())
-        .map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
+    let validation = if calibration {
+        validate_calibration_flag_averaging(configured.into_iter())
+    } else {
+        validate_ms_flag_averaging(configured.into_iter())
+    };
+    validation.map_err(|error| TaskFailure::execution(error.to_string()).at("flag-list-agent"))?;
     let incremental_quack =
         |request: &FlagDataRequest| request.mode == FlagDataMode::Quack && request.quackincrement;
     if requests.iter().skip(1).any(incremental_quack) {

@@ -820,14 +820,7 @@ def check_averaging_admission(libraries):
             inpfile=["mode='clip' clipminmax=[0,100] channelavg=True chanbin=2",
                      "mode='clip' clipminmax=[0,6]"],
         )
-        if name == "casa":
-            assert result == ("OK", {}), result
-        else:
-            assert result == (
-                "ERR", "RuntimeError",
-                "Averaging with multiple automatic flagging agents requires a shared "
-                "averaged visibility iterator (#978).",
-            ), result
+        assert result == ("OK", {}), result
         for original, current in zip(before, flags(shared), strict=True):
             np.testing.assert_array_equal(current, original)
     return 3

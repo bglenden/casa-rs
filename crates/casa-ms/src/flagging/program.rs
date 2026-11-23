@@ -10,13 +10,16 @@ use crate::schema::SubtableId;
 use crate::selection::syntax::ChannelSelection;
 use crate::selection::{TimeSelection, compile_flagdata_agent_time, first_unflagged_time_row};
 
+use super::shared_average::{SharedAgentSelection, SharedAveraging, SharedFlagView};
+
 use super::{
-    ChangeSet, CorrelationSelection, FlagDataAction, FlagDataMode, FlagDataModelFactory,
-    FlagDataReport, FlagDataRequest, FlagTimeSelection, FlaggingError, SelectedFlagRowPolicy,
-    antint, apply_clip_flags, apply_quack_flags, apply_rflag_flags, apply_tfcrop_flags,
-    display_ms_path, elevation, extend, flagging_channels, is_calibration_table, load_i32_cells,
-    persist_changed_flags, report_after, save_next_casa_flag_backup, save_next_flag_backup,
-    selected_flag_row_policy, selected_rows, set_selected_flags, shadow, summary,
+    AveragedAgentInput, ChangeSet, CorrelationSelection, FlagDataAction, FlagDataMode,
+    FlagDataModelFactory, FlagDataReport, FlagDataRequest, FlagTimeSelection, FlaggingError,
+    SelectedFlagRowPolicy, antint, apply_clip_flags, apply_quack_flags, apply_rflag_flags,
+    apply_tfcrop_flags, display_ms_path, elevation, extend, flagging_channels,
+    is_calibration_table, load_i32_cells, persist_changed_flags, report_after,
+    save_next_casa_flag_backup, save_next_flag_backup, selected_flag_row_policy, selected_rows,
+    set_selected_flags, shadow, summary,
 };
 
 struct AgentSelection {
@@ -41,6 +44,23 @@ struct AntintPlan {
 /// that cannot run with an averaged automatic agent.
 pub fn validate_calibration_flag_averaging<'a>(
     configs: impl Iterator<Item = (&'a str, bool, bool)> + Clone,
+) -> Result<(), FlaggingError> {
+    validate_flag_averaging(configs, false)
+}
+
+/// Check whether a MeasurementSet list combines averaging with an unsupported mode.
+///
+/// # Errors
+/// An agent requests averaging in an unsupported mode or list.
+pub fn validate_ms_flag_averaging<'a>(
+    configs: impl Iterator<Item = (&'a str, bool, bool)> + Clone,
+) -> Result<(), FlaggingError> {
+    validate_flag_averaging(configs, true)
+}
+
+fn validate_flag_averaging<'a>(
+    configs: impl Iterator<Item = (&'a str, bool, bool)> + Clone,
+    shared_averaging: bool,
 ) -> Result<(), FlaggingError> {
     let automatic = |mode: &str| matches!(mode, "clip" | "tfcrop" | "rflag");
     let incompatible = configs
@@ -68,7 +88,7 @@ pub fn validate_calibration_flag_averaging<'a>(
                 "Cannot use {mode} mode with timeavg=True or channelavg=True and additional modes other than extend, display, and antint. timeavg={timeavg}, channelavg={channelavg}, and the following mode has been set up: {other}. Refusing to accept this configuration."
             )));
         }
-        if multiple_automatic {
+        if multiple_automatic && !shared_averaging {
             return Err(FlaggingError::CalibrationAgentConfiguration(
                 "Averaging with multiple automatic flagging agents requires a shared averaged visibility iterator (#978).".into(),
             ));
@@ -128,7 +148,8 @@ pub(super) fn run_ms_single(
         correlations,
         averaged_time: None,
     };
-    let changes = stage_selected_ms_request(ms, &selection, request, !persist, model_factory)?;
+    let changes =
+        stage_selected_ms_request(ms, &selection, request, !persist, model_factory, None)?;
     if persist && !changes.changed_row_indices.is_empty() {
         persist_changed_flags(ms, &changes, &ms_path)?;
     }
@@ -199,13 +220,27 @@ pub fn flagdata_ms_program(
     } else {
         FlagTimeSelection::GlobalAndAgent
     };
+    let mut shared = if let Some(config) = SharedAveraging::from_requests(requests.iter()) {
+        let time_chunk = requests.iter().find_map(|request| request.time_chunk);
+        let combinescans = requests.iter().any(|request| request.combinescans);
+        Some(SharedFlagView::new(
+            &ms,
+            config,
+            time_chunk,
+            combinescans,
+            &ms_path,
+        )?)
+    } else {
+        None
+    };
     // Scan the supplied FLAG view before any list agent stages changes.
     // Keep row indices for later application, never copies of FLAG arrays.
     let antint_plans: Vec<_> = requests
         .iter()
         .enumerate()
         .map(|(index, request)| {
-            (index > 0
+            (shared.is_none()
+                && index > 0
                 && local_selection
                 && request.casa_row_selection
                 && request.mode == FlagDataMode::Antint)
@@ -219,11 +254,14 @@ pub fn flagdata_ms_program(
         match stage_ms_program_request(
             &mut ms,
             request,
-            local_selection,
-            !write_flags,
-            model_factory,
+            ProgramAgentContext {
+                local_selection,
+                calculate: !write_flags,
+                model_factory,
+                time_selection,
+            },
             antint_plan,
-            time_selection,
+            shared.as_mut(),
         ) {
             Ok(Some((report, changed_rows, changed_flag_rows))) => {
                 touched.extend(changed_rows);
@@ -239,6 +277,13 @@ pub fn flagdata_ms_program(
             ) => reports.push(None),
             Err(error) => return Err(error),
         }
+    }
+    if let Some(view) = shared
+        && write_flags
+    {
+        let mut changes = view.flush(&mut ms)?;
+        touched.extend(std::mem::take(&mut changes.changed_row_indices));
+        changed_flag_row_rows += changes.changed_flag_row_rows;
     }
     if write_flags && !touched.is_empty() {
         let changes = ChangeSet {
@@ -257,7 +302,7 @@ fn plan_antint(
     path: &str,
     time_selection: FlagTimeSelection,
 ) -> Result<Option<AntintPlan>, FlaggingError> {
-    let Some(selection) = select_agent(ms, request, true, time_selection)? else {
+    let Some(selection) = select_agent(ms, request, true, time_selection, false)? else {
         return Ok(None);
     };
     if selection
@@ -279,12 +324,14 @@ fn select_agent(
     request: &FlagDataRequest,
     local_selection: bool,
     time_selection: FlagTimeSelection,
+    shared_time: bool,
 ) -> Result<Option<AgentSelection>, FlaggingError> {
-    let averages_time = request.clip_time_bin.is_some()
-        && matches!(
-            request.mode,
-            FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
-        );
+    let averages_time = shared_time
+        || request.clip_time_bin.is_some()
+            && matches!(
+                request.mode,
+                FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
+            );
     let mut averaged_time = None;
     let mut unfiltered;
     let input = if request.casa_row_selection
@@ -344,22 +391,40 @@ fn select_agent(
     }))
 }
 
-fn stage_ms_program_request(
-    ms: &mut MeasurementSet,
-    request: &FlagDataRequest,
+struct ProgramAgentContext {
     local_selection: bool,
     calculate: bool,
     model_factory: Option<FlagDataModelFactory>,
-    antint_plan: Option<Result<Option<AntintPlan>, FlaggingError>>,
     time_selection: FlagTimeSelection,
+}
+
+fn stage_ms_program_request(
+    ms: &mut MeasurementSet,
+    request: &FlagDataRequest,
+    context: ProgramAgentContext,
+    antint_plan: Option<Result<Option<AntintPlan>, FlaggingError>>,
+    shared: Option<&mut SharedFlagView>,
 ) -> Result<Option<(FlagDataReport, Vec<usize>, usize)>, FlaggingError> {
+    let ProgramAgentContext {
+        local_selection,
+        calculate,
+        model_factory,
+        time_selection,
+    } = context;
     let (selection, affected) = if let Some(plan) = antint_plan {
         let Some(plan) = plan? else {
             return Ok(None);
         };
         (plan.selection, Some(plan.affected))
     } else {
-        let Some(selection) = select_agent(ms, request, local_selection, time_selection)? else {
+        let Some(selection) = select_agent(
+            ms,
+            request,
+            local_selection,
+            time_selection,
+            shared.as_ref().is_some_and(|view| view.averaged_in_time()),
+        )?
+        else {
             return Ok(None);
         };
         (selection, None)
@@ -389,7 +454,7 @@ fn stage_ms_program_request(
             selection.correlations.as_ref(),
         )?
     } else {
-        stage_selected_ms_request(ms, &selection, request, calculate, model_factory)?
+        stage_selected_ms_request(ms, &selection, request, calculate, model_factory, shared)?
     };
     if changes.agent_skipped {
         return Ok(None);
@@ -474,11 +539,15 @@ fn stage_selected_ms_request(
     request: &FlagDataRequest,
     calculate: bool,
     model_factory: Option<FlagDataModelFactory>,
+    shared: Option<&mut SharedFlagView>,
 ) -> Result<ChangeSet, FlaggingError> {
     let selected_rows = &selection.rows;
     let channel_selections = selection.channels.as_ref();
     let correlations = selection.correlations.as_ref();
-    let averaged_time = selection.averaged_time.as_ref();
+    let mut averaging = AveragedAgentInput {
+        time: selection.averaged_time.as_ref(),
+        view: shared,
+    };
     let ms_path = display_ms_path(ms);
     // The manual agent filters baselines after full MS selection, including
     // the rows that supply the default date for a partial time selector.
@@ -490,6 +559,36 @@ fn stage_selected_ms_request(
     } else {
         None
     };
+    if let Some(view) = averaging.view.as_deref_mut() {
+        match request.mode {
+            FlagDataMode::Extend => {
+                return view.extend(
+                    SharedAgentSelection {
+                        rows: selected_rows,
+                        channels: channel_selections,
+                        correlations,
+                        time: averaging.time,
+                    },
+                    request,
+                    &ms_path,
+                );
+            }
+            FlagDataMode::Antint => {
+                return view.antint(
+                    ms,
+                    SharedAgentSelection {
+                        rows: selected_rows,
+                        channels: channel_selections,
+                        correlations,
+                        time: averaging.time,
+                    },
+                    request,
+                    &ms_path,
+                );
+            }
+            _ => {}
+        }
+    }
     match request.mode {
         FlagDataMode::Manual => set_selected_flags(
             ms,
@@ -506,7 +605,7 @@ fn stage_selected_ms_request(
             correlations,
             request,
             model_factory,
-            averaged_time,
+            averaging,
         ),
         FlagDataMode::Quack => {
             apply_quack_flags(ms, selected_rows, channel_selections, correlations, request)
@@ -541,7 +640,7 @@ fn stage_selected_ms_request(
             channel_selections,
             request,
             model_factory,
-            averaged_time,
+            averaging,
         ),
         FlagDataMode::Rflag => apply_rflag_flags(
             ms,
@@ -550,7 +649,7 @@ fn stage_selected_ms_request(
             request,
             calculate,
             model_factory,
-            averaged_time,
+            averaging,
         ),
         FlagDataMode::Extend => extend::apply(
             ms,
