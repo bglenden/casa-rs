@@ -188,6 +188,18 @@
         "application",
         "edges"
       ]
+    },
+    "intent": {
+      "scope": "Select observing intents for sky-table generation. Direct apply and Tsys generation keep the keyword inactive. The OTF and raster composites with Tsys use the local on-source selection.",
+      "status": "Implemented",
+      "behaviors": [
+        "ps",
+        "application",
+        "edges"
+      ],
+      "evidence": [
+        "intent"
+      ]
     }
   },
   "behaviors": [
@@ -298,6 +310,15 @@
       "links": [
         "tools/casa-compat/sdcal_edges_oracle.py",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casatestdata/browse/measurementset/almasd/otf_ephem.ms?at=5e48637233019176f328ab4552e96395ab967581"
+      ]
+    },
+    "intent": {
+      "kind": "Installed CASA keyword and selected position-switch output",
+      "state": "recorded",
+      "scope": "The public wrapper forwards the text keyword through its generated schema. A tagged OFF group separates the selected scans from the default result.",
+      "result": "Pinned CASA generated scans 1 and 3 with the default and scan 1 with the selected intent. The baseline native wrapper refused the keyword. Candidate native validation is pending.",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/1530"
       ]
     }
   }
