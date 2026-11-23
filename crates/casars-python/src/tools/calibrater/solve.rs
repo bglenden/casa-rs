@@ -119,6 +119,22 @@ fn setsolve_normalization(value: &str) -> PyResult<GainNormalization> {
     }
 }
 
+fn warn_phaseonly(py: Python<'_>, phase_only: bool) -> PyResult<()> {
+    use crate::tools::{LogLine, emit};
+
+    if phase_only {
+        emit(
+            py,
+            super::LOGGER,
+            &[LogLine::warning(concat!(
+                "Please note that the phaseonly parameter will soon be eliminated.\n",
+                "You should begin using apmode='P' for phase-only."
+            ))],
+        )?;
+    }
+    Ok(())
+}
+
 fn single_dish_controls(
     family: &str,
     fraction: Option<&Bound<'_, PyAny>>,
@@ -241,6 +257,7 @@ fn standard_request(
         "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
             standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
         ),
+        "BPOLY" => return Err(setup_error()),
         "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
             let frequency_dependent = family.starts_with("MF");
             CalibrationSolveRequest::Baseline {
@@ -278,6 +295,17 @@ fn standard_request(
         }
         _ => return Err(setup_error()),
     })
+}
+
+fn configure_generic_spline(
+    state: &mut casa_calibration::CalibraterLifecycle,
+    standard: StandardSolver,
+    mode: casa_calibration::CalibrationOutputMode,
+    apmode: &str,
+) -> PyResult<()> {
+    state
+        .set_tool_generic_spline(standard.gain(GainType::GSpline), mode, apmode.into())
+        .map_err(|_| setup_error())
 }
 
 #[pymethods]
@@ -398,23 +426,14 @@ impl super::PyCalibrater {
             None
         };
         let table = PathBuf::from(table.unwrap_or(""));
-        if phase_only {
-            emit(
-                py,
-                super::LOGGER,
-                &[LogLine::warning(concat!(
-                    "Please note that the phaseonly parameter will soon be eliminated.\n",
-                    "You should begin using apmode='P' for phase-only."
-                ))],
-            )?;
-        }
+        warn_phaseonly(py, phase_only)?;
         self.with_lifecycle(py, move |state| {
             if accor || fringe.is_some() || polarization {
                 state
                     .resolve_primary_tool_refant(reference.clone())
                     .map_err(super::runtime_error)?;
             }
-            let reference = if baseline {
+            let reference = if baseline || family == "GSPLINE" {
                 state
                     .resolve_primary_tool_refant(reference)
                     .map_err(super::runtime_error)?
@@ -499,23 +518,27 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
-            let request = standard_request(
-                &family,
-                standard,
-                frequency,
-                fill_gaps,
-                fringe,
-                additive_order,
-            )?;
-            state
-                .set_tool_solve(
-                    request,
-                    mode,
-                    (!invalid_mode || fringe.is_some()).then_some(solve_mode_value),
-                    normalization,
-                    preavg,
-                )
-                .map_err(|_| setup_error())?;
+            if family == "GSPLINE" {
+                configure_generic_spline(state, standard, mode, &apmode)?;
+            } else {
+                let request = standard_request(
+                    &family,
+                    standard,
+                    frequency,
+                    fill_gaps,
+                    fringe,
+                    additive_order,
+                )?;
+                state
+                    .set_tool_solve(
+                        request,
+                        mode,
+                        (!invalid_mode || fringe.is_some()).then_some(solve_mode_value),
+                        normalization,
+                        preavg,
+                    )
+                    .map_err(|_| setup_error())?;
+            }
             state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
             Ok(true)
         })
