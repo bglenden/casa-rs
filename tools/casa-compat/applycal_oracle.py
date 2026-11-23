@@ -891,6 +891,7 @@ def run(root, native_bin, only=None):
     stokes_cases = [
         ('flags', 'mscal.stokes(FLAG,"I")[1,1]'),
         ('mask-correlation', 'any(arraymask(mscal.stokes(marray(DATA,FLAG),"I")))'),
+        ('mask-flags-reduction', 'any(mscal.stokes(marray(FLAG,FLAG),"I")) OR ANTENNA1 == 0'),
         ('mask-through-real', 'any(arraymask(real(mscal.stokes(marray(DATA,FLAG),"I"))))'),
         ('reordered-unequal-weight',
          'mscal.stokes(WEIGHT,"YY,XX")[1] > 3 AND mscal.stokes(WEIGHT,"YY,XX")[2] < 3'),

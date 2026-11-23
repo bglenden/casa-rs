@@ -48,7 +48,7 @@ pub enum ExprValue {
     /// N-dimensional array with shape and flat data (row-major order).
     Array(ArrayValue),
     /// Array data with a same-shaped mask. True entries are excluded from reductions.
-    MaskedArray(ArrayValue, Vec<bool>),
+    MaskedArray(Box<ArrayValue>, Vec<bool>),
     /// A compiled regex pattern for matching.
     Regex {
         pattern: String,
@@ -130,7 +130,8 @@ impl fmt::Display for ExprValue {
             Self::Complex(c) => write!(f, "({} + {}i)", c.re, c.im),
             Self::String(s) => write!(f, "{s}"),
             Self::DateTime(mjd) => write!(f, "MJD({mjd})"),
-            Self::Array(arr) | Self::MaskedArray(arr, _) => {
+            Self::Array(_) | Self::MaskedArray(..) => {
+                let (arr, _) = self.array_with_mask().expect("array value");
                 write!(f, "Array[")?;
                 for (i, v) in arr.data.iter().enumerate() {
                     if i > 0 {
@@ -173,7 +174,7 @@ impl ExprValue {
 
     pub(super) fn from_array_with_mask(array: ArrayValue, mask: Option<Vec<bool>>) -> Self {
         match mask {
-            Some(mask) => Self::MaskedArray(array, mask),
+            Some(mask) => Self::MaskedArray(Box::new(array), mask),
             None => Self::Array(array),
         }
     }

@@ -1632,7 +1632,8 @@ fn expr_value_to_value_untyped(val: &ExprValue) -> Value {
         ExprValue::Complex(c) => Value::Scalar(ScalarValue::Complex64(*c)),
         ExprValue::String(s) => Value::Scalar(ScalarValue::String(s.clone())),
         ExprValue::DateTime(v) => Value::Scalar(ScalarValue::Float64(*v)),
-        ExprValue::Array(arr) | ExprValue::MaskedArray(arr, _) => expr_array_to_value(arr),
+        ExprValue::Array(arr) => expr_array_to_value(arr),
+        ExprValue::MaskedArray(arr, _) => expr_array_to_value(arr),
         ExprValue::Regex { pattern, .. } => Value::Scalar(ScalarValue::String(pattern.clone())),
         ExprValue::Null => Value::Scalar(ScalarValue::Bool(false)), // fallback
     }

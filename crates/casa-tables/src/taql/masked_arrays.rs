@@ -19,7 +19,7 @@ pub(super) fn create(value: &ExprValue, flag_value: &ExprValue) -> Result<ExprVa
             _ => Err(type_error("marray() needs a Boolean mask")),
         })
         .collect::<Result<_, _>>()?;
-    Ok(ExprValue::MaskedArray(array.clone(), mask))
+    Ok(ExprValue::MaskedArray(Box::new(array.clone()), mask))
 }
 
 pub(super) fn inspect(name: &str, value: &ExprValue) -> Result<ExprValue, TaqlError> {
@@ -30,7 +30,7 @@ pub(super) fn inspect(name: &str, value: &ExprValue) -> Result<ExprValue, TaqlEr
             let mask = (0..array.data.len())
                 .map(|index| !mask.is_some_and(|flag| flag[index]))
                 .collect();
-            ExprValue::MaskedArray(array.clone(), mask)
+            ExprValue::MaskedArray(Box::new(array.clone()), mask)
         }
         _ => {
             // The pinned Boolean accessor asks for the mask of its Boolean mask.
@@ -96,7 +96,7 @@ pub(super) fn reduce_bool(name: &str, value: &ExprValue) -> Result<ExprValue, Ta
         "all" => {
             ExprValue::Bool((mask.is_none() || values.peek().is_some()) && values.all(is_true))
         }
-        "ntrue" => ExprValue::Int(values.filter(|value| is_true(*value)).count() as i64),
+        "ntrue" => ExprValue::Int(values.filter(|value| is_true(value)).count() as i64),
         _ => ExprValue::Int(
             values
                 .filter(|value| matches!(value, ExprValue::Bool(false)))

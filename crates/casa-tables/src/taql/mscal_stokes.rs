@@ -68,7 +68,7 @@ pub(super) fn bind(
         expression,
         move |context: &EvalContext<'_>| match eval_expr(&data, context)? {
             ExprValue::Array(input) => plan.convert(input, None),
-            ExprValue::MaskedArray(input, mask) => plan.convert(input, Some(mask)),
+            ExprValue::MaskedArray(input, mask) => plan.convert(*input, Some(mask)),
             _ => Err(type_error(
                 "MSCAL.STOKES requires a Complex, Double or Bool array",
             )),
