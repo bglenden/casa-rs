@@ -15,10 +15,14 @@ use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 const LOGGER: &str = "casars.tools.calanalysis";
 
-fn table_name(value: &Bound<'_, PyAny>) -> PyResult<String> {
-    value
-        .extract()
-        .map_err(|_| PyTypeError::new_err("argument _caltable must be a string"))
+struct TableName(Option<String>);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for TableName {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        Ok(Self(value.extract().ok()))
+    }
 }
 
 struct NameArgument(Option<bool>);
@@ -55,12 +59,11 @@ impl PyCalAnalysis {
         Self::default()
     }
 
-    #[pyo3(signature = (caltable = String::new()), text_signature = "($self, caltable='')")]
-    fn open(
-        &self,
-        py: Python<'_>,
-        #[pyo3(from_py_with = table_name)] caltable: String,
-    ) -> PyResult<bool> {
+    #[pyo3(signature = (caltable = TableName(Some(String::new()))), text_signature = "($self, caltable='')")]
+    fn open(&self, py: Python<'_>, caltable: TableName) -> PyResult<bool> {
+        let caltable = caltable
+            .0
+            .ok_or_else(|| PyTypeError::new_err("argument _caltable must be a string"))?;
         let outcome = py.detach(|| {
             let mut attachment = self
                 .attachment

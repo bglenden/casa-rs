@@ -65,7 +65,11 @@ impl CalAnalysis {
         let ms_name = keyword(&table, KEY_MS_NAME)?;
         let vis_cal = keyword(&table, KEY_VIS_CAL)?;
         let parameter_type = keyword(&table, KEY_PAR_TYPE)?;
-        let polarization_basis = keyword(&table, KEY_POL_BASIS)?;
+        let polarization_basis = keyword(&table, KEY_POL_BASIS)?
+            .chars()
+            .next()
+            .map(|basis| basis.to_ascii_uppercase().to_string())
+            .unwrap_or_default();
         let fields = unique_ids(&table, COL_FIELD_ID)?;
         let first_antennas = unique_ids(&table, COL_ANTENNA1)?;
         let second_antennas = unique_ids(&table, COL_ANTENNA2)?;
