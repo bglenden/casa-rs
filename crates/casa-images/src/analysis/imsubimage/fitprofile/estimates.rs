@@ -68,18 +68,23 @@ pub(super) fn automatic(profile: &[f32], maximum: usize) -> Vec<LineEstimate> {
     if profile.len() < 3 || maximum == 0 {
         return Vec::new();
     }
-    // SpectralEstimate smooths the second derivative with Q = 2.
+    // ProfileFit1D uses five neighboring channels on each side for its
+    // smoothed second derivative.
+    const HALF_WINDOW: isize = 5;
+    const DERIVATIVE_SCALE: f64 = 90. / (5. * 6. * 99. * 13.);
     let derivative: Vec<_> = (0..profile.len())
         .map(|index| {
-            (-2_isize..=2)
+            let (sum, moment) = (-HALF_WINDOW..=HALF_WINDOW)
                 .filter_map(|delta| {
                     index
                         .checked_add_signed(delta)
                         .and_then(|channel| profile.get(channel))
-                        .map(|&sample| f64::from(sample) * (delta * delta - 2) as f64)
+                        .map(|&sample| (f64::from(sample), delta))
                 })
-                .sum::<f64>()
-                / 7.
+                .fold((0., 0.), |(sum, moment), (sample, delta)| {
+                    (sum + sample, moment + sample * delta as f64 * delta as f64)
+                });
+            DERIVATIVE_SCALE * (moment - 10. * sum)
         })
         .collect();
     let mut last_peak = None;
@@ -118,7 +123,7 @@ fn estimate_between(
     let mut negative = 0.;
     for (offset, &value) in derivative[lower..=upper].iter().enumerate() {
         negative += value.min(0.);
-        let weight = value - intercept - slope * offset as f64;
+        let weight = value - slope * offset as f64 - intercept;
         let pixel = (lower + offset) as f64;
         moment[0] += weight;
         moment[1] += weight * pixel;

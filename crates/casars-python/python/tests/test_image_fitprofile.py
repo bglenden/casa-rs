@@ -549,8 +549,12 @@ def test_profile_direction_reports_the_frame_used_for_the_angles(casa, frame):
         _compare_records(native, expected)
 
 
-@pytest.mark.parametrize("amplitude", [1., 1e-15])
-def test_fixed_width_line_is_invariant_under_amplitude_scaling(casa, tmp_path, amplitude):
+@pytest.mark.parametrize("amplitude,reference_stops_early", [
+    (1., False), (1.1e-4, True), (9.9e-5, True), (1e-15, True),
+])
+def test_fixed_width_line_is_invariant_under_amplitude_scaling(
+    casa, tmp_path, amplitude, reference_stops_early,
+):
     x = np.arange(31.)
     data = _cube(_line(x, amplitude, 15., 4.), (1, 1))
     fits = []
@@ -560,16 +564,39 @@ def test_fixed_width_line_is_invariant_under_amplitude_scaling(casa, tmp_path, a
                    model=str(path))
         assert fit["valid"].item()
         model = _read(tools, path)[0]
-        if api is casa and amplitude < 1e-10:
+        if api is casa and reference_stops_early:
             error = np.linalg.norm((model - data) / amplitude) / np.linalg.norm(data / amplitude)
             assert error > .01
         else:
             np.testing.assert_allclose(model / amplitude, data / amplitude, atol=2e-6)
         fits.append(fit["gs"]["center"].item())
-    if amplitude < 1e-10:
+    if reference_stops_early:
         assert abs(fits[0] - fits[1]) > .01
     else:
         assert fits[0] == pytest.approx(fits[1], abs=2e-6)
+
+
+def test_profile_convergence_uses_only_free_parameters(casa):
+    amplitude = 1e10
+    data = _cube(_line(np.arange(55.), amplitude, 20., 5.), (1, 1))
+    arguments = dict(pampest=amplitude, pcenterest=16., pfwhmest=8., pfix="p")
+    expected = _fit(casa, data, **arguments)
+    actual = _fit(tools, data, **arguments)
+    assert expected["valid"].item() and actual["valid"].item()
+    assert actual["niter"].item() > 1
+    for key in ("amp", "center", "fwhm"):
+        np.testing.assert_allclose(actual["gs"][key], expected["gs"][key], rtol=1e-7)
+
+
+def test_profile_corrects_dependent_free_amplitudes(casa):
+    data = _cube(_line(np.arange(55.), 8., 20., 5.), (1, 1))
+    arguments = dict(pampest=[3., 3.], pcenterest=[20., 20.], pfwhmest=[5., 5.],
+                     pfix=["cf", "cf"])
+    expected = _fit(casa, data, **arguments)
+    actual = _fit(tools, data, **arguments)
+    assert expected["valid"].item() and actual["valid"].item()
+    np.testing.assert_allclose(actual["gs"]["amp"], 4., atol=2e-6)
+    _compare_records(actual, expected)
 
 
 @pytest.mark.parametrize("model,parameters,message", [
