@@ -152,12 +152,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn close(&self) -> PyResult<Py<PyAny>> {
-        stub("close")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (spw = None), text_signature = "($self, spw=-1)")]
     fn corrbit(&self, spw: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("corrbit")
@@ -187,12 +181,6 @@ impl PyMsMetadata {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn done(&self) -> PyResult<Py<PyAny>> {
-        stub("done")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
     fn effexposuretime(&self) -> PyResult<Py<PyAny>> {
         stub("effexposuretime")
     }
@@ -214,12 +202,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn fdmspws(&self) -> PyResult<Py<PyAny>> {
         stub("fdmspws")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn fieldnames(&self) -> PyResult<Py<PyAny>> {
-        stub("fieldnames")
     }
 
     /// Not yet implemented in casa-rs.
@@ -339,12 +321,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn name(&self) -> PyResult<Py<PyAny>> {
-        stub("name")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (fieldids = None), text_signature = "($self, fieldids='')")]
     fn namesforfields(&self, fieldids: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("namesforfields")
@@ -354,12 +330,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (spwids = None), text_signature = "($self, spwids='')")]
     fn namesforspws(&self, spwids: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("namesforspws")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn nantennas(&self) -> PyResult<Py<PyAny>> {
-        stub("nantennas")
     }
 
     /// Not yet implemented in casa-rs.
@@ -384,18 +354,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (polid = None), text_signature = "($self, polid=-1)")]
     fn ncorrforpol(&self, polid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("ncorrforpol")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn nfields(&self) -> PyResult<Py<PyAny>> {
-        stub("nfields")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn nobservations(&self) -> PyResult<Py<PyAny>> {
-        stub("nobservations")
     }
 
     /// Not yet implemented in casa-rs.
@@ -427,37 +385,9 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn nstates(&self) -> PyResult<Py<PyAny>> {
-        stub("nstates")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn observatorynames(&self) -> PyResult<Py<PyAny>> {
-        stub("observatorynames")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (which = None), text_signature = "($self, which=0)")]
     fn observatoryposition(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("observatoryposition")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn observers(&self) -> PyResult<Py<PyAny>> {
-        stub("observers")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (msfile = None, maxcache = None), text_signature = "($self, msfile='', maxcache=50.0)")]
-    fn open(
-        &self,
-        msfile: Option<&Bound<'_, PyAny>>,
-        maxcache: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("open")
     }
 
     /// Not yet implemented in casa-rs.
@@ -485,12 +415,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (ddid = None), text_signature = "($self, ddid=-1)")]
     fn polidfordatadesc(&self, ddid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("polidfordatadesc")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn projects(&self) -> PyResult<Py<PyAny>> {
-        stub("projects")
     }
 
     /// Not yet implemented in casa-rs.

@@ -36,6 +36,10 @@ IMPLEMENTED["calanalysis"] = {
     "msname", "numantenna", "numantenna1", "numantenna2", "numchannel", "numfeed",
     "numfield", "numspw", "numtime", "open", "partype", "polbasis", "spw", "time", "viscal",
 }
+IMPLEMENTED["msmetadata"] = {
+    "open", "close", "done", "name", "nantennas", "nfields", "nobservations",
+    "nstates", "fieldnames", "observatorynames", "observers", "projects",
+}
 IMPLEMENTED["atmosphere"] = set(casa_signatures("atmosphere")["methods"])
 IMPLEMENTED["wvr"] = {"gcal"}
 IMPLEMENTED["singledishms"] = {

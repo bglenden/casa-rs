@@ -6,6 +6,12 @@
 mod stubs;
 pub(crate) mod surface;
 
+use std::path::Path;
+use std::sync::Mutex;
+
+use casa_ms::{MeasurementSet, MsResult};
+use casa_tables::lexical_absolute;
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use crate::tools::not_yet_implemented_in;
@@ -20,12 +26,127 @@ fn stub(method: &str) -> PyResult<Py<PyAny>> {
 
 /// CASA's `msmetadata` tool.
 #[pyclass(name = "msmetadata", module = "casars.tools", frozen)]
-pub(crate) struct PyMsMetadata;
+pub(crate) struct PyMsMetadata {
+    attached: Mutex<Option<MeasurementSet>>,
+}
+
+impl PyMsMetadata {
+    fn with_ms<T: Send>(
+        &self,
+        py: Python<'_>,
+        query: impl FnOnce(&MeasurementSet) -> MsResult<T> + Send,
+    ) -> PyResult<T> {
+        py.detach(|| {
+            let attached = self.attached.lock().map_err(runtime_error)?;
+            let ms = attached.as_ref().ok_or_else(|| {
+                PyRuntimeError::new_err("Tool is not attached to an MS. Use open()")
+            })?;
+            query(ms).map_err(runtime_error)
+        })
+    }
+
+    fn observation_column(&self, py: Python<'_>, column: &str) -> PyResult<Vec<String>> {
+        self.with_ms(py, |ms| {
+            let observation = ms.observation()?;
+            (0..observation.row_count())
+                .map(|row| observation.string(row, column))
+                .collect()
+        })
+    }
+}
+
+fn runtime_error(error: impl std::fmt::Display) -> PyErr {
+    PyRuntimeError::new_err(error.to_string())
+}
 
 #[pymethods]
 impl PyMsMetadata {
     #[new]
     fn new() -> Self {
-        Self
+        Self {
+            attached: Mutex::new(None),
+        }
+    }
+
+    #[pyo3(signature = (msfile = "", maxcache = 50.0), text_signature = "($self, msfile='', maxcache=50.0)")]
+    fn open(&self, py: Python<'_>, msfile: &str, maxcache: f64) -> PyResult<bool> {
+        py.detach(|| {
+            // These queries need no derived metadata cache.
+            let _ = maxcache;
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let path = lexical_absolute(Path::new(msfile));
+            let ms = MeasurementSet::open(path).map_err(runtime_error)?;
+            ms.check_referential_integrity().map_err(runtime_error)?;
+            *attached = Some(ms);
+            Ok(true)
+        })
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn close(&self, py: Python<'_>) -> PyResult<bool> {
+        py.detach(|| {
+            self.attached.lock().map_err(runtime_error)?.take();
+            Ok(true)
+        })
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn done(&self, py: Python<'_>) -> PyResult<bool> {
+        self.close(py)
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn name(&self, py: Python<'_>) -> PyResult<String> {
+        self.with_ms(py, |ms| {
+            Ok(ms
+                .path()
+                .expect("an attached MS has a path")
+                .display()
+                .to_string())
+        })
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn nantennas(&self, py: Python<'_>) -> PyResult<usize> {
+        self.with_ms(py, |ms| Ok(ms.antenna()?.row_count()))
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn nfields(&self, py: Python<'_>) -> PyResult<usize> {
+        self.with_ms(py, |ms| Ok(ms.field()?.row_count()))
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn nobservations(&self, py: Python<'_>) -> PyResult<usize> {
+        self.with_ms(py, |ms| Ok(ms.observation()?.row_count()))
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn nstates(&self, py: Python<'_>) -> PyResult<usize> {
+        // CASA counts an empty STATE subtable as one unspecified state.
+        self.with_ms(py, |ms| Ok(ms.state()?.row_count().max(1)))
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn fieldnames(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        self.with_ms(py, |ms| {
+            let field = ms.field()?;
+            (0..field.row_count()).map(|row| field.name(row)).collect()
+        })
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn observatorynames(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        self.observation_column(py, "TELESCOPE_NAME")
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn observers(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        self.observation_column(py, "OBSERVER")
+    }
+
+    #[pyo3(signature = (), text_signature = "($self)")]
+    fn projects(&self, py: Python<'_>) -> PyResult<Vec<String>> {
+        self.observation_column(py, "PROJECT")
     }
 }
