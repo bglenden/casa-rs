@@ -294,27 +294,7 @@ fn write_gain_table(
         writer.append(RecordValue::new(fields))?;
     }
 
-    writer.copy_subtables(&[
-        (SubtableId::Observation, "OBSERVATION"),
-        (SubtableId::Antenna, "ANTENNA"),
-        (SubtableId::Field, "FIELD"),
-    ])?;
-    if subtype == "A Mueller" {
-        // A fit starts its own history instead of copying the MS import history.
-        let template = MeasurementSet::create_memory(MeasurementSetBuilder::new())
-            .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
-        template
-            .subtable(SubtableId::History)
-            .expect("standard MS history")
-            .save(TableOptions::new(writer.output_path().join("HISTORY")))
-            .map_err(|source| crate::CalibrationTableWriteError::CopySubtable {
-                subtable: "HISTORY".into(),
-                path: writer.output_path().display().to_string(),
-                source: Box::new(source),
-            })?;
-    } else {
-        writer.copy_subtables(&[(SubtableId::History, "HISTORY")])?;
-    }
+    write_gain_context(&writer, subtype)?;
     if let Some(channels) = channels {
         writer.copy_subtables(&[(SubtableId::SpectralWindow, "SPECTRAL_WINDOW")])?;
         let path = writer.output_path().join("SPECTRAL_WINDOW");
@@ -355,6 +335,34 @@ fn write_gain_table(
     writer.save_main()?;
 
     Ok(gain_report(request, solved))
+}
+
+fn write_gain_context(
+    writer: &CalibrationTableWriter<'_>,
+    subtype: &str,
+) -> Result<(), GainSolveError> {
+    writer.copy_subtables(&[
+        (SubtableId::Observation, "OBSERVATION"),
+        (SubtableId::Antenna, "ANTENNA"),
+        (SubtableId::Field, "FIELD"),
+    ])?;
+    if subtype == "A Mueller" {
+        // A fit starts its own history independently of the MS import history.
+        let template = MeasurementSet::create_memory(MeasurementSetBuilder::new())
+            .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+        template
+            .subtable(SubtableId::History)
+            .expect("standard MS history")
+            .save(TableOptions::new(writer.output_path().join("HISTORY")))
+            .map_err(|source| crate::CalibrationTableWriteError::CopySubtable {
+                subtable: "HISTORY".into(),
+                path: writer.output_path().display().to_string(),
+                source: Box::new(source),
+            })?;
+    } else {
+        writer.copy_subtables(&[(SubtableId::History, "HISTORY")])?;
+    }
+    Ok(())
 }
 
 fn gain_report(request: &GainSolveRequest, solved: &SolvedGains) -> GainSolveReport {
