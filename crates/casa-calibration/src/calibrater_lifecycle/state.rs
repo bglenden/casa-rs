@@ -263,6 +263,18 @@ impl<'a> SolveState<'a> {
                 min_snr: request.min_snr,
                 normalization: request.normalization,
             },
+            ConfiguredSolve::Opacity {
+                request,
+                mode,
+                channelized,
+            } => Self {
+                frequency_dependent: *channelized,
+                ..Self::gain(
+                    request,
+                    if *channelized { "TfOpac" } else { "TOpac" },
+                    *mode == CalibrationOutputMode::Append,
+                )
+            },
             ConfiguredSolve::LegacyEp(solver) => Self {
                 subtype: "EP Jones",
                 table: solver.output_path(),

@@ -287,6 +287,7 @@ impl CalibraterLifecycle {
             let path = match configured {
                 ConfiguredSolve::LegacyEp(ep) => ep.output_path(),
                 ConfiguredSolve::Polarization { request, .. } => &request.output,
+                ConfiguredSolve::Opacity { request, .. } => &request.output_table,
                 ConfiguredSolve::Task { request, .. } => match request.as_ref() {
                     CalibrationSolveRequest::Gain(gain)
                     | CalibrationSolveRequest::GainSpline { gain, .. }

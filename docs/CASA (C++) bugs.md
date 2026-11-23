@@ -10570,3 +10570,9 @@ computes the intersection on the selected grid in one transform.
 ## Direct fluxscale can terminate Python with an empty window map
 
 In CASA 6.7.6.14, use the [direct fluxscale fixture](../tools/casa-compat/calibrater_fluxscale_tool_oracle.py), attach the MS, and transfer from `FLUX` to `PHASE` with `refspwmap=[]`. The reference process can terminate with SIGSEGV. Casa-rs treats an empty map as no remapping and compares its returned record, caltable and HISTORY against CASA's default `refspwmap=[-1]`. [#2017](https://github.com/bglenden/casa-rs/pull/2017)
+
+## Direct opacity solves can terminate Python
+
+CASA 6.7.6.14 accepts `calibrater.setsolve` for `TOpac` and `TfOpac`. With usable data, the first fit in either visibility iterator terminates the process with SIGSEGV and leaves no calibration table. An otherwise equivalent VI2 `T` solve completes. If every selected sample is flagged, both opacity families return success and preserve the configured solver. They record zero attempted and successful intervals and publish no table.
+
+Casa-rs preserves the setup, state and no-result behavior. When the selected data would reach a fit, it raises a recoverable solve error and clears the equation. The oracle runs the reference fits in child processes. [Direct opacity solve oracle](../tools/casa-compat/calibrater_opacity_solve_oracle.py)
