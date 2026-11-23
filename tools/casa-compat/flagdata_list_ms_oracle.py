@@ -647,6 +647,44 @@ def check_agent_time_intervals(libraries):
     return len(cases) + 1
 
 
+
+def check_averaged_agent_time(libraries):
+    source = "averaged-agent-time.ms"
+    make_list_fixture(source)
+    with table(source, ack=False, readonly=False) as main:
+        times = main.getcol("TIME")
+        first, second = np.unique(times)[:2]
+        data = np.full_like(main.getcol("DATA"), 8.)
+        main.putcol("DATA", data)
+        for column in ("FLAG", "FLAG_ROW"):
+            main.putcol(column, np.zeros_like(main.getcol(column)))
+
+    def stamp(value):
+        return (datetime(1858, 11, 17) + timedelta(seconds=float(value))).strftime(
+            "%Y/%m/%d/%H:%M:%S.%f"
+        )[:-3]
+
+    midpoint = first + (second - first) / 2
+    assert not np.any(np.abs(times - midpoint) <= 1)
+    timerange = f"{stamp(midpoint - 1)}~{stamp(midpoint + 1)}"
+    expected = np.broadcast_to(np.isin(times, [first, second])[:, None, None], data.shape)
+    assert np.count_nonzero(expected) == 1280
+    for name, task in libraries:
+        vis = f"averaged-agent-time-{name}.ms"
+        copytree(source, vis)
+        assert task(
+            vis=vis, mode="list", flagbackup=False,
+            inpfile=[
+                f"mode='clip' datacolumn='DATA' timerange='{timerange}' "
+                "timeavg=True timebin='20s' clipminmax=[0,6]",
+                "mode='antint' antint_ref_antenna='A0' minchanfrac=0.01",
+            ],
+        ) == {}
+        samples, rows = flags(vis)
+        np.testing.assert_array_equal(samples, expected, err_msg=f"{name} averaged FLAG")
+        np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{name} averaged FLAG_ROW")
+    return 1
+
 def check_agent_time_defaults(libraries):
     make_list_fixture("agent-default-date.ms")
     with table("agent-default-date.ms", ack=False, readonly=False) as main:
@@ -694,6 +732,7 @@ def main():
         c1 = check_inputs_and_selectors(libraries)
         c1 += check_agent_time_intervals(libraries)
         c1 += check_agent_time_defaults(libraries)
+        c1 += check_averaged_agent_time(libraries)
         c2 = check_sequential_all_modes(libraries)
         c3 = check_savepars_history_backup_display_cli(libraries)
         c4 = check_skips_and_refusals(libraries)

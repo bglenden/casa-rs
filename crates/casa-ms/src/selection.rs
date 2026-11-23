@@ -696,6 +696,22 @@ pub(crate) fn resolve_casa_row_indices(
     resolve_row_indices_with_grammar(ms, request, RowGrammar::Casa)
 }
 
+pub(crate) fn compile_flagdata_agent_time(
+    ms: &MeasurementSet,
+    request: &MsSelection,
+    initial_default_row: usize,
+) -> MsResult<Option<TimeSelection>> {
+    request
+        .compile_with_row_grammar(
+            ms,
+            RowGrammar::FlagData {
+                agent_time_default_row: Some(initial_default_row),
+            },
+            None,
+        )
+        .map(|compiled| compiled.casa_time)
+}
+
 pub(crate) fn resolve_flagdata_selection_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,

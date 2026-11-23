@@ -1092,6 +1092,7 @@ fn apply_clip_flags(
     correlations: Option<&CorrelationSelection>,
     request: &FlagDataRequest,
     model_factory: Option<FlagDataModelFactory>,
+    averaged_time: Option<&TimeSelection>,
 ) -> Result<ChangeSet, FlaggingError> {
     let path = display_ms_path(ms);
     let widths = request.clip_channel_bins.as_deref();
@@ -1159,7 +1160,10 @@ fn apply_clip_flags(
     let read_plan = flag_read_plan(ms, selected_rows.len(), bytes_per_sample, include_ddid)?;
     if let Some(Some(seconds)) = time_average {
         return TimeClip {
-            seconds,
+            averaging: clip_time::TimeAveraging {
+                seconds,
+                filter: averaged_time,
+            },
             chunk_seconds: request.time_chunk,
             column: request.data_column,
             widths,
@@ -1423,6 +1427,7 @@ fn apply_tfcrop_flags(
     channel_selections: Option<&BTreeMap<i32, ChannelSelection>>,
     request: &FlagDataRequest,
     model_factory: Option<FlagDataModelFactory>,
+    averaged_time: Option<&TimeSelection>,
 ) -> Result<ChangeSet, FlaggingError> {
     let started = Instant::now();
     let column = request.data_column;
@@ -1480,7 +1485,10 @@ fn apply_tfcrop_flags(
             channel_selections,
             columns.as_mut(),
             request,
-            seconds,
+            clip_time::TimeAveraging {
+                seconds,
+                filter: averaged_time,
+            },
             widths,
         )?
     } else {
@@ -1949,6 +1957,7 @@ fn apply_rflag_flags(
     request: &FlagDataRequest,
     calculate: bool,
     model_factory: Option<FlagDataModelFactory>,
+    averaged_time: Option<&TimeSelection>,
 ) -> Result<ChangeSet, FlaggingError> {
     let started = Instant::now();
     let column = request.data_column;
@@ -2000,7 +2009,10 @@ fn apply_rflag_flags(
             channel_selections,
             columns.as_mut(),
             request,
-            seconds,
+            clip_time::TimeAveraging {
+                seconds,
+                filter: averaged_time,
+            },
             widths,
         )?
     } else {
@@ -2754,7 +2766,7 @@ fn load_time_averaged_tfcrop(
     selections: Option<&BTreeMap<i32, ChannelSelection>>,
     mut columns: Option<&mut ClipColumns>,
     request: &FlagDataRequest,
-    seconds: f64,
+    averaging: clip_time::TimeAveraging<'_>,
     widths: Option<&[u32]>,
 ) -> Result<LoadedSamples, FlaggingError> {
     let path = display_ms_path(ms);
@@ -2803,7 +2815,7 @@ fn load_time_averaged_tfcrop(
     let mut model_roundoff = Vec::new();
     let mut flags_by_bin = BTreeMap::new();
     let mut channel_layouts = HashMap::<(i32, usize), Arc<[usize]>>::new();
-    for group in clip_time::clip_time_groups(&timed, seconds) {
+    for group in averaging.groups(&timed) {
         let first = &group[0];
         let ddid = first.description();
         let spw = spw_for(ddid)?;

@@ -262,8 +262,27 @@ pub(super) fn mark_time_chunks(rows: &mut [ClipTimedRow], interval: f64) {
     }
 }
 
-pub(super) struct TimeClip<'a> {
+#[derive(Clone, Copy)]
+pub(super) struct TimeAveraging<'a> {
     pub(super) seconds: f64,
+    pub(super) filter: Option<&'a super::TimeSelection>,
+}
+
+impl TimeAveraging<'_> {
+    pub(super) fn groups(self, rows: &[ClipTimedRow]) -> impl Iterator<Item = &[ClipTimedRow]> {
+        clip_time_groups(rows, self.seconds).filter(move |group| {
+            self.filter.is_none_or(|filter| {
+                // AveragingTvi2 sets TIME to the center of the input centers.
+                let start = group[0].time();
+                let end = group[group.len() - 1].time();
+                filter.holds_agent_time(start + (end - start) / 2.)
+            })
+        })
+    }
+}
+
+pub(super) struct TimeClip<'a> {
+    pub(super) averaging: TimeAveraging<'a>,
     pub(super) chunk_seconds: Option<f64>,
     pub(super) column: FlagDataColumn,
     pub(super) widths: Option<&'a [u32]>,
@@ -319,7 +338,7 @@ impl TimeClip<'_> {
             total_samples: 0,
         };
         let mut matched = Vec::new();
-        for members in clip_time_groups(&timed, self.seconds) {
+        for members in self.averaging.groups(&timed) {
             let (average, before) =
                 collect_time_bin(ms, members, rows_per_block, columns, ddid_to_spw, self.path)?;
             counts.flagged_samples += before.flagged_samples;
