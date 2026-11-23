@@ -689,6 +689,27 @@ pub(crate) fn gather_only_tool_solve(
         .map(|(solved, _)| solved.solve_stats)
 }
 
+fn solve_point_stokes(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+) -> Result<[f32; 4], GainSolveError> {
+    match request.model_source {
+        GainSolveModelSource::PointSource => {
+            validate_smodel(request.smodel, true)?;
+            Ok(request.smodel)
+        }
+        GainSolveModelSource::ModelColumn
+            if !ms
+                .main_table()
+                .schema()
+                .is_some_and(|schema| schema.contains_column("MODEL_DATA")) =>
+        {
+            Err(GainSolveError::MissingModelColumn)
+        }
+        _ => Ok([1.0, 0.0, 0.0, 0.0]),
+    }
+}
+
 fn solve_gain_rows_with_settings(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
@@ -697,16 +718,7 @@ fn solve_gain_rows_with_settings(
     gather_only: Option<GatherOnlySolveSettings>,
     legacy_g_receptors: bool,
 ) -> Result<(SolvedGains, Option<TfSpectrum>), GainSolveError> {
-    if matches!(request.model_source, GainSolveModelSource::PointSource) {
-        validate_smodel(request.smodel, true)?;
-    } else if request.model_source == GainSolveModelSource::ModelColumn
-        && !ms
-            .main_table()
-            .schema()
-            .is_some_and(|schema| schema.contains_column("MODEL_DATA"))
-    {
-        return Err(GainSolveError::MissingModelColumn);
-    }
+    let point_stokes = solve_point_stokes(ms, request)?;
     validate_solve_interval(request.solve_interval)?;
     // P Jones is later in CASA's Jones chain than G, so the rotation
     // corrupts the MeasurementSet model or a polarized explicit point
@@ -714,11 +726,6 @@ fn solve_gain_rows_with_settings(
     let rotate_model = request.parang
         && request.gain_type == GainType::G
         && request.model_source.needs_model_rotation(request.smodel);
-    let point_stokes = if request.model_source == GainSolveModelSource::PointSource {
-        request.smodel
-    } else {
-        [1.0, 0.0, 0.0, 0.0]
-    };
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
