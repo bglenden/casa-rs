@@ -191,6 +191,10 @@ impl Curve {
 }
 
 impl Line {
+    pub(super) fn fixed(&self, fixed: &[bool]) -> [bool; 3] {
+        self.values.map(|binding| fixed[binding.index])
+    }
+
     pub(super) fn parameters(&self, values: &[f64]) -> [f64; 3] {
         self.values.map(|binding| binding.value(values))
     }
