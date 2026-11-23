@@ -161,19 +161,77 @@ impl CoordinateSystem {
         if let Some(maps) = self.nonconsecutive_maps() {
             return maps.to_world(&self.coordinates, pixel);
         }
-
         let mut world = Vec::with_capacity(self.n_world_axes());
+        self.append_consecutive_world(pixel, &mut world)?;
+        Ok(world)
+    }
+
+    fn append_consecutive_world(
+        &self,
+        pixel: &[f64],
+        world: &mut Vec<f64>,
+    ) -> Result<(), CoordinateError> {
         let mut pix_offset = 0;
 
         for coord in &self.coordinates {
             let np = coord.n_pixel_axes();
             let pix_slice = &pixel[pix_offset..pix_offset + np];
-            let w = coord.to_world(pix_slice)?;
-            world.extend(w);
+            match coord {
+                CoordinateModel::Direction(direction) if np == 2 => {
+                    world.extend(direction.pixel_to_world([pix_slice[0], pix_slice[1]])?);
+                }
+                CoordinateModel::Spectral(spectral) => {
+                    world.push(spectral.world_at_pixel(pix_slice[0])?)
+                }
+                CoordinateModel::Stokes(stokes) => world.push(stokes.world_at_pixel(pix_slice[0])?),
+                _ => world.extend(coord.to_world(pix_slice)?),
+            }
             pix_offset += np;
         }
+        Ok(())
+    }
 
-        Ok(world)
+    /// Convert a matrix of pixel vectors with one point per column.
+    /// The output rows follow the system's world axes, with columns contiguous.
+    ///
+    /// # Errors
+    /// Returns an error for a wrong pixel-axis count, an unrepresentable
+    /// output size, or the first point that cannot be converted.
+    pub fn to_world_columns(
+        &self,
+        pixels: ArrayView2<'_, f64>,
+    ) -> Result<Array2<f64>, CoordinateError> {
+        let n_pixel = self.n_pixel_axes();
+        if pixels.nrows() != n_pixel {
+            return Err(CoordinateError::DimensionMismatch {
+                expected: n_pixel,
+                got: pixels.nrows(),
+            });
+        }
+        let n_world = self.n_world_axes();
+        let size = n_world.checked_mul(pixels.ncols()).ok_or_else(|| {
+            CoordinateError::ConversionFailed("world coordinate matrix size overflow".into())
+        })?;
+        let mut world = Vec::with_capacity(size);
+        let mut input = Vec::new();
+        let maps = self.nonconsecutive_maps();
+        for column in pixels.axis_iter(Axis(1)) {
+            let column = match column.as_slice() {
+                Some(column) => column,
+                None => {
+                    input.clear();
+                    input.extend(column.iter().copied());
+                    &input
+                }
+            };
+            if let Some(maps) = maps {
+                world.extend(maps.to_world(&self.coordinates, column)?);
+            } else {
+                self.append_consecutive_world(column, &mut world)?;
+            }
+        }
+        Array2::from_shape_vec((n_world, pixels.ncols()).f(), world)
+            .map_err(|error| CoordinateError::ConversionFailed(error.to_string()))
     }
 
     /// Converts a full world coordinate vector to pixel coordinates.
@@ -603,6 +661,34 @@ mod tests {
             [-1e-5, 1e-5],
             [10.0, 20.0],
         )
+    }
+
+    #[test]
+    fn world_columns_preserve_layout_values_and_error_order() {
+        let system = crate::defaults::coordinate_system_for_shape(&[19, 13, 2, 6], false);
+        let pixels = ndarray::array![
+            [9.0, 9.25, 7.5],
+            [6.0, 5.5, 7.0],
+            [0.0, 1.0, 1.0],
+            [0.0, 2.5, 4.0],
+        ];
+        let column_major = Array2::from_shape_fn(pixels.dim().f(), |index| pixels[index]);
+        for input in [pixels.view(), column_major.view()] {
+            let world = system.to_world_columns(input).unwrap();
+            assert!(world.view().reversed_axes().is_standard_layout());
+            for (pixel, transformed) in input.axis_iter(Axis(1)).zip(world.axis_iter(Axis(1))) {
+                let expected = system.to_world(&pixel.to_vec()).unwrap();
+                assert_eq!(transformed.as_slice().unwrap(), expected);
+            }
+            assert_eq!(world.row(2).to_vec(), vec![1.0, 2.0, 2.0]);
+        }
+        let mut invalid = pixels;
+        invalid[[2, 0]] = 12.0;
+        invalid[[0, 1]] = 2e6;
+        assert!(matches!(
+            system.to_world_columns(invalid.view()),
+            Err(CoordinateError::AxisOutOfRange { .. })
+        ));
     }
 
     #[test]
