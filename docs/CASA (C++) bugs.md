@@ -10576,3 +10576,7 @@ In CASA 6.7.6.14, use the [direct fluxscale fixture](../tools/casa-compat/calibr
 CASA 6.7.6.14 accepts `calibrater.setsolve` for `TOpac` and `TfOpac`. With usable data, the first fit in either visibility iterator terminates the process with SIGSEGV and leaves no calibration table. An otherwise equivalent VI2 `T` solve completes. If every selected sample is flagged, both opacity families return success and preserve the configured solver. They record zero attempted and successful intervals and publish no table.
 
 Casa-rs preserves the setup, state and no-result behavior. When the selected data would reach a fit, it raises a recoverable solve error and clears the equation. The oracle runs the reference fits in child processes. [Direct opacity solve oracle](../tools/casa-compat/calibrater_opacity_solve_oracle.py)
+
+## Generic BPOLY setup can terminate Python
+
+CASA 6.7.6.14 can terminate with SIGSEGV during `calibrater.setsolve(type='BPOLY')` on an attached MeasurementSet in either visibility iterator. Casa-rs raises a recoverable setup error. The dedicated `setsolvebandpoly` entry point supplies the polynomial controls and supports the legacy fit. [Generic polynomial oracle](../tools/casa-compat/calibrater_generic_polynomial_oracle.py)

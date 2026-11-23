@@ -221,6 +221,7 @@ fn standard_request(
         "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
             standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
         ),
+        "BPOLY" => return Err(setup_error()),
         "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
             let frequency_dependent = family.starts_with("MF");
             CalibrationSolveRequest::Baseline {
@@ -248,6 +249,31 @@ fn standard_request(
         }
         _ => return Err(setup_error()),
     })
+}
+
+fn configure_generic_spline(
+    state: &mut casa_calibration::CalibraterLifecycle,
+    standard: StandardSolver,
+    mode: casa_calibration::CalibrationOutputMode,
+    elapsed: &str,
+    apmode: &str,
+    refant_mode: &str,
+) -> PyResult<bool> {
+    let controls = casa_calibration::GainSplineControls {
+        splinetime: 7200.,
+        npointaver: 2,
+        phasewrap: 0.,
+    };
+    state
+        .set_tool_spline(
+            standard.gain(GainType::GSpline),
+            controls,
+            mode,
+            apmode.into(),
+        )
+        .map_err(|_| setup_error())?;
+    state.record_solve_description(elapsed, apmode, refant_mode, None);
+    Ok(true)
 }
 
 #[pymethods]
@@ -383,7 +409,7 @@ impl super::PyCalibrater {
                     .resolve_primary_tool_refant(reference.clone())
                     .map_err(super::runtime_error)?;
             }
-            let reference = if baseline {
+            let reference = if baseline || family == "GSPLINE" {
                 state
                     .resolve_primary_tool_refant(reference)
                     .map_err(super::runtime_error)?
@@ -474,6 +500,16 @@ impl super::PyCalibrater {
                 configured.map_err(|_| setup_error())?;
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
+            }
+            if family == "GSPLINE" {
+                return configure_generic_spline(
+                    state,
+                    standard,
+                    mode,
+                    &elapsed,
+                    &apmode,
+                    &refant_mode,
+                );
             }
             let request = standard_request(&family, standard, frequency, fill_gaps, fringe)?;
             state
