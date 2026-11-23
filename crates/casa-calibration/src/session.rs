@@ -80,6 +80,13 @@ pub enum CalibrationSolveRequest {
     Accor(GainSolveRequest),
     /// Solve the additive Mueller response of each baseline from observed data.
     AdditiveMueller(GainSolveRequest),
+    /// Fit a frequency polynomial for each baseline and correlation.
+    AdditiveMuellerPolynomial {
+        /// Shared selection, prior calibration and output controls.
+        gain: GainSolveRequest,
+        /// Polynomial degree along the selected frequency domain.
+        fit_order: i32,
+    },
     /// Solve one multiplicative response per baseline and parallel hand.
     Baseline {
         /// Shared selection, prior, model and output parameters.
@@ -292,6 +299,17 @@ fn solve_open_dataset(
         )
         .map(CalibrationSolveResult::Gain)
         .map_err(|error| CalibrationError::Gain(Box::new(error))),
+        CalibrationSolveRequest::AdditiveMuellerPolynomial { gain, fit_order } => {
+            crate::solve::additive_polynomial::solve(
+                measurement_set,
+                &gain,
+                fit_order,
+                mode,
+                legacy_iterator,
+            )
+            .map(CalibrationSolveResult::Gain)
+            .map_err(|error| CalibrationError::Gain(Box::new(error)))
+        }
         CalibrationSolveRequest::Bandpass(request) => {
             solve_bandpass(measurement_set, &request, mode, activity, bandpass)
                 .map(CalibrationSolveResult::Bandpass)
