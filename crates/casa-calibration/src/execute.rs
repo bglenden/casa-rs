@@ -1155,8 +1155,9 @@ pub(crate) fn execute_tool_apply(
         selected,
         has_library_registration: correction.has_library_registration,
         legacy_corruption: false,
+        legacy_libraries: &[],
     };
-    let (mut plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
+    let (mut plan, _, _) = plan_with_selection(ms, request, None, Some(registration))?;
     if additive::in_plan(&plan) {
         plan.selected_rows =
             availability::rows_in_buffer_order(ms, std::mem::take(&mut plan.selected_rows))?;
@@ -2430,7 +2431,12 @@ fn apply_row_all_channels(
         };
         let table_plan = &plan.calibration_tables[table_index];
         let loaded_table = &chain.tables[table_index];
-        if !table_plan.applies_to(row)
+        let legacy_scan = chain
+            .legacy_scans
+            .get(&(table_index, row.row_index))
+            .copied();
+        let scan = legacy_scan.unwrap_or(row.scan_number);
+        if !table_plan.applies_to_scan(row, scan)
             || ((forward_model || skip_unavailable_terms)
                 && !availability::table_available(row, table_plan))
         {
@@ -2491,7 +2497,7 @@ fn apply_row_all_channels(
         let is_sky = crate::single_dish::is_sky_subtype(subtype);
         let is_switched_power = subtype == "G EVLASWPOW";
         let position_angle = subtype == "PosAng Jones";
-        let channelized_polarization = polarization::Leakage::is_channelized(subtype)
+        let channelized_polarization = polarization::JonesMatrix::is_channelized(subtype)
             || matches!(subtype, "Xf Jones" | "Xfparang Jones" | "GlinXphf Jones")
             || position_angle;
         let bounded_frequency_cache = is_tsys
@@ -2515,7 +2521,7 @@ fn apply_row_all_channels(
                 table_plan.interp,
             );
             key.observation_id = row.observation_id;
-            key.scan_number = row.scan_number;
+            key.scan_number = scan;
             key.data_spw_id = row.data_spw_id;
             let calculate = || {
                 fields::lookup(
@@ -2523,7 +2529,7 @@ fn apply_row_all_channels(
                     field_id,
                     cal_spw_id,
                     antenna,
-                    row,
+                    (row, scan),
                     data_spw,
                     evaluation_frequency_hz,
                 )
@@ -2749,13 +2755,13 @@ fn apply_row_all_channels(
             }
             continue;
         }
-        if let Some(leakage) = polarization::Leakage::from_subtype(subtype) {
+        if let Some(matrix) = polarization::JonesMatrix::from_subtype(subtype) {
             flush_fast_gain_pairs(
                 &mut fast_gain_pairs,
                 &mut output,
                 compute_profile.as_deref_mut(),
             )?;
-            leakage.apply(
+            matrix.apply(
                 row,
                 [&ant1, &ant2],
                 &sampling_context,
@@ -5003,7 +5009,7 @@ fn load_parameters(
             source: MsError::from(source),
         }
     })?;
-    let leakage = polarization::Leakage::from_subtype(&table_plan.summary.table_subtype);
+    let matrix = polarization::JonesMatrix::from_subtype(&table_plan.summary.table_subtype);
     let ionosphere = ionosphere::Ionosphere::for_plan(&table, table_plan)?;
     let cross_hand_phase = polarization::is_cross_hand_phase(&table_plan.summary.table_subtype);
     let sky_term = crate::single_dish::is_sky_subtype(&table_plan.summary.table_subtype);
@@ -5014,7 +5020,7 @@ fn load_parameters(
         None
     };
     let supports_calwt =
-        weights::supports_calwt(&table_plan.summary, leakage.is_some(), cross_hand_phase);
+        weights::supports_calwt(&table_plan.summary, matrix.is_some(), cross_hand_phase);
     let antpos_tropo = match (
         table_plan.summary.table_subtype.as_str(),
         ms,
@@ -5064,9 +5070,9 @@ fn load_parameters(
                 &table_plan.spec.path,
                 flags,
                 if baseline && table_plan.summary.table_subtype != "A Mueller" {
-                    Some("baseline calibration")
+                    Some((2, "baseline calibration"))
                 } else {
-                    leakage.map(|_| "leakage")
+                    matrix.map(polarization::JonesMatrix::parameter_shape)
                 },
                 cross_hand_phase,
                 reversed,
@@ -5208,7 +5214,7 @@ fn load_complex_parameters(
     row_index: usize,
     path: &Path,
     flags: &ArrayValue,
-    two_receptor_family: Option<&str>,
+    parameter_shape: Option<(usize, &str)>,
     cross_hand_phase: bool,
     reversed: bool,
 ) -> Result<CalibrationGrid, ApplyExecutionError> {
@@ -5219,13 +5225,13 @@ fn load_complex_parameters(
             path: path.display().to_string(),
             source: MsError::from(source),
         })?;
-    if let Some(family) = two_receptor_family
-        && gains.shape().first() != Some(&2)
+    if let Some((count, family)) = parameter_shape
+        && gains.shape().first() != Some(&count)
     {
         return Err(ApplyExecutionError::UnsupportedCalibrationTable {
             path: path.display().to_string(),
             reason: format!(
-                "{family} requires two CPARAM receptors, found shape {:?} at row {row_index}",
+                "{family} requires {count} CPARAM elements, found shape {:?} at row {row_index}",
                 gains.shape()
             ),
         });

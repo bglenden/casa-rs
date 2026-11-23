@@ -155,6 +155,12 @@ impl CompositeStorage {
                     rows,
                 )
             }
+            asdm_stman::TYPE => metadata.table_dat.asdm.get(manager.seq_nr)?.shapes(
+                metadata
+                    .table_dat
+                    .asdm_column(binding.columns[binding.column])?,
+                rows,
+            ),
             other => Err(StorageError::UnsupportedDataManager(format!(
                 "metadata-only array shapes for {other}"
             ))),
@@ -169,6 +175,14 @@ impl CompositeStorage {
         row: usize,
     ) -> Result<bool, StorageError> {
         let binding = Binding::of(table, column)?;
+        if binding.manager.type_name == asdm_stman::TYPE {
+            let column = table.asdm_column(binding.columns[binding.column])?;
+            return Ok(table
+                .asdm
+                .get(binding.manager.seq_nr)?
+                .shapes(column, &[row])?[0]
+                .is_some());
+        }
         if binding.manager.type_name != "TiledShapeStMan" {
             return Err(StorageError::FormatMismatch(format!(
                 "metadata-only array-cell definedness for column '{column}' requires TiledShapeStMan, found {}",

@@ -167,7 +167,7 @@ pub(super) fn lookup(
     field: i32,
     window: i32,
     antenna: i32,
-    row: &ApplyRowPlan,
+    (row, scan): (&ApplyRowPlan, i32),
     data_window: &crate::plan::SpectralWindowPlan,
     evaluation_frequency_hz: f64,
 ) -> Result<Option<GridAtTime>, ApplyExecutionError> {
@@ -217,9 +217,7 @@ pub(super) fn lookup(
         scan: table
             .callibrary
             .as_ref()
-            .map_or(row.scan_number, |library| {
-                library.scan_map.map(row.scan_number)
-            }),
+            .map_or(scan, |library| library.scan_map.map(scan)),
         window,
         antenna,
         time: row.time_seconds,
