@@ -234,17 +234,7 @@ fn open_subtable(table: &Table, name: &str) -> Result<Table, TaqlError> {
             "cannot resolve subtable {name:?} without a table path"
         ))
     })?;
-    let inherited = if table.is_reference_table().map_err(table_error)? {
-        table
-            .cache_plain_table_paths()
-            .map_err(table_error)?
-            .into_iter()
-            .next()
-    } else {
-        None
-    };
-    let owner = inherited.as_deref().unwrap_or(table_path);
-    Table::open(TableOptions::new(add_directory(stored_path, owner))).map_err(table_error)
+    Table::open(TableOptions::new(add_directory(stored_path, table_path))).map_err(table_error)
 }
 
 fn bind_column(

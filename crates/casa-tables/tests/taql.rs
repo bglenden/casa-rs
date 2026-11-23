@@ -84,6 +84,61 @@ fn select_where_simple() {
 }
 
 #[test]
+fn mscal_subtable_link_resolves_relative_to_reopened_reference_view() {
+    let temp = tempfile::tempdir().unwrap();
+    let view_dir = temp.path().join("view");
+    std::fs::create_dir(&view_dir).unwrap();
+    let antenna_path = view_dir.join("antenna.tbl");
+    let mut antenna = Table::with_schema(
+        TableSchema::new(vec![ColumnSchema::scalar("NAME", PrimitiveType::String)]).unwrap(),
+    );
+    for name in ["A0", "A1"] {
+        antenna
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "NAME",
+                Value::Scalar(ScalarValue::String(name.into())),
+            )]))
+            .unwrap();
+    }
+    antenna.save(TableOptions::new(&antenna_path)).unwrap();
+
+    let parent_path = temp.path().join("parent.ms");
+    let mut parent = Table::with_schema(
+        TableSchema::new(vec![ColumnSchema::scalar("ANTENNA1", PrimitiveType::Int32)]).unwrap(),
+    );
+    for id in [0, 1] {
+        parent
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "ANTENNA1",
+                Value::Scalar(ScalarValue::Int32(id)),
+            )]))
+            .unwrap();
+    }
+    parent.keywords_mut().upsert(
+        "ANTENNA",
+        Value::table_ref(antenna_path.to_string_lossy().into_owned()),
+    );
+    parent.save(TableOptions::new(&parent_path)).unwrap();
+    let parent = Table::open(TableOptions::new(&parent_path)).unwrap();
+    let view_path = view_dir.join("select.ms");
+    parent
+        .query("SELECT * WHERE ANTENNA1 == 1")
+        .unwrap()
+        .save(TableOptions::new(&view_path))
+        .unwrap();
+
+    let view = Table::open(TableOptions::new(&view_path)).unwrap();
+    assert_eq!(
+        view.keywords().get("ANTENNA"),
+        Some(&Value::table_ref("./antenna.tbl"))
+    );
+    let selected = view
+        .query("SELECT * WHERE mscal.ant1name() == 'A1'")
+        .unwrap();
+    assert_eq!(selected.row_count(), 1);
+}
+
+#[test]
 fn select_where_compound_and_or() {
     let table = catalog_table();
     let view = table
