@@ -667,41 +667,7 @@ fn for_each_apply_row(
         path: ms_path.clone(),
         source: MsError::from(source),
     };
-    let main = ms.main_table();
-    let readers = columns
-        .iter()
-        .map(|&name| {
-            let selected = main.data_manager_info().iter().any(|manager| {
-                matches!(
-                    manager.dm_type.as_str(),
-                    "StandardStMan"
-                        | "TiledColumnStMan"
-                        | "TiledShapeStMan"
-                        | "TiledCellStMan"
-                        | "TiledDataStMan"
-                ) && manager.columns.iter().any(|column| column == name)
-            });
-            selected.then(|| main.column_accessor(name)).transpose()
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(read_error)?;
-    // Whole-column readers (including linked tables and virtual columns) must
-    // amortize their load across the preview rather than repeat it per batch.
-    let mut prepared_columns = Vec::new();
-    let prepared_slots: Vec<_> = readers
-        .iter()
-        .zip(&columns)
-        .map(|(reader, &name)| {
-            reader.is_none().then(|| {
-                prepared_columns.push(name);
-                prepared_columns.len() - 1
-            })
-        })
-        .collect();
-    let mut prepared = (!prepared_columns.is_empty())
-        .then(|| main.row_accessor().prepare(&prepared_columns))
-        .transpose()
-        .map_err(read_error)?;
+    let mut readers = PreviewReaders::new(ms.main_table(), &columns).map_err(read_error)?;
     let data_index = (!forward_model).then_some(1);
     let sigma_slots = columns
         .iter()
@@ -720,6 +686,7 @@ fn for_each_apply_row(
                 .map(|row| row.row_index)
                 .collect();
             arrays = readers
+                .selected
                 .iter()
                 .map(|column| {
                     column
@@ -736,11 +703,13 @@ fn for_each_apply_row(
                 data_desc_id: row.data_desc_id,
                 correlation_types: Vec::new(),
             })?;
-        if let Some(prepared) = prepared.as_mut() {
+        if let Some(prepared) = readers.prepared.as_mut() {
             prepared.load(row.row_index).map_err(read_error)?;
         }
         let read = |slot: usize| {
-            if let (Some(prepared), Some(prepared_slot)) = (&prepared, prepared_slots[slot]) {
+            if let (Some(prepared), Some(prepared_slot)) =
+                (&readers.prepared, readers.prepared_slots[slot])
+            {
                 return prepared.array_at(prepared_slot).map_err(read_error);
             }
             arrays[slot]
@@ -869,6 +838,59 @@ fn for_each_apply_row(
     }
 
     Ok(())
+}
+
+struct PreviewReaders<'a> {
+    selected: Vec<Option<casa_tables::TableColumn<'a>>>,
+    prepared: Option<casa_tables::PreparedTableRow<'a>>,
+    prepared_slots: Vec<Option<usize>>,
+}
+
+impl<'a> PreviewReaders<'a> {
+    fn new(
+        main: &'a casa_tables::Table,
+        columns: &[&str],
+    ) -> Result<Self, casa_tables::TableError> {
+        let selected = columns
+            .iter()
+            .map(|&name| {
+                let supports_selection = main.data_manager_info().iter().any(|manager| {
+                    matches!(
+                        manager.dm_type.as_str(),
+                        "StandardStMan"
+                            | "TiledColumnStMan"
+                            | "TiledShapeStMan"
+                            | "TiledCellStMan"
+                            | "TiledDataStMan"
+                    ) && manager.columns.iter().any(|column| column == name)
+                });
+                supports_selection
+                    .then(|| main.column_accessor(name))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Linked tables and other whole-column readers reuse one projection.
+        let mut prepared_columns = Vec::new();
+        let prepared_slots = selected
+            .iter()
+            .zip(columns)
+            .map(|(reader, &name)| {
+                reader.is_none().then(|| {
+                    let slot = prepared_columns.len();
+                    prepared_columns.push(name);
+                    slot
+                })
+            })
+            .collect();
+        let prepared = (!prepared_columns.is_empty())
+            .then(|| main.row_accessor().prepare(&prepared_columns))
+            .transpose()?;
+        Ok(Self {
+            selected,
+            prepared,
+            prepared_slots,
+        })
+    }
 }
 
 fn preview_batch_rows(plan: &ApplyPlan, correlations: &HashMap<i32, Vec<i32>>) -> usize {
