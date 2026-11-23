@@ -27,7 +27,7 @@ fn epoch_selection(epoch: &RecordArg) -> PyResult<Option<MEpoch>> {
         .ok_or_else(|| PyRuntimeError::new_err("Epoch cannot be converted to an MEpoch"))
 }
 
-fn direction_record(measure: MetadataDirection) -> CasaValue {
+pub(in crate::tools) fn direction_record(measure: MetadataDirection) -> CasaValue {
     let record = Measure::from_casa(&CasaMeasure::Direction(measure.direction)).to_value();
     let Some(offset) = measure.offset else {
         return record;

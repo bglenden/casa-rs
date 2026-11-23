@@ -10891,6 +10891,21 @@ casa-rs keeps the public link name and resolves reads and writes against
 the MS captured at open, so changing the link cannot redirect an
 attached operation (#1030).
 
+## An invalid FIELD direction column can return the north celestial pole
+
+In CASA 6.7.6.14, call `ms.getfielddirmeas("phase")` on a valid MS.
+CASA logs an illegal column name and still returns a J2000 direction
+with declination π/2. casa-rs logs the bad column and returns the empty
+boolean array also used for other failed direction queries (#1030).
+
+## Empty MS selections can fail the spectral-window summary
+
+In CASA 6.7.6.14, select zero rows from a valid MS with nonempty
+DATA_DESCRIPTION and SPECTRAL_WINDOW, then call `getspectralwindowinfo()`.
+The scalar range returns an empty record and the summary indexes a
+missing field, raising an internal assertion error. casa-rs returns an
+empty dictionary because no data descriptions are used (#1030).
+
 ## An MS opened read-only can start writing through another handle
 
 In CASA 6.7.6.14, open an MS with `ms.open(path, nomodify=True)` and

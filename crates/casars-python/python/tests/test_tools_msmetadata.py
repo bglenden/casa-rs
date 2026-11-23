@@ -713,9 +713,8 @@ def test_msmetadata_field_polynomial_direction_records(native_dataset):
             assert metadata.done()
 
 
-def test_msmetadata_attached_ephemeris_direction_records(native_dataset):
-    casatools = pytest.importorskip("casatools")
-    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+@pytest.fixture
+def ephemeris_dataset(native_dataset):
     table = tools.table()
     assert table.open(str(native_dataset), nomodify=True)
     start = float(table.getcell("TIME", 0))
@@ -750,6 +749,13 @@ def test_msmetadata_attached_ephemeris_direction_records(native_dataset):
         "GeoLong": 0., "GeoLat": 0., "dMJD": 1., "MJD0": mjd - 3,
     })
     assert table.done()
+    return native_dataset, mjd
+
+
+def test_msmetadata_attached_ephemeris_direction_records(ephemeris_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    native_dataset, mjd = ephemeris_dataset
 
     def epoch(day):
         return {"type": "epoch", "refer": "UTC", "m0": {"value": day, "unit": "d"}}
