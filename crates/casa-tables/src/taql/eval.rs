@@ -439,9 +439,27 @@ pub fn eval_constant_string(
     name: &str,
     style: ast::IndexStyle,
 ) -> Result<String, TaqlError> {
+    match eval_constant(expr, name, style)? {
+        ExprValue::String(value) => Ok(value),
+        _ => Err(TaqlError::TypeError {
+            message: format!("{name} requires a constant string argument"),
+        }),
+    }
+}
+
+/// Evaluates an expression that does not depend on any table row.
+///
+/// # Errors
+///
+/// Returns a type error for row-dependent inputs, and propagates expression errors.
+pub fn eval_constant(
+    expr: &Expr,
+    name: &str,
+    style: ast::IndexStyle,
+) -> Result<ExprValue, TaqlError> {
     fn error(name: &str) -> TaqlError {
         TaqlError::TypeError {
-            message: format!("{name} requires a constant string argument"),
+            message: format!("{name} requires a constant argument"),
         }
     }
 
@@ -451,7 +469,8 @@ pub fn eval_constant_string(
             | Expr::RowNumber
             | Expr::Subquery(_)
             | Expr::Aggregate { .. }
-            | Expr::BoundRowLookup { .. } => return Err(error(name)),
+            | Expr::BoundRowLookup { .. }
+            | Expr::BoundRowFunction(_) => return Err(error(name)),
             Expr::FunctionCall { name: func, .. }
                 if [
                     "rownumber",
@@ -478,10 +497,7 @@ pub fn eval_constant_string(
         style,
         measures: None,
     };
-    match eval_expr(expr, &ctx)? {
-        ExprValue::String(value) => Ok(value),
-        _ => Err(error(name)),
-    }
+    eval_expr(expr, &ctx)
 }
 
 /// Evaluate an expression against a row context.
@@ -508,6 +524,7 @@ pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlEr
                 .cloned()
                 .ok_or_else(|| TaqlError::Table(format!("{original} row {row} is out of range")))
         }
+        Expr::BoundRowFunction(function) => function.evaluate(ctx),
         Expr::Unary { op, operand } => {
             let val = eval_expr(operand, ctx)?;
             eval_unary(*op, val)

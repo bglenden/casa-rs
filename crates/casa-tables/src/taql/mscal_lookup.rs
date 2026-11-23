@@ -41,6 +41,12 @@ fn bind_lookup(
             .join(", ")
     );
 
+    if matches!(function, "uvwwvl" | "uvwwvls") {
+        check_arity(name, args, 0)?;
+        return super::mscal_wavelengths::bind(original, table, function == "uvwwvls")
+            .map(|function| Some(Expr::BoundRowFunction(function)));
+    }
+
     let (subtable, column, index, allow_missing) = if function == "subcol" {
         check_arity(name, args, 3)?;
         (
@@ -117,7 +123,7 @@ fn column_ref(name: &str) -> Expr {
     })
 }
 
-fn open_subtable(table: &Table, name: &str) -> Result<Table, TaqlError> {
+pub(super) fn open_subtable(table: &Table, name: &str) -> Result<Table, TaqlError> {
     let stored_path = table
         .keywords()
         .get(name)
@@ -239,6 +245,6 @@ fn missing_value(schema: &ColumnSchema) -> ExprValue {
     }
 }
 
-fn table_error(err: TableError) -> TaqlError {
+pub(super) fn table_error(err: TableError) -> TaqlError {
     TaqlError::Table(err.to_string())
 }

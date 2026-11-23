@@ -6,6 +6,7 @@ use casa_tables::taql::ast::{Expr, Literal};
 use casa_tables::taql::{self, IndexStyle, Statement, TaqlError, TaqlResult};
 
 use super::intent::MatchMode;
+use super::taql_geometry::GeometryBinder;
 use super::{MsSelection, RowGrammar, int_list, parser, row_grammar};
 use crate::{MeasurementSet, MsError, MsResult};
 
@@ -18,7 +19,8 @@ pub(super) fn select_rows(
     if let Statement::Select(select) = &mut statement
         && let Some(predicate) = &mut select.where_clause
     {
-        bind_selectors(predicate, ms, select.style, rows_per_block)?;
+        let mut geometry = GeometryBinder::new(ms);
+        bind_selectors(predicate, ms, select.style, rows_per_block, &mut geometry)?;
     }
     match taql::exec::execute_readonly(&statement, ms.main_table()).map_err(taql_error)? {
         TaqlResult::Select { row_indices, .. } => Ok(row_indices),
@@ -33,14 +35,21 @@ fn bind_selectors(
     ms: &MeasurementSet,
     style: IndexStyle,
     rows_per_block: Option<usize>,
+    geometry: &mut GeometryBinder<'_>,
 ) -> MsResult<()> {
-    if let Expr::FunctionCall { name, args } = expr
-        && let Some(predicate) = resolve_selector(name, args, ms, style, rows_per_block)?
-    {
-        *expr = predicate;
-        return Ok(());
+    if let Expr::FunctionCall { name, args } = expr {
+        let resolved = match resolve_selector(name, args, ms, style, rows_per_block)? {
+            Some(predicate) => Some(predicate),
+            None => geometry.bind(name, args, style)?,
+        };
+        if let Some(resolved) = resolved {
+            *expr = resolved;
+            return Ok(());
+        }
     }
-    expr.try_for_each_child_mut(&mut |child| bind_selectors(child, ms, style, rows_per_block))
+    expr.try_for_each_child_mut(&mut |child| {
+        bind_selectors(child, ms, style, rows_per_block, geometry)
+    })
 }
 
 fn resolve_selector(
@@ -122,6 +131,6 @@ fn resolve_selector(
     ))
 }
 
-fn taql_error(error: TaqlError) -> MsError {
+pub(super) fn taql_error(error: TaqlError) -> MsError {
     TableError::Taql(error.to_string()).into()
 }

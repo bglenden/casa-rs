@@ -24,10 +24,12 @@
 //! `TableExprFuncNode.cc`, `TaQLNode.cc`.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
+
+use casa_types::quanta::{Quantity, Unit};
 
 use super::error::TaqlError;
-use super::eval::{EvalContext, ExprValue};
+use super::eval::{ArrayValue, EvalContext, ExprValue};
 use num_complex::Complex64;
 
 /// Trait for user-defined TaQL functions.
@@ -153,9 +155,9 @@ pub fn call_function(
         }
 
         // ── Trigonometric ──────────────────────────────────────────
-        "sin" => unary_float(name, args, f64::sin),
-        "cos" => unary_float(name, args, f64::cos),
-        "tan" => unary_float(name, args, f64::tan),
+        "sin" => map_unary(name, args, |arg| Ok(ExprValue::Float(angle(arg)?.sin()))),
+        "cos" => map_unary(name, args, |arg| Ok(ExprValue::Float(angle(arg)?.cos()))),
+        "tan" => map_unary(name, args, |arg| Ok(ExprValue::Float(angle(arg)?.tan()))),
         "asin" => unary_float(name, args, f64::asin),
         "acos" => unary_float(name, args, f64::acos),
         "atan" => unary_float(name, args, f64::atan),
@@ -197,20 +199,18 @@ pub fn call_function(
         }
 
         // ── Rounding ───────────────────────────────────────────────
-        "abs" => {
-            check_arity(name, args, 1)?;
-            if args[0].is_null() {
-                return Ok(ExprValue::Null);
-            }
-            match &args[0] {
-                ExprValue::Int(n) => Ok(ExprValue::Int(n.abs())),
-                ExprValue::Float(v) => Ok(ExprValue::Float(v.abs())),
-                ExprValue::Complex(c) => Ok(ExprValue::Float(c.norm())),
-                other => Err(TaqlError::TypeError {
-                    message: format!("abs() cannot operate on {}", other.type_name()),
-                }),
-            }
-        }
+        "abs" => map_unary(name, args, |value| match value {
+            ExprValue::Int(n) => Ok(ExprValue::Int(n.abs())),
+            ExprValue::Float(v) => Ok(ExprValue::Float(v.abs())),
+            ExprValue::Complex(c) => Ok(ExprValue::Float(c.norm())),
+            ExprValue::Quantity(q) => Ok(ExprValue::Quantity(Quantity::with_unit(
+                q.value().abs(),
+                q.unit().clone(),
+            ))),
+            other => Err(TaqlError::TypeError {
+                message: format!("abs() cannot operate on {}", other.type_name()),
+            }),
+        }),
         "sign" => {
             check_arity(name, args, 1)?;
             if args[0].is_null() {
@@ -1506,6 +1506,45 @@ fn check_arity(name: &str, args: &[ExprValue], expected: usize) -> Result<(), Ta
         })
     } else {
         Ok(())
+    }
+}
+
+fn map_unary(
+    name: &str,
+    args: &[ExprValue],
+    apply: impl Fn(&ExprValue) -> Result<ExprValue, TaqlError>,
+) -> Result<ExprValue, TaqlError> {
+    check_arity(name, args, 1)?;
+    let element = |value: &ExprValue| {
+        if value.is_null() {
+            Ok(ExprValue::Null)
+        } else {
+            apply(value)
+        }
+    };
+    match &args[0] {
+        ExprValue::Array(array) => Ok(ExprValue::Array(ArrayValue {
+            shape: array.shape.clone(),
+            data: array.data.iter().map(element).collect::<Result<_, _>>()?,
+        })),
+        value => element(value),
+    }
+}
+
+fn angle(value: &ExprValue) -> Result<f64, TaqlError> {
+    static RADIANS: LazyLock<Unit> = LazyLock::new(|| Unit::new("rad").expect("radian unit"));
+    static SECONDS: LazyLock<Unit> = LazyLock::new(|| Unit::new("s").expect("second unit"));
+    match value {
+        // Casacore also interprets one day of time as one turn.
+        ExprValue::Quantity(q) if q.unit().conformant(&SECONDS) => {
+            Ok(q.get_si_value() * (std::f64::consts::TAU / 86_400.0))
+        }
+        ExprValue::Quantity(q) => q
+            .get_value_in(&RADIANS)
+            .map_err(|err| TaqlError::TypeError {
+                message: err.to_string(),
+            }),
+        _ => value.to_float(),
     }
 }
 

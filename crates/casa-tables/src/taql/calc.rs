@@ -256,6 +256,7 @@ fn validate_no_calc_aggregates(expr: &Expr) -> Result<(), TaqlError> {
         | Expr::Literal(_)
         | Expr::ColumnRef(_)
         | Expr::Star
+        | Expr::BoundRowFunction(_)
         | Expr::RowNumber => Ok(()),
         Expr::InSet { expr, .. } => validate_no_calc_aggregates(expr),
     }
@@ -263,7 +264,7 @@ fn validate_no_calc_aggregates(expr: &Expr) -> Result<(), TaqlError> {
 
 fn expr_has_column_ref(expr: &Expr) -> bool {
     match expr {
-        Expr::ColumnRef(_) => true,
+        Expr::ColumnRef(_) | Expr::BoundRowFunction(_) => true,
         Expr::Unary { operand, .. } | Expr::IsNull { expr: operand, .. } => {
             expr_has_column_ref(operand)
         }
@@ -450,7 +451,11 @@ fn validate_calc_columns(expr: &Expr, table: &Table) -> Result<(), TaqlError> {
             }
             Ok(())
         }
-        Expr::Subquery(_) | Expr::Literal(_) | Expr::Star | Expr::RowNumber => Ok(()),
+        Expr::Subquery(_)
+        | Expr::Literal(_)
+        | Expr::Star
+        | Expr::BoundRowFunction(_)
+        | Expr::RowNumber => Ok(()),
     }
 }
 
@@ -725,7 +730,11 @@ fn resolve_calc_subexprs(
                 .map(|el| resolve_index_subexprs(el, ctx, open_table))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        Expr::Literal(_) | Expr::ColumnRef(_) | Expr::Star | Expr::RowNumber => Ok(expr.clone()),
+        Expr::Literal(_)
+        | Expr::ColumnRef(_)
+        | Expr::Star
+        | Expr::BoundRowFunction(_)
+        | Expr::RowNumber => Ok(expr.clone()),
     }
 }
 
