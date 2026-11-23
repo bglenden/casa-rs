@@ -10410,6 +10410,8 @@ fit that antenna along with the connected array. The singular fit can
 publish nonfinite coefficients, including for antennas that have data.
 Casa-rs fits the connected array and omits antennas without accepted data.
 Both legacy readers then flag visibilities with a missing antenna gain.
+This rule also applies to generic `calibrater.setsolve(type='GSPLINE')`,
+which publishes the fitted antennas across every attached field.
 
 ## `fringefit` can abort with one selected channel per spectral window
 

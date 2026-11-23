@@ -162,19 +162,11 @@ pub(crate) fn solve(
     let output = crate::timing::Phase::start("gspline_write");
     let solution_row_count = if let Some(coefficients) = &coefficients {
         let frequency = reference_frequency(ms, &context.rows, context.preapplied_rows.as_ref())?;
-        let solved_antennas = if all_fields {
-            context
-                .available_antennas
-                .iter()
-                .map(|&antenna| antenna as usize)
-                .collect()
-        } else {
-            series
-                .iter()
-                .filter(|baseline| baseline.samples.iter().flatten().copied().any(usable))
-                .flat_map(|baseline| baseline.antennas)
-                .collect::<BTreeSet<_>>()
-        };
+        let solved_antennas = series
+            .iter()
+            .filter(|baseline| baseline.samples.iter().flatten().copied().any(usable))
+            .flat_map(|baseline| baseline.antennas)
+            .collect::<BTreeSet<_>>();
         let count = writer::write(
             ms,
             request,

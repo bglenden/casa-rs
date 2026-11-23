@@ -6,18 +6,20 @@ import argparse
 from contextlib import chdir
 import json
 from pathlib import Path
+from shutil import copytree
 import signal
 from subprocess import run
 import sys
 
 import casatasks
 from casatools import calibrater as casa_calibrater
+import numpy as np
 
 from calibration_smoothcal_oracle import opened
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_polynomial_tool_oracle import verify_readers
 from calibrater_state_oracle import casa_log, native_log
-from gspline_oracle import compare_tables, source
+from gspline_oracle import apply, compare_tables, source
 
 
 def casa_spline_fit(vis, product, legacy, options, outcome, phase_control):
@@ -120,6 +122,38 @@ def append_spline(work, vis, factories):
     print('generic append refreshes the published fields', flush=True)
 
 
+def disconnected_spline(work, vis, factories):
+    partial = work/'disconnected.ms'
+    copytree(vis, partial)
+    with opened(partial, True) as table:
+        disconnected = (table.getcol('ANTENNA1') == 4) | (table.getcol('ANTENNA2') == 4)
+        flags = table.getcol('FLAG')
+        flags[..., disconnected] = True
+        table.putcol('FLAG', flags)
+        table.putcol('FLAG_ROW', disconnected)
+    for label, factory in factories.items():
+        product = work/f'disconnected-{label}.cal'
+        tool = factory()
+        assert tool.setvi(True, True) and tool.open(str(partial))
+        assert tool.selectvis(field='FLUX', spw='0:1~10') and tool.setptmodel([1, 0, 0, 0])
+        assert tool.setsolve('GSPLINE', 'inf', str(product), apmode='A', refant='A0')
+        assert tool.solve() and tool.close()
+        with opened(product) as table:
+            if label == 'casa':
+                np.testing.assert_array_equal(table.getcol('ANTENNA1'), list(range(5))*2)
+                continue
+            np.testing.assert_array_equal(table.getcol('ANTENNA1'), list(range(4))*2)
+            np.testing.assert_array_equal(table.getcol('FIELD_ID'), [0]*4 + [1]*4)
+            assert np.isfinite(table.getcol('POLY_COEFF_AMP')).all()
+        from casars.tasks import applycal as native_apply
+
+        for reader, task in [('casa', casatasks.applycal), ('native', native_apply)]:
+            data, flags = apply(work, vis, task, product, f'disconnected-{reader}')
+            np.testing.assert_array_equal(flags, np.broadcast_to(disconnected, flags.shape))
+            assert np.isfinite(data[~flags]).all()
+    print('generic disconnected antenna input checked', flush=True)
+
+
 def bpoly_setup(work, vis, factories, legacy):
     output = work/f'generic-bpoly-{legacy}.cal'
     child = """
@@ -169,6 +203,7 @@ def compare(work, reference_only):
         ):
             spline_case(work, vis, factories, name, legacy, options, mode, outcome)
         append_spline(work, vis, factories)
+        disconnected_spline(work, vis, factories)
         for legacy in (True, False):
             bpoly_setup(work, vis, factories, legacy)
 
