@@ -770,19 +770,23 @@ impl SolveAccumulator {
             Some(other) => return Err(unsupported_shape("WEIGHT_SPECTRUM", other)),
             None => None,
         };
-        self.observe_selected_samples(
-            &SolveSampleRow::of(row),
-            &samples,
-            &layout.correlations,
-            SelectedChannels {
-                indices: &layout.channels,
-                all_channels: layout.all_channels,
-                bin_width: layouts.channel_bin_widths.get(&row.data_spw_id).copied(),
-                excluded: &layout.excluded,
-                bin_weights,
-            },
-            options,
-        )
+        let channels = SelectedChannels {
+            indices: &layout.channels,
+            all_channels: layout.all_channels,
+            bin_width: layouts.channel_bin_widths.get(&row.data_spw_id).copied(),
+            excluded: &layout.excluded,
+            bin_weights,
+        };
+        let row = SolveSampleRow::of(row);
+        if options.input_rows == SolveInputRows::LegacyAdditivePolynomial {
+            self.observe_metadata(&row, false);
+            let gather = self
+                .additive_polynomial
+                .get_or_insert_with(Default::default);
+            self.attempted |= gather.observe(&row, &samples, &layout.correlations, channels)?;
+            return Ok(());
+        }
+        self.observe_selected_samples(&row, &samples, &layout.correlations, channels, options)
     }
 
     /// Accumulate one sample's `channels` (every channel for a channelized
@@ -821,14 +825,6 @@ impl SolveAccumulator {
         channels: SelectedChannels<'_>,
         options: &SolveGroupOptions,
     ) -> Result<(), GainSolveError> {
-        if options.input_rows == SolveInputRows::LegacyAdditivePolynomial {
-            self.observe_metadata(row, false);
-            let gather = self
-                .additive_polynomial
-                .get_or_insert_with(Default::default);
-            self.attempted |= gather.observe(row, samples, correlation_types, channels)?;
-            return Ok(());
-        }
         if options.input_rows == SolveInputRows::LegacyBaseline {
             return self.observe_legacy_baseline(
                 row,
