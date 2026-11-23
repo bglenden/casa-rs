@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_numerics::{
-    invert_symmetric_positive_definite, solve_symmetric_positive_definite,
+    CasacoreLdlt, invert_symmetric_positive_definite, solve_symmetric_positive_definite,
     solve_weighted_least_squares,
 };
 
@@ -19,6 +19,12 @@ pub(super) struct Solution {
     pub(super) errors: Vec<f64>,
     pub(super) iterations: usize,
     pub(super) converged: bool,
+}
+
+struct NormalEquations {
+    curvature: Vec<f64>,
+    gradient: Vec<f64>,
+    score: f64,
 }
 
 // MomentCalcBase uses casacore's Float NonLinearFitLM. Its iteration limit
@@ -39,36 +45,37 @@ pub(super) fn solve_moment_gaussian(curve: &Curve, samples: &[Sample]) -> Option
             .collect::<Vec<_>>()
     };
     let mut best = curve.parameters.clone();
-    let mut score = cost(curve, &best, samples);
     let mut equations = normal_equations(curve, &best, &free, samples);
     let mut damping = 0.001;
     let mut increase = 2.;
     for iteration in 0..ITERATIONS - 1 {
-        let (normal, gradient) = &equations;
-        if gradient.iter().all(|value| value.abs() <= EPSILON) {
+        if equations
+            .gradient
+            .iter()
+            .all(|value| value.abs() <= EPSILON)
+        {
             return Some(moment_correction(curve, samples, &free, best));
         }
-        let mut damped = normal.clone();
+        let mut damped = equations.curvature.clone();
         for index in 0..count {
             damped[index * (count + 1)] *= 1. + damping;
         }
-        let step = solve_symmetric_positive_definite(&damped, gradient)?;
+        let step = solve_symmetric_positive_definite(&damped, &equations.gradient)?;
         let trial = add(&best, &step);
         if norm(&step) <= EPSILON * (norm(&best) + EPSILON) {
             return Some(moment_correction(curve, samples, &free, trial));
         }
-        let next = cost(curve, &trial, samples);
         let candidate = normal_equations(curve, &trial, &free, samples);
         let predicted = step
             .iter()
             .enumerate()
             .map(|(index, &step)| {
-                step * (damping * step * candidate.0[index * (count + 1)] + candidate.1[index])
+                step * (damping * step * candidate.curvature[index * (count + 1)]
+                    + candidate.gradient[index])
             })
             .sum::<f64>();
-        if next < score && predicted > 0. {
+        if candidate.score < equations.score && predicted > 0. {
             best = trial;
-            score = next;
             equations = candidate;
             damping *= 0.3;
             increase = 2.;
@@ -89,8 +96,10 @@ fn moment_correction(
     free: &[usize],
     mut values: Vec<f64>,
 ) -> Vec<f64> {
-    let (normal, gradient) = normal_equations(curve, &values, free, samples);
-    if let Some(correction) = solve_symmetric_positive_definite(&normal, &gradient) {
+    let equations = normal_equations(curve, &values, free, samples);
+    if let Some(correction) =
+        solve_symmetric_positive_definite(&equations.curvature, &equations.gradient)
+    {
         for (value, step) in values.iter_mut().zip(correction) {
             *value = f64::from((*value + step) as f32);
         }
@@ -137,6 +146,9 @@ fn solve_profile(
             converged: true,
         });
     }
+    if !allow_underdetermined && !free.is_empty() {
+        return Some(solve_image_profile(curve, samples, &free, values));
+    }
     let mut damping = 0.001;
     let mut iterations = 0;
     let power = samples
@@ -148,7 +160,11 @@ fn solve_profile(
     let mut candidate = values.clone();
     while !converged && iterations < 200 && damping <= 1e12 {
         iterations += 1;
-        let (mut normal, rhs) = normal_equations(curve, &values, &free, samples);
+        let NormalEquations {
+            curvature: mut normal,
+            gradient: rhs,
+            ..
+        } = normal_equations(curve, &values, &free, samples);
         let stride = free.len() + 1;
         let stationary = rhs.iter().enumerate().all(|(index, gradient)| {
             let curvature = normal[index * stride];
@@ -195,6 +211,167 @@ fn solve_profile(
         iterations,
         converged,
     })
+}
+
+fn solve_image_profile(
+    curve: &Curve,
+    samples: &[Sample],
+    free: &[usize],
+    mut values: Vec<f64>,
+) -> Solution {
+    // ImageProfileFitter uses SpectralFit's double-precision LM policy:
+    // stopping on an absolute gradient or a relative parameter increment,
+    // then taking one undamped correction for the final estimate.
+    const EPSILON: f64 = 1e-8;
+    let components = curve
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|&(index, line)| {
+            line.multiplet.is_none()
+                || index == 0
+                || line.multiplet != curve.lines[index - 1].multiplet
+        })
+        .count()
+        + usize::from(curve.polynomial.is_some())
+        + usize::from(curve.spectral.is_some());
+    let maximum = 50 + 10 * components;
+    let norm = |values: &[f64]| values.iter().map(|value| value * value).sum::<f64>().sqrt();
+    // For very faint spectra the whole line's squared intensity can lie
+    // below CASA's gradient floor. Scale the floor in that regime so a
+    // misplaced low-amplitude line can still move.
+    let intensity = samples
+        .iter()
+        .fold(0_f64, |peak, sample| peak.max(sample.y.abs()));
+    let intensity_squared = intensity.powi(2);
+    let gradient_floor = if intensity_squared < EPSILON {
+        EPSILON * intensity_squared
+    } else {
+        EPSILON
+    };
+    let mut iterations = 0;
+    let mut damping = 0.001;
+    let mut increase = 2.;
+    let mut equations = normal_equations(curve, &values, free, samples);
+    let mut converged = false;
+    let stride = free.len() + 1;
+    let mut damped = equations.curvature.clone();
+    let mut step = equations.gradient.clone();
+    let mut trial = values.clone();
+    while iterations < maximum {
+        iterations += 1;
+        if equations
+            .gradient
+            .iter()
+            .all(|gradient| gradient.abs() <= gradient_floor)
+        {
+            converged = true;
+            break;
+        }
+        damped.copy_from_slice(&equations.curvature);
+        for index in 0..free.len() {
+            let diagonal = &mut damped[index * stride];
+            *diagonal = if *diagonal == 0. {
+                1.
+            } else {
+                *diagonal * (1. + damping)
+            };
+        }
+        let Some(factor) = CasacoreLdlt::factor(&mut damped, free.len(), 0.) else {
+            break;
+        };
+        step.copy_from_slice(&equations.gradient);
+        if factor.solve(&mut step).is_none() || !step.iter().all(|value| value.is_finite()) {
+            break;
+        }
+        trial.copy_from_slice(&values);
+        for (&index, &delta) in free.iter().zip(&step) {
+            trial[index] += delta;
+        }
+        if curve.valid_widths(&trial) {
+            if norm(&step) <= EPSILON * (norm(&values) + EPSILON) {
+                std::mem::swap(&mut values, &mut trial);
+                equations = normal_equations(curve, &values, free, samples);
+                converged = true;
+                break;
+            }
+            let candidate = normal_equations(curve, &trial, free, samples);
+            let predicted = step
+                .iter()
+                .enumerate()
+                .map(|(index, &step)| {
+                    step * (damping * step * candidate.curvature[index * stride]
+                        + candidate.gradient[index])
+                })
+                .sum::<f64>();
+            if candidate.score < equations.score && predicted > 0. {
+                std::mem::swap(&mut values, &mut trial);
+                equations = candidate;
+                damping *= 0.3;
+                increase = 2.;
+                continue;
+            }
+        }
+        damping *= increase;
+        increase *= 2.;
+        if increase > 1e10 {
+            // The reference tests a rejected trial in its next iteration.
+            iterations += 1;
+            converged = true;
+            break;
+        }
+    }
+    converged &= iterations < maximum;
+    let mut errors = vec![0.; values.len()];
+    if converged {
+        converged = finish_image_fit(equations, samples.len(), free, &mut values, &mut errors)
+            .is_some()
+            && curve.valid_widths(&values);
+    }
+    Solution {
+        values,
+        errors,
+        iterations,
+        converged,
+    }
+}
+
+fn finish_image_fit(
+    equations: NormalEquations,
+    samples: usize,
+    free: &[usize],
+    values: &mut [f64],
+    errors: &mut [f64],
+) -> Option<()> {
+    let NormalEquations {
+        mut curvature,
+        gradient,
+        score,
+    } = equations;
+    for index in 0..free.len() {
+        let diagonal = &mut curvature[index * (free.len() + 1)];
+        if *diagonal == 0. {
+            *diagonal = 1.;
+        }
+    }
+    let factor = CasacoreLdlt::factor(&mut curvature, free.len(), 0.)?;
+    let mut correction = gradient.clone();
+    factor.solve(&mut correction)?;
+    let improvement = correction
+        .iter()
+        .zip(gradient)
+        .map(|(delta, gradient)| delta * gradient)
+        .sum::<f64>();
+    let rms = ((score - improvement).max(0.) / (samples - free.len()) as f64).sqrt();
+    let mut column = vec![0.; free.len()];
+    for (index, (&parameter, step)) in free.iter().zip(correction).enumerate() {
+        values[parameter] += step;
+        column.fill(0.);
+        column[index] = 1.;
+        factor.solve(&mut column)?;
+        errors[parameter] = column[index].abs().sqrt() * rms;
+    }
+    Some(())
 }
 
 fn linear_solution(
@@ -252,10 +429,26 @@ fn uncertainty(
     samples: &[Sample],
     score: f64,
 ) -> Vec<f64> {
-    let mut errors = vec![0.; values.len()];
-    let (normal, _) = normal_equations(curve, values, free, samples);
-    let variance = score / (samples.len() - free.len()) as f64;
-    let covariance = invert_symmetric_positive_definite(&normal, free.len());
+    let equations = normal_equations(curve, values, free, samples);
+    errors_from_curvature(
+        &equations.curvature,
+        values.len(),
+        free,
+        samples.len(),
+        score,
+    )
+}
+
+fn errors_from_curvature(
+    normal: &[f64],
+    parameters: usize,
+    free: &[usize],
+    samples: usize,
+    score: f64,
+) -> Vec<f64> {
+    let mut errors = vec![0.; parameters];
+    let variance = score / (samples - free.len()) as f64;
+    let covariance = invert_symmetric_positive_definite(normal, free.len());
     for (column, &parameter) in free.iter().enumerate() {
         errors[parameter] = covariance.as_ref().map_or(f64::NAN, |covariance| {
             (covariance[column * (free.len() + 1)] * variance).sqrt()
@@ -276,13 +469,15 @@ fn normal_equations(
     parameters: &[f64],
     free: &[usize],
     samples: &[Sample],
-) -> (Vec<f64>, Vec<f64>) {
+) -> NormalEquations {
     let count = free.len();
     let mut normal = vec![0.; count * count];
     let mut rhs = vec![0.; count];
     let mut slopes = vec![0.; parameters.len()];
+    let mut score = 0.;
     for row in samples {
         let residual = row.y - curve.fitted_value(parameters, row.x);
+        score += row.weight * residual.powi(2);
         curve.gradient(parameters, row.x, &mut slopes);
         for (i, &parameter) in free.iter().enumerate() {
             let weighted = row.weight * slopes[parameter];
@@ -297,5 +492,9 @@ fn normal_equations(
             normal[j * count + i] = normal[i * count + j];
         }
     }
-    (normal, rhs)
+    NormalEquations {
+        curvature: normal,
+        gradient: rhs,
+        score,
+    }
 }
