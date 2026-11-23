@@ -7,13 +7,40 @@ use std::sync::{Mutex, PoisonError};
 
 use casa_calibration::{CalAnalysis, CalAnalysisIds::*};
 use numpy::PyArray1;
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyBool, PyDict};
 
 use crate::tools::{LogLine, emit, not_yet_implemented_in};
 
 const LOGGER: &str = "casars.tools.calanalysis";
+
+fn table_name(value: &Bound<'_, PyAny>) -> PyResult<String> {
+    value
+        .extract()
+        .map_err(|_| PyTypeError::new_err("argument _caltable must be a string"))
+}
+
+struct NameArgument(Option<bool>);
+
+impl<'a, 'py> FromPyObject<'a, 'py> for NameArgument {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let name = value.cast::<PyBool>().ok().map(|flag| flag.is_true());
+        Ok(Self(name))
+    }
+}
+
+impl NameArgument {
+    fn value(self, method: &str) -> PyResult<bool> {
+        self.0.ok_or_else(|| {
+            PyTypeError::new_err(format!(
+                "in method 'calanalysis_{method}', argument 2 of type 'bool'"
+            ))
+        })
+    }
+}
 
 #[pyclass(name = "calanalysis", module = "casars.tools", frozen)]
 #[derive(Default)]
@@ -28,8 +55,12 @@ impl PyCalAnalysis {
         Self::default()
     }
 
-    #[pyo3(signature = (caltable = ""))]
-    fn open(&self, py: Python<'_>, caltable: &str) -> PyResult<bool> {
+    #[pyo3(signature = (caltable = String::new()), text_signature = "($self, caltable='')")]
+    fn open(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = table_name)] caltable: String,
+    ) -> PyResult<bool> {
         let outcome = py.detach(|| {
             let mut attachment = self
                 .attachment
@@ -38,7 +69,7 @@ impl PyCalAnalysis {
             if let Some(table) = &*attachment {
                 return Err(format!("File {} is already open", table.name));
             }
-            *attachment = Some(CalAnalysis::open(caltable.into())?);
+            *attachment = Some(CalAnalysis::open(caltable)?);
             Ok(())
         });
         match outcome {
@@ -84,8 +115,9 @@ impl PyCalAnalysis {
         self.metadata(py, |table| Ok(table.count(Fields)))
     }
 
-    #[pyo3(signature = (name = true))]
-    fn field(&self, py: Python<'_>, name: bool) -> PyResult<Vec<String>> {
+    #[pyo3(signature = (name = NameArgument(Some(true))), text_signature = "($self, name=True)")]
+    fn field(&self, py: Python<'_>, name: NameArgument) -> PyResult<Vec<String>> {
+        let name = name.value("field")?;
         self.metadata(py, |table| table.labels(Fields, name))
     }
 
@@ -93,8 +125,9 @@ impl PyCalAnalysis {
         self.metadata(py, |table| Ok(table.count(Antennas)))
     }
 
-    #[pyo3(signature = (name = true))]
-    fn antenna(&self, py: Python<'_>, name: bool) -> PyResult<Vec<String>> {
+    #[pyo3(signature = (name = NameArgument(Some(true))), text_signature = "($self, name=True)")]
+    fn antenna(&self, py: Python<'_>, name: NameArgument) -> PyResult<Vec<String>> {
+        let name = name.value("antenna")?;
         self.metadata(py, |table| table.labels(Antennas, name))
     }
 
@@ -102,8 +135,9 @@ impl PyCalAnalysis {
         self.metadata(py, |table| Ok(table.count(FirstAntennas)))
     }
 
-    #[pyo3(signature = (name = true))]
-    fn antenna1(&self, py: Python<'_>, name: bool) -> PyResult<Vec<String>> {
+    #[pyo3(signature = (name = NameArgument(Some(true))), text_signature = "($self, name=True)")]
+    fn antenna1(&self, py: Python<'_>, name: NameArgument) -> PyResult<Vec<String>> {
+        let name = name.value("antenna1")?;
         self.metadata(py, |table| table.labels(FirstAntennas, name))
     }
 
@@ -111,8 +145,9 @@ impl PyCalAnalysis {
         self.metadata(py, |table| Ok(table.count(SecondAntennas)))
     }
 
-    #[pyo3(signature = (name = true))]
-    fn antenna2(&self, py: Python<'_>, name: bool) -> PyResult<Vec<String>> {
+    #[pyo3(signature = (name = NameArgument(Some(true))), text_signature = "($self, name=True)")]
+    fn antenna2(&self, py: Python<'_>, name: NameArgument) -> PyResult<Vec<String>> {
+        let name = name.value("antenna2")?;
         self.metadata(py, |table| table.labels(SecondAntennas, name))
     }
 
@@ -137,8 +172,9 @@ impl PyCalAnalysis {
         self.metadata(py, |table| Ok(table.count(SpectralWindows)))
     }
 
-    #[pyo3(signature = (name = true))]
-    fn spw(&self, py: Python<'_>, name: bool) -> PyResult<Vec<String>> {
+    #[pyo3(signature = (name = NameArgument(Some(true))), text_signature = "($self, name=True)")]
+    fn spw(&self, py: Python<'_>, name: NameArgument) -> PyResult<Vec<String>> {
+        let name = name.value("spw")?;
         self.metadata(py, |table| table.labels(SpectralWindows, name))
     }
 

@@ -12,7 +12,7 @@ from casatools import calanalysis as casa_calanalysis, table
 import numpy as np
 
 from calibration_smoothcal_oracle import opened
-from calibrater_apply_tool_oracle import same_record
+from calibrater_apply_tool_oracle import result, same_record
 from gaincal_delay_oracle import duplicate_rows
 from record_casa_returns import make_cal_ms
 
@@ -66,10 +66,15 @@ def read_attachment(factory, path, other, kind):
     assert detached['time'].size == detached['numchannel'].size == 0
     assert detached['freq'] == {}
     assert tool.open() is False and tool.open('missing.cal') is False
+    for wrong in (path, None, 17):
+        assert result(tool.open, wrong) == (False, ('TypeError', 'argument _caltable must be a string'))
     assert tool.open(caltable=str(path)) is True
     before = metadata(tool)
     assert tool.open(str(other)) is False
     same_record(metadata(tool), before)
+    for name, wrong in product(NAMES, (None, 0, np.bool_(False), 'X')):
+        assert result(getattr(tool, name), wrong) == (
+            False, ('TypeError', f"in method 'calanalysis_{name}', argument 2 of type 'bool'"))
     expected_type = 'Complex' if kind == 'amp' else 'Float'
     assert before['calname'] == str(path) and before['partype'] == expected_type
     assert before['field'] == ['FLUX'] and before['field_ids'] == ['1']
