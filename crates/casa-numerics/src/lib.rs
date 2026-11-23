@@ -232,6 +232,27 @@ impl<'a> CasacoreLdlt<'a> {
     }
 }
 
+/// Return the Moore-Penrose inverse of a rank-deficient normal matrix.
+///
+/// Both the input and output use row-major storage. Singular values at
+/// working precision are dropped so a dependent parameter receives
+/// the minimum-norm correction.
+#[must_use]
+pub fn pseudoinvert_normal_matrix(normal: &[f64], size: usize) -> Option<Vec<f64>> {
+    if size == 0 || normal.len() != size.checked_mul(size)? || !normal.iter().all(|v| v.is_finite())
+    {
+        return None;
+    }
+    let decomposition = DMatrix::from_row_slice(size, size, normal).svd(true, true);
+    let threshold = size as f64 * f64::EPSILON * decomposition.singular_values.amax();
+    let inverse = decomposition.pseudo_inverse(threshold).ok()?;
+    let mut entries = Vec::with_capacity(normal.len());
+    for row in inverse.row_iter() {
+        entries.extend(row.iter().copied());
+    }
+    entries.iter().all(|v| v.is_finite()).then_some(entries)
+}
+
 /// Solve a symmetric positive-definite system by Cholesky factorization.
 /// The full symmetric matrix is row-major. Small positive pivots are valid.
 #[must_use]

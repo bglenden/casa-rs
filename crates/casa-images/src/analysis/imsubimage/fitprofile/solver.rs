@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_numerics::{
-    CasacoreLdlt, invert_symmetric_positive_definite, solve_symmetric_positive_definite,
-    solve_weighted_least_squares,
+    CasacoreLdlt, invert_symmetric_positive_definite, pseudoinvert_normal_matrix,
+    solve_symmetric_positive_definite, solve_weighted_least_squares,
 };
 
 use super::curve::Curve;
@@ -237,15 +237,14 @@ fn solve_image_profile(
         + usize::from(curve.spectral.is_some());
     let maximum = 50 + 10 * components;
     let norm = |values: &[f64]| values.iter().map(|value| value * value).sum::<f64>().sqrt();
-    // For very faint spectra the whole line's squared intensity can lie
-    // below CASA's gradient floor. Scale the floor in that regime so a
-    // misplaced low-amplitude line can still move.
-    let intensity = samples
-        .iter()
-        .fold(0_f64, |peak, sample| peak.max(sample.y.abs()));
-    let intensity_squared = intensity.powi(2);
-    let gradient_floor = if intensity_squared < EPSILON {
-        EPSILON * intensity_squared
+    // With fixed peaks, every free derivative is a shape derivative and
+    // its gradient scales as intensity squared. Retain the amplitude
+    // scaling correction for these fits with dim lines.
+    let gradient_floor = if curve.fits_only_line_shapes() {
+        let intensity = samples
+            .iter()
+            .fold(0_f64, |peak, sample| peak.max(sample.y.abs()));
+        EPSILON * intensity.min(1.).powi(2)
     } else {
         EPSILON
     };
@@ -289,7 +288,12 @@ fn solve_image_profile(
             trial[index] += delta;
         }
         if curve.valid_widths(&trial) {
-            if norm(&step) <= EPSILON * (norm(&values) + EPSILON) {
+            let free_norm = free
+                .iter()
+                .map(|&index| values[index].powi(2))
+                .sum::<f64>()
+                .sqrt();
+            if norm(&step) <= EPSILON * (free_norm + EPSILON) {
                 std::mem::swap(&mut values, &mut trial);
                 equations = normal_equations(curve, &values, free, samples);
                 converged = true;
@@ -344,34 +348,62 @@ fn finish_image_fit(
     errors: &mut [f64],
 ) -> Option<()> {
     let NormalEquations {
-        mut curvature,
+        curvature,
         gradient,
         score,
     } = equations;
-    for index in 0..free.len() {
-        let diagonal = &mut curvature[index * (free.len() + 1)];
-        if *diagonal == 0. {
-            *diagonal = 1.;
-        }
-    }
-    let factor = CasacoreLdlt::factor(&mut curvature, free.len(), 0.)?;
-    let mut correction = gradient.clone();
-    factor.solve(&mut correction)?;
+    let (correction, covariance) = undamped_correction(curvature, &gradient)?;
     let improvement = correction
         .iter()
         .zip(gradient)
         .map(|(delta, gradient)| delta * gradient)
         .sum::<f64>();
     let rms = ((score - improvement).max(0.) / (samples - free.len()) as f64).sqrt();
-    let mut column = vec![0.; free.len()];
-    for (index, (&parameter, step)) in free.iter().zip(correction).enumerate() {
+    for ((&parameter, step), variance) in free.iter().zip(correction).zip(covariance) {
         values[parameter] += step;
-        column.fill(0.);
-        column[index] = 1.;
-        factor.solve(&mut column)?;
-        errors[parameter] = column[index].abs().sqrt() * rms;
+        errors[parameter] = variance.abs().sqrt() * rms;
     }
     Some(())
+}
+
+fn undamped_correction(mut curvature: Vec<f64>, gradient: &[f64]) -> Option<(Vec<f64>, Vec<f64>)> {
+    let size = gradient.len();
+    for index in 0..size {
+        let diagonal = &mut curvature[index * (size + 1)];
+        if *diagonal == 0. {
+            *diagonal = 1.;
+        }
+    }
+    let mut factors = curvature.clone();
+    if let Some(factor) = CasacoreLdlt::factor(&mut factors, size, 0.) {
+        let mut correction = gradient.to_vec();
+        factor.solve(&mut correction)?;
+        let mut covariance = Vec::with_capacity(size);
+        let mut column = vec![0.; size];
+        for index in 0..size {
+            column.fill(0.);
+            column[index] = 1.;
+            factor.solve(&mut column)?;
+            covariance.push(column[index]);
+        }
+        return Some((correction, covariance));
+    }
+
+    // The nonlinear iteration uses a damped full-rank matrix. The final
+    // undamped correction can have dependent columns, for example when
+    // two fitted peak amplitudes share the same fixed center and width.
+    let inverse = pseudoinvert_normal_matrix(&curvature, size)?;
+    let correction = inverse
+        .chunks_exact(size)
+        .map(|row| {
+            row.iter()
+                .zip(gradient)
+                .map(|(&value, &slope)| value * slope)
+                .sum::<f64>()
+        })
+        .collect();
+    let covariance = (0..size).map(|index| inverse[index * (size + 1)]).collect();
+    Some((correction, covariance))
 }
 
 fn linear_solution(
