@@ -9137,6 +9137,37 @@ default path.
 casa-rs treats an empty integer array as an empty selector and returns
 the same result as the corresponding omitted argument (#1029).
 
+## Explicit observation and array IDs can select an uninitialized scan key
+
+On an attached CASA 6.7.6.14 `msmetadata` tool, get a valid scan number
+from `scannumbers(0, 0)` and call
+`fieldsforscans([scan], obsid=0, arrayid=0)`. The vector selection
+initializes the scan number but leaves the observation and array IDs
+uninitialized. CASA can report an unknown scan with unrelated IDs. The
+single-scan and `asmap=True` variants do use the supplied IDs.
+
+casa-rs uses the requested observation, array, and scan number for the
+vector selection too, and reports an error for a missing scan (#1029).
+
+## Scan queries can abort on an empty MeasurementSet
+
+Create a valid MeasurementSet with no MAIN rows and open it with
+`msmetadata`. In CASA 6.7.6.14, calling `narrays()` or `scannumbers()`
+then terminates the process with an uncaught casacore exception. The
+array-ID check calls `max` on the empty MAIN column.
+
+casa-rs reports zero arrays and returns an empty scan-number array
+(`numpy.int64`) for the default query, consistent with `nscans()`
+returning zero on the same MeasurementSet (#1029).
+
+## Unsupported scan-selector array types can select every scan
+
+With CASA 6.7.6.14, pass a nonempty `numpy.float16` or `object` array to
+`msmetadata.fieldsforscans`. CASA emits a conversion message, discards
+the supplied scan numbers, and returns fields for every scan. casa-rs
+raises `TypeError` so the unsupported array type cannot silently widen
+the selection (#1029).
+
 ## Image coordinate frequency conversion can use the wrong physical direction
 
 Create a CASA 6.7.6.14 image with shape `[20,20,20]` and the default J2000

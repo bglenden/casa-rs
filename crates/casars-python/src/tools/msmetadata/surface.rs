@@ -79,7 +79,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "antennastations",
@@ -92,7 +92,7 @@ const METHODS: &[Method] = &[
     ),
     method("bandwidths", &[param("spw", K::Int, Int(-1))], R::Any, Yes),
     method("baseband", &[param("spw", K::Any, Required)], R::Any, Yes),
-    method("baselines", &[], R::Any, No),
+    method("baselines", &[], R::Any, Yes),
     method("chanavgspws", &[], R::Any, Yes),
     method(
         "chaneffbws",
@@ -181,7 +181,7 @@ const METHODS: &[Method] = &[
         "fieldsforname",
         &[param("name", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fieldsforscan",
@@ -192,7 +192,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fieldsforscans",
@@ -204,7 +204,7 @@ const METHODS: &[Method] = &[
             param("asmap", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fieldsforsource",
@@ -285,12 +285,12 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("nantennas", &[], R::Any, Yes),
-    method("narrays", &[], R::Any, No),
+    method("narrays", &[], R::Any, Yes),
     method(
         "nbaselines",
         &[param("ac", K::Bool, Bool(false))],
         R::Any,
-        No,
+        Yes,
     ),
     method("nchan", &[param("spw", K::Any, Required)], R::Any, Yes),
     method(
@@ -310,7 +310,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("nscans", &[], R::Any, No),
+    method("nscans", &[], R::Any, Yes),
     method("nsources", &[], R::Any, Yes),
     method(
         "nspw",
@@ -395,7 +395,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "scansforfield",
@@ -405,7 +405,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(-1)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "scansforfields",
@@ -414,7 +414,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "scansforintent",

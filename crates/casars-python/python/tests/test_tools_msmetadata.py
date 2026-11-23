@@ -219,3 +219,124 @@ def test_msmetadata_empty_integer_arrays_select_all_without_aborting(native_data
         np.testing.assert_array_equal(metadata.subwindows(empty), metadata.subwindows(), strict=True)
     finally:
         assert metadata.done()
+
+
+@pytest.mark.parametrize("maxcache", [0.0, 50.0])
+def test_msmetadata_scan_membership_and_baseline_matrix(native_dataset, maxcache):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    results = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        try:
+            assert metadata.open(str(native_dataset), maxcache)
+            scans = metadata.scannumbers()
+            assert metadata.nscans() == len(scans) == 1
+            assert metadata.narrays() == 1
+            scan = int(scans[0])
+            np.testing.assert_array_equal(metadata.fieldsforname("f"), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.scansforfield("f"), scans, strict=True)
+            np.testing.assert_array_equal(metadata.scansforfields()["0"], scans, strict=True)
+            np.testing.assert_array_equal(metadata.fieldsforscans(float(scan) + 0.9), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.fieldsforscans([[scan, scan]], asnames=True),
+                                          np.array(["F"]), strict=True)
+            for selector in (np.array([f"{scan}x"]), np.array([scan + 2j]), [str(scan)]):
+                np.testing.assert_array_equal(metadata.fieldsforscans(selector), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.scansforfield(np.int32(0)), scans, strict=True)
+            for field in (np.uint32(0), np.array(0)):
+                with pytest.raises(RuntimeError):
+                    metadata.scansforfield(field)
+            np.testing.assert_array_equal(metadata.fieldsforscans([scan], obsid=0, arrayid=0, asmap=True)[str(scan)],
+                                          np.array([0]), strict=True)
+            with pytest.raises(RuntimeError):
+                metadata.fieldsforscan(scan + 100, obsid=0, arrayid=0)
+            with pytest.raises(RuntimeError):
+                metadata.scansforfield("missing")
+            matrix = metadata.baselines()
+            assert matrix.dtype == np.bool_
+            assert matrix.shape == (4, 4)
+            assert metadata.nbaselines() == np.count_nonzero(np.triu(matrix, 1))
+            assert metadata.nbaselines(ac=True) == np.count_nonzero(np.triu(matrix))
+            results.append((scans, metadata.antennasforscan(scan), matrix))
+        finally:
+            assert metadata.done()
+    for expected, actual in zip(*results):
+        np.testing.assert_array_equal(actual, expected, strict=True)
+
+
+def test_msmetadata_explicit_array_selection_and_cache_reopen(native_dataset):
+    metadata = tools.msmetadata()
+    assert metadata.open(str(native_dataset))
+    try:
+        scans = metadata.scannumbers()
+        assert metadata.narrays() == 1
+        np.testing.assert_array_equal(metadata.fieldsforscans(scans, obsid=0, arrayid=0),
+                                      np.array([0]), strict=True)
+        table = tools.table()
+        assert table.open(str(native_dataset), nomodify=False)
+        assert table.putcol("ARRAY_ID", np.full(table.nrows(), 2, dtype=np.int32))
+        assert table.done()
+        assert metadata.open(str(native_dataset))
+        assert metadata.narrays() == 3
+        np.testing.assert_array_equal(metadata.scannumbers(obsid=0, arrayid=2), scans, strict=True)
+        np.testing.assert_array_equal(metadata.fieldsforscans(scans, obsid=0, arrayid=2),
+                                      np.array([0]), strict=True)
+        assert metadata.scannumbers(obsid=0, arrayid=0).size == 0
+        with pytest.raises(RuntimeError):
+            metadata.fieldsforscans(scans, obsid=0, arrayid=0)
+    finally:
+        assert metadata.done()
+
+
+def test_msmetadata_empty_main_has_no_arrays_or_scans(tmp_path):
+    dataset = str(tmp_path / "empty.ms")
+    simulator = tools.simulator()
+    assert simulator.open(dataset)
+    assert simulator.close()
+    metadata = tools.msmetadata()
+    assert metadata.open(dataset)
+    try:
+        assert metadata.narrays() == metadata.nscans() == 0
+        np.testing.assert_array_equal(metadata.scannumbers(), np.array([], dtype=np.int64), strict=True)
+    finally:
+        assert metadata.done()
+
+
+def test_msmetadata_reads_selected_rows_from_casa_reference_ms(native_dataset, tmp_path):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    reference = tmp_path / "selected.ms"
+    table = casatools.table()
+    assert table.open(str(native_dataset))
+    selected = table.query("ROWNUMBER() < 3", name=str(reference))
+    assert 0 < selected.nrows() < table.nrows()
+    selected.done()
+    assert table.done()
+    for subtable in native_dataset.iterdir():
+        if subtable.is_dir():
+            (reference / subtable.name).symlink_to(subtable, target_is_directory=True)
+
+    results = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(reference))
+        try:
+            scans = metadata.scannumbers()
+            assert metadata.nscans() == scans.size == 1
+            results.append((scans, metadata.fieldsforscans(scans),
+                            metadata.antennasforscan(int(scans[0])), metadata.baselines()))
+        finally:
+            assert metadata.done()
+    for expected, actual in zip(*results):
+        np.testing.assert_array_equal(actual, expected, strict=True)
+
+
+def test_msmetadata_rejects_unsupported_scan_dtypes_instead_of_selecting_all(native_dataset):
+    metadata = tools.msmetadata()
+    assert metadata.open(str(native_dataset))
+    try:
+        for dtype in (np.float16, object):
+            with pytest.raises(TypeError, match="unsupported NumPy scan-selector dtype"):
+                metadata.fieldsforscans(np.array([99], dtype=dtype))
+    finally:
+        assert metadata.done()
