@@ -201,15 +201,7 @@ pub(crate) fn solve(
         bin_widths: &bin_widths,
         selected_rows: &context.rows,
     });
-    write_baseline_caltable(
-        ms,
-        request,
-        &solved,
-        mode,
-        subtype,
-        channels,
-        legacy_gather,
-    )
+    write_baseline_caltable(ms, request, &solved, mode, subtype, channels, legacy_gather)
 }
 
 fn legacy_binned_windows(
