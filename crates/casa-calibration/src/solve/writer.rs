@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use casa_ms::MsError;
+use casa_ms::{MeasurementSetBuilder, MsError};
 use casa_ms::ms::MeasurementSet;
 use casa_ms::schema::SubtableId;
 use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
@@ -298,8 +298,23 @@ fn write_gain_table(
         (SubtableId::Observation, "OBSERVATION"),
         (SubtableId::Antenna, "ANTENNA"),
         (SubtableId::Field, "FIELD"),
-        (SubtableId::History, "HISTORY"),
     ])?;
+    if subtype == "A Mueller" {
+        // A fit starts its own history instead of copying the MS import history.
+        let template = MeasurementSet::create_memory(MeasurementSetBuilder::new())
+            .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
+        template
+            .subtable(SubtableId::History)
+            .expect("standard MS history")
+            .save(TableOptions::new(writer.output_path().join("HISTORY")))
+            .map_err(|source| crate::CalibrationTableWriteError::CopySubtable {
+                subtable: "HISTORY".into(),
+                path: writer.output_path().display().to_string(),
+                source: Box::new(source),
+            })?;
+    } else {
+        writer.copy_subtables(&[(SubtableId::History, "HISTORY")])?;
+    }
     if let Some(channels) = channels {
         writer.copy_subtables(&[(SubtableId::SpectralWindow, "SPECTRAL_WINDOW")])?;
         let path = writer.output_path().join("SPECTRAL_WINDOW");
