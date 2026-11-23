@@ -1,0 +1,789 @@
+{
+  "casa_version": "6.7.6-14",
+  "constructor": [
+    {
+      "default": null,
+      "kind": "VAR_POSITIONAL",
+      "name": "args"
+    },
+    {
+      "default": null,
+      "kind": "VAR_KEYWORD",
+      "name": "kwargs"
+    }
+  ],
+  "methods": {
+    "addSpectralWindow": [
+      {
+        "default": "{'value': 350.0, 'unit': 'GHz'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fCenter"
+      },
+      {
+        "default": "{'value': 0.008, 'unit': 'GHz'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fWidth"
+      },
+      {
+        "default": "{'value': 0.002, 'unit': 'GHz'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fRes"
+      }
+    ],
+    "close": [],
+    "done": [],
+    "getAbsCOLines": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAbsDryCont": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAbsH2OCont": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAbsH2OLines": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAbsN2OLines": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAbsO2Lines": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAbsO3Lines": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAbsTotalDry": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAbsTotalWet": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nl"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nf"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getAirMass": [],
+    "getAtmVersion": [],
+    "getAverageTebbSky": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      },
+      {
+        "default": "{'value': -1.0, 'unit': 'mm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wh2o"
+      }
+    ],
+    "getAverageTrjSky": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      },
+      {
+        "default": "{'value': -1.0, 'unit': 'mm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wh2o"
+      }
+    ],
+    "getBandwidth": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getBasicAtmParms": [],
+    "getCOLinesOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getCOLinesPathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getChanFreq": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "chanNum"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getChanNum": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "freq"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getChanSep": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getDispersivePathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getDispersivePhaseDelay": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getDispersiveWetPathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getDispersiveWetPhaseDelay": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getDryContOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getDryOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getDryOpacitySpec": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getGroundWH2O": [],
+    "getH2OContOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getH2OLinesOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getMaxFreq": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getMinFreq": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getN2OLinesOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getN2OLinesPathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getNonDispersiveDryPathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getNonDispersiveDryPhaseDelay": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getNonDispersivePathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getNonDispersivePhaseDelay": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getNonDispersiveWetPathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getNonDispersiveWetPhaseDelay": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getNumChan": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getNumLayers": [],
+    "getNumSpectralWindows": [],
+    "getO2LinesOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getO2LinesPathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getO3LinesOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getO3LinesPathLength": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getProfile": [],
+    "getRefChan": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getRefFreq": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getSkyBackgroundTemperature": [],
+    "getSpectralWindow": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getTebbSky": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      },
+      {
+        "default": "{'value': -1.0, 'unit': 'mm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wh2o"
+      }
+    ],
+    "getTebbSkySpec": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      },
+      {
+        "default": "{'value': -1.0, 'unit': 'mm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wh2o"
+      }
+    ],
+    "getTrjSky": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      },
+      {
+        "default": "{'value': -1.0, 'unit': 'mm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wh2o"
+      }
+    ],
+    "getTrjSkySpec": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      },
+      {
+        "default": "{'value': -1.0, 'unit': 'mm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wh2o"
+      }
+    ],
+    "getUserWH2O": [],
+    "getWetOpacity": [
+      {
+        "default": "-1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nc"
+      },
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "getWetOpacitySpec": [
+      {
+        "default": "0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "spwid"
+      }
+    ],
+    "initAtmProfile": [
+      {
+        "default": "{'value': 5000.0, 'unit': 'm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "altitude"
+      },
+      {
+        "default": "{'value': 270.0, 'unit': 'K'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "temperature"
+      },
+      {
+        "default": "{'value': 560.0, 'unit': 'mbar'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pressure"
+      },
+      {
+        "default": "{'value': 48.0, 'unit': 'km'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "maxAltitude"
+      },
+      {
+        "default": "20.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "humidity"
+      },
+      {
+        "default": "{'value': -5.6, 'unit': 'K/km'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dTem_dh"
+      },
+      {
+        "default": "{'value': 10.0, 'unit': 'mbar'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dP"
+      },
+      {
+        "default": "1.2",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dPm"
+      },
+      {
+        "default": "{'value': 2.0, 'unit': 'km'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "h0"
+      },
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "atmType"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "layerBoundaries"
+      },
+      {
+        "default": "[]",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "layerTemperature"
+      }
+    ],
+    "initSpectralWindow": [
+      {
+        "default": "1",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "nbands"
+      },
+      {
+        "default": "{'value': 90.0, 'unit': 'GHz'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fCenter"
+      },
+      {
+        "default": "{'value': 0.64, 'unit': 'GHz'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fWidth"
+      },
+      {
+        "default": "{'value': 0.0, 'unit': 'GHz'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "fRes"
+      }
+    ],
+    "listAtmosphereTypes": [],
+    "setAirMass": [
+      {
+        "default": null,
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "airmass"
+      }
+    ],
+    "setSkyBackgroundTemperature": [
+      {
+        "default": "{'value': 2.73, 'unit': 'K'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "tbgr"
+      }
+    ],
+    "setUserWH2O": [
+      {
+        "default": "{'value': 0.0, 'unit': 'mm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "wh2o"
+      }
+    ],
+    "updateAtmProfile": [
+      {
+        "default": "{'value': 5000.0, 'unit': 'm'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "altitude"
+      },
+      {
+        "default": "{'value': 270.0, 'unit': 'K'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "temperature"
+      },
+      {
+        "default": "{'value': 560.0, 'unit': 'mbar'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "pressure"
+      },
+      {
+        "default": "20.0",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "humidity"
+      },
+      {
+        "default": "{'value': -5.6, 'unit': 'K/km'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "dTem_dh"
+      },
+      {
+        "default": "{'value': 2.0, 'unit': 'km'}",
+        "kind": "POSITIONAL_OR_KEYWORD",
+        "name": "h0"
+      }
+    ]
+  },
+  "tool": "atmosphere"
+}
