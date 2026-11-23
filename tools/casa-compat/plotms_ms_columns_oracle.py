@@ -431,6 +431,23 @@ def compare_averaged_columns(root, native):
         observed[:, 1, :] *= -1
         table.putcol("DATA", observed)
 
+    undefined_weight = work / "undefined-weight-spectrum.ms"
+    copy_ms(vis, undefined_weight)
+    with opened(undefined_weight, True) as table:
+        name = "WEIGHT_SPECTRUM"
+        descriptor = table.getcoldesc(name)
+        table.removecols([name])
+        table.addcols({name: descriptor})
+        assert not table.iscelldefined(name, 0)
+    zero_observed = work / "zero-observed-weight.ms"
+    zero_corrected = work / "zero-corrected-weight.ms"
+    for path, name in ((zero_observed, "SIGMA_SPECTRUM"), (zero_corrected, "WEIGHT_SPECTRUM")):
+        copy_ms(vis, path)
+        with opened(path, True) as table:
+            spectrum = table.getcol(name)
+            spectrum[:, :2, :] = 0
+            table.putcol(name, spectrum)
+
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
                               ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
                               avgchannel="2", spw="0:0~3")
@@ -447,16 +464,21 @@ def compare_averaged_columns(root, native):
                                        ydatacolumn=["data", "corrected"]), ((28, 2.6), (28, 28))),
         ("avg-scalar-without-time", dict(vis=str(opposite_phase), xaxis="amp", scalar=True),
          ((2.2, 28), (2.2, 280))),
+        ("avg-undefined-weight-spectrum", dict(vis=str(undefined_weight)), ((2, 20), (2, 200))),
+        ("avg-zero-primary-weight", dict(vis=str(zero_observed)), ((7, 70), (7, 700))),
+        ("avg-zero-secondary-weights", dict(vis=str(zero_corrected)), ((2.6, 0), (2.6, 0))),
     )
     for name, overrides, first in cases:
         controls = base | overrides
         expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected), expformat="txt") is None
         selected = rows(expected)
-        assert len(selected) == 12 * len(first)
-        assert {point[2] for point in selected} == {"0", "1"}
+        channels = {"1"} if name == "avg-zero-primary-weight" else {"0", "1"}
+        per_axis = 6 * len(channels)
+        assert len(selected) == per_axis * len(first)
+        assert {point[2] for point in selected} == channels
         assert {point[12] for point in selected} == {"XX"}
-        np.testing.assert_allclose(np.array([point[:2] for point in selected[::12]], dtype=float),
+        np.testing.assert_allclose(np.array([point[:2] for point in selected[::per_axis]], dtype=float),
                                    first, rtol=1.2e-5)
         if name == "avg-independent-weighted":
             np.testing.assert_allclose(np.array([point[:2] for point in selected[1::12]], dtype=float),

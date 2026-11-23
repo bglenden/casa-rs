@@ -3887,25 +3887,6 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
-    let selected_weights = if needs_weight_values {
-        Some(SelectedArrayColumn::load_for_plot(
-            ms.main_table(),
-            "WEIGHT",
-            &row_numbers,
-            calibration,
-        )?)
-    } else {
-        None
-    };
-    let selected_sigmas = if needs_sigma_values {
-        Some(SelectedArrayColumn::load(
-            ms.main_table(),
-            "SIGMA",
-            &row_numbers,
-        )?)
-    } else {
-        None
-    };
     let selected_flag_rows = selected_bool_values(ms.main_table(), "FLAG_ROW", &row_numbers)?;
     let selected_data_desc_ids =
         selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
@@ -3984,12 +3965,37 @@ fn build_generic_visibility_scatter(
     };
     let channel_weight_kinds = calibration
         .filter(|_| {
-            project_plotms_columns && use_spectral_weights && selected_weight_spectrum.is_some()
+            project_plotms_columns
+                && use_spectral_weights
+                && selected_weight_spectrum
+                    .as_ref()
+                    .and_then(|column| column.find(0))
+                    .is_some()
         })
-        .map_or([WeightKind::Calibrated; 3], |input| {
-            plotms_columns::channel_weight_kinds(ms, spec, input)
-        });
-    let needs_observed_weights = channel_weight_kinds.contains(&WeightKind::Observed);
+        .map(|input| plotms_columns::channel_weight_kinds(ms, spec, input));
+    let needs_observed_weights =
+        channel_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Observed));
+    let needs_calibrated_weights =
+        channel_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Calibrated));
+    let selected_weights = if needs_weight_values || needs_calibrated_weights {
+        Some(SelectedArrayColumn::load_for_plot(
+            ms.main_table(),
+            "WEIGHT",
+            &row_numbers,
+            calibration,
+        )?)
+    } else {
+        None
+    };
+    let selected_sigmas = if needs_sigma_values || needs_observed_weights {
+        Some(SelectedArrayColumn::load(
+            ms.main_table(),
+            "SIGMA",
+            &row_numbers,
+        )?)
+    } else {
+        None
+    };
     let selected_sigma_spectrum = if needs_sigma_spectrum || needs_observed_weights {
         SigmaSpectrumColumn::new(ms.main_table())
             .ok()
@@ -4100,12 +4106,17 @@ fn build_generic_visibility_scatter(
             .map(|column| float_axis_values(column.get(row_slot)?, corr_count, "SIGMA"))
             .transpose()?
             .unwrap_or_else(|| vec![0.0; corr_count]);
-        let weight_spectrum_grid = selected_weight_spectrum
-            .as_ref()
-            .map(|column| float_grid_from_array(column.get(row_slot)?, "WEIGHT_SPECTRUM"))
+        let weight_spectrum_cell = match &selected_weight_spectrum {
+            Some(column) if project_plotms_columns => column.find(row_slot),
+            Some(column) => Some(column.get(row_slot)?),
+            None => None,
+        };
+        let weight_spectrum_grid = weight_spectrum_cell
+            .map(|cell| float_grid_from_array(cell, "WEIGHT_SPECTRUM"))
             .transpose()?
             .or_else(|| {
-                needs_weight_spectrum.then(|| scalar_values_to_grid(&weight_values, chan_count))
+                (needs_weight_spectrum || needs_calibrated_weights)
+                    .then(|| scalar_values_to_grid(&weight_values, chan_count))
             });
         let sigma_spectrum_grid = selected_sigma_spectrum
             .as_ref()
@@ -4113,18 +4124,27 @@ fn build_generic_visibility_scatter(
             .map(|cell| float_grid_from_array(cell, "SIGMA_SPECTRUM"))
             .transpose()?
             .or_else(|| {
-                needs_sigma_spectrum.then(|| scalar_values_to_grid(&sigma_values, chan_count))
+                (needs_sigma_spectrum || needs_observed_weights)
+                    .then(|| scalar_values_to_grid(&sigma_values, chan_count))
             });
         let observed_weights = sigma_spectrum_grid
             .as_ref()
             .filter(|_| needs_observed_weights)
             .map(plotms_columns::inverse_variance);
-        let [x_weight_grid, y_weight_grid, secondary_weight_grid] =
-            channel_weight_kinds.map(|kind| match kind {
-                WeightKind::Observed => observed_weights.as_ref(),
-                WeightKind::Calibrated if use_spectral_weights => weight_spectrum_grid.as_ref(),
-                _ => None,
-            });
+        let weight_grid = |kind| match kind {
+            WeightKind::Observed => observed_weights.as_ref(),
+            WeightKind::Calibrated
+                if use_spectral_weights
+                    && (!project_plotms_columns || channel_weight_kinds.is_some()) =>
+            {
+                weight_spectrum_grid.as_ref()
+            }
+            _ => None,
+        };
+        let [x_weight_grid, y_weight_grid, secondary_weight_grid] = channel_weight_kinds
+            .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
+            .map(weight_grid);
+        let primary_weight_grid = channel_weight_kinds.and_then(|kinds| weight_grid(kinds.primary));
         for (column_name, grid) in [
             ("WEIGHT_SPECTRUM", weight_spectrum_grid.as_ref()),
             ("SIGMA_SPECTRUM", sigma_spectrum_grid.as_ref()),
@@ -4274,6 +4294,13 @@ fn build_generic_visibility_scatter(
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
             for bin in channel_bins.iter() {
+                let transformed_channel_weights = channel_weight_kinds.is_some() && bin.averaged;
+                if transformed_channel_weights
+                    && let Some((weights, flags)) = primary_weight_grid.zip(flags.as_ref())
+                    && !plotms_columns::bin_has_weight(weights, *corr_index, bin, flags)
+                {
+                    continue;
+                }
                 let bin_collect_started = timing_enabled.then(Instant::now);
                 if let Some(grid) = grid.as_ref() {
                     let flags = flags
@@ -4355,6 +4382,7 @@ fn build_generic_visibility_scatter(
                     &visibility_weights,
                     *corr_index,
                     bin,
+                    transformed_channel_weights,
                 );
                 let x_visibility = if let Some(grid) = x_grid.as_ref() {
                     VisibilityBinSamples::new(
@@ -4363,6 +4391,7 @@ fn build_generic_visibility_scatter(
                         &x_visibility_weights,
                         *corr_index,
                         bin,
+                        transformed_channel_weights,
                     )
                 } else {
                     y_visibility
@@ -4376,6 +4405,7 @@ fn build_generic_visibility_scatter(
                         &secondary_visibility_weights,
                         *corr_index,
                         bin,
+                        transformed_channel_weights,
                     )
                 } else {
                     y_visibility
@@ -4801,7 +4831,7 @@ fn finalize_averaged_axis_value(
                 &accumulator.visibility_sample_weights,
             )
         };
-        return compute_weighted_visibility_math(axis, samples, weights, scalar_average);
+        return compute_weighted_visibility_math(axis, samples, weights, scalar_average, false);
     }
     match axis {
         MsAxis::Time => {
@@ -6184,6 +6214,7 @@ struct VisibilityBinSamples<'a> {
     weights: &'a [f64],
     projection: Option<(VisibilityColumnProjection, [Complex64; 2])>,
     signed_amplitude: bool,
+    zero_invalid_weight: bool,
 }
 
 impl<'a> VisibilityBinSamples<'a> {
@@ -6193,6 +6224,7 @@ impl<'a> VisibilityBinSamples<'a> {
         weights: &'a [f64],
         corr_index: usize,
         bin: &ChannelBin,
+        zero_invalid_weight: bool,
     ) -> Self {
         let projection = grid.and_then(|grid| {
             let (projection, model) = grid.model.as_ref()?;
@@ -6208,6 +6240,7 @@ impl<'a> VisibilityBinSamples<'a> {
             weights,
             projection,
             signed_amplitude: grid.is_some_and(|grid| grid.signed_amplitude),
+            zero_invalid_weight,
         }
     }
 }
@@ -6306,6 +6339,7 @@ fn compute_axis_value(
             visibility.values,
             visibility.weights,
             scalar_average,
+            visibility.zero_invalid_weight,
         ));
     }
     match axis {
@@ -6495,6 +6529,7 @@ fn compute_weighted_visibility_math(
     samples: &[Complex64],
     weights: &[f64],
     scalar_average: bool,
+    zero_invalid_weight: bool,
 ) -> Option<f64> {
     if samples.is_empty() {
         return None;
@@ -6503,6 +6538,9 @@ fn compute_weighted_visibility_math(
         return compute_visibility_math(axis, samples, scalar_average);
     }
     let weight_sum = weights.iter().sum::<f64>();
+    if zero_invalid_weight && (weight_sum <= 0.0 || weight_sum.is_nan()) {
+        return Some(0.0);
+    }
     if weight_sum <= 0.0 {
         return compute_visibility_math(axis, samples, scalar_average);
     }
