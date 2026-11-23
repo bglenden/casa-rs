@@ -273,10 +273,10 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         history::record_applycal(task, &request.measurement_set);
     }
     let value = casa_value(task.surface(), &applied, &result);
-    report_success(task.surface(), &report, &result, value)
+    report_task_success(task.surface(), &report, &result, value)
 }
 
-fn report_success(
+fn report_task_success(
     surface: &str,
     report: &read::Report,
     result: &CalibrationTaskResult,
@@ -297,6 +297,14 @@ fn report_success(
         crate::timing::report_process_memory();
         return TaskSuccess::new(value, &serde_json::json!({ "kind": kind }));
     }
+    report_success(report, result, value)
+}
+
+fn report_success(
+    report: &read::Report,
+    result: &CalibrationTaskResult,
+    value: CasaValue,
+) -> Result<TaskSuccess, TaskFailure> {
     let rendered = render::render(report.format, result).map_err(TaskFailure::execution)?;
     let text = match report.output.as_deref() {
         Some(path) => {
