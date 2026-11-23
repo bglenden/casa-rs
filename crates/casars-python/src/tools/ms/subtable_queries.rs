@@ -31,38 +31,82 @@ pub(super) struct Subtables {
 struct Subtable(RefCell<Option<SubtableSnapshot>>);
 
 struct SubtableSnapshot {
-    table: Table,
-    files: TableFiles,
-    stamp: Option<TableStamp>,
+    tables: Vec<Table>,
+    publication: Option<(TableFiles, TableStamp)>,
 }
 
 impl Subtable {
-    fn read(&self, main: &Table, id: SubtableId) -> MsResult<Ref<'_, Table>> {
+    fn read(&self, main: &Table, id: SubtableId) -> MsResult<Ref<'_, [Table]>> {
         let current = self.0.borrow().as_ref().is_some_and(|snapshot| {
-            snapshot.stamp.is_some() && snapshot.files.stamp() == snapshot.stamp
+            snapshot
+                .publication
+                .as_ref()
+                .is_some_and(|(files, stamp)| files.stamp() == Some(*stamp))
         });
         if !current {
-            let path = MeasurementSet::linked_subtable_path(main, id)
-                .ok_or_else(|| MsError::MissingSubtable(id.name().to_string()))?;
-            let files = TableFiles::new(&path);
-            let stamp = files.stamp();
-            let table = Table::open(TableOptions::new(&path))?;
-            // A reference or concatenation may see writes to a constituent
-            // while its own descriptor and sync file both stay unchanged.
-            let plain = matches!(
-                Table::immediate_part_names(&path, &path)?,
-                TablePartNames::Plain(_)
-            );
-            *self.0.borrow_mut() = Some(SubtableSnapshot {
-                table,
-                files,
-                stamp: if plain { stamp } else { None },
-            });
+            *self.0.borrow_mut() = Some(Self::open(main, id)?);
         }
         Ok(Ref::map(self.0.borrow(), |snapshot| {
-            &snapshot.as_ref().expect("subtable was opened").table
+            snapshot
+                .as_ref()
+                .expect("subtable was opened")
+                .tables
+                .as_slice()
         }))
     }
+
+    fn open(main: &Table, id: SubtableId) -> MsResult<SubtableSnapshot> {
+        let paths = MeasurementSet::linked_subtable_paths(main, id)?;
+        let single = paths.len() == 1;
+        let mut tables = Vec::with_capacity(paths.len());
+        let mut publication = None;
+        for path in paths {
+            let candidate = if single {
+                let files = TableFiles::new(&path);
+                files.stamp().map(|stamp| (files, stamp))
+            } else {
+                None
+            };
+            let table = Table::open(TableOptions::new(&path))?;
+            // Reference, concatenated, or virtual columns may see changes
+            // that do not touch this table's control and sync files.
+            if candidate.is_some()
+                && !table.is_memory()
+                && table.schema().is_some_and(|schema| {
+                    schema
+                        .columns()
+                        .iter()
+                        .all(|col| !table.is_virtual_column(col.name()))
+                })
+                && matches!(
+                    Table::immediate_part_names(&path, &path)?,
+                    TablePartNames::Plain(_)
+                )
+            {
+                publication = candidate;
+            }
+            tables.push(table);
+        }
+        Ok(SubtableSnapshot {
+            tables,
+            publication,
+        })
+    }
+}
+
+fn subtable_row(tables: &[Table], row: usize, id: SubtableId) -> MsResult<(&Table, usize)> {
+    let mut local = row;
+    for table in tables {
+        if local < table.row_count() {
+            return Ok((table, local));
+        }
+        local -= table.row_count();
+    }
+    Err(MsError::InvalidIndex {
+        context: id.name().into(),
+        index: row,
+        max: row - local,
+    })
 }
 
 impl AttachedMs {
@@ -80,8 +124,9 @@ impl AttachedMs {
         };
         let field = usize::try_from(field)
             .map_err(|_| MsError::InvalidInput(format!("Invalid FIELD row {field}")))?;
-        let table = self.subtables.field.read(&self.main, SubtableId::Field)?;
-        MsField::new(&table).metadata_direction_at_seconds(field, column, time)
+        let tables = self.subtables.field.read(&self.main, SubtableId::Field)?;
+        let (table, row) = subtable_row(&tables, field, SubtableId::Field)?;
+        MsField::new(table).metadata_direction_at_seconds(row, column, time)
     }
 
     fn spectral_window_info(&self) -> MsResult<CasaValue> {
@@ -97,21 +142,27 @@ impl AttachedMs {
             .subtables
             .polarization
             .read(&self.main, SubtableId::Polarization)?;
-        let (dd, spw, pol) = (
-            MsDataDescription::new(&dd),
-            MsSpectralWindow::new(&spw),
-            MsPolarization::new(&pol),
-        );
-        if dd.row_count() == 0 || spw.row_count() == 0 {
+        if dd.iter().all(|table| table.row_count() == 0)
+            || spw.iter().all(|table| table.row_count() == 0)
+        {
             return Ok(CasaValue::empty_record());
         }
 
         let mut records = Vec::new();
         for id in self.used_data_descriptions()? {
-            let spw_id = nonnegative_id(dd.spectral_window_id(id)?, "SPECTRAL_WINDOW_ID")?;
-            let pol_id = nonnegative_id(dd.polarization_id(id)?, "POLARIZATION_ID")?;
-            let chan_freq = spw.chan_freq(spw_id)?;
-            let chan_width = spw.chan_width(spw_id)?;
+            let (table, dd_row) = subtable_row(&dd, id, SubtableId::DataDescription)?;
+            let description = MsDataDescription::new(table);
+            let spw_id = nonnegative_id(
+                description.spectral_window_id(dd_row)?,
+                "SPECTRAL_WINDOW_ID",
+            )?;
+            let pol_id = nonnegative_id(description.polarization_id(dd_row)?, "POLARIZATION_ID")?;
+            let (table, spw_row) = subtable_row(&spw, spw_id, SubtableId::SpectralWindow)?;
+            let window = MsSpectralWindow::new(table);
+            let (table, pol_row) = subtable_row(&pol, pol_id, SubtableId::Polarization)?;
+            let polarization = MsPolarization::new(table);
+            let chan_freq = window.chan_freq(spw_row)?;
+            let chan_width = window.chan_width(spw_row)?;
             let (Some(&freq), Some(&width)) = (chan_freq.first(), chan_width.first()) else {
                 return Err(MsError::InvalidInput(format!(
                     "Spectral window {spw_id} has no first channel frequency or width"
@@ -119,17 +170,28 @@ impl AttachedMs {
             };
             let record = CasaValue::record([
                 ("SpectralWindowId", CasaValue::Int(spw_id as i64)),
-                ("NumChan", CasaValue::Int(spw.num_chan(spw_id)?.into())),
+                ("NumChan", CasaValue::Int(window.num_chan(spw_row)?.into())),
                 (
                     "Frame",
-                    CasaValue::Text(spw.reference_frequency_reference(spw_id)?.as_str().into()),
+                    CasaValue::Text(
+                        window
+                            .reference_frequency_reference(spw_row)?
+                            .as_str()
+                            .into(),
+                    ),
                 ),
                 ("Chan1Freq", CasaValue::Float(freq)),
                 ("ChanWidth", CasaValue::Float(width)),
-                ("TotalWidth", CasaValue::Float(spw.total_bandwidth(spw_id)?)),
-                ("RefFreq", CasaValue::Float(spw.ref_frequency(spw_id)?)),
+                (
+                    "TotalWidth",
+                    CasaValue::Float(window.total_bandwidth(spw_row)?),
+                ),
+                ("RefFreq", CasaValue::Float(window.ref_frequency(spw_row)?)),
                 ("PolId", CasaValue::Int(pol_id as i64)),
-                ("NumCorr", CasaValue::Int(pol.num_corr(pol_id)?.into())),
+                (
+                    "NumCorr",
+                    CasaValue::Int(polarization.num_corr(pol_row)?.into()),
+                ),
             ]);
             records.push((id.to_string(), record));
         }

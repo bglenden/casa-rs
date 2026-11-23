@@ -188,10 +188,10 @@ impl PyMsTool {
                         std::slice::from_ref(path)
                     }
                     // A selection is a reference over the entire concat table.
-                    TablePartNames::Concatenation(_) if ms.selected_rows.is_some() => {
+                    TablePartNames::Concatenation { .. } if ms.selected_rows.is_some() => {
                         std::slice::from_ref(&ms.name)
                     }
-                    TablePartNames::Concatenation(parts) => parts.as_slice(),
+                    TablePartNames::Concatenation { parts, .. } => parts.as_slice(),
                 };
                 parts
                     .iter()

@@ -36,6 +36,7 @@ use crate::subtables::{
 };
 use crate::validate::{self, ValidationIssue};
 
+mod linked_subtables;
 mod optional_subtables;
 
 /// The MS version number written by this crate.
@@ -108,16 +109,6 @@ impl MeasurementSet {
         Self::open_tables(path, |table_path| {
             Table::open(TableOptions::new(table_path))
         })
-    }
-
-    /// Find one subtable of an already opened MAIN, following its table
-    /// keyword (including a reference view's inherited subtable links).
-    /// This is useful for a metadata query that needs no other subtables.
-    ///
-    /// Returns `None` for an in-memory MAIN or an absent subtable.
-    pub fn linked_subtable_path(main: &Table, id: SubtableId) -> Option<PathBuf> {
-        main.path()
-            .and_then(|path| subtable_path_from_main(main, path, id))
     }
 
     /// Open and retain read locks on MAIN and every present subtable.

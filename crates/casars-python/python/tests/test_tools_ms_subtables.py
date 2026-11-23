@@ -1,5 +1,7 @@
 """Independent controls for the public MS FIELD direction surface."""
 
+import shutil
+
 import numpy as np
 import pytest
 from casars import tools
@@ -96,6 +98,94 @@ def test_ms_field_ephemeris_on_casa_reference_view(ephemeris_dataset):
         for angle in ("m0", "m1"):
             assert actual[angle]["unit"] == expected[angle]["unit"]
             assert actual[angle]["value"] == pytest.approx(expected[angle]["value"], abs=2e-11)
+
+
+def test_ms_field_direction_observes_forwarded_column_updates(native_dataset):
+    casa = pinned_casa()
+    field = native_dataset / "FIELD"
+    source = native_dataset / "FIELD-storage"
+    table = casa.table()
+    assert table.open(str(field))
+    descriptor, columns, rows = table.getdesc(), table.colnames(), table.nrows()
+    assert table.done()
+    field.rename(source)
+    assert table.create(str(field), descriptor, nrow=rows, dminfo={
+        "*1": {
+            "TYPE": "ForwardColumnEngine", "NAME": "ForwardColumnEngine",
+            "SPEC": {"FORWARDTABLE": str(source)}, "COLUMNS": columns,
+        },
+    })
+    assert table.done()
+
+    for module, longitude in ((casa, 0.993), (tools, -0.742)):
+        ms = module.ms()
+        assert ms.open(str(native_dataset))
+        assert ms.getfielddirmeas()["m0"]["value"] != longitude
+        assert table.open(str(source), nomodify=False)
+        values = table.getcell("PHASE_DIR", 0)
+        values[0, 0] = longitude
+        assert table.putcell("PHASE_DIR", 0, values)
+        assert table.done()
+        assert ms.getfielddirmeas()["m0"]["value"] == pytest.approx(longitude, abs=1e-13)
+        assert ms.done()
+
+
+def test_ms_field_direction_refuses_missing_ephemeris(ephemeris_dataset):
+    casa = pinned_casa()
+    dataset, _ = ephemeris_dataset
+    path = dataset / "FIELD" / "EPHEM0_TEST.tab"
+    path.rename(dataset.with_name("missing-ephemeris.tab"))
+    for module in (casa, tools):
+        ms = module.ms()
+        assert ms.open(str(dataset))
+        for column in ("PHASE_DIR", "EPHEMERIS_DIR"):
+            np.testing.assert_array_equal(
+                ms.getfielddirmeas(column), np.empty(0, dtype=bool), strict=True,
+            )
+        assert ms.done()
+
+
+@pytest.mark.parametrize("explicit_field", [False, True])
+def test_ms_reads_member_subtables_from_casa_multi_ms(native_dataset, tmp_path, explicit_field):
+    casa = pinned_casa()
+    parts = [tmp_path / name for name in ("a.ms", "b.ms")]
+    for path in parts:
+        shutil.copytree(native_dataset, path)
+    table = casa.table()
+    assert table.open(str(parts[1] / "FIELD"), nomodify=False)
+    values = table.getcell("PHASE_DIR", 0)
+    values[0, 0] = 0.731
+    assert table.putcell("PHASE_DIR", 0, values)
+    assert table.done()
+
+    dataset = tmp_path / "observations.mms"
+    concat = casa.ms()
+    names = ["ANTENNA", "DATA_DESCRIPTION", "FEED"]
+    if explicit_field:
+        names.append("FIELD")
+    assert concat.createmultims(str(dataset), list(map(str, parts)), names)
+    assert concat.done()
+    assert not (dataset / "FIELD").exists()
+
+    records = []
+    for module in (casa, tools):
+        ms = module.ms()
+        assert ms.open(str(dataset))
+        first = ms.getfielddirmeas()
+        assert first["refer"] == "J2000"
+        assert first["m0"]["value"] != 0.731
+        second = ms.getfielddirmeas(fieldid=1)
+        if explicit_field:
+            assert second["m0"]["value"] == pytest.approx(0.731, abs=1e-13)
+        else:
+            np.testing.assert_array_equal(second, np.empty(0, dtype=bool), strict=True)
+        info = ms.getspectralwindowinfo()
+        assert set(info) == {"0"}
+        assert info["0"]["NumChan"] == 4
+        assert info["0"]["NumCorr"] == 2
+        records.append((first, info))
+        assert ms.done()
+    assert records[0] == records[1]
 
 
 def test_ms_spectral_window_info_tracks_used_descriptions(tmp_path, measures):

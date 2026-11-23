@@ -12,7 +12,7 @@ use casa_types::quanta::casacore::casacore_unit;
 use casa_types::quanta::{Dimension, UnitDim};
 use casa_types::{ArrayValue, ScalarValue, Value};
 
-use crate::ephemeris::{PhaseCentreEphemerisError, find_ephemeris_in_field};
+use crate::ephemeris::find_ephemeris_in_field;
 use crate::{MeasurementSet, MsError, MsResult, SubTable, open_measures_runtime};
 
 use super::MsField;
@@ -100,7 +100,7 @@ impl MsField<'_> {
             MsError::InvalidInput("FIELD polynomial order must be nonnegative".into())
         })?;
         let ephemeris = if order == 0 || kind == FieldDirectionColumn::Ephemeris {
-            self.ephemeris_path(row, &time)?
+            self.ephemeris_path(row)?
         } else {
             None
         };
@@ -153,25 +153,16 @@ impl MsField<'_> {
         )?))
     }
 
-    fn ephemeris_path(&self, row: usize, time: &DirectionTime<'_>) -> MsResult<Option<PathBuf>> {
+    fn ephemeris_path(&self, row: usize) -> MsResult<Option<PathBuf>> {
         let Some(id) = self.ephemeris_id(row)?.filter(|&id| id >= 0) else {
             return Ok(None);
         };
         let field_path = self.table().path().ok_or_else(|| {
             MsError::InvalidInput("field ephemeris requires an on-disk MeasurementSet".into())
         })?;
-        match find_ephemeris_in_field(field_path, id) {
-            // The low-level ms call follows casacore's FIELD-column behavior
-            // when an ID no longer has a corresponding ephemeris table.
-            Err(PhaseCentreEphemerisError::MissingEphemerisTable { .. })
-                if matches!(time, DirectionTime::FieldSeconds(_)) =>
-            {
-                Ok(None)
-            }
-            path => path
-                .map(Some)
-                .map_err(|error| MsError::InvalidInput(error.to_string())),
-        }
+        find_ephemeris_in_field(field_path, id)
+            .map(Some)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))
     }
 
     fn direction_time(
