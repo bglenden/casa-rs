@@ -118,15 +118,16 @@
       "status": "Partial"
     },
     "msselect": {
-      "scope": "Native TaQL selection exists; full CASA-supported forms, errors and mutation scope remain.",
+      "scope": "MeasurementSet selection compares physical row membership, calibrated and untouched data, flags, weights, and error state. The registered MSCAL and DERIVEDMSCAL functions cover metadata, Boolean selectors, derived angles and delays, UVW, Stokes conversions, and help. Equivalent ordinary TaQL controls cover the pinned scan and time crashes and the UV-distance hang.",
       "evidence": [
         "oracle",
-        "source"
+        "source",
+        "mscal-selection"
       ],
       "behaviors": [
         "common-application"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "docallib": {
       "scope": "Native task-library activation, inactive traditional controls and original flat-spwmap HISTORY are CASA-compared, including deferred parse-error setup. Full remaining callable/coercion domains stay open with the common task acceptance.",
@@ -368,7 +369,7 @@
       "kind": "Matched public-Python performance",
       "state": "failed",
       "scope": "Historical 175 MB, 12000 rows, 6144000 complex samples; one worker, five alternating public-Python pairs per cache policy, predating completed HISTORY/modes. Full 21-parameter/state equivalence remains unfinished; final matched qualification follows functionality.",
-      "result": "Scalar gain reuse reduces compute median 0.228\u21920.077 s warm and 0.213\u21920.076 s cold. Full native 0.661 s warm/0.624 s cold versus CASA 0.259/0.349 s: still slower and CPU-limited. Gross repeated sampling is corrected; detailed tuning and final qualification follow functionality equivalence under owner direction on #979.",
+      "result": "Scalar gain reuse reduces compute median 0.228→0.077 s warm and 0.213→0.076 s cold. Full native 0.661 s warm/0.624 s cold versus CASA 0.259/0.349 s: still slower and CPU-limited. Gross repeated sampling is corrected; detailed tuning and final qualification follow functionality equivalence under owner direction on #979.",
       "casa_version": "6.7.6.14",
       "revision": "665d698e0dd5e0e169edcd9f069f518b69e4108e",
       "command": "python tools/perf/calibrate/applycal.py --vis <175MB-MS> --gain <constant.gcal> --native-bin <66850cc50-release> --out <receipt> --repeats 5 --cache warm|cold",
@@ -421,6 +422,21 @@
       "receipt": "resources/casa-compat/evidence/leakage-application-20261121.json",
       "links": [
         "tools/casa-compat/calibration_leakage_apply_oracle.py"
+      ]
+    },
+    "mscal-selection": {
+      "kind": "Same-input public-Python comparisons with pinned casacore readback",
+      "state": "passed",
+      "scope": "Ordinary MeasurementSet TaQL selection and the MSCAL functions reached by applycal.",
+      "result": "The initial integrated provider passed 510 ordinary cases and five isolated crash controls. The final revised provider passed all 144 affected selections, including malformed inputs, derived quantities, Stokes masks, and nested help.",
+      "casa_version": "6.7.6.14",
+      "revision": "27a99ab9b712bd4a47787c723977f5b7570d375d",
+      "source_revision": "27a99ab9b712bd4a47787c723977f5b7570d375d",
+      "command": "python tools/casa-compat/applycal_oracle.py --work <new-directory> --native-bin <calibrate> --only '^api-select-'",
+      "receipt": "resources/casa-compat/evidence/applycal-mscal-selection-20261123.json",
+      "links": [
+        "tools/casa-compat/applycal_oracle.py",
+        "https://github.com/bglenden/casa-rs/pull/2130"
       ]
     }
   }

@@ -121,7 +121,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e`. Status counts: Default only: 0, Implemented: 1, Not implemented: 0, Partial: 20, Unassessed: 0.
+Audit baseline: `45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e`. Status counts: Default only: 0, Implemented: 2, Not implemented: 0, Partial: 19, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -137,7 +137,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `antenna` | `''` | `''`; `antenna` → `antenna` | Partial | The shared CASA baseline grammar serves applycal, including lists, negation, distances and combinations with other selectors. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `scan` | `''` | `''`; `scan` → `scan` | Partial | CASA numeric scan lists, ranges and comparisons use the shared grammar on applycal. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `observation` | `''` | `''`; `observation` → `observation` | Partial | Scalar strings and integer observation IDs are kept in their original form for HISTORY and parsed by the shared observation grammar. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `variant` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
-| `msselect` | `''` | `''`; `msselect` → `msselect` | Partial | Native TaQL selection exists; full CASA-supported forms, errors and mutation scope remain. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
+| `msselect` | `''` | `''`; `msselect` → `msselect` | Implemented | MeasurementSet selection compares physical row membership, calibrated and untouched data, flags, weights, and error state. The registered MSCAL and DERIVEDMSCAL functions cover metadata, Boolean selectors, derived angles and delays, UVW, Stokes conversions, and help. Equivalent ordinary TaQL controls cover the pinned scan and time crashes and the UV-distance hang. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source), [mscal-selection](#applycal-evidence-mscal-selection) |
 | `docallib` | `False` | `False`; `docallib` → `docallib` | Partial | Native task-library activation, inactive traditional controls and original flat-spwmap HISTORY are CASA-compared, including deferred parse-error setup. Full remaining callable/coercion domains stay open with the common task acceptance. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `bool` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `callib` | `''` | `''`; `callib` → `callib` | Partial | G/T/B task files follow CalLibraryGram typed/case-sensitive grammar, CWD paths, first table-level calwt, comma/newline entries, raw MS slices, buffer intent scope, field/observation/scan/antenna/SPW maps and overlap refusal. Missing axes use skip/strict rules; entirely unmapped antenna groups pass unflagged. Reach is retained but not consumed upstream. Remaining supported-family/chain and callable/state domains stay open. Literal relative library names and Multi-MS application are compared. [common-application](#applycal-behavior-common-application)<br>Catalog domain: `string` | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source) |
 | `gaintable` | `[]` | `[]`; `gaintable` → `gaintable` | Partial | Traditional and library paths exercise supported Jones families. G/T/B/BPOLY/K, Antpos, opacity and gain-curve tables retain their coefficient, flag and weight behavior. Leakage Jones tables use four-product calibration and leave leakage weights unchanged. [common-application](#applycal-behavior-common-application) [leakage-application](#applycal-behavior-leakage-application)<br>Catalog domain: list[`path` (calibration_table)], length 0..many; scalar allowed | [oracle](#applycal-evidence-oracle), [source](#applycal-evidence-source), [leakage-application](#applycal-evidence-leakage-application) |
@@ -296,6 +296,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `45fa6d9303a35532f7c21cbf7e6594cf7e2fbc8e`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> python tools/casa-compat/calibration_leakage_apply_oracle.py --work <new-directory>`.
 - Receipt: `resources/casa-compat/evidence/leakage-application-20261121.json`.
+
+<a id="applycal-evidence-mscal-selection"></a>
+##### mscal-selection
+
+**Same-input public-Python comparisons with pinned casacore readback — passed.** The initial integrated provider passed 510 ordinary cases and five isolated crash controls. The final revised provider passed all 144 affected selections, including malformed inputs, derived quantities, Stokes masks, and nested help. Ordinary MeasurementSet TaQL selection and the MSCAL functions reached by applycal.
+
+- [tools/casa-compat/applycal_oracle.py](https://github.com/bglenden/casa-rs/blob/27a99ab9b712bd4a47787c723977f5b7570d375d/tools/casa-compat/applycal_oracle.py)
+- [https://github.com/bglenden/casa-rs/pull/2130](https://github.com/bglenden/casa-rs/pull/2130)
+- Revision: `27a99ab9b712bd4a47787c723977f5b7570d375d`; CASA: `6.7.6.14`.
+- Command: `python tools/casa-compat/applycal_oracle.py --work <new-directory> --native-bin <calibrate> --only '^api-select-'`.
+- Receipt: `resources/casa-compat/evidence/applycal-mscal-selection-20261123.json`.
 
 ### bandpass
 
