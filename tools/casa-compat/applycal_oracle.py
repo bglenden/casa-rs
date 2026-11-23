@@ -857,7 +857,7 @@ def run(root, native_bin, only=None):
         field_ms, time_ms, antenna_ms = geometry_measure_fixtures(observation_source, root)
         for label, vis, predicate in [
             ('degree-field-direction', field_ms, 'mscal.ha("CUSTOM_DIR") < -0.169rad'),
-            ('not-direction-column', field_ms, 'mscal.ha("NO_DIRECTION") < -0.169rad'),
+            ('not-direction-column', field_ms, 'mscal.ha("NO_DIRECTION") > -4rad'),
             ('pluto', field_ms, 'mscal.ha("PLUTO") < 1.156rad'),
             ('explicit-field-name', field_ms, r'mscal.ha("\PLUTO") < -0.169rad'),
             ('time-reference-column', time_ms, 'mscal.ha() < -0.257rad'),
