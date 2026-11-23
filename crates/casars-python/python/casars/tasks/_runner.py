@@ -177,6 +177,17 @@ def run(
     and then raised here.
     """
 
+    return _run_task(task, parameters, workspace, values)
+
+
+def _run_task(
+    task: str,
+    parameters: SurfaceParameters | None,
+    workspace: StrPath | None,
+    values: dict[str, ParameterData],
+    *,
+    value_only: bool = False,
+) -> TaskCompletion:
     resolved_workspace = _resolve_workspace(workspace, parameters)
     if parameters is not None:
         if parameters.surface != task:
@@ -200,7 +211,7 @@ def run(
                     except AssertionError as error:
                         raise ValueError(str(error)) from error
         resolved.set_many(values)
-    return _execute(task, resolved, resolved_workspace)
+    return _execute(task, resolved, resolved_workspace, value_only=value_only)
 
 
 def _run(task: str, values: Mapping[str, ParameterData]) -> TaskCompletion:
@@ -1851,7 +1862,7 @@ def _call_blcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
 def _call_applycal(values: dict[str, Any]) -> Any:
     _check_applycal_selectors(values)
     try:
-        return run("applycal", **values).value
+        return _run_task("applycal", None, None, values, value_only=True).value
     except TaskExecutionError as error:
         if error.completion.parameter == "calwt":
             raise IndexError(error.completion.message) from error
@@ -1912,7 +1923,9 @@ def _require_plotting() -> None:
     from matplotlib import pyplot as _plt  # noqa: F401
 
 
-def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCompletion:
+def _execute(
+    task: str, resolved: SurfaceParameters, workspace: Path, *, value_only: bool = False,
+) -> TaskCompletion:
     use_payload = task in {"simobserve", "simanalyze", "simalma"} and resolved.get("graphics") in {"file", "screen", "both"}
     if task == "plotms":
         path = resolved.get("plotfile") or ""
@@ -1926,12 +1939,13 @@ def _execute(task: str, resolved: SurfaceParameters, workspace: Path) -> TaskCom
             payload = Path(directory) / "arrays.bin"
             payload.touch()
             return _execute_task(task, resolved, workspace, payload)
-    return _execute_task(task, resolved, workspace, None)
+    return _execute_task(task, resolved, workspace, None, value_only=value_only)
 
 
 def _execute_task(
     task: str, resolved: SurfaceParameters, workspace: Path, payload: Path | None,
     *, bandpass_completed_pages: int | None = None, argument_text: Mapping[str, str] | None = None,
+    value_only: bool = False,
 ) -> TaskCompletion:
     invocation = resolved.provider_invocation()
     if argument_text:
@@ -1944,6 +1958,9 @@ def _execute_task(
     else:
         command = (_task_executable(task), *invocation.args)
     environment = dict(os.environ)
+    environment.pop("CASARS_APPLYCAL_VALUE_ONLY", None)
+    if task == "applycal" and value_only:
+        environment["CASARS_APPLYCAL_VALUE_ONLY"] = "1"
     if task == "listcal":
         # A later listing error takes effect only when the reader reaches it.
         environment["CASARS_LISTCAL_PAGED_REPLY"] = "1"

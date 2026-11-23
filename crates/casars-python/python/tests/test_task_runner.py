@@ -35,6 +35,7 @@ Path(os.environ["FAKE_TASK_LOG"]).write_text(json.dumps({
     "cwd": os.getcwd(),
     "session": os.getsid(0),
     "request": request,
+    "applycal_value_only": os.environ.get("CASARS_APPLYCAL_VALUE_ONLY"),
 }), encoding="utf-8")
 surface = request["surface"]
 reply = os.environ.get("FAKE_TASK_REPLY", "succeeded")
@@ -200,6 +201,27 @@ def test_a_profile_runs_as_the_wrappers_values(
     assert values["vis"] == ["target.ms"]
     assert values["caltable"] == "target.gcal"
     assert values["solint"] == "60s"
+
+
+def test_applycal_only_requests_a_value_from_the_casa_signature_wrapper(
+    tmp_path: Path, fake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = fake("CASARS_CALIBRATE_BIN")
+    monkeypatch.setenv("FAKE_TASK_VALUE", '{"kind": "none"}')
+    monkeypatch.setenv("FAKE_TASK_RESULT", '{"kind": "apply"}')
+    vis = tmp_path / "target.ms"
+    vis.mkdir()
+
+    assert tasks.applycal(vis=vis, applymode="trial", flagbackup=False) is None
+    wrapper = recorded(log)
+    assert wrapper["applycal_value_only"] == "1"
+
+    monkeypatch.setenv("CASARS_APPLYCAL_VALUE_ONLY", "1")
+    completion = tasks.run("applycal", vis=vis, applymode="trial", flagbackup=False)
+    generic = recorded(log)
+    assert completion.successful and completion.value is None
+    assert generic["applycal_value_only"] is None
+    assert generic["request"] == wrapper["request"]
 
 
 def test_a_request_carries_only_the_values_set(

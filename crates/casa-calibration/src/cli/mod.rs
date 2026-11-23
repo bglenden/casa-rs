@@ -273,7 +273,31 @@ fn run_task(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
         history::record_applycal(task, &request.measurement_set);
     }
     let value = casa_value(task.surface(), &applied, &result);
-    report_success(&report, &result, value)
+    report_task_success(task.surface(), &report, &result, value)
+}
+
+fn report_task_success(
+    surface: &str,
+    report: &read::Report,
+    result: &CalibrationTaskResult,
+    value: CasaValue,
+) -> Result<TaskSuccess, TaskFailure> {
+    let compact_kind = match result {
+        CalibrationTaskResult::Apply(_) => Some("apply"),
+        CalibrationTaskResult::ApplyMultiMs(_) => Some("apply_multi_ms"),
+        _ => None,
+    };
+    if let Some(kind) = compact_kind
+        && surface == "applycal"
+        && report.output.is_none()
+        && std::env::var_os("CASARS_APPLYCAL_VALUE_ONLY").is_some_and(|value| value == "1")
+    {
+        // The completion decoder needs the kind, and the CASA-signature
+        // wrapper consumes only the value. Avoid serializing the row plan.
+        crate::timing::report_process_memory();
+        return TaskSuccess::new(value, &serde_json::json!({ "kind": kind }));
+    }
+    report_success(report, result, value)
 }
 
 fn report_success(
