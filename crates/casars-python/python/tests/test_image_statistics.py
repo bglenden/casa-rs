@@ -90,7 +90,7 @@ def test_statistics_reads_persisted_masks_and_region(casa, tmp_path):
 
 
 def test_statistics_compacts_region_planes_without_dropping_filtered_pixels(casa):
-    shape = (3, 4, 8, 4)
+    shape = [3, 4, 8, 4]
     pixels = np.broadcast_to(
         np.arange(8)[None, None, :, None] + 10 * np.arange(4)[None, None, None, :],
         shape,
