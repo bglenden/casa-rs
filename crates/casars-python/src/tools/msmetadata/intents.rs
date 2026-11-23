@@ -62,14 +62,8 @@ impl StateIntents {
     }
 
     fn selected_states(&self, text: &str, expand: bool) -> MsResult<Vec<bool>> {
-        let regex = if expand && text.contains('*') {
-            let pattern = text
-                .split('*')
-                .map(regex::escape)
-                .collect::<Vec<_>>()
-                .join(".*");
-            let pattern = format!(r"\A(?:{pattern})\z");
-            Some(Regex::new(&pattern).map_err(|error| MsError::InvalidInput(error.to_string()))?)
+        let regex = if expand {
+            wildcard_pattern(text)?
         } else {
             None
         };
@@ -85,6 +79,20 @@ impl StateIntents {
             })
             .collect())
     }
+}
+
+pub(super) fn wildcard_pattern(text: &str) -> MsResult<Option<Regex>> {
+    if !text.contains('*') {
+        return Ok(None);
+    }
+    let pattern = text
+        .split('*')
+        .map(regex::escape)
+        .collect::<Vec<_>>()
+        .join(".*");
+    Regex::new(&format!(r"\A(?:{pattern})\z"))
+        .map(Some)
+        .map_err(|error| MsError::InvalidInput(error.to_string()))
 }
 
 fn matches_state(selected: &[bool], state: i32) -> bool {

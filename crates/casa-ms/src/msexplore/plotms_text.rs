@@ -281,7 +281,7 @@ fn write_point(
     )
 }
 
-fn name(axis: MsAxis) -> &'static str {
+pub(super) fn name(axis: MsAxis) -> &'static str {
     match axis {
         MsAxis::Amplitude => "Amp",
         MsAxis::Phase => "Phase",

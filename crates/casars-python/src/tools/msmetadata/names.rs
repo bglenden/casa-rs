@@ -107,7 +107,7 @@ impl<'a, 'py> FromPyObject<'a, 'py> for Indices {
     }
 }
 
-fn checked_row(index: i64, count: usize, name: &str) -> MsResult<usize> {
+pub(super) fn checked_row(index: i64, count: usize, name: &str) -> MsResult<usize> {
     usize::try_from(index)
         .ok()
         .filter(|&index| index < count)

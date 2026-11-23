@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Build figures for calibrated MeasurementSet visibilities and atmospheric curves.
+//! Build figures for MeasurementSet visibilities and atmospheric curves.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -8,7 +8,7 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
-use super::{MsAxis, MsPlotPayload, MsScatterGridPayload};
+use super::{MsAxis, MsDataColumn, MsPlotPayload, MsScatterGridPayload, plotms_text};
 use crate::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
     PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy, PlotPayloadWriter,
@@ -22,6 +22,7 @@ pub(super) fn prepare(
     output: Option<&Path>,
     show: bool,
     overlays: &[Vec<Curve>],
+    stored_columns: Option<[MsDataColumn; 2]>,
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
     let (x, y, second, grid) = match payload {
         MsPlotPayload::Scatter(plot) => (plot.x_axis, plot.y_axis, plot.secondary_y_axis, None),
@@ -33,6 +34,9 @@ pub(super) fn prepare(
         }
     };
     let mut document = plotms_visibility_document(payload);
+    if let Some(columns) = stored_columns {
+        label_stored_columns(task, &mut document, [x, y], second, columns)?;
+    }
     document.show_legend = task.flag("showlegend")?;
     let limits = plot_limits(task.value("plotrange"))?;
     let style = PanelStyle {
@@ -86,6 +90,57 @@ pub(super) fn prepare(
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
     }
     Ok(figures)
+}
+
+fn label_stored_columns(
+    task: &TaskInvocation<'_>,
+    document: &mut PlotDocument,
+    [x, y]: [MsAxis; 2],
+    second: Option<MsAxis>,
+    [x_column, y_column]: [MsDataColumn; 2],
+) -> Result<(), TaskFailure> {
+    let has_label =
+        |name| Ok::<_, TaskFailure>(task.text(name)?.is_some_and(|text| !text.is_empty()));
+    let x_name = column_axis_name(x, x_column);
+    let mut y_name = column_axis_name(y, y_column);
+    if let Some(second) = second {
+        y_name.push_str(", ");
+        y_name.push_str(&column_axis_name(second, y_column));
+    }
+    if !has_label("title")? {
+        document.title = format!("{y_name} vs. {x_name}");
+    }
+    let explicit_x = has_label("xlabel")?;
+    let explicit_y = has_label("ylabel")?;
+    let axes = std::iter::once(&mut document.axes)
+        .chain(document.panels.iter_mut().map(|panel| &mut panel.axes));
+    for axis in axes.flatten() {
+        let (kind, column) = match axis.id.as_str() {
+            "x" if !explicit_x => (x, x_column),
+            "y" if !explicit_y => (y, y_column),
+            "y-secondary" => match second {
+                Some(second) => (second, y_column),
+                None => continue,
+            },
+            _ => continue,
+        };
+        if kind.is_visibility_math() {
+            axis.label = column_axis_name(kind, column);
+            if kind == MsAxis::Phase {
+                axis.label.push_str(" (degrees)");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
+    let name = plotms_text::name(axis);
+    if axis.is_visibility_math() && column != MsDataColumn::Data {
+        format!("{name}:{column}")
+    } else {
+        name.into()
+    }
 }
 
 struct PanelStyle {

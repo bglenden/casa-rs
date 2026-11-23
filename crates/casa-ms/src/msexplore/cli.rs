@@ -219,8 +219,32 @@ fn run_task(
         };
         let atmosphere = super::calibration::atmosphere::Options::from_task(task)?;
         let visibility_document = calibration.is_some() || atmosphere.is_some();
-        let options = options_from_plotms(task, calibration.is_some(), visibility_document)?;
-        if visibility_document {
+        let options = options_from_plotms(task, visibility_document)?;
+        if calibration.is_none()
+            && let Some(x_column) = options.x_data_column
+        {
+            if [x_column, options.data_column].into_iter().any(|column| {
+                !matches!(
+                    column,
+                    MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+                )
+            }) {
+                return Err(TaskFailure::validation(
+                    "distinct MeasurementSet X and Y derived data columns are pending #1032",
+                ));
+            }
+            let symbols = task.value("customflaggedsymbol");
+            let ordinate_count = 1 + usize::from(options.y_axis2.is_some());
+            if (0..ordinate_count)
+                .any(|index| super::calibration::figure::shows_flagged(symbols, index))
+            {
+                return Err(TaskFailure::validation(
+                    "displaying flagged points with distinct MeasurementSet X and Y data columns is pending #1032",
+                )
+                .at("customflaggedsymbol"));
+            }
+        }
+        if visibility_document || options.x_data_column.is_some() {
             return run_visibility_plot(task, options, payload, calibration, atmosphere);
         }
         options
@@ -316,6 +340,10 @@ fn run_visibility_plot(
                 figure_file,
                 show,
                 &overlays,
+                options
+                    .x_data_column
+                    .filter(|_| calibrated.is_none())
+                    .map(|x_column| [x_column, options.data_column]),
             )?;
         }
         if let Some(path) = text_file {
@@ -1082,7 +1110,6 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
 /// Translate the CASA PlotMS spellings to the existing MS exploration request.
 fn options_from_plotms(
     task: &TaskInvocation<'_>,
-    on_the_fly: bool,
     visibility_document: bool,
 ) -> Result<CliOptions, TaskFailure> {
     let text = |name| {
@@ -1097,16 +1124,6 @@ fn options_from_plotms(
             .and_then(std::ffi::OsStr::to_str)
             .map(str::to_owned)
     });
-    let plot_format = if visibility_document {
-        MsExportFormat::Txt
-    } else {
-        export_format
-            .as_deref()
-            .map(MsExportFormat::parse)
-            .transpose()
-            .map_err(|_| TaskFailure::validation("MeasurementSet figure export is pending #1032"))?
-            .unwrap_or(MsExportFormat::Txt)
-    };
     let x_axis = text("xaxis")?
         .map_or(Ok(MsAxis::Time), |axis| {
             MsAxis::parse(&axis.to_ascii_lowercase())
@@ -1135,24 +1152,24 @@ fn options_from_plotms(
             .transpose()
             .map_err(TaskFailure::validation)
     };
-    let x_column = data_column(text("xdatacolumn")?)?;
-    let y_column = data_column(plotms_column(task.value("ydatacolumn"))?)?;
-    let data_column = if on_the_fly {
-        y_column.unwrap_or(MsDataColumn::Data)
+    let x_column = data_column(text("xdatacolumn")?)?.unwrap_or(MsDataColumn::Data);
+    let y_column =
+        data_column(plotms_column(task.value("ydatacolumn"))?)?.unwrap_or(MsDataColumn::Data);
+    let y_uses_data =
+        y_axis.is_visibility_math() || y_axis2.is_some_and(MsAxis::is_visibility_math);
+    let data_column = if y_uses_data { y_column } else { x_column };
+    let x_data_column =
+        (x_axis.is_visibility_math() && x_column != data_column).then_some(x_column);
+    let plot_format = if visibility_document || x_data_column.is_some() {
+        MsExportFormat::Txt
     } else {
-        y_column.or(x_column).unwrap_or(MsDataColumn::Data)
+        export_format
+            .as_deref()
+            .map(MsExportFormat::parse)
+            .transpose()
+            .map_err(|_| TaskFailure::validation("MeasurementSet figure export is pending #1032"))?
+            .unwrap_or(MsExportFormat::Txt)
     };
-    let x_data_column = if on_the_fly {
-        Some(x_column.unwrap_or(MsDataColumn::Data))
-    } else {
-        x_column
-    }
-    .filter(|column| *column != data_column);
-    if x_data_column.is_some() && !on_the_fly {
-        return Err(TaskFailure::validation(
-            "distinct MeasurementSet X and Y data columns are pending #1032",
-        ));
-    }
     let color_by = text("coloraxis")?
         .map_or(Ok(MsColorAxis::None), |axis| {
             MsColorAxis::parse(&axis.to_ascii_lowercase())

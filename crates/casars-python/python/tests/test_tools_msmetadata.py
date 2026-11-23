@@ -558,3 +558,106 @@ def test_msmetadata_source_measures_use_source_units_and_optional_cells(native_d
                 metadata.transitions()
         finally:
             assert metadata.done()
+
+
+def test_msmetadata_antenna_observation_selectors_and_measures(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "ANTENNA"), nomodify=False)
+    assert table.putcol("DISH_DIAMETER", np.array([25., 18., 30., 25.]))
+    position = table.getcol("POSITION")
+    assert table.putcol("POSITION", position / np.array([[1000.], [1.], [0.01]]))
+    assert table.putcolkeyword("POSITION", "QuantumUnits", ["km", "m", "cm"])
+    assert table.done()
+    assert table.open(str(native_dataset / "OBSERVATION"), nomodify=False)
+    assert table.putcell("SCHEDULE", 0, ["schedule A", "schedule B"])
+    assert table.putcell("TIME_RANGE", 0, np.array([4.8e9, 4.8e9 + 600.]) / 86400.)
+    assert table.putcolkeyword("TIME_RANGE", "QuantumUnits", ["d"])
+    assert table.done()
+
+    results = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            assert metadata.antennadiameter("A2") == {"unit": "m", "value": 18.0}
+            assert metadata.antennadiameter(np.int32(2)) == {"unit": "m", "value": 30.0}
+            assert metadata.antennadiameter()["0"] == {"unit": "m", "value": 25.0}
+            np.testing.assert_array_equal(metadata.antennaids(), np.arange(4), strict=True)
+            np.testing.assert_array_equal(metadata.antennaids("A*", mindiameter="20m",
+                                                             maxdiameter={"value": 25., "unit": "m"}),
+                                          np.array([0, 3]), strict=True)
+            np.testing.assert_array_equal(metadata.antennaids(np.array(["A3", "A1", "A3"])),
+                                          np.array([2, 0]), strict=True)
+            np.testing.assert_array_equal(metadata.antennaids("absent*", obsid=0),
+                                          np.array([], dtype="int64"), strict=True)
+            assert metadata.antennastations() == ["P1", "P2", "P3", "P4"]
+            assert metadata.antennastations([2, 0, 2]) == ["P3", "P1", "P3"]
+            assert metadata.antennastations(np.array([b"A4", b"A3"])) == ["P4", "P3"]
+            assert metadata.antennastations("A1", obsid=0) == ["P1"]
+            for dtype in ("U1", "S1"):
+                empty = np.array([], dtype=dtype)
+                np.testing.assert_array_equal(metadata.antennaids(empty), np.array([], dtype=np.int64), strict=True)
+                assert metadata.antennastations(empty) == []
+            if module is casatools:
+                for selector in (np.uint32(1), np.bool_(True)):
+                    np.testing.assert_array_equal(metadata.antennaids(selector), np.arange(4), strict=True)
+                    assert metadata.antennastations(selector) == ["P1", "P2", "P3", "P4"]
+                    assert metadata.antennaposition(selector) == metadata.antennaposition(0)
+            else:
+                assert metadata.antennastations(np.uint32(1)) == ["P2"]
+                assert metadata.antennaposition(np.uint32(1)) == metadata.antennaposition(1)
+                with pytest.raises(RuntimeError):
+                    metadata.antennaids(np.uint32(1))
+                for query in (metadata.antennaids, metadata.antennastations, metadata.antennaposition):
+                    with pytest.raises(RuntimeError):
+                        query(np.bool_(True))
+            assert metadata.schedule(0) == ["schedule A", "schedule B"]
+            results.append([
+                metadata.antennaposition(), metadata.antennaposition(b"A2"),
+                metadata.antennaoffset("A3"), metadata.observatoryposition(), metadata.timerangeforobs(0),
+            ])
+            for query, name in ((metadata.antennadiameter, "absent"), (metadata.antennaposition, 99),
+                                (metadata.antennaoffset, -1), (metadata.schedule, -1),
+                                (metadata.timerangeforobs, 1), (metadata.observatoryposition, 1)):
+                with pytest.raises(RuntimeError):
+                    query(name)
+        finally:
+            assert metadata.done()
+
+    def compare(expected, actual):
+        assert expected.keys() == actual.keys()
+        for key, value in expected.items():
+            if isinstance(value, dict):
+                compare(value, actual[key])
+            elif isinstance(value, float):
+                assert actual[key] == pytest.approx(value, rel=1e-12, abs=1e-7)
+            else:
+                assert actual[key] == value
+
+    for expected, actual in zip(*results):
+        compare(expected, actual)
+
+
+def test_msmetadata_stations_without_an_observed_match(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    for column in ("ANTENNA1", "ANTENNA2"):
+        ids = table.getcol(column)
+        assert np.any(ids == 3)
+        assert table.putcol(column, np.where(ids == 3, 0, ids).astype(np.int32))
+    assert table.done()
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            assert metadata.antennastations(3, obsid=0) == []
+            expected = ["P1", "P2", "P3", "P4"] if module is casatools else []
+            assert metadata.antennastations("A4", obsid=0) == expected
+            assert metadata.antennastations(["A4"], obsid=0) == expected
+            assert metadata.antennastations("A1", obsid=0) == ["P1"]
+        finally:
+            assert metadata.done()

@@ -20,7 +20,9 @@ use super::provider::{MeasuresProvider, ObservatoryPosition};
 /// WGS84 ellipsoid identifier for sofars (n=1).
 const WGS84_ELLIPSOID: i32 = 1;
 const CASACORE_WGS84_A_M: f64 = 6_378_137.0;
-const CASACORE_WGS84_B_M: f64 = 6_356_752.314_2;
+const CASACORE_WGS84_FLATTENING: f64 = 1.0 / 298.257_223_563;
+const CASACORE_WGS84_ECCENTRICITY_SQUARED: f64 =
+    CASACORE_WGS84_FLATTENING * (2.0 - CASACORE_WGS84_FLATTENING);
 
 /// Position reference frame types.
 ///
@@ -288,8 +290,6 @@ impl MPosition {
 }
 
 fn casacore_itrf_to_wgs84([x, y, z]: [f64; 3]) -> Result<[f64; 3], MeasureError> {
-    const FLATTENING: f64 = 1.0 / 298.257_223_563;
-    const ECCENTRICITY_SQUARED: f64 = FLATTENING * (2.0 - FLATTENING);
     let radius = (x * x + y * y + z * z).sqrt();
     if !radius.is_finite() {
         return Err(MeasureError::ModelError {
@@ -309,8 +309,9 @@ fn casacore_itrf_to_wgs84([x, y, z]: [f64; 3]) -> Result<[f64; 3], MeasureError>
     loop {
         let previous = latitude;
         let sine = previous.sin();
-        let normal_radius = CASACORE_WGS84_A_M / (1.0 - ECCENTRICITY_SQUARED * sine * sine).sqrt();
-        let axial = z + normal_radius * ECCENTRICITY_SQUARED * sine;
+        let normal_radius =
+            CASACORE_WGS84_A_M / (1.0 - CASACORE_WGS84_ECCENTRICITY_SQUARED * sine * sine).sqrt();
+        let axial = z + normal_radius * CASACORE_WGS84_ECCENTRICITY_SQUARED * sine;
         latitude = if planar_radius == 0.0 {
             if axial >= 0.0 {
                 std::f64::consts::FRAC_PI_2
@@ -328,8 +329,7 @@ fn casacore_itrf_to_wgs84([x, y, z]: [f64; 3]) -> Result<[f64; 3], MeasureError>
 }
 
 fn casacore_wgs84_to_itrf(longitude_rad: f64, latitude_rad: f64, height_m: f64) -> [f64; 3] {
-    let e2 = (CASACORE_WGS84_A_M * CASACORE_WGS84_A_M - CASACORE_WGS84_B_M * CASACORE_WGS84_B_M)
-        / (CASACORE_WGS84_A_M * CASACORE_WGS84_A_M);
+    let e2 = CASACORE_WGS84_ECCENTRICITY_SQUARED;
     let (sin_lat, cos_lat) = latitude_rad.sin_cos();
     let (sin_lon, cos_lon) = longitude_rad.sin_cos();
     let n = CASACORE_WGS84_A_M / (1.0 - e2 * sin_lat * sin_lat).sqrt();
@@ -412,9 +412,12 @@ mod tests {
         );
         let [x, y, z] = alma.as_itrf();
 
-        assert!((x - 2_225_142.180_271_370_3).abs() < 1.0e-7, "x={x}");
-        assert!((y - -5_440_307.370_354_437).abs() < 1.0e-7, "y={y}");
-        assert!((z - -2_481_029.851_840_987_3).abs() < 1.0e-7, "z={z}");
+        // CASA 6.7.6.14's ITRF measure converted from spherical to Cartesian.
+        // The earlier values used a rounded polar radius instead of casacore's
+        // inverse flattening.
+        assert!((x - 2_225_142.180_268_967).abs() < 1.0e-7, "x={x}");
+        assert!((y - -5_440_307.370_348_562).abs() < 1.0e-7, "y={y}");
+        assert!((z - -2_481_029.851_873_546_4).abs() < 1.0e-7, "z={z}");
     }
 
     #[test]
