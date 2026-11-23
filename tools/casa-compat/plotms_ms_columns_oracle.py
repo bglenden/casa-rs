@@ -248,6 +248,28 @@ def compare_zero_model(root, vis, source, native):
                     "Amp:data/model (vector)", "Phase:data/model (vector) (degrees)"))
 
 
+def compare_ratio_float_range(root, vis, source, native):
+    bounded = root / "ratio-float-range.ms"
+    copy_ms(vis, bounded)
+    data, model = (source[column].copy() for column in ("DATA", "MODEL_DATA"))
+    data[0, 1, 0], model[0, 1, 0] = 8 + 4j, 2e-38
+    data[0, 3, 0], model[0, 3, 0] = 1e-30 + 2e-30j, 1e30
+    with opened(bounded, True) as table:
+        table.putcol("DATA", data)
+        table.putcol("MODEL_DATA", model)
+    for method, phase in (("vector", 0.0), ("scalar", np.inf)):
+        name = f"{method}-ratio-float-range"
+        column = f"data/model_{method}"
+        controls = request(bounded) | dict(xdatacolumn=column, ydatacolumn=column, expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        np.testing.assert_array_equal(np.array([sample[:2] for sample in rows(expected)[:2]], dtype=float),
+                                      [[np.inf, phase], [0.0, 0.0]])
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: matched the float range for 12 selected points", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -270,6 +292,7 @@ def main():
         compare_missing_corrected(root, vis, source, native)
         compare_scalar_phase_boundary(root, vis, source, native)
         compare_zero_model(root, vis, source, native)
+        compare_ratio_float_range(root, vis, source, native)
 
 
 if __name__ == "__main__":
