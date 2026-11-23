@@ -9,13 +9,13 @@ use super::syntax::trim_row_id_space;
 use crate::{MeasurementSet, MsError, MsResult};
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct UvDistanceSelection {
+pub(crate) struct UvDistanceSelection {
     meters: Vec<(f64, f64)>,
     by_ddid: BTreeMap<i32, Vec<(f64, f64)>>,
 }
 
 impl UvDistanceSelection {
-    pub(super) fn parse(ms: &MeasurementSet, text: &str) -> MsResult<Self> {
+    pub(crate) fn parse(ms: &MeasurementSet, text: &str) -> MsResult<Self> {
         let mut selection = Self::default();
         let mut wavelengths = Vec::new();
         for term in text.split(',') {
@@ -48,7 +48,7 @@ impl UvDistanceSelection {
         !self.by_ddid.is_empty()
     }
 
-    pub(super) fn holds(&self, uvw: [f64; 3], ddid: Option<i32>) -> bool {
+    pub(crate) fn holds(&self, uvw: [f64; 3], ddid: Option<i32>) -> bool {
         let distance = uvw[0].powi(2) + uvw[1].powi(2);
         let matches = |&(lower, upper): &(f64, f64)| (lower..=upper).contains(&distance);
         self.meters.iter().any(matches)

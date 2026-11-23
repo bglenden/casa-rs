@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Shared MeasurementSet flagging execution and sequential multi-agent programs.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use casa_types::ScalarValue;
@@ -8,7 +9,10 @@ use casa_types::ScalarValue;
 use crate::ms::MeasurementSet;
 use crate::schema::SubtableId;
 use crate::selection::syntax::ChannelSelection;
-use crate::selection::{TimeSelection, compile_flagdata_agent_time, first_unflagged_time_row};
+use crate::selection::{
+    TimeSelection, UvDistanceSelection, compile_flagdata_agent_time, first_unflagged_time_row,
+    flagdata_c_string,
+};
 
 use super::shared_average::{SharedAgentSelection, SharedAveraging, SharedFlagView};
 
@@ -27,6 +31,19 @@ struct AgentSelection {
     channels: Option<BTreeMap<i32, ChannelSelection>>,
     correlations: Option<CorrelationSelection>,
     averaged_time: Option<TimeSelection>,
+    averaged_uv: Option<UvDistanceSelection>,
+}
+
+impl AgentSelection {
+    fn shared(&self) -> SharedAgentSelection<'_> {
+        SharedAgentSelection {
+            rows: Some(&self.rows),
+            channels: self.channels.as_ref(),
+            correlations: self.correlations.as_ref(),
+            time: self.averaged_time.as_ref(),
+            uv: self.averaged_uv.as_ref(),
+        }
+    }
 }
 
 struct AntintPlan {
@@ -147,6 +164,7 @@ pub(super) fn run_ms_single(
         channels: channel_selections,
         correlations,
         averaged_time: None,
+        averaged_uv: None,
     };
     let changes =
         stage_selected_ms_request(ms, &selection, request, !persist, model_factory, None)?;
@@ -336,8 +354,9 @@ fn select_agent(
                 FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
             );
     let mut averaged_time = None;
-    let mut unfiltered;
-    let input = if request.casa_row_selection
+    let mut averaged_uv = None;
+    let mut input = Cow::Borrowed(request);
+    if request.casa_row_selection
         && averages_time
         && request.selection.selectdata
         && request
@@ -361,18 +380,35 @@ fn select_agent(
         }
         // The local agent filters the output TIME of the averaging iterator.
         // Every contributing integration must still reach the averaging step.
-        unfiltered = request.clone();
-        unfiltered.selection.timerange = None;
-        &unfiltered
-    } else {
-        request
-    };
+        input.to_mut().selection.timerange = None;
+    }
+    if shared_time
+        && request.selection.selectdata
+        && let Some(text) = request
+            .selection
+            .uvrange
+            .as_deref()
+            .map(flagdata_c_string)
+            .filter(|text| !text.is_empty())
+    {
+        match UvDistanceSelection::parse(ms, text) {
+            Ok(filter) => averaged_uv = Some(filter),
+            Err(_) if local_selection => return Ok(None),
+            Err(source) => {
+                return Err(FlaggingError::MutateFlags {
+                    path: display_ms_path(ms),
+                    reason: format!("select rows: {source}"),
+                });
+            }
+        }
+        input.to_mut().selection.uvrange = None;
+    }
     let input_time_selection = if averages_time {
         FlagTimeSelection::Global
     } else {
         time_selection
     };
-    let selection = match selected_rows(ms, input, input_time_selection) {
+    let selection = match selected_rows(ms, &input, input_time_selection) {
         Ok(selection) => selection,
         Err(_) if local_selection => return Ok(None),
         Err(error) => return Err(error),
@@ -391,6 +427,7 @@ fn select_agent(
         channels,
         correlations,
         averaged_time,
+        averaged_uv,
     }))
 }
 
@@ -470,7 +507,20 @@ fn stage_ms_program_request(
         return Ok(None);
     }
     if let Some(view) = shared {
-        changes.summary = Some(view.summarize(&selection.rows, selection.averaged_time.as_ref()));
+        if request.extendflags && matches!(request.mode, FlagDataMode::Tfcrop | FlagDataMode::Rflag)
+        {
+            let extension = view.extend_implicit(&display_ms_path(ms))?;
+            changes.changed_samples += extension.changed_samples;
+            changes
+                .changed_row_indices
+                .extend(extension.changed_row_indices);
+            changes.changed_row_indices.sort_unstable();
+            changes.changed_row_indices.dedup();
+            changes.changed_rows = changes.changed_row_indices.len();
+        }
+        let (selected_rows, summary) = view.summarize(selection.shared());
+        changes.selected_rows = Some(selected_rows);
+        changes.summary = Some(summary);
     }
     let changed_rows = std::mem::take(&mut changes.changed_row_indices);
     let changed_flag_rows = changes.changed_flag_row_rows;
@@ -559,6 +609,7 @@ fn stage_selected_ms_request(
     let correlations = selection.correlations.as_ref();
     let mut averaging = AveragedAgentInput {
         time: selection.averaged_time.as_ref(),
+        uv: selection.averaged_uv.as_ref(),
         view: shared,
     };
     let ms_path = display_ms_path(ms);
@@ -575,29 +626,10 @@ fn stage_selected_ms_request(
     if let Some(view) = averaging.view.as_deref_mut() {
         match request.mode {
             FlagDataMode::Extend => {
-                return view.extend(
-                    SharedAgentSelection {
-                        rows: selected_rows,
-                        channels: channel_selections,
-                        correlations,
-                        time: averaging.time,
-                    },
-                    request,
-                    &ms_path,
-                );
+                return view.extend(selection.shared(), request, &ms_path);
             }
             FlagDataMode::Antint => {
-                return view.antint(
-                    ms,
-                    SharedAgentSelection {
-                        rows: selected_rows,
-                        channels: channel_selections,
-                        correlations,
-                        time: averaging.time,
-                    },
-                    request,
-                    &ms_path,
-                );
+                return view.antint(ms, selection.shared(), request, &ms_path);
             }
             _ => {}
         }

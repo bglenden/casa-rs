@@ -4,6 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::selection::{UvDistanceSelection, load_uvw_column};
+
 use super::clip_average::{ChannelBins, bin_members, check_channel_bins};
 use super::clip_time::{
     ClipTimedRow, averaged_output_time, clip_time_groups, ordered_baseline_chunks, read_flags,
@@ -14,6 +16,14 @@ use super::*;
 pub(super) struct SharedAveraging<'a> {
     pub(super) seconds: Option<f64>,
     pub(super) widths: Option<&'a [u32]>,
+    uvw_weights: Option<UvwWeights>,
+}
+
+#[derive(Clone, Copy)]
+enum UvwWeights {
+    Unit,
+    Weight,
+    Sigma,
 }
 
 impl<'a> SharedAveraging<'a> {
@@ -36,6 +46,14 @@ impl<'a> SharedAveraging<'a> {
         if requests.clone().take(2).count() < 2 {
             return None;
         }
+        let uvw_selected = requests.clone().any(|request| {
+            request.selection.selectdata
+                && request
+                    .selection
+                    .uvrange
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+        });
         let automatic = requests.filter(automatic);
         // Each enabled agent sets the corresponding layer on the shared
         // handler. The last enabled agent determines that layer's bin size.
@@ -44,38 +62,181 @@ impl<'a> SharedAveraging<'a> {
             .rev()
             .find_map(|request| request.clip_time_bin.as_deref().and_then(time_bin_seconds));
         let widths = automatic
+            .clone()
             .rev()
             .find_map(|request| request.clip_channel_bins.as_deref());
-        (seconds.is_some() || widths.is_some()).then_some(Self { seconds, widths })
+        let uvw_weights = (seconds.is_some() && uvw_selected).then(|| {
+            let time_columns = automatic
+                .filter(|request| {
+                    request
+                        .clip_time_bin
+                        .as_deref()
+                        .and_then(time_bin_seconds)
+                        .is_some()
+                })
+                .map(|request| request.data_column);
+            if time_columns.clone().any(|column| {
+                matches!(
+                    column,
+                    FlagDataColumn::CorrectedData | FlagDataColumn::Residual
+                )
+            }) {
+                UvwWeights::Weight
+            } else if time_columns
+                .clone()
+                .any(|column| matches!(column, FlagDataColumn::Data | FlagDataColumn::FloatData))
+            {
+                UvwWeights::Sigma
+            } else {
+                UvwWeights::Unit
+            }
+        });
+        (seconds.is_some() || widths.is_some()).then_some(Self {
+            seconds,
+            widths,
+            uvw_weights,
+        })
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct SharedAgentSelection<'a> {
-    pub(super) rows: &'a [usize],
+    pub(super) rows: Option<&'a [usize]>,
     pub(super) channels: Option<&'a BTreeMap<i32, ChannelSelection>>,
     pub(super) correlations: Option<&'a CorrelationSelection>,
     pub(super) time: Option<&'a TimeSelection>,
+    pub(super) uv: Option<&'a UvDistanceSelection>,
+}
+
+impl SharedAgentSelection<'_> {
+    fn holds(&self, row: &SharedFlagRow) -> bool {
+        self.rows
+            .is_none_or(|rows| rows.binary_search(&row.row()).is_ok())
+            && self
+                .time
+                .is_none_or(|filter| filter.holds_agent_time(row.time))
+            && self.uv.is_none_or(|filter| {
+                filter.holds(
+                    row.uvw.expect("averaged UV coordinates have been prepared"),
+                    Some(row.members[0].description()),
+                )
+            })
+    }
 }
 
 pub(super) struct SharedFlagView {
+    input_rows: Vec<usize>,
     rows: Vec<SharedFlagRow>,
     flags: BTreeMap<usize, ArrayD<bool>>,
     ddid_to_spw: BTreeMap<i32, i32>,
     channel_layouts: BTreeMap<(i32, usize), Arc<[usize]>>,
-    columns: Vec<(FlagDataColumn, Vec<ArrayValue>)>,
+    columns: Vec<(FlagDataColumn, Vec<SharedVisibility>)>,
     staged: BTreeMap<usize, ArrayD<bool>>,
     averaged_in_time: bool,
+}
+
+struct SharedVisibility {
+    data: ArrayValue,
+    roundoff: Option<ArrayD<f32>>,
 }
 
 struct SharedFlagRow {
     members: Vec<ClipTimedRow>,
     time: f64,
+    uvw: Option<[f64; 3]>,
     spw: i32,
     width: u32,
     channels: Arc<[usize]>,
     original_flags: ArrayD<bool>,
     current_flags: ArrayD<bool>,
+}
+
+struct AveragedUvw {
+    coordinates: Vec<[f64; 3]>,
+    weights: Vec<f64>,
+}
+
+impl AveragedUvw {
+    fn read(
+        ms: &MeasurementSet,
+        rows: &[usize],
+        source: UvwWeights,
+        path: &str,
+    ) -> Result<Self, FlaggingError> {
+        let table = ms.main_table();
+        let error = |reason: String| FlaggingError::MutateFlags {
+            path: path.to_owned(),
+            reason,
+        };
+        let coordinates =
+            load_uvw_column(table, rows).map_err(|source| error(source.to_string()))?;
+        let weights = match source {
+            UvwWeights::Unit => Vec::new(),
+            UvwWeights::Weight | UvwWeights::Sigma => {
+                let use_sigma = matches!(source, UvwWeights::Sigma);
+                let name = if use_sigma { "SIGMA" } else { "WEIGHT" };
+                table
+                    .column_accessor(name)
+                    .and_then(|column| column.array_cells_owned(rows))
+                    .map_err(|source| error(source.to_string()))?
+                    .into_iter()
+                    .zip(rows)
+                    .map(|(cell, row)| {
+                        let Some(ArrayValue::Float32(cell)) = cell else {
+                            return Err(error(format!("{name} row {row} must be a Float array")));
+                        };
+                        Ok(cell
+                            .iter()
+                            .copied()
+                            .map(|value| {
+                                f64::from(if use_sigma {
+                                    if value > f32::MIN_POSITIVE {
+                                        (1.0 / f64::from(value * value)) as f32
+                                    } else {
+                                        0.0
+                                    }
+                                } else {
+                                    value
+                                })
+                            })
+                            .sum())
+                    })
+                    .collect::<Result<_, _>>()?
+            }
+        };
+        Ok(Self {
+            coordinates,
+            weights,
+        })
+    }
+
+    fn reduce(&self, members: &[ClipTimedRow], flags: &BTreeMap<usize, ArrayD<bool>>) -> [f64; 3] {
+        let valid = |row: usize| flags[&row].iter().any(|&flag| !flag);
+        let all_flagged = !members.iter().any(|member| valid(member.row));
+        let mut count = 0;
+        let mut total = 0.0;
+        let mut sum = [0.0; 3];
+        for member in members {
+            if all_flagged || valid(member.row) {
+                let weight = if all_flagged {
+                    1.0
+                } else {
+                    self.weights.get(member.row).copied().unwrap_or(1.0)
+                };
+                count += 1;
+                total += weight;
+                for (sum, coordinate) in sum.iter_mut().zip(self.coordinates[member.row]) {
+                    *sum += coordinate * weight;
+                }
+            }
+        }
+        let normalization = if total == 0.0 {
+            f64::from(count)
+        } else {
+            total
+        };
+        sum.map(|coordinate| coordinate / normalization)
+    }
 }
 
 impl SharedFlagView {
@@ -97,7 +258,12 @@ impl SharedFlagView {
             .copied()
             .zip(read_flags(ms.main_table(), &selected, path)?)
             .collect::<BTreeMap<_, _>>();
+        let uvw = config
+            .uvw_weights
+            .map(|source| AveragedUvw::read(ms, &selected, source, path))
+            .transpose()?;
         let mut view = Self {
+            input_rows: selected,
             rows: Vec::new(),
             flags,
             ddid_to_spw,
@@ -108,20 +274,25 @@ impl SharedFlagView {
         };
         if let Some(seconds) = config.seconds {
             for members in clip_time_groups(&timed, seconds) {
-                view.add_row(members, config.widths, path)?;
+                view.add_row(members, config.widths, uvw.as_ref(), path)?;
             }
         } else {
             for row in &timed {
-                view.add_row(std::slice::from_ref(row), config.widths, path)?;
+                view.add_row(std::slice::from_ref(row), config.widths, uvw.as_ref(), path)?;
             }
         }
         Ok(view)
+    }
+
+    pub(super) fn input_rows(&self) -> &[usize] {
+        &self.input_rows
     }
 
     fn add_row(
         &mut self,
         members: &[ClipTimedRow],
         widths: Option<&[u32]>,
+        uvw: Option<&AveragedUvw>,
         path: &str,
     ) -> Result<(), FlaggingError> {
         let first = &members[0];
@@ -158,6 +329,7 @@ impl SharedFlagView {
         self.rows.push(SharedFlagRow {
             members: members.to_vec(),
             time,
+            uvw: uvw.map(|uvw| uvw.reduce(members, &self.flags)),
             spw,
             width,
             channels,
@@ -190,7 +362,7 @@ impl SharedFlagView {
         column: FlagDataColumn,
         columns: &mut ClipColumns,
         path: &str,
-    ) -> Result<Vec<ArrayValue>, FlaggingError> {
+    ) -> Result<Vec<SharedVisibility>, FlaggingError> {
         use super::clip_time::ClipTimeAccumulator;
 
         let input = &self.flags;
@@ -269,11 +441,14 @@ impl SharedFlagView {
                     } else {
                         let flags = &batch.flags[slot];
                         let bins = ChannelBins::new(group.width, &group.channels, flags);
-                        output.push(
-                            values
+                        let roundoff =
+                            values.fourier_residual_roundoff(slot, flags, group.row(), path)?;
+                        output.push(SharedVisibility {
+                            data: values
                                 .row(slot, flags, bins.as_ref(), group.row(), path)?
                                 .into_owned(),
-                        );
+                            roundoff: reduce_roundoff(roundoff.as_ref(), flags, bins.as_ref()),
+                        });
                         slot += 1;
                     }
                 }
@@ -343,7 +518,7 @@ impl SharedFlagRow {
         mut accumulator: super::clip_time::ClipTimeAccumulator,
         column: FlagDataColumn,
         path: &str,
-    ) -> Result<ArrayValue, FlaggingError> {
+    ) -> Result<SharedVisibility, FlaggingError> {
         let reduced = accumulator.reduced_visibility(
             column,
             Some(&self.channels),
@@ -351,8 +526,35 @@ impl SharedFlagRow {
             self.row(),
             path,
         )?;
-        Ok(reduced.data.into_owned())
+        Ok(SharedVisibility {
+            data: reduced.data.into_owned(),
+            roundoff: reduce_roundoff(
+                reduced.fourier_roundoff,
+                reduced.flags,
+                reduced.bins.as_ref(),
+            ),
+        })
     }
+}
+
+fn reduce_roundoff(
+    roundoff: Option<&ArrayD<f32>>,
+    flags: &ArrayD<bool>,
+    bins: Option<&ChannelBins<'_>>,
+) -> Option<ArrayD<f32>> {
+    let roundoff = roundoff?;
+    let Some(bins) = bins else {
+        return Some(roundoff.clone());
+    };
+    let averaged_flags = bins.flags();
+    Some(ArrayD::from_shape_fn(averaged_flags.raw_dim(), |index| {
+        let (corr, bin) = (index[0], index[1]);
+        bins.original_channels(bin)
+            .iter()
+            .filter(|&&chan| flags[[corr, chan]] == averaged_flags[[corr, bin]])
+            .map(|&chan| roundoff[[corr, chan]])
+            .fold(0.0, f32::max)
+    }))
 }
 
 impl SharedFlagView {
@@ -378,30 +580,17 @@ impl SharedFlagView {
         request: &FlagDataRequest,
         path: &str,
     ) -> Result<LoadedSamples, FlaggingError> {
-        let SharedAgentSelection {
-            rows: selected,
-            channels: channel_selections,
-            correlations,
-            time: filter,
-        } = selection;
         let values = fit.and_then(|column| self.columns.iter().find(|(key, _)| *key == column));
         let select_channels = request
             .clip_channel_bins
             .is_none()
-            .then_some(channel_selections)
+            .then_some(selection.channels)
             .flatten();
-        let mut axes = AveragedSampleAxes::default();
         let mut samples = Vec::new();
-        let mut projected = BTreeMap::new();
+        let mut model_roundoff = Vec::new();
         for (index, group) in self.rows.iter().enumerate() {
-            if selected.binary_search(&group.row()).is_err() {
+            if !selection.holds(group) {
                 continue;
-            }
-            if filter.is_some_and(|filter| !filter.holds_agent_time(group.time)) {
-                if !request.extendflags {
-                    continue;
-                }
-                axes.rows_outside_time.insert(index);
             }
             let channels = group.select_channels(select_channels, path)?;
             let first = &group.members[0];
@@ -415,13 +604,15 @@ impl SharedFlagView {
                 ant2,
             };
             if let Some((column, values)) = values {
+                let visibility = &values[index];
                 let flags = if request.mode == FlagDataMode::Rflag {
                     &group.original_flags
                 } else {
                     &group.current_flags
                 };
+                let first_sample = samples.len();
                 push_row_samples(
-                    &values[index],
+                    &visibility.data,
                     flags,
                     &channels,
                     metadata,
@@ -429,27 +620,31 @@ impl SharedFlagView {
                     column.name(),
                     &mut samples,
                 )?;
+                if let Some(roundoff) = &visibility.roundoff {
+                    model_roundoff.resize(first_sample, 0.0);
+                    model_roundoff.extend(
+                        samples[first_sample..]
+                            .iter()
+                            .map(|sample| roundoff[[sample.corr, sample.chan]]),
+                    );
+                }
             } else {
                 push_flag_samples(
                     &group.current_flags,
                     &channels,
-                    correlations.map(|corr| corr.planes(first.description())),
+                    selection
+                        .correlations
+                        .map(|corr| corr.planes(first.description())),
                     metadata,
                     &mut samples,
                 );
             }
-            axes.rows_by_bin.insert(
-                index,
-                group.members.iter().map(|member| member.row).collect(),
-            );
-            projected.insert(index, group.current_flags.clone());
         }
-        axes.flags_by_bin = Some(projected);
         Ok(LoadedSamples {
             samples,
             flags_by_row: BTreeMap::new(),
-            model_roundoff: Vec::new(),
-            axes,
+            model_roundoff,
+            axes: AveragedSampleAxes::default(),
         })
     }
 
@@ -463,12 +658,6 @@ impl SharedFlagView {
 
     pub(super) fn averaged_in_time(&self) -> bool {
         self.averaged_in_time
-    }
-
-    pub(super) fn add_modified_flags(&self, samples: &[Sample], mask: &mut [bool]) {
-        for sample in samples {
-            mask[sample.index] |= self.rows[sample.row].current_flags[[sample.corr, sample.chan]];
-        }
     }
 
     pub(super) fn stage(&mut self, samples: &[Sample], matched: &[bool], flag: bool) -> ChangeSet {
@@ -501,15 +690,9 @@ impl SharedFlagView {
         changed
     }
 
-    pub(super) fn summarize(
-        &self,
-        selected: &[usize],
-        time: Option<&TimeSelection>,
-    ) -> FlagSummary {
-        let rows = self.rows.iter().filter(|row| {
-            selected.binary_search(&row.row()).is_ok()
-                && time.is_none_or(|filter| filter.holds_agent_time(row.time))
-        });
+    pub(super) fn summarize(&self, selection: SharedAgentSelection<'_>) -> (usize, FlagSummary) {
+        let rows = self.rows.iter().filter(|row| selection.holds(row));
+        let mut selected_rows = 0;
         let mut counts = FlagSummary {
             flagged_samples: 0,
             total_samples: 0,
@@ -519,10 +702,11 @@ impl SharedFlagView {
                 .staged
                 .get(&member.row)
                 .unwrap_or(&self.flags[&member.row]);
+            selected_rows += 1;
             counts.total_samples += flags.len();
             counts.flagged_samples += flags.iter().filter(|&&flag| flag).count();
         }
-        counts
+        (selected_rows, counts)
     }
 
     pub(super) fn flush(self, ms: &mut MeasurementSet) -> Result<ChangeSet, FlaggingError> {
@@ -585,12 +769,6 @@ impl SharedFlagView {
         options: ClipOptions<'_>,
         path: &str,
     ) -> Result<ChangeSet, FlaggingError> {
-        let SharedAgentSelection {
-            rows: selected,
-            channels,
-            correlations,
-            time: filter,
-        } = selection;
         let values = &self
             .columns
             .iter()
@@ -600,20 +778,17 @@ impl SharedFlagView {
         let selections = if request.clip_channel_bins.is_some() {
             None
         } else {
-            channels
+            selection.channels
         };
         let mut samples = Vec::new();
         let mut coordinates = Vec::new();
-        let mut selected_rows = 0;
         for (index, group) in self.rows.iter().enumerate() {
-            if selected.binary_search(&group.row()).is_err()
-                || filter.is_some_and(|filter| !filter.holds_agent_time(group.time))
-            {
+            if !selection.holds(group) {
                 continue;
             }
-            selected_rows += group.members.len();
             let first = &group.members[0];
-            let projections = correlations
+            let projections = selection
+                .correlations
                 .map(|corr| corr.clip_projections_for(first.description(), path))
                 .transpose()?;
             if projections.is_some_and(|products| products.is_empty()) {
@@ -622,7 +797,7 @@ impl SharedFlagView {
             let channels = group.select_channels(selections, path)?;
             coordinates.clear();
             apply_clip_array(
-                &values[index],
+                &values[index].data,
                 &group.current_flags,
                 Some(&channels),
                 ClipOptions {
@@ -647,13 +822,27 @@ impl SharedFlagView {
             }
         }
         let matched = vec![true; samples.len()];
-        let mut changes = self.stage(&samples, &matched, true);
-        changes.selected_rows = Some(selected_rows);
-        Ok(changes)
+        Ok(self.stage(&samples, &matched, true))
     }
 }
 
 impl SharedFlagView {
+    pub(super) fn extend_implicit(&mut self, path: &str) -> Result<ChangeSet, FlaggingError> {
+        let samples = self
+            .load_samples(
+                SharedAgentSelection::default(),
+                None,
+                &FlagDataRequest::default(),
+                path,
+            )?
+            .samples;
+        let mut modified = vec![false; samples.len()];
+        let baseline = |sample: &Sample| self.rows[sample.row].members[0].baseline_key();
+        let groups = samples.chunk_by(|a, b| baseline(a) == baseline(b));
+        extend_autoflag_grouped(groups, &samples, &mut modified);
+        Ok(self.stage(&samples, &modified, true))
+    }
+
     pub(super) fn extend(
         &mut self,
         selection: SharedAgentSelection<'_>,
@@ -676,9 +865,7 @@ impl SharedFlagView {
             }
             grown.extend(extend::grow(group, request));
         }
-        let mut changed = self.stage(&samples, &grown, request.action.value());
-        changed.selected_rows = loaded.axes.time_selected_rows(selection.time);
-        Ok(changed)
+        Ok(self.stage(&samples, &grown, request.action.value()))
     }
 
     pub(super) fn antint(
@@ -689,14 +876,11 @@ impl SharedFlagView {
         path: &str,
     ) -> Result<ChangeSet, FlaggingError> {
         let loaded = self.load_samples(selection, None, request, path)?;
-        let timed = loaded
-            .axes
-            .rows_by_bin
-            .keys()
-            .map(|&index| {
-                let row = &self.rows[index];
-                row.members[0].projected(index, row.time)
-            })
+        let timed = self
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| row.members[0].projected(index, row.time))
             .collect::<Vec<_>>();
         let Some(affected) =
             antint::affected_average_rows(ms, timed, &request.antint, path, |row| {
@@ -713,8 +897,6 @@ impl SharedFlagView {
             .iter()
             .map(|sample| affected.binary_search(&sample.row).is_ok())
             .collect::<Vec<_>>();
-        let mut changed = self.stage(&loaded.samples, &mask, true);
-        changed.selected_rows = loaded.axes.time_selected_rows(selection.time);
-        Ok(changed)
+        Ok(self.stage(&loaded.samples, &mask, true))
     }
 }

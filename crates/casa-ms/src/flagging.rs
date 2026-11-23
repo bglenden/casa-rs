@@ -36,7 +36,7 @@ use crate::schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
 use crate::selection::{
     MsSelection, ResolvedMsSelectionRow, TimeDefaults, TimeSelection, TimeSelectorDefaults,
-    flagdata_c_string, resolve_flagdata_selection_with_system_budget,
+    UvDistanceSelection, flagdata_c_string, resolve_flagdata_selection_with_system_budget,
     resolve_row_indices_with_system_budget, resolve_time_selector,
 };
 use crate::{
@@ -1092,6 +1092,7 @@ fn maximum_flag_elements(ms: &MeasurementSet) -> Result<usize, FlaggingError> {
 #[derive(Default)]
 struct AveragedAgentInput<'a> {
     time: Option<&'a TimeSelection>,
+    uv: Option<&'a UvDistanceSelection>,
     view: Option<&'a mut SharedFlagView>,
 }
 
@@ -1106,6 +1107,7 @@ fn apply_clip_flags(
 ) -> Result<ChangeSet, FlaggingError> {
     let AveragedAgentInput {
         time: averaged_time,
+        uv: averaged_uv,
         view,
     } = averaging;
     let path = display_ms_path(ms);
@@ -1114,11 +1116,14 @@ fn apply_clip_flags(
     let average = view.is_some()
         || time_average.is_some_and(|interval| interval.is_some())
         || widths.is_some_and(|widths| widths.iter().any(|&width| width != 0));
+    let operand_rows = view
+        .as_deref()
+        .map_or(selected_rows, SharedFlagView::input_rows);
     let models = if request.clipoutside.is_some() {
         clip_models::ClipModels::for_selection(
             ms,
             request.data_column,
-            selected_rows,
+            operand_rows,
             model_factory,
             &path,
         )?
@@ -1155,10 +1160,11 @@ fn apply_clip_flags(
         view.prepare_column(ms, request.data_column, &mut columns, &path)?;
         return view.clip(
             SharedAgentSelection {
-                rows: selected_rows,
+                rows: Some(selected_rows),
                 channels: channel_selections,
                 correlations,
                 time: averaged_time,
+                uv: averaged_uv,
             },
             request,
             options,
@@ -1478,6 +1484,7 @@ fn apply_tfcrop_flags(
 ) -> Result<ChangeSet, FlaggingError> {
     let AveragedAgentInput {
         time: averaged_time,
+        uv: averaged_uv,
         mut view,
     } = averaging;
     let started = Instant::now();
@@ -1509,7 +1516,8 @@ fn apply_tfcrop_flags(
         tfcrop_columns(
             ms,
             column,
-            selected_rows,
+            view.as_deref()
+                .map_or(selected_rows, SharedFlagView::input_rows),
             model_factory,
             options.is_some(),
             average,
@@ -1542,6 +1550,7 @@ fn apply_tfcrop_flags(
             widths,
             input: AveragedAgentInput {
                 time: averaged_time,
+                uv: averaged_uv,
                 view: view.as_deref_mut(),
             },
         },
@@ -1591,7 +1600,7 @@ fn apply_tfcrop_flags(
             },
         )?;
     }
-    if request.extendflags {
+    if request.extendflags && view.is_none() {
         let fit_flags = loaded
             .axes
             .flags_by_bin
@@ -2010,6 +2019,7 @@ fn apply_rflag_flags(
 ) -> Result<ChangeSet, FlaggingError> {
     let AveragedAgentInput {
         time: averaged_time,
+        uv: averaged_uv,
         mut view,
     } = averaging;
     let started = Instant::now();
@@ -2035,7 +2045,8 @@ fn apply_rflag_flags(
         autoflag_columns(
             ms,
             column,
-            selected_rows,
+            view.as_deref()
+                .map_or(selected_rows, SharedFlagView::input_rows),
             model_factory,
             active,
             average,
@@ -2068,6 +2079,7 @@ fn apply_rflag_flags(
             widths,
             input: AveragedAgentInput {
                 time: averaged_time,
+                uv: averaged_uv,
                 view: view.as_deref_mut(),
             },
         },
@@ -2132,10 +2144,7 @@ fn apply_rflag_flags(
     } else {
         RflagFitOutcome::default()
     };
-    if request.extendflags {
-        if let Some(view) = view.as_deref() {
-            view.add_modified_flags(&samples, &mut modified);
-        }
+    if request.extendflags && view.is_none() {
         let fit_flags = loaded
             .axes
             .flags_by_bin
@@ -2241,10 +2250,11 @@ fn load_automatic_samples(
         }
         return view.load_samples(
             SharedAgentSelection {
-                rows,
+                rows: Some(rows),
                 channels,
                 correlations: None,
                 time: input.time,
+                uv: input.uv,
             },
             columns.map(|_| column),
             request,

@@ -754,6 +754,99 @@ def check_averaged_extension(libraries):
     return 1
 
 
+def check_averaged_virtual_model(libraries):
+    source = "averaged-virtual-model.ms"
+    make_cal_ms(source, channels=8, scan_seconds=20)
+    casatasks.setjy(
+        vis=source, field="FLUX", standard="manual", fluxdensity=[2., 0., 0., 0.],
+        usescratch=False,
+    )
+    with table(source, ack=False, readonly=False) as main:
+        data = main.getcol("DATA")
+        main.putcol("DATA", np.full_like(data, 2))
+        main.putcol("MODEL_DATA", np.full_like(data, 7))
+        main.putcol("FLAG", np.zeros_like(data, dtype=bool))
+        main.putcol("FLAG_ROW", np.zeros(data.shape[0], dtype=bool))
+    initial = flags(source)
+    for name, task in libraries:
+        vis = f"averaged-virtual-model-{name}.ms"
+        copytree(source, vis)
+        assert task(
+            vis=vis, mode="list", flagbackup=False,
+            inpfile=[
+                "mode='clip' datacolumn='RESIDUAL_DATA' field='PHASE' "
+                "clipminmax=[0,100] channelavg=True chanbin=2",
+                "mode='clip' datacolumn='RESIDUAL_DATA' field='FLUX' clipminmax=[0,1]",
+            ],
+        ) == {}
+        for before, actual in zip(initial, flags(vis), strict=True):
+            np.testing.assert_array_equal(actual, before)
+    return 1
+
+
+def check_averaged_companion_time(libraries):
+    source = "averaged-companion-time.ms"
+    make_cal_ms(source, channels=8, scan_seconds=40)
+    with table(source, ack=False, readonly=False) as main:
+        times = main.getcol("TIME")
+        fields = main.getcol("FIELD_ID")
+        baseline = (main.getcol("ANTENNA1") == 0) & (main.getcol("ANTENNA2") == 1)
+        _, time_index = np.unique(times, return_inverse=True)
+        uvw = np.zeros_like(main.getcol("UVW"))
+        uvw[:, 0] = np.where(time_index % 2 == 0, 10., 90.)
+        uvw[baseline, 0] = 50.
+        main.putcol("UVW", uvw)
+        data = main.getcol("DATA")
+        seed = np.zeros_like(data, dtype=bool)
+        seed[:, :, 0] = True
+        main.putcol("FLAG", seed)
+        main.putcol("FLAG_ROW", np.zeros(data.shape[0], dtype=bool))
+        main.putcol("DATA", np.full_like(data, 2))
+    first, second = np.unique(times)[:2]
+    midpoint = first + (second - first) / 2
+    stamp = lambda sec: (
+        datetime(1858, 11, 17) + timedelta(seconds=float(sec))
+    ).strftime("%Y/%m/%d/%H:%M:%S.%f")[:-3]
+    timerange = f"{stamp(midpoint-1)}~{stamp(midpoint+1)}"
+    window = np.isin(times, [first, second])
+    all_rows = np.ones_like(window)
+    extend = "mode='extend' growtime=0.0 growfreq=0.0 extendpols=True"
+    antint = "mode='antint' antint_ref_antenna='A1' minchanfrac=0.01"
+    phase_seed = np.zeros_like(seed)
+    phase_seed[fields == 1, :4, 0] = True
+    cases = [
+        ("extend-time", f"{extend} spw='0:0~3' timerange='{timerange}'", seed, window),
+        ("antint-time", f"{antint} spw='0:0~3' timerange='{timerange}'", seed, window),
+        ("clip-uvw", "mode='clip' datacolumn='DATA' clipminmax=[0,1] "
+         "spw='0:0~3' uvrange='45~55m'", seed, all_rows),
+        ("antint-baseline", f"{antint} spw='0:0~3' antenna='0&1'", seed, baseline),
+    ]
+    cases += [
+        (f"{mode}-extension", f"mode='{mode}' field='FLUX' datacolumn='DATA' extendflags=True",
+         phase_seed, fields == 1)
+        for mode in ("tfcrop", "rflag")
+    ]
+    for label, command, initial, expected_rows in cases:
+        expected = initial.copy()
+        expected[expected_rows, :4, 1] = True
+        for name, task in libraries:
+            vis = f"averaged-companion-{label}-{name}.ms"
+            copytree(source, vis)
+            with table(vis, ack=False, readonly=False) as main:
+                main.putcol("FLAG", initial)
+            assert task(
+                vis=vis, mode="list", flagbackup=False,
+                inpfile=[
+                    "mode='clip' datacolumn='DATA' clipminmax=[0,100] timeavg=True timebin='20s'",
+                    command,
+                ],
+            ) == {}
+            samples, rows = flags(vis)
+            np.testing.assert_array_equal(samples, expected, err_msg=f"{label} {name} averaged FLAG")
+            np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{label} {name} averaged FLAG_ROW")
+    return len(cases)
+
+
 def check_agent_time_defaults(libraries):
     make_list_fixture("agent-default-date.ms")
     with table("agent-default-date.ms", ack=False, readonly=False) as main:
@@ -804,6 +897,8 @@ def main():
         c1 += check_averaged_agent_time(libraries)
         c2 = check_sequential_all_modes(libraries)
         c2 += check_averaged_extension(libraries)
+        c2 += check_averaged_virtual_model(libraries)
+        c2 += check_averaged_companion_time(libraries)
         c3 = check_savepars_history_backup_display_cli(libraries)
         c4 = check_skips_and_refusals(libraries)
         c4 += check_averaging_admission(libraries)
