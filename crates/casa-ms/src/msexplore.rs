@@ -2085,6 +2085,12 @@ pub struct MsScatterPointRef {
     pub chan_end: usize,
 }
 
+impl MsScatterPointRef {
+    fn plotms_order(&self) -> (usize, usize, usize) {
+        (self.row, self.chan_start, self.corr)
+    }
+}
+
 /// One iterated scatter panel within a multi-panel page.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MsScatterPanelPayload {
@@ -4507,6 +4513,9 @@ fn build_generic_visibility_scatter(
                 }
             } else {
                 series.sort_by_key(|entry| entry.y_index);
+                if spec.y_axes.len() > 2 {
+                    series.iter_mut().for_each(plotms_ordinates::order_series);
+                }
             }
             Some(MsScatterPanelPayload {
                 key: panel_key,

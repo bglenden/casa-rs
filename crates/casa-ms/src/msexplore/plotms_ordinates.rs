@@ -5,8 +5,9 @@ use casa_types::Complex64;
 use ndarray::ArrayView2;
 
 use super::{
-    ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, PlotMsInput,
-    PreparedSelectedDataSource, VisibilityBinSamples, check_grid_shapes, collect_bin_samples_into,
+    ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterPointRef,
+    MsScatterSeries, PlotMsInput, PreparedSelectedDataSource, VisibilityBinSamples,
+    check_grid_shapes, collect_bin_samples_into,
 };
 use crate::MeasurementSet;
 
@@ -147,5 +148,28 @@ impl BinBuffer {
             weight.map(|spectrum| (spectrum, &mut self.weights)),
             &mut self.values,
         );
+    }
+}
+
+pub(super) fn order_series(series: &mut MsScatterSeries) {
+    if series
+        .provenance
+        .iter()
+        .is_sorted_by_key(MsScatterPointRef::plotms_order)
+    {
+        return;
+    }
+    let mut order = (0..series.provenance.len()).collect::<Vec<_>>();
+    order.sort_unstable_by_key(|&index| series.provenance[index].plotms_order());
+    series.points = order.iter().map(|&index| series.points[index]).collect();
+    series.provenance = order
+        .iter()
+        .map(|&index| series.provenance[index].clone())
+        .collect();
+    if !series.plotms_metadata.is_empty() {
+        series.plotms_metadata = order
+            .iter()
+            .map(|&index| series.plotms_metadata[index])
+            .collect();
     }
 }

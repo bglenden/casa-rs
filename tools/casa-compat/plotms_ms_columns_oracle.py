@@ -444,22 +444,41 @@ def compare_multiple_ordinates(root, vis, native):
                          [layer.get_xydata() for layer in axis.lines]) for axis in figure.axes])
         return figure, primary
 
-    figure = base | dict(expformat="png", width=500, height=360, dpi=100)
-    expected, actual = (root / f"three-ordinates.{engine}.png" for engine in ("casa", "native"))
-    assert reference(**figure, plotfile=str(expected)) is None
-    with patch.object(_plot_document, "render_document", record):
-        assert native(**figure, plotfile=str(actual)) is None
-    [axes] = capture
-    assert [(side, label, len(layers)) for side, label, layers in axes] == [
-        ("left", "Real:model, Amp:corrected", 2), ("right", "Phase (degrees)", 1),
-    ]
-    coordinates = np.array([point[:2] for point in rows(root / "three-ordinates.casa.txt")], dtype=float)
-    real, phase, amp = np.split(coordinates, 3)
-    for layer, section in zip(axes[0][2] + axes[1][2], (real, amp, phase), strict=True):
-        np.testing.assert_allclose(layer, section, rtol=1.2e-5, atol=1e-7)
-    for output in (expected, actual):
-        with Image.open(output) as image:
-            assert image.size == (500, 360)
+    dense = base | dict(correlation="")
+    expected, actual = (root / f"three-ordinates-two-correlations.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**dense, plotfile=str(expected), expformat="txt") is None
+    assert native(**dense, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 90
+    assert [point[0] for point in rows(expected)[:5]] == ["1", "1", "2", "3", "3"]
+
+    split = [("left", "Real:model, Amp:corrected", (0, 2)), ("right", "Phase (degrees)", (1,))]
+    figures = (
+        ("three-ordinates", base, "three-ordinates", split),
+        ("three-ordinates-scalar-side", base | dict(yaxislocation="right"), "three-ordinates",
+         [("left", "Real:model, Phase (degrees), Amp:corrected", (0, 1, 2))]),
+        ("three-ordinates-short-sides", base | dict(yaxislocation=["right"]), "three-ordinates",
+         [("left", "Phase (degrees), Amp:corrected", (1, 2)), ("right", "Real:model", (0,))]),
+        ("three-ordinates-two-correlations", dense | dict(xconnector="line"),
+         "three-ordinates-two-correlations", split),
+    )
+    for name, controls, text, expectations in figures:
+        figure = controls | dict(expformat="png", width=500, height=360, dpi=100)
+        expected, actual = (root / f"{name}.{engine}.png" for engine in ("casa", "native"))
+        assert reference(**figure, plotfile=str(expected)) is None
+        with patch.object(_plot_document, "render_document", record):
+            assert native(**figure, plotfile=str(actual)) is None
+        [axes] = capture
+        capture.clear()
+        coordinates = np.array([point[:2] for point in rows(root / f"{text}.casa.txt")], dtype=float)
+        ordinates = np.split(coordinates, 3)
+        assert len(axes) == len(expectations)
+        for (side, label, layers), (expected_side, expected_label, indices) in zip(axes, expectations, strict=True):
+            assert (side, label, len(layers)) == (expected_side, expected_label, len(indices))
+            for layer, index in zip(layers, indices, strict=True):
+                np.testing.assert_allclose(layer, ordinates[index], rtol=1.2e-5, atol=1e-7)
+        for output in (expected, actual):
+            with Image.open(output) as image:
+                assert image.size == (500, 360)
     with opened(virtual) as table:
         assert "MODEL_DATA" not in table.colnames()
 
@@ -475,6 +494,30 @@ def compare_multiple_ordinates(root, vis, native):
         assert not output.exists()
 
     from casars.tasks import TaskParameterError
+
+    invalid = base | dict(yaxislocation=["left", "right", "left", "top"])
+    for engine, task in (("casa", reference), ("native", native)):
+        output = root / f"three-ordinate-invalid-location.{engine}.txt"
+        try:
+            task(**invalid, plotfile=str(output), expformat="txt")
+        except ValueError as error:
+            assert "invalid yaxislocation value 'top'" in str(error), error
+        else:
+            raise AssertionError(f"{engine} accepted an invalid ordinate location before export")
+        assert not output.exists()
+
+    for axis in ("u", "elevation"):
+        mixed = dense | dict(yaxis=["real", "phase", axis], expformat="txt")
+        expected, actual = (root / f"three-ordinate-mixed-{axis}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**mixed, plotfile=str(expected)) is None
+        assert len(rows(expected)) == 78
+        try:
+            native(**mixed, plotfile=str(actual))
+        except TaskParameterError as error:
+            assert "mixed MeasurementSet visibility and metadata ordinates or geometry abscissae are pending #1032" in str(error), error
+        else:
+            raise AssertionError(f"PlotMS used the visibility-only sample mask for the mixed {axis} plot")
+        assert not actual.exists()
 
     averaged = base | dict(avgchannel="2", expformat="txt")
     expected, actual = (root / f"three-ordinate-averaged.{engine}.txt" for engine in ("casa", "native"))

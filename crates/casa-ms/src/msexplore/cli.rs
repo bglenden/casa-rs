@@ -44,6 +44,7 @@ struct CliOptions {
     x_data_column: Option<MsDataColumn>,
     secondary_y_data_column: Option<MsDataColumn>,
     additional_ordinates: Vec<(MsAxis, MsDataColumn)>,
+    right_ordinates: Vec<bool>,
     weight_axis_columns: [Option<MsDataColumn>; 3],
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
@@ -237,14 +238,20 @@ fn run_task(
         let visibility_document = calibration.is_some() || atmosphere.is_some();
         let (options, visibility_document) =
             plotms_options::options_from_plotms(task, visibility_document)?;
-        if !options.additional_ordinates.is_empty()
-            && (calibration.is_some()
+        if !options.additional_ordinates.is_empty() {
+            if calibration.is_some()
                 || options.plotms_averaging_active()
-                || options.iteraxis.is_some())
-        {
-            return Err(TaskFailure::validation(
-                "more than two MeasurementSet ordinates with averaging, iteration or a callibrary are pending #1032",
-            ));
+                || options.iteraxis.is_some()
+            {
+                return Err(TaskFailure::validation(
+                    "more than two MeasurementSet ordinates with averaging, iteration or a callibrary are pending #1032",
+                ));
+            }
+            if options.has_mixed_ordinate_dimensions() {
+                return Err(TaskFailure::validation(
+                    "mixed MeasurementSet visibility and metadata ordinates or geometry abscissae are pending #1032",
+                ));
+            }
         }
         if calibration.is_some() && options.secondary_y_data_column.is_some() {
             return Err(TaskFailure::validation(
@@ -434,7 +441,11 @@ fn run_visibility_plot(
                 &overlays,
                 axis_columns
                     .filter(|_| calibrated.is_none())
-                    .map(|columns| (columns, options.additional_ordinates.as_slice())),
+                    .map(|columns| super::plotms_figure::VisibilityAxisColumns {
+                        base: columns,
+                        additional: &options.additional_ordinates,
+                        right_ordinates: &options.right_ordinates,
+                    }),
             )?;
         }
         if let Some(path) = text_file {
@@ -1153,6 +1164,7 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
         x_data_column: None,
         secondary_y_data_column: None,
         additional_ordinates: Vec::new(),
+        right_ordinates: Vec::new(),
         weight_axis_columns: [None; 3],
         color_by: required(task, "color_by", MsColorAxis::parse)?,
         avgchannel: parsed(task, "avgchannel", number::<usize>)?,

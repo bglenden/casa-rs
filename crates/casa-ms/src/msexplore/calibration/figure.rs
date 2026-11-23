@@ -355,7 +355,16 @@ struct AxisRanges<'a> {
 
 impl<'a> AxisRanges<'a> {
     fn new(task: &'a TaskInvocation<'_>, layout: &PlotPanels) -> Result<Self, TaskFailure> {
-        let locations = ordinate_locations(task)?;
+        let locations =
+            super::axis_names(task.value("yaxislocation")).map_err(TaskFailure::validation)?;
+        if locations
+            .iter()
+            .any(|location| !matches!(*location, "" | "left" | "right"))
+        {
+            return Err(TaskFailure::validation(
+                "yaxislocation accepts left or right",
+            ));
+        }
         let flagged_symbols = task.value("customflaggedsymbol");
         Ok(Self {
             global: data_ranges(&layout.panels, &locations, flagged_symbols),
@@ -385,23 +394,7 @@ impl<'a> AxisRanges<'a> {
     }
 }
 
-pub(in crate::msexplore) fn ordinate_locations<'a>(
-    task: &'a TaskInvocation<'_>,
-) -> Result<Vec<&'a str>, TaskFailure> {
-    let locations =
-        super::axis_names(task.value("yaxislocation")).map_err(TaskFailure::validation)?;
-    if locations
-        .iter()
-        .any(|location| !matches!(*location, "" | "left" | "right"))
-    {
-        return Err(TaskFailure::validation(
-            "yaxislocation accepts left or right",
-        ));
-    }
-    Ok(locations)
-}
-
-pub(in crate::msexplore) fn right_side(locations: &[&str], index: usize) -> bool {
+fn right_side(locations: &[&str], index: usize) -> bool {
     locations
         .get(index)
         .or_else(|| (locations.len() == 1).then(|| &locations[0]))

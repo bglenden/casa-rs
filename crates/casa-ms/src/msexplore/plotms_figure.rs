@@ -6,7 +6,7 @@ use std::path::Path;
 
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use super::calibration::figure::{ordinate_locations, plot_limits, right_side};
+use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
 use super::{
     MsAxis, MsDataColumn, MsPlotPayload, MsScatterGridPayload, MsScatterPlotPayload, plotms_text,
@@ -17,7 +17,11 @@ use crate::plot_document::{
     plotms_visibility_document, series_y_bounds,
 };
 
-type VisibilityAxisColumns<'a> = ([MsDataColumn; 3], &'a [(MsAxis, MsDataColumn)]);
+pub(super) struct VisibilityAxisColumns<'a> {
+    pub(super) base: [MsDataColumn; 3],
+    pub(super) additional: &'a [(MsAxis, MsDataColumn)],
+    pub(super) right_ordinates: &'a [bool],
+}
 
 pub(super) fn prepare(
     task: &TaskInvocation<'_>,
@@ -38,17 +42,24 @@ pub(super) fn prepare(
         }
     };
     let mut document = plotms_visibility_document(payload);
-    if let Some((columns, additional)) = columns {
-        label_visibility_columns(task, &mut document, [x, y], second, columns)?;
+    if let Some(columns) = columns {
+        label_visibility_columns(task, &mut document, [x, y], second, columns.base)?;
         if let MsPlotPayload::Scatter(plot) = payload
-            && !additional.is_empty()
+            && !columns.additional.is_empty()
             && let Some(second) = second
         {
-            let choices = [(y, columns[1]), (second, columns[2])]
+            let choices = [(y, columns.base[1]), (second, columns.base[2])]
                 .into_iter()
-                .chain(additional.iter().copied())
+                .chain(columns.additional.iter().copied())
                 .collect::<Vec<_>>();
-            group_ordinate_sides(task, &mut document, plot, &choices, columns[0])?;
+            group_ordinate_sides(
+                task,
+                &mut document,
+                plot,
+                &choices,
+                columns.base[0],
+                columns.right_ordinates,
+            )?;
         }
     }
     document.show_legend = task.flag("showlegend")?;
@@ -112,9 +123,9 @@ fn group_ordinate_sides(
     plot: &MsScatterPlotPayload,
     choices: &[(MsAxis, MsDataColumn)],
     x_column: MsDataColumn,
+    right_ordinates: &[bool],
 ) -> Result<(), TaskFailure> {
-    let locations = ordinate_locations(task)?;
-    let right = |index| right_side(&locations, index);
+    let right = |index| right_ordinates.get(index).copied().unwrap_or(false);
     let axis_id = |right| if right { "y-secondary" } else { "y" };
     let supplied_label = task.text("ylabel")?.filter(|label| !label.is_empty());
     if !task.text("title")?.is_some_and(|title| !title.is_empty()) {

@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::super::{calibration, plotms_columns};
@@ -14,6 +15,16 @@ use super::{
 impl CliOptions {
     pub(super) fn has_independent_ordinates(&self) -> bool {
         self.secondary_y_data_column.is_some() || !self.additional_ordinates.is_empty()
+    }
+
+    pub(super) fn has_mixed_ordinate_dimensions(&self) -> bool {
+        self.x_axis.is_some_and(MsAxis::uses_derived_geometry)
+            || self
+                .y_axis
+                .into_iter()
+                .chain(self.y_axis2)
+                .chain(self.additional_ordinates.iter().map(|&(axis, _)| axis))
+                .any(|axis| !axis.is_visibility_math())
     }
 
     pub(super) fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 3]> {
@@ -38,6 +49,28 @@ impl CliOptions {
             || self.avgbaseline
             || self.avgantenna
             || self.avgspw
+    }
+}
+
+fn right_ordinates(task: &TaskInvocation<'_>) -> Result<Vec<bool>, TaskFailure> {
+    let supplied = task.value("yaxislocation");
+    let names = calibration::axis_names(supplied).map_err(TaskFailure::validation)?;
+    let sides = names
+        .into_iter()
+        .map(|name| match name {
+            "left" => Ok(false),
+            "right" => Ok(true),
+            _ => Err(
+                TaskFailure::validation(format!("invalid yaxislocation value '{name}'"))
+                    .at("yaxislocation"),
+            ),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let is_list = |value| matches!(value, Some(ParameterValue::Array(_)));
+    if is_list(supplied) == is_list(task.value("yaxis")) {
+        Ok(sides)
+    } else {
+        Ok(Vec::new())
     }
 }
 
@@ -161,6 +194,7 @@ pub(super) fn options_from_plotms(
         x_data_column,
         secondary_y_data_column,
         additional_ordinates,
+        right_ordinates: right_ordinates(task)?,
         weight_axis_columns,
         color_by,
         avgchannel: average_text("avgchannel")?
