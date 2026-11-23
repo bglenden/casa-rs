@@ -139,6 +139,7 @@ pub fn call_function(
     }
 
     match lower.as_str() {
+        "mscal.help" | "derivedmscal.help" => super::mscal_help::help(name, args),
         // ── Math constants ─────────────────────────────────────────
         "pi" => {
             check_arity(name, args, 0)?;

@@ -55,6 +55,7 @@ pub mod aggregate;
 pub mod format;
 pub mod functions;
 mod meas_udf;
+mod mscal_help;
 mod mscal_lookup;
 mod mscal_stokes;
 mod mscal_wavelengths;

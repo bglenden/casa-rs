@@ -910,6 +910,13 @@ def run(root, native_bin, only=None):
         for label, predicate in stokes_cases:
             case(f'api-select-mscal-stokes-{label}', dict(msselect=predicate), input_vis=stokes_source)
 
+    for label, predicate in [
+        ('all', 'strlen(mscal.help()) == 4354 AND ANTENNA1 == 0'),
+        ('stokes', 'strlen(derivedmscal.help("STOKES")) == 1093 AND ANTENNA1 == 0'),
+        ('row-dependent', 'mscal.help(mscal.ant1name()) LIKE "a1 is%"'),
+    ]:
+        case(f'api-select-mscal-help-{label}', dict(msselect=predicate), input_vis=observation_source)
+
     for label, arguments in [
         ('scalar-map', dict(spwmap=0, flagbackup=True)),
         ('empty-text-map', dict(spwmap='')),
