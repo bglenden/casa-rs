@@ -563,6 +563,17 @@ fn parse_crtf_spectral_range(
     axis_len: usize,
     text_origin: Option<&CoordinateSystem>,
 ) -> Result<Vec<usize>, ImageError> {
+    let [first, last] = crtf_spectral_bounds(val, coords, spec_axis, axis_len, text_origin)?;
+    Ok((first..=last).collect())
+}
+
+fn crtf_spectral_bounds(
+    val: &str,
+    coords: &CoordinateSystem,
+    spec_axis: usize,
+    axis_len: usize,
+    text_origin: Option<&CoordinateSystem>,
+) -> Result<[usize; 2], ImageError> {
     let inner = val
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
@@ -586,7 +597,7 @@ fn parse_crtf_spectral_range(
             "CRTF spectral range [{inner}] selects no channels in 0..{axis_len}"
         )));
     }
-    Ok((lo as usize..=hi as usize).collect())
+    Ok([lo as usize, hi as usize])
 }
 
 fn parse_spectral_endpoint(
