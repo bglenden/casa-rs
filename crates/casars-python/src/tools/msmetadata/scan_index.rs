@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
 
 use casa_ms::{MeasurementSet, MsError, MsResult};
-use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut};
+use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
+use casa_types::ScalarValue;
 
 const CHUNK_ROWS: usize = 1 << 16;
 
@@ -43,6 +44,9 @@ pub(super) struct ScanIndex {
 impl ScanIndex {
     pub(super) fn read(ms: &MeasurementSet) -> MsResult<Self> {
         let main = ms.main_table();
+        let root = ms.path().expect("an attached MS has a path");
+        let direct =
+            !main.is_reference_table()? && Table::concatenated_source_paths(root)?.is_none();
         let mut result = Self::default();
         let mut rows = Vec::new();
         let [
@@ -57,21 +61,40 @@ impl ScanIndex {
         for start in (0..main.row_count()).step_by(CHUNK_ROWS) {
             rows.clear();
             rows.extend(start..(start + CHUNK_ROWS).min(main.row_count()));
-            let mut columns = [
+            let columns = [
                 ("OBSERVATION_ID", &mut observations),
                 ("ARRAY_ID", &mut arrays),
                 ("SCAN_NUMBER", &mut numbers),
                 ("FIELD_ID", &mut fields),
                 ("ANTENNA1", &mut ant1),
                 ("ANTENNA2", &mut ant2),
-            ]
-            .map(|(name, values)| {
-                RequiredScalarColumnDestination::new(
-                    name,
-                    RequiredScalarColumnValuesMut::Int32(values),
-                )
-            });
-            main.required_scalar_columns_for_rows_into(&rows, &mut columns)?;
+            ];
+            if direct {
+                let mut destinations = columns.map(|(name, values)| {
+                    RequiredScalarColumnDestination::new(
+                        name,
+                        RequiredScalarColumnValuesMut::Int32(values),
+                    )
+                });
+                main.required_scalar_columns_for_rows_into(&rows, &mut destinations)?;
+            } else {
+                // Reference and concatenation descriptors resolve row identity
+                // in the general selected-column path.
+                for (name, values) in columns {
+                    let cells = main
+                        .column_accessor(name)?
+                        .scalar_cells_owned_for_rows(&rows)?;
+                    values.clear();
+                    for cell in cells {
+                        let Some(ScalarValue::Int32(value)) = cell else {
+                            return Err(MsError::InvalidInput(format!(
+                                "MAIN column {name} has a missing or non-integer value"
+                            )));
+                        };
+                        values.push(value);
+                    }
+                }
+            }
             let mut previous_scan = None;
             let mut scan = None;
             for index in 0..rows.len() {

@@ -9160,6 +9160,14 @@ casa-rs reports zero arrays and returns an empty scan-number array
 (`numpy.int64`) for the default query, consistent with `nscans()`
 returning zero on the same MeasurementSet (#1029).
 
+## Unsupported scan-selector array types can select every scan
+
+With CASA 6.7.6.14, pass a nonempty `numpy.float16` or `object` array to
+`msmetadata.fieldsforscans`. CASA emits a conversion message, discards
+the supplied scan numbers, and returns fields for every scan. casa-rs
+raises `TypeError` so the unsupported array type cannot silently widen
+the selection (#1029).
+
 ## Image coordinate frequency conversion can use the wrong physical direction
 
 Create a CASA 6.7.6.14 image with shape `[20,20,20]` and the default J2000

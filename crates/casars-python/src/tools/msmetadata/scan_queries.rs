@@ -6,7 +6,7 @@ use casa_ms::{MeasurementSet, MsError, MsResult};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{PyBool, PyBytes, PyComplex, PyComplexMethods, PyFloat, PyInt, PyList, PyString};
 
 use super::PyMsMetadata;
 use super::scan_index::{Scan, ScanIndex, ScanKey};
@@ -14,16 +14,38 @@ use crate::convert::{nested_sequence_items, value::CasaValue};
 
 struct ScanList(Vec<i64>);
 
+fn scan_number_text(text: &str) -> PyResult<i64> {
+    let text = text.trim_start();
+    let sign = usize::from(text.starts_with(['+', '-']));
+    let digits = text[sign..].bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return Ok(0);
+    }
+    text[..sign + digits]
+        .parse()
+        .map_err(|_| PySystemError::new_err("scan number is out of range"))
+}
+
 impl<'a, 'py> FromPyObject<'a, 'py> for ScanList {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
         let invalid = || PySystemError::new_err("scans must be a number, list or NumPy array");
         let number = |value: &Bound<'py, PyAny>| {
+            if let Ok(text) = value.cast::<PyString>() {
+                return scan_number_text(text.to_str()?);
+            }
+            if let Ok(bytes) = value.cast::<PyBytes>() {
+                return scan_number_text(&String::from_utf8_lossy(bytes.as_bytes()));
+            }
             if let Ok(value) = value.extract::<i64>() {
                 return Ok(value);
             }
-            let value = value.extract::<f64>().map_err(|_| invalid())?;
+            let value = if let Ok(complex) = value.cast::<PyComplex>() {
+                complex.real()
+            } else {
+                value.extract::<f64>().map_err(|_| invalid())?
+            };
             if value.is_finite() && value >= i64::MIN as f64 && value < -(i64::MIN as f64) {
                 Ok(value as i64)
             } else {
@@ -37,8 +59,13 @@ impl<'a, 'py> FromPyObject<'a, 'py> for ScanList {
             return Ok(Self(vec![number(&object)?]));
         }
         let items = if let Ok(array) = object.cast::<PyUntypedArray>() {
-            if !matches!(array.dtype().kind(), b'b' | b'i' | b'u' | b'f') {
-                return Err(invalid());
+            let dtype = array.dtype();
+            if !matches!(dtype.kind(), b'b' | b'i' | b'u' | b'f' | b'c' | b'S' | b'U')
+                || (dtype.kind() == b'f' && dtype.itemsize() == 2)
+            {
+                return Err(PyTypeError::new_err(
+                    "unsupported NumPy scan-selector dtype",
+                ));
             }
             array
                 .call_method1("ravel", ("F",))?
@@ -72,16 +99,18 @@ impl<'a, 'py> FromPyObject<'a, 'py> for FieldSelector {
     type Error = PyErr;
 
     fn extract(object: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
-        use pyo3::types::PyBool;
         if let Ok(name) = object.cast::<PyString>() {
-            Ok(Self::Name(name.to_str()?.to_owned()))
-        } else if !object.is_instance_of::<PyBool>()
-            && let Ok(id) = object.extract::<i64>()
-        {
-            Ok(Self::Id(id))
-        } else {
-            Ok(Self::Unsupported)
+            return Ok(Self::Name(name.to_str()?.to_owned()));
         }
+        let signed = if object.is_instance_of::<PyInt>() {
+            !object.is_instance_of::<PyBool>()
+        } else {
+            object.is_instance(&object.py().import("numpy")?.getattr("signedinteger")?)?
+        };
+        if signed && let Ok(id) = object.extract::<i64>() {
+            return Ok(Self::Id(id));
+        }
+        Ok(Self::Unsupported)
     }
 }
 
