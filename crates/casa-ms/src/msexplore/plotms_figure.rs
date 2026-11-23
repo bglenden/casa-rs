@@ -142,6 +142,10 @@ fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
             MsDataColumn::CorrectedMinusModel => "corrected-model (vector)",
             MsDataColumn::DataMinusModelScalar => "data-model (scalar)",
             MsDataColumn::CorrectedMinusModelScalar => "corrected-model (scalar)",
+            MsDataColumn::DataDivModel => "data/model (vector)",
+            MsDataColumn::CorrectedDivModel => "corrected/model (vector)",
+            MsDataColumn::DataDivModelScalar => "data/model (scalar)",
+            MsDataColumn::CorrectedDivModelScalar => "corrected/model (scalar)",
             other => other.as_str(),
         };
         format!("{name}:{label}")

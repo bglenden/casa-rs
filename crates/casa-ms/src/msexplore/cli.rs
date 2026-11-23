@@ -260,7 +260,7 @@ fn run_task(
 impl CliOptions {
     fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 2]> {
         (self.x_data_column.is_some()
-            || self.data_column.is_residual()
+            || self.data_column.is_derived()
             || self.data_column == MsDataColumn::Corrected)
             .then_some([
                 self.x_data_column.unwrap_or(self.data_column),
@@ -273,17 +273,7 @@ fn check_plotms_columns(
     options: &CliOptions,
     columns: [MsDataColumn; 2],
 ) -> Result<(), TaskFailure> {
-    if columns.into_iter().any(|column| {
-        !matches!(
-            column,
-            MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
-        ) && !column.is_residual()
-    }) {
-        return Err(TaskFailure::validation(
-            "distinct MeasurementSet X and Y derived data columns are pending #1032",
-        ));
-    }
-    if columns.into_iter().any(MsDataColumn::is_residual)
+    if columns.into_iter().any(MsDataColumn::is_derived)
         && (options.avgchannel.is_some_and(|width| width > 1)
             || options.avgtime.is_some()
             || options.avgscan
@@ -330,6 +320,8 @@ fn run_visibility_plot(
             MsDataColumn::Corrected => MsDataColumn::Data,
             MsDataColumn::CorrectedMinusModel => MsDataColumn::DataMinusModel,
             MsDataColumn::CorrectedMinusModelScalar => MsDataColumn::DataMinusModelScalar,
+            MsDataColumn::CorrectedDivModel => MsDataColumn::DataDivModel,
+            MsDataColumn::CorrectedDivModelScalar => MsDataColumn::DataDivModelScalar,
             other => other,
         });
         if adjusted != *columns {
@@ -1217,10 +1209,10 @@ fn options_from_plotms(
     };
     let x_data_column =
         (x_axis.is_visibility_math() && x_column != data_column).then_some(x_column);
-    let residual_plot =
-        data_column.is_residual() || x_data_column.is_some_and(MsDataColumn::is_residual);
+    let derived_column_plot =
+        data_column.is_derived() || x_data_column.is_some_and(MsDataColumn::is_derived);
     let visibility_document = visibility_document
-        || residual_plot
+        || derived_column_plot
         || x_data_column.is_some()
         || data_column == MsDataColumn::Corrected;
     let plot_format = if visibility_document {
