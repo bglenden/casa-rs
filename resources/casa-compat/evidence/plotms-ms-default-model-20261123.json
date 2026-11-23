@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-23",
+  "revision": "7ee7a82fb6b90dc584df075f27c0281d76f6bf31",
+  "source_revision": "7ee7a82fb6b90dc584df075f27c0281d76f6bf31",
+  "baseline_revision": "7d71fa0557cfa5260a3b1e6d109a5171b700808b",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "scope": "Unaveraged default model and residuals without a stored MODEL_DATA column.",
+  "result": "passed",
+  "baseline_result": "CASA exported a unit parallel-hand model and zero cross-hands. Native failed to find MODEL_DATA.",
+  "text_exports": 7,
+  "points": 78,
+  "figures": 1,
+  "rendered_coordinates": 12,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07,
+  "pending_virtual_recipe": "CASA exported the declared 7.25 Jy model on the matching selection. Native reports #1032 and writes no file."
+}

@@ -505,6 +505,118 @@ def compare_float_columns(root, vis, source, native):
         assert compare_text(actual, expected) == 12
 
 
+def compare_default_model(root, native):
+    vis = root / "default-model.ms"
+    make_cal_ms(str(vis), stokes="XX XY YX YY")
+    with opened(vis, True) as table:
+        corr, channel, row = np.indices(table.getcol("DATA").shape)
+        observed = (1 + channel + row / 256 + 2 * corr).astype(np.complex64)
+        flags = (channel == 2)
+        table.putcol("DATA", observed)
+        table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", np.zeros(observed.shape[2], dtype=bool))
+        absent = {"MODEL_DATA", "CORRECTED_DATA"}
+        table.removecols(sorted(absent.intersection(table.colnames())))
+
+    cases = (
+        ("unit-model-parallel", dict(xdatacolumn="model", yaxis="amp", ydatacolumn="data"), (1, 2)),
+        ("unit-model-cross", dict(xdatacolumn="model", yaxis="amp", ydatacolumn="data",
+                                  correlation="XY"), (0, 4)),
+        ("unit-model-corrected-residual", dict(xaxis="channel", xdatacolumn="", yaxis="real",
+                                                ydatacolumn="corrected-model_vector"), (1, 1)),
+        ("unit-model-cross-residual", dict(xaxis="channel", xdatacolumn="", yaxis="real",
+                                            ydatacolumn="data-model_vector", correlation="XY"), (1, 4)),
+    )
+    for name, overrides, first in cases:
+        controls = request(vis) | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert len(selected) == 12
+        assert {sample[2] for sample in selected} == {"1", "3"}
+        np.testing.assert_allclose(np.array(selected[0][:2], dtype=float), first, rtol=1.2e-5, atol=1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: 12 matching points without MODEL_DATA", flush=True)
+
+    controls = request(vis) | cases[0][1]
+    compare_figure(root, native, controls, root / "unit-model-parallel.casa.txt",
+                   ("Amp vs. Amp:model", "Amp:model", "Amp"))
+    with opened(vis) as table:
+        assert absent.isdisjoint(table.colnames())
+        np.testing.assert_array_equal(table.getcol("DATA"), observed)
+        np.testing.assert_array_equal(table.getcol("FLAG"), flags)
+
+    corrected_only = root / "corrected-only-model.ms"
+    copy_ms(vis, corrected_only)
+    casa.clearcal(str(corrected_only), addmodel=False)
+    with opened(corrected_only, True) as table:
+        assert "CORRECTED_DATA" in table.colnames()
+        table.removecols([column for column in ("DATA", "MODEL_DATA") if column in table.colnames()])
+    controls = request(corrected_only) | dict(xaxis="amp", xdatacolumn="model", yaxis="amp",
+                                              ydatacolumn="corrected", expformat="txt")
+    expected, actual = (root / f"unit-with-corrected-only.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    assert {float(point[0]) for point in rows(expected)} == {1.0}
+
+    from casars.tasks import TaskExecutionError
+
+    virtual = root / "virtual-model.ms"
+    copy_ms(vis, virtual)
+    for name in ("SPECTRAL_WINDOW", "DATA_DESCRIPTION"):
+        with opened(virtual / name, True) as table:
+            table.addrows(1)
+            for column in table.colnames():
+                if table.iscelldefined(column, 0):
+                    table.putcell(column, 1, table.getcell(column, 0))
+            if name == "DATA_DESCRIPTION":
+                table.putcell("SPECTRAL_WINDOW_ID", 1, 1)
+            else:
+                table.putcell("NAME", 1, "SPW1")
+                table.putcell("CHAN_FREQ", 1, table.getcell("CHAN_FREQ", 0) + 2e7)
+                table.putcell("REF_FREQUENCY", 1, table.getcell("REF_FREQUENCY", 0) + 2e7)
+    with opened(virtual, True) as table:
+        phase = table.getcol("FIELD_ID") == 1
+        times = table.getcol("TIME")
+        integrations = np.unique(times[phase])
+        descriptions = table.getcol("DATA_DESC_ID")
+        descriptions[phase & (times >= integrations[len(integrations) // 2])] = 1
+        table.putcol("DATA_DESC_ID", descriptions)
+    casa.setjy(str(virtual), field="PHASE", spw="0", standard="manual",
+               fluxdensity=[7.25, 0, 0, 0], usescratch=False)
+    with opened(virtual, True) as table:
+        assert "MODEL_DATA" not in table.colnames()
+        table.putkeyword("definedmodel_field_0", "model_missing")
+    controls = request(virtual) | dict(xaxis="channel", xdatacolumn="", yaxis="amp", ydatacolumn="model",
+                                       expformat="txt")
+    expected, actual = (root / f"unit-with-other-virtual-field.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    assert {float(point[1]) for point in rows(expected)} == {1.0}
+
+    unmatched = controls | dict(field="PHASE", spw="1:1~3")
+    expected, actual = (root / f"unit-unmatched-virtual-window.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**unmatched, plotfile=str(expected)) is None
+    assert native(**unmatched, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    assert {float(point[1]) for point in rows(expected)} == {1.0}
+
+    controls |= dict(field="PHASE")
+    expected, actual = (root / f"selected-virtual-model.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert {float(point[1]) for point in rows(expected)} == {7.25}
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "virtual MeasurementSet models are pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS substituted a unit model for a selected virtual definition")
+    assert not actual.exists()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -530,6 +642,7 @@ def main():
         compare_ratio_float_range(root, vis, source, native)
         compare_ordinate_columns(root, vis, native)
         compare_float_columns(root, vis, source, native)
+        compare_default_model(root, native)
 
 
 if __name__ == "__main__":

@@ -83,7 +83,7 @@
       "status": "Partial"
     },
     "xdatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Additional column forms remain open.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Complex inputs without a stored or selected virtual model use the default visibility model. Additional column forms remain open.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -92,7 +92,8 @@
         "ms-model-ratios",
         "ms-float-data",
         "ms-corrected-fallback",
-        "callibrary"
+        "callibrary",
+        "ms-default-model"
       ],
       "behaviors": [
         "coordinates"
@@ -128,7 +129,7 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Two unaveraged ordinates can choose independent columns, including ordinates of the same axis type. Missing column list entries use observed data. Additional column forms and more than two ordinates remain open.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Two unaveraged ordinates can choose independent columns, including ordinates of the same axis type. Missing column list entries use observed data. Complex inputs without a stored or selected virtual model use the default visibility model. Additional column forms and more than two ordinates remain open.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -138,7 +139,8 @@
         "ms-ordinate-columns",
         "ms-float-data",
         "ms-corrected-fallback",
-        "callibrary"
+        "callibrary",
+        "ms-default-model"
       ],
       "behaviors": [
         "coordinates"
@@ -1071,7 +1073,7 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for two independent unaveraged ordinates.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for two independent unaveraged ordinates. Use the default visibility model for complex data without a stored model or an applicable virtual recipe.",
       "evidence": [
         "paired",
         "selectors",
@@ -1083,7 +1085,8 @@
         "ms-float-data",
         "ms-corrected-fallback",
         "callibrary",
-        "legacy-calibration"
+        "legacy-calibration",
+        "ms-default-model"
       ],
       "gap": "Pointing-coordinate axes, more than two ordinates, averaged independent ordinate columns and additional MS column forms are open."
     },
@@ -1394,6 +1397,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-legacy-calibration-20261121.json",
       "links": [
         "tools/casa-compat/plotms_legacy_calibration_oracle.py"
+      ]
+    },
+    "ms-default-model": {
+      "kind": "Same-input default MeasurementSet visibility model",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on the same complex MeasurementSets without a stored MODEL_DATA column.",
+      "result": "Seven paired text exports matched 78 selected points and exact source metadata, including unit parallel hands, zero cross-hands, residuals, corrected-only storage, a dangling pointer and a virtual model in another spectral window. One 500 by 360 pixel PNG matched 12 artist coordinates, labels and dimensions. A selected virtual recipe still reports pending support in #1032.",
+      "casa_version": "6.7.6.14",
+      "revision": "7ee7a82fb6b90dc584df075f27c0281d76f6bf31",
+      "source_revision": "7ee7a82fb6b90dc584df075f27c0281d76f6bf31",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-default-model-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2143"
       ]
     }
   }

@@ -30,6 +30,7 @@ pub mod cli;
 mod plotms_atmosphere;
 mod plotms_columns;
 mod plotms_figure;
+mod plotms_model;
 mod plotms_text;
 pub mod task_contract;
 
@@ -6913,6 +6914,7 @@ fn selected_plot_weight_spectrum<'a>(
 enum SelectedArrayValues<'a> {
     Stored(Vec<Option<ArrayValue>>),
     Calibrated(Vec<Option<&'a ArrayValue>>),
+    DefaultModel(Vec<Arc<ArrayValue>>),
 }
 
 struct SelectedArrayColumn<'a> {
@@ -6963,6 +6965,7 @@ impl<'a> SelectedArrayColumn<'a> {
         let value = match &self.values {
             SelectedArrayValues::Stored(values) => values.get(row_slot).and_then(Option::as_ref),
             SelectedArrayValues::Calibrated(values) => values.get(row_slot).copied().flatten(),
+            SelectedArrayValues::DefaultModel(values) => values.get(row_slot).map(Arc::as_ref),
         };
         value.ok_or_else(|| {
             format!(
@@ -7004,6 +7007,23 @@ impl<'a> PreparedSelectedDataSource<'a> {
         calibration: Option<&PlotMsInput<'a>>,
     ) -> Result<Self, String> {
         let load = |name| {
+            if name == "MODEL_DATA"
+                && calibration.is_some_and(|input| input.rows.is_none())
+                && ms.main_table().schema().is_some_and(|schema| {
+                    schema.column("MODEL_DATA").is_none()
+                        && schema.column("FLOAT_DATA").is_none()
+                        && (schema.column("DATA").is_some()
+                            || schema.column("CORRECTED_DATA").is_some())
+                })
+            {
+                return Ok(SelectedArrayColumn {
+                    column: name,
+                    values: SelectedArrayValues::DefaultModel(plotms_model::default_cells(
+                        ms,
+                        row_indices,
+                    )?),
+                });
+            }
             SelectedArrayColumn::load_for_plot(ms.main_table(), name, row_indices, calibration)
         };
         let observed = if calibration.is_some_and(|input| input.prefer_float_data) {
