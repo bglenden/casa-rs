@@ -46,7 +46,7 @@ use crate::{
     MeasurementSetWriteSession, MsError, MsReadPlan, MsSelectionIoBudget,
     maximum_visibility_cell_elements,
 };
-use casa_numerics::solve_weighted_least_squares;
+use casa_numerics::{solve_symmetric_ldlt_casacore_with_precision, solve_weighted_least_squares};
 
 mod antint;
 mod calibration;
@@ -3541,29 +3541,46 @@ fn tfcrop_fit_base_and_flag(
     }
     let rows = unique_sample_rows(samples);
     let chans = unique_sample_chans(samples);
-    let (axis0, axis1) = match direction {
-        TfcropDirection::Freq => (chans, rows),
-        TfcropDirection::Time => (rows, chans),
+    let (n0, n1) = match direction {
+        TfcropDirection::Freq => (chans.len(), rows.len()),
+        TfcropDirection::Time => (rows.len(), chans.len()),
     };
-    if axis0.is_empty() || axis1.is_empty() {
-        return;
-    }
 
-    let mut by_row_chan = HashMap::<(usize, usize), Sample>::with_capacity(samples.len());
-    for sample in samples {
-        by_row_chan.insert((sample.row, sample.chan), *sample);
-    }
+    let dense = rows.len().checked_mul(chans.len()) == Some(samples.len())
+        && rows.windows(2).all(|pair| pair[0] < pair[1])
+        && samples
+            .chunks_exact(chans.len())
+            .zip(&rows)
+            .all(|(cells, row)| {
+                cells
+                    .iter()
+                    .zip(&chans)
+                    .all(|(cell, chan)| cell.row == *row && cell.chan == *chan)
+            });
+    let sparse = (!dense).then(|| {
+        samples
+            .iter()
+            .map(|sample| ((sample.row, sample.chan), sample))
+            .collect::<HashMap<_, _>>()
+    });
+    let sample_at = |i0, i1| {
+        let (row, chan) = tfcrop_row_chan(direction, i0, i1);
+        if let Some(sparse) = &sparse {
+            sparse.get(&(rows[row], chans[chan])).copied()
+        } else {
+            samples.get(row * chans.len() + chan)
+        }
+    };
 
-    let mut avg_dat = vec![0.0f32; axis0.len()];
-    let mut avg_flag = vec![false; axis0.len()];
-    let mut avg_roundoff = (!model_roundoff.is_empty()).then(|| vec![0.0; axis0.len()]);
+    let mut avg_dat = vec![0.0f32; n0];
+    let mut avg_flag = vec![false; n0];
+    let mut avg_roundoff = (!model_roundoff.is_empty()).then(|| vec![0.0; n0]);
     let mut all_zeros = true;
-    for (i0, key0) in axis0.iter().enumerate() {
+    for i0 in 0..n0 {
         let mut sum = 0.0f32;
         let mut count = 0usize;
-        for key1 in &axis1 {
-            let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
-            if let Some(sample) = by_row_chan.get(&(row, chan))
+        for i1 in 0..n1 {
+            if let Some(sample) = sample_at(i0, i1)
                 && !sample_is_modified(sample, modified)
             {
                 sum += tfcrop_value(sample);
@@ -3604,7 +3621,7 @@ fn tfcrop_fit_base_and_flag(
         ),
     };
 
-    let mut normalized_roundoff = avg_roundoff.as_ref().map(|_| vec![0.0; axis0.len()]);
+    let mut normalized_roundoff = avg_roundoff.as_ref().map(|_| vec![0.0; n0]);
     // The fitted baseline shares information across the axis, including
     // channels at which the model has no spectral coverage.
     let fit_roundoff = avg_roundoff.as_ref().map_or(0.0, |bounds| {
@@ -3614,15 +3631,14 @@ fn tfcrop_fit_base_and_flag(
             .filter(|bound| bound.is_finite())
             .fold(0.0, f32::max)
     });
-    for key1 in &axis1 {
-        let mut normalized = vec![0.0f32; axis0.len()];
-        let mut flags = vec![false; axis0.len()];
+    for i1 in 0..n1 {
+        let mut normalized = vec![0.0f32; n0];
+        let mut flags = vec![false; n0];
         if let Some(roundoff) = &mut normalized_roundoff {
             roundoff.fill(0.0);
         }
-        for (i0, key0) in axis0.iter().enumerate() {
-            let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
-            if let Some(sample) = by_row_chan.get(&(row, chan)) {
+        for i0 in 0..n0 {
+            if let Some(sample) = sample_at(i0, i1) {
                 flags[i0] = sample_is_modified(sample, modified);
                 if !flags[i0] && (casa_arithmetic || avg_fit[i0].abs() > f32::EPSILON) {
                     let fit = avg_fit[i0];
@@ -3649,7 +3665,7 @@ fn tfcrop_fit_base_and_flag(
             if !casa_arithmetic && (!sd.is_finite() || sd <= f32::EPSILON) {
                 break;
             }
-            for i0 in 0..axis0.len() {
+            for i0 in 0..n0 {
                 let deviation = (normalized[i0] - 1.0).abs();
                 if !flags[i0]
                     && deviation > cutoff as f32 * sd
@@ -3674,12 +3690,11 @@ fn tfcrop_fit_base_and_flag(
             cutoff as f32 * sd,
         );
 
-        for (i0, key0) in axis0.iter().enumerate() {
-            if !flags[i0] {
+        for (i0, &flagged) in flags.iter().enumerate() {
+            if !flagged {
                 continue;
             }
-            let (row, chan) = tfcrop_row_chan(direction, *key0, *key1);
-            if let Some(sample) = by_row_chan.get(&(row, chan))
+            if let Some(sample) = sample_at(i0, i1)
                 && !modified[sample.index]
             {
                 modified[sample.index] = true;
@@ -3913,6 +3928,17 @@ fn tfcrop_poly_fit(
     degree: usize,
     casa_arithmetic: bool,
 ) {
+    // CASA's LinearFit forms a small normal system before solving it. The
+    // degrees used by the CASA-shaped fit need only three or four terms.
+    if casa_arithmetic
+        && match degree {
+            2 => tfcrop_casa_poly_fit::<3>(data, flag, fit, left, right),
+            3 => tfcrop_casa_poly_fit::<4>(data, flag, fit, left, right),
+            _ => false,
+        }
+    {
+        return;
+    }
     let rows = (left..=right)
         .filter(|index| !flag[*index])
         .map(|index| {
@@ -3939,6 +3965,48 @@ fn tfcrop_poly_fit(
             .map(|(power, coefficient)| coefficient * x.powi(power as i32))
             .sum::<f64>() as f32;
     }
+}
+
+fn tfcrop_casa_poly_fit<const N: usize>(
+    data: &[f32],
+    flag: &[bool],
+    fit: &mut [f32],
+    left: usize,
+    right: usize,
+) -> bool {
+    let mut normal = [[0.0; N]; N];
+    let mut known = [0.0; N];
+    let mut count = 0;
+    for index in (left..=right).filter(|&index| !flag[index]) {
+        let sample = f64::from(data[index]);
+        let x = index as f64 + 1.0;
+        let powers = std::array::from_fn::<_, N, _>(|power| x.powi(power as i32));
+        for (column, &value) in powers.iter().enumerate() {
+            known[column] += value * sample;
+            for (other, &factor) in powers.iter().enumerate().skip(column) {
+                normal[column][other] += value * factor;
+            }
+        }
+        count += 1;
+    }
+    if count < N {
+        return false;
+    }
+    // Non-SVD LinearFit uses zero collinearity tolerance and returns its
+    // initial zero coefficients if inversion fails.
+    let solution =
+        solve_symmetric_ldlt_casacore_with_precision(normal, known, 0.0).unwrap_or([0.0; N]);
+    for (index, value) in fit.iter_mut().enumerate().take(right + 1).skip(left) {
+        let x = index as f64 + 1.0;
+        // FlagAgentTimeFreqCrop::polyFit rounds each sum to Float.
+        *value = solution
+            .iter()
+            .enumerate()
+            .fold(0.0f32, |sum, (power, coefficient)| {
+                (f64::from(sum) + coefficient * x.powi(power as i32)) as f32
+            });
+    }
+    true
 }
 
 fn tfcrop_mean(values: &[f32], flags: &[bool]) -> f32 {
@@ -5484,6 +5552,22 @@ mod tests {
                 .iter()
                 .any(|s| s.field == 2 && s.spw == 3 && s.amp == 5.0)
         );
+    }
+
+    #[test]
+    fn tfcrop_cubic_fits_narrow_support_at_high_channels() {
+        let mut data = [0.0; 103];
+        let mut flag = [true; 103];
+        let mut fitted = [0.0; 103];
+        data[99..].copy_from_slice(&[0.25, 1.75, 0.125, 0.5]);
+        flag[99..].fill(false);
+        tfcrop_poly_fit(&data, &flag, &mut fitted, 99, 102, 3, true);
+
+        // C++ casacore LinearFit followed by CASA's Float accumulation.
+        let expected = [0.201156, 1.80258, 0.216449, 0.567763];
+        for (actual, expected) in fitted[99..].iter().zip(expected) {
+            assert!((actual - expected).abs() < 2.0e-5, "{actual} != {expected}");
+        }
     }
 
     #[test]

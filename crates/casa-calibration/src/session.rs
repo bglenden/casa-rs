@@ -78,6 +78,8 @@ pub enum CalibrationSolveRequest {
     },
     /// Normalize the sampler response from antenna autocorrelations.
     Accor(GainSolveRequest),
+    /// Solve the additive Mueller response of each baseline from observed data.
+    AdditiveMueller(GainSolveRequest),
     /// Solve one multiplicative response per baseline and parallel hand.
     Baseline {
         /// Shared selection, prior, model and output parameters.
@@ -270,8 +272,20 @@ fn solve_open_dataset(
         } => crate::solve::baseline::solve(
             measurement_set,
             &gain,
-            frequency_dependent,
-            frequency_interval,
+            crate::solve::baseline::Family::Multiplicative {
+                frequency_dependent,
+                frequency_interval,
+            },
+            mode,
+            activity,
+            legacy_iterator,
+        )
+        .map(CalibrationSolveResult::Gain)
+        .map_err(|error| CalibrationError::Gain(Box::new(error))),
+        CalibrationSolveRequest::AdditiveMueller(gain) => crate::solve::baseline::solve(
+            measurement_set,
+            &gain,
+            crate::solve::baseline::Family::Additive,
             mode,
             activity,
             legacy_iterator,
