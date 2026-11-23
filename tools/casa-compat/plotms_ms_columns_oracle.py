@@ -277,6 +277,55 @@ def compare_ratio_float_range(root, vis, source, native):
         print(f"{name}: matched the float range for 12 selected points", flush=True)
 
 
+def compare_ordinate_columns(root, vis, native):
+    from casars import _plot_document
+
+    base = request(vis) | dict(xaxis="channel", xdatacolumn="", yaxislocation=["left", "right"])
+    cases = (
+        ("ord-distinct-axes", ["amp", "phase"], ["data", "corrected"]),
+        ("ord-same-axis", ["amp", "amp"], ["data", "corrected"]),
+        ("ord-same-axis-short-list", ["amp", "amp"], ["corrected"]),
+        ("ord-short-list", ["amp", "phase"], ["corrected"]),
+        ("ord-scalar-column", ["amp", "phase"], "corrected"),
+        ("ord-reverse-axes", ["phase", "amp"], ["corrected", "data"]),
+    )
+    for name, axes, columns in cases:
+        controls = base | dict(yaxis=axes, ydatacolumn=columns, expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 24
+        assert [point[2:] for point in selected[:12]] == [point[2:] for point in selected[12:]]
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 24
+        print(f"{name}: matched both ordinates for 12 selected points", flush=True)
+
+    capture = []
+    render = _plot_document.render_document
+
+    def record(*args, **kwargs):
+        figure, primary = render(*args, **kwargs)
+        capture.append((primary.get_xlabel(), [(axis.get_ylabel(), axis.lines[0].get_xydata())
+                                               for axis in figure.axes]))
+        return figure, primary
+
+    controls = base | dict(yaxis=["amp", "amp"], ydatacolumn=["data", "corrected"],
+                           expformat="png", width=500, height=360, dpi=100)
+    expected, actual = (root / f"ord-same-axis.{engine}.png" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    with patch.object(_plot_document, "render_document", record):
+        assert native(**controls, plotfile=str(actual)) is None
+    [(xlabel, layers)] = capture
+    assert xlabel == "Channel", xlabel
+    assert [label for label, _ in layers] == ["Amp", "Amp:corrected"], layers
+    coordinates = np.array([point[:2] for point in rows(root / "ord-same-axis.casa.txt")], dtype=float)
+    for index, (_, layer) in enumerate(layers):
+        np.testing.assert_allclose(layer, coordinates[index * 12:(index + 1) * 12], rtol=1.2e-5, atol=1e-7)
+    for output in (expected, actual):
+        with Image.open(output) as image:
+            assert image.size == (500, 360), (output, image.size)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -300,6 +349,7 @@ def main():
         compare_scalar_phase_boundary(root, vis, source, native)
         compare_zero_model(root, vis, source, native)
         compare_ratio_float_range(root, vis, source, native)
+        compare_ordinate_columns(root, vis, native)
 
 
 if __name__ == "__main__":
