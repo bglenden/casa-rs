@@ -6,10 +6,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{Table, TableError, TableInfo, TableOptions};
+use casa_types::{RecordValue, Value};
 
+use super::subtable_copy::{attached_subtable_name, copy_dir_recursive};
 use super::{
     MsTransformError, MsTransformReport, MsTransformRequest, MsTransformTaskOptions, RowGrammar,
-    copy_dir_recursive, scalar_f64, scalar_i32, transform_product,
+    scalar_f64, scalar_i32, transform_product,
 };
 use crate::SubtableId;
 use crate::selection::syntax::parse_numeric_row_id_ranges;
@@ -91,7 +93,7 @@ pub(super) fn retain(
     let Some(mut report) = report else {
         return Ok(None);
     };
-    install_shared_subtables(destination, &outputs)?;
+    install_shared_subtables(destination, &outputs, tables[0].keywords())?;
     let info = container_info(partition_axis(&request.input_ms).as_deref(), &outputs);
     let concat = Table::concat(tables).map_err(|source| table_error(destination, source))?;
     concat
@@ -189,36 +191,62 @@ fn container_info(axis: Option<&str>, members: &[PathBuf]) -> TableInfo {
     }
 }
 
-fn install_shared_subtables(root: &Path, members: &[PathBuf]) -> Result<(), MsTransformError> {
-    let first = &members[0];
-    let first_name = first.file_name().expect("relative member has a name");
+fn install_shared_subtables(
+    root: &Path,
+    members: &[PathBuf],
+    first_keywords: &RecordValue,
+) -> Result<(), MsTransformError> {
     for id in SubtableId::ALL_REQUIRED
         .iter()
         .chain(SubtableId::ALL_OPTIONAL.iter())
     {
-        let first_table = first.join(id.name());
-        if !root.join(&first_table).exists() {
+        install_shared_subtable(
+            root,
+            members,
+            Path::new(id.name()),
+            matches!(id, SubtableId::History | SubtableId::Source),
+        )?;
+    }
+    let first_path = casa_tables::lexical_absolute(&root.join(&members[0]));
+    for field in first_keywords.fields() {
+        let Value::TableRef(reference) = &field.value else {
+            continue;
+        };
+        if let Some(name) = attached_subtable_name(&first_path, &field.name, reference)
+            && !root.join(&name).exists()
+        {
+            install_shared_subtable(root, members, &name, false)?;
+        }
+    }
+    Ok(())
+}
+
+fn install_shared_subtable(
+    root: &Path,
+    members: &[PathBuf],
+    name: &Path,
+    copy_to_members: bool,
+) -> Result<(), MsTransformError> {
+    let first = &members[0];
+    let first_table = first.join(name);
+    let source = root.join(&first_table);
+    if !source.exists() {
+        return Ok(());
+    }
+    link_directory(&first_table, &root.join(name))?;
+    let first_name = first.file_name().expect("relative member has a name");
+    let member_link = Path::new("..").join(first_name).join(name);
+    for member in &members[1..] {
+        let destination = root.join(member).join(name);
+        if !destination.exists() {
             continue;
         }
-        link_directory(&first_table, &root.join(id.name()))?;
-        for member in &members[1..] {
-            let destination = root.join(member).join(id.name());
-            if !destination.exists() {
-                continue;
-            }
-            if matches!(id, SubtableId::History | SubtableId::Source) {
-                fs::remove_dir_all(&destination)
-                    .map_err(|error| write_error(&destination, error))?;
-                copy_dir_recursive(&root.join(&first_table), &destination)
-                    .map_err(|error| write_error(&destination, error))?;
-            } else {
-                fs::remove_dir_all(&destination)
-                    .map_err(|error| write_error(&destination, error))?;
-                link_directory(
-                    &Path::new("..").join(first_name).join(id.name()),
-                    &destination,
-                )?;
-            }
+        fs::remove_dir_all(&destination).map_err(|error| write_error(&destination, error))?;
+        if copy_to_members {
+            copy_dir_recursive(&source, &destination)
+                .map_err(|error| write_error(&destination, error))?;
+        } else {
+            link_directory(&member_link, &destination)?;
         }
     }
     Ok(())

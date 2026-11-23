@@ -584,16 +584,176 @@ def check_skips_and_refusals(libraries):
     return len(skip_to_summary) + 5 + len(errors) + 1
 
 
+def check_agent_time_intervals(libraries):
+    make_list_fixture("agent-time.ms")
+    with table("agent-time.ms", ack=False, readonly=False) as main:
+        original = main.getcol("TIME")
+        unique, integrations = np.unique(original, return_inverse=True)
+        point = np.floor(unique[0] / 86400) * 86400
+        next_point = point + 43200
+        # Midnight and noon are exactly representable both in MJD days and
+        # seconds. Shift the midnight integration by one representable step.
+        times = np.where(integrations < 2, point - 10, next_point + 10 * (integrations - 2))
+        times[integrations == 1] = np.nextafter(point, -np.inf)
+        main.putcol("TIME", times)
+
+    def stamp(value):
+        return (datetime(1858, 11, 17) + timedelta(seconds=float(value))).strftime(
+            "%Y/%m/%d/%H:%M:%S.%f"
+        )[:-3]
+
+    shifted = times == np.nextafter(point, -np.inf)
+    empty = np.zeros_like(times, dtype=bool)
+    lower = point + (next_point - point) / 2
+    cases = (
+        ("global-point", stamp(point), None, shifted),
+        ("one-agent-point", stamp(point), False, empty),
+        ("two-agent-point", stamp(point), True, empty),
+        ("two-agent-range", f"0.0[{stamp(lower)}~{stamp(next_point)}]", True,
+         times == next_point),
+    )
+    for label, timerange, multi, expected in cases:
+        for name, task in libraries:
+            vis = f"{label}-{name}.ms"
+            copytree("agent-time.ms", vis)
+            if multi is None:
+                options = dict(mode="manual", timerange=timerange)
+            else:
+                commands = [f"mode='manual' timerange='{timerange}'"]
+                if multi:
+                    commands.append("mode='summary'")
+                options = dict(mode="list", inpfile=commands)
+            task(vis=vis, flagbackup=False, **options)
+            flagged, row_flags = flags(vis)
+            np.testing.assert_array_equal(
+                flagged, np.broadcast_to(expected[:, None, None], flagged.shape),
+                err_msg=f"{label} {name} FLAG",
+            )
+            np.testing.assert_array_equal(row_flags, expected, err_msg=f"{label} {name} FLAG_ROW")
+    for name, task in libraries:
+        vis = f"empty-agent-time-{name}.ms"
+        copytree("agent-time.ms", vis)
+        result = task(
+            vis=vis, flagbackup=False, mode="list",
+            inpfile=[
+                f"mode='summary' name='empty' timerange='{stamp(point)}'",
+                "mode='summary' name='all'",
+            ],
+        )
+        assert [(report["name"], report["total"]) for report in result.values()] == [
+            ("empty", 0),
+            ("all", flags(vis)[0].size),
+        ], (name, result)
+    return len(cases) + 1
+
+
+def check_agent_time_defaults(libraries):
+    make_list_fixture("agent-default-date.ms")
+    with table("agent-default-date.ms", ack=False, readonly=False) as main:
+        unique, integration = np.unique(main.getcol("TIME"), return_inverse=True)
+        day = np.floor(unique[0] / 86400) * 86400
+        offsets = [21600, 21600, 86400, 129600] + [
+            151200 + 10 * i for i in range(len(unique) - 4)
+        ]
+        times = day + np.asarray(offsets)[integration]
+        first_scan = integration < 2
+        main.putcol("TIME", times)
+        main.putcol("FIELD_ID", np.where(first_scan, 0, 1).astype("int32"))
+        main.putcol("SCAN_NUMBER", np.where(first_scan, 1, 2).astype("int32"))
+
+    cases = (
+        ("single-agent-date", ["mode='manual' timerange='>12:00:00'"], times >= day + 129600),
+        ("field-agent-date", ["mode='manual' field='1' timerange='12:00:00'", "mode='summary'"],
+         integration == 3),
+        ("initial-agent-date", ["mode='manual' scan='1'", "mode='unflag' timerange='12:00:00'"],
+         integration == 0),
+    )
+    for label, commands, expected in cases:
+        for name, task in libraries:
+            vis = f"{label}-{name}.ms"
+            copytree("agent-default-date.ms", vis)
+            if label == "initial-agent-date":
+                with table(vis, ack=False, readonly=False) as main:
+                    times_with_noon = times.copy()
+                    times_with_noon[integration == 1] = day + 43200
+                    main.putcol("TIME", times_with_noon)
+            task(vis=vis, mode="list", inpfile=commands, flagbackup=False)
+            flagged, row_flags = flags(vis)
+            np.testing.assert_array_equal(
+                flagged, np.broadcast_to(expected[:, None, None], flagged.shape),
+                err_msg=f"{label} {name} FLAG",
+            )
+            np.testing.assert_array_equal(row_flags, expected, err_msg=f"{label} {name} FLAG_ROW")
+    return len(cases)
+
+
 def main():
     assert casatasks.version() == [6, 7, 6, 14]
     libraries = (("casa", casatasks.flagdata), ("native", tasks.flagdata))
     with TemporaryDirectory(prefix="flagdata-list-ms-") as root, chdir(root):
         c1 = check_inputs_and_selectors(libraries)
+        c1 += check_agent_time_intervals(libraries)
+        c1 += check_agent_time_defaults(libraries)
         c2 = check_sequential_all_modes(libraries)
         c3 = check_savepars_history_backup_display_cli(libraries)
         c4 = check_skips_and_refusals(libraries)
+        c4 += check_averaging_admission(libraries)
     print(f"{c1} input/selector cases, {c2} multi-mode/ntime/rflag cases, {c3} metadata/interop cases, "
           f"and {c4} skip/refusal cases verified against CASA 6.7.6.14.")
+
+
+def check_averaging_admission(libraries):
+    make_list_fixture("averaging-admission.ms", with_corrected=False)
+    make_list_fixture("averaging-shared.ms")
+    with table("averaging-shared.ms", ack=False, readonly=False) as main:
+        values = main.getcol("DATA")
+        values[:, 0::2, :] = 2
+        values[:, 1::2, :] = 8
+        main.putcol("DATA", values)
+        for column in ("FLAG", "FLAG_ROW"):
+            main.putcol(column, np.zeros_like(main.getcol(column)))
+    for name, task in libraries:
+        invalid = f"invalid-averaging-{name}.ms"
+        copytree("averaging-admission.ms", invalid)
+        before = flags(invalid)
+        result = outcome(
+            task, vis=invalid, mode="list", flagbackup=False,
+            inpfile=["mode='manual'", "mode='display' datacolumn='DATA' timeavg=True"],
+        )
+        assert result == (
+            "ERR", "RuntimeError",
+            "Cannot use timeavg or channelavg in mode display. timeavg=1, channelavg=0. "
+            "These averaging options are only allowed for auto-flagging methods. "
+            "Refusing this configuration.",
+        ), (name, result)
+        for original, current in zip(before, flags(invalid), strict=True):
+            np.testing.assert_array_equal(current, original)
+        assert task(
+            vis=invalid, mode="list", flagbackup=False,
+            inpfile=["mode='manual'", "mode='antint' datacolumn='CORRECTED' timeavg=True "
+                     "antint_ref_antenna='A0'"],
+        ) == {}
+        assert flags(invalid)[0].all()
+
+        shared = f"shared-averaging-{name}.ms"
+        copytree("averaging-shared.ms", shared)
+        before = flags(shared)
+        result = outcome(
+            task, vis=shared, mode="list", flagbackup=False,
+            inpfile=["mode='clip' clipminmax=[0,100] channelavg=True chanbin=2",
+                     "mode='clip' clipminmax=[0,6]"],
+        )
+        if name == "casa":
+            assert result == ("OK", {}), result
+        else:
+            assert result == (
+                "ERR", "RuntimeError",
+                "Averaging with multiple automatic flagging agents requires a shared "
+                "averaged visibility iterator (#978).",
+            ), result
+        for original, current in zip(before, flags(shared), strict=True):
+            np.testing.assert_array_equal(current, original)
+    return 3
 
 
 if __name__ == "__main__":

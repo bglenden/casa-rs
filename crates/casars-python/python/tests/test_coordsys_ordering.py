@@ -1,5 +1,7 @@
 """CASA axis transposition and coordinate creation-order changes."""
 
+import platform
+
 import numpy as np
 import pytest
 
@@ -82,12 +84,65 @@ def test_order_argument_errors_are_atomic(method):
 
 
 @pytest.mark.parametrize("method", ["transpose", "reorder"])
-@pytest.mark.parametrize("order", [False, [0.5], ["0"], [np.nan], [np.inf], np.array([[0]])])
+@pytest.mark.parametrize("order", [False, [0.5], ["0"], [np.nan], [-np.inf], np.array([[0]])])
 def test_scalar_and_coerced_order_arguments(casa, method, order):
     for implementation in (tools, casa):
         cs = implementation.coordsys().newcoordsys(linear=1)
         assert getattr(cs, method)(order=order)
         assert cs.naxes() == 1
+
+
+
+@pytest.mark.parametrize("method", ["transpose", "reorder"])
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+@pytest.mark.parametrize(
+    "argument, expected",
+    [
+        pytest.param([np.inf], "overflow", id="positive-infinity"),
+        pytest.param([np.float32(np.inf)], "overflow", id="numpy-float-list"),
+        pytest.param(np.array([np.inf]), "overflow", id="float-array"),
+        pytest.param([1.e30], "overflow", id="wide-float"),
+        pytest.param([2.**63], "overflow", id="native-long-limit"),
+        pytest.param([np.nan], "identity", id="nan"),
+        pytest.param([-1.e30], "identity", id="negative-wide-float"),
+        pytest.param([2.**32], "identity", id="low-32-bits"),
+        pytest.param([2**72], "range-error", id="wide-python-int"),
+        pytest.param([-(2**72)], "range-error", id="negative-wide-python-int"),
+        pytest.param([str(2**72)], "range-error", id="wide-numeric-text"),
+        pytest.param([str(-(2**72))], "identity", id="negative-wide-text"),
+        pytest.param([np.uint64(1)], "identity", id="unsigned-list-item"),
+        pytest.param([[np.uint64(1)]], "identity", id="unsigned-nested-list-item"),
+        pytest.param(np.array([2**63], dtype="u8"), "identity", id="wide-unsigned-array"),
+        pytest.param(np.array([2**63+1], dtype="u8"), "range-error", id="unsigned-array-low-bits"),
+        pytest.param(np.uint64(0), "length-error", id="bare-unsigned"),
+        pytest.param(np.float32(0), "length-error", id="bare-float32"),
+        pytest.param(np.array([0], dtype=object), "length-error", id="object-array"),
+        pytest.param([1+2j], "range-error", id="complex-real-component"),
+        pytest.param([np.complex64(1+2j)], "identity", id="narrow-complex-list-item"),
+    ],
+)
+def test_order_binding_preserves_native_coercion_and_failed_state(method, backend, argument, expected):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    if expected == "overflow":
+        expected = "range-error" if platform.machine() in ("aarch64", "arm64") else "identity"
+    coordinates = api.coordsys().newcoordsys(linear=1)
+    try:
+        before = coordinates.torecord()
+        world_before = coordinates.toworld([3.0])["numeric"]
+        call = getattr(coordinates, method)
+        if expected == "identity":
+            assert call(argument)
+            assert coordinates.naxes() == 1
+            _assert_value(coordinates.toworld([3.0])["numeric"], world_before)
+        else:
+            message = "which" if expected == "range-error" else "nelements|length"
+            with pytest.raises(RuntimeError, match=message):
+                call(argument)
+            _assert_value(coordinates.torecord(), before)
+    finally:
+        coordinates.done()
 
 
 def test_transpose_keeps_a_hidden_slot_and_reorder_restores_its_coordinate(casa):
@@ -125,3 +180,74 @@ def test_transpose_keeps_a_sampled_tabular_coordinate_live():
     reloaded = tools.coordsys()
     assert reloaded.fromrecord(cs.torecord())
     np.testing.assert_array_equal(reloaded.toworld([1.0, 5.0])["numeric"], [14.0, 5.0])
+
+
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+def test_ragged_order_stops_before_writing_the_incompatible_row(backend):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    coords = api.coordsys().newcoordsys(direction=True, spectral=True)
+    try:
+        before = coords.torecord()
+        with pytest.raises(RuntimeError, match="length 2"):
+            coords.reorder([[1], [0, 2]])
+        _assert_value(coords.torecord(), before)
+        assert coords.reorder([b"\v1", 0])
+        assert coords.coordinatetype() == ["Spectral", "Direction"]
+    finally:
+        coords.done()
+
+    coords = api.coordsys().newcoordsys(linear=4)
+    try:
+        assert coords.setnames(["zero", "one", "two", "three"])
+        with pytest.raises(RuntimeError, match="nelements"):
+            coords.transpose([np.array([2, 1]), np.array([3, 0])])
+        assert coords.names() == ["zero", "one", "two", "three"]
+        assert coords.transpose([[2, 1], [3, 0]])
+        assert coords.names() == ["two", "three", "one", "zero"]
+    finally:
+        coords.done()
+
+
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+def test_subimage_observes_integer_vector_dtype_and_overflow_precedence(backend):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    coords = api.coordsys().newcoordsys(stokes="I,Q,U,V")
+    try:
+        for shape in ([np.ulonglong(1)], [np.longdouble(1)], np.array([1], dtype="f2")):
+            np.testing.assert_array_equal(
+                coords.subimage([0.], shape)["stokes0"]["stokes"], ["I", "Q", "U", "V"]
+            )
+        for shape in (np.array([1], dtype="u8"), [[1], [2, 4]]):
+            np.testing.assert_array_equal(coords.subimage([0.], shape)["stokes0"]["stokes"], ["I"])
+        before = coords.torecord()
+        for shape in (2**72, [2**72], [[-(2**72)]]):
+            with pytest.raises(SystemError, match="returned a result with an exception set") as error:
+                coords.subimage([0.], shape)
+            assert isinstance(error.value.__cause__, OverflowError)
+        with pytest.raises(RuntimeError, match="nShape"):
+            coords.subimage([0.], [2**72, 2])
+        with pytest.raises(RuntimeError, match="Illegal origin shift"):
+            coords.subimage([9.], [2**72])
+        _assert_value(coords.torecord(), before)
+    finally:
+        coords.done()
+
+
+@pytest.mark.parametrize("method", ["transpose", "reorder"])
+def test_bare_nonfinite_order_uses_checked_axis_conversion(method):
+    coords = tools.coordsys().newcoordsys(linear=1)
+    try:
+        before = coords.torecord()
+        apply = getattr(coords, method)
+        if platform.machine() in ("aarch64", "arm64"):
+            with pytest.raises(RuntimeError, match="which"):
+                apply(float("inf"))
+        else:
+            assert apply(float("inf"))
+        _assert_value(coords.torecord(), before)
+    finally:
+        coords.done()

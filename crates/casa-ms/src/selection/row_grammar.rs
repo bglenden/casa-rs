@@ -150,7 +150,7 @@ pub(crate) fn flagdata_channel_ranges(
     Ok(ranges)
 }
 
-pub(super) fn flagdata_c_string(text: &str) -> &str {
+pub(crate) fn flagdata_c_string(text: &str) -> &str {
     text.split_once('\0').map_or(text, |(prefix, _)| prefix)
 }
 
@@ -228,25 +228,19 @@ pub(super) fn with_time(
     selection: CompiledMsSelection,
     text: &str,
     rows_per_block: Option<usize>,
+    agent_time_default_row: Option<usize>,
 ) -> MsResult<CompiledMsSelection> {
     if text.is_empty() {
         return Ok(selection);
     }
-    let table = ms.main_table();
-    let first = if selection.where_clauses().is_empty() {
-        let mut first = 0;
-        if has_column(table, "FLAG_ROW") {
-            for row in 0..table.row_count() {
-                if !get_bool(table, row, "FLAG_ROW")? {
-                    first = row;
-                    break;
-                }
-            }
-        }
-        first
+    let first = if let Some(original_first) = agent_time_default_row {
+        flagdata_agent_time_row(ms, &selection, rows_per_block, original_first)?
+    } else if selection.where_clauses().is_empty() {
+        first_unflagged_time_row(ms)?
     } else {
         selection.first_match(ms, rows_per_block)?.unwrap_or(0)
     };
+    let table = ms.main_table();
     let defaults = |row| -> MsResult<TimeDefaults> {
         Ok(TimeDefaults {
             time_mjd_s: get_f64(table, row, "TIME")?,
@@ -257,13 +251,17 @@ pub(super) fn with_time(
             },
         })
     };
-    let time = resolve_time_selector(
+    let mut time = resolve_time_selector(
         text,
         TimeSelectorDefaults {
             first_term: defaults(first)?,
             later_terms: defaults(0)?,
         },
     )?;
+    // AgentFlagger tests the closed endpoints of getTimeList().
+    if agent_time_default_row.is_some() {
+        time.use_agent_intervals();
+    }
     let terms = time.terms().iter().map(|term| match term.condition {
         TimeCondition::Near { time_s, tolerance_s } =>
             format!("ABS(TIME - {time_s}) <= {tolerance_s}"),
@@ -280,6 +278,41 @@ pub(super) fn with_time(
     selection.casa_taql_exprs.push(disjunction(terms));
     selection.casa_time = Some(time);
     Ok(selection)
+}
+
+pub(crate) fn first_unflagged_time_row(ms: &MeasurementSet) -> MsResult<usize> {
+    let table = ms.main_table();
+    if has_column(table, "FLAG_ROW") {
+        for row in 0..table.row_count() {
+            if !get_bool(table, row, "FLAG_ROW")? {
+                return Ok(row);
+            }
+        }
+    }
+    Ok(0)
+}
+
+fn flagdata_agent_time_row(
+    ms: &MeasurementSet,
+    selection: &CompiledMsSelection,
+    rows_per_block: Option<usize>,
+    original_first: usize,
+) -> MsResult<usize> {
+    // FlagAgentBase adds array, field, and scan to MSSelection before parsing
+    // timerange. The remaining agent selectors are added afterwards.
+    if selection.field_ids.is_none()
+        && selection.casa_array_ranges.is_none()
+        && selection.casa_scan_ranges.is_none()
+    {
+        return Ok(original_first);
+    }
+    let prefix = CompiledMsSelection {
+        field_ids: selection.field_ids.clone(),
+        casa_array_ranges: selection.casa_array_ranges.clone(),
+        casa_scan_ranges: selection.casa_scan_ranges.clone(),
+        ..CompiledMsSelection::default()
+    };
+    Ok(prefix.first_match(ms, rows_per_block)?.unwrap_or(0))
 }
 
 fn disjunction(terms: Vec<String>) -> String {

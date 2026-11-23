@@ -35,6 +35,14 @@ impl TableUseLock {
         Self::open(path, false, 0)
     }
 
+    /// Mark a read-only attachment as open, waiting for a current writer.
+    ///
+    /// # Errors
+    /// Returns an error for an unreadable table or a failed lock request.
+    pub fn acquire_waiting_readonly(path: &Path) -> Result<Self, TableError> {
+        Self::open(path, true, 0)
+    }
+
     /// Mark a read-only attachment as open where locking is available.
     /// A read-only directory without a lock file can still be read. The
     /// guard retains the directory identity even when it cannot mark it open.
@@ -43,6 +51,21 @@ impl TableUseLock {
     /// Returns an error for an unreadable table or a conflicting writer.
     pub fn acquire_readonly(path: &Path) -> Result<Self, TableError> {
         Self::open(path, true, 1)
+    }
+
+    /// Whether a read-only directory has no lock file to join.
+    pub fn readonly_without_lock_file(path: &Path) -> bool {
+        let missing = path
+            .join("table.lock")
+            .symlink_metadata()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+        missing
+            && crate::publication::check_write_access(path).is_err_and(|error| {
+                matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+                )
+            })
     }
 
     fn open(path: &Path, readonly: bool, attempts: u32) -> Result<Self, TableError> {

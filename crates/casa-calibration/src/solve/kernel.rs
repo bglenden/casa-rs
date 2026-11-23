@@ -296,14 +296,17 @@ pub(crate) fn solve_group(
                         .get(&antenna_id)
                         .copied()
                         .unwrap_or_default();
-                    let flagged = !receptor.solved.contains(&antenna_id)
-                        || snr <= min_snr
-                        || !param_error.is_finite();
-                    row.gains.push(if flagged {
-                        Complex32::new(1.0, 0.0)
-                    } else {
-                        receptor.gains[&antenna_id]
-                    });
+                    let fitted = receptor.solved.contains(&antenna_id) && param_error.is_finite();
+                    let flagged = !fitted || snr <= min_snr;
+                    // CASA's AP solve retains the fit beneath the SNR flag.
+                    // The amplitude- and phase-only paths publish unity there.
+                    row.gains.push(
+                        if fitted && (!flagged || solve_mode == GainSolveMode::AmplitudePhase) {
+                            receptor.gains[&antenna_id]
+                        } else {
+                            Complex32::new(1.0, 0.0)
+                        },
+                    );
                     row.flags.push(flagged);
                     row.param_errors.push(param_error);
                     row.snrs.push(snr);

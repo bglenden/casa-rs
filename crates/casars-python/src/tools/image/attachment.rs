@@ -37,6 +37,12 @@ pub(super) struct SharedImage {
     coordinates_replaced: AtomicBool,
 }
 
+impl SharedImage {
+    pub(super) fn lock(&self) -> MutexGuard<'_, ImageHandle> {
+        self.handle.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 pub(super) type OpenImages = BTreeMap<PathBuf, Vec<Weak<SharedImage>>>;
 
 static ATTACHED: Mutex<OpenImages> = Mutex::new(BTreeMap::new());
@@ -209,7 +215,7 @@ impl AttachedImage {
             &name,
             &key,
             Some(0),
-            TableUseLock::acquire_waiting,
+            TableUseLock::acquire_waiting_readonly,
             component_cache,
         )?;
         if !keep_read_lock {
@@ -367,10 +373,11 @@ impl AttachedImage {
     }
 
     pub(super) fn lock(&self) -> MutexGuard<'_, ImageHandle> {
-        self.image
-            .handle
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        self.image.lock()
+    }
+
+    pub(super) fn share_image(&self) -> Arc<SharedImage> {
+        Arc::clone(&self.image)
     }
 
     pub(super) fn capture_live_coordinates(
@@ -436,8 +443,17 @@ impl AttachedImage {
             .collect()
     }
 
-    pub(super) fn open_concat_expression_operand(path: &Path) -> PyResult<Self> {
-        Self::open_native(path, path, Some(0), TableUseLock::acquire_waiting, true)
+    pub(super) fn open_unregistered_expression_operand(path: &Path) -> PyResult<Self> {
+        if ImageHandle::recognizes_miriad(path, path) {
+            return Self::open_miriad(path);
+        }
+        Self::open_native(
+            path,
+            path,
+            Some(0),
+            TableUseLock::acquire_waiting_readonly,
+            true,
+        )
     }
 
     pub(super) fn retain_expression_inputs(&mut self, inputs: Vec<Self>, paths: Vec<PathBuf>) {

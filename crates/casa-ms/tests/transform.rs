@@ -10,8 +10,124 @@ use casa_ms::{
     TransformDataColumn, mstransform, schema::main_table::VisibilityDataColumn,
     selection::MsSelection,
 };
-use casa_types::{ArrayValue, ScalarValue};
+use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
+use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
+
+fn attach_test_subtable(input: &std::path::Path, as_reference: bool) -> std::path::PathBuf {
+    let attached = input.join("AUXILIARY");
+    let backing = if as_reference {
+        input.join("AUXILIARY_BACKING")
+    } else {
+        attached.clone()
+    };
+    let schema = TableSchema::new(vec![ColumnSchema::scalar("ID", PrimitiveType::Int32)])
+        .expect("auxiliary schema");
+    let mut table = Table::with_schema(schema);
+    for value in [1, 2, 3] {
+        table
+            .add_row(RecordValue::new(vec![RecordField::new(
+                "ID",
+                Value::Scalar(ScalarValue::Int32(value)),
+            )]))
+            .expect("auxiliary row");
+    }
+    table
+        .save(TableOptions::new(&backing))
+        .expect("backing table");
+    if as_reference {
+        Table::open(TableOptions::new(&backing))
+            .expect("open backing table")
+            .select_rows(&[2, 0])
+            .expect("select auxiliary rows")
+            .save(TableOptions::new(&attached))
+            .expect("save auxiliary reference table");
+    }
+    let mut main = Table::open_with_lock(
+        TableOptions::new(input),
+        casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLocking),
+    )
+    .expect("open input main");
+    main.keywords_mut()
+        .upsert("AUXILIARY", Value::table_ref("././AUXILIARY"));
+    main.save_keywords_atomically(input)
+        .expect("link auxiliary");
+    attached
+}
+
+fn transform_with_auxiliary(
+    input_ms: std::path::PathBuf,
+    output_ms: std::path::PathBuf,
+) -> Result<casa_ms::MsTransformReport, casa_ms::MsTransformError> {
+    mstransform(&MsTransformRequest {
+        input_ms,
+        output_ms,
+        spw: String::new(),
+        width: 1,
+        data_column: TransformDataColumn::Data,
+        selection: MsSelection::new(),
+        keep_flags: true,
+    })
+}
+
+#[test]
+fn transform_materializes_auxiliary_reference_rows() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let output = dir.path().join("output.ms");
+    attach_test_subtable(&input, true);
+    transform_with_auxiliary(input.clone(), output.clone()).expect("transform");
+    std::fs::rename(input, dir.path().join("input-moved.ms")).expect("move input out of reach");
+
+    let table = Table::open(TableOptions::new(output.join("AUXILIARY"))).expect("output auxiliary");
+    assert!(!table.is_reference_table().expect("table kind"));
+    let rows = table
+        .column_accessor("ID")
+        .expect("ID column")
+        .scalar_cells_owned_for_rows(&[0, 1])
+        .expect("read ID");
+    assert_eq!(
+        rows,
+        [Some(ScalarValue::Int32(3)), Some(ScalarValue::Int32(1))]
+    );
+}
+
+#[test]
+fn transform_waits_for_the_auxiliary_subtable_read_lock() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let table = attach_test_subtable(&input, false);
+    let signal = dir.path().join("locked.signal");
+    let release = dir.path().join("release.signal");
+    let mut holder = hold_the_write_lock_in_another_process(&table, &signal, &release);
+    let releaser = std::thread::spawn(move || {
+        let requested = this_process_requests_the_lock(&table);
+        std::fs::write(release, "release").expect("release the holder");
+        requested
+    });
+
+    let result = transform_with_auxiliary(input, dir.path().join("output.ms"));
+    assert!(releaser.join().expect("lock observer"));
+    assert!(holder.wait().expect("holder exits").success());
+    result.expect("transform after the write lock is released");
+}
+
+#[test]
+fn transform_refuses_output_inside_an_auxiliary_directory_alias() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = common::create_msexplore_spectrum_fixture_ms(dir.path(), true, &[]);
+    let table = attach_test_subtable(&input, false);
+    let alias = dir.path().join("alias");
+    std::os::unix::fs::symlink(&table, &alias).expect("subtable alias");
+    let output = alias.join("output.ms");
+    let error = transform_with_auxiliary(input, output.clone()).expect_err("reject recursive copy");
+    assert!(
+        error
+            .to_string()
+            .contains("output is inside input subtable")
+    );
+    assert!(!output.exists());
+}
 
 #[test]
 fn mstransform_selects_channels_updates_metadata_and_weight_spectrum() {

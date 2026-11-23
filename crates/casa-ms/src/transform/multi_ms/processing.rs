@@ -337,7 +337,7 @@ fn write_members(
         if spectral_groups.len() > 1 {
             super::partition_metadata::consolidate(destination, &outputs, &spectral_groups)?;
         }
-        install_shared_subtables(destination, &outputs)?;
+        install_shared_subtables(destination, &outputs, tables[0].keywords())?;
         let info = container_info(execution.axis, &outputs);
         let concat = Table::concat(tables).map_err(|source| table_error(destination, source))?;
         concat

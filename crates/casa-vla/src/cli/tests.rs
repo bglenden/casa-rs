@@ -109,6 +109,32 @@ fn options_follow_the_command_line() {
     let implicit = options(&["--archivefiles", "a.exp,b.xp1"]).expect("implicit vis");
     assert_eq!(implicit.archivefiles.len(), 2);
     assert!(implicit.vis.is_none());
+    assert_eq!(implicit.frequencytol_hz, 0.0);
+
+    for tolerance in ["150000.0Hz", "150kHz"] {
+        let explicit = options(&["--archivefiles", "a.exp", "--frequencytol", tolerance])
+            .expect("explicit reference tolerance");
+        assert_eq!(explicit.frequencytol_hz, 150_000.0);
+    }
+    let mut numeric = casa_task_runtime::ParameterSession::defaults(
+        casa_provider_contracts::builtin_surface_bundle("importvla").expect("importvla surface"),
+    )
+    .expect("session");
+    numeric
+        .set(
+            "archivefiles",
+            ParameterValue::Array(vec![ParameterValue::String("a.exp".into())]),
+        )
+        .expect("archivefiles");
+    numeric
+        .set("frequencytol", ParameterValue::Float(150_000.0))
+        .expect("numeric tolerance");
+    assert_eq!(
+        options_from(&TaskInvocation::new(&numeric, Path::new(".")))
+            .expect("explicit numeric tolerance")
+            .frequencytol_hz,
+        150_000.0
+    );
 
     let every = options(&[
         "--archivefiles",

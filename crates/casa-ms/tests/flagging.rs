@@ -9,14 +9,15 @@ use casa_ms::{
     flagdata_ms_program, flagdata_path, list_flag_versions, rename_flag_version,
     restore_flag_version, save_flag_version,
 };
-use casa_types::{ArrayValue, Complex32, ScalarValue, Value};
+use casa_tables::{ColumnSchema, Table, TableInfo, TableOptions, TableSchema};
+use casa_types::{ArrayValue, Complex32, PrimitiveType, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 use std::process::Command;
 use tempfile::tempdir;
 
 use common::{
-    NUM_CHAN, NUM_CORR, create_msexplore_averaging_fixture_ms, create_msexplore_fixture_ms,
-    create_two_polarization_fixture_ms,
+    NUM_CHAN, NUM_CORR, create_msexplore_averaging_fixture_ms, create_msexplore_fixture_in_memory,
+    create_msexplore_fixture_ms, create_two_polarization_fixture_ms,
 };
 
 #[test]
@@ -150,6 +151,36 @@ fn flagmanager_save_and_restore_round_trips_main_flags() {
 
     let versions = list_flag_versions(&ms).expect("list versions");
     assert!(versions.iter().any(|entry| entry.name == "before"));
+}
+
+#[test]
+fn flagmanager_can_save_an_empty_calibration_table_without_flag_row() {
+    let temp = tempdir().expect("tempdir");
+    let path = temp.path().join("empty.cal");
+    let schema = TableSchema::new(vec![ColumnSchema::array_variable(
+        "FLAG",
+        PrimitiveType::Bool,
+        Some(2),
+    )])
+    .expect("flag schema");
+    let mut table = Table::with_schema(schema.clone());
+    table.set_info(TableInfo {
+        table_type: "Calibration".to_string(),
+        ..TableInfo::default()
+    });
+    table
+        .save(TableOptions::new(&path))
+        .expect("save calibration table");
+    let ms = MeasurementSet::open(path).expect("open calibration table");
+
+    casa_ms::flagging::save_disk_flag_version(&ms, "empty", "no rows", FlagMerge::Replace)
+        .expect("save empty flag version");
+    let version = Table::open(TableOptions::new(
+        temp.path().join("empty.cal.flagversions/flags.empty"),
+    ))
+    .expect("read empty flag version");
+    assert_eq!(version.row_count(), 0);
+    assert_eq!(version.schema(), Some(&schema));
 }
 
 #[test]
@@ -856,6 +887,90 @@ fn flagdata_ms_program_stages_skips_and_persists() {
     assert!(apply_reports[2].is_some());
     let persisted = MeasurementSet::open(&ms_path).expect("reopen MS");
     assert_flag(&persisted, 0, 0, 0);
+}
+
+#[test]
+fn antint_list_prepass_honors_its_input_and_agent_selection_policy() {
+    let temp = tempdir().expect("tempdir");
+    let path = create_msexplore_fixture_ms(temp.path());
+    let make_input = |in_memory| {
+        let mut ms = if in_memory {
+            create_msexplore_fixture_in_memory()
+        } else {
+            MeasurementSet::open(&path).expect("open MS")
+        };
+        set_flag_on_open_ms(&mut ms, 0, 0, 0, true);
+        ms
+    };
+    let manual = FlagDataRequest {
+        mode: FlagDataMode::Manual,
+        casa_row_selection: true,
+        selection: MsSelection {
+            scan: Some("2".into()),
+            spw: Some("0:0".into()),
+            ..MsSelection::default()
+        },
+        spw: Some("0:0".into()),
+        flagbackup: false,
+        ..FlagDataRequest::default()
+    };
+    let antint = FlagDataRequest {
+        mode: FlagDataMode::Antint,
+        casa_row_selection: true,
+        antint: casa_ms::flagging::AntennaIntegrationOptions {
+            reference_antenna: "ANT0".into(),
+            min_channel_fraction: 0.0,
+            verbose: false,
+        },
+        flagbackup: false,
+        ..FlagDataRequest::default()
+    };
+    let summary = FlagDataRequest {
+        mode: FlagDataMode::Summary,
+        casa_row_selection: true,
+        ..FlagDataRequest::default()
+    };
+    let samples = NUM_CORR * NUM_CHAN;
+    for in_memory in [false, true] {
+        let reports = flagdata_ms_program(
+            make_input(in_memory),
+            &[manual.clone(), antint.clone(), summary.clone()],
+            false,
+            true,
+            None,
+        )
+        .expect("CASA-style antint calculate");
+        let flagged = reports[2]
+            .as_ref()
+            .and_then(|report| report.summary.as_ref())
+            .expect("summary")
+            .overall
+            .flagged;
+        assert_eq!(flagged as usize, samples + NUM_CORR);
+
+        let reports = flagdata_ms_program(
+            make_input(in_memory),
+            &[
+                manual.clone(),
+                FlagDataRequest {
+                    casa_row_selection: false,
+                    ..antint.clone()
+                },
+                antint.clone(),
+            ],
+            false,
+            true,
+            None,
+        )
+        .expect("mixed typed and CASA antint calculate");
+        assert_eq!(
+            reports[1].as_ref().expect("typed antint").changed_samples,
+            2 * samples - NUM_CORR - 1
+        );
+        assert_eq!(reports[2].as_ref().expect("CASA antint").changed_samples, 0);
+    }
+    let persisted = MeasurementSet::open(&path).expect("open after previews");
+    assert_not_flag(&persisted, 0, 0, 0);
 }
 
 #[test]

@@ -6,7 +6,9 @@ use std::path::Path;
 use casa_ms::{
     MeasurementSet, MeasurementSetBuilder, derived::engine::MsCalEngine, schema::SubtableId,
 };
-use casa_tables::{ColumnSchema, Table, TableOptions, TableWriteLock};
+use casa_tables::{
+    ColumnAddition, ColumnSchema, ManagerAddition, Table, TableOptions, TableWriteLock,
+};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn};
 
@@ -251,8 +253,29 @@ pub fn update_calibration_table(path: &Path) -> Result<(), String> {
     }
     drop(table);
     stage_calibration_table_edit(path, path, |table, stage| {
-        repair_observation_metadata(table, stage)?;
-        table.save(TableOptions::new(stage)).map_err(error_text)
+        link_observation_subtable(table, stage)?;
+        table.save_keywords_atomically(stage).map_err(error_text)?;
+        if !has_observation_column(table) {
+            // A separate manager supplies the new zero-filled column while
+            // preserving every existing solution and flag storage file.
+            table
+                .add_columns_in_place(
+                    vec![ColumnAddition {
+                        schema: ColumnSchema::scalar(COL_OBSERVATION_ID, PrimitiveType::Int32),
+                        default: Some(Value::Scalar(ScalarValue::Int32(0))),
+                        keywords: RecordValue::default(),
+                        manager_type: None,
+                        manager_group: None,
+                    }],
+                    Some(ManagerAddition {
+                        kind: "StandardStMan".into(),
+                        name: String::new(),
+                        spec: RecordValue::default(),
+                    }),
+                )
+                .map_err(error_text)?;
+        }
+        Ok(())
     })
 }
 
@@ -265,6 +288,10 @@ pub(crate) fn repair_observation_metadata(table: &mut Table, stage: &Path) -> Re
             )
             .map_err(error_text)?;
     }
+    link_observation_subtable(table, stage)
+}
+
+fn link_observation_subtable(table: &mut Table, stage: &Path) -> Result<(), String> {
     if table.keywords().get("OBSERVATION").is_none() {
         let observation = stage.join("OBSERVATION");
         if observation.exists() {

@@ -391,6 +391,22 @@ mod tests {
     use super::super::{StreamedTiledShapeColumn, StreamingTiledShapeWriter};
     use super::*;
 
+    #[test]
+    fn copy_partial_channels_of_a_category_plane() {
+        let cell: Vec<u8> = (0..30).collect();
+        let mut tile = [0xff; 6];
+        copy_cube_to_tile(
+            &cell,
+            &[2, 5, 3],
+            &mut tile,
+            &[2, 3, 1],
+            &[0, 3, 1],
+            &[2, 2, 1],
+            1,
+        );
+        assert_eq!(tile, [16, 17, 18, 19, 0xff, 0xff]);
+    }
+
     /// Two shapes, each tiled in two tiles across the cell; the first ends
     /// inside a band, and undefined rows fall between them.
     fn layouts() -> Vec<StreamedTiledShapeCubeLayout> {

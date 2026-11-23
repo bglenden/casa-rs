@@ -135,12 +135,15 @@ fn copy_sparse(source: &Path, target: &Path, metadata: &Metadata) -> io::Result<
     use std::io::{Read, Seek, SeekFrom};
 
     let mut input = File::open(source)?;
-    let mut data = next_extent(&input, 0, libc::SEEK_DATA);
+    let mut offset = 0;
+    let mut data = next_extent(&input, offset, libc::SEEK_DATA);
     if matches!(&data, Err(error) if matches!(error.raw_os_error(), Some(libc::EINVAL | libc::ENOTSUP)))
     {
         return Ok(false);
     }
     let mut output = File::create_new(target)?;
+    #[cfg(target_os = "macos")]
+    let block_size = destination_block_size(&output)?;
     while let Some(start) = data? {
         let end = next_extent(&input, start, libc::SEEK_HOLE)?.unwrap_or(metadata.len());
         input.seek(SeekFrom::Start(start))?;
@@ -151,11 +154,69 @@ fn copy_sparse(source: &Path, target: &Path, metadata: &Metadata) -> io::Result<
                 "Table extent changed during copy",
             ));
         }
-        data = next_extent(&input, end, libc::SEEK_DATA);
+        #[cfg(target_os = "macos")]
+        preserve_sparse_gap(&output, offset, start, block_size)?;
+        offset = end;
+        data = next_extent(&input, offset, libc::SEEK_DATA);
     }
     output.set_len(metadata.len())?;
     output.set_permissions(metadata.permissions())?;
     Ok(true)
+}
+
+#[cfg(target_os = "macos")]
+fn destination_block_size(file: &std::fs::File) -> io::Result<u64> {
+    use std::mem::MaybeUninit;
+    use std::os::fd::AsRawFd;
+
+    let mut stats = MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: fstatfs writes the complete struct on success and the fd is live.
+    let block_size = unsafe {
+        if libc::fstatfs(file.as_raw_fd(), stats.as_mut_ptr()) != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        u64::from(stats.assume_init().f_bsize)
+    };
+    if block_size == 0 {
+        return Err(io::Error::other("Destination filesystem has no block size"));
+    }
+    Ok(block_size)
+}
+
+#[cfg(target_os = "macos")]
+fn preserve_sparse_gap(
+    file: &std::fs::File,
+    start: u64,
+    end: u64,
+    block_size: u64,
+) -> io::Result<()> {
+    use std::os::fd::AsRawFd;
+
+    let start = start.next_multiple_of(block_size);
+    let end = end / block_size * block_size;
+    if start >= end {
+        return Ok(());
+    }
+    // APFS can allocate skipped ranges when the copied file is closed.
+    // Punch only ranges that the source filesystem reported as holes.
+    let gap = libc::fpunchhole_t {
+        fp_flags: 0,
+        reserved: 0,
+        fp_offset: start as libc::off_t,
+        fp_length: (end - start) as libc::off_t,
+    };
+    // SAFETY: the descriptor is live and the argument uses Darwin's ABI.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_PUNCHHOLE, &gap) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::EINVAL | libc::ENOTSUP | libc::EOPNOTSUPP | libc::ENOTTY)
+    ) {
+        return Ok(());
+    }
+    Err(error)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -184,6 +245,31 @@ mod tests {
     use super::*;
 
     const SOURCE_PROBE: &str = "CASA_TABLE_COPY_TEST_SOURCE";
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sparse_gap_rounds_inward_without_punching_adjacent_data() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("destination");
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        let block = destination_block_size(&file).unwrap() * 4;
+        let mut expected = vec![0; (block * 5) as usize];
+        expected[block as usize] = 0x9b;
+        expected[(4 * block - 1) as usize] = 0xd2;
+        fs::write(&path, &expected).unwrap();
+
+        preserve_sparse_gap(&file, block + 1, 4 * block - 1, block).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), expected);
+        assert_eq!(
+            next_extent(&file, 2 * block, libc::SEEK_HOLE).unwrap(),
+            Some(2 * block)
+        );
+    }
 
     #[test]
     fn copy_preserves_source_locks_and_subtable_sync_data() {

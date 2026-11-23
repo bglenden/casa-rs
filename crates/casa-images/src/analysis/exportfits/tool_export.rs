@@ -95,7 +95,10 @@ pub fn export_attached_fits(
             scratch: ScratchSpace::SystemTemp,
         },
     )?;
-    plan.copy_to(image, &mut selected, options.mask, options.stretch)?;
+    crate::analysis::with_mask_output_paths(
+        request.overwrite.then_some(request.fitsimage.as_path()),
+        || plan.copy_to(image, &mut selected, options.mask, options.stretch),
+    )?;
     write_options.beam_record = None;
     export_fits_typed(request, &selected, history, None, write_options)
 }

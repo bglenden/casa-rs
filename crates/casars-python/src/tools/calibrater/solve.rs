@@ -447,14 +447,22 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
-            if matches!(family.as_str(), "TF" | "TF JONES" | "TF NOISE") {
-                let frequency = casa_calibration::BandpassFrequencyInterval::from_casa(
-                    frequency.unwrap_or_default(),
-                )
-                .ok_or_else(setup_error)?;
-                state
-                    .set_tool_tf(standard.gain(GainType::T), mode, frequency, invalid_mode)
-                    .map_err(|_| setup_error())?;
+            if matches!(
+                family.as_str(),
+                "TF" | "TF JONES" | "TF NOISE" | "TOPAC" | "TFOPAC"
+            ) {
+                let channelized = family != "TOPAC";
+                let frequency = channelized
+                    .then(|| bandpass_frequency(frequency))
+                    .transpose()?
+                    .flatten();
+                let gain = standard.gain(GainType::T);
+                let configured = if family.ends_with("OPAC") {
+                    state.set_tool_opacity_solve(gain, mode, channelized)
+                } else {
+                    state.set_tool_tf(gain, mode, frequency, invalid_mode)
+                };
+                configured.map_err(|_| setup_error())?;
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }

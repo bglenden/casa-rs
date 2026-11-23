@@ -53,8 +53,10 @@ pub(crate) fn build_solve_groups(
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
     let baseline_solve = options.input_rows.is_baseline();
-    let keep_autocorrelations =
-        options.input_rows == SolveInputRows::GainTool || options.input_rows.is_accor();
+    let keep_autocorrelations = matches!(
+        options.input_rows,
+        SolveInputRows::GainTool | SolveInputRows::OpacityTool
+    ) || options.input_rows.is_accor();
     let seed_combined_g = !baseline_solve
         && !options.input_rows.is_accor()
         && options.gain_type == GainType::G
@@ -173,6 +175,11 @@ pub(crate) fn build_solve_groups(
                 &mut layouts,
                 (&inputs, index),
             )?;
+            if options.input_rows == SolveInputRows::OpacityTool
+                && (group.attempted || group.gather_attempted())
+            {
+                return Err(GainSolveError::OpacityCannotFit);
+            }
         }
         Ok::<_, GainSolveError>(())
     };

@@ -558,9 +558,33 @@ pub(super) fn read_flags(
     rows: &[usize],
     path: &str,
 ) -> Result<Vec<ArrayD<bool>>, FlaggingError> {
+    read_flag_cells(table, rows, path, |column, rows| {
+        column.array_cells_owned(rows)
+    })
+}
+
+pub(super) fn read_flags_uncached(
+    table: &Table,
+    rows: &[usize],
+    path: &str,
+) -> Result<Vec<ArrayD<bool>>, FlaggingError> {
+    read_flag_cells(table, rows, path, |column, rows| {
+        column.array_cells_owned_uncached(rows)
+    })
+}
+
+fn read_flag_cells(
+    table: &Table,
+    rows: &[usize],
+    path: &str,
+    read: impl FnOnce(
+        &casa_tables::TableColumn<'_>,
+        &[usize],
+    ) -> Result<Vec<Option<ArrayValue>>, casa_tables::TableError>,
+) -> Result<Vec<ArrayD<bool>>, FlaggingError> {
     table
         .column_accessor(FLAG_COLUMN)
-        .and_then(|column| column.array_cells_owned(rows))
+        .and_then(|column| read(&column, rows))
         .map_err(|error| FlaggingError::MutateFlags {
             path: path.to_string(),
             reason: error.to_string(),

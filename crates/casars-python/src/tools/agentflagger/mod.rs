@@ -97,11 +97,20 @@ impl PyAgentFlagger {
         }
         let path = absolute_path(Path::new(msname))?;
         self.with_session(py, |session| {
-            let table = open_table(&path)?;
+            let mut table = open_table(&path)?;
             if table.main_table().info().table_type != "Calibration" {
                 return Err(PyRuntimeError::new_err(
                     "agentflagger requires a calibration table (#1527); MeasurementSet support is tracked in #978",
                 ));
+            }
+            let main = table.main_table();
+            if main.schema().is_some_and(|schema| !schema.contains_column("OBSERVATION_ID"))
+                || main.keywords().get("OBSERVATION").is_none()
+            {
+                // CASA's writable NewCalTable open upgrades legacy tables.
+                drop(table);
+                casa_calibration::update_calibration_table(&path).map_err(runtime_error)?;
+                table = open_table(&path)?;
             }
             let column_names = table.main_table().schema().into_iter()
                 .flat_map(casa_tables::TableSchema::columns)

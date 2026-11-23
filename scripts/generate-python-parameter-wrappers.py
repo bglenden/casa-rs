@@ -295,6 +295,7 @@ def casa_parameter(
     concepts: dict[tuple[str, int], dict[str, Any]],
     *,
     stub: bool,
+    distinguish_explicit_string: bool = False,
 ) -> str:
     """One parameter of a CASA signature: CASA's literal default, or, for a
     keyword-only casa-rs control without one, the unset marker."""
@@ -302,6 +303,8 @@ def casa_parameter(
     default = binding.get("default", {})
     if default.get("kind") == "literal":
         text = "..." if stub else python_literal(default["value"])
+        if distinguish_explicit_string and not stub:
+            text = f"_ImplicitStringDefault({text})"
         annotation = binding_annotation(binding, concepts)
     else:
         text = "..." if stub else "_UNSET"
@@ -328,7 +331,13 @@ def casa_signature_lines(
     ]
     positional = [binding for binding in bindings if binding not in keyword_only]
     lines = [f"def {surface_id}("]
-    lines.extend(casa_parameter(binding, concepts, stub=stub) for binding in positional)
+    lines.extend(
+        casa_parameter(
+            binding, concepts, stub=stub,
+            distinguish_explicit_string=surface_id == "importvla" and binding["name"] == "frequencytol",
+        )
+        for binding in positional
+    )
     if keyword_only:
         lines.append("    *,")
         lines.extend(casa_parameter(binding, concepts, stub=stub) for binding in keyword_only)
@@ -395,6 +404,10 @@ def render_task_module(
         lines.extend(
             [
                 "_UNSET = object()",
+                "",
+                "",
+                "class _ImplicitStringDefault(str):",
+                '    """A default that keeps the signature text and distinguishes explicit strings."""',
                 "",
                 "",
                 "def _explicit(values: Mapping[str, object], names: tuple[str, ...]) -> dict[str, ParameterData]:",

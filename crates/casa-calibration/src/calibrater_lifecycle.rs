@@ -89,6 +89,11 @@ enum ConfiguredSolve {
     },
     LegacyEp(Box<LegacyEpSolver>),
     SingleDish(Box<crate::single_dish::tool::Solver>),
+    Opacity {
+        request: Box<crate::GainSolveRequest>,
+        mode: CalibrationOutputMode,
+        channelized: bool,
+    },
     Polarization {
         request: Box<crate::solve::grouping::leakage::LeakageSolveRequest>,
         invalid_mode: bool,
@@ -143,6 +148,9 @@ pub enum CalibraterLifecycleError {
     /// The EP solver uses the original visibility iterator.
     #[error("Error in Calibrater::setsolve.")]
     EpNeedsLegacyIterator,
+    /// The pinned opacity types configure but cannot produce a solve product.
+    #[error("The configured opacity type cannot solve a calibration table.")]
+    OpacityCannotSolve,
     /// The polarization solve could not be configured or completed.
     #[error("{0}")]
     LeakageSolve(String),
@@ -840,7 +848,8 @@ impl CalibraterLifecycle {
             Some(
                 ConfiguredSolve::Task { .. }
                 | ConfiguredSolve::Polarization { .. }
-                | ConfiguredSolve::SingleDish(_),
+                | ConfiguredSolve::SingleDish(_)
+                | ConfiguredSolve::Opacity { .. },
             ) => {
                 return Err(CalibraterLifecycleError::ImageNeedsEp);
             }
@@ -903,6 +912,27 @@ impl CalibraterLifecycle {
         Ok(())
     }
 
+    /// Retain the direct scalar or spectral opacity solve configuration.
+    ///
+    /// # Errors
+    /// Returns an error without an attached MeasurementSet.
+    pub fn set_tool_opacity_solve(
+        &mut self,
+        mut request: crate::GainSolveRequest,
+        mode: CalibrationOutputMode,
+        channelized: bool,
+    ) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation_mut()?;
+        request.gain_type = crate::GainType::T;
+        equation.solve = Some(ConfiguredSolve::Opacity {
+            request: Box::new(request),
+            mode,
+            channelized,
+        });
+        equation.solve_description = None;
+        Ok(())
+    }
+
     fn solve_configured(
         &self,
         activity: Option<&mut crate::solve_stats::ToolSolveActivity>,
@@ -947,6 +977,11 @@ impl CalibraterLifecycle {
                     return Err(CalibraterLifecycleError::SingleDishSolve(
                         "execute a direct single-dish configuration with solve_tool".into(),
                     ));
+                }
+                Some(ConfiguredSolve::Opacity { .. }) => {
+                    // Both real opacity classes reach the pinned complex
+                    // Jones solver, which terminates without a product.
+                    return Err(CalibraterLifecycleError::OpacityCannotSolve);
                 }
                 Some(ConfiguredSolve::Polarization { .. }) => {
                     return Err(CalibraterLifecycleError::LeakageSolve(
@@ -1029,6 +1064,12 @@ impl CalibraterLifecycle {
             }
             return self.solve_single_dish_tool();
         }
+        if matches!(equation.solve, Some(ConfiguredSolve::Opacity { .. })) {
+            if !self.legacy_iterator {
+                self.last_solve_stats = None;
+            }
+            return self.solve_opacity_tool();
+        }
         if matches!(equation.solve, Some(ConfiguredSolve::Polarization { .. })) {
             self.last_solve_stats = None;
             return match self.solve_polarization_tool() {
@@ -1099,6 +1140,43 @@ impl CalibraterLifecycle {
                 if let Some(record) = activity.record() {
                     self.last_activity = Some(record);
                 }
+                Ok(())
+            }
+            Err(error) => {
+                self.reset(true, true)?;
+                Err(error)
+            }
+        }
+    }
+
+    fn solve_opacity_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
+        let equation = self.equation()?;
+        let Some(ConfiguredSolve::Opacity { request, .. }) = &equation.solve else {
+            unreachable!("opacity dispatch requires a configured opacity solver");
+        };
+        let mut request = (**request).clone();
+        request.selection = equation.attachment.selection().clone();
+        request.prior_calibration_tables = equation.apply.tables.clone();
+        request.parang = equation.apply.parang_terms > 0;
+        request.correlation_dependent_flags = self.correlation_dependent_flags.unwrap_or_default();
+        if let CalibraterModel::Point(stokes) = equation.model {
+            request.model_source = GainSolveModelSource::PointSource;
+            request.smodel = stokes;
+        }
+        let mut activity = crate::solve_stats::ToolSolveActivity::default();
+        let gathered = (|| {
+            equation.check_opacity_parameters()?;
+            let ms =
+                MeasurementSet::open(equation.attachment.path()).map_err(AttachmentError::from)?;
+            crate::solve::gather_opacity_solve(&ms, &request, &mut activity)
+                .map_err(|_| CalibraterLifecycleError::OpacityCannotSolve)
+        })();
+        match gathered {
+            Ok(stats) => {
+                if !self.legacy_iterator {
+                    self.last_solve_stats = Some(crate::casa_return::solvestats(&stats));
+                }
+                self.last_activity = activity.record();
                 Ok(())
             }
             Err(error) => {

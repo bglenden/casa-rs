@@ -288,6 +288,7 @@ impl CalibraterLifecycle {
                 ConfiguredSolve::LegacyEp(ep) => ep.output_path(),
                 ConfiguredSolve::SingleDish(solver) => solver.recorded_output()?,
                 ConfiguredSolve::Polarization { request, .. } => &request.output,
+                ConfiguredSolve::Opacity { request, .. } => &request.output_table,
                 ConfiguredSolve::Task { request, .. } => match request.as_ref() {
                     CalibrationSolveRequest::Gain(gain)
                     | CalibrationSolveRequest::GainSpline { gain, .. }

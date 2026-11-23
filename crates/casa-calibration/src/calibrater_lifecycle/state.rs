@@ -296,6 +296,18 @@ impl<'a> SolveState<'a> {
                     solver.mode == CalibrationOutputMode::Append,
                 )
             },
+            ConfiguredSolve::Opacity {
+                request,
+                mode,
+                channelized,
+            } => Self {
+                frequency_dependent: *channelized,
+                ..Self::gain(
+                    request,
+                    if *channelized { "TfOpac" } else { "TOpac" },
+                    *mode == CalibrationOutputMode::Append,
+                )
+            },
             ConfiguredSolve::LegacyEp(solver) => Self {
                 subtype: "EP Jones",
                 table: solver.output_path(),
