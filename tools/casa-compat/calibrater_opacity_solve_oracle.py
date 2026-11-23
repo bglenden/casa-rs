@@ -13,8 +13,10 @@ import sys
 
 import casatasks
 from casatools import calibrater as casa_calibrater
+import numpy as np
 
-from calibrater_apply_tool_oracle import result
+from calibration_smoothcal_oracle import opened
+from calibrater_apply_tool_oracle import result, same_record
 from calibrater_state_oracle import casa_log, native_log
 from record_casa_returns import make_cal_ms
 
@@ -78,6 +80,30 @@ def isolated(work, engine, family, old, vis):
     print(engine, family, 'VI1' if old else 'VI2', 'exit', completed.returncode, flush=True)
 
 
+def flagged_copy(dataset, output):
+    copytree(dataset, output)
+    with opened(output, True) as table:
+        for name in ('FLAG_ROW', 'FLAG'):
+            assert table.putcol(name, np.ones_like(table.getcol(name)))
+
+
+def no_result(factory, family, old, dataset, output):
+    tool = factory()
+    assert tool.setvi(old, True) and tool.open(str(dataset), addcorr=old, addmodel=old)
+    try:
+        assert tool.selectvis(field='0', spw='0:3') and tool.setptmodel([1., 0., 0., 0.])
+        assert tool.setsolve(family, 'inf', str(output), minblperant=2)
+        assert tool.solve() and not output.exists()
+        values = tool.returndict()
+        assert list(values['solve_tables']) == [str(output)]
+        activity = tool.activityrec()
+        assert list(activity['nExpected']) == [1]
+        assert list(activity['nAttempt']) == list(activity['nSucceed']) == [0]
+        return activity, values.get('solvestats')
+    finally:
+        assert tool.close()
+
+
 def run(args):
     assert casatasks.version_string() == '6.7.6.14'
     args.work.mkdir()
@@ -86,12 +112,18 @@ def run(args):
         make_cal_ms(str(vis))
         legacy = args.work/'legacy.ms'
         copytree(args.legacy_dataset, legacy)
+        flagged = {old: args.work/f'flagged-{old}.ms' for old in (False, True)}
+        for old, path in flagged.items():
+            flagged_copy(legacy if old else vis, path)
     isolated(args.work, 'casa', 'T', False, vis)
     for family, old in product(FAMILIES, (False, True)):
         dataset = legacy if old else vis
         path = args.work/f'{family}-{old}-setup.cal'
         with casa_log(args.work/f'{family}-{old}-setup.log') as capture:
             reference = setup_cases(casa_calibrater, capture, dataset, path, family, old)
+        with chdir(args.work):
+            flagged_output = args.work/f'{family}-{old}-flagged.cal'
+            expected = no_result(casa_calibrater, family, old, flagged[old], flagged_output)
         if not args.reference_only:
             from casars.tools import calibrater as native_calibrater
 
@@ -99,6 +131,10 @@ def run(args):
                 native = setup_cases(native_calibrater, capture, dataset, path, family, old)
             assert native == reference, (family, old, native, reference)
             isolated(args.work, 'native', family, old, dataset)
+            actual = no_result(native_calibrater, family, old, flagged[old], flagged_output)
+            same_record(actual[0], expected[0])
+            same_record(actual[1], expected[1])
+        print(family, 'VI1' if old else 'VI2', 'fully flagged solve', flush=True)
         isolated(args.work, 'casa', family, old, dataset)
 
 
