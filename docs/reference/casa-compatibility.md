@@ -1931,11 +1931,11 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `colindex` | `0` | `0`; `colindex` → `colindex` | Default only | Column location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `plotindex` | `0` | `0`; `plotindex` → `plotindex` | Default only | Index to address a subplot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `xaxis` | `''` | `''`; `xaxis` → `xaxis` | Partial | Plot x-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `parangle`, `baseline`, `delay`, `antenna position`, `swp`, `u`, `tec`, `ant-parang`, `gamp`, `Antenna1`, `UVdist`, `WeightSpectrum`, `Baseline`, `flag`, `Real`, `switchedpower`, `timeint`, `WtSp`, `Ant-Elevation`, `GainReal`, `time_interval`, `uvdist_l`, `GainAmp`, `ant1`, `flagrow`, `Wt`, `Velocity`, `opac`, `Feed2`, `corr`, `imaginary`, `gainamp`, `Vwave`, `wwave`, `Frequency`, `observation`, `feed1`, `ant-azimuth`, `rate`, `Elevation`, `Intent`, `Row`, `swpower`, `antpos`, `ant-elevation`, `antenna`, `v`, `V`, `interval`, `sigmaspectrum`, `DelayRate`, `tsys`, `gainphase`, `Ant-Parangle`, `imag`, `Radial Velocity`, `UVwave`, `Observation`, `Poln`, `W`, `timeinterval`, `Channel`, `snr`, `SNR`, `frequency`, `Interval`, `uvdistl`, `disp`, `Imag`, `dispdelay`, `Feed1`, `rho`, `Ant-RA`, `delayrate`, `spgain`, `Antenna`, `Uwave`, `SigmaSpectrum`, `Azimuth`, `Scan`, `Tsys`, `polarization`, `intent`, `phase`, `amp`, `ant-parangle`, `SigmaSp`, `freq`, `wt*amp`, `channel`, `uwave`, `Flag`, `correlation`, `FlagRow`, `TEC`, `SwPower`, `GainPhase`, `GainImag`, `ant-parallacticangle`, `real`, `Time`, `weight`, `antenna2`, `gainimag`, `gimag`, `Antenna2`, `spw`, `gphase`, `Opac`, `parang`, `Amp`, `ant-ra`, `Sigma`, `amplitude`, `Ant-DEC`, `HourAngle`, `U`, `row`, `Wt*Amp`, `gainreal`, `chan`, `Field`, `DispDelay`, `hourang`, `vwave`, `radialvelocity`, `sigma`, `Antenna Position`, `Delay`, `uvwave`, `vel`, `uvdist`, `velocity`, `hourangle`, `poln`, `ant2`, `Phase`, `azimuth`, `Corr`, `parallacticangle`, `weightspectrum`, `Ant-Azimuth`, `wtsp`, ``, `Distance`, `opacity`, `antenna1`, `feed2`, `sigmasp`, `time`, `w`, `wt`, `field`, `greal`, `elevation`, `del`, `ant`, `ant-dec`, `Spw`, `scan`, `Wwave`, `ParAngle` | [paired](#plotms-evidence-paired) |
-| `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Data column to use for x-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary) |
+| `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Use a stored MeasurementSet visibility column for X independently of Y. A blank selector defaults to DATA for a new plot. Additional column forms remain open. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [callibrary](#plotms-evidence-callibrary) |
 | `xframe` | `''` | `''`; `xframe` → `xframe` | Default only | Coordinate frame to use for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `icrs`, `azelgeo`, `b1950`, `galactic`, ``, `j2000`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `xinterp` | `''` | `''`; `xinterp` → `xinterp` | Default only | Interpolation method for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: ``, `nearest`, `cubic spline`, `spline`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yaxis` | `''` | `''`; `yaxis` → `yaxis` | Partial | Plot y-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
-| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Data column to use for y-axis (blank for default/current). Note that unspecified residuals are complex (vector) differences or ratios. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary) |
+| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Use a stored MeasurementSet visibility column for Y independently of X. A blank selector defaults to DATA for a new plot. Per-ordinate lists and additional column forms remain open. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [callibrary](#plotms-evidence-callibrary) |
 | `yframe` | `''` | `''`; `yframe` → `yframe` | Default only | Coordinate frame to use for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yinterp` | `''` | `''`; `yinterp` → `yinterp` | Default only | Interpolation method for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yaxislocation` | `''` | `''`; `yaxislocation` → `yaxislocation` | Partial | Location of the y-axis (blank for default: left) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
@@ -1983,7 +1983,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `symbolfill` | `'fill'` | `'fill'`; `symbolfill` → `symbolfill` | Partial | Fill type of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `symboloutline` | `False` | `False`; `symboloutline` → `symboloutline` | Partial | Outline plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `coloraxis` | `''` | `''`; `coloraxis` → `coloraxis` | Partial | Selects data axis for colorizing [presentation](#plotms-behavior-presentation)<br>Catalog domain: `baseline`, `Antenna1`, `Baseline`, `ant1`, `corr`, `observation`, `Intent`, `antpos`, `Observation`, `Poln`, `Channel`, `AntPos`, `Scan`, `polarization`, `intent`, `channel`, `correlation`, `Time`, `antenna2`, `Antenna2`, `spw`, `chan`, `Field`, `poln`, `ant2`, `Corr`, ``, `antenna1`, `time`, `field`, `Spw`, `scan` | [paired](#plotms-evidence-paired) |
-| `customflaggedsymbol` | `False` | `False`; `customflaggedsymbol` → `customflaggedsymbol` | Partial | Enable custom symbol(s) for flagged points [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `customflaggedsymbol` | `False` | `False`; `customflaggedsymbol` → `customflaggedsymbol` | Partial | Enable custom symbols for flagged calibration solutions. Visible flagged points with independent stored MeasurementSet columns are refused under #1032. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `flaggedsymbolshape` | `'circle'` | `'circle'`; `flaggedsymbolshape` → `flaggedsymbolshape` | Partial | Shape of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `flaggedsymbolsize` | `2` | `2`; `flaggedsymbolsize` → `flaggedsymbolsize` | Partial | Size of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `flaggedsymbolcolor` | `'ff0000'` | `'ff0000'`; `flaggedsymbolcolor` → `flaggedsymbolcolor` | Partial | Color (name or hex code) of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
@@ -2049,11 +2049,11 @@ Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-select
 <a id="plotms-behavior-coordinates"></a>
 ##### Project axes and flags
 
-**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata.
+**Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes with the shared sample mask.
 
-Pointing-coordinate axes and advanced per-axis MS data columns are open.
+Pointing-coordinate axes, per-ordinate column lists and additional MS column forms are open.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [ms-columns](#plotms-evidence-ms-columns), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-averaging"></a>
 ##### Average solution points
@@ -2085,11 +2085,11 @@ Evidence: [paired](#plotms-evidence-paired), [calibration-controls](#plotms-evid
 <a id="plotms-behavior-export"></a>
 ##### Save and publish selected plot products
 
-**Partial** — Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.
+**Partial** — Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export MeasurementSet text and figures for independent stored visibility columns, and calibrated MeasurementSet text and paginated figures, including atmospheric curves.
 
 More export, multi-plot state and interactive display forms remain open.
 
-Evidence: [paired](#plotms-evidence-paired), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
+Evidence: [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
 
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
@@ -2203,6 +2203,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `f9215c62670dfc19138bd9d65a949d22065f1c59`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_callibrary_oracle.py --work <new-dir> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-callibrary-20261119.json`.
+
+<a id="plotms-evidence-ms-columns"></a>
+##### ms-columns
+
+**Same-input MeasurementSet visibility columns — passed.** Four text exports matched 48 visible points with their source metadata, including independently defaulted axes. Two 500 by 360 pixel PNGs had 24 Matplotlib coordinates matching the CASA text exports, with column names and units in the default labels. Two unsupported mixed-column requests produced issue-linked refusals and no native outputs. The input data and flags remained unchanged. Public Python tasks in CASA 6.7.6.14 with casaplotms 2.9.1 and casa-rs on one identical MeasurementSet with stored DATA, CORRECTED_DATA and MODEL_DATA.
+
+- [https://github.com/bglenden/casa-rs/pull/2125](https://github.com/bglenden/casa-rs/pull/2125)
+- Revision: `18e142cc9d6f64785beffb36b081f2dfa78c2d1c`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-columns-20261123.json`.
 
 <a id="plotms-evidence-legacy-calibration"></a>
 ##### legacy-calibration
