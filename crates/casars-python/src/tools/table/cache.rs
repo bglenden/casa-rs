@@ -53,7 +53,10 @@ fn add_open(open: &Open, names: &mut BTreeMap<PathBuf, bool>) -> Result<(), Fail
 
 impl State {
     fn cached_names(&self) -> Result<BTreeMap<PathBuf, bool>, Fail> {
-        let mut names = BTreeMap::new();
+        let mut names = registry::attached_table_paths()
+            .into_iter()
+            .map(|name| (name, false))
+            .collect();
         if let Some(open) = &self.open {
             add_open(open, &mut names)?;
         }

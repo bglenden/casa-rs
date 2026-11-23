@@ -155,6 +155,7 @@ def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures
             "ms": ("ms", "mstool"),
             "ms_createmultims": ("ms", "mstool"),
             "ms_statwt": ("ms", "statwt"),
+            "calibrater": ("calibrater,table", "calibrater"),
             "getantposalma": (task, None),
             "getcalmodvla": (task, None),
         }.get(name, (task, task))
