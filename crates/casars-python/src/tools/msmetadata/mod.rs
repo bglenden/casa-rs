@@ -8,6 +8,7 @@ mod intents;
 mod names;
 mod scan_index;
 mod scan_queries;
+mod source_metadata;
 mod spectral;
 mod spectral_classes;
 mod spw_membership;

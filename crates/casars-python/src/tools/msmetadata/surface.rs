@@ -213,13 +213,13 @@ const METHODS: &[Method] = &[
             param("asnames", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fieldsforsources",
         &[param("asnames", K::Bool, Bool(false))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "fieldsforspw",
@@ -362,7 +362,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("projects", &[], R::Any, Yes),
-    method("propermotions", &[], R::Any, No),
+    method("propermotions", &[], R::Any, Yes),
     method(
         "refdir",
         &[
@@ -380,7 +380,7 @@ const METHODS: &[Method] = &[
             param("spw", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "rxbands",
@@ -468,7 +468,7 @@ const METHODS: &[Method] = &[
     ),
     method("schedule", &[param("obsid", K::Int, Int(-1))], R::Any, No),
     method("sideband", &[param("spw", K::Any, Required)], R::Any, Yes),
-    method("sourcedirs", &[], R::Any, No),
+    method("sourcedirs", &[], R::Any, Yes),
     method(
         "sourceidforfield",
         &[param("field", K::Int, Int(-1))],
@@ -477,7 +477,7 @@ const METHODS: &[Method] = &[
     ),
     method("sourceidsfromsourcetable", &[], R::Any, Yes),
     method("sourcenames", &[], R::Any, Yes),
-    method("sourcetimes", &[], R::Any, No),
+    method("sourcetimes", &[], R::Any, Yes),
     method(
         "spwfordatadesc",
         &[param("ddid", K::Int, Int(-1))],
@@ -610,7 +610,7 @@ const METHODS: &[Method] = &[
             param("spw", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "wvrspws",

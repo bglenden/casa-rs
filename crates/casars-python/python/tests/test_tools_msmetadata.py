@@ -493,3 +493,68 @@ def test_msmetadata_intents_keep_the_actual_state_time_relationship(native_datas
                 metadata.scansforintent("missing")
         finally:
             assert metadata.done()
+
+
+def test_msmetadata_source_measures_use_source_units_and_optional_cells(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    source = tools.table()
+    assert source.open(str(native_dataset / "SOURCE"), nomodify=False)
+    assert source.nrows() == 1
+    assert source.putcell("SPECTRAL_WINDOW_ID", 0, 0)
+    assert source.putcell("TIME", 0, 4.8e9)
+    assert source.putcell("PROPER_MOTION", 0, np.array([1.25e-11, -2.5e-11]))
+    assert source.putcolkeyword("REST_FREQUENCY", "QuantumUnits", ["GHz"])
+    assert source.putcell("REST_FREQUENCY", 0, np.array([1.25, 2.5]))
+    assert source.putcell("TRANSITION", 0, ["A", "LINE B"])
+    assert source.done()
+
+    results = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            assert metadata.sourcetimes()["0"] == {"value": 4.8e9, "unit": "s"}
+            assert metadata.propermotions()["0"] == {
+                "longitude": {"value": 1.25e-11, "unit": "rad/s"},
+                "latitude": {"value": -2.5e-11, "unit": "rad/s"},
+            }
+            frequencies = metadata.restfreqs()
+            assert frequencies["0"] == {
+                "type": "frequency", "refer": "LSRK", "m0": {"value": 1.25e9, "unit": "Hz"},
+            }
+            assert frequencies["1"]["m0"] == {"value": 2.5e9, "unit": "Hz"}
+            np.testing.assert_array_equal(metadata.transitions(), np.array(["A", "LINE B"]), strict=True)
+            np.testing.assert_array_equal(metadata.fieldsforsources()["0"], np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.fieldsforsource(0, True), np.array(["F"]), strict=True)
+            assert metadata.fieldsforsource(999, True).shape == (0,)
+            results.append(metadata.sourcedirs()["0"])
+            for bad_source, bad_spw in [(-1, 0), (0, -1), (999, 0), (0, 999)]:
+                with pytest.raises(RuntimeError):
+                    metadata.restfreqs(bad_source, bad_spw)
+                with pytest.raises(RuntimeError):
+                    metadata.transitions(bad_source, bad_spw)
+        finally:
+            assert metadata.done()
+
+    reference, native = results
+    assert (native["type"], native["refer"]) == (reference["type"], reference["refer"])
+    for axis in ("m0", "m1"):
+        assert native[axis]["unit"] == reference[axis]["unit"]
+        assert native[axis]["value"] == pytest.approx(reference[axis]["value"], abs=2e-15)
+
+    assert source.open(str(native_dataset / "SOURCE"), nomodify=False)
+    assert source.addrows(1)
+    assert source.putcell("SOURCE_ID", 1, 0)
+    assert source.putcell("SPECTRAL_WINDOW_ID", 1, 0)
+    assert source.done()
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            with pytest.raises(RuntimeError, match="duplicate SOURCE table keys"):
+                metadata.restfreqs()
+            with pytest.raises(RuntimeError, match="duplicate SOURCE table keys"):
+                metadata.transitions()
+        finally:
+            assert metadata.done()
