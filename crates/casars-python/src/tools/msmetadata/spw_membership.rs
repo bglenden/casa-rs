@@ -13,7 +13,7 @@ use super::scan_queries::{FieldSelector, int_array, matching_scan};
 use super::spectral::spw_row;
 use crate::convert::{nested_sequence_items, value::CasaValue};
 
-fn checked_spw(ms: &MeasurementSet, id: i64) -> MsResult<i32> {
+pub(super) fn checked_spw(ms: &MeasurementSet, id: i64) -> MsResult<i32> {
     spw_row(&ms.spectral_window()?, id).map(|id| id as i32)
 }
 

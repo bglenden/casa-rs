@@ -44,7 +44,7 @@ fn interval(center: f64, tolerance: f64) -> MsResult<RangeInclusive<f64>> {
     Ok(center - tolerance..=center + tolerance)
 }
 
-fn times_array(times: BTreeSet<Time>) -> CasaValue {
+pub(super) fn times_array(times: BTreeSet<Time>) -> CasaValue {
     CasaValue::floats(times.into_iter().map(|time| time.0).collect())
 }
 

@@ -436,3 +436,60 @@ def test_msmetadata_window_name_and_numpy_time_selector_forms(native_dataset):
                 np.testing.assert_array_equal(unsigned, all_times["0"], strict=True)
         finally:
             assert metadata.done()
+
+
+def test_msmetadata_intents_keep_the_actual_state_time_relationship(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "STATE"), nomodify=False)
+    assert table.nrows() == 1
+    assert table.addrows(2)
+    for row, mode in enumerate(("OBSERVE+TARGET#ON_SOURCE,CALIBRATE_WVR#ON_SOURCE",
+                                "CALIBRATE_PHASE#ON_SOURCE", "UNUSED")):
+        assert table.putcell("OBS_MODE", row, mode)
+    assert table.done()
+    assert table.open(str(native_dataset), nomodify=False)
+    times = table.getcol("TIME")
+    assert len(np.unique(times)) > 1
+    state = (times > times.min()).astype(np.int32)
+    assert table.putcol("STATE_ID", state)
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            scans = metadata.scannumbers()
+            expected = ["CALIBRATE_PHASE#ON_SOURCE", "CALIBRATE_WVR#ON_SOURCE",
+                        "OBSERVE+TARGET#ON_SOURCE"]
+            assert metadata.intents() == [*expected, "UNUSED"]
+            assert metadata.intentsforfield("F") == expected
+            assert metadata.intentsforfield("f") == []
+            for field in (b"F", np.bytes_("F"), np.str_("F"), np.int32(0)):
+                assert metadata.intentsforfield(field) == expected
+            for invalid in (99, -1, np.uint32(0), False, None, [0]):
+                with pytest.raises(RuntimeError):
+                    metadata.intentsforfield(invalid)
+            assert metadata.intentsforscan(int(scans[0])) == expected
+            assert metadata.intentsforspw(0) == expected
+            for pattern in ("OBSERVE*", b"OBSERVE*", np.str_("OBSERVE*"), np.bytes_("OBSERVE*")):
+                np.testing.assert_array_equal(metadata.fieldsforintent(pattern, asnames=True),
+                                              np.array(["F"]), strict=True)
+            with pytest.raises(TypeError):
+                metadata.fieldsforintent(None)
+            literal = metadata.fieldsforintent("OBSERVE+*", asnames=True)
+            expected_literal = np.array([], dtype="U5") if module is casatools else np.array(["F"])
+            np.testing.assert_array_equal(literal, expected_literal, strict=True)
+            np.testing.assert_array_equal(metadata.scansforintent("*WVR*"), scans, strict=True)
+            np.testing.assert_array_equal(metadata.spwsforintent("CALIBRATE*"), np.array([0]), strict=True)
+            np.testing.assert_array_equal(metadata.timesforintent("CALIBRATE_PHASE#ON_SOURCE"),
+                                          np.unique(times[state == 1]), strict=True)
+            np.testing.assert_array_equal(metadata.timesforintent("OBSERVE+TARGET#ON_SOURCE"),
+                                          np.unique(times[state == 0]), strict=True)
+            assert metadata.timesforintent("CALIBRATE*").size == 0
+            assert metadata.scansforintent("UNUSED").size == 0
+            with pytest.raises(RuntimeError):
+                metadata.scansforintent("missing")
+        finally:
+            assert metadata.done()

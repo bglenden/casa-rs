@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1029 (`stubs.rs`).
 
 mod data_description;
+mod intents;
 mod names;
 mod scan_index;
 mod scan_queries;
