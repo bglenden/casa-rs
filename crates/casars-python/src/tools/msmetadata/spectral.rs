@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+use casa_ms::columns::frequency_columns::ChanFreqColumn;
+use casa_ms::{MsError, MsResult, MsSpectralWindow, SubTable};
+use casa_types::measures::record::frequency_to_record;
+use casa_types::quanta::{Dimension, Quantity, Unit, UnitDim, casacore};
+use casa_types::{ArrayValue, ScalarValue, Value};
+use numpy::IntoPyArray;
+use pyo3::prelude::*;
+
+use super::PyMsMetadata;
+use crate::convert::value::CasaValue;
+
+fn spw_row(spw: &MsSpectralWindow<'_>, id: i64) -> MsResult<usize> {
+    let count = spw.row_count();
+    usize::try_from(id)
+        .ok()
+        .filter(|&row| row < count)
+        .ok_or_else(|| {
+            MsError::InvalidInput(format!(
+                "Spectral window ID {id} out of range, must be nonnegative and less than {count}"
+            ))
+        })
+}
+
+fn water_vapor_windows(spw: &MsSpectralWindow<'_>) -> MsResult<Vec<usize>> {
+    let mut all = Vec::new();
+    let mut nominal = Vec::new();
+    for row in 0..spw.row_count() {
+        let name = spw.name(row)?;
+        if name.contains("WVR") {
+            all.push(row);
+            if name == "WVR#NOMINAL" {
+                nominal.push(row);
+            }
+        }
+    }
+    Ok(if nominal.is_empty() { all } else { nominal })
+}
+
+fn column_unit(spw: &MsSpectralWindow<'_>, column: &str) -> MsResult<Unit> {
+    let unit = spw
+        .table()
+        .column_keywords(column)
+        .and_then(|keywords| keywords.get("QuantumUnits"))
+        .and_then(|units| match units {
+            Value::Array(ArrayValue::String(units)) => units.first().map(String::as_str),
+            Value::Scalar(ScalarValue::String(unit)) => Some(unit.as_str()),
+            _ => None,
+        })
+        .unwrap_or("Hz");
+    casacore::casacore_unit(unit).map_err(|error| MsError::InvalidInput(error.to_string()))
+}
+
+fn convert_units(
+    values: &mut [f64],
+    source: Unit,
+    requested: &str,
+    conformant: bool,
+) -> MsResult<()> {
+    let target = casacore::casacore_unit(requested)
+        .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+    if source.val().dim == target.val().dim {
+        let inverse = target.val().factor / source.val().factor;
+        if inverse != 1.0 {
+            for value in values {
+                *value /= inverse;
+            }
+        }
+    } else {
+        if conformant {
+            let time = UnitDim::basis(Dimension::Time);
+            let angle = UnitDim::basis(Dimension::Angle);
+            let length = UnitDim::basis(Dimension::Length);
+            let frequency = time.pow(-1);
+            let dimensions = (source.val().dim, target.val().dim);
+            if ![
+                (time, angle),
+                (angle, time),
+                (length, frequency),
+                (frequency, length),
+            ]
+            .contains(&dimensions)
+            {
+                return Err(MsError::InvalidInput(format!(
+                    "From/to units not consistent. Cannot convert {} to {}",
+                    source.name(),
+                    target.name()
+                )));
+            }
+        }
+        for value in values {
+            *value = casacore::get_value(&Quantity::with_unit(*value, source.clone()), &target);
+        }
+    }
+    Ok(())
+}
+
+#[pymethods]
+impl PyMsMetadata {
+    #[pyo3(signature = (includewvr = true), text_signature = "($self, includewvr=True)")]
+    fn nspw(&self, py: Python<'_>, includewvr: bool) -> PyResult<usize> {
+        self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let total = windows.row_count();
+            if includewvr {
+                Ok(total)
+            } else {
+                Ok(total - water_vapor_windows(&windows)?.len())
+            }
+        })
+    }
+
+    #[pyo3(signature = (complement = false), text_signature = "($self, complement=False)")]
+    fn wvrspws(&self, py: Python<'_>, complement: bool) -> PyResult<Py<PyAny>> {
+        let ids = self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let wvr = water_vapor_windows(&windows)?;
+            let selected = if complement {
+                (0..windows.row_count())
+                    .filter(|index| wvr.binary_search(index).is_err())
+                    .collect::<Vec<_>>()
+            } else {
+                wvr
+            };
+            Ok(selected.into_iter().map(|id| id as i64).collect::<Vec<_>>())
+        })?;
+        Ok(ids.into_pyarray(py).into_any().unbind())
+    }
+
+    #[pyo3(signature = (spw), text_signature = "($self, spw)")]
+    fn nchan(&self, py: Python<'_>, spw: i64) -> PyResult<usize> {
+        self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let row = spw_row(&windows, spw)?;
+            let widths = windows.table().cell_accessor(row, "CHAN_WIDTH")?.array()?;
+            Ok(widths.len())
+        })
+    }
+
+    #[pyo3(signature = (spw, unit = "Hz"), text_signature = "($self, spw, unit='Hz')")]
+    fn chanfreqs(&self, py: Python<'_>, spw: i64, unit: &str) -> PyResult<Py<PyAny>> {
+        let frequencies = self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let mut values = windows.chan_freq(spw_row(&windows, spw)?)?;
+            convert_units(
+                &mut values,
+                column_unit(&windows, "CHAN_FREQ")?,
+                unit,
+                false,
+            )?;
+            Ok(values)
+        })?;
+        Ok(frequencies.into_pyarray(py).into_any().unbind())
+    }
+
+    #[pyo3(signature = (spw, unit = "Hz"), text_signature = "($self, spw, unit='Hz')")]
+    fn chanwidths(&self, py: Python<'_>, spw: i64, unit: &str) -> PyResult<Py<PyAny>> {
+        let widths = self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let mut values = windows.chan_width(spw_row(&windows, spw)?)?;
+            convert_units(
+                &mut values,
+                column_unit(&windows, "CHAN_WIDTH")?,
+                unit,
+                true,
+            )?;
+            Ok(values)
+        })?;
+        Ok(widths.into_pyarray(py).into_any().unbind())
+    }
+
+    #[pyo3(signature = (spw, unit = "Hz"), text_signature = "($self, spw, unit='Hz')")]
+    fn meanfreq(&self, py: Python<'_>, spw: i64, unit: &str) -> PyResult<f64> {
+        self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let values = windows.chan_freq(spw_row(&windows, spw)?)?;
+            if values.is_empty() {
+                return Err(MsError::InvalidInput("No channel frequencies".into()));
+            }
+            let mut mean = values.iter().sum::<f64>() / values.len() as f64;
+            convert_units(
+                std::slice::from_mut(&mut mean),
+                column_unit(&windows, "CHAN_FREQ")?,
+                unit,
+                false,
+            )?;
+            Ok(mean)
+        })
+    }
+
+    #[pyo3(signature = (spw), text_signature = "($self, spw)")]
+    fn sideband(&self, py: Python<'_>, spw: i64) -> PyResult<i32> {
+        self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            Ok(if windows.net_sideband(spw_row(&windows, spw)?)? == 2 {
+                1
+            } else {
+                -1
+            })
+        })
+    }
+
+    #[pyo3(signature = (spw = -1), text_signature = "($self, spw=-1)")]
+    fn reffreq(&self, py: Python<'_>, spw: i64) -> PyResult<Py<PyAny>> {
+        let frequency = self.with_ms(py, |ms| {
+            let windows = ms.spectral_window()?;
+            let row = spw_row(&windows, spw)?;
+            let frequency = ChanFreqColumn::new(windows.table()).get_ref_frequency(row)?;
+            Ok(frequency_to_record(&frequency))
+        })?;
+        CasaValue::from_record(&frequency).into_python(py)
+    }
+}
