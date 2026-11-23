@@ -45,11 +45,28 @@ impl<'a, T: Copy> ChannelMatrix<'a, T> {
     }
 }
 
-#[derive(Clone, Copy)]
-enum WeightKind {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WeightKind {
     Observed,
     Calibrated,
     Unit,
+}
+
+pub(crate) fn visibility_weight_kind(
+    column: OptionalMainColumn,
+    has_observed: bool,
+    has_corrected: bool,
+    time_averaged: bool,
+) -> WeightKind {
+    use OptionalMainColumn::{Data, FloatData, LagData, ModelData};
+    match column {
+        Data => WeightKind::Observed,
+        FloatData if time_averaged && has_corrected => WeightKind::Observed,
+        ModelData if has_corrected => WeightKind::Calibrated,
+        ModelData if has_observed => WeightKind::Observed,
+        ModelData | LagData => WeightKind::Unit,
+        _ => WeightKind::Calibrated,
+    }
 }
 
 pub(super) struct InputStatistic<'a> {
@@ -278,16 +295,7 @@ impl<'a> ChannelAverages<'a> {
         if !self.propagate_weights {
             return WeightKind::Unit;
         }
-        match column {
-            OptionalMainColumn::Data => WeightKind::Observed,
-            OptionalMainColumn::FloatData if self.time_averaged && self.corrected => {
-                WeightKind::Observed
-            }
-            OptionalMainColumn::ModelData if self.corrected => WeightKind::Calibrated,
-            OptionalMainColumn::ModelData if self.data => WeightKind::Observed,
-            OptionalMainColumn::ModelData | OptionalMainColumn::LagData => WeightKind::Unit,
-            _ => WeightKind::Calibrated,
-        }
+        visibility_weight_kind(column, self.data, self.corrected, self.time_averaged)
     }
 
     fn weight_at(&self, kind: WeightKind, corr: usize, chan: usize) -> f32 {
@@ -386,7 +394,7 @@ pub(super) fn unaveraged_spectra(
     ))
 }
 
-pub(super) fn weight_from_sigma(sigma: f32) -> f32 {
+pub(crate) fn weight_from_sigma(sigma: f32) -> f32 {
     if sigma > f32::MIN_POSITIVE {
         1.0 / (sigma * sigma)
     } else {

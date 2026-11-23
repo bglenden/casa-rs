@@ -4,8 +4,10 @@
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use super::{MsAxis, MsDataColumn};
+use super::{ChannelBin, FloatGrid, MsAxis, MsDataColumn, MsPlotSpec, PlotMsInput};
 use crate::MeasurementSet;
+use crate::schema::main_table::OptionalMainColumn;
+use crate::transform::{WeightKind, visibility_weight_kind, weight_from_sigma};
 
 pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) -> bool {
     axes.into_iter()
@@ -13,14 +15,27 @@ pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) 
         .any(|(axis, column)| axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model())
 }
 
+pub(super) fn weight_axis_columns(
+    axes: [Option<MsAxis>; 3],
+    columns: [MsDataColumn; 3],
+) -> [Option<MsDataColumn>; 3] {
+    std::array::from_fn(|index| {
+        matches!(
+            axes[index],
+            Some(MsAxis::Weight | MsAxis::WeightSpectrum | MsAxis::Sigma | MsAxis::SigmaSpectrum)
+        )
+        .then_some(columns[index])
+    })
+}
+
 pub(super) fn check_averaging(
     averaging: bool,
-    independent_ordinates: bool,
+    extended_averaging_with_independent_ordinates: bool,
     columns: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
-    if averaging && independent_ordinates {
+    if extended_averaging_with_independent_ordinates {
         return Err(TaskFailure::validation(
-            "averaging independent MeasurementSet ordinate columns is pending #1032",
+            "time, baseline, antenna and SPW averaging of independent MeasurementSet ordinate columns is pending #1032",
         ));
     }
     if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
@@ -29,6 +44,104 @@ pub(super) fn check_averaging(
         ));
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ChannelWeightKinds {
+    pub(super) axes: [WeightKind; 3],
+    pub(super) primary: WeightKind,
+}
+
+impl ChannelWeightKinds {
+    pub(super) fn uses(self, kind: WeightKind) -> bool {
+        self.primary == kind || self.axes.contains(&kind)
+    }
+}
+
+pub(super) fn channel_weight_kinds(
+    ms: &MeasurementSet,
+    spec: &MsPlotSpec,
+    input: &PlotMsInput<'_>,
+) -> ChannelWeightKinds {
+    let primary = spec.data_column;
+    let columns = [
+        input.x_data_column.unwrap_or(primary),
+        primary,
+        input.secondary_y_data_column.unwrap_or(primary),
+    ];
+    let axes = [
+        Some(spec.x_axis),
+        Some(spec.y_axis()),
+        spec.secondary_y_axis(),
+    ];
+    let schema = ms.main_table().schema();
+    let has = |name| schema.is_some_and(|schema| schema.contains_column(name));
+    let mut active = axes
+        .into_iter()
+        .zip(columns)
+        .zip(input.weight_axis_columns)
+        .filter_map(|((axis, column), weight_column)| {
+            let weight_column = match weight_column {
+                Some(MsDataColumn::Corrected) if !has("CORRECTED_DATA") => Some(MsDataColumn::Data),
+                weight_column => weight_column,
+            };
+            weight_column.or_else(|| {
+                axis.is_some_and(MsAxis::is_visibility_math)
+                    .then_some(column)
+            })
+        });
+    // PlotMS configures the transform to load all columns for a mixed-column
+    // request, so a model uses the corrected or observed weighting when present.
+    let first = active.next();
+    let all = first.is_some_and(|first| active.any(|column| column != first));
+    let has_observed = all && has("DATA");
+    let has_corrected = all && has("CORRECTED_DATA");
+    let primary = if has_observed {
+        MsDataColumn::Data
+    } else if has_corrected {
+        MsDataColumn::Corrected
+    } else {
+        first.unwrap_or(primary)
+    };
+    let kind = |column| {
+        let column = match column {
+            MsDataColumn::Data => OptionalMainColumn::Data,
+            MsDataColumn::Corrected => OptionalMainColumn::CorrectedData,
+            MsDataColumn::Model => OptionalMainColumn::ModelData,
+            _ => return WeightKind::Unit,
+        };
+        visibility_weight_kind(column, has_observed, has_corrected, false)
+    };
+    ChannelWeightKinds {
+        axes: columns.map(kind),
+        primary: kind(primary),
+    }
+}
+
+pub(super) fn bin_has_weight(
+    spectrum: &FloatGrid,
+    corr: usize,
+    bin: &ChannelBin,
+    flags: &ndarray::ArrayView2<'_, bool>,
+) -> bool {
+    bin.channels()
+        .filter(|&channel| !flags[(corr, channel)])
+        .map(|channel| spectrum.values[corr * spectrum.chan_count + channel])
+        .sum::<f64>()
+        > 0.0
+}
+
+pub(super) fn inverse_variance(spectrum: &FloatGrid) -> FloatGrid {
+    FloatGrid {
+        corr_count: spectrum.corr_count,
+        chan_count: spectrum.chan_count,
+        values: spectrum
+            .values
+            .iter()
+            .copied()
+            .map(|sigma| f64::from(weight_from_sigma(sigma as f32)))
+            .collect(),
+    }
 }
 
 pub(super) fn ordinate_columns(
