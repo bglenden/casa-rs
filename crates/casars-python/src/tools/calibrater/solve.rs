@@ -253,11 +253,15 @@ fn standard_request(
         "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
         "T" | "T JONES" | "T NOISE" => CalibrationSolveRequest::Gain(standard.gain(GainType::T)),
         "K" | "K JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::K)),
+        "KMBD" | "KMBD JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::KMbd)),
         "KCROSS" | "KCROSS JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::KCross)),
+        "KANTPOS" | "KANTPOS JONES" => {
+            CalibrationSolveRequest::Gain(standard.gain(GainType::KAntPos))
+        }
         "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
             standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
         ),
-        "BPOLY" => return Err(setup_error()),
+        "BPOLY" | "P" | "P JONES" => return Err(setup_error()),
         "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
             let frequency_dependent = family.starts_with("MF");
             CalibrationSolveRequest::Baseline {
@@ -289,9 +293,6 @@ fn standard_request(
                 controls,
                 active_phase,
             }
-        }
-        _ if casa_calibration::CalibraterLifecycle::recognizes_calibration_type(family) => {
-            return crate::tools::not_yet_implemented_in("calibrater", "setsolve", 1528);
         }
         _ => return Err(setup_error()),
     })
@@ -384,9 +385,13 @@ impl super::PyCalibrater {
             CalibrationOutputMode::Replace
         };
         let family = r#type.unwrap_or("MF").to_ascii_uppercase();
+        let family = casa_calibration::CalibraterLifecycle::direct_solve_factory_alias(&family)
+            .map(str::to_owned)
+            .unwrap_or(family);
         let single_dish = single_dish_controls(&family, fraction, numedge, radius, smooth)?;
         let polarization =
             casa_calibration::CalibraterLifecycle::recognizes_polarization_solve_type(&family);
+        let gather_only = casa_calibration::CalibraterLifecycle::gather_only_solve_type(&family);
         let baseline = matches!(
             family.as_str(),
             "M" | "M MUELLER" | "MF" | "MF MUELLER" | "A" | "A MUELLER"
@@ -428,7 +433,7 @@ impl super::PyCalibrater {
         let table = PathBuf::from(table.unwrap_or(""));
         warn_phaseonly(py, phase_only)?;
         self.with_lifecycle(py, move |state| {
-            if accor || fringe.is_some() || polarization {
+            if accor || fringe.is_some() || polarization || gather_only.is_some() {
                 state
                     .resolve_primary_tool_refant(reference.clone())
                     .map_err(super::runtime_error)?;
@@ -499,26 +504,29 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
-            if matches!(
-                family.as_str(),
-                "TF" | "TF JONES" | "TF NOISE" | "TOPAC" | "TFOPAC"
-            ) {
-                let channelized = family != "TOPAC";
+            if let Some((subtype, channelized)) = gather_only {
                 let frequency = channelized
                     .then(|| bandpass_frequency(frequency))
                     .transpose()?
                     .flatten();
-                let gain = standard.gain(GainType::T);
-                let configured = if family.ends_with("OPAC") {
-                    state.set_tool_opacity_solve(gain, mode, channelized)
-                } else {
-                    state.set_tool_tf(gain, mode, frequency, invalid_mode)
-                };
-                configured.map_err(|_| setup_error())?;
-                state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
-                return Ok(true);
-            }
-            if family == "GSPLINE" {
+                state
+                    .set_tool_gather_only_solve(
+                        subtype,
+                        standard.gain(GainType::T),
+                        mode,
+                        frequency,
+                    )
+                    .map_err(|_| setup_error())?;
+            } else if matches!(family.as_str(), "TF" | "TF JONES" | "TF NOISE") {
+                state
+                    .set_tool_tf(
+                        standard.gain(GainType::T),
+                        mode,
+                        bandpass_frequency(frequency)?,
+                        invalid_mode,
+                    )
+                    .map_err(|_| setup_error())?;
+            } else if family == "GSPLINE" {
                 configure_generic_spline(state, standard, mode, &apmode)?;
             } else {
                 let request = standard_request(

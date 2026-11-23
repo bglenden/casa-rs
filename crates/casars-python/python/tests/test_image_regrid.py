@@ -54,6 +54,91 @@ def _compare(actual, expected, *, tolerance=2e-5):
     assert actual[5:] == expected[5:]
 
 
+def test_regrid_retains_selected_spectral_axis_without_a_template_coordinate(casa):
+    square = np.arange(8**3, dtype=np.float32).reshape(8, 8, 8)
+    sky = casa.coordsys().newcoordsys(direction=True).torecord()
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=square)
+            expected = _read(source)
+            for template in ({}, sky):
+                result = source.regrid(csys=template, axes=[2], method="cubic", decimate=1)
+                try:
+                    _compare(_read(result), expected, tolerance=0)
+                finally:
+                    result.done()
+        finally:
+            source.done()
+
+    # CASA compares the selected spectral length to the first output dimension
+    # for axes=[2]. Check the correct axis on a rectangular cube.
+    source = tools.image()
+    try:
+        assert source.fromarray(pixels=square[:, :, :5])
+        expected = _read(source)
+        result = source.regrid(axes=[2], method="cubic", decimate=1)
+        try:
+            _compare(_read(result), expected, tolerance=0)
+        finally:
+            result.done()
+        with pytest.raises(RuntimeError, match="must keep its input length"):
+            source.regrid(axes=[2], shape=[8, 8, 6], decimate=1)
+    finally:
+        source.done()
+
+
+def test_regrid_forces_sampling_of_native_spectral_axis(casa):
+    pixels = np.arange(8**3, dtype=np.float32).reshape(8, 8, 8)
+    valid = np.ones_like(pixels, dtype=bool)
+    valid[3, 3, 3] = False
+    sampled = valid.copy()
+    sampled[3, 3, 4] = False
+    coords = casa.coordsys().newcoordsys(direction=True)
+    try:
+        sky = coords.torecord()
+    finally:
+        coords.done()
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromarray(pixels=pixels)
+            assert source.putregion(pixelmask=valid)
+            for template in ({}, sky, _record(source)):
+                for force, expected in ((False, valid), (True, sampled)):
+                    result = source.regrid(csys=template, axes=[2], method="cubic",
+                                           decimate=1, force=force)
+                    try:
+                        np.testing.assert_array_equal(result.getchunk(getmask=True), expected)
+                        np.testing.assert_allclose(result.getchunk()[expected], pixels[expected])
+                    finally:
+                        result.done()
+        finally:
+            source.done()
+
+
+def test_regrid_rejects_multiple_beams_on_selected_spectral_axis(casa):
+    coords = casa.coordsys().newcoordsys(direction=True)
+    try:
+        sky = coords.torecord()
+    finally:
+        coords.done()
+    for api in (casa, tools):
+        source = api.image()
+        try:
+            assert source.fromshape(shape=[8, 8, 8])
+            for channel in range(8):
+                assert source.setrestoringbeam(
+                    major=f"{channel + 4}arcsec", minor="3arcsec", pa="0deg", channel=channel
+                )
+            for template in ({}, sky):
+                with pytest.raises(RuntimeError, match="multiple beams"):
+                    source.regrid(csys=template, axes=[2], decimate=1)
+            assert source.isopen()
+        finally:
+            source.done()
+
+
 @pytest.mark.parametrize("kind", ["f", "d", "c", "cd"])
 def test_regrid_defaults_preserve_four_pixel_types_and_native_writer_readers(casa, tmp_path, kind):
     data = _ramp().astype(np.float64)

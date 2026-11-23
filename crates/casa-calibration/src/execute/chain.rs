@@ -130,10 +130,11 @@ pub(crate) fn has_polarization_matrix(plan: &ApplyPlan) -> bool {
 /// The supported CASA VisCal::Type order. Equal types keep supplied apply order.
 pub(crate) fn viscal_order(subtype: &str) -> u8 {
     match subtype {
+        baseline::NOISE_SUBTYPE => 1,
         "M Mueller" | "Mf Mueller" | "SDSKY_PS" | "SDSKY_OTF" | "SDSKY_RASTER" => 2,
         "KAntPos Jones" => 3,
         "B Jones" | "B TSYS" | "BPOLY" => 4,
-        "K Jones" | "Kcross Jones" | "K WVR" | "Fringe Jones" => 5,
+        "K Jones" | "KMBD Jones" | "Kcross Jones" | "K WVR" | "Fringe Jones" => 5,
         "J Jones" | "Jf Jones" => 7,
         "D Jones" | "Df Jones" | "Dgen Jones" | "Dfgen Jones" | "DLLS Jones" | "DfLLS Jones" => 8,
         "X Jones" | "Xf Jones" | "Xparang Jones" | "Xfparang Jones" | "X Mueller"

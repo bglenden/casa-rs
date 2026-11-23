@@ -647,6 +647,18 @@ pub(crate) fn interpolate_time_linear(
     }
 }
 
+/// Reconstruct CASA's complex parameter from its separate Float arrays.
+pub(crate) fn complex_from_casa_polar(amplitude: f32, phase: f32) -> Complex32 {
+    Complex32::new(amplitude * phase_cosine(phase), amplitude * phase.sin())
+}
+
+// CASA evaluates the two Float arrays separately. Combining calls into the
+// platform sincos routine can change the rounding of CAL Jones elements.
+#[inline(never)]
+fn phase_cosine(phase: f32) -> f32 {
+    phase.cos()
+}
+
 pub(crate) fn interpolate_gain_amplitude_phase(
     lower: Complex32,
     upper: Complex32,

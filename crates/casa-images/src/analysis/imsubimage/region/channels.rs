@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Channel ranges for image regions.
 
-use casa_coordinates::CoordinateType;
+use casa_coordinates::{CoordinateSystem, CoordinateType};
+use casa_types::quanta::{Quantity, Unit};
 
 use crate::analysis::{ChannelSpan, parse_image_channel_spans};
 use crate::{ImageError, ImageInterface, ImagePixel};
+
+use super::{channel_position, crtf_spectral_bounds};
 
 pub(super) fn resolve_channels<T: ImagePixel>(
     image: &dyn ImageInterface<T>,
@@ -23,7 +26,7 @@ pub(super) fn resolve_channels<T: ImagePixel>(
         ImageError::InvalidMetadata("channel selection requires a spectral axis".into())
     })?;
     let requested = arg_trimmed
-        .map(|text| parse_image_channel_spans(text, full_shape[axis]))
+        .map(|text| channel_spans(text, image.coordinates(), axis, full_shape[axis]))
         .transpose()?;
     let mut spans = match crtf_chans {
         None => requested.expect("one channel selection"),
@@ -72,6 +75,57 @@ pub(super) fn resolve_channels<T: ImagePixel>(
         spans.clear();
     }
     Ok((Some(axis), spans))
+}
+
+fn channel_spans(
+    text: &str,
+    coordinates: &CoordinateSystem,
+    axis: usize,
+    length: usize,
+) -> Result<Vec<ChannelSpan>, ImageError> {
+    let Some((_, range)) = text
+        .split_once('=')
+        .filter(|(key, _)| key.trim() == "range")
+    else {
+        return parse_image_channel_spans(text, length);
+    };
+    let range = range.trim();
+    let invalid = || ImageError::CasaSelection(format!("invalid spectral range {text:?}"));
+    let (lower, upper) = range
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .and_then(|inner| inner.split_once(','))
+        .ok_or_else(invalid)?;
+    // CASA requires both range endpoints to have conforming units. Its
+    // legacy integer selector above is the form for unitless channel bounds.
+    let endpoint = |text: &str| -> Result<bool, ImageError> {
+        let text = text.trim();
+        if let Some(value) = channel_position(text) {
+            value
+                .parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite())
+                .ok_or_else(invalid)?;
+            return Ok(true);
+        }
+        let frequency = Quantity::read(text).map_err(|_| invalid())?;
+        let hz = Unit::new("Hz").expect("built-in frequency unit");
+        frequency
+            .get_value_in(&hz)
+            .ok()
+            .filter(|value| value.is_finite())
+            .ok_or_else(invalid)?;
+        Ok(false)
+    };
+    if endpoint(lower)? != endpoint(upper)? {
+        return Err(invalid());
+    }
+    let [first, last] = crtf_spectral_bounds(range, coordinates, axis, length, None)?;
+    Ok(vec![ChannelSpan {
+        first,
+        last,
+        step: 1,
+    }])
 }
 
 fn upper_bound(spans: &[ChannelSpan]) -> usize {
