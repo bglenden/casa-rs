@@ -134,7 +134,7 @@ pub(crate) fn viscal_order(subtype: &str) -> u8 {
         "M Mueller" | "Mf Mueller" | "SDSKY_PS" | "SDSKY_OTF" | "SDSKY_RASTER" => 2,
         "KAntPos Jones" => 3,
         "B Jones" | "B TSYS" | "BPOLY" => 4,
-        "K Jones" | "Kcross Jones" | "K WVR" | "Fringe Jones" => 5,
+        "K Jones" | "KMBD Jones" | "Kcross Jones" | "K WVR" | "Fringe Jones" => 5,
         "J Jones" | "Jf Jones" => 7,
         "D Jones" | "Df Jones" | "Dgen Jones" | "Dfgen Jones" | "DLLS Jones" | "DfLLS Jones" => 8,
         "X Jones" | "Xf Jones" | "Xparang Jones" | "Xfparang Jones" | "X Mueller"

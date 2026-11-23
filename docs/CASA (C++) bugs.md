@@ -10650,3 +10650,15 @@ CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type
 ## A Noise baseline indexing assumes ordered antenna columns
 
 With eight antennas, both CASA 6.7.6.14 calibrater iterators applied the `A Noise` coefficients of `(0, 7)` to a deliberately reversed `(1, 0)` visibility. Casa-rs uses the coefficients of `(0, 1)`, conjugates them, and exchanges the cross hands to preserve the visibility's orientation. The ordinary ordered-baseline inputs agree with CASA. [Paired A Noise oracle](../tools/casa-compat/calibrater_anoise_oracle.py)
+
+## Direct EVLASWP can gather data and fail at fitting
+
+CASA 6.7.6.14 accepts direct `calibrater.setsolve(type='EVLASWP')` when the MeasurementSet links readable `SYSPOWER` and `CALDEVICE` tables. Both iterators record expected intervals and write no table for fully flagged input. Both terminate on the isolated usable visibility fit. Casa-rs retains the gather stage and returns a recoverable solve error for usable data. [Paired switched-power and KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+
+## Joint KMBD fitting can abort with single-correlation buffers
+
+When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 iterators refuse a mix of single- and dual-hand buffers. Two single-hand buffers instead terminate when the one-hand answer is assigned to the two-hand table array. Casa-rs reports a recoverable solve error in each case. [Paired KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+
+## A calibrater gain matrix can keep its correction direction during corruption
+
+In CASA 6.7.6.14, a VI2 session that calls `correct` and then `corrupt` with the same single-slot gain table can apply the inverse gain to both visibility columns. Casa-rs applies the inverse gain to `CORRECTED_DATA` and the forward gain to `MODEL_DATA`. The same planted session with VI1 terminates during its direct amplitude G fit in an isolated CASA process. The native VI1 session completes the fit and both visibility operations. [Paired session oracle](../tools/casa-compat/calibrater_session_oracle.py)

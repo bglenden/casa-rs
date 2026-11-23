@@ -71,6 +71,7 @@ mod sky;
 pub(crate) use fields::load as load_interpolated_calibration_table;
 mod gain_validity;
 mod initialization;
+mod ordered_gain;
 use gain_validity::correcting_gain;
 pub(crate) mod additive;
 mod additive_polynomial;
@@ -1870,6 +1871,7 @@ struct RowGeometryCache {
     projected_offsets: HashMap<ProjectedOffsetKey, [f64; 3]>,
     materialized_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
     bandpass_power: bandpass::PowerCache,
+    ordered_gains: ordered_gain::Cache,
     calibration_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
     transient_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
     transient_frequency_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
@@ -2684,6 +2686,13 @@ fn apply_row_all_channels(
             bounded_frequency_cache && ant1.interpolated,
             bounded_frequency_cache && ant2.interpolated,
         );
+        let ordered_gains = !forward_model
+            && table_plan.spec.callibrary.is_some()
+            && matches!(subtype, "B Jones" | "G Jones" | "T Jones");
+        let raw_jones = ordered_gains.then_some([
+            (Arc::as_ptr(&ant1.grid), !ant1.interpolated),
+            (Arc::as_ptr(&ant2.grid), !ant2.interpolated),
+        ]);
         let (ant1, ant2) = (ant1.grid, ant2.grid);
         let bandpass_weights = if is_bandpass && !is_tsys && calibrate_weights {
             let mut scratch = bandpass::PowerCache::default();
@@ -2707,6 +2716,7 @@ fn apply_row_all_channels(
                 geometry_cache.as_deref_mut(),
                 loaded_table,
                 ant1_transient,
+                ordered_gains,
             )?;
             let ant2 = bandpass::prepare(
                 ant2,
@@ -2715,6 +2725,7 @@ fn apply_row_all_channels(
                 geometry_cache.as_deref_mut(),
                 loaded_table,
                 ant2_transient,
+                ordered_gains,
             )?;
             (ant1, ant2)
         } else {
@@ -2732,7 +2743,7 @@ fn apply_row_all_channels(
             } else {
                 &cal_spw.channel_frequencies_hz
             },
-            cal_ref_frequency_hz: cal_spw_reference_frequency_hz(cal_spw),
+            cal_ref_frequency_hz: delay_reference_frequency(cal_spw, table_plan, loaded_table),
             // Prepared solutions already occupy the full MS grid. Temporal
             // interpolation happened at lookup; sample original bins directly.
             interp: if resample_frequency {
@@ -2811,6 +2822,7 @@ fn apply_row_all_channels(
 
         let materialize_started_at = compute_profile.as_ref().map(|_| Instant::now());
         if !forward_model
+            && !ordered_gains
             && !calibrate_weights
             && !first_receptor_only
             && let Some(pair) = build_fast_gain_pair(
@@ -2859,6 +2871,47 @@ fn apply_row_all_channels(
                 materialize_started_at,
             );
             profile.row_dependent_materialized_pairs += 1;
+        }
+
+        if let Some([raw_first, raw_second]) = raw_jones
+            && matches!(ant1.as_ref(), CalibrationGrid::Complex(_))
+            && matches!(ant2.as_ref(), CalibrationGrid::Complex(_))
+        {
+            flush_fast_gain_pairs(
+                &mut fast_gain_pairs,
+                &mut output,
+                compute_profile.as_deref_mut(),
+            )?;
+            let mut scratch = ordered_gain::Cache::default();
+            let cache = geometry_cache
+                .as_deref_mut()
+                .map_or(&mut scratch, |cache| &mut cache.ordered_gains);
+            let antennas = [
+                ordered_gain::Antenna {
+                    id: row.antenna1,
+                    grid: &ant1,
+                    round_trip: raw_first.1 && raw_first.0 == Arc::as_ptr(&ant1),
+                },
+                ordered_gain::Antenna {
+                    id: row.antenna2,
+                    grid: &ant2,
+                    round_trip: raw_second.1 && raw_second.0 == Arc::as_ptr(&ant2),
+                },
+            ];
+            if ordered_gain::apply(
+                cache,
+                antennas,
+                ordered_gain::Options {
+                    table: table_index,
+                    calibrate_weights,
+                    bandpass_weights: bandpass_weights.as_deref(),
+                    first_receptor_only,
+                },
+                &mut output,
+                [weight_spectrum.as_mut(), implicit_weight_spectrum.as_mut()],
+            )? {
+                continue;
+            }
         }
 
         if !forward_model
@@ -4171,7 +4224,7 @@ enum TimeParameterFamily {
 impl TimeParameterFamily {
     fn from_subtype(subtype: &str) -> Option<Self> {
         match subtype {
-            "K Jones" | "Kcross Jones" => Some(Self::Delay),
+            "K Jones" | "KMBD Jones" | "Kcross Jones" => Some(Self::Delay),
             "KAntPos Jones" => Some(Self::Antpos),
             "EGainCurve" => Some(Self::GainCurve { power: false }),
             "EPowerCurve" => Some(Self::GainCurve { power: true }),
@@ -5112,7 +5165,7 @@ fn load_parameters(
             CalibrationParameterFamily::Float
                 if matches!(
                     table_plan.summary.table_subtype.as_str(),
-                    "K Jones" | "Kcross Jones"
+                    "K Jones" | "KMBD Jones" | "Kcross Jones"
                 ) =>
             {
                 let delays = read_fparam()?;
@@ -5654,6 +5707,36 @@ fn infer_bpoly_receptor_count(
 }
 
 pub(crate) use casa_numerics::legacy_bpoly_chebyshev_value;
+
+fn delay_reference_frequency(
+    cal_spw: &crate::plan::SpectralWindowPlan,
+    plan: &ApplyCalibrationTablePlan,
+    loaded: &LoadedCalibrationTable,
+) -> f64 {
+    if plan.summary.table_subtype == "KMBD Jones" {
+        if loaded.callibrary.is_none() {
+            // The traditional KMBD applicator always uses an absolute pivot.
+            return 0.;
+        }
+        // A callibrary instead uses KJones's version-dependent frequency pivot.
+        if matches!(
+            plan.summary.keywords.casa_version.as_deref(),
+            None | Some(
+                "Unknown"
+                    | "5.3.0-100"
+                    | "5.3.0-101"
+                    | "5.3.0-102"
+                    | "5.3.0-103"
+                    | "5.3.0-104"
+                    | "5.3.0-105"
+                    | "5.3.0-106"
+            )
+        ) {
+            return cal_spw.ref_frequency_hz;
+        }
+    }
+    cal_spw_reference_frequency_hz(cal_spw)
+}
 
 fn cal_spw_reference_frequency_hz(cal_spw: &crate::plan::SpectralWindowPlan) -> f64 {
     cal_spw
