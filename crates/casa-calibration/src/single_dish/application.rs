@@ -12,7 +12,7 @@ use casa_types::{ScalarValue, Value};
 use super::{generate_edges, generate_position_switch, tsys};
 use crate::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
-    execute::execute_single_dish_apply,
+    CalibrationOutputMode, execute::execute_single_dish_apply,
 };
 
 pub(super) fn run(
@@ -34,7 +34,7 @@ pub(super) fn run(
     if let Some(staging) = &staging {
         if mode.starts_with("ps,") {
             let output = staging.path().join("sky.cal");
-            generate_position_switch(task, &ms, selected, &output, false)?;
+            generate_position_switch(task, &ms, selected, &output, CalibrationOutputMode::Create)?;
             paths.push(output);
         } else if mode.starts_with("otf") {
             let output = staging.path().join("sky.cal");
@@ -48,12 +48,22 @@ pub(super) fn run(
             } else {
                 selected
             };
-            generate_edges(task, &ms, sky_selection, &output, false)?;
+            generate_edges(
+                task,
+                &ms,
+                sky_selection,
+                &output,
+                CalibrationOutputMode::Create,
+            )?;
             paths.push(output);
         }
         if mode.contains("tsys,") {
             let output = staging.path().join("tsys.cal");
-            tsys(infile.clone(), output.clone(), false)?;
+            tsys(
+                infile.clone(),
+                output.clone(),
+                CalibrationOutputMode::Create,
+            )?;
             paths.push(output);
         }
     }
