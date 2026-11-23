@@ -25,7 +25,8 @@ use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 pub(super) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
-    activity: Option<&mut ToolSolveActivity>,
+    mut activity: Option<&mut ToolSolveActivity>,
+    legacy_iterator: bool,
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.refant, RefAntSelector::Unspecified) {
         return Err(delay_error("specify a reference antenna explicitly"));
@@ -35,6 +36,7 @@ pub(super) fn solve(
         validate_smodel(request.smodel, true)?;
     }
     let cross_hand = request.gain_type == GainType::KCross;
+    let antenna_position = request.gain_type == GainType::KAntPos;
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
@@ -49,6 +51,9 @@ pub(super) fn solve(
         },
     )?;
     let windows = delay_windows(ms, &context.rows, cross_hand)?;
+    let combined_output_spw = (legacy_iterator && request.combine.spectral_windows)
+        .then(|| context.rows.iter().map(|row| row.data_spw_id).min())
+        .flatten();
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -93,25 +98,41 @@ pub(super) fn solve(
     let mut transforms = BTreeMap::new();
     let mut rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
-    let mut stats =
-        SolveStatsBuilder::new(2, spectral_window_ids(ms)?, &context.available_antennas);
+    let parameters = request.gain_type.polarizations();
+    let window_ids = spectral_window_ids(ms)?;
+    if combined_output_spw.is_some()
+        && let Some(activity) = activity.as_deref_mut()
+    {
+        activity.initialize(window_ids.len());
+    }
+    let mut stats = SolveStatsBuilder::new(parameters, window_ids, &context.available_antennas);
     for mut group in groups.into_values() {
         group.finalize_for_solve(request.solve_mode, false);
         let mut stages = IntervalStages::of(&group, 0);
-        if cross_hand {
-            // CASA's cross-hand solver reports unflagged data in both
-            // terms and bypasses the iterative solver's two thresholds.
-            stages
-                .with_data
-                .resize(2, stages.with_data.first().cloned().unwrap_or_default());
+        if cross_hand || antenna_position {
+            // CASA reports data availability for the full output parameter
+            // shape and bypasses the iterative solver's two thresholds.
+            stages.with_data.resize(
+                parameters,
+                stages.with_data.first().cloned().unwrap_or_default(),
+            );
         }
         stages.constrained.clear();
         stats.interval(&stages);
+        if let Some(output_spw) = combined_output_spw
+            && let Some(activity) = activity.as_deref_mut()
+        {
+            activity.count_mapped_interval(
+                group.spw_id,
+                output_spw,
+                group.attempted,
+                group.attempted,
+            );
+        }
         if !group.attempted {
             continue;
         }
-        attempted_spw_ids.insert(group.spw_id);
-        stats.record_success(group.spw_id, true);
+        let output_spw = combined_output_spw.unwrap_or(group.spw_id);
         let solutions = group_delays(
             &group,
             request,
@@ -119,33 +140,46 @@ pub(super) fn solve(
             &windows,
             &mut transforms,
         )?;
+        attempted_spw_ids.insert(output_spw);
+        stats.record_success(output_spw, true);
         rows.extend(context.available_antennas.iter().map(|&antenna| {
             let delays = if cross_hand {
                 solutions.get(&0).copied().unwrap_or_default()
             } else {
                 solutions.get(&antenna).copied().unwrap_or_default()
             };
+            let mut gains = Vec::with_capacity(parameters);
+            let mut flags = Vec::with_capacity(parameters);
+            for delay in delays {
+                gains.push(Complex32::new(delay.unwrap_or_default(), 0.));
+                flags.push(delay.is_none());
+            }
+            if antenna_position {
+                // The inherited K solver fits the two parallel hands.
+                // Its reference row defines the unused third term as zero.
+                gains.push(Complex32::ZERO);
+                flags.push(antenna != context.refant_id);
+            }
             SolutionRow {
                 time_seconds: group.solution_time,
                 field_id: group.field_id,
-                spw_id: group.spw_id,
+                spw_id: output_spw,
                 antenna_id: antenna,
                 scan_number: group.scan_number(),
                 observation_id: group.observation_id,
                 refant_id: -1,
-                gains: delays
-                    .iter()
-                    .map(|delay| Complex32::new(delay.unwrap_or_default(), 0.))
-                    .collect(),
-                flags: delays.iter().map(Option::is_none).collect(),
-                param_errors: vec![0.; 2],
-                snrs: vec![0.; 2],
+                gains,
+                flags,
+                param_errors: vec![0.; parameters],
+                snrs: vec![0.; parameters],
                 weights: Vec::new(),
             }
         }));
     }
     let tool_solve = activity.is_some();
-    stats.track_activity(activity);
+    if combined_output_spw.is_none() {
+        stats.track_activity(activity);
+    }
     let mut solve_stats = stats.finish();
     if !cross_hand && !tool_solve {
         // task_gaincal.resultsDictGaintypeExcept copies the unflagged
@@ -240,6 +274,11 @@ fn group_delays(
     let cross_hand = request.gain_type == GainType::KCross;
     let mode = request.solve_mode;
     if buffers.len() > 1 {
+        if request.gain_type == GainType::KAntPos {
+            return Err(delay_error(
+                "the KAntPos fit cannot combine multiple buffers in a solution interval",
+            ));
+        }
         return multiband::solve(
             buffers
                 .into_iter()
