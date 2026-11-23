@@ -59,6 +59,39 @@ def test_direct_and_context_dependent_direction_frames(casa):
         np.testing.assert_allclose(cs.toworld([0., 0.])["numeric"], [0., 0.], atol=1.e-12)
 
 
+def test_legacy_lsr_record_is_restored_and_written_as_lsrk(casa, tmp_path):
+    reference = casa.coordsys().newcoordsys(direction=True, spectral=True)
+    record = reference.torecord()
+    axis = "spectral1"
+    assert record[axis]["system"] == "LSRK"
+    record[axis]["system"] = "LSR"
+    record[axis]["velUnit"] = "m/s"
+    pixel = [1.0, 2.0, 3.5]
+    frequency = reference.toworld(pixel)["numeric"][2]
+    for writer in (tools, casa):
+        coordinates = writer.coordsys()
+        assert coordinates.fromrecord(record)
+        restored = coordinates.torecord()
+        assert restored[axis]["system"] == "LSRK"
+        assert restored[axis]["velUnit"] == "m/s"
+        assert coordinates.referencecode("spectral")[0] == "LSRK"
+        path = str(tmp_path / f"{writer.__name__}.im")
+        image = writer.image()
+        assert image.fromshape(path, [5, 5, 6], restored)
+        image.done()
+        for reader in (tools, casa):
+            image = reader.image()
+            assert image.open(path)
+            try:
+                reopened = image.coordsys().torecord()[axis]
+                assert reopened["system"] == "LSRK"
+                assert reopened["velUnit"] == "m/s"
+                actual = image.toworld(pixel)["numeric"][2]
+                assert actual == pytest.approx(frequency, rel=0.0, abs=1.e-6)
+            finally:
+                image.done()
+
+
 def test_spectral_conversion_uses_observation_context_and_survives_native_io(casa, tmp_path, caplog):
     base = casa.coordsys().newcoordsys(direction=True, spectral=True)
     assert base.setunits(["rad", "rad", "Hz"])
