@@ -159,7 +159,7 @@ def compare(work, reference_only):
         vis, _ = source(work, 'ap', channels=12, scan_seconds=160, integration_seconds=4)
         for name, legacy, options, mode, outcome in (
             ('default', True, {}, 'PHASAMP', 'product'),
-            ('amplitude', True, dict(apmode='A', refant='A0', preavg=0., t='int'), 'AMP', 'product'),
+            ('amplitude', True, dict(apmode='A', refant='A3', preavg=0., t='int'), 'AMP', 'product'),
             ('phaseonly', True, dict(phaseonly=True, apmode='A', refant='A0'), 'PHAS', 'product'),
             ('preaveraged', True, dict(preavg=8., refant='A0', t='20s'), 'PHASAMP', 'product'),
             ('literal', True, dict(apmode='FOO'), 'FOO', 'product'),

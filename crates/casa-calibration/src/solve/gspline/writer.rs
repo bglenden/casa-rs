@@ -180,7 +180,7 @@ impl SplineRow<'_> {
             fields.push(text(name, ""));
         }
         for (name, value) in [
-            ("REF_ANT", self.reference),
+            ("REF_ANT", if self.write_phase { self.reference } else { 0 }),
             ("REF_FEED", 0),
             ("REF_RECEPTOR", 0),
         ] {
