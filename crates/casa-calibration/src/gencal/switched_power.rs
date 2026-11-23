@@ -24,7 +24,7 @@ struct VisibilityLabels {
     scan_limits: Vec<(i32, (f64, f64))>,
 }
 
-pub(super) fn input_paths(
+pub(crate) fn input_paths(
     ms: &MeasurementSet,
     path: &Path,
 ) -> Result<(PathBuf, PathBuf), GencalError> {

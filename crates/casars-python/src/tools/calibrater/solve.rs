@@ -261,7 +261,7 @@ fn standard_request(
         "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
             standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
         ),
-        "BPOLY" | "P" | "P JONES" | "EVLASWP" | "G EVLASWPOW" => return Err(setup_error()),
+        "BPOLY" | "P" | "P JONES" => return Err(setup_error()),
         "M" | "M MUELLER" | "MF" | "MF MUELLER" => {
             let frequency_dependent = family.starts_with("MF");
             CalibrationSolveRequest::Baseline {
