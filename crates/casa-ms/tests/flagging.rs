@@ -16,8 +16,8 @@ use std::process::Command;
 use tempfile::tempdir;
 
 use common::{
-    NUM_CHAN, NUM_CORR, create_msexplore_averaging_fixture_ms, create_msexplore_fixture_ms,
-    create_two_polarization_fixture_ms,
+    NUM_CHAN, NUM_CORR, create_msexplore_averaging_fixture_ms, create_msexplore_fixture_in_memory,
+    create_msexplore_fixture_ms, create_two_polarization_fixture_ms,
 };
 
 #[test]
@@ -887,6 +887,90 @@ fn flagdata_ms_program_stages_skips_and_persists() {
     assert!(apply_reports[2].is_some());
     let persisted = MeasurementSet::open(&ms_path).expect("reopen MS");
     assert_flag(&persisted, 0, 0, 0);
+}
+
+#[test]
+fn antint_list_prepass_honors_its_input_and_agent_selection_policy() {
+    let temp = tempdir().expect("tempdir");
+    let path = create_msexplore_fixture_ms(temp.path());
+    let make_input = |in_memory| {
+        let mut ms = if in_memory {
+            create_msexplore_fixture_in_memory()
+        } else {
+            MeasurementSet::open(&path).expect("open MS")
+        };
+        set_flag_on_open_ms(&mut ms, 0, 0, 0, true);
+        ms
+    };
+    let manual = FlagDataRequest {
+        mode: FlagDataMode::Manual,
+        casa_row_selection: true,
+        selection: MsSelection {
+            scan: Some("2".into()),
+            spw: Some("0:0".into()),
+            ..MsSelection::default()
+        },
+        spw: Some("0:0".into()),
+        flagbackup: false,
+        ..FlagDataRequest::default()
+    };
+    let antint = FlagDataRequest {
+        mode: FlagDataMode::Antint,
+        casa_row_selection: true,
+        antint: casa_ms::flagging::AntennaIntegrationOptions {
+            reference_antenna: "ANT0".into(),
+            min_channel_fraction: 0.0,
+            verbose: false,
+        },
+        flagbackup: false,
+        ..FlagDataRequest::default()
+    };
+    let summary = FlagDataRequest {
+        mode: FlagDataMode::Summary,
+        casa_row_selection: true,
+        ..FlagDataRequest::default()
+    };
+    let samples = NUM_CORR * NUM_CHAN;
+    for in_memory in [false, true] {
+        let reports = flagdata_ms_program(
+            make_input(in_memory),
+            &[manual.clone(), antint.clone(), summary.clone()],
+            false,
+            true,
+            None,
+        )
+        .expect("CASA-style antint calculate");
+        let flagged = reports[2]
+            .as_ref()
+            .and_then(|report| report.summary.as_ref())
+            .expect("summary")
+            .overall
+            .flagged;
+        assert_eq!(flagged as usize, samples + NUM_CORR);
+
+        let reports = flagdata_ms_program(
+            make_input(in_memory),
+            &[
+                manual.clone(),
+                FlagDataRequest {
+                    casa_row_selection: false,
+                    ..antint.clone()
+                },
+                antint.clone(),
+            ],
+            false,
+            true,
+            None,
+        )
+        .expect("mixed typed and CASA antint calculate");
+        assert_eq!(
+            reports[1].as_ref().expect("typed antint").changed_samples,
+            2 * samples - NUM_CORR - 1
+        );
+        assert_eq!(reports[2].as_ref().expect("CASA antint").changed_samples, 0);
+    }
+    let persisted = MeasurementSet::open(&path).expect("open after previews");
+    assert_not_flag(&persisted, 0, 0, 0);
 }
 
 #[test]

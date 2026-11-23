@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::mem::size_of;
 
-use casa_tables::Table;
 use casa_types::ArrayValue;
 use casa_types::quanta::format::{YMD, format_time};
 
@@ -45,8 +44,33 @@ pub(super) fn apply(
     channels: Option<&BTreeMap<i32, ChannelSelection>>,
     correlations: Option<&CorrelationSelection>,
     path: &str,
-    original_flags: Option<&Table>,
 ) -> Result<ChangeSet, FlaggingError> {
+    let affected = affected_rows(ms, selected, options, path)?;
+    apply_affected(ms, affected, channels, correlations)
+}
+
+pub(super) fn apply_affected(
+    ms: &mut MeasurementSet,
+    affected: Option<Vec<usize>>,
+    channels: Option<&BTreeMap<i32, ChannelSelection>>,
+    correlations: Option<&CorrelationSelection>,
+) -> Result<ChangeSet, FlaggingError> {
+    if let Some(affected) = affected {
+        apply_geometric_flags(ms, &affected, channels, correlations)
+    } else {
+        Ok(ChangeSet {
+            agent_skipped: true,
+            ..ChangeSet::default()
+        })
+    }
+}
+
+pub(super) fn affected_rows(
+    ms: &MeasurementSet,
+    selected: &[usize],
+    options: &AntennaIntegrationOptions,
+    path: &str,
+) -> Result<Option<Vec<usize>>, FlaggingError> {
     let fail = |reason: String| FlaggingError::MutateFlags {
         path: path.to_owned(),
         reason,
@@ -59,13 +83,10 @@ pub(super) fn apply(
             "Cannot create agent Antint: The antenna requested ({name}) could not be found in the input dataset"
         );
         tracing::error!("There is no agent to run in list");
-        return Ok(ChangeSet {
-            agent_skipped: true,
-            ..ChangeSet::default()
-        });
+        return Ok(None);
     };
     if selected.is_empty() || antenna_count < 2 {
-        return Ok(ChangeSet::default());
+        return Ok(Some(Vec::new()));
     }
 
     let ddid_to_spw = data_description_spw_map(ms)?;
@@ -99,8 +120,8 @@ pub(super) fn apply(
     let budget = MsSelectionIoBudget::from_system_memory(2, bytes_per_row, None)
         .map_err(|error| fail(error.to_string()))?;
     let plan = MsReadPlan::new(timed.len(), budget).map_err(|error| fail(error.to_string()))?;
-    let column = original_flags
-        .unwrap_or_else(|| ms.main_table())
+    let column = ms
+        .main_table()
         .column_accessor(FLAG_COLUMN)
         .map_err(|error| fail(error.to_string()))?;
     let mut affected = IntegrationScan {
@@ -116,7 +137,7 @@ pub(super) fn apply(
             .map_err(|error| fail(error.to_string()))
     })?;
     affected.sort_unstable();
-    apply_geometric_flags(ms, &affected, channels, correlations)
+    Ok(Some(affected))
 }
 
 struct IntegrationScan<'a> {
