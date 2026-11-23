@@ -10,9 +10,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 968
-- Surfaces: 63 (63 task, 0 session)
-- Surface bindings: 1435
+- Concepts: 974
+- Surfaces: 64 (64 task, 0 session)
+- Surface bindings: 1442
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -68,6 +68,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Calibration Statistics](#surface-calstat)<br><code>calstat</code> | task | 1 | <code>calibration</code> | 3 | Compute descriptive statistics for a calibration table column. |
 | [List Calibration Solutions](#surface-listcal)<br><code>listcal</code> | task | 1 | <code>calibration</code> | 7 | List selected antenna calibration solutions and flags. |
 | [Plot Bandpass](#surface-plotbandpass)<br><code>plotbandpass</code> | task | 1 | <code>calibration</code> | 49 | Plot calibration spectra and channel derivatives. |
+| [Get Ephemeris Table](#surface-getephemtable)<br><code>getephemtable</code> | task | 1 | <code>calibration</code> | 7 | Retrieve a solar-system ephemeris from JPL Horizons. |
 | [Get VLA Calibrator Model](#surface-getcalmodvla)<br><code>getcalmodvla</code> | task | 1 | <code>calibration</code> | 8 | Retrieve a calibrator brightness model from the VLA service. |
 | [Predict Calibrator Component](#surface-predictcomp)<br><code>predictcomp</code> | task | 1 | <code>simulation</code> | 15 | Write a flux calibrator component list and optionally plot its visibility amplitudes. |
 | [Water-vapour Radiometer Calibration](#surface-wvrgcal)<br><code>wvrgcal</code> | task | 1 | <code>calibration</code> | 24 | Use ALMA radiometer measurements to calibrate atmospheric phase. |
@@ -1981,6 +1982,26 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>scans</code> | <code>plotbandpass.scans@r1</code> | <code>variant</code> | <code>""</code>; optional | Plot | A scan or list of scans for which to display solutions. Default = all. Does not work with overlay="time". |
 | <code>figfileSequential</code> | <code>plotbandpass.figfile_sequential@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | naming scheme for pngs: False: name by spw/antenna (default), True: figfile.000.png, figfile.001.png, etc. |
 | <code>chanrangeSetXrange</code> | <code>plotbandpass.chanrange_set_xrange@r1</code> | <code>bool</code> | <code>false</code>; optional | Plot | If True, then chanrange also sets the xrange to display |
+
+<a id="surface-getephemtable"></a>
+
+## Get Ephemeris Table (<code>getephemtable</code>)
+
+- Kind: `task`
+- Contract version: `1`
+- Category: Calibration
+- Provider family: `calibration`
+- Summary: Retrieve a solar-system ephemeris from JPL Horizons.
+
+| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
+|---|---|---|---|---|---|
+| <code>objectname</code> | <code>ephemeris.object_name@r1</code> | <code>string</code> | <code>""</code>; optional | Input | Name or Horizons designation of the target. |
+| <code>asis</code> | <code>ephemeris.as_is@r1</code> | <code>bool</code> | <code>false</code>; optional | Input | Pass the supplied designation directly to Horizons. |
+| <code>timerange</code> | <code>ephemeris.time_range@r1</code> | <code>string</code> | <code>""</code>; optional | Input | Start and stop times separated by a tilde, in calendar, JD or MJD form. |
+| <code>interval</code> | <code>ephemeris.interval@r1</code> | <code>string</code> | <code>"5m"</code>; optional | Input | Integer sample count or integer duration with a Horizons unit. |
+| <code>outfile</code> | <code>ephemeris.output_table@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Output | Write the MeasComet ephemeris table at this path. |
+| <code>rawdatafile</code> | <code>ephemeris.raw_output@r1</code> | <code>path (file)</code> | <code>""</code>; optional | Output | Optionally write the original Horizons response text. |
+| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 
 <a id="surface-getcalmodvla"></a>
 
