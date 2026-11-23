@@ -2217,10 +2217,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-residual-columns"></a>
 ##### ms-residual-columns
 
-**Same-input complex MeasurementSet residuals — passed.** Four vector residual text exports matched 48 selected coordinate pairs and their metadata. A 500 by 360 pixel PNG matched 12 artist coordinates and displayed the CASA column labels and phase unit. The source data and flags remained unchanged. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on a selected MeasurementSet with distinct stored DATA, CORRECTED_DATA and MODEL_DATA values.
+**Same-input complex MeasurementSet residuals — passed.** Six vector residual text exports matched 72 selected coordinate pairs and their metadata, including a residual against time and explicit zero averaging. A 500 by 360 pixel PNG matched 12 artist coordinates and displayed the CASA column labels and phase unit. The source data and flags remained unchanged. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on a selected MeasurementSet with distinct stored DATA, CORRECTED_DATA and MODEL_DATA values.
 
 - [https://github.com/bglenden/casa-rs/pull/2128](https://github.com/bglenden/casa-rs/pull/2128)
-- Revision: `261548c605ef32dd3709e79afd1ced3110eec556`; CASA: `6.7.6.14`.
+- Revision: `0c1333d3563170a5a05dcfa8f1249e186e056983`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-residual-columns-20261123.json`.
 

@@ -1279,9 +1279,9 @@
       "kind": "Same-input complex MeasurementSet residuals",
       "state": "passed",
       "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on a selected MeasurementSet with distinct stored DATA, CORRECTED_DATA and MODEL_DATA values.",
-      "result": "Four vector residual text exports matched 48 selected coordinate pairs and their metadata. A 500 by 360 pixel PNG matched 12 artist coordinates and displayed the CASA column labels and phase unit. The source data and flags remained unchanged.",
+      "result": "Six vector residual text exports matched 72 selected coordinate pairs and their metadata, including a residual against time and explicit zero averaging. A 500 by 360 pixel PNG matched 12 artist coordinates and displayed the CASA column labels and phase unit. The source data and flags remained unchanged.",
       "casa_version": "6.7.6.14",
-      "revision": "261548c605ef32dd3709e79afd1ced3110eec556",
+      "revision": "0c1333d3563170a5a05dcfa8f1249e186e056983",
       "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
       "receipt": "resources/casa-compat/evidence/plotms-ms-residual-columns-20261123.json",
       "links": [
