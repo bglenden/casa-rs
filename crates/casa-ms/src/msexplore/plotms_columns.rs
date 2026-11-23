@@ -82,20 +82,27 @@ pub(super) fn resolve_storage_columns(
         other => other,
     });
     for (axis, column) in axes.into_iter().zip(columns) {
-        if column != Float || !axis.is_some_and(MsAxis::is_visibility_math) {
+        if !axis.is_some_and(MsAxis::is_visibility_math) {
             continue;
         }
-        if !has_float {
+        if has_float && !has_data && matches!(column, DataMinusModel | DataMinusModelScalar) {
             return Err(TaskFailure::validation(
-                "FLOAT_DATA is unavailable. Use DATA for PlotMS.",
+                "Data residuals not valid; use FLOAT_DATA.",
             ));
         }
-        if matches!(axis, Some(MsAxis::Phase | MsAxis::Imaginary)) {
-            return Err(TaskFailure::validation(
-                "PlotMS requires an amplitude or real axis for FLOAT_DATA.",
-            ));
+        if column == Float {
+            if !has_float {
+                return Err(TaskFailure::validation(
+                    "FLOAT_DATA is unavailable. Use DATA for PlotMS.",
+                ));
+            }
+            if matches!(axis, Some(MsAxis::Phase | MsAxis::Imaginary)) {
+                return Err(TaskFailure::validation(
+                    "PlotMS requires an amplitude or real axis for FLOAT_DATA.",
+                ));
+            }
         }
-        if averaging {
+        if averaging && has_float && matches!(column, Data | Float) {
             return Err(TaskFailure::validation(
                 "averaging MeasurementSet FLOAT_DATA is pending #1032",
             ));

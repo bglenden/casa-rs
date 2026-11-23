@@ -447,12 +447,18 @@ def compare_float_columns(root, vis, source, native):
                 if name in table.colnames():
                     np.testing.assert_array_equal(table.getcol(name), expected, err_msg=name)
 
+    float_model = root / "float-and-model.ms"
+    copy_ms(mixed, float_model)
+    with opened(float_model, True) as table:
+        table.removecols(["DATA", "CORRECTED_DATA"])
     invalid = (
-        ("missing-float", vis, "amp", "FLOAT_DATA is unavailable"),
-        ("phase-float", float_only, "phase", "requires an amplitude or real axis"),
+        ("missing-float", vis, "amp", "float", "FLOAT_DATA is unavailable"),
+        ("phase-float", float_only, "phase", "float", "requires an amplitude or real axis"),
+        ("vector-float-residual", float_model, "amp", "data-model_vector", "Data residuals not valid"),
+        ("scalar-float-residual", float_model, "amp", "data-model_scalar", "Data residuals not valid"),
     )
-    for name, destination, axis, diagnostic in invalid:
-        controls = request(destination) | dict(xaxis="channel", yaxis=axis, xdatacolumn="", ydatacolumn="float")
+    for name, destination, axis, column, diagnostic in invalid:
+        controls = request(destination) | dict(xaxis="channel", yaxis=axis, xdatacolumn="", ydatacolumn=column)
         for engine, task, message in (("casa", reference, "plot parameters failed"), ("native", native, diagnostic)):
             output = root / f"{name}.{engine}.txt"
             try:
@@ -462,6 +468,22 @@ def compare_float_columns(root, vis, source, native):
             else:
                 raise AssertionError(f"{engine} accepted {name}")
             assert not output.exists()
+
+    from casars.tasks import TaskParameterError
+
+    controls = request(mixed) | dict(xaxis="channel", yaxis="amp", xdatacolumn="",
+                                     ydatacolumn="data", avgchannel="2", expformat="txt")
+    expected, actual = (root / f"average-mixed-float.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert len(selected) == 6 and all(float(point[1]) < 0 for point in selected)
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging MeasurementSet FLOAT_DATA is pending #1032" in str(error), error
+    else:
+        raise AssertionError("Observed FLOAT_DATA averaging silently exported complex DATA")
+    assert not actual.exists()
 
     controls = request(float_only) | dict(xaxis="channel", yaxis="real", xdatacolumn="", ydatacolumn="float")
     expected, actual = (root / f"real-float.{engine}.txt" for engine in ("casa", "native"))
