@@ -78,6 +78,56 @@ def test_per_plane_beam_list_matrix_and_areas(tmp_path, casa, shape):
         assert backend.done()
 
 
+def test_beam_matrix_uses_first_created_spectral_axis(casa, tmp_path):
+    path = str(tmp_path / "transposed.im")
+    coords = casa.coordsys().newcoordsys(direction=True, stokes="I Q U", spectral=True)
+    assert coords.addcoordinate(spectral=True)
+    record = coords.torecord()
+    assert coords.done()
+    image = casa.image()
+    assert image.fromshape(shape=[2, 2, 3, 5, 7], csys=record)
+    try:
+        transposed = image.transpose(path, order="01423")
+        try:
+            assert transposed.setrestoringbeam("5arcsec", "2arcsec", "6deg", channel=0, polarization=0)
+            assert transposed.setrestoringbeam("7arcsec", "3arcsec", "35deg", channel=4, polarization=2)
+        finally:
+            transposed.done()
+    finally:
+        image.done()
+
+    matrices = []
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.open(path)
+            matrix = image.restoringbeam(mbret="matrix")
+            assert matrix["major"]["value"].shape == (3, 5)
+            assert matrix["major"]["value"][2, 4] == 7.0
+            matrices.append(matrix)
+        finally:
+            image.done()
+    _assert_value(matrices[1], matrices[0])
+
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    try:
+        record = table.getkeyword("coords")
+        for index, kind in enumerate(("Direction", "Stokes", "Spectral", "Spectral")):
+            coordinate = record.pop(f"{kind.lower()}{index}")
+            coordinate["coordinate_type"] = kind
+            record[f"coordinate{index}"] = coordinate
+        table.putkeyword("coords", record)
+    finally:
+        table.done()
+    image = tools.image()
+    try:
+        assert image.open(path)
+        _assert_value(image.restoringbeam(mbret="matrix"), matrices[0])
+    finally:
+        image.done()
+
+
 def test_beam_queries_on_an_image_without_a_beam():
     image = tools.image()
     assert image.fromshape(shape=[2, 2])

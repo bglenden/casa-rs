@@ -124,20 +124,10 @@ fn beam_matrix(
 }
 
 fn beam_parameter_matrices(
-    coordinates: &CoordinateSystem,
     info: &RecordValue,
     beams: &ImageBeamSet,
+    stokes_first: bool,
 ) -> PyResult<Vec<(&'static str, CasaValue)>> {
-    let pixel_axis = |kind| {
-        coordinates
-            .find_coordinate(kind)
-            .and_then(|index| coordinates.coordinate_pixel_axes(index))
-            .and_then(|axes| axes.into_iter().flatten().next())
-    };
-    let stokes_first = pixel_axis(CoordinateType::Stokes).is_some_and(|stokes| {
-        pixel_axis(CoordinateType::Spectral)
-            .is_none_or(|spectral| spectral == 0 || spectral >= stokes)
-    });
     let (shape, planes) = beam_matrix_planes(beams, stokes_first);
     let grid = subrecord(info, "perplanebeams").ok_or_else(|| raised("Missing per-plane beams"))?;
     let mut stored_grid = HashMap::with_capacity(beams.nelements());
@@ -191,7 +181,7 @@ fn beam_parameter_matrices(
 
 pub(super) fn restoring_beam(
     view: &super::beam_view::BeamView,
-    coordinates: &CoordinateSystem,
+    coordinate_record: impl FnOnce() -> RecordValue,
     channel: i64,
     polarization: i64,
     mode: &str,
@@ -261,7 +251,15 @@ pub(super) fn restoring_beam(
         ("nStokes", CasaValue::Int(stokes)),
     ];
     if matrix {
-        result.extend(beam_parameter_matrices(coordinates, view.record(), &beams)?);
+        let (spectral, stokes) = plane_axes(&coordinate_record())?;
+        let stokes_first = stokes.is_some_and(|stokes| {
+            spectral.is_none_or(|spectral| spectral == 0 || spectral >= stokes)
+        });
+        result.extend(beam_parameter_matrices(
+            view.record(),
+            &beams,
+            stokes_first,
+        )?);
     } else {
         let by_channel = (0..beams.n_channels()).map(|channel| {
             let by_stokes = (0..beams.n_stokes())
@@ -274,15 +272,37 @@ pub(super) fn restoring_beam(
 }
 
 pub(super) fn plane_axes(record: &RecordValue) -> PyResult<(Option<usize>, Option<usize>)> {
-    let axes = CoordinateSystem::record_coordinates(record).map_err(raised)?;
-    let axis = |kind: &str| {
-        // CASA assigns beams by coordinate creation order, including after transposition.
-        axes.iter()
-            .filter_map(|axis| Some((axis.field.strip_prefix(kind)?.parse::<usize>().ok()?, axis)))
-            .min_by_key(|(index, _)| *index)
-            .and_then(|(_, axis)| axis.pixel_axes.first().copied().flatten())
-    };
-    Ok((axis("spectral"), axis("stokes")))
+    let mut axes = CoordinateSystem::record_coordinates(record).map_err(raised)?;
+    // CASA assigns beams by coordinate creation order, including after transposition.
+    axes.sort_by_key(|axis| {
+        axis.field
+            .trim_start_matches(|character: char| character.is_ascii_alphabetic())
+            .parse::<usize>()
+            .ok()
+    });
+    let mut spectral = None;
+    let mut stokes = None;
+    for axis in axes {
+        let kind = if axis.field.starts_with("spectral") {
+            CoordinateType::Spectral
+        } else if axis.field.starts_with("stokes") {
+            CoordinateType::Stokes
+        } else if axis.field.starts_with("coordinate") {
+            axis.model(record).map_err(raised)?.coordinate_type()
+        } else {
+            continue;
+        };
+        let selected = match kind {
+            CoordinateType::Spectral => &mut spectral,
+            CoordinateType::Stokes => &mut stokes,
+            _ => continue,
+        };
+        selected.get_or_insert_with(|| axis.pixel_axes.first().copied().flatten());
+        if spectral.is_some() && stokes.is_some() {
+            break;
+        }
+    }
+    Ok((spectral.flatten(), stokes.flatten()))
 }
 
 pub(super) fn axis_length(image: &ImageHandle, axis: Option<usize>) -> PyResult<usize> {
@@ -424,7 +444,7 @@ impl PyImageTool {
                     let handle = image.lock();
                     restoring_beam(
                         &image.beam_view(),
-                        handle.coordinates(),
+                        || handle.coordinate_record(),
                         channel,
                         polarization,
                         mbret,

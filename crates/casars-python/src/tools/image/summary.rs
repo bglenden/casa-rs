@@ -132,13 +132,13 @@ fn describe(
         .unwrap();
         fields.push((
             "restoringbeam",
-            restoring_beam(beam_view, &coords, -1, -1, "list")?,
+            restoring_beam(beam_view, || record.clone(), -1, -1, "list")?,
         ));
     } else if beams.is_multi() {
         plane_beams::append(&mut header, &record, &coords, &beams, list && verbose)?;
         fields.push((
             "perplanebeams",
-            restoring_beam(beam_view, &coords, -1, -1, "list")?,
+            restoring_beam(beam_view, || record.clone(), -1, -1, "list")?,
         ));
     }
 
