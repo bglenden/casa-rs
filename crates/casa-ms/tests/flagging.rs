@@ -913,8 +913,15 @@ fn typed_list_tfcrop_keeps_its_input_time_selection() {
 
 #[test]
 fn averaged_list_clip_reports_only_members_of_selected_bins() {
+    let mut ms = create_msexplore_fixture_in_memory();
+    // Place the first two integrations in the same averaging chunk.
+    ms.main_table_mut()
+        .cell_accessor_mut(1, "SCAN_NUMBER")
+        .expect("second scan cell")
+        .set(Value::Scalar(ScalarValue::Int32(1)))
+        .expect("share the first scan");
     let reports = flagdata_ms_program(
-        create_msexplore_fixture_in_memory(),
+        ms,
         &["00:00:0.3~00:00:0.7", "00:00:9~00:00:10"].map(|timerange| FlagDataRequest {
             mode: FlagDataMode::Clip,
             casa_row_selection: true,
