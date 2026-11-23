@@ -117,6 +117,19 @@ impl<'a> ImageToolExpressionInputs<'a> {
         expression: impl Into<Cow<'a, str>>,
         directory: &Path,
     ) -> Result<Self, ImageError> {
+        Self::resolve_with_image_paths(expression, directory, |_| None)
+    }
+
+    /// Resolve image names in a directory, allowing a caller to substitute a
+    /// staged image for an operand before the new image is published.
+    ///
+    /// # Errors
+    /// Returns an error for a missing operand or invalid expression.
+    pub fn resolve_with_image_paths(
+        expression: impl Into<Cow<'a, str>>,
+        directory: &Path,
+        substitute: impl Fn(&Path) -> Option<PathBuf>,
+    ) -> Result<Self, ImageError> {
         let expression = expression.into();
         if expression.is_empty() {
             return Err(ImageError::CasaSelection(
@@ -125,7 +138,7 @@ impl<'a> ImageToolExpressionInputs<'a> {
         }
         let operands = referenced_images(&expression)?
             .into_iter()
-            .map(|name| resolve_named_operand(directory, name))
+            .map(|name| resolve_named_operand_with(directory, name, &substitute))
             .collect::<Result<_, _>>()?;
         Ok(Self {
             expression,
@@ -422,7 +435,15 @@ fn resolve_named_operands(names: Vec<String>) -> Result<Vec<ResolvedOperand>, Im
 }
 
 fn resolve_named_operand(base: &Path, name: String) -> Result<ResolvedOperand, ImageError> {
-    let (entry, mask) = operand_path(base, &name).ok_or_else(|| ImageError::CasaSelection(format!(
+    resolve_named_operand_with(base, name, &|_| None)
+}
+
+fn resolve_named_operand_with(
+    base: &Path,
+    name: String,
+    substitute: &impl Fn(&Path) -> Option<PathBuf>,
+) -> Result<ResolvedOperand, ImageError> {
+    let (entry, mask) = operand_path(base, &name, substitute).ok_or_else(|| ImageError::CasaSelection(format!(
         "Input mask specification is incorrect: ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"
     )))?;
     let path = entry
@@ -730,19 +751,21 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
     ))
 }
 
-fn operand_path(base: &Path, spec: &str) -> Option<(PathBuf, Option<String>)> {
-    let direct_path = base.join(spec);
-    if direct_path.exists() {
+fn operand_path(
+    base: &Path,
+    spec: &str,
+    substitute: &impl Fn(&Path) -> Option<PathBuf>,
+) -> Option<(PathBuf, Option<String>)> {
+    let existing = |path: PathBuf| substitute(&path).or_else(|| path.exists().then_some(path));
+    if let Some(direct_path) = existing(base.join(spec)) {
         return Some((direct_path, None));
     }
     if let Some((left, right)) = spec.rsplit_once(':')
         && !left.is_empty()
         && !right.trim().is_empty()
+        && let Some(source) = existing(base.join(left))
     {
-        let source = base.join(left);
-        if source.exists() {
-            return Some((source, Some(right.trim().to_owned())));
-        }
+        return Some((source, Some(right.trim().to_owned())));
     }
     None
 }

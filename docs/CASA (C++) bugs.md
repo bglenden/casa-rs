@@ -8702,6 +8702,21 @@ casa-rs validates the metadata source and stages the product before
 publication. The failed call preserves an existing output and leaves a new
 output path absent. [#1625](https://github.com/bglenden/casa-rs/issues/1625)
 
+The same staging protects inputs of a saved metadata expression. For
+`out.im` containing `leaf.im`, use a saved `imagemd` expression that reads
+`out.im/leaf.im` and request `imagecalc(..., outfile='out.im', overwrite=True)`.
+CASA deletes the nested input before failing to open the metadata. Casa-rs
+rejects the overlap and keeps both tables. An exact reference to `out.im`
+is valid and reads the new staged output.
+
+## A saved `imagecalc` operand can return a stale cached section
+
+With `imagecalc(pixels='"expr.im" + 1')`, where the saved `expr.im` contains
+`"leaf.im" * 3`, read a one-pixel section, unlock the result, and add 50 to
+the underlying `leaf.im` with another tool. CASA 6.7.6.14 can return its
+previous value on the next read of the same section. Casa-rs returns the
+updated value on that read. See [#1625](https://github.com/bglenden/casa-rs/issues/1625).
+
 ## `imagecalc` can read a different FITS operand after a directory change
 
 Create two directories with an `input.fits` of the same shape in each. Give

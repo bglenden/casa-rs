@@ -1133,6 +1133,126 @@ def test_imagecalc_uses_saved_image_for_explicit_metadata(tmp_path, backend):
         assert output.done() and image.done()
 
 
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("previous", [False, True], ids=["new", "replace"])
+@pytest.mark.parametrize("kind", ["saved", "virtual"])
+def test_imagecalc_reads_its_output_through_metadata_image(tmp_path, backend, previous, kind):
+    api = _backend(backend)
+    leaf, output, metadata = (tmp_path / name for name in ("leaf.im", "output.im", "metadata.im"))
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    assert image.fromarray(str(leaf), pixels) and image.done()
+    if previous or kind == "virtual":
+        assert image.fromarray(str(output), pixels * 5)
+        assert image.setbrightnessunit("K") and image.done()
+    if kind == "saved":
+        _manifest(metadata, ImageExpr=f'"{output}" * 3', MiscInfo={"station": "alma"})
+    else:
+        joined = image.imageconcat(str(metadata), [str(output), str(leaf)], axis=0,
+                                   mode="nomove", relax=True)
+        assert joined.setmiscinfo({"station": "alma"}) and joined.done()
+        if not previous:
+            assert image.open(str(output)) and image.remove() and image.done()
+    result = image.imagecalc(str(output), f'"{leaf}" + 13', overwrite=previous, imagemd=str(metadata))
+    try:
+        np.testing.assert_array_equal(result.getchunk(), pixels + 13)
+        assert result.brightnessunit() == ""
+        assert result.miscinfo()["station"] == "alma"
+    finally:
+        assert result.done() and image.done()
+
+
+def test_imagecalc_does_not_replace_output_that_contains_its_metadata_operand(tmp_path):
+    api = _backend("casars")
+    leaf, output, metadata = (tmp_path / name for name in ("leaf.im", "output.im", "metadata.im"))
+    inner = output / "inner.im"
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    for path in (leaf, output, inner):
+        assert image.fromarray(str(path), pixels) and image.done()
+    _manifest(metadata, ImageExpr=f'"{inner}" * 3')
+    try:
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression input"):
+            image.imagecalc(str(output), f'"{leaf}" + 13', overwrite=True, imagemd=str(metadata))
+        for path in (output, inner):
+            assert image.open(str(path))
+            np.testing.assert_array_equal(image.getchunk(), pixels)
+            assert image.done()
+    finally:
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_imagecalc_validates_metadata_type_against_replacement_precision(tmp_path, backend):
+    api = _backend(backend)
+    leaf, output, metadata = (tmp_path / name for name in ("leaf.im", "output.im", "metadata.im"))
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    for path in (leaf, output):
+        assert image.fromarray(str(path), pixels) and image.done()
+    _manifest(metadata, ImageExpr=f'"{output}" * 3')
+    try:
+        with pytest.raises(RuntimeError, match="Unsupported image pixel data type"):
+            image.imagecalc(str(output), f'"{leaf}" + 13', overwrite=True,
+                            imagemd=str(metadata), prec="double")
+        assert image.open(str(output))
+        if backend == "casars":
+            assert image.pixeltype() == "float"
+            np.testing.assert_array_equal(image.getchunk(), pixels)
+        else:
+            assert image.pixeltype() == "double"
+            np.testing.assert_array_equal(image.getchunk(), pixels + 13)
+    finally:
+        image.done()
+
+
+def test_lazy_imagecalc_refreshes_a_previously_read_saved_operand_section(tmp_path):
+    api = _backend("casars")
+    leaf, manifest = (tmp_path / name for name in ("leaf.im", "expression.im"))
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    assert image.fromarray(str(leaf), pixels) and image.done()
+    _manifest(manifest, ImageExpr=f'"{leaf}" * 3')
+    result = image.imagecalc(pixels=f'"{manifest}" + 1')
+    try:
+        np.testing.assert_array_equal(result.getchunk([0, 0], [0, 0]), [[1.]])
+        assert result.unlock()
+        assert image.open(str(leaf)) and image.putchunk(pixels + 50) and image.done()
+        np.testing.assert_array_equal(result.getchunk([0, 0], [0, 0]), [[151.]])
+    finally:
+        result.done()
+        image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("method", ["imagecalc", "fromimage", "newimagefromimage"])
+def test_image_expression_can_create_a_new_child_of_its_operand(tmp_path, backend, method):
+    api = _backend(backend)
+    leaf, source = (tmp_path / name for name in ("leaf.im", "source.im"))
+    output = leaf / "new.im"
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    assert image.fromarray(str(leaf), pixels) and image.done()
+    _manifest(source, ImageExpr=f'"{leaf}" * 3')
+    if method == "imagecalc":
+        result = image.imagecalc(str(output), f'"{source}" + 1', overwrite=True)
+    else:
+        result = getattr(image, method)(infile=str(leaf), outfile=str(output),
+                                        mask=f'"{source}" > 4', overwrite=True)
+    if method == "fromimage":
+        assert result is True
+        result = image
+    try:
+        np.testing.assert_array_equal(result.getchunk(), pixels * 3 + 1 if method == "imagecalc" else pixels)
+        if method != "imagecalc":
+            np.testing.assert_array_equal(result.getchunk(getmask=True), pixels * 3 > 4)
+        assert result.done()
+        assert image.open(str(leaf))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        image.done()
+
+
 @pytest.mark.parametrize("source_kind", ["saved", "virtual"])
 @pytest.mark.parametrize("backend", ["casa", "casars"])
 @pytest.mark.parametrize("factory", ["fromimage", "newimagefromimage"])
