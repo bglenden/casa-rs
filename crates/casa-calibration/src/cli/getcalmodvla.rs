@@ -25,10 +25,11 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     if outfile.trim().is_empty() {
         return Err(invalid("outfile", "outfile must be specified"));
     }
-    let destination = task.workspace().join(outfile);
+    let requested_path = Path::new(&outfile);
+    let destination = task.workspace().join(requested_path);
     let overwrite = task.flag("overwrite")?;
     if !overwrite && destination.symlink_metadata().is_ok() {
-        return Err(exists(&destination));
+        return Err(exists(requested_path));
     }
     let source = task.required_text("source")?;
     let direction = task.required_text("direction")?;
@@ -107,7 +108,13 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     provenance.upsert("run_date", text(now.to_string()));
     provenance.upsert("url", text(url));
     provenance.upsert("response", Value::Record(response));
-    publish(&destination, overwrite, &components, provenance)?;
+    publish(
+        &destination,
+        requested_path,
+        overwrite,
+        &components,
+        provenance,
+    )?;
     tracing::info!(path = %destination.display(), "component list has been written");
     TaskSuccess::new(CasaValue::None, &())
 }
@@ -122,7 +129,8 @@ fn execution(error: impl std::fmt::Display) -> TaskFailure {
 
 fn exists(path: &Path) -> TaskFailure {
     execution(format!(
-        "A file or directory named {} already exists and overwrite is False",
+        "The overwrite parameter is False and a file or directory named {} already exists. \
+         Either remove or rename it, or change overwrite to True, or both.",
         path.display()
     ))
     .at("outfile")
@@ -333,6 +341,7 @@ fn json_value(value: Json) -> Result<Value, TaskFailure> {
 
 fn publish(
     path: &Path,
+    requested_path: &Path,
     overwrite: bool,
     list: &ComponentList,
     provenance: RecordValue,
@@ -355,7 +364,7 @@ fn publish(
                 exchange_directories(&component_path, path)
                     .map_err(|error| execution(error).at("outfile"))
             } else {
-                Err(exists(path))
+                Err(exists(requested_path))
             }
         }
         Err(error) => Err(execution(error).at("outfile")),
