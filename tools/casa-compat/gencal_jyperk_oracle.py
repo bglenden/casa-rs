@@ -312,7 +312,7 @@ def compare_services(root, vis, engines):
             assert len(records) == 1 and records[0][:2] == ('/asdm/', {'uid': 'uid://A002/X85c183/X36f'})
             np.testing.assert_allclose(gains(via_web)[:, 0], 1./6., rtol=2e-7)
 
-        with database(send) as (url, records):
+        with database(send) as (url, records), patch.object(JyPerKDatabaseClient, 'DEFAULT_BASE_URL', f'{url}/rejected'):
             os.environ['JYPERKDB_URL'] = f'{url}/rejected'
             rejected = root/f'{label}-gencal-service-rejected.cal'
             try:
