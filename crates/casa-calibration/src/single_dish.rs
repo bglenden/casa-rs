@@ -37,6 +37,11 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
         field: selector(task, "field")?,
         spw: selector(task, "spw")?,
         scan: selector(task, "scan")?,
+        intent: if matches!(mode.as_str(), "ps" | "otf" | "otfraster") {
+            selector(task, "intent")?
+        } else {
+            None
+        },
         ..MsSelection::default()
     };
     if mode == "tsys" && (selection.scan.is_some() || selection.spw.is_some()) {

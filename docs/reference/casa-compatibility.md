@@ -60,7 +60,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | sdatmcor | sdatmcor | yes | 29 | 29 | 0 | 0 | 0 | 0 |
 | sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
-| sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdcal | sdcal | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | sdfit | sdfit | yes | 21 | 21 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
@@ -3008,21 +3008,21 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 ### sdcal
 
-- CASA source: `casatasks/sdcal.py`, 14 parameters
+- CASA source: `casatasks/sdcal.py`, 15 parameters
 - Implementation: `casatasks/private/task_sdcal.py`, `sdcal` (line 23): 1 return statements, 13 raise statements
   - returns at line 30: `None`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
 - CASA's named parameters: yes
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: none
-- Shared parameters: 14, in CASA's order: yes
+- Shared parameters: 15, in CASA's order: yes
 - Defaults that differ: none
 
 #### sdcal parameter implementation
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`. Status counts: Default only: 0, Implemented: 14, Not implemented: 0, Partial: 0, Unassessed: 0.
+Audit baseline: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`. Status counts: Default only: 0, Implemented: 15, Not implemented: 0, Partial: 0, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -3042,6 +3042,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `field` | `''` | `''`; `field` → `field` | Implemented | Select reference and science fields. Tsys uses the whole observation when generating a composite prior. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
 | `spw` | `''` | `''`; `spw` → `spw` | Implemented | Select reference windows and science channels. Direct Tsys generation requires the all-window form. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
 | `scan` | `''` | `''`; `scan` → `scan` | Implemented | Select scan rows for sky generation and application. Direct Tsys generation requires the all-scan form. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Select observing intents for sky-table generation. Direct apply and Tsys generation keep the keyword inactive. The OTF and raster composites with Tsys use the local on-source selection. [ps](#sdcal-behavior-ps) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [intent](#sdcal-evidence-intent) |
 
 #### sdcal interacting modes and task behavior
 
@@ -3137,6 +3138,13 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1974`.
+
+<a id="sdcal-evidence-intent"></a>
+##### intent
+
+**Installed CASA keyword and selected position-switch output — recorded.** Pinned CASA generated scans 1 and 3 with the default and scan 1 with the selected intent. The baseline native wrapper refused the keyword. Candidate native validation is pending. The public wrapper forwards the text keyword through its generated schema. A tagged OFF group separates the selected scans from the default result.
+
+- [https://github.com/bglenden/casa-rs/issues/1530](https://github.com/bglenden/casa-rs/issues/1530)
 
 ### sdfit
 

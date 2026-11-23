@@ -302,6 +302,49 @@ tool.close()
     print('CASA-held output locks protect both native calibration products', flush=True)
 
 
+def check_intent(root, seed, temperatures, tasks):
+    vis = root / 'selected-intent.ms'
+    copy_ms(seed, vis)
+    with opened(vis / 'STATE', True) as state:
+        tagged = state.nrows()
+        state.addrows(1)
+        state.putcell('OBS_MODE', tagged, 'OBSERVE_TARGET#OFF_SOURCE,CALIBRATE_FOCUS#ON_SOURCE')
+        state.putcell('SIG', tagged, False)
+        state.putcell('REF', tagged, True)
+    with opened(vis, True) as main:
+        states = main.getcol('STATE_ID')
+        states[main.getcol('SCAN_NUMBER') == 1] = tagged
+        assert main.putcol('STATE_ID', states)
+
+    selected = {}
+    for engine, task in tasks.items():
+        default = root / f'{engine}-all-intents.cal'
+        subset = root / f'{engine}-selected-intent.cal'
+        task(str(vis), calmode='ps', outfile=str(default))
+        task(str(vis), calmode='ps', outfile=str(subset), intent='CALIBRATE_FOCUS#ON_SOURCE')
+        np.testing.assert_array_equal(columns(default)['SCAN_NUMBER'], [1, 3])
+        selected[engine] = columns(subset)
+        np.testing.assert_array_equal(selected[engine]['SCAN_NUMBER'], [1])
+
+        default_tsys = root / f'{engine}-tsys-default-intent.cal'
+        inactive_tsys = root / f'{engine}-tsys-unused-intent.cal'
+        task(str(temperatures), calmode='tsys', outfile=str(default_tsys))
+        task(str(temperatures), calmode='tsys', outfile=str(inactive_tsys), intent='UNUSED_INTENT')
+        compare_mapping(columns(inactive_tsys), columns(default_tsys), False)
+
+        applications = []
+        for name, extra in (('default', {}), ('unused', {'intent': 'UNUSED_INTENT'})):
+            apply_vis = root / f'{engine}-apply-{name}-intent.ms'
+            copy_ms(vis, apply_vis)
+            task(str(apply_vis), calmode='apply', applytable=str(default), **extra)
+            with opened(apply_vis) as main:
+                applications.append({key: main.getcol(key) for key in ('CORRECTED_DATA', 'FLAG')})
+        compare_mapping(applications[1], applications[0], False)
+    if 'native' in selected:
+        compare_mapping(selected['native'], selected['casa'], False)
+    print('Position-switch intent selection and inactive apply/Tsys intent matched', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -318,6 +361,7 @@ def main():
     temperatures = compare_tsys(root, seed, tasks)
     check_selectors_and_errors(root, seed, temperatures, tasks)
     check_parameter_planes(root, seed, tasks)
+    check_intent(root, seed, temperatures, tasks)
     if 'native' in tasks:
         check_busy_replacement(root, seed, temperatures, tasks['native'])
 
