@@ -521,6 +521,7 @@ fn finalize_series(
                 label: label.clone(),
                 color_group: label,
                 y_axis,
+                y_index: 0,
                 points: scatter_points,
                 plotms_metadata: Vec::new(),
                 provenance,

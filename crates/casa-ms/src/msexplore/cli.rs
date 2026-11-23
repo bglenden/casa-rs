@@ -38,6 +38,7 @@ struct CliOptions {
     y_axis2: Option<MsAxis>,
     data_column: MsDataColumn,
     x_data_column: Option<MsDataColumn>,
+    secondary_y_data_column: Option<MsDataColumn>,
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
     avgtime: Option<f64>,
@@ -220,6 +221,11 @@ fn run_task(
         let atmosphere = super::calibration::atmosphere::Options::from_task(task)?;
         let visibility_document = calibration.is_some() || atmosphere.is_some();
         let (options, visibility_document) = options_from_plotms(task, visibility_document)?;
+        if calibration.is_some() && options.secondary_y_data_column.is_some() {
+            return Err(TaskFailure::validation(
+                "independent ordinate columns with a MeasurementSet callibrary are pending #1032",
+            ));
+        }
         if calibration.is_none()
             && let Some(columns) = options.plotms_axis_columns()
         {
@@ -258,30 +264,36 @@ fn run_task(
 }
 
 impl CliOptions {
-    fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 2]> {
+    fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 3]> {
         (self.x_data_column.is_some()
+            || self.y_axis2.is_some()
             || self.data_column.is_derived()
             || self.data_column == MsDataColumn::Corrected)
             .then_some([
                 self.x_data_column.unwrap_or(self.data_column),
                 self.data_column,
+                self.secondary_y_data_column.unwrap_or(self.data_column),
             ])
     }
 }
 
 fn check_plotms_columns(
     options: &CliOptions,
-    columns: [MsDataColumn; 2],
+    columns: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
-    if columns.into_iter().any(MsDataColumn::is_derived)
-        && (options.avgchannel.is_some_and(|width| width > 1)
-            || options.avgtime.is_some()
-            || options.avgscan
-            || options.avgfield
-            || options.avgbaseline
-            || options.avgantenna
-            || options.avgspw)
-    {
+    let averaging = options.avgchannel.is_some_and(|width| width > 1)
+        || options.avgtime.is_some()
+        || options.avgscan
+        || options.avgfield
+        || options.avgbaseline
+        || options.avgantenna
+        || options.avgspw;
+    if averaging && options.secondary_y_data_column.is_some() {
+        return Err(TaskFailure::validation(
+            "averaging independent MeasurementSet ordinate columns is pending #1032",
+        ));
+    }
+    if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
         return Err(TaskFailure::validation(
             "averaging derived data columns in this MeasurementSet plot is pending #1032",
         ));
@@ -326,9 +338,12 @@ fn run_visibility_plot(
         });
         if adjusted != *columns {
             tracing::warn!("CORRECTED_DATA is unavailable. Using DATA for PlotMS.");
-            let [x, y] = adjusted;
+            let [x, y, secondary_y] = adjusted;
             options.data_column = y;
             options.x_data_column = (x != y).then_some(x);
+            if options.secondary_y_data_column.is_some() {
+                options.secondary_y_data_column = Some(secondary_y);
+            }
             *columns = adjusted;
         }
     }
@@ -361,7 +376,12 @@ fn run_visibility_plot(
         let spec = build_explore_spec(&options).map_err(TaskFailure::validation)?;
         let payload = match &calibrated {
             Some(input) => build_calibrated_plotms_payload(&ms, &spec, input),
-            None => build_uncalibrated_plotms_payload(&ms, &spec, options.x_data_column),
+            None => build_uncalibrated_plotms_payload(
+                &ms,
+                &spec,
+                options.x_data_column,
+                options.secondary_y_data_column,
+            ),
         }
         .map_err(TaskFailure::execution)?;
         let overlays = if let Some(atmosphere) = atmosphere {
@@ -574,7 +594,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
         max_plot_points: options.max_points,
         plots: vec![plot_spec],
     };
-    spec.validate()?;
+    spec.validate_with_ordinate_columns(options.secondary_y_data_column.is_some())?;
     Ok(spec)
 }
 
@@ -616,7 +636,7 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
         options.showmajorgrid,
         options.showminorgrid,
     )?;
-    spec.validate()?;
+    spec.validate_with_ordinate_columns(options.secondary_y_data_column.is_some())?;
     Ok(spec)
 }
 
@@ -1101,6 +1121,7 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
         y_axis2: parsed(task, "y_axis2", MsAxis::parse)?,
         data_column: required(task, "datacolumn", MsDataColumn::parse)?,
         x_data_column: None,
+        secondary_y_data_column: None,
         color_by: required(task, "color_by", MsColorAxis::parse)?,
         avgchannel: parsed(task, "avgchannel", number::<usize>)?,
         avgtime: parsed(task, "avgtime", number::<f64>)?,
@@ -1196,22 +1217,32 @@ fn options_from_plotms(
             .map_err(TaskFailure::validation)
     };
     let x_column = data_column(text("xdatacolumn")?)?.unwrap_or(MsDataColumn::Data);
-    let y_column =
-        data_column(plotms_column(task.value("ydatacolumn"))?)?.unwrap_or(MsDataColumn::Data);
-    let y_uses_data =
-        y_axis.is_visibility_math() || y_axis2.is_some_and(MsAxis::is_visibility_math);
-    let data_column = if y_uses_data {
+    let [y_column, secondary_y] = super::plotms_columns::ordinate_columns(task, y_axis, y_axis2)?;
+    let secondary_uses_data = y_axis2.is_some_and(MsAxis::is_visibility_math);
+    let data_column = if y_axis.is_visibility_math() {
         y_column
     } else if x_axis.is_visibility_math() {
         x_column
+    } else if secondary_uses_data {
+        secondary_y
     } else {
         MsDataColumn::Data
     };
     let x_data_column =
         (x_axis.is_visibility_math() && x_column != data_column).then_some(x_column);
-    let derived_column_plot =
-        data_column.is_derived() || x_data_column.is_some_and(MsDataColumn::is_derived);
+    let secondary_y = if secondary_uses_data {
+        secondary_y
+    } else {
+        data_column
+    };
+    let secondary_y_data_column =
+        (y_axis2 == Some(y_axis) || secondary_y != data_column).then_some(secondary_y);
+    let derived_column_plot = data_column.is_derived()
+        || x_data_column.is_some_and(MsDataColumn::is_derived)
+        || secondary_y_data_column.is_some_and(MsDataColumn::is_derived);
+    let normalize_zero_average = derived_column_plot || y_axis2.is_some();
     let visibility_document = visibility_document
+        || y_axis2.is_some()
         || derived_column_plot
         || x_data_column.is_some()
         || data_column == MsDataColumn::Corrected;
@@ -1260,17 +1291,18 @@ fn options_from_plotms(
         y_axis2,
         data_column,
         x_data_column,
+        secondary_y_data_column,
         color_by,
         avgchannel: average_text("avgchannel")?
             .map(|value| number::<usize>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&width| !derived_column_plot || width != 0),
+            .filter(|&width| !normalize_zero_average || width != 0),
         avgtime: average_text("avgtime")?
             .map(|value| number::<f64>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&interval| !derived_column_plot || interval != 0.0),
+            .filter(|&interval| !normalize_zero_average || interval != 0.0),
         avgscan: average("avgscan")?,
         avgfield: average("avgfield")?,
         avgbaseline: average("avgbaseline")?,
@@ -1326,19 +1358,6 @@ fn options_from_plotms(
         plot_format,
     };
     Ok((options, visibility_document))
-}
-
-fn plotms_column(value: Option<&ParameterValue>) -> Result<Option<String>, TaskFailure> {
-    let columns = super::calibration::axis_names(value).map_err(TaskFailure::validation)?;
-    let first = columns.first().copied().filter(|name| !name.is_empty());
-    if let Some(first) = first
-        && columns.iter().any(|name| *name != first)
-    {
-        return Err(TaskFailure::validation(
-            "multiple MeasurementSet data columns are pending #1032",
-        ));
-    }
-    Ok(first.map(str::to_owned))
 }
 
 /// Refuse the combinations a plot or flag edit cannot take.

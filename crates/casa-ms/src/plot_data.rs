@@ -296,6 +296,7 @@ mod tests {
                 label: "field 0".into(),
                 color_group: "field-0".into(),
                 y_axis: MsAxis::Amplitude,
+                y_index: 0,
                 points: vec![(1.0, 3.0), (2.0, 4.0)],
                 plotms_metadata: Vec::new(),
                 provenance: vec![

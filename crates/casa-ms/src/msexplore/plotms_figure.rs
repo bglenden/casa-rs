@@ -22,7 +22,7 @@ pub(super) fn prepare(
     output: Option<&Path>,
     show: bool,
     overlays: &[Vec<Curve>],
-    columns: Option<[MsDataColumn; 2]>,
+    columns: Option<[MsDataColumn; 3]>,
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
     let (x, y, second, grid) = match payload {
         MsPlotPayload::Scatter(plot) => (plot.x_axis, plot.y_axis, plot.secondary_y_axis, None),
@@ -97,7 +97,7 @@ fn label_visibility_columns(
     document: &mut PlotDocument,
     [x, y]: [MsAxis; 2],
     second: Option<MsAxis>,
-    [x_column, y_column]: [MsDataColumn; 2],
+    [x_column, y_column, secondary_y_column]: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
     let has_label =
         |name| Ok::<_, TaskFailure>(task.text(name)?.is_some_and(|text| !text.is_empty()));
@@ -105,7 +105,7 @@ fn label_visibility_columns(
     let mut y_name = column_axis_name(y, y_column);
     if let Some(second) = second {
         y_name.push_str(", ");
-        y_name.push_str(&column_axis_name(second, y_column));
+        y_name.push_str(&column_axis_name(second, secondary_y_column));
     }
     if !has_label("title")? {
         document.title = format!("{y_name} vs. {x_name}");
@@ -119,7 +119,7 @@ fn label_visibility_columns(
             "x" if !explicit_x => (x, x_column),
             "y" if !explicit_y => (y, y_column),
             "y-secondary" => match second {
-                Some(second) => (second, y_column),
+                Some(second) => (second, secondary_y_column),
                 None => continue,
             },
             _ => continue,
@@ -134,7 +134,7 @@ fn label_visibility_columns(
     Ok(())
 }
 
-fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
+pub(super) fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
     let name = plotms_text::name(axis);
     if axis.is_visibility_math() && column != MsDataColumn::Data {
         let label = match column {

@@ -332,13 +332,22 @@ fn secondary_axis_scatter_document(
     metadata: &PayloadMetadata,
     preset: MsPlotPreset,
 ) -> PlotDocument {
+    let primary_bounds = payload.fixed_y_bounds.unwrap_or_else(|| {
+        payload
+            .series
+            .iter()
+            .filter(|series| series.y_index == 0)
+            .flat_map(|series| series.points.iter().map(|(_, y)| *y))
+            .fold(None, bounds_accumulator)
+            .unwrap_or((0.0, 1.0))
+    });
     let mut axes = axes_for_ranges(
         "x",
         &payload.x_label,
         "y",
         &payload.y_label,
         payload.fixed_x_bounds,
-        payload.fixed_y_bounds,
+        Some(primary_bounds),
         payload
             .series
             .iter()
@@ -351,7 +360,7 @@ fn secondary_axis_scatter_document(
                 payload
                     .series
                     .iter()
-                    .filter(|series| Some(series.y_axis) == payload.secondary_y_axis)
+                    .filter(|series| series.y_index == 1)
                     .flat_map(|series| series.points.iter().map(|(_, y)| *y)),
             )
         });
@@ -366,13 +375,8 @@ fn secondary_axis_scatter_document(
                 PlotAxisScale::Linear,
             )
         });
-        for layer in &mut layers {
-            if payload
-                .series
-                .iter()
-                .find(|series| series.label == layer.title)
-                .is_some_and(|series| Some(series.y_axis) == payload.secondary_y_axis)
-            {
+        for (series, layer) in payload.series.iter().zip(&mut layers) {
+            if series.y_index == 1 {
                 layer.y_axis_id = "y-secondary".to_string();
             }
         }

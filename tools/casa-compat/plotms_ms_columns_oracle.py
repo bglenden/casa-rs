@@ -185,6 +185,8 @@ def compare_missing_corrected(root, vis, source, native):
         "vector-ratio-without-corrected": dict(xdatacolumn="corrected/model_vector", ydatacolumn="data/model_vector"),
         "scalar-ratio-without-corrected": dict(xdatacolumn="data/model_scalar", ydatacolumn="corrected/model_scalar"),
         "scalar-without-corrected": dict(xdatacolumn="corrected-model_scalar", ydatacolumn="data-model_scalar"),
+        "ordinate-without-corrected": dict(xaxis="channel", yaxis=["amp", "amp"],
+                                            xdatacolumn="", ydatacolumn=["data", "corrected"]),
     }
     for name, options in cases.items():
         controls = request(fallback) | options | dict(expformat="txt")
@@ -192,7 +194,7 @@ def compare_missing_corrected(root, vis, source, native):
         assert reference(**controls, plotfile=str(expected)) is None
         assert native(**controls, plotfile=str(actual)) is None
         count = compare_text(actual, expected)
-        assert count == 12
+        assert count == (24 if name == "ordinate-without-corrected" else 12)
         print(f"{name}: {count} matches with no stored CORRECTED_DATA", flush=True)
     compare_figure(root, native, request(fallback), root / "corrected-on-y.casa.txt",
                    ("Phase vs. Amp", "Amp", "Phase (degrees)"))
@@ -277,6 +279,101 @@ def compare_ratio_float_range(root, vis, source, native):
         print(f"{name}: matched the float range for 12 selected points", flush=True)
 
 
+def compare_ordinate_columns(root, vis, native):
+    from casars import _plot_document
+
+    base = request(vis) | dict(xaxis="channel", xdatacolumn="", yaxislocation=["left", "right"])
+    cases = {
+        "ord-distinct-axes": dict(yaxis=["amp", "phase"], ydatacolumn=["data", "corrected"]),
+        "ord-same-axis": dict(yaxis=["amp", "amp"], ydatacolumn=["data", "corrected"]),
+        "ord-same-axis-short-list": dict(yaxis=["amp", "amp"], ydatacolumn=["corrected"]),
+        "ord-short-list": dict(yaxis=["amp", "phase"], ydatacolumn=["corrected"]),
+        "ord-scalar-column": dict(yaxis=["amp", "phase"], ydatacolumn="corrected",
+                                  avgchannel="0", avgtime="0"),
+        "ord-equal-coordinates": dict(yaxis=["amp", "real"], ydatacolumn=["data", "data"]),
+        "ord-reverse-axes": dict(yaxis=["phase", "amp"], ydatacolumn=["corrected", "data"]),
+        "ord-shares-x-column": dict(xaxis="amp", xdatacolumn="corrected", yaxis=["amp", "phase"],
+                                     ydatacolumn=["data", "corrected"], avgchannel="0", avgtime="0"),
+    }
+    for name, options in cases.items():
+        controls = base | options | dict(expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 24
+        assert [point[2:] for point in selected[:12]] == [point[2:] for point in selected[12:]]
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 24
+        print(f"{name}: matched both ordinates for 12 selected points", flush=True)
+
+    duplicates = (("identical", "data", "data"), ("aliases", "residual", "corrected-model_vector"))
+    for name, first, second in duplicates:
+        for engine, task in (("casa", reference), ("native", native)):
+            duplicate = base | dict(yaxis=["amp", "amp"], ydatacolumn=[first, second], expformat="txt")
+            output = root / f"ord-duplicate-{name}.{engine}.txt"
+            try:
+                task(**duplicate, plotfile=str(output))
+            except RuntimeError as error:
+                assert "Remove duplicate y-axes." in str(error), error
+            else:
+                raise AssertionError(f"{engine} accepted duplicate ordinates with the same column")
+            assert not output.exists()
+
+    for name, invalid in (("scalar", "typo"), ("empty-entry", ["data", ""]),
+                          ("trailing-entry", ["data", "corrected", "typo"])):
+        controls = base | dict(yaxis=["amp", "phase"], ydatacolumn=invalid, expformat="txt")
+        for engine, task in (("casa", reference), ("native", native)):
+            output = root / f"ord-invalid-{name}.{engine}.txt"
+            try:
+                task(**controls, plotfile=str(output))
+            except ValueError as error:
+                assert "invalid ydatacolumn" in str(error), error
+            else:
+                raise AssertionError(f"{engine} accepted the invalid {name} selector")
+            assert not output.exists()
+
+    controls = base | dict(yaxis=["amp", "amp"], ydatacolumn=["data"], expformat="txt")
+    for engine, task, message in (("casa", reference, "plot parameters failed"),
+                                  ("native", native, "Remove duplicate y-axes.")):
+        output = root / f"ord-default-duplicate.{engine}.txt"
+        try:
+            task(**controls, plotfile=str(output))
+        except Exception as error:
+            assert message in str(error), error
+        else:
+            raise AssertionError(f"{engine} accepted duplicate effective DATA ordinates")
+        assert not output.exists()
+
+    capture = []
+    render = _plot_document.render_document
+
+    def record(*args, **kwargs):
+        figure, primary = render(*args, **kwargs)
+        capture.append((primary.get_xlabel(), [(axis.get_ylabel(), axis.lines[0].get_xydata(), axis.get_ylim())
+                                               for axis in figure.axes]))
+        return figure, primary
+
+    for name, labels in (("ord-same-axis", ["Amp", "Amp:corrected"]),
+                         ("ord-equal-coordinates", ["Amp", "Real"])):
+        controls = base | cases[name] | dict(expformat="png", width=500, height=360, dpi=100)
+        expected, actual = (root / f"{name}.{engine}.png" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        with patch.object(_plot_document, "render_document", record):
+            assert native(**controls, plotfile=str(actual)) is None
+        [(xlabel, layers)] = capture
+        capture.clear()
+        assert xlabel == "Channel", xlabel
+        assert [label for label, _, _ in layers] == labels, layers
+        coordinates = np.array([point[:2] for point in rows(root / f"{name}.casa.txt")], dtype=float)
+        for index, (_, layer, _) in enumerate(layers):
+            np.testing.assert_allclose(layer, coordinates[index * 12:(index + 1) * 12], rtol=1.2e-5, atol=1e-7)
+        if name == "ord-equal-coordinates":
+            assert layers[0][2] == layers[1][2], (layers[0][2], layers[1][2])
+        for output in (expected, actual):
+            with Image.open(output) as image:
+                assert image.size == (500, 360), (output, image.size)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -300,6 +397,7 @@ def main():
         compare_scalar_phase_boundary(root, vis, source, native)
         compare_zero_model(root, vis, source, native)
         compare_ratio_float_range(root, vis, source, native)
+        compare_ordinate_columns(root, vis, native)
 
 
 if __name__ == "__main__":
