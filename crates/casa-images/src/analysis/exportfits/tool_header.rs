@@ -111,6 +111,16 @@ pub fn image_fits_header_with_beams(
         }
     }
     if standard {
+        if image
+            .coordinates()
+            .obs_info()
+            .date
+            .as_ref()
+            .is_none_or(|epoch| epoch.value().as_mjd() == 0.0)
+        {
+            wcs.remove("DATE-OBS");
+            wcs.insert("TIMESYS".into(), FitsValue::String("UTC".into()));
+        }
         header.observation(image, &mut wcs)?;
     } else {
         header.text("TIMESYS", "UTC");
@@ -155,7 +165,7 @@ pub(super) fn image_export_cards<T: ImagePixel>(
     wcs: &[(String, FitsValue)],
 ) -> Result<Vec<String>, ImageError> {
     let mut header = ImageFitsHeader(Vec::new());
-    header.image_metadata(image.units(), info)?;
+    header.image_metadata(image.units(), info, None)?;
     header.0.retain(|card| match card.keyword.name.as_str() {
         "BMAJ" | "BMIN" | "BPA" => false,
         "BUNIT" => image.units().is_empty(),
@@ -310,20 +320,12 @@ impl ImageFitsHeader {
         image: &dyn ImageInterface<T>,
         wcs: &mut BTreeMap<String, FitsValue>,
     ) -> Result<(), ImageError> {
-        let obs = image.coordinates().obs_info();
-        if obs
-            .date
-            .as_ref()
-            .is_none_or(|epoch| epoch.value().as_mjd() == 0.0)
-        {
-            wcs.remove("DATE-OBS");
-            wcs.insert("TIMESYS".into(), FitsValue::String("UTC".into()));
-        }
         for keyword in ["TELESCOP", "OBSERVER", "DATE-OBS", "TIMESYS"] {
             if let Some(value) = wcs.remove(keyword) {
                 self.add(keyword, value, None);
             }
         }
+        let obs = image.coordinates().obs_info();
         if let Some(position) = &obs.telescope_position {
             let xyz = position
                 .convert_to(PositionRef::ITRF)
