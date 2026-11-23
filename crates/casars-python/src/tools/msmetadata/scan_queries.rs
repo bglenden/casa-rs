@@ -133,7 +133,7 @@ pub(super) fn matching_scan<'a>(
     Ok(scans)
 }
 
-fn field_ids(ms: &MeasurementSet, name: &str) -> MsResult<BTreeSet<i32>> {
+pub(super) fn field_ids(ms: &MeasurementSet, name: &str) -> MsResult<BTreeSet<i32>> {
     let fields = ms.field()?;
     let mut ids = BTreeSet::new();
     for row in 0..fields.row_count() {

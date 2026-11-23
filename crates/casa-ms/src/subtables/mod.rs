@@ -230,6 +230,7 @@ pub mod field;
 pub mod flag_cmd;
 pub mod freq_offset;
 pub mod history;
+mod metadata_field;
 pub mod observation;
 pub mod pointing;
 pub mod polarization;

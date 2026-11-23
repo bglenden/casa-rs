@@ -661,3 +661,184 @@ def test_msmetadata_stations_without_an_observed_match(native_dataset):
             assert metadata.antennastations("A1", obsid=0) == ["P1"]
         finally:
             assert metadata.done()
+
+
+def test_msmetadata_field_polynomial_direction_records(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "FIELD"), nomodify=False)
+    origin = 4.8e9
+    assert table.putcell("TIME", 0, origin)
+    assert table.putcell("NUM_POLY", 0, 1)
+    phase = (-0.12, 0.41)
+    reference = (-0.13, 0.45)
+    rates = (2e-5, -3e-5)
+    for name, constant in (("PHASE_DIR", phase), ("REFERENCE_DIR", reference)):
+        assert table.putcell(name, 0, np.asfortranarray(np.rad2deg(np.array([constant, rates]).T)))
+        assert table.putcolkeyword(name, "QuantumUnits", ["deg", "deg"])
+    assert table.done()
+
+    def compare(direction, expected):
+        assert (direction["type"], direction["refer"]) == ("direction", "J2000")
+        for index, value in enumerate(expected):
+            component = direction[f"m{index}"]
+            assert component["unit"] == "rad"
+            assert component["value"] == pytest.approx(value, abs=2e-12)
+
+    epoch = {"type": "epoch", "refer": "UTC", "m0": {"value": origin + 20, "unit": "s"}}
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            compare(metadata.phasecenter(), phase)
+            compare(metadata.refdir("F"), reference)
+            compare(metadata.refdir(b"F"), reference)
+            compare(metadata.phasecenter(0, epoch), tuple(offset + 20 * rate for offset, rate in zip(phase, rates)))
+            compare(metadata.refdir(np.int32(0), epoch), tuple(offset + 20 * rate for offset, rate in zip(reference, rates)))
+            relative_epoch = {
+                "type": "epoch", "refer": "UTC", "m0": {"value": 20.0, "unit": "s"},
+                "offset": {"type": "epoch", "refer": "UTC", "m0": {"value": origin, "unit": "s"}},
+            }
+            compare(metadata.phasecenter(0, relative_epoch),
+                    tuple(offset + 20 * rate for offset, rate in zip(phase, rates)))
+            with pytest.raises(RuntimeError):
+                metadata.phasecenter(99)
+            with pytest.raises(RuntimeError):
+                metadata.refdir("absent")
+            with pytest.raises(RuntimeError):
+                metadata.refdir(0, {"type": "direction", "refer": "J2000",
+                                    "m0": {"value": 0., "unit": "rad"}, "m1": {"value": 0., "unit": "rad"}})
+        finally:
+            assert metadata.done()
+
+
+def test_msmetadata_attached_ephemeris_direction_records(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset), nomodify=True)
+    start = float(table.getcell("TIME", 0))
+    assert table.done()
+    mjd = np.floor(start / 86400.0)
+    field = native_dataset / "FIELD"
+    assert table.open(str(field), nomodify=False)
+    if "EPHEMERIS_ID" not in table.colnames():
+        assert table.addcols({"EPHEMERIS_ID": {"valueType": "int"}})
+    assert table.putcell("EPHEMERIS_ID", 0, 0)
+    assert table.putcell("TIME", 0, start)
+    assert table.putcell("PHASE_DIR", 0, np.array([[0.001], [0.002]]))
+    assert table.putcell("REFERENCE_DIR", 0, np.array([[0.003], [0.004]]))
+    assert table.done()
+
+    columns = {name: {"valueType": "double"} for name in ("MJD", "RA", "DEC", "Rho", "RadVel")}
+    assert table.create(str(field / "EPHEM0_TEST.tab"), columns, nrow=5)
+    assert table.putinfo({"type": "IERS", "subType": "ephemeris"})
+    for name, unit, values in (
+        ("MJD", "d", np.arange(mjd - 2, mjd + 3)),
+        ("RA", "deg", 15.0 + np.arange(5) / 10.0),
+        ("DEC", "deg", -30.0 + np.arange(5) / 10.0),
+        ("Rho", "AU", np.full(5, 2.0)),
+        ("RadVel", "AU/d", np.full(5, 0.001)),
+    ):
+        assert table.putcolkeyword(name, "UNIT", unit)
+        assert table.putcol(name, values)
+    assert table.putkeywords({
+        "VS_CREATE": "2026/11/22/00:00", "VS_DATE": "2026/11/22/00:00",
+        "VS_VERSION": "0001.0001", "VS_TYPE": "Table of comet/planetary positions",
+        "NAME": "TEST", "posrefsys": "ICRF/ICRS", "obsloc": "GEOCENTRIC", "GeoDist": 0.,
+        "GeoLong": 0., "GeoLat": 0., "dMJD": 1., "MJD0": mjd - 3,
+    })
+    assert table.done()
+
+    def epoch(day):
+        return {"type": "epoch", "refer": "UTC", "m0": {"value": day, "unit": "d"}}
+
+    outcomes = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            at_origin = metadata.phasecenter()
+            later = metadata.phasecenter(0, epoch(mjd + 0.75))
+            ref = metadata.refdir(0, epoch(mjd + 0.75))
+            assert at_origin["m0"]["value"] != later["m0"]["value"]
+            assert later["m1"]["value"] != ref["m1"]["value"]
+            with pytest.raises(RuntimeError):
+                metadata.phasecenter(0, epoch(mjd + 20))
+            outcomes.append([at_origin, later, ref])
+        finally:
+            assert metadata.done()
+    for expected, actual in zip(*outcomes):
+        assert expected["refer"] == actual["refer"]
+        for axis in ("m0", "m1"):
+            assert expected[axis]["unit"] == actual[axis]["unit"]
+            assert expected[axis]["value"] == pytest.approx(actual[axis]["value"], abs=2e-11)
+
+    # The reference MAIN table has no local FIELD directory. Both tools
+    # must resolve the field's ephemeris through the inherited FIELD link.
+    view = native_dataset.with_name("ephemeris-view.ms")
+    reference = casatools.table()
+    assert reference.open(str(native_dataset))
+    selection = reference.selectrows(np.array([0], dtype=np.int64), str(view))
+    assert selection.done()
+    assert reference.done()
+    assert not (view / "FIELD").exists()
+    for module, expected in zip((casatools, tools), outcomes):
+        metadata = module.msmetadata()
+        assert metadata.open(str(view))
+        try:
+            assert metadata.refdir(0, epoch(mjd + 0.75)) == expected[2]
+        finally:
+            assert metadata.done()
+
+
+def test_msmetadata_pointing_interpolation_uses_each_antenna(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    first, second = table.getcol("ANTENNA1"), table.getcol("ANTENNA2")
+    row = int(np.flatnonzero(first != second)[0])
+    antennas = [int(first[row]), int(second[row])]
+    time = float(table.getcell("TIME", row))
+    assert table.putcell("INTERVAL", row, 2.0)
+    assert table.done()
+    assert table.open(str(native_dataset / "POINTING"), nomodify=False)
+    if table.nrows():
+        assert table.removerows(list(range(table.nrows())))
+    assert table.addrows(4)
+    assert table.putcolkeyword("DIRECTION", "QuantumUnits", ["deg", "deg"])
+    assert table.putcolkeyword("TARGET", "QuantumUnits", ["deg", "deg"])
+    for index, antenna in enumerate(antennas):
+        for sample in range(2):
+            record = 2 * index + sample
+            assert table.putcell("ANTENNA_ID", record, antenna)
+            assert table.putcell("TIME", record, time - 1 + sample * 10)
+            assert table.putcell("INTERVAL", record, 10.0)
+            assert table.putcell("NUM_POLY", record, 0)
+            direction = np.array([[-0.12 + 0.03 * index + 0.01 * sample],
+                                  [0.46 + 0.02 * index - 0.02 * sample]])
+            assert table.putcell("DIRECTION", record, np.rad2deg(direction))
+            assert table.putcell("TARGET", record, np.rad2deg(direction))
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            for interpolate in (False, True):
+                result = metadata.pointingdirection(row, interpolate=interpolate, initialrow=2)
+                assert result["time"] == time
+                for index, antenna in enumerate(antennas):
+                    entry = result[f"antenna{index + 1}"]
+                    assert entry["id"] == antenna
+                    direction = entry["pointingdirection"]
+                    assert direction["m0"]["value"] == pytest.approx(
+                        -0.12 + 0.03 * index + 0.001 * interpolate, abs=1e-13)
+                    assert direction["m1"]["value"] == pytest.approx(
+                        0.46 + 0.02 * index - 0.002 * interpolate, abs=1e-13)
+            with pytest.raises(RuntimeError):
+                metadata.pointingdirection(-1)
+        finally:
+            assert metadata.done()

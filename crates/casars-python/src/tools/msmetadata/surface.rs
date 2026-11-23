@@ -343,7 +343,7 @@ const METHODS: &[Method] = &[
             param("epoch", K::Record, EmptyRecord),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "pointingdirection",
@@ -353,7 +353,7 @@ const METHODS: &[Method] = &[
             param("initialrow", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "polidfordatadesc",
@@ -370,7 +370,7 @@ const METHODS: &[Method] = &[
             param("epoch", K::Record, EmptyRecord),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("reffreq", &[param("spw", K::Int, Int(-1))], R::Any, Yes),
     method(
