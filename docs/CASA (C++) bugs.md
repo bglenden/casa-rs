@@ -3385,6 +3385,15 @@ casa-rs treats that channel as it treats the others: it is not regridded,
 and the output keeps the input's (`casa_images::regrid`). Converting the
 frame of an axis that is never regridded serves no purpose.
 
+## `image.regrid` can compare the lengths of different unchanged axes
+
+CASA 6.7.6.14 preserves the native spectral coordinate and pixels for
+`image.regrid(axes=[2], method="cubic")` on a direction and spectral cube
+when the template has no spectral coordinate. But on a cube of shape
+`[8, 9, 5]` the same call fails because the shape check compares spectral
+length 5 to the first output length 8. Casa-rs checks the shape of the
+unchanged spectral axis and keeps the image's original grid and samples.
+
 ## `tsdimaging`'s theoretical beam models the kernels, not the gridder's
 
 - Date noted: 2026-10-28
@@ -8788,6 +8797,21 @@ Casa-rs emits that warning and exports the stored spectral coordinates.
 Both engines produced identical text when `transform=False` with nondefault
 frame, rest frequency and velocity convention. [Calibration diagnostics #1526](https://github.com/bglenden/casa-rs/issues/1526)
 
+## Mixed averaged flagdata can leave row flags clear
+
+On the public `Four_ants_3C286.ms` fixture, CASA 6.7.6.14's stock mixed
+Clip, TFCrop, RFlag, and antint list test starts from cleared flags. The
+shared iterator averages pairs of integrations and groups channels in
+bins of eight. The task flags 591,808 samples and leaves `FLAG_ROW` false
+for 26 of the 486 rows whose samples are all flagged in the repeated
+stock replay. The same 26 rows occur with the Clip, TFCrop, and RFlag
+prefix alone. An interleaved timing replay returned another row mask
+with identical sample flags. CASA's
+`AveragingTvi2::writeFlag` derives the row flag from the propagated
+sample mask. Casa-rs preserves that rule after projecting the final
+shared mask to the input rows. The stock test passes and every sample
+flag agrees with CASA.
+
 ## Calibration quack can flag the whole scan when times are out of order
 
 With CASA 6.7.6.14, two Tsys time blocks in the same scan stored in reverse
@@ -10626,3 +10650,11 @@ CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type
 ## A Noise baseline indexing assumes ordered antenna columns
 
 With eight antennas, both CASA 6.7.6.14 calibrater iterators applied the `A Noise` coefficients of `(0, 7)` to a deliberately reversed `(1, 0)` visibility. Casa-rs uses the coefficients of `(0, 1)`, conjugates them, and exchanges the cross hands to preserve the visibility's orientation. The ordinary ordered-baseline inputs agree with CASA. [Paired A Noise oracle](../tools/casa-compat/calibrater_anoise_oracle.py)
+
+## Direct EVLASWP can gather data and fail at fitting
+
+CASA 6.7.6.14 accepts direct `calibrater.setsolve(type='EVLASWP')` when the MeasurementSet links readable `SYSPOWER` and `CALDEVICE` tables. Both iterators record expected intervals and write no table for fully flagged input. Both terminate on the isolated usable visibility fit. Casa-rs retains the gather stage and returns a recoverable solve error for usable data. [Paired switched-power and KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+
+## Joint KMBD fitting can abort with single-correlation buffers
+
+When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 iterators refuse a mix of single- and dual-hand buffers. Two single-hand buffers instead terminate when the one-hand answer is assigned to the two-hand table array. Casa-rs reports a recoverable solve error in each case. [Paired KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)

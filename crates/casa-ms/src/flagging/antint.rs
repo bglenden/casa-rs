@@ -140,6 +140,50 @@ pub(super) fn affected_rows(
     Ok(Some(affected))
 }
 
+/// Antint reads the unmodified flags of the visibility iterator.
+pub(super) fn affected_average_rows<'a>(
+    ms: &MeasurementSet,
+    mut timed: Vec<ClipTimedRow>,
+    options: &AntennaIntegrationOptions,
+    path: &str,
+    flags: impl Fn(usize) -> &'a ndarray::ArrayD<bool>,
+) -> Result<Option<Vec<usize>>, FlaggingError> {
+    let fail = |reason: String| FlaggingError::MutateFlags {
+        path: path.to_owned(),
+        reason,
+    };
+    let (reference, antenna_count) = reference_antenna(ms, &options.reference_antenna)
+        .map_err(|error| fail(error.to_string()))?;
+    let Some(reference) = reference else {
+        return Ok(None);
+    };
+    if timed.is_empty() || antenna_count < 2 {
+        return Ok(Some(Vec::new()));
+    }
+    sort_iterator_rows(&mut timed);
+    let mut channels_by_description = BTreeMap::new();
+    for row in &timed {
+        channels_by_description
+            .entry(row.description())
+            .or_insert_with(|| flags(row.row).shape()[1]);
+    }
+    let mut affected = IntegrationScan {
+        rows: &timed,
+        reference,
+        antenna_count,
+        channels_by_description: &channels_by_description,
+        options,
+    }
+    .affected_rows(timed.len(), fail, |indices| {
+        Ok(indices
+            .iter()
+            .map(|&index| Some(ArrayValue::Bool(flags(index).clone())))
+            .collect())
+    })?;
+    affected.sort_unstable();
+    Ok(Some(affected))
+}
+
 struct IntegrationScan<'a> {
     rows: &'a [ClipTimedRow],
     reference: i32,
