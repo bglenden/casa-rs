@@ -518,6 +518,15 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
+            if let Some(subtype) =
+                casa_calibration::CalibraterLifecycle::gather_only_solve_type(&family)
+            {
+                state
+                    .set_tool_gather_only_solve(subtype, standard.gain(GainType::T), mode)
+                    .map_err(|_| setup_error())?;
+                state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
+                return Ok(true);
+            }
             if family == "GSPLINE" {
                 configure_generic_spline(state, standard, mode, &apmode)?;
             } else {

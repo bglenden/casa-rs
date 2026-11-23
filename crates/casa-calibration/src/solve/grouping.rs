@@ -56,7 +56,7 @@ pub(crate) fn build_solve_groups(
     let baseline_solve = options.input_rows.is_baseline();
     let keep_autocorrelations = matches!(
         options.input_rows,
-        SolveInputRows::GainTool | SolveInputRows::OpacityTool
+        SolveInputRows::GainTool | SolveInputRows::GatherOnlyTool
     ) || options.input_rows.is_accor();
     let seed_combined_g = !baseline_solve
         && !options.input_rows.is_accor()
@@ -176,10 +176,10 @@ pub(crate) fn build_solve_groups(
                 &mut layouts,
                 (&inputs, index),
             )?;
-            if options.input_rows == SolveInputRows::OpacityTool
+            if options.input_rows == SolveInputRows::GatherOnlyTool
                 && (group.attempted || group.gather_attempted())
             {
-                return Err(GainSolveError::OpacityCannotFit);
+                return Err(GainSolveError::GatherOnlyCannotFit);
             }
         }
         Ok::<_, GainSolveError>(())
