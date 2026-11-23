@@ -18,6 +18,7 @@ pub(in crate::solve) struct Gather {
 #[derive(Clone, Debug)]
 pub(in crate::solve) struct Spectrum {
     pub(in crate::solve) channels: Vec<usize>,
+    sample_shape: [usize; 2],
     pairs: BTreeMap<(i32, i32), Baseline>,
 }
 
@@ -42,6 +43,21 @@ impl Gather {
                 "unsupported additive fit correlation count".into(),
             ));
         }
+        let sample_shape = [samples.data.nrows(), samples.data.ncols()];
+        let window = self
+            .windows
+            .entry(row.data_desc_id)
+            .or_insert_with(|| Spectrum {
+                channels: channels.indices.to_vec(),
+                sample_shape,
+                pairs: BTreeMap::new(),
+            });
+        if sample_shape != window.sample_shape || channels.indices != window.channels {
+            return Err(GainSolveError::UnsupportedParameterShape {
+                path: format!("DATA_DESC_ID {} additive fit", row.data_desc_id),
+                shape: sample_shape.to_vec(),
+            });
+        }
         let accepted = channels
             .indices
             .iter()
@@ -55,13 +71,6 @@ impl Gather {
         let Some(&(_, first)) = accepted.first() else {
             return Ok(false);
         };
-        let window = self
-            .windows
-            .entry(row.data_desc_id)
-            .or_insert_with(|| Spectrum {
-                channels: channels.indices.to_vec(),
-                pairs: BTreeMap::new(),
-            });
         let (p, q) = (row.antenna1, row.antenna2);
         let spectrum = window
             .pairs

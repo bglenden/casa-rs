@@ -11,6 +11,7 @@ from casatools import calibrater as casa_calibrater
 import numpy as np
 
 from blcal_oracle import copy_ms, source
+from bpoly_oracle import multiwindow_data
 from calibration_smoothcal_oracle import opened
 from calibrater_apply_tool_oracle import result, same_record
 from calibrater_solve_tool_oracle import compare_readers
@@ -139,6 +140,86 @@ def check_partial_time_flags(work, factories, datasets, coordinates):
     print('partial time flags and full-interval preaveraging matched', flush=True)
 
 
+def check_flagged_model(work, product, factories, datasets):
+    flagged = work/'flagged-constant-coefficient.cal'
+    copy_ms(product, flagged)
+    with opened(flagged, True) as table:
+        first, second = (table.getcol(key) for key in ('ANTENNA1', 'ANTENNA2'))
+        flags = table.getcol('FLAG')
+        flags[0, :, (first == 0) & (second == 1)] = True
+        assert table.putcol('FLAG', flags)
+    for legacy in (False, True):
+        for name, factory in factories.items():
+            vis = datasets[name]
+            with opened(vis, True) as table:
+                data = table.getcol('DATA')
+                assert table.putcol('MODEL_DATA', np.full_like(data, MODEL_START))
+                field, p, q = (table.getcol(key) for key in ('FIELD_ID', 'ANTENNA1', 'ANTENNA2'))
+                baseline = (field == 0) & (p == 0) & (q == 1)
+            tool = factory()
+            assert tool.setvi(legacy, True) and tool.open(str(vis), addmodel=True)
+            assert tool.selectvis(field='FLUX', spw='0:2~9')
+            assert tool.setapply(table=str(flagged)) and tool.corrupt() and tool.close()
+            with opened(vis) as table:
+                model = table.getcol('MODEL_DATA')
+                np.testing.assert_array_equal(model[0, FIT_CHANNELS, baseline],
+                                              0. if legacy else MODEL_START)
+                np.testing.assert_allclose(model[1:, FIT_CHANNELS, baseline],
+                                           data[1:, FIT_CHANNELS, baseline], rtol=0., atol=3e-6)
+        print('flagged polynomial model', legacy, 'matched', flush=True)
+
+
+def check_combined_domain(work, factories, reference):
+    dataset = work/'combined.ms'
+    multiwindow_data(reference, dataset)
+    with opened(dataset, True) as table:
+        field, dd, time = (table.getcol(k) for k in ('FIELD_ID', 'DATA_DESC_ID', 'TIME'))
+        scan = np.where(time < np.median(time[field == 0]), 1, 2)
+        data = np.broadcast_to(1. + 2. * dd, table.getcol('DATA').shape).astype('complex64')
+        flags = np.zeros(data.shape, dtype=bool)
+        flags[..., (scan == 1) & (dd == 1)] = True
+        for key, value in (('DATA', data), ('SCAN_NUMBER', scan.astype('int32')),
+                           ('FLAG', flags), ('FLAG_ROW', flags.all(axis=(0, 1)))):
+            assert table.putcol(key, value)
+    with opened(dataset/'SPECTRAL_WINDOW') as table:
+        domain = table.getcol('CHAN_FREQ')[3, :]
+    for name, factory in factories.items():
+        product = work/f'combined-{name}.cal'
+        tool = factory()
+        assert tool.setvi(True, True) and tool.open(str(dataset))
+        assert tool.selectvis(field='FLUX', spw='0:3,1:3')
+        assert tool.setsolve('A', 'inf', str(product), fitorder=1, combine='spw')
+        assert tool.solve() and tool.close()
+        with opened(product) as table, opened(product/'SPECTRAL_WINDOW') as spw:
+            p, q = (table.getcol(key) for key in ('ANTENNA1', 'ANTENNA2'))
+            rows = (p == 0) & (q == 1)
+            np.testing.assert_array_equal(table.getcol('SCAN_NUMBER')[rows], [1, 2])
+            np.testing.assert_array_equal(table.getcol('FLAG')[0, :, rows],
+                                          [[False, True], [False, False]])
+            if name == 'native':
+                np.testing.assert_array_equal(spw.getcell('CHAN_FREQ', 0), domain)
+                np.testing.assert_allclose(table.getcol('CPARAM')[0, :, rows],
+                                           [[1., 0.], [2., 1.]], atol=2e-6, rtol=0.)
+            else:
+                np.testing.assert_array_equal(spw.getcell('CHAN_FREQ', 0), [domain[0]] * 2)
+        print('initially flagged combined window', name, 'checked', flush=True)
+
+
+def check_reversed_table(work, product, vis, factory):
+    reversed_table = work/'reversed-calibration.cal'
+    copy_ms(product, reversed_table)
+    with opened(reversed_table, True) as table:
+        p, q = (table.getcol(key) for key in ('ANTENNA1', 'ANTENNA2'))
+        row = int(np.flatnonzero((p == 0) & (q == 1))[0])
+        coefficients, flags = (table.getcell(key, row) for key in ('CPARAM', 'FLAG'))
+        order = [0, 2, 1, 3]
+        for key, value in (('ANTENNA1', 1), ('ANTENNA2', 0),
+                           ('CPARAM', coefficients[order].conj()), ('FLAG', flags[order])):
+            assert table.putcell(key, row, value)
+    check_apply(factory, vis, reversed_table, False)
+    print('reversed coefficient row and cross hands matched', flush=True)
+
+
 def run(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     work.mkdir()
@@ -173,6 +254,10 @@ def run(work, reference_only):
                             same_record(activities['native'], activities['casa'])
                         print(label, writer, old, 'application matched', flush=True)
             print(label, 'reference' if reference_only else 'matched', flush=True)
+        check_flagged_model(work, work/'complex-casa.cal', factories, datasets)
+        check_combined_domain(work, factories, reference)
+        if 'native' in factories:
+            check_reversed_table(work, work/'complex-casa.cal', datasets['native'], factories['native'])
         check_partial_time_flags(work, factories, datasets, coordinates)
 
 

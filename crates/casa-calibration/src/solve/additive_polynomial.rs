@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use casa_ms::MeasurementSet;
 
 use super::grouping::{
-    PriorCalibrationMode, SolveGroupOptions, SolveInputRows, build_solve_groups,
+    PriorCalibrationMode, SelectedSolveRow, SolveGroupOptions, SolveInputRows, build_solve_groups,
+    selected_channels,
 };
 use super::{GainSolveError, GainSolveModelSource, GainSolveReport, GainSolveRequest, GainType};
 use super::{RefAntSelector, SolvedGains};
@@ -21,6 +22,59 @@ pub(super) struct TableGrid {
 pub(super) struct Window {
     pub(super) frequency_domain: [f64; 2],
     pub(super) correlations: usize,
+}
+
+struct SelectedFrequencies {
+    by_description: BTreeMap<i32, Vec<f64>>,
+    by_window: BTreeMap<i32, [f64; 2]>,
+}
+
+impl SelectedFrequencies {
+    fn read(ms: &MeasurementSet, rows: &[SelectedSolveRow]) -> Result<Self, GainSolveError> {
+        use std::collections::btree_map::Entry;
+
+        let table = ms.spectral_window().map_err(ms_error)?;
+        let mut by_description = BTreeMap::new();
+        let mut by_window = BTreeMap::new();
+        for row in rows {
+            if let Entry::Vacant(entry) = by_description.entry(row.data_desc_id) {
+                let id = row.data_spw_id as usize;
+                let frequencies = table.chan_freq(id).map_err(ms_error)?;
+                if usize::try_from(table.num_chan(id).map_err(ms_error)?).ok()
+                    != Some(frequencies.len())
+                {
+                    return Err(frequency_shape(row.data_spw_id, frequencies.len()));
+                }
+                if let Entry::Vacant(domain) = by_window.entry(row.data_spw_id) {
+                    let selected =
+                        selected_channels(row.channel_selection.as_ref(), frequencies.len())?;
+                    if selected.is_empty() {
+                        return Err(frequency_shape(row.data_spw_id, frequencies.len()));
+                    }
+                    domain.insert(bounds(selected.iter().map(|&channel| frequencies[channel])));
+                }
+                entry.insert(frequencies);
+            }
+        }
+        Ok(Self {
+            by_description,
+            by_window,
+        })
+    }
+}
+
+fn bounds(frequencies: impl Iterator<Item = f64>) -> [f64; 2] {
+    frequencies.fold(
+        [f64::INFINITY, f64::NEG_INFINITY],
+        |[low, high], frequency| [low.min(frequency), high.max(frequency)],
+    )
+}
+
+fn frequency_shape(window: i32, channels: usize) -> GainSolveError {
+    GainSolveError::UnsupportedParameterShape {
+        path: format!("SPECTRAL_WINDOW {window} additive fit frequency grid"),
+        shape: vec![channels],
+    }
 }
 
 pub(crate) fn solve(
@@ -47,19 +101,13 @@ pub(crate) fn solve(
         true,
         PriorCalibrationMode::Data,
     )?;
-    let spectral = ms.spectral_window().map_err(ms_error)?;
-    let mut frequencies = BTreeMap::new();
-    for row in &context.rows {
-        if let std::collections::btree_map::Entry::Vacant(entry) =
-            frequencies.entry(row.data_desc_id)
-        {
-            entry.insert(
-                spectral
-                    .chan_freq(row.data_spw_id as usize)
-                    .map_err(ms_error)?,
-            );
-        }
-    }
+    let frequencies = SelectedFrequencies::read(ms, &context.rows)?;
+    // Keep the frequency basis fixed across all intervals, including those
+    // where an entire input window has no usable measurements.
+    let combined_domain = request
+        .combine
+        .spectral_windows
+        .then(|| bounds(frequencies.by_window.values().flatten().copied()));
     let groups = build_solve_groups(
         ms,
         &context.rows,
@@ -103,25 +151,17 @@ pub(crate) fn solve(
                 "incompatible correlation counts for additive polynomial fitting".into(),
             ));
         }
-        let window = grid.windows.entry(group.spw_id).or_insert_with(|| {
-            let frequency_domain = gather
-                .windows
-                .iter()
-                .flat_map(|(dd, window)| {
-                    window
-                        .channels
-                        .iter()
-                        .map(|&channel| frequencies[dd][channel])
-                })
-                .fold(
-                    [f64::INFINITY, f64::NEG_INFINITY],
-                    |[low, high], frequency| [low.min(frequency), high.max(frequency)],
-                );
-            Window {
-                frequency_domain,
-                correlations,
-            }
+        let window = grid.windows.entry(group.spw_id).or_insert_with(|| Window {
+            frequency_domain: combined_domain
+                .unwrap_or_else(|| frequencies.by_window[&group.spw_id]),
+            correlations,
         });
+        for (&dd, layout) in &gather.windows {
+            let axis = &frequencies.by_description[&dd];
+            if layout.channels.iter().any(|&channel| channel >= axis.len()) {
+                return Err(frequency_shape(group.spw_id, axis.len()));
+            }
+        }
         if window.correlations != correlations {
             return Err(GainSolveError::Baseline(
                 "incompatible additive coefficient shapes in one spectral window".into(),
@@ -131,7 +171,7 @@ pub(crate) fn solve(
         solved.rows.extend(gather.solutions(
             &group,
             &context.available_antennas,
-            &frequencies,
+            &frequencies.by_description,
             window.frequency_domain,
             terms,
             request.solve_mode,

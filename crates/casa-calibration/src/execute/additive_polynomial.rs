@@ -10,6 +10,7 @@ pub(super) fn apply(
     path: &Path,
     reversed: bool,
     forward: bool,
+    legacy_corruption: bool,
     output: &mut ApplyBuffer<'_>,
 ) -> Result<(), ApplyExecutionError> {
     let invalid = |reason: &str| ApplyExecutionError::UnsupportedCalibrationTable {
@@ -66,7 +67,9 @@ pub(super) fn apply(
                     *cell -= value;
                 }
             } else if forward {
-                output.corrected[[correlation, channel]] = Complex32::ZERO;
+                if legacy_corruption {
+                    output.corrected[[correlation, channel]] = Complex32::ZERO;
+                }
             } else if output.propagate_flags && !output.flags[[correlation, channel]] {
                 output.flags[[correlation, channel]] = true;
                 *output.newly_flagged_samples += 1;

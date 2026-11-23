@@ -2583,6 +2583,7 @@ fn apply_row_all_channels(
                     &loaded_table.path,
                     antenna1 > antenna2,
                     forward_model,
+                    chain.legacy_corruption,
                     &mut output,
                 )?;
                 continue;
@@ -5220,6 +5221,12 @@ fn load_complex_parameters(
     let mut grid = GainGrid::from_arrays(path, gains, flags)?;
     if reversed {
         grid.values.mapv_inplace(|value| value.conj());
+        if grid.receptor_count == 4 && grid.values.ndim() == 2 {
+            for coefficient in 0..grid.channel_count {
+                grid.values.swap([1, coefficient], [2, coefficient]);
+                grid.flags.swap([1, coefficient], [2, coefficient]);
+            }
+        }
     }
     if cross_hand_phase {
         grid = grid.cross_hand_diagonal(path)?;
