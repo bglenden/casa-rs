@@ -56,7 +56,22 @@ def test_clearcal_updates_an_open_table(native_dataset, tmp_path):
     np.testing.assert_array_equal(snapshots[0][1], snapshots[1][1])
 
 
-def test_clearcal_preserves_a_user_lock(native_dataset):
+def test_clearcal_preserves_a_user_lock(native_dataset, tmp_path):
+    casa = pinned_casa()
+    import casatasks
+
+    reference = tmp_path / "casa-user-lock.ms"
+    shutil.copytree(native_dataset, reference)
+    reference_table = casa.table()
+    assert reference_table.open(str(reference), nomodify=False, lockoptions={"option": "user"})
+    try:
+        assert reference_table.lock(write=True)
+        casatasks.clearcal(str(reference), addmodel=True)
+        assert "MODEL_DATA" in reference_table.colnames()
+        assert not reference_table.haslock(write=True)
+    finally:
+        assert reference_table.done()
+
     table = tools.table()
     assert table.open(str(native_dataset), nomodify=False, lockoptions={"option": "user"})
     try:
