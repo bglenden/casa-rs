@@ -18,6 +18,17 @@ use super::{
     selected_flag_row_policy, selected_rows, set_selected_flags, shadow, summary,
 };
 
+struct AgentSelection {
+    rows: Vec<usize>,
+    channels: Option<BTreeMap<i32, ChannelSelection>>,
+    correlations: Option<CorrelationSelection>,
+}
+
+struct AntintPlan {
+    selection: AgentSelection,
+    affected: Option<Vec<usize>>,
+}
+
 /// Validate CASA's allowed time and channel averaging in a list of agents.
 ///
 /// Each config provides the mode, channel-average switch, and time-average
@@ -134,7 +145,8 @@ pub(super) fn run_ms_single(
 }
 
 /// Execute a sequence of MeasurementSet flagging agents on one opened table view.
-/// Earlier agents' staged edits are visible to later agents and summaries.
+/// Earlier agents' staged edits are visible to later summary and propagation
+/// passes. CASA's antenna-integration prepass reads the original input flags.
 /// When `write_flags` is `false`, staged flags are discarded without mutating
 /// the MeasurementSet on disk; when `true`, changed rows are written once at
 /// the end. When `local_selection` is `true` (multiple commands in CASA's
@@ -154,16 +166,30 @@ pub fn flagdata_ms_program(
         });
     }
     let ms_path = display_ms_path(&ms);
+    // Scan the supplied FLAG view before any list agent stages changes.
+    // Keep row indices for later application, never copies of FLAG arrays.
+    let antint_plans: Vec<_> = requests
+        .iter()
+        .enumerate()
+        .map(|(index, request)| {
+            (index > 0
+                && local_selection
+                && request.casa_row_selection
+                && request.mode == FlagDataMode::Antint)
+                .then(|| plan_antint(&ms, request, &ms_path))
+        })
+        .collect();
     let mut reports = Vec::with_capacity(requests.len());
     let mut touched = BTreeSet::new();
     let mut changed_flag_row_rows = 0usize;
-    for request in requests {
+    for (request, antint_plan) in requests.iter().zip(antint_plans) {
         match stage_ms_program_request(
             &mut ms,
             request,
-            !write_flags,
             local_selection,
+            !write_flags,
             model_factory,
+            antint_plan,
         ) {
             Ok(Some((report, changed_rows, changed_flag_rows))) => {
                 touched.extend(changed_rows);
@@ -191,19 +217,39 @@ pub fn flagdata_ms_program(
     Ok(reports)
 }
 
-fn stage_ms_program_request(
-    ms: &mut MeasurementSet,
+fn plan_antint(
+    ms: &MeasurementSet,
     request: &FlagDataRequest,
-    calculate: bool,
+    path: &str,
+) -> Result<Option<AntintPlan>, FlaggingError> {
+    let Some(selection) = select_agent(ms, request, true)? else {
+        return Ok(None);
+    };
+    if selection
+        .correlations
+        .as_ref()
+        .is_some_and(|selection| !selection.has_active_products())
+    {
+        return Ok(None);
+    }
+    let affected = antint::affected_rows(ms, &selection.rows, &request.antint, path)?;
+    Ok(Some(AntintPlan {
+        selection,
+        affected,
+    }))
+}
+
+fn select_agent(
+    ms: &MeasurementSet,
+    request: &FlagDataRequest,
     local_selection: bool,
-    model_factory: Option<FlagDataModelFactory>,
-) -> Result<Option<(FlagDataReport, Vec<usize>, usize)>, FlaggingError> {
+) -> Result<Option<AgentSelection>, FlaggingError> {
     let selection = match selected_rows(ms, request) {
         Ok(selection) => selection,
         Err(_) if local_selection => return Ok(None),
         Err(error) => return Err(error),
     };
-    let channel_selections = match flagging_channels(ms, request, selection.channel_ranges) {
+    let channels = match flagging_channels(ms, request, selection.channel_ranges) {
         Ok(channels) => channels,
         Err(_) if local_selection => return Ok(None),
         Err(error) => return Err(error),
@@ -212,31 +258,67 @@ fn stage_ms_program_request(
     if !request.display_column_is_scalar {
         return Err(FlaggingError::DisplayColumnVector);
     }
+    Ok(Some(AgentSelection {
+        rows: selection.rows,
+        channels,
+        correlations,
+    }))
+}
+
+fn stage_ms_program_request(
+    ms: &mut MeasurementSet,
+    request: &FlagDataRequest,
+    local_selection: bool,
+    calculate: bool,
+    model_factory: Option<FlagDataModelFactory>,
+    antint_plan: Option<Result<Option<AntintPlan>, FlaggingError>>,
+) -> Result<Option<(FlagDataReport, Vec<usize>, usize)>, FlaggingError> {
+    let (selection, affected) = if let Some(plan) = antint_plan {
+        let Some(plan) = plan? else {
+            return Ok(None);
+        };
+        (plan.selection, Some(plan.affected))
+    } else {
+        let Some(selection) = select_agent(ms, request, local_selection)? else {
+            return Ok(None);
+        };
+        (selection, None)
+    };
     if request.mode == FlagDataMode::Summary {
         return summary::report(
             ms,
             &selection.rows,
-            channel_selections.as_ref(),
-            correlations.as_ref(),
+            selection.channels.as_ref(),
+            selection.correlations.as_ref(),
             request.summary_options,
         )
         .map(|report| Some((report, Vec::new(), 0)));
     }
-    if correlations
+    if selection
+        .correlations
         .as_ref()
         .is_some_and(|selection| !selection.has_active_products())
     {
         return Ok(None);
     }
-    let mut changes = stage_selected_ms_request(
-        ms,
-        &selection.rows,
-        channel_selections.as_ref(),
-        correlations.as_ref(),
-        request,
-        calculate,
-        model_factory,
-    )?;
+    let mut changes = if let Some(affected) = affected {
+        antint::apply_affected(
+            ms,
+            affected,
+            selection.channels.as_ref(),
+            selection.correlations.as_ref(),
+        )?
+    } else {
+        stage_selected_ms_request(
+            ms,
+            &selection.rows,
+            selection.channels.as_ref(),
+            selection.correlations.as_ref(),
+            request,
+            calculate,
+            model_factory,
+        )?
+    };
     if changes.agent_skipped {
         return Ok(None);
     }
