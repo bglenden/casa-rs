@@ -81,7 +81,6 @@ def pending_cases(root, native, vis):
     from casars.tasks import TaskParameterError
 
     cases = (
-        ("scalar-difference", dict(xdatacolumn="data-model_scalar"), 12, "derived data columns"),
         ("averaged-vector", dict(xdatacolumn="corrected-model_vector", avgchannel="3"),
          6, "averaging derived data columns"),
         ("visible-flags", dict(customflaggedsymbol=True), 18, "displaying flagged points"),
@@ -92,9 +91,7 @@ def pending_cases(root, native, vis):
         assert reference(**controls, plotfile=str(expected)) is None
         selected = rows(expected)
         assert len(selected) == point_count
-        if name == "scalar-difference":
-            assert all(float(point[0]) < 0 for point in selected)
-        elif name == "visible-flags":
+        if name == "visible-flags":
             assert {sample[2] for sample in selected} == {"1", "2", "3"}
         try:
             native(**controls, plotfile=str(actual))
@@ -119,6 +116,10 @@ def compare(root, vis, native):
         "zero-channel-and-time": {"xdatacolumn": "data-model_vector", "avgchannel": "0", "avgtime": "0"},
         "vector-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data-model_vector",
                               "ydatacolumn": "corrected-model_vector"},
+        "scalar-amp-phase": {"xdatacolumn": "data-model_scalar", "ydatacolumn": "corrected-model_scalar"},
+        "scalar-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data-model_scalar",
+                              "ydatacolumn": "corrected-model_scalar"},
+        "scalar-vs-time": {"xaxis": "time", "yaxis": "amp", "ydatacolumn": "data-model_scalar"},
     }
     for name, options in cases.items():
         controls = base | options
@@ -130,6 +131,8 @@ def compare(root, vis, native):
         assert len(selected) == 12, selected
         assert {sample[2] for sample in selected} == {"1", "3"}, selected
         assert {sample[12] for sample in selected} == {"XX"}, selected
+        if name == "scalar-amp-phase":
+            assert all(float(point[0]) < 0 for point in selected)
         start = perf_counter()
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         native_seconds = perf_counter() - start
@@ -144,6 +147,9 @@ def compare(root, vis, native):
     compare_figure(root, native, base | cases["explicit-vector"], root / "explicit-vector.casa.txt",
                    ("Phase:corrected-model (vector) vs. Amp:data-model (vector)",
                     "Amp:data-model (vector)", "Phase:corrected-model (vector) (degrees)"))
+    compare_figure(root, native, base | cases["scalar-amp-phase"], root / "scalar-amp-phase.casa.txt",
+                   ("Phase:corrected-model (scalar) vs. Amp:data-model (scalar)",
+                    "Amp:data-model (scalar)", "Phase:corrected-model (scalar) (degrees)"))
     pending_cases(root, native, vis)
 
 
@@ -158,6 +164,7 @@ def compare_missing_corrected(root, vis, source, native):
         "residual-on-x": dict(xdatacolumn="residual", ydatacolumn="data"),
         "residual-on-y": dict(ydatacolumn="corrected-model_vector"),
         "corrected-vs-time": dict(xaxis="time", xdatacolumn=""),
+        "scalar-without-corrected": dict(xdatacolumn="corrected-model_scalar", ydatacolumn="data-model_scalar"),
     }
     for name, options in cases.items():
         controls = request(fallback) | options | dict(expformat="txt")
