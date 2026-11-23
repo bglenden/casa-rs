@@ -54,8 +54,9 @@ def compare(work, reference_only):
                 same_record(state, canonical_state)
             print('alias', legacy, repr(alias), canonical, flush=True)
         for legacy, factory in product((False, True), engines.values()):
-            assert setup(factory, vis, legacy, 'SDSKY_OTF')[0] == (
-                (True, True) if legacy else REJECTED)
+            for name in ('SDSKY_OTF', 'PREFSDSKY_OTFSUFFIX', 'SDSKY_OTF ', 'SDSKY_OTFD'):
+                assert setup(factory, vis, legacy, name)[0] == (
+                    (True, True) if legacy else REJECTED)
             for name in ('XJONES', ' B'):
                 assert setup(factory, vis, legacy, name)[0] == REJECTED
             for name in ('DLIN+X', 'D+RANDOM', 'D+QU', 'DF+X', 'X JONES'):

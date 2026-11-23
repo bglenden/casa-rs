@@ -666,11 +666,12 @@ impl CalibraterLifecycle {
     /// Resolve CASA factory spellings before reading solver-specific options.
     #[must_use]
     pub fn direct_solve_factory_alias(kind: &str) -> Option<&'static str> {
-        match traditional_apply::calibration_factory_type(kind)? {
-            "KAntPos Jones" => Some("KANTPOS"),
-            "Fringe Jones" => Some("FRINGE"),
-            "Accor Jones" => Some("ACCOR"),
-            alias @ ("SDSKY_PS" | "SDSKY_RASTER" | "SDGAIN_OTFD") => Some(alias),
+        match traditional_apply::calibration_factory_type(kind) {
+            Some("KAntPos Jones") => Some("KANTPOS"),
+            Some("Fringe Jones") => Some("FRINGE"),
+            Some("Accor Jones") => Some("ACCOR"),
+            Some(alias @ ("SDSKY_PS" | "SDSKY_RASTER" | "SDGAIN_OTFD")) => Some(alias),
+            None if kind.to_ascii_uppercase().contains("SDSKY_OTF") => Some("SDSKY_OTF"),
             _ => None,
         }
     }
