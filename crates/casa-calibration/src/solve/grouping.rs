@@ -146,6 +146,9 @@ pub(crate) fn build_solve_groups(
                 .any(|(row, _, _)| models.reads_column(row.field_id)),
             batch
                 .iter()
+                .any(|(row, _, _)| models.uses_virtual_model(row.field_id)),
+            batch
+                .iter()
                 .map(|row| spectral_weights.contains(row))
                 .collect(),
             options.polynomial_bandpass && !channel_bin_widths.is_empty(),
@@ -689,9 +692,13 @@ impl SolveAccumulator {
         } else {
             inputs.flags.as_ref()
         };
-        let mut predicted = layouts
-            .models
-            .predict(ms, row, &layout.correlations, raw_flags)?;
+        let mut predicted = layouts.models.predict(
+            ms,
+            row,
+            &layout.correlations,
+            raw_flags,
+            batch.0.cell("UVW", batch.1),
+        )?;
         let rotated = layouts
             .rotation
             .as_ref()

@@ -153,9 +153,13 @@ pub(crate) struct SolveInputBatch {
 
 impl SolveInputBatch {
     pub(super) fn polynomial_bin_weights(&self, index: usize) -> Option<&ArrayValue> {
+        self.cell("WEIGHT_SPECTRUM", index)
+    }
+
+    pub(super) fn cell(&self, name: &str, index: usize) -> Option<&ArrayValue> {
         self.columns
             .iter()
-            .find(|(column, _)| *column == "WEIGHT_SPECTRUM")
+            .find(|(column, _)| *column == name)
             .and_then(|(_, rows)| rows[index].as_ref())
     }
 }
@@ -167,6 +171,7 @@ pub(super) fn read_input_batch(
     rows: &[usize],
     (read_visibilities, read_model_flags): (bool, bool),
     read_model_column: bool,
+    read_uvw: bool,
     spectral_weights: Vec<bool>,
     read_polynomial_bin_weights: bool,
 ) -> Result<SolveInputBatch, GainSolveError> {
@@ -191,6 +196,9 @@ pub(super) fn read_input_batch(
     }
     if read_model_column {
         columns.push("MODEL_DATA");
+    }
+    if read_uvw {
+        columns.push("UVW");
     }
     let mut inputs = SolveInputBatch {
         columns: Vec::with_capacity(columns.len()),
@@ -225,7 +233,7 @@ fn read_column_inputs(
     kind: Option<casa_types::PrimitiveType>,
     rows: &[usize],
 ) -> Result<Vec<Option<ArrayValue>>, casa_tables::TableError> {
-    if name != "SIGMA"
+    if !matches!(name, "SIGMA" | "UVW")
         && let Ok(shapes) = column.array_shapes_uncached(rows)
         && let Some(Some(shape)) = shapes.first()
         && shape.len() == 2

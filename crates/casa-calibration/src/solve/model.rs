@@ -283,6 +283,12 @@ impl ModelInputs {
         &self.dynamic_fields
     }
 
+    pub(super) fn uses_virtual_model(&self, field: i32) -> bool {
+        self.virtual_models
+            .get(&field)
+            .is_some_and(|entries| !entries.is_empty())
+    }
+
     pub(super) fn uses_fourier(&self, field: i32) -> bool {
         self.virtual_models.get(&field).is_some_and(|entries| {
             entries.iter().any(|entry| {
@@ -482,8 +488,9 @@ impl ModelInputs {
         row: &SelectedSolveRow,
         correlations: &[i32],
         raw_flags: &ArrayD<bool>,
+        uvw_cell: Option<&ArrayValue>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
-        self.predict_model(ms, row, correlations, (raw_flags, None), false)
+        self.predict_model(ms, row, correlations, (raw_flags, None), false, uvw_cell)
     }
 
     pub(super) fn predict_model(
@@ -493,6 +500,7 @@ impl ModelInputs {
         correlations: &[i32],
         (raw_flags, previous): (&ArrayD<bool>, Option<ArrayD<Complex32>>),
         scratch_model: bool,
+        uvw_cell: Option<&ArrayValue>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
         if let Some(error) = self.virtual_refusal(row.field_id) {
             return Err(error);
@@ -546,7 +554,10 @@ impl ModelInputs {
                 .with_position(engine.observatory_position().clone())
                 .with_direction(field.clone())
         };
-        let uvw = uvw(ms, row.row_index, self.uncached_main_reads)?;
+        let uvw = match uvw_cell {
+            Some(cell) => uvw_coordinates(cell)?,
+            None => uvw(ms, row.row_index, self.uncached_main_reads)?,
+        };
         let (frequencies, frequency_ref) = &self.frequencies[&row.data_spw_id];
         let shape = [correlations.len(), frequencies.len()];
         let mut model = match previous {
@@ -900,7 +911,11 @@ fn uvw(ms: &MeasurementSet, row: usize, uncached: bool) -> Result<[f64; 3], Gain
                 .map_err(error)?,
         )
     };
-    if let ArrayValue::Float64(values) = values.as_ref()
+    uvw_coordinates(values.as_ref())
+}
+
+fn uvw_coordinates(cell: &ArrayValue) -> Result<[f64; 3], GainSolveError> {
+    if let ArrayValue::Float64(values) = cell
         && let Some(values) = values.as_slice()
         && let Ok(values) = values.try_into()
     {
