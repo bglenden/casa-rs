@@ -15,6 +15,10 @@ has `casatools`:
       --rust $CARGO_TARGET_DIR/release/examples/at_tool_quantities \\
       --cpp $TMPDIR/atm_oracle --cpp-as-shipped $TMPDIR/atm_oracle_as_shipped
 
+Pass `--native-python` instead of `--rust` to exercise the installed
+`casars.tools.atmosphere` class. That comparison gates every measured quantity
+against the corrected C++ oracle.
+
 For seven atmospheres (all five `at` types at Chajnantor, a humid sea level
 and the VLA in winter) and fifteen bands from 22 GHz to 1 THz it reads, per
 channel, the opacities, phase delays, path lengths and sky temperatures the
@@ -95,10 +99,11 @@ def value(result) -> float:
     return float(result)
 
 
-def at_tool(profile: dict, bands: list[dict], sets: list[dict]) -> dict:
-    from casatools import atmosphere
+def at_tool(profile: dict, bands: list[dict], sets: list[dict], factory=None) -> dict:
+    if factory is None:
+        from casatools import atmosphere as factory
 
-    at = atmosphere()
+    at = factory()
     at.initAtmProfile(
         altitude={"value": profile["altitude_m"], "unit": "m"},
         temperature={"value": profile["temperature_k"], "unit": "K"},
@@ -197,7 +202,8 @@ def finite_number(x) -> bool:
 
 
 def compare(
-    config: dict, reference_profiles, ours: dict, names=("casa-rs", "the at tool"), gate: bool = True
+    config: dict, reference_profiles, ours: dict, names=("casa-rs", "the at tool"), gate: bool = True,
+    gated_quantities=ACCEPTED,
 ) -> tuple[dict, list[str]]:
     """The worst relative difference of each quantity, and every problem.
 
@@ -277,7 +283,7 @@ def compare(
         if key not in worst:
             problems.append(f"{key}: no value compared")
     if gate:
-        for key in ACCEPTED:
+        for key in gated_quantities:
             if key in worst and worst[key][0] > ACCEPTANCE:
                 problems.append(f"{key}: {worst[key][0]:.3e} at {worst[key][1]} exceeds {ACCEPTANCE:g}")
     return worst, problems
@@ -297,7 +303,9 @@ def print_table(title: str, worst: dict, gate: bool) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--rust", required=True, help="casa-atmosphere's at_tool_quantities example")
+    native = parser.add_mutually_exclusive_group(required=True)
+    native.add_argument("--rust", help="casa-atmosphere's at_tool_quantities example")
+    native.add_argument("--native-python", action="store_true", help="exercise the public casars.tools.atmosphere class")
     parser.add_argument("--cpp", required=True, help="the C++ oracle with the corrections (--binary)")
     parser.add_argument("--cpp-as-shipped", required=True, help="the C++ oracle as CASA ships ATM")
     parser.add_argument("--report", help="write every value and difference here as JSON")
@@ -307,16 +315,24 @@ def main() -> int:
         {"centre_ghz": c, "width_ghz": w, "res_ghz": r, "channels": math.ceil(w / r)} for c, w, r in BANDS
     ]
     config = {"profiles": PROFILES, "bands": bands, "sets": SETS}
-    rust = run([args.rust], json.dumps(config))
+    numbers = (*CHANNEL_QUANTITIES, *WINDOW_QUANTITIES, *SET_QUANTITIES, "ground_water_m")
+    if args.native_python:
+        from casars.tools import atmosphere
+
+        rust = {"profiles": [at_tool(profile, bands, SETS, factory=atmosphere) for profile in PROFILES]}
+        native_gates = numbers
+    else:
+        rust = run([args.rust], json.dumps(config))
+        native_gates = ACCEPTED
     cpp = run([args.cpp, "--at-tool"], oracle_input(config))
     shipped = run([args.cpp_as_shipped, "--at-tool"], oracle_input(config))
     casa = [at_tool(profile, bands, SETS) for profile in PROFILES]
     checks = {
         "shipped": ("ATM as CASA ships it, against the at tool",
-                    compare(config, casa, shipped, ("the C++ as shipped", "the at tool")), True),
+                    compare(config, casa, shipped, ("the C++ as shipped", "the at tool"), gated_quantities=numbers), True),
         "port": ("casa-atmosphere, against ATM with its corrections",
                  compare(config, cpp["profiles"] if isinstance(cpp, dict) else None, rust,
-                         ("casa-rs", "the C++ with corrections")), True),
+                         ("casa-rs", "the C++ with corrections"), gated_quantities=native_gates), True),
         "corrections": ("What the corrections change: ATM with them, against the at tool (not gated)",
                         compare(config, casa, cpp, ("the C++ with corrections", "the at tool"), gate=False), False),
     }
