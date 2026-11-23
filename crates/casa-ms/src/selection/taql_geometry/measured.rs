@@ -52,7 +52,7 @@ pub(super) fn directions(table: &Table, column: &str) -> MsResult<Vec<MDirection
                 return Err(invalid(format!("FIELD {column} requires a double array")));
             };
             let shape = angles.shape();
-            if shape.len() < 2 || shape[0] != 2 || angles.len() < 2 {
+            if shape.first() != Some(&2) || angles.len() < 2 {
                 return Err(invalid(format!(
                     "FIELD {column} requires two direction axes"
                 )));

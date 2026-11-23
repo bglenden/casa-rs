@@ -63,6 +63,10 @@ def geometry_measure_fixtures(base, root):
         if name != 'NO_DIRECTION':
             t.putcolkeyword(name, 'MEASINFO', {'type': 'direction', 'Ref': 'J2000'})
             t.putcolkeyword(name, 'QuantumUnits', ['deg', 'deg'])
+    t.addcols({'DIR_1D': {'valueType': 'double', 'ndim': 1, 'shape': [2]}})
+    t.putcol('DIR_1D', np.broadcast_to(np.array([10., -20.])[:, None], (2, t.nrows())).copy())
+    t.putcolkeyword('DIR_1D', 'MEASINFO', {'type': 'direction', 'Ref': 'J2000'})
+    t.putcolkeyword('DIR_1D', 'QuantumUnits', ['deg', 'deg'])
     t.close()
 
     time_ms=root/'source-mscal-time-ref.ms'
@@ -852,11 +856,12 @@ def run(root, native_bin, only=None):
         case(f'api-select-mscal-geometry-{label}', dict(msselect=predicate), input_vis=observation_source)
 
     if only is None or any(re.search(only, f'api-select-mscal-geometry-{label}') for label in (
-            'degree-field-direction', 'not-direction-column', 'time-reference-column',
+            'degree-field-direction', 'rank-one-field-direction', 'not-direction-column', 'time-reference-column',
             'wgs84-antenna-uvw', 'wgs84-antenna-delay', 'pluto', 'explicit-field-name')):
         field_ms, time_ms, antenna_ms = geometry_measure_fixtures(observation_source, root)
         for label, vis, predicate in [
             ('degree-field-direction', field_ms, 'mscal.ha("CUSTOM_DIR") < -0.169rad'),
+            ('rank-one-field-direction', field_ms, 'mscal.ha("DIR_1D") < -0.169rad'),
             ('not-direction-column', field_ms, 'mscal.ha("NO_DIRECTION") > -4rad'),
             ('pluto', field_ms, 'mscal.ha("PLUTO") < 1.156rad'),
             ('explicit-field-name', field_ms, r'mscal.ha("\PLUTO") < -0.169rad'),
