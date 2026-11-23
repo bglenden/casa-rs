@@ -103,7 +103,7 @@ impl PyAtmosphere {
         Ok(count)
     }
 
-    #[pyo3(name = "addSpectralWindow", signature = (fCenter=QuantityArg::Omitted, fWidth=QuantityArg::Omitted, fRes=QuantityArg::Omitted), text_signature = "($self, fCenter={'value': 90.0, 'unit': 'GHz'}, fWidth={'value': 0.64, 'unit': 'GHz'}, fRes={'value': 0.0, 'unit': 'GHz'})")]
+    #[pyo3(name = "addSpectralWindow", signature = (fCenter=QuantityArg::Omitted, fWidth=QuantityArg::Omitted, fRes=QuantityArg::Omitted), text_signature = "($self, fCenter={'value': 350.0, 'unit': 'GHz'}, fWidth={'value': 0.008, 'unit': 'GHz'}, fRes={'value': 0.002, 'unit': 'GHz'})")]
     fn add_spectral_window(
         &self,
         py: Python<'_>,
@@ -111,9 +111,9 @@ impl PyAtmosphere {
         fWidth: QuantityArg,
         fRes: QuantityArg,
     ) -> PyResult<i64> {
-        let center = fCenter.read("fCenter", (90., "GHz"))?;
-        let width = fWidth.read("fWidth", (0.64, "GHz"))?;
-        let resolution = fRes.read("fRes", (0., "GHz"))?;
+        let center = fCenter.read("fCenter", (350., "GHz"))?;
+        let width = fWidth.read("fWidth", (0.008, "GHz"))?;
+        let resolution = fRes.read("fRes", (0.002, "GHz"))?;
         if !self.run(py, |session| session.spectrum().is_some()) {
             warn(
                 py,

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA's atmospheric transmission tool.
 
+mod absorption;
 mod profile;
 mod quantity;
+mod sky;
+pub(crate) mod surface;
 mod windows;
 
 use std::sync::{Mutex, PoisonError};
