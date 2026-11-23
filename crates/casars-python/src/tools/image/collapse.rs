@@ -17,7 +17,7 @@ use pyo3::types::{PyBool, PyList, PyString, PyTuple};
 
 use super::PyImageTool;
 use super::attachment::AttachedImage;
-use super::create::publish_masked_image;
+use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{RegionArgument, require_bool};
 
@@ -354,7 +354,7 @@ impl PyImageTool {
             };
             let mut live_coordinates = None;
             let outfile = outfile.trim();
-            let mut product = publish_masked_image(outfile, overwrite, Some(mask), |path| {
+            let mut product = publish_image(outfile, overwrite, |path| {
                 let mut image = attached.lock();
                 image.check_single_precision("collapse")?;
                 if !outfile.is_empty() {

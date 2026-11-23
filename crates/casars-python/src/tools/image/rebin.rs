@@ -18,7 +18,7 @@ use super::PyImageTool;
 use super::attachment::AttachedImage;
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_masked_image;
+use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{Region, mask_argument};
 
@@ -111,7 +111,7 @@ impl PyImageTool {
             let region = region?;
             let mask = mask?;
             let mut live_coordinates = None;
-            let mut product = publish_masked_image(outfile, overwrite, Some(&mask), |path| {
+            let mut product = publish_image(outfile, overwrite, |path| {
                 let mut handle = attachment.lock();
                 match &*handle {
                     ImageHandle::Double(_) => return Err(raised("rebin does not support images with double precision pixel values.")),

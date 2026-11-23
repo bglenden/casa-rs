@@ -22,7 +22,7 @@ use super::PyImageTool;
 use super::attachment::read_locked;
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_masked_image;
+use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::records::{numeric_axis_vector, string_vector};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
@@ -227,7 +227,7 @@ impl PyImageTool {
                 region: region.selection(), mask: (!mask.is_empty()).then_some(mask.as_str()),
                 stretch, destination,
             };
-            publish_masked_image(outfile, overwrite, Some(&mask), |stage| read_locked(input, |handle| {
+            publish_image(outfile, overwrite, |stage| read_locked(input, |handle| {
                 handle.check_single_precision("sepconvolve")?;
                 let ImageHandle::Float(source) = handle else {
                     return Err(raised("Exception: image cannot be NULL."));

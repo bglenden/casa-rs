@@ -41,10 +41,6 @@ pub(super) fn open(
     unreachable!("the graph has a root")
 }
 
-pub(super) fn dependencies(path: &Path) -> Result<Vec<PathBuf>, ImageError> {
-    capture(path, false).map(|(_, dependencies)| dependencies)
-}
-
 fn capture(path: &Path, temporary_locks: bool) -> Result<(Vec<Frame>, Vec<PathBuf>), ImageError> {
     let directory = std::env::current_dir().map_err(io)?;
     let first = Frame::open(
@@ -61,7 +57,10 @@ fn capture(path: &Path, temporary_locks: bool) -> Result<(Vec<Frame>, Vec<PathBu
 
     while let Some(frame) = frames.last_mut() {
         if let Some((path, entry)) = frame.next_member() {
-            capture_path(entry, &mut dependencies)?;
+            capture_path(path, &mut dependencies)?;
+            if entry != path {
+                capture_path(entry, &mut dependencies)?;
+            }
             if active.contains(path) {
                 return Err(ImageError::CasaSelection(format!(
                     "Cycle in image expression or concatenation at {}",

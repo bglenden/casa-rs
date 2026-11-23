@@ -20,7 +20,7 @@ use super::PyImageTool;
 use super::attachment::read_locked;
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_masked_image;
+use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::records::numeric_axis_vector;
 use super::subimage::{RegionArgument, mask_argument, require_bool};
@@ -95,7 +95,7 @@ impl PyImageTool {
                 axes: &axes.0, method, region: region.selection(),
                 mask: (!mask.is_empty()).then_some(mask.as_str()), stretch, destination,
             };
-            let product = publish_masked_image(outfile, overwrite, Some(&mask), |stage| read_locked(input, |handle| {
+            let product = publish_image(outfile, overwrite, |stage| read_locked(input, |handle| {
                 handle.check_single_precision("twopointcorrelation")?;
                 if let Some(destination) = destination {
                     for source in handle.path().into_iter().chain(input.operand_paths().iter().map(|path| path.as_path())) {

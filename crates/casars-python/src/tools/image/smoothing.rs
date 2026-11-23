@@ -17,7 +17,7 @@ use pyo3::types::PyString;
 use super::PyImageTool;
 use super::attachment::AttachedImage;
 use super::beam_view::BeamView;
-use super::create::publish_masked_image;
+use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
@@ -232,33 +232,28 @@ impl PyImageTool {
                 .as_ref()
                 .ok_or_else(|| raised("Unable to create image"))?;
             let mut live_coordinates = None;
-            let mut output = publish_masked_image(
-                request.outfile,
-                request.overwrite,
-                Some(&request.mask.value),
-                |path| {
-                    let mut image = attached.lock();
-                    image.check_single_precision(request.name())?;
-                    if !request.outfile.is_empty() {
-                        for input in image
-                            .path()
-                            .into_iter()
-                            .chain(attached.operand_paths().iter().map(|path| path.as_path()))
-                        {
-                            ensure_outfile_does_not_alias_input(Path::new(request.outfile), input)
-                                .map_err(raised)?;
-                        }
+            let mut output = publish_image(request.outfile, request.overwrite, |path| {
+                let mut image = attached.lock();
+                image.check_single_precision(request.name())?;
+                if !request.outfile.is_empty() {
+                    for input in image
+                        .path()
+                        .into_iter()
+                        .chain(attached.operand_paths().iter().map(|path| path.as_path()))
+                    {
+                        ensure_outfile_does_not_alias_input(Path::new(request.outfile), input)
+                            .map_err(raised)?;
                     }
-                    attached.require_pixel_read_lock(&mut image)?;
-                    let beams = attached.beam_view().clone();
-                    let staged = request.build(&image, &beams, path, state.history);
-                    let released = attached.release_requested_lock(&mut image);
-                    let staged = staged?;
-                    released?;
-                    live_coordinates = AttachedImage::capture_live_coordinates(&staged)?;
-                    Ok(staged)
-                },
-            )?;
+                }
+                attached.require_pixel_read_lock(&mut image)?;
+                let beams = attached.beam_view().clone();
+                let staged = request.build(&image, &beams, path, state.history);
+                let released = attached.release_requested_lock(&mut image);
+                let staged = staged?;
+                released?;
+                live_coordinates = AttachedImage::capture_live_coordinates(&staged)?;
+                Ok(staged)
+            })?;
             if let Some((record, system)) = live_coordinates {
                 output.keep_live_coordinates(record, system);
             }

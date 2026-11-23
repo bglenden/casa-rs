@@ -19,7 +19,7 @@ use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_masked_image;
+use super::create::publish_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::pixels::{Pixels, snapshot_array};
 use super::subimage::{RegionArgument, require_bool};
@@ -165,7 +165,7 @@ impl Request<'_> {
                 })
             })
             .transpose()?;
-        publish_masked_image(self.outfile, self.overwrite, Some(self.mask), |path| {
+        publish_image(self.outfile, self.overwrite, |path| {
             if let Some(beam) = &beam_attachment {
                 self.stage_two(source, beam, path)
             } else {

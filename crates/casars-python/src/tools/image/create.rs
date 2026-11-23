@@ -320,6 +320,10 @@ impl StagedImage {
         })
     }
 
+    fn output_paths(&self) -> impl Iterator<Item = &Path> {
+        std::iter::once(self.target.as_path()).chain(self.alias.as_deref())
+    }
+
     fn check_alias(&self) -> PyResult<()> {
         if let Some(alias) = &self.alias
             && !alias.canonicalize().is_ok_and(|path| path == self.target)
@@ -557,19 +561,6 @@ pub(super) fn publish_image(
     })
 }
 
-pub(super) fn publish_masked_image(
-    outfile: &str,
-    overwrite: bool,
-    mask: Option<&str>,
-    build: impl FnOnce(Option<&Path>) -> PyResult<ImageHandle>,
-) -> PyResult<AttachedImage> {
-    if overwrite && let Some(mask) = mask {
-        casa_images::analysis::protect_composed_mask_outputs(mask, [Path::new(outfile)])
-            .map_err(raised)?;
-    }
-    publish_image(outfile, overwrite, build)
-}
-
 pub(super) fn publish_virtual_concat(
     outfile: &str,
     expanded: &str,
@@ -693,10 +684,17 @@ fn publish_staged_pair(
     build: impl FnOnce(Option<&Path>, Option<&Path>) -> PyResult<(ImageHandle, Option<ImageHandle>)>,
 ) -> PyResult<AttachedImage> {
     check_distinct(primary.as_ref(), companion.as_ref())?;
-    let (image, secondary) = build(
-        primary.as_ref().map(|stage| stage.product.as_path()),
-        companion.as_ref().map(|stage| stage.product.as_path()),
-    )?;
+    let output_paths = primary
+        .iter()
+        .chain(companion.iter())
+        .filter(|_| overwrite)
+        .flat_map(StagedImage::output_paths);
+    let (image, secondary) = casa_images::analysis::with_mask_output_paths(output_paths, || {
+        build(
+            primary.as_ref().map(|stage| stage.product.as_path()),
+            companion.as_ref().map(|stage| stage.product.as_path()),
+        )
+    })?;
     drop(secondary);
     let temporary = if primary.is_none() {
         Some(AttachedImage::temporary(image))
@@ -751,7 +749,15 @@ pub(super) fn publish_image_set<T, const N: usize>(
 ) -> PyResult<T> {
     let stages = NamedImageStages::new(outputs, overwrite)?;
     let paths = stages.paths();
-    let product = build(std::array::from_fn(|index| paths[index]))?;
+    let outputs = stages
+        .stages
+        .iter()
+        .filter_map(Option::as_ref)
+        .filter(|(_, overwrite)| *overwrite)
+        .flat_map(|(stage, _)| stage.output_paths());
+    let product = casa_images::analysis::with_mask_output_paths(outputs, || {
+        build(std::array::from_fn(|index| paths[index]))
+    })?;
     stages.publish(false)?;
     Ok(product)
 }

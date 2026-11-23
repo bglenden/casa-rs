@@ -7,6 +7,7 @@ mod geometry;
 pub(super) use geometry::validate_mask;
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -475,12 +476,7 @@ fn open_operands_for_outputs(
         .map(|operand| {
             let image = if composed::recognizes(&operand.path) {
                 let (image, dependencies) = composed::open(&operand.path, temporary_source_locks)?;
-                for destination in destinations {
-                    for dependency in &dependencies {
-                        super::ensure_outfile_does_not_alias_input(destination, dependency)?;
-                        super::ensure_artifacts_do_not_overlap(destination, dependency)?;
-                    }
-                }
+                check_mask_outputs(destinations, &dependencies)?;
                 image
             } else {
                 open_path_with_mask_name(
@@ -593,38 +589,51 @@ fn mask_expression(raw: &str) -> String {
     }
 }
 
-/// Refuse to overwrite an existing output referenced by a composed image mask.
-///
-/// # Errors
-/// Returns an error for a composed mask dependency that overlaps an output.
-pub fn protect_composed_mask_outputs<'a>(
-    mask: &str,
-    outputs: impl IntoIterator<Item = &'a Path>,
-) -> Result<(), ImageError> {
-    let outputs: Vec<_> = outputs
-        .into_iter()
-        .filter(|path| path.symlink_metadata().is_ok())
-        .collect();
-    if outputs.is_empty() || mask.trim().is_empty() {
-        return Ok(());
+thread_local! {
+    static MASK_OUTPUTS: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+}
+
+struct MaskOutputScope(usize);
+
+impl Drop for MaskOutputScope {
+    fn drop(&mut self) {
+        MASK_OUTPUTS.with_borrow_mut(|paths| paths.truncate(self.0));
     }
-    // Leave invalid plain-text syntax and unknown inputs to the caller's
-    // normal mask validation. Only admitted composed operands need tracing.
-    let Ok(operands) = resolve_operands(&mask_expression(mask.trim())) else {
-        return Ok(());
-    };
-    for operand in operands {
-        if composed::recognizes(&operand.path) {
-            let dependencies = composed::dependencies(&operand.entry)?;
-            for output in &outputs {
-                for path in &dependencies {
-                    super::ensure_outfile_does_not_alias_input(output, path)?;
-                    super::ensure_artifacts_do_not_overlap(output, path)?;
-                }
+}
+
+/// Check composed mask operands opened by a synchronous image build against
+/// its pending output paths. The scope is local to the current thread.
+pub fn with_mask_output_paths<'a, R>(
+    outputs: impl IntoIterator<Item = &'a Path>,
+    build: impl FnOnce() -> R,
+) -> R {
+    let outputs: Vec<_> = outputs.into_iter().map(Path::to_path_buf).collect();
+    if outputs.is_empty() {
+        return build();
+    }
+    let previous = MASK_OUTPUTS.with_borrow_mut(|paths| {
+        let previous = paths.len();
+        paths.extend(outputs);
+        previous
+    });
+    let _scope = MaskOutputScope(previous);
+    build()
+}
+
+fn check_mask_outputs(destinations: &[&Path], dependencies: &[PathBuf]) -> Result<(), ImageError> {
+    MASK_OUTPUTS.with_borrow(|pending| {
+        let pending_overwrites = pending.iter().map(PathBuf::as_path).filter(|path| {
+            // A fresh child cannot remove an existing graph dependency.
+            path.symlink_metadata().is_ok()
+        });
+        for output in destinations.iter().copied().chain(pending_overwrites) {
+            for dependency in dependencies {
+                super::ensure_outfile_does_not_alias_input(output, dependency)?;
+                super::ensure_artifacts_do_not_overlap(output, dependency)?;
             }
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub(super) struct PreparedMask<'a> {

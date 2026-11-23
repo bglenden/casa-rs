@@ -302,3 +302,72 @@ def test_analysis_rejects_a_cycle_between_mask_operand_formats(tmp_path):
         np.testing.assert_array_equal(image.getchunk(), pixels)
     finally:
         image.done()
+
+
+def test_named_analysis_protects_mask_operand_opened_after_waiting_for_source(tmp_path):
+    import subprocess
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+    from time import monotonic, sleep
+
+    def wait_for(ready, future=None):
+        deadline = monotonic() + 10
+        while monotonic() < deadline:
+            if ready():
+                return
+            if future is not None and future.done():
+                break
+            sleep(0.02)
+        pytest.fail("The staged image did not reach its expected synchronization point")
+
+    source, destination, other, mask, held, release = (
+        tmp_path / name for name in ("source.im", "destination.im", "other.im", "mask.im", "held", "release")
+    )
+    image = tools.image()
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    for path, values in ((source, pixels * 5), (destination, pixels), (other, pixels + 10)):
+        assert image.fromarray(str(path), values) and image.done()
+    assert image.open(str(source)) and image.unlock()
+    mask.mkdir()
+    descriptor = mask / "imageexpr.json"
+    descriptor.write_text(json.dumps({"ImageExpr": f'"{other}" * 3'}))
+    child = subprocess.Popen(
+        [sys.executable, "-c", """
+import sys
+from pathlib import Path
+from time import monotonic, sleep
+from casars import tools
+source, held, release = map(Path, sys.argv[1:])
+image = tools.image()
+assert image.open(str(source))
+assert image.lock(writelock=True, nattempts=5)
+held.touch()
+deadline = monotonic() + 14
+while not release.exists() and monotonic() < deadline:
+    sleep(0.02)
+image.done()
+""", str(source), str(held), str(release)]
+    )
+    try:
+        wait_for(held.exists)
+        with ThreadPoolExecutor() as pool:
+            future = pool.submit(image.subimage, outfile=str(destination),
+                                 overwrite=True, mask=f'"{mask}" > 4')
+            try:
+                wait_for(lambda: any(tmp_path.glob(".tmp*")), future)
+                next_descriptor = mask / "next.json"
+                next_descriptor.write_text(json.dumps({"ImageExpr": f'"{destination}" * 3'}))
+                next_descriptor.replace(descriptor)
+            finally:
+                release.touch()
+            with pytest.raises(RuntimeError, match="matches or contains input image|overlaps"):
+                future.result(timeout=10)
+        assert image.isopen()
+        np.testing.assert_array_equal(image.getchunk(), pixels * 5)
+        assert image.done() and image.open(str(destination))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        release.touch()
+        if child.poll() is None:
+            child.wait(timeout=15)
+        image.done()
