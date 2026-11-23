@@ -1,0 +1,20 @@
+{
+  "revision": "9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2",
+  "files": {
+    "test_task_applycal.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_applycal.py",
+      "sha256": "aa0f868a7bc4a01bc3d177330c068e70b17bc3616baf69636f94b44c1182eba2",
+      "size": 39043
+    },
+    "test_task_fluxscale.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_fluxscale.py",
+      "sha256": "7aab2215d9fdd44a7d9ae053e6837abb1e1db7156d8ba48381031a56da4d9b69",
+      "size": 40165
+    },
+    "test_tool_calanalysis.py": {
+      "upstream_path": "casatools/tests/tools/calanalysis/test_tool_calanalysis.py",
+      "sha256": "1ec89b7f1ec0ff047190827517608cbe8948064f3d84a6726a68ec9b4f32c7f7",
+      "size": 10353
+    }
+  }
+}
