@@ -10658,3 +10658,7 @@ CASA 6.7.6.14 accepts direct `calibrater.setsolve(type='EVLASWP')` when the Meas
 ## Joint KMBD fitting can abort with single-correlation buffers
 
 When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 iterators refuse a mix of single- and dual-hand buffers. Two single-hand buffers instead terminate when the one-hand answer is assigned to the two-hand table array. Casa-rs reports a recoverable solve error in each case. [Paired KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+
+## `calanalysis.get` can terminate on a restricted feed
+
+In CASA 6.7.6.14, open one of the two-feed, multi-window tables in the [selected-series oracle](../tools/casa-compat/calanalysis_get_oracle.py) and call `get(feed='1')`. On both complex and real tables, the reference process terminates with SIGSEGV after opening the table successfully. Casa-rs filters the selected feed by its table index and verifies that the returned records equal the same feed's series from the unrestricted query.
