@@ -174,11 +174,7 @@ struct Geometry {
 
 impl Geometry {
     fn read(ms: &MeasurementSet) -> MsResult<Self> {
-        let measures = ms
-            .main_table()
-            .measures_provider()
-            .cloned()
-            .map_or_else(crate::open_measures_runtime, Ok)?;
+        let measures = crate::open_measures_runtime()?;
         let antenna = ms.antenna()?;
         let mut antennas = Vec::with_capacity(antenna.row_count());
         let mut alt_az = Vec::with_capacity(antenna.row_count());
