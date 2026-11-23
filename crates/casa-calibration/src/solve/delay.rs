@@ -25,8 +25,8 @@ use crate::solve_stats::{IntervalStages, SolveStatsBuilder, ToolSolveActivity};
 pub(super) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
-    activity: Option<&mut ToolSolveActivity>,
-    legacy: bool,
+    mut activity: Option<&mut ToolSolveActivity>,
+    legacy_iterator: bool,
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.refant, RefAntSelector::Unspecified) {
         return Err(delay_error("specify a reference antenna explicitly"));
@@ -37,6 +37,7 @@ pub(super) fn solve(
     }
     let cross_hand = request.gain_type == GainType::KCross;
     let antenna_position = request.gain_type == GainType::KAntPos;
+    let legacy_multiband = legacy_iterator && request.gain_type == GainType::KMbd;
     let input_phase = crate::timing::Phase::start("gain_select_read_average");
     let context = prepare_calibration_solve(
         ms,
@@ -51,15 +52,16 @@ pub(super) fn solve(
         },
     )?;
     let windows = delay_windows(ms, &context.rows, cross_hand)?;
-    let unsupported_multiband =
-        antenna_position && request.combine.spectral_windows && windows.len() > 1;
+    let combined_output_spw = (legacy_iterator && request.combine.spectral_windows)
+        .then(|| context.rows.iter().map(|row| row.data_spw_id).min())
+        .flatten();
     let groups = build_solve_groups(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            input_rows: if legacy {
+            input_rows: if legacy_multiband {
                 SolveInputRows::LegacyDelay
             } else {
                 SolveInputRows::default()
@@ -102,11 +104,13 @@ pub(super) fn solve(
     let mut rows = Vec::new();
     let mut attempted_spw_ids = BTreeSet::new();
     let parameters = request.gain_type.polarizations();
-    let mut stats = SolveStatsBuilder::new(
-        parameters,
-        spectral_window_ids(ms)?,
-        &context.available_antennas,
-    );
+    let window_ids = spectral_window_ids(ms)?;
+    if combined_output_spw.is_some()
+        && let Some(activity) = activity.as_deref_mut()
+    {
+        activity.initialize(window_ids.len());
+    }
+    let mut stats = SolveStatsBuilder::new(parameters, window_ids, &context.available_antennas);
     for mut group in groups.into_values() {
         group.finalize_for_solve(request.solve_mode, false);
         let mut stages = IntervalStages::of(&group, 0);
@@ -120,24 +124,30 @@ pub(super) fn solve(
         }
         stages.constrained.clear();
         stats.interval(&stages);
+        if let Some(output_spw) = combined_output_spw
+            && let Some(activity) = activity.as_deref_mut()
+        {
+            activity.count_mapped_interval(
+                group.spw_id,
+                output_spw,
+                group.attempted,
+                group.attempted,
+            );
+        }
         if !group.attempted {
             continue;
         }
-        if unsupported_multiband {
-            return Err(delay_error(
-                "the KAntPos fit cannot combine multiple spectral windows",
-            ));
-        }
-        attempted_spw_ids.insert(group.spw_id);
-        stats.record_success(group.spw_id, true);
+        let output_spw = combined_output_spw.unwrap_or(group.spw_id);
         let solutions = group_delays(
             &group,
             request,
             context.refant_id,
             &windows,
             &mut transforms,
-            legacy,
+            legacy_multiband,
         )?;
+        attempted_spw_ids.insert(output_spw);
+        stats.record_success(output_spw, true);
         rows.extend(context.available_antennas.iter().map(|&antenna| {
             let delays = if cross_hand {
                 solutions.get(&0).copied().unwrap_or_default()
@@ -159,7 +169,7 @@ pub(super) fn solve(
             SolutionRow {
                 time_seconds: group.solution_time,
                 field_id: group.field_id,
-                spw_id: group.spw_id,
+                spw_id: output_spw,
                 antenna_id: antenna,
                 scan_number: group.scan_number(),
                 observation_id: group.observation_id,
@@ -173,7 +183,9 @@ pub(super) fn solve(
         }));
     }
     let tool_solve = activity.is_some();
-    stats.track_activity(activity);
+    if combined_output_spw.is_none() {
+        stats.track_activity(activity);
+    }
     let mut solve_stats = stats.finish();
     if !cross_hand && !tool_solve {
         // task_gaincal.resultsDictGaintypeExcept copies the unflagged
@@ -269,6 +281,11 @@ fn group_delays(
     let cross_hand = request.gain_type == GainType::KCross;
     let mode = request.solve_mode;
     if buffers.len() > 1 {
+        if request.gain_type == GainType::KAntPos {
+            return Err(delay_error(
+                "the KAntPos fit cannot combine multiple buffers in a solution interval",
+            ));
+        }
         return multiband::solve(
             buffers
                 .into_iter()

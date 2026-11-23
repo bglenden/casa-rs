@@ -35,8 +35,8 @@ pub(crate) enum SolveInputRows {
     Interferometry,
     /// Retain autocorrelations as fixed residuals in direct antenna solves.
     GainTool,
-    /// Keep direct gather statistics and stop once an opacity fit would run.
-    OpacityTool,
+    /// Keep direct gather statistics and stop once fitting would be required.
+    GatherOnlyTool { legacy: bool },
     /// Also retain the input buffer axes for a fringe FFT.
     Fringe,
     /// Retain input axes and raw gather records for a direct fringe solve.
@@ -92,7 +92,7 @@ impl SolveInputRows {
         matches!(
             self,
             Self::GainTool
-                | Self::OpacityTool
+                | Self::GatherOnlyTool { .. }
                 | Self::BaselineTool
                 | Self::AccorTool
                 | Self::LegacyAccor
@@ -279,7 +279,9 @@ impl super::SolveGroupOptions {
         self.legacy_chan_selection()
             || matches!(
                 self.input_rows,
-                SolveInputRows::LegacyAccor | SolveInputRows::LegacyDelay
+                SolveInputRows::LegacyAccor
+                    | SolveInputRows::LegacyDelay
+                    | SolveInputRows::GatherOnlyTool { legacy: true }
             )
     }
 

@@ -890,6 +890,61 @@ fn flagdata_ms_program_stages_skips_and_persists() {
 }
 
 #[test]
+fn typed_list_tfcrop_keeps_its_input_time_selection() {
+    let request = FlagDataRequest {
+        mode: FlagDataMode::Tfcrop,
+        clip_time_bin: Some("20s".into()),
+        selection: MsSelection {
+            timerange: Some("00:00:0.5~00:00:1.5".into()),
+            ..MsSelection::default()
+        },
+        ..FlagDataRequest::default()
+    };
+    let reports = flagdata_ms_program(
+        create_msexplore_fixture_in_memory(),
+        &[request],
+        false,
+        true,
+        None,
+    )
+    .expect("evaluate typed TFCrop");
+    assert_eq!(reports[0].as_ref().expect("TFCrop report").selected_rows, 1);
+}
+
+#[test]
+fn averaged_list_clip_reports_only_members_of_selected_bins() {
+    let mut ms = create_msexplore_fixture_in_memory();
+    // Place the first two integrations in the same averaging chunk.
+    ms.main_table_mut()
+        .cell_accessor_mut(1, "SCAN_NUMBER")
+        .expect("second scan cell")
+        .set(Value::Scalar(ScalarValue::Int32(1)))
+        .expect("share the first scan");
+    let reports = flagdata_ms_program(
+        ms,
+        &["00:00:0.3~00:00:0.7", "00:00:9~00:00:10"].map(|timerange| FlagDataRequest {
+            mode: FlagDataMode::Clip,
+            casa_row_selection: true,
+            clip_time_bin: Some("2s".into()),
+            selection: MsSelection {
+                timerange: Some(timerange.into()),
+                ..MsSelection::default()
+            },
+            ..FlagDataRequest::default()
+        }),
+        false,
+        true,
+        None,
+    )
+    .expect("evaluate averaged Clip agents");
+    let selected = reports
+        .iter()
+        .map(|report| report.as_ref().expect("Clip report").selected_rows)
+        .collect::<Vec<_>>();
+    assert_eq!(selected, [2, 0]);
+}
+
+#[test]
 fn antint_list_prepass_honors_its_input_and_agent_selection_policy() {
     let temp = tempdir().expect("tempdir");
     let path = create_msexplore_fixture_ms(temp.path());

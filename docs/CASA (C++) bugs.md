@@ -9133,6 +9133,16 @@ The selected channel is degenerate, and the beam lookup assigns the
 polarization index to the channel dimension. casa-rs maps each result to
 its original channel and Stokes beam.
 
+## Image statistics can remove channels when selecting polarizations
+
+In CASA 6.7.6.14, call `statistics(axes=[0, 1], region=...)` on a
+`[3, 4, 8, 4]` direction, spectral and Stokes image. Select all eight
+channels and only Stokes I and V with `regionmanager.frombcs`. CASA returns
+arrays of shape `(6, 4)` because it removes channel planes 1 and 2 while
+leaving the excluded polarizations in the result. Casa-rs returns shape
+`(8, 2)` with the eight original channels and only I and V. It applies
+each region exclusion to the corresponding display axis.
+
 ## Setting the pixels of a complex image can terminate CASA
 
 On the pinned Linux build of CASA 6.7.6.14, `image.fromshape(shape=[3, 4],
@@ -10597,6 +10607,10 @@ In CASA 6.7.6.14, `calibrater.corrupt()` with the old iterator looks up a callib
 
 The selected slice uses its registered calibration scan even when the current visibility belongs to a different scan. Mixed scan and intent wildcards can also give the CASA ordered index a cyclic comparison. The one-antenna probe with three distinct gains found an insertion-order-dependent result. The native lookup uses one ordered context throughout a buffer. The oracle records the two registration orders where the pinned CASA result differs.
 
-## Direct KAntPos can abort when combining multiple spectral windows
+## Some direct calibration factories gather data without a usable fitting stage
 
-CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. On a single window, both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. A planted two-window solve with `combine='spw'` terminated in both iterators when its two fitted terms were assigned to a three-term array. Casa-rs reports a recoverable error when this unsupported fit is reached. [Paired antenna-position oracle](../tools/casa-compat/calibrater_antenna_position_oracle.py)
+CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones, B TSYS, gain curve, and legacy power curve. With all input flagged, the tool reports the expected intervals and does not produce a table. When four-correlation usable data reaches the fitting stage, the pinned legacy J/Jf and both B TSYS iterators terminate. The tested modern J/Jf, A Noise, F Jones and curve configurations return a solve error. Modern power curve returns a setup error. Casa-rs retains the available gather stage and uses a recoverable error for the unavailable fit. These limits concern solving. Existing table application and specification are separate operations. [Paired factory oracle](../tools/casa-compat/calibrater_gather_only_oracle.py)
+
+## Direct KAntPos can abort when a solution combines multiple buffers
+
+CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. Both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. Two overlapping windows with `combine='spw'` or two fields with `combine='field'` terminated in both iterators when the multi-buffer fitter assigned two terms to a three-term array. Casa-rs reports a recoverable error when this fit is reached. Windows separated into single-buffer scan or integration intervals produce tables. [Paired antenna-position oracle](../tools/casa-compat/calibrater_antenna_position_oracle.py)
