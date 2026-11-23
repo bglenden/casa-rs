@@ -93,6 +93,18 @@ impl CalibrationOutput {
         Self::prepare_type(path, mode, Some("ApplyTable"), false)
     }
 
+    pub(crate) fn prepare_ephemeris_table(
+        path: &Path,
+        overwrite: bool,
+    ) -> Result<Self, CalibrationTableWriteError> {
+        let mode = if overwrite {
+            CalibrationOutputMode::Replace
+        } else {
+            CalibrationOutputMode::Create
+        };
+        Self::prepare_type(path, mode, Some("IERS"), false)
+    }
+
     fn prepare_type(
         path: &Path,
         mode: CalibrationOutputMode,

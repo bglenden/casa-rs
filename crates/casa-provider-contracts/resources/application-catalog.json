@@ -525,6 +525,16 @@
       "include_in_suite": true
     },
     {
+      "id": "getephemtable",
+      "launch": {
+        "executable": "calibrate",
+        "cargo_package": "casa-calibration",
+        "override_env": "CASARS_CALIBRATE_BIN"
+      },
+      "dataset_kinds": [],
+      "include_in_suite": true
+    },
+    {
       "id": "getcalmodvla",
       "launch": {
         "executable": "calibrate",
