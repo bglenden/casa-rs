@@ -3385,6 +3385,15 @@ casa-rs treats that channel as it treats the others: it is not regridded,
 and the output keeps the input's (`casa_images::regrid`). Converting the
 frame of an axis that is never regridded serves no purpose.
 
+## `image.regrid` can compare the lengths of different unchanged axes
+
+CASA 6.7.6.14 preserves the native spectral coordinate and pixels for
+`image.regrid(axes=[2], method="cubic")` on a direction and spectral cube
+when the template has no spectral coordinate. But on a cube of shape
+`[8, 9, 5]` the same call fails because the shape check compares spectral
+length 5 to the first output length 8. Casa-rs checks the shape of the
+unchanged spectral axis and keeps the image's original grid and samples.
+
 ## `tsdimaging`'s theoretical beam models the kernels, not the gridder's
 
 - Date noted: 2026-10-28
