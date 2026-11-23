@@ -29,6 +29,12 @@ CASES = [
     ({'ap': 'PHASE', 'unwrap': True}, 8), ({'ap': 'P', 'axis': 'F', 'unwrap': True}, 34),
     ({'norm': True}, 8), ({'axis': 'garbage'}, 0), ({'jumpmax': -1.}, 0),
     ({'field': 'does-not-exist'}, 0), ({'feed': 'does-not-exist'}, 0),
+    ({'field': 1}, 2), ({'spw': [1, 0]}, 8), ({'antenna': '!A1'}, 0),
+    ({'antenna': 'A1;!A1'}, 4), ({'feed': [1, 2]}, 8), ({'feed': '2,1'}, 8),
+    ({'timerange': [6., 8.]}, 6), ({'timerange': [8.01, 8.99]}, 0),
+    ({'timerange': np.array([7., 9.])}, 8), ({'timerange': [7.]}, 0),
+    ({'timerange': ['7', '8']}, 6), ({'timerange': [[7., 8.]]}, 6),
+    ({'timerange': '7~8'}, 0),
 ]
 
 

@@ -284,6 +284,18 @@ fn time_limits(value: &Variant) -> Result<Option<[f64; 2]>, String> {
         Variant::Empty => return Ok(None),
         Variant::Text(value) if value.trim().is_empty() => return Ok(None),
         Variant::Numbers(values) | Variant::Array { values, .. } => values,
+        Variant::Texts(values) => {
+            let [start, stop] = values.as_slice() else {
+                return Err("Invalid analysis time range".into());
+            };
+            let parse = |value: &str| {
+                value
+                    .trim()
+                    .parse()
+                    .map_err(|_| String::from("Invalid analysis time range"))
+            };
+            return Ok(Some([parse(start)?, parse(stop)?]));
+        }
         _ => return Err("Invalid analysis time range".into()),
     };
     match values.as_slice() {
