@@ -108,6 +108,33 @@ fn setsolve_mode(value: &str, phase_only: bool) -> (String, GainSolveMode, bool)
     (apmode, mode, invalid)
 }
 
+fn setsolve_normalization(value: &str) -> PyResult<GainNormalization> {
+    let value = value.to_ascii_uppercase();
+    if value.contains("MEAN") {
+        Ok(GainNormalization::Mean)
+    } else if value.contains("MED") {
+        Ok(GainNormalization::Median)
+    } else {
+        Err(setup_error())
+    }
+}
+
+fn warn_phaseonly(py: Python<'_>, phase_only: bool) -> PyResult<()> {
+    use crate::tools::{LogLine, emit};
+
+    if phase_only {
+        emit(
+            py,
+            super::LOGGER,
+            &[LogLine::warning(concat!(
+                "Please note that the phaseonly parameter will soon be eliminated.\n",
+                "You should begin using apmode='P' for phase-only."
+            ))],
+        )?;
+    }
+    Ok(())
+}
+
 fn single_dish_controls(
     family: &str,
     fraction: Option<&Bound<'_, PyAny>>,
@@ -156,6 +183,14 @@ fn setsolve_long(value: Option<&Bound<'_, PyAny>>, position: u8, default: i64) -
             "in method 'calibrater_setsolve', argument {position} of type 'long'"
         ))
     })
+}
+
+fn additive_fit_order(family: &str, value: Option<&Bound<'_, PyAny>>) -> PyResult<i32> {
+    if matches!(family, "A" | "A MUELLER") {
+        i32::try_from(setsolve_long(value, 19, 0)?).map_err(|_| setup_error())
+    } else {
+        Ok(0)
+    }
 }
 
 fn fringe_window(value: Option<&Bound<'_, PyAny>>) -> PyResult<[f64; 2]> {
@@ -212,6 +247,7 @@ fn standard_request(
     frequency: Option<&str>,
     fill_gaps: usize,
     fringe: Option<(FringeControls, bool)>,
+    additive_order: i32,
 ) -> PyResult<CalibrationSolveRequest> {
     Ok(match family {
         "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
@@ -235,7 +271,17 @@ fn standard_request(
             }
         }
         "ACCOR" | "ACCOR JONES" => CalibrationSolveRequest::Accor(standard.gain(GainType::G)),
-        "A" | "A MUELLER" => CalibrationSolveRequest::AdditiveMueller(standard.gain(GainType::G)),
+        "A" | "A MUELLER" => {
+            let gain = standard.gain(GainType::G);
+            if additive_order == 0 {
+                CalibrationSolveRequest::AdditiveMueller(gain)
+            } else {
+                CalibrationSolveRequest::AdditiveMuellerPolynomial {
+                    gain,
+                    fit_order: additive_order,
+                }
+            }
+        }
         "FRINGE" | "FRINGE JONES" => {
             let (controls, active_phase) = fringe.expect("parsed fringe controls");
             CalibrationSolveRequest::FringeTool {
@@ -255,10 +301,8 @@ fn configure_generic_spline(
     state: &mut casa_calibration::CalibraterLifecycle,
     standard: StandardSolver,
     mode: casa_calibration::CalibrationOutputMode,
-    elapsed: &str,
     apmode: &str,
-    refant_mode: &str,
-) -> PyResult<bool> {
+) -> PyResult<()> {
     let controls = casa_calibration::GainSplineControls {
         splinetime: 7200.,
         npointaver: 2,
@@ -271,9 +315,7 @@ fn configure_generic_spline(
             mode,
             apmode.into(),
         )
-        .map_err(|_| setup_error())?;
-    state.record_solve_description(elapsed, apmode, refant_mode, None);
-    Ok(true)
+        .map_err(|_| setup_error())
 }
 
 #[pymethods]
@@ -360,6 +402,7 @@ impl super::PyCalibrater {
             "M" | "M MUELLER" | "MF" | "MF MUELLER" | "A" | "A MUELLER"
         );
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
+        let additive_order = additive_fit_order(&family, fitorder)?;
         let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
             let active = paramactive
                 .map(|value| value.extract::<Vec<bool>>())
@@ -393,16 +436,7 @@ impl super::PyCalibrater {
             None
         };
         let table = PathBuf::from(table.unwrap_or(""));
-        if phase_only {
-            emit(
-                py,
-                super::LOGGER,
-                &[LogLine::warning(concat!(
-                    "Please note that the phaseonly parameter will soon be eliminated.\n",
-                    "You should begin using apmode='P' for phase-only."
-                ))],
-            )?;
-        }
+        warn_phaseonly(py, phase_only)?;
         self.with_lifecycle(py, move |state| {
             if accor || fringe.is_some() || polarization {
                 state
@@ -439,14 +473,7 @@ impl super::PyCalibrater {
                     (time, Some(frequency))
                 });
             let (apmode, solve_mode_value, invalid_mode) = setsolve_mode(&apmode, phase_only);
-            let normtype = normtype.to_ascii_uppercase();
-            let normalization = if normtype.contains("MEAN") {
-                GainNormalization::Mean
-            } else if normtype.contains("MED") {
-                GainNormalization::Median
-            } else {
-                return Err(setup_error());
-            };
+            let normalization = setsolve_normalization(&normtype)?;
             let standard = StandardSolver {
                 output_table: table,
                 solve_interval: GainSolveInterval::from_casa(time).ok_or_else(setup_error)?,
@@ -502,25 +529,26 @@ impl super::PyCalibrater {
                 return Ok(true);
             }
             if family == "GSPLINE" {
-                return configure_generic_spline(
-                    state,
+                configure_generic_spline(state, standard, mode, &apmode)?;
+            } else {
+                let request = standard_request(
+                    &family,
                     standard,
-                    mode,
-                    &elapsed,
-                    &apmode,
-                    &refant_mode,
-                );
+                    frequency,
+                    fill_gaps,
+                    fringe,
+                    additive_order,
+                )?;
+                state
+                    .set_tool_solve(
+                        request,
+                        mode,
+                        (!invalid_mode || fringe.is_some()).then_some(solve_mode_value),
+                        normalization,
+                        preavg,
+                    )
+                    .map_err(|_| setup_error())?;
             }
-            let request = standard_request(&family, standard, frequency, fill_gaps, fringe)?;
-            state
-                .set_tool_solve(
-                    request,
-                    mode,
-                    (!invalid_mode || fringe.is_some()).then_some(solve_mode_value),
-                    normalization,
-                    preavg,
-                )
-                .map_err(|_| setup_error())?;
             state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
             Ok(true)
         })

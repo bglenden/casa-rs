@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Selection, bucketing, and accumulation for `gaincal` and `bandpass`.
 
+pub(super) mod additive_polynomial;
 mod inputs;
 pub(crate) mod leakage;
 mod legacy_baseline;
@@ -575,6 +576,7 @@ pub(crate) struct SolveAccumulator {
     pub(crate) first_g_graphs: Option<Box<[SolveGraph; 2]>>,
     direct_gain: Option<samples::DirectGainGather>,
     legacy_baselines: Option<legacy_baseline::LegacyMuellerGather>,
+    pub(super) additive_polynomial: Option<additive_polynomial::Gather>,
     parallel_hands: usize,
     baseline_centroids: HashMap<AveragedBaseline, WeightedTime>,
     preaverage_starts: HashMap<AveragedBaseline, f64>,
@@ -633,6 +635,7 @@ impl SolveAccumulator {
             first_g_graphs: None,
             direct_gain: None,
             legacy_baselines: None,
+            additive_polynomial: None,
             parallel_hands: 1,
             baseline_centroids: HashMap::new(),
             preaverage_starts: HashMap::new(),
@@ -767,19 +770,23 @@ impl SolveAccumulator {
             Some(other) => return Err(unsupported_shape("WEIGHT_SPECTRUM", other)),
             None => None,
         };
-        self.observe_selected_samples(
-            &SolveSampleRow::of(row),
-            &samples,
-            &layout.correlations,
-            SelectedChannels {
-                indices: &layout.channels,
-                all_channels: layout.all_channels,
-                bin_width: layouts.channel_bin_widths.get(&row.data_spw_id).copied(),
-                excluded: &layout.excluded,
-                bin_weights,
-            },
-            options,
-        )
+        let channels = SelectedChannels {
+            indices: &layout.channels,
+            all_channels: layout.all_channels,
+            bin_width: layouts.channel_bin_widths.get(&row.data_spw_id).copied(),
+            excluded: &layout.excluded,
+            bin_weights,
+        };
+        let row = SolveSampleRow::of(row);
+        if options.input_rows == SolveInputRows::LegacyAdditivePolynomial {
+            self.observe_metadata(&row, false);
+            let gather = self
+                .additive_polynomial
+                .get_or_insert_with(Default::default);
+            self.attempted |= gather.observe(&row, &samples, &layout.correlations, channels)?;
+            return Ok(());
+        }
+        self.observe_selected_samples(&row, &samples, &layout.correlations, channels, options)
     }
 
     /// Accumulate one sample's `channels` (every channel for a channelized

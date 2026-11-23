@@ -297,6 +297,7 @@ impl CalibraterLifecycle {
                     | CalibrationSolveRequest::FringeTool { gain, .. }
                     | CalibrationSolveRequest::Accor(gain)
                     | CalibrationSolveRequest::AdditiveMueller(gain)
+                    | CalibrationSolveRequest::AdditiveMuellerPolynomial { gain, .. }
                     | CalibrationSolveRequest::Baseline { gain, .. } => &gain.output_table,
                     CalibrationSolveRequest::Bandpass(request) => &request.output_table,
                 },

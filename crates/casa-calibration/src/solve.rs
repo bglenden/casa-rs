@@ -14,6 +14,7 @@
 //! close to CASA's own `gaincal` when applied.
 
 pub(crate) mod accor;
+pub(crate) mod additive_polynomial;
 pub(crate) mod baseline;
 #[cfg(test)]
 mod batch_trial;

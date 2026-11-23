@@ -115,10 +115,16 @@ pub(super) fn apply(
     replace_model: bool,
     output: &mut ApplyBuffer<'_>,
 ) -> Result<(), ApplyExecutionError> {
-    let grid = grid.map(|grid| match grid {
-        CalibrationGrid::Complex(grid) => grid,
-        _ => unreachable!("baseline grid was prepared as CPARAM"),
-    });
+    let grid = match grid {
+        Some(CalibrationGrid::Complex(grid)) if grid.receptor_count == 2 => Some(grid),
+        Some(_) => {
+            return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                path: path.display().to_string(),
+                reason: "constant additive Mueller requires two CPARAM receptors".into(),
+            });
+        }
+        None => None,
+    };
     let correlations = baseline::correlation_count(output)?;
     for correlation in 0..correlations {
         for channel in 0..output.corrected.shape()[1] {

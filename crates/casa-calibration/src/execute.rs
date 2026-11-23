@@ -73,6 +73,7 @@ mod gain_validity;
 mod initialization;
 use gain_validity::correcting_gain;
 pub(crate) mod additive;
+mod additive_polynomial;
 mod bandpass;
 pub(crate) mod baseline;
 mod chain;
@@ -2569,6 +2570,24 @@ fn apply_row_all_channels(
                     lookup_started_at,
                 );
             }
+            if subtype == "A Mueller" && cal_spw.num_chan > 1 {
+                if !forward_model && (trial || !plan.apply_mode.writes_corrected_data()) {
+                    return Err(ApplyExecutionError::UnsupportedCalibrationTable {
+                        path: loaded_table.path.display().to_string(),
+                        reason: "trial apply is unavailable for additive polynomial tables".into(),
+                    });
+                }
+                additive_polynomial::apply(
+                    solution.as_ref().map(|solution| solution.grid.as_ref()),
+                    cal_spw,
+                    &loaded_table.path,
+                    antenna1 > antenna2,
+                    forward_model,
+                    chain.legacy_corruption,
+                    &mut output,
+                )?;
+                continue;
+            }
             let grid = baseline::prepare(
                 solution,
                 &cal_spw.channel_frequencies_hz,
@@ -5032,7 +5051,7 @@ fn load_parameters(
                 row_index,
                 &table_plan.spec.path,
                 flags,
-                if baseline {
+                if baseline && table_plan.summary.table_subtype != "A Mueller" {
                     Some("baseline calibration")
                 } else {
                     leakage.map(|_| "leakage")
@@ -5202,6 +5221,12 @@ fn load_complex_parameters(
     let mut grid = GainGrid::from_arrays(path, gains, flags)?;
     if reversed {
         grid.values.mapv_inplace(|value| value.conj());
+        if grid.receptor_count == 4 && grid.values.ndim() == 2 {
+            for coefficient in 0..grid.channel_count {
+                grid.values.swap([1, coefficient], [2, coefficient]);
+                grid.flags.swap([1, coefficient], [2, coefficient]);
+            }
+        }
     }
     if cross_hand_phase {
         grid = grid.cross_hand_diagonal(path)?;
