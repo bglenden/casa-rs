@@ -219,23 +219,23 @@ fn run_task(
         };
         let atmosphere = super::calibration::atmosphere::Options::from_task(task)?;
         let visibility_document = calibration.is_some() || atmosphere.is_some();
-        let options = options_from_plotms(task, visibility_document)?;
+        let (options, visibility_document) = options_from_plotms(task, visibility_document)?;
         if calibration.is_none()
-            && let Some(x_column) = options.x_data_column
+            && let Some(columns) = options.plotms_axis_columns()
         {
-            check_mixed_plotms_columns(&options, x_column)?;
+            check_plotms_columns(&options, columns)?;
             let symbols = task.value("customflaggedsymbol");
             let ordinate_count = 1 + usize::from(options.y_axis2.is_some());
             if (0..ordinate_count)
                 .any(|index| super::calibration::figure::shows_flagged(symbols, index))
             {
                 return Err(TaskFailure::validation(
-                    "displaying flagged points with distinct MeasurementSet X and Y data columns is pending #1032",
+                    "displaying flagged points for this MeasurementSet column plot is pending #1032",
                 )
                 .at("customflaggedsymbol"));
             }
         }
-        if visibility_document || options.x_data_column.is_some() {
+        if visibility_document {
             return run_visibility_plot(task, options, payload, calibration, atmosphere);
         }
         options
@@ -257,28 +257,30 @@ fn run_task(
     })
 }
 
-fn check_mixed_plotms_columns(
+impl CliOptions {
+    fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 2]> {
+        (self.x_data_column.is_some() || self.data_column.is_vector_residual()).then_some([
+            self.x_data_column.unwrap_or(self.data_column),
+            self.data_column,
+        ])
+    }
+}
+
+fn check_plotms_columns(
     options: &CliOptions,
-    x_column: MsDataColumn,
+    columns: [MsDataColumn; 2],
 ) -> Result<(), TaskFailure> {
-    let columns = [x_column, options.data_column];
-    let residual = |column| {
-        matches!(
-            column,
-            MsDataColumn::DataMinusModel | MsDataColumn::CorrectedMinusModel
-        )
-    };
     if columns.into_iter().any(|column| {
         !matches!(
             column,
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
-        ) && !residual(column)
+        ) && !column.is_vector_residual()
     }) {
         return Err(TaskFailure::validation(
             "distinct MeasurementSet X and Y derived data columns are pending #1032",
         ));
     }
-    if columns.into_iter().any(residual)
+    if columns.into_iter().any(MsDataColumn::is_vector_residual)
         && (options.avgchannel.is_some_and(|width| width > 1)
             || options.avgtime.is_some()
             || options.avgscan
@@ -288,7 +290,7 @@ fn check_mixed_plotms_columns(
             || options.avgspw)
     {
         return Err(TaskFailure::validation(
-            "averaging derived data columns on distinct MeasurementSet axes is pending #1032",
+            "averaging derived data columns in this MeasurementSet plot is pending #1032",
         ));
     }
     Ok(())
@@ -369,9 +371,8 @@ fn run_visibility_plot(
                 show,
                 &overlays,
                 options
-                    .x_data_column
-                    .filter(|_| calibrated.is_none())
-                    .map(|x_column| [x_column, options.data_column]),
+                    .plotms_axis_columns()
+                    .filter(|_| calibrated.is_none()),
             )?;
         }
         if let Some(path) = text_file {
@@ -1139,7 +1140,7 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
 fn options_from_plotms(
     task: &TaskInvocation<'_>,
     visibility_document: bool,
-) -> Result<CliOptions, TaskFailure> {
+) -> Result<(CliOptions, bool), TaskFailure> {
     let text = |name| {
         task.text(name)
             .map(|text| text.filter(|value| !value.is_empty()))
@@ -1185,10 +1186,19 @@ fn options_from_plotms(
         data_column(plotms_column(task.value("ydatacolumn"))?)?.unwrap_or(MsDataColumn::Data);
     let y_uses_data =
         y_axis.is_visibility_math() || y_axis2.is_some_and(MsAxis::is_visibility_math);
-    let data_column = if y_uses_data { y_column } else { x_column };
+    let data_column = if y_uses_data {
+        y_column
+    } else if x_axis.is_visibility_math() {
+        x_column
+    } else {
+        MsDataColumn::Data
+    };
     let x_data_column =
         (x_axis.is_visibility_math() && x_column != data_column).then_some(x_column);
-    let plot_format = if visibility_document || x_data_column.is_some() {
+    let residual_plot = data_column.is_vector_residual()
+        || x_data_column.is_some_and(MsDataColumn::is_vector_residual);
+    let visibility_document = visibility_document || residual_plot || x_data_column.is_some();
+    let plot_format = if visibility_document {
         MsExportFormat::Txt
     } else {
         export_format
@@ -1205,7 +1215,7 @@ fn options_from_plotms(
         .map_err(TaskFailure::validation)?;
     let correlation = text("correlation")?.or(text("polarization")?);
     let transform = task.flag("transform")?;
-    Ok(CliOptions {
+    let options = CliOptions {
         ms_path: task.path("vis")?,
         summary_format: MeasurementSetSummaryOutputFormat::Text,
         summary_output: None,
@@ -1237,11 +1247,13 @@ fn options_from_plotms(
         avgchannel: average_text("avgchannel")?
             .map(|value| number::<usize>(&value))
             .transpose()
-            .map_err(TaskFailure::validation)?,
+            .map_err(TaskFailure::validation)?
+            .filter(|&width| !residual_plot || width != 0),
         avgtime: average_text("avgtime")?
             .map(|value| number::<f64>(&value))
             .transpose()
-            .map_err(TaskFailure::validation)?,
+            .map_err(TaskFailure::validation)?
+            .filter(|&interval| !residual_plot || interval != 0.0),
         avgscan: average("avgscan")?,
         avgfield: average("avgfield")?,
         avgbaseline: average("avgbaseline")?,
@@ -1295,7 +1307,8 @@ fn options_from_plotms(
         flag_output: None,
         plot_output,
         plot_format,
-    })
+    };
+    Ok((options, visibility_document))
 }
 
 fn plotms_column(value: Option<&ParameterValue>) -> Result<Option<String>, TaskFailure> {

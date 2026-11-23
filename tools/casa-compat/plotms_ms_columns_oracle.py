@@ -115,6 +115,8 @@ def compare(root, vis, native):
         "explicit-vector": {"xdatacolumn": "data-model_vector", "ydatacolumn": "corrected-model_vector"},
         "implicit-vector": {"xdatacolumn": "data-model", "ydatacolumn": "corrected-model"},
         "residual-alias": {"xdatacolumn": "residual", "ydatacolumn": "data"},
+        "residual-vs-time": {"xaxis": "time", "yaxis": "amp", "ydatacolumn": "residual"},
+        "zero-channel-and-time": {"xdatacolumn": "data-model_vector", "avgchannel": "0", "avgtime": "0"},
         "vector-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data-model_vector",
                               "ydatacolumn": "corrected-model_vector"},
     }

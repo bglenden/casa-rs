@@ -611,6 +611,10 @@ pub enum MsDataColumn {
 }
 
 impl MsDataColumn {
+    fn is_vector_residual(self) -> bool {
+        matches!(self, Self::DataMinusModel | Self::CorrectedMinusModel)
+    }
+
     /// Stable machine-readable identifier.
     pub fn as_str(self) -> &'static str {
         match self {
