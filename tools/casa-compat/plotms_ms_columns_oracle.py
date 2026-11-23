@@ -72,7 +72,8 @@ def compare_figure(root, native, controls, expected, labels):
     assert (title, xlabel, ylabel) == labels, (title, xlabel, ylabel)
     coordinates = np.array([point[:2] for point in rows(expected)], dtype=float)
     np.testing.assert_allclose(points, coordinates, rtol=1.2e-5, atol=1e-7)
-    for values, limits in zip(points.T, (xlim, ylim), strict=True):
+    visible = points[np.isfinite(points).all(axis=1)]
+    for values, limits in zip(visible.T, (xlim, ylim), strict=True):
         assert min(limits) <= min(values) <= max(values) <= max(limits), (values, limits)
     for output in outputs:
         with Image.open(output) as image:
@@ -119,6 +120,14 @@ def compare(root, vis, native):
         "zero-channel-and-time": {"xdatacolumn": "data-model_vector", "avgchannel": "0", "avgtime": "0"},
         "vector-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data-model_vector",
                               "ydatacolumn": "corrected-model_vector"},
+        "implicit-vector-ratio": {"xdatacolumn": "data/model", "ydatacolumn": "corrected/model"},
+        "explicit-vector-ratio": {"xdatacolumn": "data/model_vector", "ydatacolumn": "corrected/model_vector"},
+        "vector-ratio-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data/model_vector",
+                                    "ydatacolumn": "corrected/model_vector"},
+        "scalar-amp-phase-ratio": {"xdatacolumn": "data/model_scalar", "ydatacolumn": "corrected/model_scalar"},
+        "scalar-ratio-components": {"xaxis": "real", "yaxis": "imag", "xdatacolumn": "data/model_scalar",
+                                    "ydatacolumn": "corrected/model_scalar"},
+        "scalar-ratio-vs-time": {"xaxis": "time", "yaxis": "amp", "ydatacolumn": "data/model_scalar"},
         "scalar-amp-phase": {"xdatacolumn": "data-model_scalar", "ydatacolumn": "corrected-model_scalar"},
         "scalar-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data-model_scalar",
                               "ydatacolumn": "corrected-model_scalar"},
@@ -153,6 +162,12 @@ def compare(root, vis, native):
     compare_figure(root, native, base | cases["scalar-amp-phase"], root / "scalar-amp-phase.casa.txt",
                    ("Phase:corrected-model (scalar) vs. Amp:data-model (scalar)",
                     "Amp:data-model (scalar)", "Phase:corrected-model (scalar) (degrees)"))
+    compare_figure(root, native, base | cases["explicit-vector-ratio"], root / "explicit-vector-ratio.casa.txt",
+                   ("Phase:corrected/model (vector) vs. Amp:data/model (vector)",
+                    "Amp:data/model (vector)", "Phase:corrected/model (vector) (degrees)"))
+    compare_figure(root, native, base | cases["scalar-amp-phase-ratio"], root / "scalar-amp-phase-ratio.casa.txt",
+                   ("Phase:corrected/model (scalar) vs. Amp:data/model (scalar)",
+                    "Amp:data/model (scalar)", "Phase:corrected/model (scalar) (degrees)"))
     pending_cases(root, native, vis)
 
 
@@ -167,6 +182,8 @@ def compare_missing_corrected(root, vis, source, native):
         "residual-on-x": dict(xdatacolumn="residual", ydatacolumn="data"),
         "residual-on-y": dict(ydatacolumn="corrected-model_vector"),
         "corrected-vs-time": dict(xaxis="time", xdatacolumn=""),
+        "vector-ratio-without-corrected": dict(xdatacolumn="corrected/model_vector", ydatacolumn="data/model_vector"),
+        "scalar-ratio-without-corrected": dict(xdatacolumn="data/model_scalar", ydatacolumn="corrected/model_scalar"),
         "scalar-without-corrected": dict(xdatacolumn="corrected-model_scalar", ydatacolumn="data-model_scalar"),
     }
     for name, options in cases.items():
@@ -203,6 +220,63 @@ def compare_scalar_phase_boundary(root, vis, source, native):
                     "Amp:data-model (scalar)", "Phase:corrected-model (scalar) (degrees)"))
 
 
+def compare_zero_model(root, vis, source, native):
+    zero_model = root / "zero-model.ms"
+    copy_ms(vis, zero_model)
+    model = source["MODEL_DATA"].copy()
+    model[0, 1, 0] = 0
+    model[0, 3, 0] = 0
+    with opened(zero_model, True) as table:
+        table.putcol("MODEL_DATA", model)
+    cases = (
+        ("vector-zero-phase", "amp", "phase", "data/model_vector", np.inf, np.nan),
+        ("vector-zero-complex", "real", "imag", "corrected/model_vector", np.inf, np.inf),
+        ("scalar-zero-phase", "amp", "phase", "corrected/model_scalar", np.inf, np.inf),
+        ("scalar-zero-components", "real", "imag", "data/model_scalar", 2, 0),
+    )
+    for name, x, y, column, expected_x, expected_y in cases:
+        controls = request(zero_model) | dict(xaxis=x, yaxis=y, xdatacolumn=column, ydatacolumn=column)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        np.testing.assert_array_equal(np.array(rows(expected)[0][:2], dtype=float), [expected_x, expected_y])
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: matched defined and nonfinite values for 12 selected points", flush=True)
+    controls = request(zero_model) | dict(xdatacolumn="data/model_vector", ydatacolumn="data/model_vector")
+    compare_figure(root, native, controls, root / "vector-zero-phase.casa.txt",
+                   ("Phase:data/model (vector) vs. Amp:data/model (vector)",
+                    "Amp:data/model (vector)", "Phase:data/model (vector) (degrees)"))
+
+
+def compare_ratio_float_range(root, vis, source, native):
+    bounded = root / "ratio-float-range.ms"
+    copy_ms(vis, bounded)
+    data, model = (source[column].copy() for column in ("DATA", "MODEL_DATA"))
+    data[0, 1, 0], model[0, 1, 0] = 8 + 4j, 2e-38
+    data[0, 3, 0], model[0, 3, 0] = 1e-30 + 2e-30j, 1e30
+    with opened(bounded, True) as table:
+        second = np.flatnonzero((table.getcol("ANTENNA1") == 0)
+                                & (table.getcol("ANTENNA2") == 1)
+                                & (table.getcol("FIELD_ID") == 0))[1]
+        data[0, 1, second], model[0, 1, second] = 8 + 4j, 1e-37
+        table.putcol("DATA", data)
+        table.putcol("MODEL_DATA", model)
+    phases = (("vector", (0.0, 0.0, 26.5651)), ("scalar", (np.inf, 6.34349e-29, np.inf)))
+    for method, expected_phases in phases:
+        name = f"{method}-ratio-float-range"
+        column = f"data/model_{method}"
+        controls = request(bounded) | dict(xdatacolumn=column, ydatacolumn=column, expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 12
+        for export in (expected, actual):
+            extremes = np.array([sample[:2] for sample in rows(export)[:3]], dtype=float)
+            np.testing.assert_allclose(extremes, np.column_stack(([np.inf, 0.0, 8.94427e37], expected_phases)),
+                                       rtol=1.2e-5, atol=0)
+        print(f"{name}: matched the float range for 12 selected points", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -224,6 +298,8 @@ def main():
                 np.testing.assert_array_equal(table.getcol(name), values, err_msg=name)
         compare_missing_corrected(root, vis, source, native)
         compare_scalar_phase_boundary(root, vis, source, native)
+        compare_zero_model(root, vis, source, native)
+        compare_ratio_float_range(root, vis, source, native)
 
 
 if __name__ == "__main__":

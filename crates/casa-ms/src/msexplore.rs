@@ -611,15 +611,27 @@ pub enum MsDataColumn {
 }
 
 impl MsDataColumn {
-    fn is_residual(self) -> bool {
-        matches!(self, Self::DataMinusModel | Self::CorrectedMinusModel)
-            || self.is_scalar_residual()
-    }
-
-    fn is_scalar_residual(self) -> bool {
+    fn is_derived(self) -> bool {
         matches!(
             self,
-            Self::DataMinusModelScalar | Self::CorrectedMinusModelScalar
+            Self::DataMinusModel
+                | Self::CorrectedMinusModel
+                | Self::DataMinusModelScalar
+                | Self::CorrectedMinusModelScalar
+                | Self::DataDivModel
+                | Self::CorrectedDivModel
+                | Self::DataDivModelScalar
+                | Self::CorrectedDivModelScalar
+        )
+    }
+
+    fn has_unbounded_phase(self) -> bool {
+        matches!(
+            self,
+            Self::DataMinusModelScalar
+                | Self::CorrectedMinusModelScalar
+                | Self::DataDivModelScalar
+                | Self::CorrectedDivModelScalar
         )
     }
 
@@ -654,11 +666,13 @@ impl MsDataColumn {
             }
             "data-model" | "data-model_vector" | "data_minus_model" => Ok(Self::DataMinusModel),
             "data-model_scalar" | "data_minus_model_scalar" => Ok(Self::DataMinusModelScalar),
-            "corrected/model" | "corrected_div_model" => Ok(Self::CorrectedDivModel),
+            "corrected/model" | "corrected/model_vector" | "corrected_div_model" => {
+                Ok(Self::CorrectedDivModel)
+            }
             "corrected/model_scalar" | "corrected_div_model_scalar" => {
                 Ok(Self::CorrectedDivModelScalar)
             }
-            "data/model" | "data_div_model" => Ok(Self::DataDivModel),
+            "data/model" | "data/model_vector" | "data_div_model" => Ok(Self::DataDivModel),
             "data/model_scalar" | "data_div_model_scalar" => Ok(Self::DataDivModelScalar),
             other => Err(format!("unsupported msexplore data column {other:?}")),
         }
@@ -3891,7 +3905,7 @@ fn build_generic_visibility_scatter(
     let use_spectral_weights = calibration.is_some()
         && needs_visibility_grid
         && spec.averaging.avgchannel.is_some_and(|width| width > 1);
-    let project_scalar_residual = calibration.is_some_and(|input| input.rows.is_none());
+    let project_plotms_columns = calibration.is_some_and(|input| input.rows.is_none());
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
             .y_axes
@@ -3949,11 +3963,11 @@ fn build_generic_visibility_scatter(
         let row_grid_started = timing_enabled.then(Instant::now);
         let grid = data_source
             .as_ref()
-            .map(|source| source.row(row_slot, project_scalar_residual))
+            .map(|source| source.row(row_slot, project_plotms_columns))
             .transpose()?;
         let x_grid = x_data_source
             .as_ref()
-            .map(|source| source.row(row_slot, project_scalar_residual))
+            .map(|source| source.row(row_slot, project_plotms_columns))
             .transpose()?;
         if let (Some(x), Some(y)) = (&x_grid, &grid)
             && (x.corr_count, x.chan_count) != (y.corr_count, y.chan_count)
@@ -4390,8 +4404,8 @@ fn build_generic_visibility_scatter(
         .unwrap_or_else(|| axis_label(spec.y_axis()));
     let secondary_y_label = spec.secondary_y_axis().map(axis_label);
     let bounds_for_column = |axis, column: MsDataColumn| {
-        if project_scalar_residual && column.is_scalar_residual() {
-            // A difference of phases can extend beyond the principal phase range.
+        if project_plotms_columns && column.has_unbounded_phase() {
+            // Projected scalar columns can extend beyond the principal phase range.
             None
         } else {
             fixed_bounds(axis)
@@ -6035,7 +6049,7 @@ fn resolve_spectral_context(
 struct VisibilityBinSamples<'a> {
     values: &'a [Complex64],
     weights: &'a [f64],
-    scalar_residual: Option<[Complex64; 2]>,
+    projection: Option<(VisibilityColumnProjection, [Complex64; 2])>,
 }
 
 impl<'a> VisibilityBinSamples<'a> {
@@ -6046,17 +6060,81 @@ impl<'a> VisibilityBinSamples<'a> {
         corr_index: usize,
         bin: &ChannelBin,
     ) -> Self {
-        let scalar_residual = grid.and_then(|grid| {
-            let model = grid.scalar_residual_model.as_ref()?;
+        let projection = grid.and_then(|grid| {
+            let (projection, model) = grid.model.as_ref()?;
             let observed = *values.first()?;
             debug_assert_eq!(bin.channels().count(), 1);
-            Some([observed, model[corr_index * grid.chan_count + bin.start]])
+            Some((
+                *projection,
+                [observed, model[corr_index * grid.chan_count + bin.start]],
+            ))
         });
         Self {
             values,
             weights,
-            scalar_residual,
+            projection,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum VisibilityColumnProjection {
+    ScalarResidual,
+    VectorRatio,
+    ScalarRatio,
+}
+
+impl VisibilityColumnProjection {
+    fn axis_value(self, axis: MsAxis, [observed, model]: [Complex64; 2]) -> Option<f64> {
+        let as_complex_float =
+            |value: Complex64| num_complex::Complex32::new(value.re as f32, value.im as f32);
+        match self {
+            Self::ScalarResidual => {
+                let value = match axis {
+                    MsAxis::Amplitude => observed.norm() - model.norm(),
+                    MsAxis::Phase => (observed.arg() - model.arg()).to_degrees(),
+                    MsAxis::Real => observed.re - model.re,
+                    MsAxis::Imaginary => observed.im - model.im,
+                    _ => unreachable!("visibility projection requires a visibility axis"),
+                };
+                value.is_finite().then_some(value)
+            }
+            Self::VectorRatio => {
+                let value = if model == Complex64::new(0.0, 0.0) {
+                    // Match C++ complex division at a zero denominator for text export.
+                    let infinity = f64::INFINITY.copysign(model.re);
+                    Complex64::new(infinity * observed.re, infinity * observed.im)
+                } else {
+                    observed / model
+                };
+                // CASA caches the complex float quotient before converting its axes.
+                let value = as_complex_float(value);
+                Some(f64::from(match axis {
+                    MsAxis::Amplitude => value.norm(),
+                    MsAxis::Phase => Self::float_phase_degrees(value.arg()),
+                    MsAxis::Real => value.re,
+                    MsAxis::Imaginary => value.im,
+                    _ => unreachable!("visibility projection requires a visibility axis"),
+                }))
+            }
+            Self::ScalarRatio => {
+                let observed = as_complex_float(observed);
+                let model = as_complex_float(model);
+                Some(f64::from(match axis {
+                    MsAxis::Amplitude => observed.norm() / model.norm(),
+                    MsAxis::Phase => Self::float_phase_degrees(observed.arg() / model.norm()),
+                    // CASA's scalar ratio uses component differences for these axes.
+                    MsAxis::Real => observed.re - model.re,
+                    MsAxis::Imaginary => observed.im - model.im,
+                    _ => unreachable!("visibility projection requires a visibility axis"),
+                }))
+            }
+        }
+    }
+
+    fn float_phase_degrees(radians: f32) -> f32 {
+        // The cache multiplies the Float array by 180 before dividing by pi.
+        (radians * 180.0) / std::f32::consts::PI
     }
 }
 
@@ -6080,15 +6158,8 @@ fn compute_axis_value(
     geometry_engine: Option<&MsCalEngine>,
 ) -> Result<Option<f64>, String> {
     if axis.is_visibility_math() {
-        if let Some([observed, model]) = visibility.scalar_residual {
-            let value = match axis {
-                MsAxis::Amplitude => observed.norm() - model.norm(),
-                MsAxis::Phase => (observed.arg() - model.arg()).to_degrees(),
-                MsAxis::Real => observed.re - model.re,
-                MsAxis::Imaginary => observed.im - model.im,
-                _ => unreachable!("scalar residuals require a visibility axis"),
-            };
-            return Ok(value.is_finite().then_some(value));
+        if let Some((projection, operands)) = visibility.projection {
+            return Ok(projection.axis_value(axis, operands));
         }
         return Ok(compute_weighted_visibility_math(
             axis,
@@ -6594,7 +6665,19 @@ struct ComplexGrid {
     corr_count: usize,
     chan_count: usize,
     values: Vec<Complex64>,
-    scalar_residual_model: Option<Vec<Complex64>>,
+    model: Option<(VisibilityColumnProjection, Vec<Complex64>)>,
+}
+
+impl ComplexGrid {
+    fn with_model(
+        mut self,
+        model: Self,
+        projection: VisibilityColumnProjection,
+    ) -> Result<Self, String> {
+        check_grid_shapes(&self, &model)?;
+        self.model = Some((projection, model.values));
+        Ok(self)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -6862,7 +6945,7 @@ impl<'a> PreparedSelectedDataSource<'a> {
         }
     }
 
-    fn row(&self, row_slot: usize, project_scalar_residual: bool) -> Result<ComplexGrid, String> {
+    fn row(&self, row_slot: usize, project_plotms_columns: bool) -> Result<ComplexGrid, String> {
         match self {
             Self::Single(column) => complex_grid_from_array(column.get(row_slot)?),
             Self::Difference {
@@ -6870,12 +6953,10 @@ impl<'a> PreparedSelectedDataSource<'a> {
                 right,
                 scalar,
             } => {
-                let mut left = complex_grid_from_array(left.get(row_slot)?)?;
+                let left = complex_grid_from_array(left.get(row_slot)?)?;
                 let right = complex_grid_from_array(right.get(row_slot)?)?;
-                if *scalar && project_scalar_residual {
-                    check_grid_shapes(&left, &right)?;
-                    left.scalar_residual_model = Some(right.values);
-                    return Ok(left);
+                if *scalar && project_plotms_columns {
+                    return left.with_model(right, VisibilityColumnProjection::ScalarResidual);
                 }
                 combine_grids(left, right, |left, right| {
                     if *scalar {
@@ -6892,6 +6973,14 @@ impl<'a> PreparedSelectedDataSource<'a> {
             } => {
                 let numerator = complex_grid_from_array(numerator.get(row_slot)?)?;
                 let denominator = complex_grid_from_array(denominator.get(row_slot)?)?;
+                if project_plotms_columns {
+                    let projection = if *scalar {
+                        VisibilityColumnProjection::ScalarRatio
+                    } else {
+                        VisibilityColumnProjection::VectorRatio
+                    };
+                    return numerator.with_model(denominator, projection);
+                }
                 combine_grids(numerator, denominator, |left, right| {
                     if *scalar {
                         if right.norm() == 0.0 {
@@ -6924,7 +7013,7 @@ fn complex_grid_from_array(array: &ArrayValue) -> Result<ComplexGrid, String> {
                     .iter()
                     .map(|value| Complex64::new(value.re as f64, value.im as f64))
                     .collect(),
-                scalar_residual_model: None,
+                model: None,
             })
         }
         ArrayValue::Complex64(values) => {
@@ -6936,7 +7025,7 @@ fn complex_grid_from_array(array: &ArrayValue) -> Result<ComplexGrid, String> {
                 corr_count: values.nrows(),
                 chan_count: values.ncols(),
                 values: values.iter().copied().collect(),
-                scalar_residual_model: None,
+                model: None,
             })
         }
         other => Err(format!(
@@ -7014,7 +7103,7 @@ where
             .zip(right.values)
             .map(|(left, right)| combine(left, right))
             .collect(),
-        scalar_residual_model: None,
+        model: None,
     })
 }
 
@@ -8677,13 +8766,13 @@ mod tests {
                     corr_count: 1,
                     chan_count: 2,
                     values: vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
-                    scalar_residual_model: None,
+                    model: None,
                 },
                 ComplexGrid {
                     corr_count: 2,
                     chan_count: 1,
                     values: vec![Complex64::new(1.0, 0.0), Complex64::new(2.0, 0.0)],
-                    scalar_residual_model: None,
+                    model: None,
                 },
                 |left, right| left + right,
             )
