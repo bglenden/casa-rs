@@ -53,6 +53,8 @@ pub(crate) enum SolveInputRows {
     BaselineTool,
     /// Retain all baselines for CASA's old self-gathering Mueller solver.
     LegacyBaseline,
+    /// Preserve all correlations and selected frequency channels for an A fit.
+    LegacyAdditivePolynomial,
 }
 
 impl SolveInputRows {
@@ -77,7 +79,10 @@ impl SolveInputRows {
     pub(super) fn is_baseline(self) -> bool {
         matches!(
             self,
-            Self::Baselines | Self::BaselineTool | Self::LegacyBaseline
+            Self::Baselines
+                | Self::BaselineTool
+                | Self::LegacyBaseline
+                | Self::LegacyAdditivePolynomial
         )
     }
 
@@ -188,7 +193,10 @@ impl SolveAccumulator {
             // SDBList::aggregateFld uses the smallest field in a combined interval.
             self.field_id = self.field_id.min(row.field_id);
         }
-        if options.input_rows == SolveInputRows::LegacyBaseline {
+        if matches!(
+            options.input_rows,
+            SolveInputRows::LegacyBaseline | SolveInputRows::LegacyAdditivePolynomial
+        ) {
             // The old averaged VisBuffer reports the ending observation.
             self.observation_id = row.observation_id;
         }
@@ -273,7 +281,9 @@ impl super::SolveGroupOptions {
         self.polynomial_bandpass
             || matches!(
                 self.input_rows,
-                SolveInputRows::LegacyBaseline | SolveInputRows::FringeTool { legacy: true }
+                SolveInputRows::LegacyBaseline
+                    | SolveInputRows::LegacyAdditivePolynomial
+                    | SolveInputRows::FringeTool { legacy: true }
             )
     }
 }

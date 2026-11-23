@@ -11,6 +11,7 @@ use casa_tables::{ColumnSchema, Table, TableOptions, TableSchema};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
+use super::additive_polynomial::TableGrid;
 use super::{GainSolveError, GainSolveReport, GainSolveRequest};
 use crate::constants::{
     COL_ANTENNA1, COL_ANTENNA2, COL_ARRAY_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_FPARAM,
@@ -108,6 +109,29 @@ enum GainTableSpectrum<'a> {
     Collapsed,
     Channelized(GainChannelGrid<'a>),
     LegacyMueller(Option<GainChannelGrid<'a>>),
+    AdditivePolynomial(&'a TableGrid),
+}
+
+pub(super) fn write_additive_polynomial_caltable(
+    ms: &MeasurementSet,
+    request: &GainSolveRequest,
+    solved: &SolvedGains,
+    mode: crate::CalibrationOutputMode,
+    grid: &TableGrid,
+) -> Result<GainSolveReport, GainSolveError> {
+    let name = ms.path().map_or_else(
+        || "<in-memory>".to_owned(),
+        |path| path.display().to_string(),
+    );
+    write_gain_table(
+        ms,
+        name,
+        request,
+        solved,
+        mode,
+        "A Mueller",
+        GainTableSpectrum::AdditivePolynomial(grid),
+    )
 }
 
 pub(super) fn write_baseline_caltable(
@@ -145,10 +169,11 @@ fn write_gain_table(
     if rows.is_empty() {
         return Ok(gain_report(request, solved));
     }
-    let (channels, legacy_mueller) = match spectrum {
-        GainTableSpectrum::Collapsed => (None, false),
-        GainTableSpectrum::Channelized(grid) => (Some(grid), false),
-        GainTableSpectrum::LegacyMueller(grid) => (grid, true),
+    let (channels, legacy_mueller, polynomial) = match spectrum {
+        GainTableSpectrum::Collapsed => (None, false, None),
+        GainTableSpectrum::Channelized(grid) => (Some(grid), false, None),
+        GainTableSpectrum::LegacyMueller(grid) => (grid, true, None),
+        GainTableSpectrum::AdditivePolynomial(grid) => (None, true, Some(grid)),
     };
     let delay = request.gain_type.is_delay();
     let legacy_gain_metadata = !delay
@@ -200,10 +225,10 @@ fn write_gain_table(
     )?;
 
     for row in rows {
-        let receptors = if channels.is_some() {
-            request.gain_type.polarizations()
-        } else {
-            row.gains.len()
+        let receptors = match (polynomial, &channels) {
+            (Some(grid), _) => grid.windows[&row.spw_id].correlations,
+            (None, Some(_)) => request.gain_type.polarizations(),
+            (None, None) => row.gains.len(),
         };
         let shape = IxDyn(&[receptors, row.gains.len() / receptors]).f();
         let parameters = if delay {
@@ -331,6 +356,9 @@ fn write_gain_table(
             request.combine.spectral_windows,
             legacy_mueller,
         )?;
+        if let Some(grid) = polynomial {
+            write_additive_domains(writer.output_path(), grid)?;
+        }
     }
     writer.save_main()?;
 
@@ -362,6 +390,37 @@ fn write_gain_context(
     } else {
         writer.copy_subtables(&[(SubtableId::History, "HISTORY")])?;
     }
+    Ok(())
+}
+
+fn write_additive_domains(root: &Path, grid: &TableGrid) -> Result<(), GainSolveError> {
+    let destination = root.join("SPECTRAL_WINDOW");
+    let failed = |source| GainSolveError::CopySubtable {
+        subtable: "SPECTRAL_WINDOW".into(),
+        path: root.display().to_string(),
+        source: Box::new(source),
+    };
+    let mut table = Table::open(TableOptions::new(&destination)).map_err(failed)?;
+    let coefficient_count = i32::try_from(grid.terms)
+        .map_err(|_| GainSolveError::Baseline("too many additive coefficients".into()))?;
+    for (&spw, window) in &grid.windows {
+        for (column, value) in [
+            (
+                "NUM_CHAN",
+                Value::Scalar(ScalarValue::Int32(coefficient_count)),
+            ),
+            (
+                "CHAN_FREQ",
+                Value::Array(f64_array(&window.frequency_domain)),
+            ),
+        ] {
+            table
+                .cell_accessor_mut(spw as usize, column)
+                .and_then(|mut cell| cell.set(value))
+                .map_err(failed)?;
+        }
+    }
+    table.save(TableOptions::new(destination)).map_err(failed)?;
     Ok(())
 }
 

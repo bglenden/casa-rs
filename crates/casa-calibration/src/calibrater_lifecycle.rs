@@ -1013,6 +1013,7 @@ impl CalibraterLifecycle {
             | CalibrationSolveRequest::FringeTool { gain, .. }
             | CalibrationSolveRequest::Accor(gain)
             | CalibrationSolveRequest::AdditiveMueller(gain)
+            | CalibrationSolveRequest::AdditiveMuellerPolynomial { gain, .. }
             | CalibrationSolveRequest::Baseline { gain, .. } => {
                 gain.selection = selection;
                 gain.model_source = model_source;
