@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-23",
+  "revision": "ae00dac1c9b99af99387995f09c75cbd9aba5158",
+  "baseline_revision": "a1df237be691e49c867979ab76096b50a432d5f1",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "scope": "Stored CORRECTED_DATA absent on a complex MeasurementSet with DATA and MODEL_DATA. Compare corrected and corrected vector residuals on both axes and a corrected ordinate against time.",
+  "result": "passed",
+  "baseline_result": "CASA exported 12 points for the first selected corrected-column request. casa-rs failed because CORRECTED_DATA did not exist.",
+  "text_exports": 5,
+  "points": 60,
+  "figures": 1,
+  "rendered_coordinates": 12,
+  "figure_size_px": [500, 360],
+  "pointwise_relative_tolerance": 1.2e-5,
+  "pointwise_absolute_tolerance": 1e-7,
+  "source_columns_preserved": ["DATA", "MODEL_DATA", "FLAG", "FLAG_ROW"]
+}

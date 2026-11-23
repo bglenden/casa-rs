@@ -88,6 +88,7 @@
         "paired",
         "ms-columns",
         "ms-residual-columns",
+        "ms-corrected-fallback",
         "callibrary"
       ],
       "behaviors": [
@@ -129,6 +130,7 @@
         "paired",
         "ms-columns",
         "ms-residual-columns",
+        "ms-corrected-fallback",
         "callibrary"
       ],
       "behaviors": [
@@ -1061,12 +1063,13 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector residuals with the shared sample mask.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector residuals with the shared sample mask. Use DATA for corrected axes and corrected vector residuals when the stored corrected column is absent on a complex MeasurementSet.",
       "evidence": [
         "paired",
         "selectors",
         "ms-columns",
         "ms-residual-columns",
+        "ms-corrected-fallback",
         "callibrary",
         "legacy-calibration"
       ],
@@ -1286,6 +1289,19 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-residual-columns-20261123.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2128"
+      ]
+    },
+    "ms-corrected-fallback": {
+      "kind": "Same-input corrected-column fallback for MeasurementSets",
+      "state": "passed",
+      "scope": "Selected complex MeasurementSet without CORRECTED_DATA. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs use DATA for corrected plots and DATA minus MODEL_DATA for corrected vector residuals.",
+      "result": "Five paired text exports matched 60 points and their exact source metadata. One 500 by 360 pixel PNG matched 12 rendered coordinates and the effective default column labels. Neither task added the corrected column or changed the source data and flags.",
+      "casa_version": "6.7.6.14",
+      "revision": "ae00dac1c9b99af99387995f09c75cbd9aba5158",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-corrected-fallback-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2129"
       ]
     },
     "legacy-calibration": {
