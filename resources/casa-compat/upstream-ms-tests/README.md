@@ -19,9 +19,8 @@ The remaining groups use the MeasurementSet or GUI tool surfaces. The
 `ms_statwt` suite exercises the supported `ms.statwt` method. General
 `ms` and `msmetadata` coverage follows those tools' public implementations.
 
-The stock `split::test_updateFlagcmd1` prepares a lazy ASDM-backed
-MeasurementSet. Native storage cannot read its `AsdmStMan` visibility
-column. Run that assertion on the same materialized visibility data by
-adding `--eager-asdm-fixtures --only test_updateFlagcmd1`. The option
-changes fixture creation for both implementations. The default run keeps
-the upstream lazy fixture.
+The stock `split::test_updateFlagcmd1` and
+`mstransform::test_split_update_flagcmd` use lazy ASDM-backed MeasurementSets.
+The default replay preserves their `AsdmStMan` visibility columns and reads
+the original BDF payloads. Add `--eager-asdm-fixtures` to run a control with
+materialized input on both implementations.

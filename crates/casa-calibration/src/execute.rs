@@ -2689,12 +2689,10 @@ fn apply_row_all_channels(
         let ordered_gains = !forward_model
             && table_plan.spec.callibrary.is_some()
             && matches!(subtype, "B Jones" | "G Jones" | "T Jones");
-        let raw_jones = ordered_gains.then(|| {
-            [
-                (Arc::as_ptr(&ant1.grid), !ant1.interpolated),
-                (Arc::as_ptr(&ant2.grid), !ant2.interpolated),
-            ]
-        });
+        let raw_jones = ordered_gains.then_some([
+            (Arc::as_ptr(&ant1.grid), !ant1.interpolated),
+            (Arc::as_ptr(&ant2.grid), !ant2.interpolated),
+        ]);
         let (ant1, ant2) = (ant1.grid, ant2.grid);
         let bandpass_weights = if is_bandpass && !is_tsys && calibrate_weights {
             let mut scratch = bandpass::PowerCache::default();
@@ -2718,6 +2716,7 @@ fn apply_row_all_channels(
                 geometry_cache.as_deref_mut(),
                 loaded_table,
                 ant1_transient,
+                ordered_gains,
             )?;
             let ant2 = bandpass::prepare(
                 ant2,
@@ -2726,6 +2725,7 @@ fn apply_row_all_channels(
                 geometry_cache.as_deref_mut(),
                 loaded_table,
                 ant2_transient,
+                ordered_gains,
             )?;
             (ant1, ant2)
         } else {

@@ -23,16 +23,23 @@ struct Sample {
 
 impl Sample {
     fn new(value: Complex32, flag: bool, round_trip: bool) -> Self {
-        let (value, flagged) = correcting_gain(value, flag);
-        let value = if round_trip && !flagged {
+        let value = if round_trip && !flag {
             let phase = value.im.atan2(value.re);
             let amplitude = value.re.hypot(value.im);
             complex_from_casa_polar(amplitude, phase)
         } else {
             value
         };
-        let power = value.re * value.re + value.im * value.im;
-        let inverse = if power.is_normal() {
+        // CASA measures power before inversion flags a singular Jones term.
+        let power = if flag {
+            1.
+        } else {
+            value.re * value.re + value.im * value.im
+        };
+        let (value, flagged) = correcting_gain(value, flag);
+        let inverse = if flagged {
+            value
+        } else if power.is_normal() {
             Complex32::new(value.re / power, -value.im / power)
         } else {
             // Preserve the range of the scaled complex division for a very
