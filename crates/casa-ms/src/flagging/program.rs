@@ -7,13 +7,14 @@ use casa_types::ScalarValue;
 
 use crate::ms::MeasurementSet;
 use crate::schema::SubtableId;
+use crate::selection::first_unflagged_time_row;
 use crate::selection::syntax::ChannelSelection;
 
 use super::{
     ChangeSet, CorrelationSelection, FlagDataAction, FlagDataMode, FlagDataModelFactory,
-    FlagDataReport, FlagDataRequest, FlaggingError, SelectedFlagRowPolicy, antint,
-    apply_clip_flags, apply_quack_flags, apply_rflag_flags, apply_tfcrop_flags, display_ms_path,
-    elevation, extend, flagging_channels, is_calibration_table, load_i32_cells,
+    FlagDataReport, FlagDataRequest, FlagTimeSelection, FlaggingError, SelectedFlagRowPolicy,
+    antint, apply_clip_flags, apply_quack_flags, apply_rflag_flags, apply_tfcrop_flags,
+    display_ms_path, elevation, extend, flagging_channels, is_calibration_table, load_i32_cells,
     persist_changed_flags, report_after, save_next_casa_flag_backup, save_next_flag_backup,
     selected_flag_row_policy, selected_rows, set_selected_flags, shadow, summary,
 };
@@ -97,7 +98,8 @@ pub(super) fn run_ms_single(
     let mut backup_version = early_backup
         .then(|| save_next_casa_flag_backup(ms, "flagdata"))
         .transpose()?;
-    let selection = selected_rows(ms, request)?;
+    let time_selection = FlagTimeSelection::Global;
+    let selection = selected_rows(ms, request, time_selection)?;
     let selected = selection.rows;
     if selected.is_empty() {
         tracing::warn!(path = %ms_path, mode = ?request.mode, "flagdata selected no rows");
@@ -132,7 +134,15 @@ pub(super) fn run_ms_single(
         persist_changed_flags(ms, &changes, &ms_path)?;
     }
     let thresholds = changes.thresholds;
-    let report = report_after(ms, request, &selected, changes, backup_version, thresholds)?;
+    let report = report_after(
+        ms,
+        request,
+        &selected,
+        changes,
+        backup_version,
+        thresholds,
+        time_selection,
+    )?;
     tracing::info!(
         path = %ms_path,
         mode = ?report.mode,
@@ -166,6 +176,30 @@ pub fn flagdata_ms_program(
         });
     }
     let ms_path = display_ms_path(&ms);
+    let time_selection = if local_selection {
+        let has_timerange = requests.iter().any(|request| {
+            request.casa_row_selection
+                && request.selection.selectdata
+                && request
+                    .selection
+                    .timerange
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty() && !text.starts_with('\0'))
+        });
+        let initial_default_row = if has_timerange {
+            first_unflagged_time_row(&ms).map_err(|source| FlaggingError::MutateFlags {
+                path: ms_path.clone(),
+                reason: format!("select rows: {source}"),
+            })?
+        } else {
+            0
+        };
+        FlagTimeSelection::Agent {
+            initial_default_row,
+        }
+    } else {
+        FlagTimeSelection::GlobalAndAgent
+    };
     // Scan the supplied FLAG view before any list agent stages changes.
     // Keep row indices for later application, never copies of FLAG arrays.
     let antint_plans: Vec<_> = requests
@@ -176,7 +210,7 @@ pub fn flagdata_ms_program(
                 && local_selection
                 && request.casa_row_selection
                 && request.mode == FlagDataMode::Antint)
-                .then(|| plan_antint(&ms, request, &ms_path))
+                .then(|| plan_antint(&ms, request, &ms_path, time_selection))
         })
         .collect();
     let mut reports = Vec::with_capacity(requests.len());
@@ -190,6 +224,7 @@ pub fn flagdata_ms_program(
             !write_flags,
             model_factory,
             antint_plan,
+            time_selection,
         ) {
             Ok(Some((report, changed_rows, changed_flag_rows))) => {
                 touched.extend(changed_rows);
@@ -221,8 +256,9 @@ fn plan_antint(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
     path: &str,
+    time_selection: FlagTimeSelection,
 ) -> Result<Option<AntintPlan>, FlaggingError> {
-    let Some(selection) = select_agent(ms, request, true)? else {
+    let Some(selection) = select_agent(ms, request, true, time_selection)? else {
         return Ok(None);
     };
     if selection
@@ -243,8 +279,20 @@ fn select_agent(
     ms: &MeasurementSet,
     request: &FlagDataRequest,
     local_selection: bool,
+    time_selection: FlagTimeSelection,
 ) -> Result<Option<AgentSelection>, FlaggingError> {
-    let selection = match selected_rows(ms, request) {
+    let time_selection = if request.clip_time_bin.is_some()
+        && matches!(
+            request.mode,
+            FlagDataMode::Clip | FlagDataMode::Tfcrop | FlagDataMode::Rflag
+        ) {
+        // Averaged automatic agents need to test the output timestamps of
+        // their shared iterator (#978). Preserve their input row selection.
+        FlagTimeSelection::Global
+    } else {
+        time_selection
+    };
+    let selection = match selected_rows(ms, request, time_selection) {
         Ok(selection) => selection,
         Err(_) if local_selection => return Ok(None),
         Err(error) => return Err(error),
@@ -272,6 +320,7 @@ fn stage_ms_program_request(
     calculate: bool,
     model_factory: Option<FlagDataModelFactory>,
     antint_plan: Option<Result<Option<AntintPlan>, FlaggingError>>,
+    time_selection: FlagTimeSelection,
 ) -> Result<Option<(FlagDataReport, Vec<usize>, usize)>, FlaggingError> {
     let (selection, affected) = if let Some(plan) = antint_plan {
         let Some(plan) = plan? else {
@@ -279,7 +328,7 @@ fn stage_ms_program_request(
         };
         (plan.selection, Some(plan.affected))
     } else {
-        let Some(selection) = select_agent(ms, request, local_selection)? else {
+        let Some(selection) = select_agent(ms, request, local_selection, time_selection)? else {
             return Ok(None);
         };
         (selection, None)
@@ -325,7 +374,15 @@ fn stage_ms_program_request(
     let changed_rows = std::mem::take(&mut changes.changed_row_indices);
     let changed_flag_rows = changes.changed_flag_row_rows;
     let thresholds = changes.thresholds;
-    let report = report_after(ms, request, &selection.rows, changes, None, thresholds)?;
+    let report = report_after(
+        ms,
+        request,
+        &selection.rows,
+        changes,
+        None,
+        thresholds,
+        time_selection,
+    )?;
     Ok(Some((report, changed_rows, changed_flag_rows)))
 }
 

@@ -38,7 +38,9 @@ mod feed_expr;
 mod intent;
 pub(crate) mod parser;
 mod row_grammar;
-pub(crate) use row_grammar::flagdata_channel_ranges;
+pub(crate) use row_grammar::{
+    first_unflagged_time_row, flagdata_c_string, flagdata_channel_ranges,
+};
 pub mod spw_expr;
 pub mod syntax;
 pub mod time_expr;
@@ -61,7 +63,9 @@ pub(crate) enum RowGrammar {
     Standard,
     Casa,
     Transform,
-    FlagData,
+    FlagData {
+        agent_time_default_row: Option<usize>,
+    },
 }
 
 /// Builder for MS row selection criteria.
@@ -695,8 +699,15 @@ pub(crate) fn resolve_casa_row_indices(
 pub(crate) fn resolve_flagdata_selection_with_system_budget(
     ms: &MeasurementSet,
     request: &MsSelection,
+    agent_time_default_row: Option<usize>,
 ) -> MsResult<ResolvedMsSelection> {
-    resolve_selection_with_grammar(ms, request, RowGrammar::FlagData)
+    resolve_selection_with_grammar(
+        ms,
+        request,
+        RowGrammar::FlagData {
+            agent_time_default_row,
+        },
+    )
 }
 
 fn resolve_row_indices_with_grammar(
