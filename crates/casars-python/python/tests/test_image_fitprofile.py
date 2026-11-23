@@ -207,7 +207,9 @@ def test_profile_solution_images_use_the_collapsed_spectral_grid(casa, tmp_path)
                 finally:
                     coords.done()
                 assert product.shape().tolist() == [3, 2, 1]
-                np.testing.assert_allclose(product.getchunk(), 7., atol=2e-6)
+                values = product.getchunk()
+                assert values.dtype == np.float64
+                np.testing.assert_allclose(values, 7., atol=2e-6)
                 assert product.getchunk(getmask=True).all()
             finally:
                 product.done()
