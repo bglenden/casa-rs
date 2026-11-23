@@ -106,8 +106,23 @@ impl MeasurementSet {
     /// keywords written by older versions of this crate are also accepted.
     pub fn open(path: impl AsRef<Path>) -> MsResult<Self> {
         let path = path.as_ref().to_path_buf();
-        Self::open_tables(path, |table_path| {
+        Self::open_tables(path, None, |table_path| {
             Table::open(TableOptions::new(table_path))
+        })
+    }
+
+    /// Open MAIN with an explicit set of resolved subtable paths. This is
+    /// used by read-only views whose subtables are themselves concatenations.
+    /// The supplied paths describe all the subtables held by the view.
+    ///
+    /// # Errors
+    /// MAIN or a supplied subtable cannot be opened.
+    pub fn open_with_subtable_paths(
+        path: impl AsRef<Path>,
+        subtables: &HashMap<SubtableId, PathBuf>,
+    ) -> MsResult<Self> {
+        Self::open_tables(path.as_ref().to_path_buf(), Some(subtables), |path| {
+            Table::open(TableOptions::new(path))
         })
     }
 
@@ -128,13 +143,14 @@ impl MeasurementSet {
     pub fn open_retained_read(path: impl AsRef<Path>) -> MsResult<Self> {
         let path = path.as_ref().to_path_buf();
         let lock_options = LockOptions::new(LockMode::AutoLocking);
-        Self::open_tables(path, |table_path| {
+        Self::open_tables(path, None, |table_path| {
             Table::open_with_lock(TableOptions::new(table_path), lock_options.clone())
         })
     }
 
     fn open_tables(
         path: PathBuf,
+        linked: Option<&HashMap<SubtableId, PathBuf>>,
         mut open_table: impl FnMut(&Path) -> Result<Table, TableError>,
     ) -> MsResult<Self> {
         tracing::info!(path = %path.display(), "opening MeasurementSet");
@@ -151,7 +167,11 @@ impl MeasurementSet {
             .collect();
 
         for id in all_ids {
-            if let Some(subtable_path) = subtable_path_from_main(&main, &path, id) {
+            let subtable_path = match linked {
+                Some(links) => links.get(&id).cloned(),
+                None => subtable_path_from_main(&main, &path, id),
+            };
+            if let Some(subtable_path) = subtable_path {
                 let table = open_table(&subtable_path)?;
                 subtables.insert(id, table);
                 subtable_paths.insert(id, subtable_path);
@@ -541,6 +561,18 @@ impl MeasurementSet {
     /// All subtable IDs present in this MS.
     pub fn subtable_ids(&self) -> Vec<SubtableId> {
         self.subtables.keys().copied().collect()
+    }
+
+    /// The bytes retained by lazy cell payloads, or no estimate if a table
+    /// has materialized all of its rows.
+    #[doc(hidden)]
+    pub fn retained_cell_cache_bytes(&self) -> Option<usize> {
+        self.subtables
+            .values()
+            .chain(std::iter::once(&self.main))
+            .try_fold(0usize, |bytes, table| {
+                bytes.checked_add(table.retained_cell_cache_bytes()?)
+            })
     }
 
     /// The filesystem path, if any.

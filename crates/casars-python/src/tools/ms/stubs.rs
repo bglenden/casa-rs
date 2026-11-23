@@ -313,12 +313,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (cachesize = None), text_signature = "($self, cachesize=50.0)")]
-    fn metadata(&self, cachesize: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("metadata")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn msselectedindices(&self) -> PyResult<Py<PyAny>> {
         stub("msselectedindices")
@@ -489,12 +483,6 @@ impl PyMsTool {
         hanning: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("regridspw")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn reset(&self) -> PyResult<Py<PyAny>> {
-        stub("reset")
     }
 
     /// Not yet implemented in casa-rs.

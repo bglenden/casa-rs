@@ -1959,6 +1959,13 @@ impl std::fmt::Debug for Table {
 // ── Constructors and table kind ──────────────────────────────────────
 
 impl Table {
+    /// The logical heap retained by values in this table's lazy cell caches.
+    /// Fully materialized row storage cannot be admitted to this cache budget.
+    #[doc(hidden)]
+    pub fn retained_cell_cache_bytes(&self) -> Option<usize> {
+        self.inner.retained_cell_cache_bytes()
+    }
+
     /// Return the checked logical heap bytes retained by a freshly opened,
     /// lazy table metadata capability.
     ///
