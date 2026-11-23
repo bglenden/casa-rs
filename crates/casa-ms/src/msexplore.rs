@@ -1765,6 +1765,7 @@ impl MsPlotSpec {
                     | MsAxis::Phase
                     | MsAxis::Real
                     | MsAxis::Imaginary
+                    | MsAxis::Channel
                     | MsAxis::U
                     | MsAxis::V
                     | MsAxis::W
@@ -8163,8 +8164,12 @@ mod tests {
         assert!(spec.validate().unwrap_err().contains("x axis field"));
 
         let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+        spec.x_axis = MsAxis::Amplitude;
         spec.y_axes = vec![MsAxis::Channel];
-        assert!(spec.validate().unwrap_err().contains("y axis channel"));
+        spec.validate()
+            .expect("channel ordinate uses the existing channel bins");
+        spec.y_axes = vec![MsAxis::Scan];
+        assert!(spec.validate().unwrap_err().contains("y axis scan"));
 
         let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
         spec.averaging.avgchannel = Some(8);
