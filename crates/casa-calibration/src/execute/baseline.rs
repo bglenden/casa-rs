@@ -4,7 +4,7 @@
 use super::*;
 
 pub(crate) fn is_subtype(subtype: &str) -> bool {
-    matches!(subtype, "M Mueller" | "Mf Mueller")
+    matches!(subtype, "M Mueller" | "Mf Mueller" | "A Mueller")
 }
 
 /// A stable triangular index, independent of MS antenna count and row order.
@@ -52,6 +52,21 @@ pub(super) fn prepare(
     }
 }
 
+pub(super) fn correlation_count(output: &ApplyBuffer<'_>) -> Result<usize, ApplyExecutionError> {
+    let correlations = output.correlation_types.len();
+    if !matches!(correlations, 1 | 2 | 4) {
+        return Err(ApplyExecutionError::UnsupportedCorrelationLayout {
+            data_desc_id: output.data_desc_id,
+            correlation_types: output
+                .correlation_types
+                .iter()
+                .map(|code| stokes_name(*code).to_string())
+                .collect(),
+        });
+    }
+    Ok(correlations)
+}
+
 pub(super) fn apply(
     grid: Option<&CalibrationGrid>,
     path: &Path,
@@ -64,17 +79,7 @@ pub(super) fn apply(
         _ => unreachable!("baseline grid was prepared as CPARAM"),
     });
     let channels = output.corrected.shape()[1];
-    let correlations = output.correlation_types.len();
-    if !matches!(correlations, 1 | 2 | 4) {
-        return Err(ApplyExecutionError::UnsupportedCorrelationLayout {
-            data_desc_id: output.data_desc_id,
-            correlation_types: output
-                .correlation_types
-                .iter()
-                .map(|code| stokes_name(*code).to_string())
-                .collect(),
-        });
-    }
+    let correlations = correlation_count(output)?;
     for corr in 0..correlations {
         if correlations == 4 && matches!(corr, 1 | 2) {
             // Diag2 Mueller has no cross-hand response.

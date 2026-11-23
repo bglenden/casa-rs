@@ -99,7 +99,7 @@ pub(super) fn execute_strict_tool(
     tool: &mut ToolApplyExecution<'_>,
 ) -> Result<(), ApplyExecutionError> {
     let mut chain = ApplyChain::load(ms, &plan, false)?;
-    chain.arrange_for_tool(&plan, tool.correction.parang_terms);
+    chain.arrange_for_tool(&plan, tool.correction.parang_terms, tool.additive);
     let ordered = rows_in_buffer_order(ms, std::mem::take(&mut plan.selected_rows))?
         .into_iter()
         .map(|row| (available(&row, &plan), row))

@@ -175,6 +175,28 @@ impl Registration {
 }
 
 impl TimePlan {
+    /// Whether every response in this window retains its registered parameters.
+    pub(crate) fn same_window_solution(&self, first: TimeQuery, second: TimeQuery) -> bool {
+        let scope = self.scope.coordinates(first.observation, first.scan);
+        if first.window != second.window
+            || scope != self.scope.coordinates(second.observation, second.scan)
+        {
+            return false;
+        }
+        self.series.iter().all(|(&(obs, scan, window, _), rows)| {
+            if (obs, scan) != scope || window != first.window || rows.is_empty() {
+                return true;
+            }
+            let start = Registration::new(rows, first.time);
+            let end = Registration::new(rows, second.time);
+            if self.mode == TimeInterpolation::Nearest || (start.exact && end.exact) {
+                start.nearest(rows) == end.nearest(rows)
+            } else {
+                start.time == end.time
+            }
+        })
+    }
+
     fn candidates(&self, query: &TimeQuery) -> Option<SelectedSeries<'_>> {
         let (observation, scan) = self.scope.coordinates(query.observation, query.scan);
         self.series

@@ -109,6 +109,7 @@ impl CalibraterLifecycle {
             libraries: &equation.apply.library_tables,
             opacity: &opacity,
             previous: equation.apply.counts,
+            additive: &equation.apply.additive,
         };
         let result = equation.attachment.with_write(|ms, selected, lock| {
             let applied = match operation {

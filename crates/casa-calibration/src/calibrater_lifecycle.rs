@@ -109,6 +109,7 @@ struct ApplyTerms {
     parang_terms: usize,
     parang_calwt: bool,
     tableless_opacity: Vec<traditional_apply::TablelessOpacity>,
+    additive: crate::execute::additive::ToolState,
 }
 
 #[derive(Clone, Copy, Default)]

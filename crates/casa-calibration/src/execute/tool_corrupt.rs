@@ -38,7 +38,8 @@ pub(crate) fn execute_tool_corrupt(
         tracking.previous,
     );
     let mut chain = ApplyChain::load(ms, &plan, false)?;
-    chain.arrange_for_tool(&plan, correction.parang_terms);
+    chain.arrange_for_tool(&plan, correction.parang_terms, tracking.additive);
+    chain.legacy_corruption = operation.legacy;
     chain.steps.reverse();
     let (all_calibrated, missing_library) =
         select_corruption_rows(ms, &mut plan, tracking.libraries, operation)?;
