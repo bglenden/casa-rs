@@ -159,45 +159,98 @@ pub fn solve_symmetric_ldlt_casacore_with_precision<const N: usize>(
     known: [f64; N],
     precision: f64,
 ) -> Option<[f64; N]> {
-    if !precision.is_finite() || precision < 0.0 {
-        return None;
-    }
-    for row in 0..N {
-        let (prior_rows, current_and_after) = normal.split_at_mut(row);
-        let current_row = &mut current_and_after[0];
-        let original_diagonal = current_row[row];
-        if original_diagonal == 0.0 {
+    let factor = CasacoreLdlt::factor(normal.as_flattened_mut(), N, precision)?;
+    let mut solution = known;
+    factor.solve(&mut solution)?;
+    Some(solution)
+}
+
+/// In-place LDLT factorization in casacore `LSQFit` arithmetic order.
+///
+/// The factor can solve several right-hand sides, for instance to compute
+/// the correction and the diagonal of its parameter covariance.
+pub struct CasacoreLdlt<'a> {
+    normal: &'a [f64],
+    size: usize,
+}
+
+impl<'a> CasacoreLdlt<'a> {
+    /// Factor the upper triangle of a row-major square matrix. Reject a
+    /// pivot with `pivot² / original_diagonal <= precision` as collinear.
+    pub fn factor(normal: &'a mut [f64], size: usize, precision: f64) -> Option<Self> {
+        if normal.len() != size.checked_mul(size)? || !precision.is_finite() || precision < 0.0 {
             return None;
         }
-        let mut diagonal = original_diagonal;
-        for (prior, prior_row) in prior_rows.iter().enumerate() {
-            diagonal -= prior_row[row] * prior_row[row] / prior_row[prior];
-        }
-        if !diagonal.is_finite() || diagonal * diagonal / original_diagonal <= precision {
-            return None;
-        }
-        current_row[row] = diagonal;
-        for column in row + 1..N {
-            for (prior, prior_row) in prior_rows.iter().enumerate() {
-                current_row[column] -= prior_row[row] * prior_row[column] / prior_row[prior];
+        // Split each current row from the preceding factors so no copied
+        // factor matrix is needed.
+        for row in 0..size {
+            let (prior_rows, current_and_after) = normal.split_at_mut(row * size);
+            let current_row = &mut current_and_after[..size];
+            let original_diagonal = current_row[row];
+            if original_diagonal == 0.0 {
+                return None;
+            }
+            let mut diagonal = original_diagonal;
+            for (prior, prior_row) in prior_rows.chunks_exact(size).enumerate() {
+                diagonal -= prior_row[row] * prior_row[row] / prior_row[prior];
+            }
+            if !diagonal.is_finite() || diagonal * diagonal / original_diagonal <= precision {
+                return None;
+            }
+            current_row[row] = diagonal;
+            for column in row + 1..size {
+                for (prior, prior_row) in prior_rows.chunks_exact(size).enumerate() {
+                    current_row[column] -= prior_row[row] * prior_row[column] / prior_row[prior];
+                }
             }
         }
+        Some(Self { normal, size })
     }
 
-    let mut solution = [0.0; N];
-    for row in 0..N {
-        solution[row] = known[row];
-        for prior in 0..row {
-            solution[row] -= normal[prior][row] * solution[prior] / normal[prior][prior];
+    /// Overwrite the right-hand side with the solution. Its length must
+    /// equal the factor's dimension.
+    pub fn solve(&self, solution: &mut [f64]) -> Option<()> {
+        let size = self.size;
+        if solution.len() != size {
+            return None;
         }
-    }
-    for row in (0..N).rev() {
-        for later in row + 1..N {
-            solution[row] -= normal[row][later] * solution[later];
+        for row in 0..size {
+            for prior in 0..row {
+                let offset = prior * size;
+                solution[row] -=
+                    self.normal[offset + row] * solution[prior] / self.normal[offset + prior];
+            }
         }
-        solution[row] /= normal[row][row];
+        for row in (0..size).rev() {
+            let offset = row * size;
+            for later in row + 1..size {
+                solution[row] -= self.normal[offset + later] * solution[later];
+            }
+            solution[row] /= self.normal[offset + row];
+        }
+        Some(())
     }
-    Some(solution)
+}
+
+/// Return the Moore-Penrose inverse of a rank-deficient normal matrix.
+///
+/// Both the input and output use row-major storage. Singular values at
+/// working precision are dropped so a dependent parameter receives
+/// the minimum-norm correction.
+#[must_use]
+pub fn pseudoinvert_normal_matrix(normal: &[f64], size: usize) -> Option<Vec<f64>> {
+    if size == 0 || normal.len() != size.checked_mul(size)? || !normal.iter().all(|v| v.is_finite())
+    {
+        return None;
+    }
+    let decomposition = DMatrix::from_row_slice(size, size, normal).svd(true, true);
+    let threshold = size as f64 * f64::EPSILON * decomposition.singular_values.amax();
+    let inverse = decomposition.pseudo_inverse(threshold).ok()?;
+    let mut entries = Vec::with_capacity(normal.len());
+    for row in inverse.row_iter() {
+        entries.extend(row.iter().copied());
+    }
+    entries.iter().all(|v| v.is_finite()).then_some(entries)
 }
 
 /// Solve a symmetric positive-definite system by Cholesky factorization.
@@ -243,7 +296,7 @@ pub fn invert_symmetric_positive_definite(normal: &[f64], size: usize) -> Option
 #[cfg(test)]
 mod tests {
     use super::{
-        invert_symmetric_positive_definite, solve_symmetric_ldlt_casacore,
+        CasacoreLdlt, invert_symmetric_positive_definite, solve_symmetric_ldlt_casacore,
         solve_weighted_least_squares,
     };
 
@@ -279,6 +332,16 @@ mod tests {
     #[test]
     fn casacore_ldlt_rejects_singular_system() {
         assert!(solve_symmetric_ldlt_casacore([[0.0]], [1.0]).is_none());
+    }
+
+    #[test]
+    fn casacore_ldlt_reuses_a_factor_with_a_negative_pivot() {
+        let mut curvature = [1., 2., 0., 1.];
+        let factor = CasacoreLdlt::factor(&mut curvature, 2, 0.).unwrap();
+        for (mut rhs, expected) in [([3., 3.], [1., 1.]), ([1., 2.], [1., 0.])] {
+            factor.solve(&mut rhs).unwrap();
+            assert_eq!(rhs, expected);
+        }
     }
 
     #[test]

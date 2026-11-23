@@ -48,6 +48,7 @@ pub(super) fn prepare(
             cache,
             table,
             solution.interpolated,
+            false,
         )
         .map(Some),
         _ => Err(ApplyExecutionError::UnsupportedCalibrationTable {
