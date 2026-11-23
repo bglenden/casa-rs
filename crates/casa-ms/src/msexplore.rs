@@ -5113,11 +5113,14 @@ fn build_generic_visibility_scatter_with_averaging(
         let row_time_value = selected_times[row_slot];
         let time_group = time_bins.map(|bins| bins[&row]);
         if let Some(group) = time_group {
-            let unflagged = selected_correlations.iter().any(|(corr, _)| {
-                channel_bins
-                    .iter()
-                    .any(|bin| bin.channels().any(|channel| !flags[(*corr, channel)]))
-            });
+            // Time averaging sees selected input channels, including any
+            // incomplete bin that channel averaging will subsequently drop.
+            let ranges = calibration.and_then(|input| input.channels.get(&spw_id));
+            let unflagged = plotms_ordinates::has_unflagged_input(
+                &flags,
+                &selected_correlations,
+                ranges.map(Vec::as_slice),
+            );
             time_bounds
                 .entry(group)
                 .or_insert_with(|| plotms_ordinates::VisibilityTimeBounds::new(row_time_value))

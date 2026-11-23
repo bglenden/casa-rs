@@ -803,8 +803,10 @@ def compare_combined_averaged_columns(root, native):
         ("spectra", {}, 0, 25 / 7, 550 / 15),
         ("spectra-mixed", {}, 0, 3, 480 / 14),
         ("row-mixed", {}, 0, 4, 490 / 11),
+        ("zero-primary-one-channel", {}, 0, 3.8, 550 / 15),
         ("zero-primary-first-bin", dict(spw="0:0~3"), 1, 25 / 7, 550 / 15),
         ("zero-secondary", {}, 0, 25 / 7, 0),
+        ("discarded-tail", dict(spw="0:0~2"), 0, 2.6, 28),
     )
     for name, overrides, channel, observed, corrected in cases:
         vis = work / f"{name}.ms"
@@ -818,6 +820,8 @@ def compare_combined_averaged_columns(root, native):
             flags = np.zeros(shape, dtype=bool)
             if name.endswith("mixed"):
                 flags[0, 1, ~even] = True
+            if name == "discarded-tail":
+                flags[0, :2, ~even] = True
             table.putcol("FLAG", flags)
             if name != "row-mixed":
                 descriptor = table.getcoldesc("DATA")
@@ -829,6 +833,8 @@ def compare_combined_averaged_columns(root, native):
                                        np.resize(later, shape[1])[:, None]).astype(np.float32)
                     if name == "zero-primary-first-bin" and column == "SIGMA_SPECTRUM":
                         pattern[:2, :] = 0
+                    if name == "zero-primary-one-channel" and column == "SIGMA_SPECTRUM":
+                        pattern[0, :] = 0
                     if name == "zero-secondary" and column == "WEIGHT_SPECTRUM":
                         pattern.fill(0)
                     table.putcol(column, np.broadcast_to(pattern, shape).copy())
@@ -862,6 +868,31 @@ def compare_combined_averaged_columns(root, native):
     assert not actual.exists()
     figure = base | dict(vis=str(work / "spectra.ms"))
     compare_ordinate_figure(work, "spectra", native, figure, "Real", ["Real:corrected", "Real:model"])
+    compare_mixed_float_time_normalization(work, source, native, base)
+
+
+def compare_mixed_float_time_normalization(work, source, native, base):
+    vis = work / "unused-float.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        for name in ("DATA", "CORRECTED_DATA", "MODEL_DATA", "WEIGHT", "SIGMA"):
+            table.putcol(name, np.ones_like(table.getcol(name)))
+        descriptor = table.getcoldesc("DATA")
+        table.addcols({"FLOAT_DATA": dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                         dataManagerGroup="FLOAT_DATA")})
+        table.putcol("FLOAT_DATA", np.ones(table.getcol("DATA").shape, dtype=np.float32))
+    for width, count in (("", 12), ("2", 6)):
+        controls = base | dict(vis=str(vis), xaxis="channel", xdatacolumn="", avgchannel=width, expformat="txt")
+        name = f"unused-float-time-{width or 'only'}"
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        assert native(**controls, plotfile=str(actual)) is None
+        casa_rows, native_rows = rows(expected), rows(actual)
+        assert len(casa_rows) == len(native_rows) == count
+        np.testing.assert_allclose([float(point[1]) for point in casa_rows], 2 / 3, rtol=1.2e-5)
+        assert {float(point[1]) for point in native_rows} == {1.0}
+        assert [point[:1] + point[2:] for point in native_rows] == [point[:1] + point[2:] for point in casa_rows]
+        print(f"{name}: native preserves {count} constant unit visibilities", flush=True)
 
 
 def compare_float_columns(root, vis, source, native):
