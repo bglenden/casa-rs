@@ -198,6 +198,12 @@ def _run_task(
     else:
         resolved = TaskParameters.defaults(task, workspace=resolved_workspace)
     if values:
+        if task == "setjy" and isinstance(fluxdict := values.get("fluxdict"), Mapping):
+            names = fluxdict.get("spwName")
+            if getattr(getattr(names, "dtype", None), "kind", None) == "S":
+                # The fluxscale record can contain fixed-width byte strings.
+                # The setjy model uses numeric spwID values and ignores these labels.
+                values["fluxdict"] = {key: value for key, value in fluxdict.items() if key != "spwName"}
         if task in ("split", "mstransform"):
             if "correlation" in values:
                 try:
