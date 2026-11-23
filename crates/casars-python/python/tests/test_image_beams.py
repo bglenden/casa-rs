@@ -88,6 +88,43 @@ def test_beam_queries_on_an_image_without_a_beam():
     assert image.done()
 
 
+def test_selected_beams_keep_saved_quantities_after_native_reopen(casa, tmp_path):
+    region = casa.regionmanager().box([1, 1, 2, 1], [3, 3, 5, 2])
+    expected = {
+        "major": {"value": 0.125, "unit": "arcmin"},
+        "minor": {"value": 3.5, "unit": "arcsec"},
+        "positionangle": {"value": 11., "unit": "deg"},
+    }
+    for writer in (casa, tools):
+        source = writer.image()
+        try:
+            assert source.fromshape(shape=[6, 5, 8, 4])
+            assert source.setrestoringbeam("7arcsec", "3arcsec", "6deg", channel=0, polarization=0)
+            assert source.setrestoringbeam(
+                "0.125arcmin", "3.5arcsec", "11deg", channel=2, polarization=1,
+            )
+            paths = {
+                name: str(tmp_path / f"{writer.__name__}-{name}.im")
+                for name in ("subimage", "collapsed", "line", "continuum")
+            }
+            source.subimage(paths["subimage"], region=region).done()
+            source.collapse("mean", [2], paths["collapsed"], region=region).done()
+            source.continuumsub(
+                outline=paths["line"], outcont=paths["continuum"], region=region,
+            ).done()
+        finally:
+            source.done()
+        for name, path in paths.items():
+            for reader in (casa, tools):
+                image = reader.image()
+                try:
+                    assert image.open(path)
+                    beam = image.restoringbeam() if name == "collapsed" else image.restoringbeam(0, 0)
+                    assert beam == expected, (writer.__name__, name, reader.__name__)
+                finally:
+                    image.done()
+
+
 @pytest.mark.parametrize("writer", ["casa", "casars"])
 def test_write_native_beams_and_copy_to_another_image(tmp_path, casa, writer):
     source_module, reader_module = (casa, tools) if writer == "casa" else (tools, casa)

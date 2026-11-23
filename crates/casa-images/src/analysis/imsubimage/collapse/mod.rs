@@ -123,6 +123,7 @@ impl<'a> ImageCollapse<'a> {
         if let Some(tabular) = &tabular {
             apply_decimation(&mut section, Some(tabular), 0, 1, DecimationMethod::Copy)?;
         }
+        section.preserve_beams(source.coordinates(), beams)?;
         let units = if options.function == CollapseFunction::Flux {
             flux_units(source, &section, options.axes)?
         } else {
@@ -148,8 +149,7 @@ impl<'a> ImageCollapse<'a> {
                 .flatten()
                 .any(|axis| reduced[axis] && section.shape[axis] > 1)
         {
-            let first = *section.image_info.beam_set.beam(0, 0);
-            section.image_info.beam_set.set_all(first);
+            section.keep_first_beam();
         }
         collapse_coordinates(&mut section, options.axes)?;
         Ok(Self {

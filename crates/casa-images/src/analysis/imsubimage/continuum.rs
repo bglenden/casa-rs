@@ -58,7 +58,7 @@ impl ImageContinuum {
         let axis = image
             .find_axis(CoordinateType::Spectral)
             .ok_or_else(|| invalid("This image has no spectral axis"))?;
-        let section = SubimagePlan::new_with_beams(
+        let section = SubimagePlan::new_preserving_beams(
             image,
             Some(record),
             SubimageOptions {
@@ -66,7 +66,7 @@ impl ImageContinuum {
                 dropdeg: false,
                 keepaxes: &[],
             },
-            Some(beam_record),
+            beam_record,
         )?;
         let length = section.shape[axis];
         if order >= length - 1 {

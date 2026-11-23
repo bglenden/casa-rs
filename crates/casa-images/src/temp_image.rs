@@ -776,6 +776,10 @@ impl<T: ImagePixel> MutableImageInterface<T> for TempImage<T> {
         TempImage::set_image_info(self, info)
     }
 
+    fn set_image_info_record(&mut self, record: RecordValue) -> Result<(), ImageError> {
+        TempImage::set_image_info_record(self, record)
+    }
+
     fn set_misc_info(&mut self, rec: RecordValue) -> Result<(), ImageError> {
         TempImage::set_misc_info(self, rec)
     }
