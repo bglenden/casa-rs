@@ -26,8 +26,9 @@ pub struct MsSelectionIndices {
     pub antenna1: Vec<i32>,
     /// Second-side antenna identifiers, signed for negated pairs.
     pub antenna2: Vec<i32>,
-    /// Baselines in the order the antenna grammar produced them.
-    pub baselines: Vec<[i32; 2]>,
+    /// Baselines in the order the antenna grammar produced them. A supplied
+    /// antenna clause has two columns even when it names no pairs.
+    pub baselines: Option<Vec<[i32; 2]>>,
     /// Spectral window identifiers in the order the SPW grammar emits.
     pub spw: Vec<i32>,
     /// Inclusive `[window, first channel, last channel, stride]` ranges.
@@ -154,7 +155,7 @@ impl MeasurementSet {
             } = self.antenna_selection_indices(text)?;
             table.antenna1 = first;
             table.antenna2 = second;
-            table.baselines = baselines;
+            table.baselines = Some(baselines);
         }
         if let Some(text) = nonempty(request.scan.as_deref()) {
             table.scan = scan_indices(text, rows_per_block)?;

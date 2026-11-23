@@ -119,3 +119,47 @@ def test_ms_selection_indices_report_independent_polarization_and_spw_lists(tmp_
         assert ms.nrow(True) == 0
         same_record(ms.msselectedindices(), parsed)
         assert ms.done()
+
+
+def test_ms_selection_string_and_record_argument_forms(native_dataset, monkeypatch):
+    casa = pinned_casa()
+    dataset = str(native_dataset)
+    for api in (casa, tools):
+        ms = api.ms()
+        expected = ms.msseltoindex(dataset, field="0", taql="FIELD_ID==0")
+        same_record(
+            ms.msseltoindex(dataset.encode(), field=b"0", taql=b"FIELD_ID==0"),
+            expected,
+        )
+        same_record(ms.msseltoindex(np.str_(dataset), field=np.int64(0), taql="FIELD_ID==0"), expected)
+        for invalid in (None, native_dataset, 1):
+            with pytest.raises(TypeError, match="argument _vis must be a string"):
+                ms.msseltoindex(invalid)
+        with pytest.raises(TypeError, match="argument _taql must be a string"):
+            ms.msseltoindex(dataset, taql=None)
+        with monkeypatch.context() as patch:
+            patch.chdir(native_dataset)
+            same_record(ms.msseltoindex(field="0", taql="FIELD_ID==0"), expected)
+
+        assert ms.open(dataset)
+        assert ms.msselect({b"field": b"0"}, onlyparse=True)
+        np.testing.assert_array_equal(ms.msselectedindices()["field"], np.array([0], dtype=np.int64))
+        with pytest.raises(TypeError, match="_items is not a dictionary"):
+            ms.msselect(None)
+        assert not ms.msselect({"field": 0})
+        np.testing.assert_array_equal(ms.msselectedindices()["field"], np.array([0], dtype=np.int64))
+        for selection in (
+            {"antenna": "A1&A3", "baseline": "A2&A4"},
+            {"baseline": "A2&A4", "antenna": "A1&A3"},
+        ):
+            assert ms.msselect(selection, onlyparse=True)
+            np.testing.assert_array_equal(
+                ms.msselectedindices()["baselines"], np.array([[1, 3]], dtype=np.int64),
+                strict=True,
+            )
+        assert ms.msselect({"baseline": "A1&"}, onlyparse=True)
+        np.testing.assert_array_equal(
+            ms.msselectedindices()["baselines"], np.empty((0, 2), dtype=np.int64),
+            strict=True,
+        )
+        assert ms.done()
