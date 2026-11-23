@@ -269,7 +269,7 @@ pub(crate) fn evaluate_solve_priors(
                 | PriorSolveBoundary::GainSpline
         );
     if !type_ordered && gain_boundary {
-        return evaluate_apply_rows(ms, &plan, false).map(Into::into);
+        return evaluate_apply_rows(ms, &plan, share_input_flags).map(Into::into);
     }
     // The measurement equation corrects DATA with earlier terms and corrupts
     // MODEL_DATA with the remaining terms. The channel-dependent opacity
@@ -322,7 +322,7 @@ pub(crate) fn evaluate_solve_priors(
                 ms,
                 plan,
                 true,
-                share_input_flags,
+                share_input_flags && !gain_boundary,
                 parang_terms,
             )?),
             polarized,
