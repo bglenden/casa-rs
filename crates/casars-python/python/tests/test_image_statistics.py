@@ -89,6 +89,35 @@ def test_statistics_reads_persisted_masks_and_region(casa, tmp_path):
         assert image.done()
 
 
+def test_statistics_compacts_region_planes_without_dropping_filtered_pixels(casa):
+    shape = (3, 4, 8, 4)
+    pixels = np.broadcast_to(
+        np.arange(8)[None, None, :, None] + 10 * np.arange(4)[None, None, None, :],
+        shape,
+    ).astype(np.float32)
+    rg = casa.regionmanager()
+    for api in (casa, tools):
+        image = api.image()
+        try:
+            assert image.fromarray(pixels=pixels)
+            coordinates = image.coordsys().torecord()
+            region = rg.frombcs(csys=coordinates, shape=shape, chans="1~2;5~6", stokes="IV")
+            expected = np.array([[1, 31], [2, 32], [5, 35], [6, 36]])
+            for limit, mean in [([], expected), ([0, 15], expected * [1, 0])]:
+                result = image.statistics(axes=[0, 1], region=region, includepix=limit)
+                np.testing.assert_array_equal(result["mean"], mean)
+                np.testing.assert_array_equal(result["npts"], 12 * (mean > 0))
+                assert result["npts"].dtype == np.float64
+            if api is tools:
+                # All channels remain when only the second display axis has exclusions.
+                stokes = rg.frombcs(csys=coordinates, shape=shape, stokes="IV")
+                result = image.statistics(axes=[0, 1], region=stokes)
+                np.testing.assert_array_equal(result["mean"], np.arange(8)[:, None] + [0, 30])
+                np.testing.assert_array_equal(result["npts"], np.full((8, 2), 12))
+        finally:
+            image.done()
+
+
 @pytest.mark.parametrize("pixel_type", ["f", "d"])
 @pytest.mark.parametrize("options", [
     {},
