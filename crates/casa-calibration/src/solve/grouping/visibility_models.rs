@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use casa_ms::{MeasurementSet, ResolvedMsSelectionRow, VirtualModelEntry, scratch_columns};
-use casa_types::{Complex32, ScalarValue};
+use casa_types::{ArrayValue, Complex32, ScalarValue};
 use ndarray::ArrayD;
 
 use crate::ft::PreparedVoltagePattern;
@@ -168,7 +168,7 @@ impl VisibilityModels {
         flags: &ArrayD<bool>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
         match self.rows.get(&row) {
-            Some(row) => self.models.predict(ms, row, correlations, flags),
+            Some(row) => self.models.predict(ms, row, correlations, flags, None),
             None => Ok(None),
         }
     }
@@ -180,11 +180,13 @@ impl VisibilityModels {
         correlations: &[i32],
         flags: &ArrayD<bool>,
         previous: Option<ArrayD<Complex32>>,
+        uvw_cell: Option<&ArrayValue>,
     ) -> Result<Option<ArrayD<Complex32>>, GainSolveError> {
         match self.rows.get(&row) {
-            Some(row) => self
-                .models
-                .predict_model(ms, row, correlations, (flags, previous), true),
+            Some(row) => {
+                self.models
+                    .predict_model(ms, row, correlations, (flags, previous), true, uvw_cell)
+            }
             None => Ok(None),
         }
     }

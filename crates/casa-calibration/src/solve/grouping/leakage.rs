@@ -704,6 +704,8 @@ impl LeakageInputs<'_> {
             rows.iter()
                 .any(|(row, _, _)| self.models.reads_column(row.field_id)),
             rows.iter()
+                .any(|(row, _, _)| self.models.uses_virtual_model(row.field_id)),
+            rows.iter()
                 .map(|row| self.spectral_weights.contains(row))
                 .collect(),
             false,
@@ -972,9 +974,13 @@ impl LeakageInputs<'_> {
         } else {
             input.flags.as_ref()
         };
-        let prediction = self
-            .models
-            .predict(self.ms, row, &correlations, raw_flags)?;
+        let prediction = self.models.predict(
+            self.ms,
+            row,
+            &correlations,
+            raw_flags,
+            batch.0.cell("UVW", batch.1),
+        )?;
         let point_model = || {
             let first = correlations[order[0]];
             ArrayD::from_shape_fn(input.data.raw_dim(), |index| {
