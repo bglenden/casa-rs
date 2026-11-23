@@ -6,6 +6,7 @@ use crate::storage::{
     RefTableDatContents, TABLE_CONTROL_FILE, TABLE_INFO_FILE, TableDatResult,
     read_table_dat_dispatch,
 };
+use crate::table_path::rebase_table_keywords;
 
 /// Ordered RefTable descriptors from the view to its root. No cells are read
 /// and the returned path is the one whose process lock covers the view.
@@ -55,9 +56,7 @@ pub(super) fn reference_lock_path(path: &Path) -> Result<PathBuf, TableError> {
 
 fn base_name<'a>(chain: &'a [RefTableDatContents], mut name: &'a str) -> &'a str {
     for view in chain {
-        if let Some((_, column)) = view.column_name_map.iter().find(|(view, _)| view == name) {
-            name = column;
-        }
+        name = view.parent_column(name);
     }
     name
 }
@@ -65,9 +64,7 @@ fn base_name<'a>(chain: &'a [RefTableDatContents], mut name: &'a str) -> &'a str
 fn base_row(chain: &[RefTableDatContents], mut row: usize) -> Result<usize, TableError> {
     for view in chain {
         row = view
-            .row_map
-            .get(row)
-            .and_then(|&row| usize::try_from(row).ok())
+            .parent_row(row)
             .ok_or_else(|| TableError::Storage(format!("reference row {row} is out of bounds")))?;
     }
     Ok(row)
@@ -197,12 +194,14 @@ impl Table {
         let (root, chain) = reference_chain(destination.to_path_buf(), false)?;
         self.check_reference_base(&root)?;
         let mut table = Table::open(TableOptions::new(&root))?;
-        *table.keywords_mut() = self.keywords().clone();
+        let view = self.source_path.as_deref().expect("saved reference");
+        let mut keywords = self.keywords().clone();
+        rebase_table_keywords(&mut keywords, view, &root);
+        *table.keywords_mut() = keywords;
         for column in &chain[0].column_names {
-            table.set_column_keywords(
-                base_name(&chain, column),
-                self.column_keywords(column).cloned().unwrap_or_default(),
-            );
+            let mut keywords = self.column_keywords(column).cloned().unwrap_or_default();
+            rebase_table_keywords(&mut keywords, view, &root);
+            table.set_column_keywords(base_name(&chain, column), keywords);
         }
         self.note_persisted_write(&root);
         table.save_metadata_only(TableOptions::new(&root))?;
