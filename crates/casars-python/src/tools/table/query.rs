@@ -434,7 +434,10 @@ fn value_scalar_kind(v: &ExprValue) -> ScalarKind {
         ExprValue::Int(_) => ScalarKind::Int,
         ExprValue::Float(_) | ExprValue::Quantity(_) | ExprValue::DateTime(_) => ScalarKind::Float,
         ExprValue::Complex(_) => ScalarKind::Complex,
-        ExprValue::String(_) | ExprValue::Regex { .. } | ExprValue::Array(_) => ScalarKind::String,
+        ExprValue::String(_)
+        | ExprValue::Regex { .. }
+        | ExprValue::Array(_)
+        | ExprValue::MaskedArray(..) => ScalarKind::String,
     }
 }
 
@@ -511,10 +514,16 @@ fn calc_output_to_casavalue(out: CalcOutput) -> CasaValue {
     if out.values.is_empty() {
         return super::values::empty_column(out.empty_scalar_type);
     }
-    if out.values.iter().any(|v| matches!(v, ExprValue::Array(_))) {
+    if out
+        .values
+        .iter()
+        .any(|v| matches!(v, ExprValue::Array(_) | ExprValue::MaskedArray(..)))
+    {
         return CasaValue::record(out.values.iter().enumerate().map(|(i, v)| {
             let val = match v {
-                ExprValue::Array(arr) => array_expr_to_casavalue(arr),
+                ExprValue::Array(arr) | ExprValue::MaskedArray(arr, _) => {
+                    array_expr_to_casavalue(arr)
+                }
                 scalar => scalars_to_casavalue(std::slice::from_ref(scalar), vec![1]),
             };
             (i.to_string(), val)
