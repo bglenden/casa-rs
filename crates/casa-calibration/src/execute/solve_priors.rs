@@ -304,7 +304,9 @@ pub(crate) fn evaluate_solve_priors(
     }
     plan.calibration_tables = model_tables;
     plan.parang = forward_parang;
-    if polarized || forward_parang {
+    // Additive offsets must operate on the actual model, just as matrix terms
+    // must. Applying them to unit visibilities cannot represent a gain factor.
+    if polarized || forward_parang || super::additive::in_plan(&plan) {
         return Ok(PreappliedRows {
             data: rows,
             data_prior,

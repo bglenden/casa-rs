@@ -72,6 +72,7 @@ pub(crate) use fields::load as load_interpolated_calibration_table;
 mod gain_validity;
 mod initialization;
 use gain_validity::correcting_gain;
+pub(crate) mod additive;
 mod additive_polynomial;
 mod bandpass;
 pub(crate) mod baseline;
@@ -643,7 +644,7 @@ fn for_each_apply_row(
     })?;
     let mut chain = ApplyChain::load(ms, plan, forward_model)?;
     if let Some(run) = &tool {
-        chain.arrange_for_tool(plan, run.correction.parang_terms);
+        chain.arrange_for_tool(plan, run.correction.parang_terms, run.additive);
     }
 
     let any_calwt = applies_preview_weights(plan, &chain);
@@ -1119,6 +1120,7 @@ pub(crate) struct ToolActivityInput<'a> {
     pub(crate) libraries: &'a [LibraryApplyRegistration],
     pub(crate) opacity: &'a [(&'static str, usize)],
     pub(crate) previous: ApplyTermCounts,
+    pub(crate) additive: &'a additive::ToolState,
 }
 
 fn unresolved_opacity(ms: &MeasurementSet) -> ApplyExecutionError {
@@ -1137,6 +1139,7 @@ pub(crate) fn has_usable_apply_rows(plan: &ApplyPlan) -> bool {
 struct ToolApplyExecution<'a> {
     correction: ToolCorrection,
     activity: &'a mut ToolApplyActivity,
+    additive: &'a additive::ToolState,
 }
 
 /// Correct the selection resolved under the same lock used for row writes.
@@ -1153,7 +1156,11 @@ pub(crate) fn execute_tool_apply(
         has_library_registration: correction.has_library_registration,
         legacy_corruption: false,
     };
-    let (plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
+    let (mut plan, _) = plan_with_selection(ms, request, None, Some(registration))?;
+    if additive::in_plan(&plan) {
+        plan.selected_rows =
+            availability::rows_in_buffer_order(ms, std::mem::take(&mut plan.selected_rows))?;
+    }
     let mut activity = ToolApplyActivity::from_plan(
         &plan,
         tracking.names,
@@ -1165,6 +1172,7 @@ pub(crate) fn execute_tool_apply(
     let mut run = ToolApplyExecution {
         correction,
         activity: &mut activity,
+        additive: tracking.additive,
     };
     let all_calibrated = plan
         .selected_rows
@@ -1217,8 +1225,8 @@ fn execute_apply_available(
         chain
     } else {
         let mut chain = ApplyChain::load(ms, &plan, false)?;
-        if let Some(tool) = correction {
-            chain.arrange_for_tool(&plan, tool.parang_terms);
+        if let Some(tool) = &tool {
+            chain.arrange_for_tool(&plan, tool.correction.parang_terms, tool.additive);
         }
         loaded = chain;
         &loaded
@@ -1864,6 +1872,7 @@ struct RowGeometryCache {
     transient_lookups: HashMap<CalibrationLookupKey, Option<fields::GridAtTime>>,
     transient_frequency_grids: HashMap<MaterializedGridKey, Arc<CalibrationGrid>>,
     transient_time: Option<u64>,
+    additive_matrices: HashMap<(usize, i32), additive::CachedMatrix>,
     last_elevation_context: Option<RowGeometryContextKey>,
     last_elevations: Vec<Option<f64>>,
     last_projected_context: Option<RowGeometryContextKey>,
@@ -2488,7 +2497,7 @@ fn apply_row_all_channels(
             || is_sky
             || channelized_polarization
             || is_spline
-            || matches!(subtype, "Mf Mueller" | "TfOpac");
+            || matches!(subtype, "Mf Mueller" | "TfOpac" | additive::SUBTYPE);
         let evaluation_frequency_hz = if is_spline {
             let frequencies = data_channels.frequencies_hz;
             frequencies.iter().sum::<f64>() / frequencies.len() as f64
@@ -2585,13 +2594,35 @@ fn apply_row_all_channels(
                 geometry_cache.as_deref_mut(),
                 loaded_table,
             )?;
-            baseline::apply(
-                grid.as_deref(),
-                &loaded_table.path,
-                antenna1 > antenna2,
-                forward_model,
-                &mut output,
-            )?;
+            if subtype == additive::SUBTYPE {
+                let add = chain.additive.as_ref().map_or(forward_model, |state| {
+                    state.direction(
+                        (table_index, row.data_spw_id),
+                        additive::Context::new(loaded_table, row, field_id, cal_spw_id),
+                        loaded_table,
+                        forward_model,
+                        geometry_cache
+                            .as_mut()
+                            .map(|cache| &mut cache.additive_matrices),
+                    )
+                });
+                additive::apply(
+                    grid.as_deref(),
+                    &loaded_table.path,
+                    antenna1 > antenna2,
+                    add,
+                    forward_model && chain.legacy_corruption,
+                    &mut output,
+                )?;
+            } else {
+                baseline::apply(
+                    grid.as_deref(),
+                    &loaded_table.path,
+                    antenna1 > antenna2,
+                    forward_model,
+                    &mut output,
+                )?;
+            }
             continue;
         }
         let ant1 = lookup(row.antenna1, geometry_cache.as_deref_mut())?;

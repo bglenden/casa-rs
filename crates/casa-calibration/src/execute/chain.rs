@@ -13,6 +13,8 @@ pub(super) struct ApplyChain {
     pub(super) tables: Vec<LoadedCalibrationTable>,
     pub(super) steps: Vec<ApplyStep>,
     pub(super) parang: Option<ParallacticAngleState>,
+    pub(super) additive: Option<additive::ToolState>,
+    pub(super) legacy_corruption: bool,
 }
 
 impl ApplyChain {
@@ -75,12 +77,22 @@ impl ApplyChain {
             tables,
             steps,
             parang,
+            additive: None,
+            legacy_corruption: false,
         })
     }
 
     /// The stateful tool sorts every configured term and allows repeated
     /// registration of the table-free parallactic-angle term.
-    pub(super) fn arrange_for_tool(&mut self, plan: &ApplyPlan, parang_terms: usize) {
+    pub(super) fn arrange_for_tool(
+        &mut self,
+        plan: &ApplyPlan,
+        parang_terms: usize,
+        additive: &additive::ToolState,
+    ) {
+        if additive::in_plan(plan) {
+            self.additive = Some(additive.clone());
+        }
         self.repeat_parang(parang_terms);
         self.steps.sort_by_key(|step| match step {
             ApplyStep::Table(index) => {
@@ -129,6 +141,7 @@ pub(crate) fn viscal_order(subtype: &str) -> u8 {
         "EGainCurve" | "EPowerCurve" => 12,
         "T Jones" | "Tf Jones" | "TOpac" | "TfOpac" => 13,
         "F Jones" => 14,
+        additive::SUBTYPE => 15,
         _ => 6,
     }
 }

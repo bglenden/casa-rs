@@ -158,6 +158,14 @@ fn setsolve_long(value: Option<&Bound<'_, PyAny>>, position: u8, default: i64) -
     })
 }
 
+fn additive_fit_order(family: &str, value: Option<&Bound<'_, PyAny>>) -> PyResult<i32> {
+    if matches!(family, "A" | "A MUELLER") {
+        i32::try_from(setsolve_long(value, 19, 0)?).map_err(|_| setup_error())
+    } else {
+        Ok(0)
+    }
+}
+
 fn fringe_window(value: Option<&Bound<'_, PyAny>>) -> PyResult<[f64; 2]> {
     let window = value
         .map(|value| value.extract::<crate::convert::DoubleList>())
@@ -212,6 +220,7 @@ fn standard_request(
     frequency: Option<&str>,
     fill_gaps: usize,
     fringe: Option<(FringeControls, bool)>,
+    additive_order: i32,
 ) -> PyResult<CalibrationSolveRequest> {
     Ok(match family {
         "G" | "G JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::G)),
@@ -234,6 +243,17 @@ fn standard_request(
             }
         }
         "ACCOR" | "ACCOR JONES" => CalibrationSolveRequest::Accor(standard.gain(GainType::G)),
+        "A" | "A MUELLER" => {
+            let gain = standard.gain(GainType::G);
+            if additive_order == 0 {
+                CalibrationSolveRequest::AdditiveMueller(gain)
+            } else {
+                CalibrationSolveRequest::AdditiveMuellerPolynomial {
+                    gain,
+                    fit_order: additive_order,
+                }
+            }
+        }
         "FRINGE" | "FRINGE JONES" => {
             let (controls, active_phase) = fringe.expect("parsed fringe controls");
             CalibrationSolveRequest::FringeTool {
@@ -333,12 +353,7 @@ impl super::PyCalibrater {
             "M" | "M MUELLER" | "MF" | "MF MUELLER" | "A" | "A MUELLER"
         );
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
-        let additive_order = matches!(family.as_str(), "A" | "A MUELLER")
-            .then(|| setsolve_long(fitorder, 19, 0))
-            .transpose()?
-            .map(i32::try_from)
-            .transpose()
-            .map_err(|_| setup_error())?;
+        let additive_order = additive_fit_order(&family, fitorder)?;
         let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
             let active = paramactive
                 .map(|value| value.extract::<Vec<bool>>())
@@ -480,14 +495,14 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
-            let request = match additive_order {
-                Some(0) => CalibrationSolveRequest::AdditiveMueller(standard.gain(GainType::G)),
-                Some(fit_order) => CalibrationSolveRequest::AdditiveMuellerPolynomial {
-                    gain: standard.gain(GainType::G),
-                    fit_order,
-                },
-                None => standard_request(&family, standard, frequency, fill_gaps, fringe)?,
-            };
+            let request = standard_request(
+                &family,
+                standard,
+                frequency,
+                fill_gaps,
+                fringe,
+                additive_order,
+            )?;
             state
                 .set_tool_solve(
                     request,

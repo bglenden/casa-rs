@@ -260,14 +260,7 @@ impl Coordinate for StokesCoordinate {
                 got: pixel.len(),
             });
         }
-        let index = (pixel[0] + 0.5).trunc();
-        if !index.is_finite() || index < 0.0 || index >= self.stokes.len() as f64 {
-            return Err(CoordinateError::AxisOutOfRange {
-                index: index as usize,
-                naxes: self.stokes.len(),
-            });
-        }
-        Ok(vec![self.stokes[index as usize].code() as f64])
+        Ok(vec![self.world_at_pixel(pixel[0])?])
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
@@ -324,6 +317,17 @@ impl Coordinate for StokesCoordinate {
 }
 
 impl StokesCoordinate {
+    pub(crate) fn world_at_pixel(&self, pixel: f64) -> Result<f64, CoordinateError> {
+        let index = (pixel + 0.5).trunc();
+        if !index.is_finite() || index < 0.0 || index >= self.stokes.len() as f64 {
+            return Err(CoordinateError::AxisOutOfRange {
+                index: index as usize,
+                naxes: self.stokes.len(),
+            });
+        }
+        Ok(f64::from(self.stokes[index as usize].code()))
+    }
+
     pub(crate) fn to_record(&self) -> RecordValue {
         let mut rec = RecordValue::default();
         rec.upsert(

@@ -245,7 +245,27 @@ impl SpectralCoordinate {
     ///
     /// Returns an error if the unit or pixel-to-world conversion is invalid.
     pub fn world_frequency_hz(&self, pixel: f64) -> Result<f64, CoordinateError> {
-        self.value_in_hz(self.to_world(&[pixel])?[0])
+        self.value_in_hz(self.world_at_pixel(pixel)?)
+    }
+
+    pub(crate) fn world_at_pixel(&self, pixel: f64) -> Result<f64, CoordinateError> {
+        let world = match &self.mapping {
+            SpectralMapping::Linear {
+                crval,
+                cdelt,
+                crpix,
+            } => crval + cdelt * self.linear_transform * (pixel - crpix),
+            SpectralMapping::Tabular {
+                pixel_values,
+                world_values,
+                crval,
+                ..
+            } => {
+                let world = interpolate(pixel_values, world_values, pixel)?;
+                scaled_world(world, *crval, self.linear_transform)
+            }
+        };
+        self.convert_native_to_world(world)
     }
 
     /// Return the spectral increment in the world frame, expressed in Hz.
@@ -714,23 +734,7 @@ impl Coordinate for SpectralCoordinate {
                 got: pixel.len(),
             });
         }
-        let world = match &self.mapping {
-            SpectralMapping::Linear {
-                crval,
-                cdelt,
-                crpix,
-            } => crval + cdelt * self.linear_transform * (pixel[0] - crpix),
-            SpectralMapping::Tabular {
-                pixel_values,
-                world_values,
-                crval,
-                ..
-            } => {
-                let world = interpolate(pixel_values, world_values, pixel[0])?;
-                scaled_world(world, *crval, self.linear_transform)
-            }
-        };
-        Ok(vec![self.convert_native_to_world(world)?])
+        Ok(vec![self.world_at_pixel(pixel[0])?])
     }
 
     fn to_pixel(&self, world: &[f64]) -> Result<Vec<f64>, CoordinateError> {
