@@ -15,10 +15,11 @@ use time::OffsetDateTime;
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     let outfile = required(task, "outfile")?;
-    let destination = task.workspace().join(&outfile);
+    let requested_path = Path::new(&outfile);
+    let destination = task.workspace().join(requested_path);
     let overwrite = task.flag("overwrite")?;
     if !overwrite && destination.exists() {
-        return Err(exists(&destination));
+        return Err(exists(requested_path));
     }
     let hosts = task.texts("hosts")?;
     match hosts.first().map(String::as_str) {
@@ -70,6 +71,7 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     metadata.insert("timestamp".into(), Value::from(timestamp()));
     publish(
         &destination,
+        requested_path,
         overwrite,
         &json!({"data": data, "metadata": metadata}),
     )?;
@@ -88,7 +90,8 @@ fn required(task: &TaskInvocation<'_>, name: &'static str) -> Result<String, Tas
 
 fn exists(path: &Path) -> TaskFailure {
     TaskFailure::execution(format!(
-        "A file or directory named {} already exists and overwrite is False",
+        "A file or directory named {} already exists and overwrite is False, so exiting. \
+         Either rename the existing file or directory, change the value of overwrite to True, or both.",
         path.display()
     ))
 }
@@ -132,9 +135,16 @@ fn signal_to_noise(value: Option<&ParameterValue>) -> Result<Option<Value>, Task
         Some(ParameterValue::Integer(number)) if *number >= 0 => Ok(Some(json!(number))),
         Some(ParameterValue::Float(number)) if *number >= 0.0 => Ok(Some(json!(number))),
         Some(ParameterValue::Bool(value)) => Ok(Some(json!(value))),
-        Some(ParameterValue::Integer(_) | ParameterValue::Float(_)) => Err(invalid(
+        Some(ParameterValue::Integer(number)) => Err(invalid(
             "snr",
-            "If a number, parameter snr must be non-negative",
+            format!("If a number, parameter snr ({number}) must be non-negative."),
+        )),
+        Some(ParameterValue::Float(number)) => Err(invalid(
+            "snr",
+            format!(
+                "If a number, parameter snr ({}) must be non-negative.",
+                python_float(*number)
+            ),
         )),
         _ => Err(TaskFailure::execution("snr must be a string or number").at("snr.type")),
     }
@@ -160,7 +170,10 @@ impl Retry {
             if delay_seconds <= 0.0 || Duration::try_from_secs_f64(delay_seconds).is_err() {
                 return Err(invalid(
                     "rdelay",
-                    format!("If nretry > 0, rdelay (={delay_seconds}) must be positive."),
+                    format!(
+                        "If nretry > 0, rdelay (={}) must be positive.",
+                        python_float(delay_seconds)
+                    ),
                 ));
             }
             if delay_seconds < 0.5 {
@@ -300,7 +313,12 @@ fn timestamp() -> String {
     )
 }
 
-fn publish(path: &Path, overwrite: bool, document: &Value) -> Result<(), TaskFailure> {
+fn publish(
+    path: &Path,
+    requested_path: &Path,
+    overwrite: bool,
+    document: &Value,
+) -> Result<(), TaskFailure> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let failed = |error: io::Error| {
         TaskFailure::execution(format!("{}: {error}", path.display())).at("outfile")
@@ -312,7 +330,7 @@ fn publish(path: &Path, overwrite: bool, document: &Value) -> Result<(), TaskFai
     if !overwrite {
         stage.persist_noclobber(path).map_err(|error| {
             if error.error.kind() == io::ErrorKind::AlreadyExists {
-                exists(path)
+                exists(requested_path)
             } else {
                 failed(error.error)
             }
