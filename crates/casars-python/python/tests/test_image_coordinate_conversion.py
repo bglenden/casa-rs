@@ -299,3 +299,54 @@ def test_tabular_world_quantities_and_measures(casa_image):
         image.done()
         reference.done()
         coords.done()
+
+
+@pytest.mark.parametrize("frequency", ["CMB", "LGROUP", "BARY"])
+def test_coordmeasures_frequency_uses_the_physical_direction(frequency):
+    casa = pytest.importorskip("casatools")
+    assert casa.version_string().replace("-", ".") == "6.7.6.14"
+    reference = casa.image()
+    image = tools.image()
+    measures = casa.measures()
+    try:
+        for source in (reference, image):
+            assert source.fromshape(shape=[20, 20, 20])
+            coords = source.coordsys()
+            try:
+                assert coords.setconversiontype(direction="B1950", spectral="CMB")
+                assert source.setcoordsys(coords.torecord())
+            finally:
+                coords.done()
+
+        native = image.coordmeasures(dframe="native", sframe="native")["measure"]
+        assert native["direction"]["refer"] == "J2000"
+        assert native["direction"]["m0"]["value"] == 0
+        assert native["direction"]["m1"]["value"] == 0
+        lsrk = native["spectral"]["frequency"]
+        assert lsrk["refer"] == "LSRK"
+        assert lsrk["m0"] == {"value": 1.415e9, "unit": "Hz"}
+
+        assert measures.doframe(measures.direction("J2000", "0rad", "0rad"))
+        physical = measures.measure(lsrk, frequency)
+        casa_report = reference.coordmeasures(dframe="cl", sframe=frequency)["measure"]
+        angles = casa_report["direction"]
+        assert angles["refer"] == "B1950"
+        assert measures.doframe(measures.direction("J2000", angles["m0"], angles["m1"]))
+        mislabeled = measures.measure(lsrk, frequency)
+        assert casa_report["spectral"]["frequency"]["m0"]["value"] == pytest.approx(
+            mislabeled["m0"]["value"], abs=1e-3, rel=0
+        )
+        assert abs(mislabeled["m0"]["value"] - physical["m0"]["value"]) > 500
+
+        for direction, frame in (("cl", "B1950"), ("native", "J2000"),
+                                 ("GALACTIC", "GALACTIC")):
+            actual = image.coordmeasures(dframe=direction, sframe=frequency)["measure"]
+            measured = actual["spectral"]["frequency"]
+            assert actual["direction"]["refer"] == frame
+            assert measured["refer"] == frequency
+            assert measured["m0"]["unit"] == physical["m0"]["unit"] == "Hz"
+            assert measured["m0"]["value"] == pytest.approx(physical["m0"]["value"], abs=1e-3, rel=0)
+    finally:
+        measures.done()
+        reference.done()
+        image.done()

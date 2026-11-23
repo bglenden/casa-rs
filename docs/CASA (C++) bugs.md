@@ -9100,6 +9100,37 @@ pixels, the same call can terminate the process.
 casa-rs averages valid pixels over the requested axes and retains all
 other axes, for every supported image pixel type (#1627).
 
+## Image coordinate frequency conversion can use the wrong physical direction
+
+Create a CASA 6.7.6.14 image with shape `[20,20,20]` and the default J2000
+direction `(0,0)` at the reference pixel. Set the direction conversion
+to B1950 and the spectral conversion to CMB. The converted direction
+coordinates then enter the frequency measures frame labeled as J2000.
+The returned frequency is wrong regardless of the direction reporting
+frame requested by the caller.
+
+For the reference pixel's LSRK frequency of 1.415 GHz, the pinned
+`image.coordmeasures` tool returns approximately 1,416,700,650.518 Hz in CMB,
+1,414,142,155.337 Hz in LGROUP and 1,415,002,053.555 Hz in BARY. CASA's
+independent measures tool reproduces these results when fed the mislabeled
+coordinates. Both casa-rs and the independent conversion with the actual
+J2000 direction agree within 0.001 Hz on 1,416,697,167.835 Hz,
+1,414,138,758.484 Hz and 1,415,001,368.979 Hz respectively. The native
+frequency context uses the physical position, independently of the
+direction chosen for the returned record.
+
+## The 45-degree image rotation fixture assumes prior floating-point rounding
+
+The CASA 6.7.6.14 upstream `ia_rotate_test.test_basic` compares the result
+of rotating `prerot.im` by 45 degrees to archived `postrot.im` at a
+maximum absolute error of 1e-21. Both backends preserve the 200-by-200
+shape, the Python result dtype and the exact 33,272-pixel validity mask.
+With the archived case the native image differs by 9.52e-9 normalized
+RMS and at most 5.96e-8 on valid pixels. This is float32 interpolation
+rounding. The companion comparison checks the stored image's dimensions,
+dtype, mask and agreement at float32 precision. The upstream test and
+its tolerance remain unchanged.
+
 ## Image statistics can report an extremum outside the sampled pixels
 
 In CASA 6.7.6.14, `ia.statistics(region=...)` on a box starting at
