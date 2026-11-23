@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_images::analysis::evaluate_image_tool_mask;
 use pyo3::prelude::*;
 
 use super::PyImageTool;
@@ -28,7 +27,7 @@ impl PyImageTool {
                 return Err(raised("Exception: You must specify an expression."));
             }
             attachment.require_lock(&mut image, casa_tables::LockType::Write)?;
-            let values = evaluate_image_tool_mask(mask, image.shape()).map_err(raised)?;
+            let values = super::saved_expression::evaluate_mask(mask, image.shape(), None)?;
             let explicit = (!name.is_empty()).then_some(name);
             if let Some(name) = explicit {
                 validate_name(name)?;

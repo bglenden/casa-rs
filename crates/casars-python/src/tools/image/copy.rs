@@ -261,10 +261,13 @@ impl CopyImage<'_> {
         let mask = if self.mask.is_empty() {
             None
         } else {
-            Some(
-                casa_images::analysis::evaluate_image_tool_mask(&self.mask, original.shape())
-                    .map_err(raised)?,
-            )
+            let target =
+                (self.overwrite && !self.outfile.is_empty()).then(|| Path::new(self.outfile));
+            Some(super::saved_expression::evaluate_mask(
+                &self.mask,
+                original.shape(),
+                target,
+            )?)
         };
         macro_rules! copy_native {
             ($storage:expr, $variant:ident) => {

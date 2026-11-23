@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use casa_images::analysis::{ImageToolExpressionInputs, ImageToolPixelExpression};
+use casa_images::analysis::{
+    BoundImageToolOperands, ImageToolExpressionInputs, ImageToolPixelExpression,
+};
 use casa_images::concat_file::is_image_concat;
 use casa_images::expr_file::{ToolExpressionManifest, is_image_expr};
 use casa_images::miriad_read::MiriadImage;
@@ -14,7 +16,7 @@ use casa_images::{
 };
 use casa_lattices::Lattice;
 use casa_tables::lexical_absolute;
-use casa_types::{Complex32, Complex64, RecordValue};
+use casa_types::{ArrayD, Complex32, Complex64, RecordValue};
 use pyo3::prelude::*;
 
 use super::attachment::AttachedImage;
@@ -52,7 +54,7 @@ pub(super) fn open_for_concatenation(
     // still be opened directly without consulting or registering in it.
     compile_at(
         path,
-        AttachedImage::open_concat_expression_operand,
+        AttachedImage::open_unregistered_expression_operand,
         true,
         active,
     )
@@ -86,28 +88,69 @@ pub(super) fn check_output_dependencies<'a>(
 }
 
 pub(super) fn compile_inline(
-    inputs: ImageToolExpressionInputs<'_>,
+    inputs: &ImageToolExpressionInputs<'_>,
     temporary_source_locks: bool,
 ) -> PyResult<(ImageToolPixelExpression, Vec<AttachedImage>, Vec<PathBuf>)> {
+    let (graph, operands) = capture_inline(inputs, AttachedImage::open)?;
+    let (pixels, _) = inputs
+        .compile_with_bound_operands(&operands, temporary_source_locks)
+        .map_err(raised)?;
+    Ok((pixels, graph.retained, graph.paths))
+}
+
+pub(super) fn has_manifest_operands(inputs: &ImageToolExpressionInputs<'_>) -> bool {
+    inputs
+        .paths()
+        .any(|path| is_image_expr(path) || is_image_concat(path))
+}
+
+pub(super) fn compile_edit(expression: &str) -> PyResult<ImageToolPixelExpression> {
+    let inputs = ImageToolExpressionInputs::resolve(expression).map_err(raised)?;
+    if !has_manifest_operands(&inputs) {
+        return inputs.compile().map_err(raised);
+    }
+    // The caller already holds the target image mutex. Open independent
+    // source handles so a transitive reference to that target can be read.
+    let (_graph, operands) =
+        capture_inline(&inputs, AttachedImage::open_unregistered_expression_operand)?;
+    inputs
+        .compile_with_bound_operands(&operands, false)
+        .map(|(pixels, _)| pixels)
+        .map_err(raised)
+}
+
+pub(super) fn evaluate_mask(
+    expression: &str,
+    shape: &[usize],
+    overwrite_target: Option<&Path>,
+) -> PyResult<ArrayD<bool>> {
+    let inputs = ImageToolExpressionInputs::resolve(expression).map_err(raised)?;
+    if !has_manifest_operands(&inputs) {
+        return inputs
+            .evaluate_mask_with_bound_operands(&BoundImageToolOperands::new(), shape)
+            .map_err(raised);
+    }
+    let (graph, operands) =
+        capture_inline(&inputs, AttachedImage::open_unregistered_expression_operand)?;
+    if let Some(target) = overwrite_target {
+        check_output_dependencies(target, &graph.paths)?;
+    }
+    inputs
+        .evaluate_mask_with_bound_operands(&operands, shape)
+        .map_err(raised)
+}
+
+fn capture_inline(
+    inputs: &ImageToolExpressionInputs<'_>,
+    open_source: fn(&Path) -> PyResult<AttachedImage>,
+) -> PyResult<(CapturedGraph, BoundImageToolOperands)> {
     let mut graph = CapturedGraph {
         include_manifest_paths: true,
         ..CapturedGraph::default()
     };
     let directory = std::env::current_dir().map_err(raised)?;
-    let root = PendingExpression {
-        path: PathBuf::new(),
-        manifest: None,
-        inputs,
-        next: 0,
-    };
-    let (pixels, _, _) = graph.compile(
-        root,
-        &directory,
-        AttachedImage::open,
-        &mut HashSet::new(),
-        temporary_source_locks,
-    )?;
-    Ok((pixels, graph.retained, graph.paths))
+    let operands = graph.capture(inputs, None, &directory, open_source, &mut HashSet::new())?;
+    Ok((graph, operands))
 }
 
 fn compile_at(
@@ -119,14 +162,17 @@ fn compile_at(
     let directory = std::env::current_dir().map_err(raised)?;
     let root = path.canonicalize().map_err(raised)?;
     let (captured, manifest) = SavedExpressionDirectory::open(path, root.clone())?;
-    let initial = PendingExpression::from_manifest(root, manifest, &directory)?;
+    let inputs =
+        ImageToolExpressionInputs::resolve_in_directory(manifest.expression.as_str(), &directory)
+            .map_err(raised)?;
     let mut graph = CapturedGraph {
         include_manifest_paths,
         ..CapturedGraph::default()
     };
     graph.retain_manifest(&captured)?;
-    let (pixels, single_precision, misc) =
-        graph.compile(initial, &directory, open_source, active, true)?;
+    let operands = graph.capture(&inputs, Some(root), &directory, open_source, active)?;
+    let (pixels, single_precision) = compile_manifest(&inputs, &operands)?;
+    let misc = manifest.misc_info().map_err(raised)?;
     captured.check_name(path)?;
     let image = match pixels {
         ImageToolPixelExpression::Real(expression) if single_precision => {
@@ -175,21 +221,28 @@ struct CapturedGraph {
 }
 
 impl CapturedGraph {
-    fn compile(
+    fn capture(
         &mut self,
-        root: PendingExpression<'_>,
+        inputs: &ImageToolExpressionInputs<'_>,
+        root: Option<PathBuf>,
         directory: &Path,
         open_source: fn(&Path) -> PyResult<AttachedImage>,
         active: &mut HashSet<PathBuf>,
-        temporary_source_locks: bool,
-    ) -> PyResult<(ImageToolPixelExpression, bool, Option<RecordValue>)> {
-        if !active.insert(root.path.clone()) {
-            return Err(expression_cycle(&root.path));
+    ) -> PyResult<BoundImageToolOperands> {
+        if let Some(path) = &root
+            && !active.insert(path.clone())
+        {
+            return Err(expression_cycle(path));
         }
-        let mut pending = vec![root];
-        let mut compiled = HashMap::new();
-        while let Some(frame) = pending.last_mut() {
-            if let Some((path, entry)) = frame.next_path() {
+        let mut pending = Vec::new();
+        let mut top = inputs.paths_and_entries();
+        let mut compiled = BoundImageToolOperands::new();
+        loop {
+            let next = match pending.last_mut() {
+                Some(frame) => PendingExpression::next_path(frame),
+                None => top.next(),
+            };
+            if let Some((path, entry)) = next {
                 if active.contains(path) {
                     return Err(expression_cycle(path));
                 }
@@ -221,28 +274,22 @@ impl CapturedGraph {
                     self.retain_miriad_files(path)?;
                     self.retained.push(open_source(path)?);
                 }
-            } else {
-                let frame = pending.pop().expect("checked for an expression frame");
-                let (pixels, single) = frame.compile(&compiled, temporary_source_locks)?;
-                let misc = frame
-                    .manifest
-                    .as_ref()
-                    .map(ToolExpressionManifest::misc_info)
-                    .transpose()
-                    .map_err(raised)?
-                    .flatten();
+            } else if let Some(frame) = pending.pop() {
+                let (pixels, single) = compile_manifest(&frame.inputs, &compiled)?;
+                let misc = frame.manifest.misc_info().map_err(raised)?;
                 active.remove(&frame.path);
-                if pending.is_empty() {
-                    return Ok((pixels, single, misc));
-                }
                 let pixels = match misc {
                     Some(misc) => replace_misc_info(pixels, misc),
                     None => pixels,
                 };
                 compiled.insert(frame.path, (pixels, single));
+            } else {
+                if let Some(path) = &root {
+                    active.remove(path);
+                }
+                return Ok(compiled);
             }
         }
-        unreachable!("completed graph returns its root");
     }
 
     fn retain_manifest(&mut self, directory: &SavedExpressionDirectory) -> PyResult<()> {
@@ -370,14 +417,14 @@ fn bound_image<T: ImageExprValue>(
     .compile()
 }
 
-struct PendingExpression<'a> {
+struct PendingExpression {
     path: PathBuf,
-    manifest: Option<ToolExpressionManifest>,
-    inputs: ImageToolExpressionInputs<'a>,
+    manifest: ToolExpressionManifest,
+    inputs: ImageToolExpressionInputs<'static>,
     next: usize,
 }
 
-impl PendingExpression<'_> {
+impl PendingExpression {
     fn from_manifest(
         path: PathBuf,
         manifest: ToolExpressionManifest,
@@ -388,7 +435,7 @@ impl PendingExpression<'_> {
                 .map_err(raised)?;
         Ok(Self {
             path,
-            manifest: Some(manifest),
+            manifest,
             inputs,
             next: 0,
         })
@@ -399,24 +446,17 @@ impl PendingExpression<'_> {
         self.next += 1;
         Some(paths)
     }
+}
 
-    fn compile(
-        &self,
-        compiled: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
-        temporary_source_locks: bool,
-    ) -> PyResult<(ImageToolPixelExpression, bool)> {
-        let (pixels, single) = self
-            .inputs
-            .compile_with_bound_operands(
-                compiled,
-                temporary_source_locks || self.manifest.is_some(),
-            )
-            .map_err(raised)?;
-        if self.manifest.is_some() {
-            super::imagecalc::check_geometry(&pixels, self.inputs.paths().len() != 0)?;
-        }
-        Ok((pixels, single))
-    }
+fn compile_manifest(
+    inputs: &ImageToolExpressionInputs<'_>,
+    operands: &BoundImageToolOperands,
+) -> PyResult<(ImageToolPixelExpression, bool)> {
+    let (pixels, single) = inputs
+        .compile_with_bound_operands(operands, true)
+        .map_err(raised)?;
+    super::imagecalc::check_geometry(&pixels, inputs.paths().len() != 0)?;
+    Ok((pixels, single))
 }
 
 fn replace_misc_info(

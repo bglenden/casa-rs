@@ -55,18 +55,25 @@ impl Metadata {
                 "Exception: Cannot access {name} so cannot copy its metadata to output image."
             )));
         }
-        let image = ImageHandle::open(path).map_err(raised)?;
+        if casa_images::expr_file::is_image_expr(path) {
+            let source = super::saved_expression::open(path)?;
+            return Self::from_image(&source.lock());
+        }
+        Self::from_image(&ImageHandle::open(path).map_err(raised)?)
+    }
+
+    fn from_image(image: &ImageHandle) -> PyResult<Self> {
         if !matches!(
             image.kind(),
             ImagePixelType::Float32 | ImagePixelType::Complex32
         ) {
             return Err(raised("Exception: Unsupported image pixel data type."));
         }
-        let info = match image_info_record(&image) {
+        let info = match image_info_record(image) {
             Some(record) => record.clone(),
-            None => image_info(&image).map_err(raised)?.to_record(),
+            None => image_info(image).map_err(raised)?.to_record(),
         };
-        let (misc_info, units) = with_pixels!(&image, storage => with_storage!(storage, image =>
+        let (misc_info, units) = with_pixels!(image, storage => with_storage!(storage, image =>
             (image.misc_info(), image.units().to_owned())
         ));
         Ok(Self {
@@ -191,12 +198,9 @@ impl PyImageTool {
             };
             let inputs = ImageToolExpressionInputs::resolve(pixels).map_err(raised)?;
             let has_sources = inputs.paths().next().is_some();
-            let uses_bound_sources = inputs.paths().any(|path|
-                casa_images::expr_file::is_image_expr(path)
-                    || casa_images::concat_file::is_image_concat(path)
-            );
+            let uses_bound_sources = super::saved_expression::has_manifest_operands(&inputs);
             let (expression, retained, paths) = if uses_bound_sources {
-                super::saved_expression::compile_inline(inputs, outfile.is_empty())?
+                super::saved_expression::compile_inline(&inputs, outfile.is_empty())?
             } else {
                 let retained = AttachedImage::open_expression_inputs(inputs.paths())?;
                 let expression = if outfile.is_empty() { inputs.compile_lazy() } else { inputs.compile() }

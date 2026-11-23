@@ -1084,6 +1084,109 @@ def test_inline_imagecalc_uses_bound_expression_operands(tmp_path, source_kind, 
 
 
 @pytest.mark.parametrize("source_kind", ["saved", "virtual"])
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("operation", ["calc", "calcmask"])
+def test_image_edits_use_bound_expression_operands(tmp_path, source_kind, backend, operation):
+    api = _backend(backend)
+    leaf, extra, source = (tmp_path / name for name in ("leaf.im", "extra.im", "source.im"))
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    for path in (leaf, extra):
+        assert image.fromarray(str(path), pixels) and image.done()
+    if source_kind == "saved":
+        _manifest(source, ImageExpr=f'"{leaf}" * 3')
+        values = pixels * 3
+        # The named expression reads the very table being edited.
+        assert image.open(str(leaf))
+    else:
+        image.imageconcat(str(source), [str(leaf), str(extra)], axis=0, relax=True,
+                          mode="nomove", tempclose=False).done()
+        values = np.concatenate([pixels, pixels])
+        assert image.fromshape(shape=list(values.shape))
+    try:
+        if operation == "calc":
+            assert image.calc(f'"{source}" + 1')
+            np.testing.assert_array_equal(image.getchunk(), values + 1)
+        else:
+            assert image.calcmask(f'"{source}" > 4', name="chosen")
+            np.testing.assert_array_equal(image.getchunk(getmask=True), values > 4)
+    finally:
+        assert image.done()
+
+
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+def test_imagecalc_uses_saved_image_for_explicit_metadata(tmp_path, backend):
+    api = _backend(backend)
+    leaf, metadata = (tmp_path / name for name in ("leaf.im", "metadata.im"))
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    assert image.fromarray(str(leaf), pixels)
+    assert image.setbrightnessunit("Jy/pixel")
+    assert image.done()
+    _manifest(metadata, ImageExpr=f'"{leaf}" * 3', MiscInfo={"station": "alma"})
+    output = image.imagecalc(pixels=f'"{leaf}" + 1', imagemd=str(metadata))
+    try:
+        np.testing.assert_array_equal(output.getchunk(), pixels + 1)
+        assert output.brightnessunit() == "Jy/pixel"
+        assert output.miscinfo()["station"] == "alma"
+    finally:
+        assert output.done() and image.done()
+
+
+@pytest.mark.parametrize("source_kind", ["saved", "virtual"])
+@pytest.mark.parametrize("backend", ["casa", "casars"])
+@pytest.mark.parametrize("factory", ["fromimage", "newimagefromimage"])
+def test_image_copy_uses_bound_expression_mask(tmp_path, source_kind, backend, factory):
+    api = _backend(backend)
+    other_api = _backend("casars" if backend == "casa" else "casa")
+    leaf, extra, source, output = (tmp_path / name for name in
+                                  ("leaf.im", "extra.im", "source.im", "output.im"))
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    reader = other_api.image()
+    for path in (leaf, extra):
+        assert image.fromarray(str(path), pixels) and image.done()
+    if source_kind == "saved":
+        _manifest(source, ImageExpr=f'"{leaf}" * 3')
+        values = pixels * 3
+    else:
+        image.imageconcat(str(source), [str(leaf), str(extra)], axis=0, relax=True,
+                          mode="nomove", tempclose=False).done()
+        values = np.concatenate([pixels, pixels])
+    result = getattr(image, factory)(infile=str(source), outfile=str(output), mask=f'"{source}" > 4')
+    if factory == "fromimage":
+        assert result is True
+        result = image
+    try:
+        assert result.done()
+        assert reader.open(str(output))
+        np.testing.assert_array_equal(reader.getchunk(), values)
+        np.testing.assert_array_equal(reader.getchunk(getmask=True), values > 4)
+    finally:
+        reader.done()
+        image.done()
+
+
+@pytest.mark.parametrize("factory", ["fromimage", "newimagefromimage"])
+def test_image_copy_preserves_a_transitive_mask_operand(tmp_path, factory):
+    api = _backend("casars")
+    source, output, mask = (tmp_path / name for name in ("source.im", "output.im", "mask.im"))
+    values = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    assert image.fromarray(str(source), values * 10) and image.done()
+    assert image.fromarray(str(output), values) and image.done()
+    _manifest(mask, ImageExpr=f'"{output}" * 1')
+    try:
+        with pytest.raises(RuntimeError, match="overlaps a saved image expression input"):
+            getattr(image, factory)(infile=str(source), outfile=str(output),
+                                    mask=f'"{mask}" > 4', overwrite=True)
+        assert image.open(str(output))
+        np.testing.assert_array_equal(image.getchunk(), values)
+    finally:
+        assert image.done()
+
+
+@pytest.mark.parametrize("source_kind", ["saved", "virtual"])
 def test_inline_imagecalc_keeps_transitive_source_before_overwrite(tmp_path, source_kind):
     api = _backend("casars")
     leaf, source, extra = (tmp_path / name for name in ("leaf.im", "source.im", "extra.im"))
