@@ -1056,10 +1056,11 @@
       "id": "selection",
       "title": "Select solution samples",
       "status": "Partial",
-      "scope": "Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC.",
+      "scope": "Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC. Route ordinary MeasurementSet visibility plots through native row, baseline, channel, correlation and flag selection.",
       "evidence": [
         "paired",
         "selectors",
+        "ms-ordinary-visibility",
         "legacy-calibration"
       ],
       "gap": "Remaining MeasurementSet selection paths are open under #1032 and #215."
@@ -1118,10 +1119,11 @@
       "id": "export",
       "title": "Save and publish selected plot products",
       "status": "Partial",
-      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export MeasurementSet text and figures for independent stored visibility columns, and calibrated MeasurementSet text and paginated figures, including atmospheric curves.",
+      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export ordinary MeasurementSet visibility coordinates and independent stored visibility columns as text and figures. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.",
       "evidence": [
         "paired",
         "ms-columns",
+        "ms-ordinary-visibility",
         "callibrary",
         "legacy-calibration"
       ],
@@ -1336,6 +1338,19 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-ordinate-columns-20261123.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2134"
+      ]
+    },
+    "ms-ordinary-visibility": {
+      "kind": "Same-input ordinary MeasurementSet visibility plots",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on one MeasurementSet using default observed visibility columns, a named baseline, selected channels and correlation, and mixed flags.",
+      "result": "Amplitude/phase, amplitude/channel and amplitude/time matched across three text exports with 36 coordinate pairs and exact source metadata. Three 500 by 360 pixel PNGs matched the artist data and axis labels. Artist times matched CASA text to its 1 ms precision.",
+      "casa_version": "6.7.6.14",
+      "revision": "361ec76dda9819289c5dc640615f15edac68240d",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-ordinary-visibility-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2137"
       ]
     },
     "ms-corrected-fallback": {

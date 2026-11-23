@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-23",
+  "revision": "361ec76dda9819289c5dc640615f15edac68240d",
+  "baseline_revision": "1dffbda58cc8d0740ac9a67e21ee5efbf32bfa28",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "scope": "Ordinary observed visibility plots of phase against amplitude and amplitude against channel and time, selecting a field, named baseline, channels and correlation. Each plot excludes the flagged channel.",
+  "result": "passed",
+  "baseline_result": "CASA exported 12 points on the selected baseline and produced a PNG. Native failed the antenna selection for text and refused the figure format.",
+  "text_exports": 3,
+  "points": 36,
+  "figures": 3,
+  "rendered_coordinates": 36,
+  "figure_size_px": [500, 360],
+  "time_coordinate_absolute_tolerance_seconds": 0.00051,
+  "pointwise_relative_tolerance": 1.2e-5,
+  "pointwise_absolute_tolerance": 1e-7
+}
