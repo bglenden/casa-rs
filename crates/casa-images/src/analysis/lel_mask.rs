@@ -96,6 +96,9 @@ pub struct ImageToolExpressionInputs<'a> {
     operands: Vec<ResolvedOperand>,
 }
 
+/// Pre-opened numeric operands keyed by resolved image path.
+pub type BoundImageToolOperands = HashMap<PathBuf, (ImageToolPixelExpression, bool)>;
+
 impl<'a> ImageToolExpressionInputs<'a> {
     /// Resolve the operand paths relative to the current working directory.
     /// # Errors
@@ -114,6 +117,19 @@ impl<'a> ImageToolExpressionInputs<'a> {
         expression: impl Into<Cow<'a, str>>,
         directory: &Path,
     ) -> Result<Self, ImageError> {
+        Self::resolve_with_image_paths(expression, directory, |_| None)
+    }
+
+    /// Resolve image names in a directory, allowing a caller to substitute a
+    /// staged image for an operand before the new image is published.
+    ///
+    /// # Errors
+    /// Returns an error for a missing operand or invalid expression.
+    pub fn resolve_with_image_paths(
+        expression: impl Into<Cow<'a, str>>,
+        directory: &Path,
+        substitute: impl Fn(&Path) -> Option<PathBuf>,
+    ) -> Result<Self, ImageError> {
         let expression = expression.into();
         if expression.is_empty() {
             return Err(ImageError::CasaSelection(
@@ -122,7 +138,7 @@ impl<'a> ImageToolExpressionInputs<'a> {
         }
         let operands = referenced_images(&expression)?
             .into_iter()
-            .map(|name| resolve_named_operand(directory, name))
+            .map(|name| resolve_named_operand_with(directory, name, &substitute))
             .collect::<Result<_, _>>()?;
         Ok(Self {
             expression,
@@ -166,7 +182,7 @@ impl<'a> ImageToolExpressionInputs<'a> {
         self.compile_with_source_locks(true)
     }
 
-    /// Compile a lazy numeric expression with resolved saved expression operands.
+    /// Compile a numeric expression with supplied operands and a source lock policy.
     ///
     /// Callers supply already validated expressions keyed by resolved path. Each
     /// saved operand is captured as a section reader with its original precision
@@ -174,22 +190,47 @@ impl<'a> ImageToolExpressionInputs<'a> {
     ///
     /// # Errors
     /// Returns an error for an unreadable operand or an invalid expression.
-    pub fn compile_with_saved_operands(
+    pub fn compile_with_bound_operands(
         &self,
-        saved: &HashMap<PathBuf, (ImageToolPixelExpression, bool)>,
+        bound: &BoundImageToolOperands,
+        temporary_source_locks: bool,
     ) -> Result<(ImageToolPixelExpression, bool), ImageError> {
-        let opened = self
-            .operands
+        let opened = self.open_bound_operands(bound, temporary_source_locks)?;
+        self.compile_opened(&opened)
+    }
+
+    /// Evaluate a Boolean mask using supplied saved or virtual image operands.
+    ///
+    /// # Errors
+    /// Returns an error for invalid expressions, operands, or target shapes.
+    pub fn evaluate_mask_with_bound_operands(
+        &self,
+        bound: &BoundImageToolOperands,
+        target_shape: &[usize],
+    ) -> Result<ArrayD<bool>, ImageError> {
+        let opened = self.open_bound_operands(bound, false)?;
+        evaluate_image_tool_mask_opened(&self.expression, target_shape, &opened)
+    }
+
+    fn open_bound_operands(
+        &self,
+        bound: &BoundImageToolOperands,
+        temporary_source_locks: bool,
+    ) -> Result<Vec<(String, Operand)>, ImageError> {
+        self.operands
             .iter()
             .map(|operand| {
-                let source = match saved.get(&operand.path) {
+                let source = match bound.get(&operand.path) {
                     Some((pixels, single_precision)) => saved_operand(pixels, *single_precision)?,
-                    None => open_path_with_mask_name(&operand.path, operand.mask.clone(), true)?,
+                    None => open_path_with_mask_name(
+                        &operand.path,
+                        operand.mask.clone(),
+                        temporary_source_locks,
+                    )?,
                 };
                 Ok((operand.name.clone(), source))
             })
-            .collect::<Result<Vec<_>, ImageError>>()?;
-        self.compile_opened(&opened)
+            .collect()
     }
 
     fn compile_with_source_locks(
@@ -255,9 +296,17 @@ pub fn evaluate_image_tool_mask(
     target_shape: &[usize],
 ) -> Result<ArrayD<bool>, ImageError> {
     let opened = image_operands(expression)?;
-    let (real, complex) = operand_resolvers(&opened);
+    evaluate_image_tool_mask_opened(expression, target_shape, &opened)
+}
+
+fn evaluate_image_tool_mask_opened(
+    expression: &str,
+    target_shape: &[usize],
+    opened: &[(String, Operand)],
+) -> Result<ArrayD<bool>, ImageError> {
+    let (real, complex) = operand_resolvers(opened);
     let parsed = parse_image_tool_mask(expression, &real, &complex, &|name| {
-        is_single_precision(&opened, name)
+        is_single_precision(opened, name)
     })?;
     if parsed.shape().is_empty() && !parsed.is_shape_polymorphic() {
         return Ok(ArrayD::from_elem(
@@ -386,7 +435,15 @@ fn resolve_named_operands(names: Vec<String>) -> Result<Vec<ResolvedOperand>, Im
 }
 
 fn resolve_named_operand(base: &Path, name: String) -> Result<ResolvedOperand, ImageError> {
-    let (entry, mask) = operand_path(base, &name).ok_or_else(|| ImageError::CasaSelection(format!(
+    resolve_named_operand_with(base, name, &|_| None)
+}
+
+fn resolve_named_operand_with(
+    base: &Path,
+    name: String,
+    substitute: &impl Fn(&Path) -> Option<PathBuf>,
+) -> Result<ResolvedOperand, ImageError> {
+    let (entry, mask) = operand_path(base, &name, substitute).ok_or_else(|| ImageError::CasaSelection(format!(
         "Input mask specification is incorrect: ImageExprParse: '{name}' is an unknown lattice or image or it is an unqualified region"
     )))?;
     let path = entry
@@ -694,19 +751,21 @@ fn mask_parse_error(error: crate::expr_parser::ExprParseError) -> ImageError {
     ))
 }
 
-fn operand_path(base: &Path, spec: &str) -> Option<(PathBuf, Option<String>)> {
-    let direct_path = base.join(spec);
-    if direct_path.exists() {
+fn operand_path(
+    base: &Path,
+    spec: &str,
+    substitute: &impl Fn(&Path) -> Option<PathBuf>,
+) -> Option<(PathBuf, Option<String>)> {
+    let existing = |path: PathBuf| substitute(&path).or_else(|| path.exists().then_some(path));
+    if let Some(direct_path) = existing(base.join(spec)) {
         return Some((direct_path, None));
     }
     if let Some((left, right)) = spec.rsplit_once(':')
         && !left.is_empty()
         && !right.trim().is_empty()
+        && let Some(source) = existing(base.join(left))
     {
-        let source = base.join(left);
-        if source.exists() {
-            return Some((source, Some(right.trim().to_owned())));
-        }
+        return Some((source, Some(right.trim().to_owned())));
     }
     None
 }

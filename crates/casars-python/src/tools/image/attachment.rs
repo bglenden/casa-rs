@@ -443,7 +443,7 @@ impl AttachedImage {
             .collect()
     }
 
-    pub(super) fn open_concat_expression_operand(path: &Path) -> PyResult<Self> {
+    pub(super) fn open_unregistered_expression_operand(path: &Path) -> PyResult<Self> {
         if ImageHandle::recognizes_miriad(path, path) {
             return Self::open_miriad(path);
         }

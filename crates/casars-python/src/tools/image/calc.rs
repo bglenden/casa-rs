@@ -2,7 +2,6 @@
 
 use casa_images::analysis::{
     ImageToolPixelExpression, calculate_complex_pixels, calculate_real_pixels,
-    compile_image_tool_expression,
 };
 use pyo3::prelude::*;
 
@@ -22,7 +21,7 @@ impl PyImageTool {
             let Some(attachment) = state.image.as_ref() else { return Ok(false) };
             let mut image = attachment.lock();
             image.check_single_precision("calc")?;
-            let expression = compile_image_tool_expression(pixels).map_err(raised)?;
+            let expression = super::saved_expression::compile_edit(pixels)?;
             let (shape, coordinates) = match (&*image, &expression) {
                 (_, ImageToolPixelExpression::Boolean(_)) => return Err(raised("Exception: Unsupported node data type Bool.")),
                 (ImageHandle::Float(_), ImageToolPixelExpression::Real(expression)) =>

@@ -30,22 +30,40 @@ use crate::tools::image::handle::{
     ImageHandle, Storage, raised, same_file_identity, with_pixels, with_storage,
 };
 use crate::tools::image::saved_expression::SavedExpressionInputs;
+use crate::tools::image::saved_expression::StagedOutput;
 
 pub(in crate::tools::image) fn open(path: &Path) -> PyResult<AttachedImage> {
-    let image = load(path, false, &mut HashSet::new())?;
+    let image = load(path, false, &mut HashSet::new(), None)?;
     AttachedImage::with_virtual_concat(image, path, &mut registry())
 }
 
 pub(in crate::tools::image) fn open_handle(path: &Path) -> Result<ImageHandle, ImageError> {
-    load(path, false, &mut HashSet::new())
+    load(path, false, &mut HashSet::new(), None)
         .map_err(|error| ImageError::CasaSelection(error.to_string()))
 }
 
 pub(in crate::tools::image) fn open_expression_leaf(
     path: &Path,
     active: &mut HashSet<PathBuf>,
+    output: Option<&StagedOutput<'_>>,
 ) -> PyResult<ImageHandle> {
-    load(path, false, active)
+    load(path, false, active, output)
+}
+
+pub(in crate::tools::image) fn open_metadata(
+    path: &Path,
+    output: &StagedOutput<'_>,
+) -> PyResult<ImageHandle> {
+    let image = load(path, false, &mut HashSet::new(), Some(output))?;
+    super::saved_expression::check_output_dependencies(
+        output.target,
+        image
+            .concat_operands()
+            .iter()
+            .chain(&image.concat_expression_operands()),
+        false,
+    )?;
+    Ok(image)
 }
 
 pub(in crate::tools::image) fn check_relocation(source: &Path, target: &Path) -> PyResult<()> {
@@ -56,6 +74,7 @@ fn load(
     path: &Path,
     outer_tempclose: bool,
     active: &mut HashSet<PathBuf>,
+    output: Option<&StagedOutput<'_>>,
 ) -> PyResult<ImageHandle> {
     let root = path.canonicalize().map_err(raised)?;
     if !active.insert(root.clone()) {
@@ -71,9 +90,16 @@ fn load(
     if referent != operand_entries[0] {
         operand_entries.push(referent);
     }
-    let paths = manifest.paths(&root);
+    let mut paths = manifest.paths(&root);
+    if let Some(output) = output {
+        for path in &mut paths {
+            if let Some(staged) = output.substitute(path) {
+                *path = staged;
+            }
+        }
+    }
     let tempclose = outer_tempclose || manifest.temp_close();
-    let inputs = open_members(&paths, tempclose, active)?;
+    let inputs = open_members(&paths, tempclose, active, output)?;
     let geometry: Vec<_> = inputs.iter().map(Input::geometry).collect();
     let kind = manifest.pixel_type().map_err(raised)?;
     validate_types(&inputs, kind)?;
@@ -117,7 +143,7 @@ pub(super) fn stage_nomove(
             ));
         }
     }
-    let inputs = open_members(paths, request.tempclose, &mut HashSet::new())?;
+    let inputs = open_members(paths, request.tempclose, &mut HashSet::new(), None)?;
     protect_expression_sources(final_path, &inputs)?;
     let (kind, plan, misc) = creation_plan(request, &inputs, logs)?;
     let manifest = ConcatManifest::new(
@@ -154,7 +180,7 @@ pub(super) fn stage_owned(
 ) -> PyResult<OwnedOperands> {
     let mut members = OwnedOperands::inspect(paths, final_path, moving)?;
     let validation_paths = members.validation_paths();
-    let inputs = open_members(&validation_paths, true, &mut HashSet::new())?;
+    let inputs = open_members(&validation_paths, true, &mut HashSet::new(), None)?;
     protect_expression_sources(final_path, &inputs)?;
     let (kind, plan, misc) = creation_plan(request, &inputs, logs)?;
     members.capture_validated_inputs(inputs)?;
@@ -196,16 +222,17 @@ fn open_members<'a>(
     paths: &'a [PathBuf],
     tempclose: bool,
     active: &mut HashSet<PathBuf>,
+    output: Option<&StagedOutput<'_>>,
 ) -> PyResult<Vec<Input<'a>>> {
     paths
         .iter()
         .map(|path| {
             let resolved = path.canonicalize().map_err(raised)?;
             if is_image_concat(&resolved) {
-                let image = load(&resolved, tempclose, active)?;
+                let image = load(&resolved, tempclose, active, output)?;
                 Input::from_image(path, image, tempclose, None)
             } else {
-                Input::open_resolved(path, &resolved, tempclose, active)
+                Input::open_resolved(path, &resolved, tempclose, active, output)
             }
         })
         .collect()
