@@ -20,8 +20,11 @@ const PARAMETERS: &[&str] = &[
     "obsmap", "scanmap", "spwmap",
 ];
 
-pub(super) fn parse(contents: &str) -> Result<(Vec<Entry>, bool), (usize, String)> {
-    let tokens = lex(contents)?;
+pub(super) fn parse(
+    contents: &str,
+    allow_empty_maps: bool,
+) -> Result<(Vec<Entry>, bool), (usize, String)> {
+    let tokens = lex(contents, allow_empty_maps)?;
     let mut entries = Vec::new();
     let mut has_statement = false;
     let mut values = BTreeMap::new();
@@ -106,7 +109,7 @@ pub(super) fn parse(contents: &str) -> Result<(Vec<Entry>, bool), (usize, String
     Ok((entries, has_statement))
 }
 
-fn lex(contents: &str) -> Result<Vec<(usize, Token)>, (usize, String)> {
+fn lex(contents: &str, allow_empty_maps: bool) -> Result<Vec<(usize, Token)>, (usize, String)> {
     let chars = contents.chars().collect::<Vec<_>>();
     let mut tokens = Vec::new();
     let (mut index, mut line, mut beginning) = (0, 1, true);
@@ -183,7 +186,9 @@ fn lex(contents: &str) -> Result<Vec<(usize, Token)>, (usize, String)> {
                     }
                 }
                 if index == chars.len()
-                    || (ids.is_empty() && chars[start..index].iter().any(|ch| !ch.is_whitespace()))
+                    || (ids.is_empty()
+                        && (!allow_empty_maps
+                            || chars[start..index].iter().any(|ch| !ch.is_whitespace())))
                 {
                     return Err((start_line, "empty or unterminated mapping array".into()));
                 }
