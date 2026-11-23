@@ -35,11 +35,21 @@ def probe(engine, family, old, vis, output):
     try:
         assert tool.selectvis(field='0', spw='0:3') and tool.setptmodel([1., 0., 0., 0.])
         refant = '' if old else 'A0'
+        if engine == 'native' and not old:
+            first = output.with_name(f'{output.stem}-prior-T.cal')
+            assert tool.setsolve('T', 'inf', str(first), refant=refant, minblperant=2)
+            assert tool.solve() and first.exists() and 'solvestats' in tool.returndict()
+            activity = tool.activityrec()
+            assert tool.setapply(type='P')
         assert tool.setsolve(family, 'inf', str(output), refant=refant, minblperant=2)
         print('configured opacity solver' if family in FAMILIES else 'configured control', flush=True)
         if engine == 'native':
             assert result(tool.solve) == REFUSAL
-            assert not output.exists() and list(tool.returndict()['solve_tables']) == []
+            values = tool.returndict()
+            assert not output.exists() and list(values['solve_tables']) == []
+            assert list(values['apply_tables']) == [] and 'solvestats' not in values
+            if not old:
+                same_record(tool.activityrec(), activity)
             print('recoverable solve refusal and cleared state', flush=True)
         else:
             assert tool.solve() and output.exists()
@@ -87,17 +97,19 @@ def flagged_copy(dataset, output):
             assert table.putcol(name, np.ones_like(table.getcol(name)))
 
 
-def no_result(factory, family, old, dataset, output):
+def no_result(factory, family, old, dataset, output, interval, mode):
     tool = factory()
     assert tool.setvi(old, True) and tool.open(str(dataset), addcorr=old, addmodel=old)
     try:
         assert tool.selectvis(field='0', spw='0:3') and tool.setptmodel([1., 0., 0., 0.])
-        assert tool.setsolve(family, 'inf', str(output), minblperant=2)
+        assert tool.setsolve(family, interval, str(output), minblperant=2, apmode=mode)
         assert tool.solve() and not output.exists()
         values = tool.returndict()
         assert list(values['solve_tables']) == [str(output)]
         activity = tool.activityrec()
-        assert list(activity['nExpected']) == [1]
+        expected = activity['nExpected']
+        assert len(expected) == 1
+        assert expected[0] > 1 if interval == 'int' else expected[0] == 1
         assert list(activity['nAttempt']) == list(activity['nSucceed']) == [0]
         return activity, values.get('solvestats')
     finally:
@@ -121,9 +133,6 @@ def run(args):
         path = args.work/f'{family}-{old}-setup.cal'
         with casa_log(args.work/f'{family}-{old}-setup.log') as capture:
             reference = setup_cases(casa_calibrater, capture, dataset, path, family, old)
-        with chdir(args.work):
-            flagged_output = args.work/f'{family}-{old}-flagged.cal'
-            expected = no_result(casa_calibrater, family, old, flagged[old], flagged_output)
         if not args.reference_only:
             from casars.tools import calibrater as native_calibrater
 
@@ -131,9 +140,16 @@ def run(args):
                 native = setup_cases(native_calibrater, capture, dataset, path, family, old)
             assert native == reference, (family, old, native, reference)
             isolated(args.work, 'native', family, old, dataset)
-            actual = no_result(native_calibrater, family, old, flagged[old], flagged_output)
-            same_record(actual[0], expected[0])
-            same_record(actual[1], expected[1])
+        with chdir(args.work):
+            for interval, mode in (('inf', 'AP'), ('int', 'AP'), ('int', 'BAD')):
+                flagged_output = args.work/f'{family}-{old}-{interval}-{mode}-flagged.cal'
+                expected = no_result(casa_calibrater, family, old, flagged[old], flagged_output,
+                                     interval, mode)
+                if not args.reference_only:
+                    actual = no_result(native_calibrater, family, old, flagged[old], flagged_output,
+                                       interval, mode)
+                    same_record(actual[0], expected[0])
+                    same_record(actual[1], expected[1])
         print(family, 'VI1' if old else 'VI2', 'fully flagged solve', flush=True)
         isolated(args.work, 'casa', family, old, dataset)
 

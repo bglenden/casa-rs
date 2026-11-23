@@ -887,11 +887,12 @@ impl CalibraterLifecycle {
     /// Returns an error without an attached MeasurementSet.
     pub fn set_tool_opacity_solve(
         &mut self,
-        request: crate::GainSolveRequest,
+        mut request: crate::GainSolveRequest,
         mode: CalibrationOutputMode,
         channelized: bool,
     ) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation_mut()?;
+        request.gain_type = crate::GainType::T;
         equation.solve = Some(ConfiguredSolve::Opacity {
             request: Box::new(request),
             mode,
@@ -1022,6 +1023,9 @@ impl CalibraterLifecycle {
     pub fn solve_tool(&mut self) -> Result<(), CalibraterLifecycleError> {
         let equation = self.equation()?;
         if matches!(equation.solve, Some(ConfiguredSolve::Opacity { .. })) {
+            if !self.legacy_iterator {
+                self.last_solve_stats = None;
+            }
             return self.solve_opacity_tool();
         }
         if matches!(equation.solve, Some(ConfiguredSolve::Polarization { .. })) {

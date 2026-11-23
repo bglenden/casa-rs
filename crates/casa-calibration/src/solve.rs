@@ -696,14 +696,20 @@ fn solve_gain_rows_with_settings(
         .map(|widths| tf_multi_bin_windows(ms, &context.rows, widths))
         .transpose()?
         .unwrap_or_default();
-    let direct_gain = activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T);
+    let input_rows = if reject_opacity_fit {
+        grouping::SolveInputRows::OpacityTool
+    } else {
+        grouping::SolveInputRows::gain(
+            activity.is_some() && matches!(request.gain_type, GainType::G | GainType::T),
+        )
+    };
     let groups = build_solve_groups(
         ms,
         &context.rows,
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            input_rows: grouping::SolveInputRows::gain(direct_gain),
+            input_rows,
             gain_type: request.gain_type,
             model_source: request.model_source,
             point_stokes,
@@ -742,11 +748,6 @@ fn solve_gain_rows_with_settings(
         &context.available_antennas,
     );
     for ((base_key, bucket_key), mut group) in groups {
-        if reject_opacity_fit && (group.attempted || group.gather_attempted()) {
-            // The pinned real opacity families cannot run the Jones fit.
-            // An unusable interval still contributes to the gather record.
-            return Err(GainSolveError::OpacityCannotFit);
-        }
         if (group.attempted || group.gather_attempted())
             && (multi_bin_windows.contains(&group.spw_id)
                 || (request.combine.spectral_windows && !multi_bin_windows.is_empty()))
