@@ -281,8 +281,10 @@ def test_ms_index_queries_parse_taql_without_reading_visibility_cells(native_dat
         assert ms.msselect({"field": "0", "taql": "FLAG"}, onlyparse=True)
         assert not ms.msselect({"field": "0", "taql": "FLAG"})
         assert ms.nrow(True) == count
+        indices = ms.msselectedindices()
+        np.testing.assert_array_equal(indices["field"], np.array([0], dtype=np.int64), strict=True)
         if api is tools:
             assert not ms.msselect({"taql": expression})
             assert ms.nrow(True) == count
-            assert ms.msselectedindices()["field"].size == 0
+            same_record(ms.msselectedindices(), indices)
         assert ms.done()
