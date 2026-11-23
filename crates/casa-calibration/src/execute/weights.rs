@@ -12,7 +12,7 @@ use ndarray::{Array1, Array2, ArrayD, Axis};
 
 pub(super) fn supports_calwt(
     summary: &CalibrationTableSummary,
-    is_leakage: bool,
+    mixes_correlations: bool,
     cross_hand_phase: bool,
 ) -> bool {
     let subtype = summary.table_subtype.as_str();
@@ -20,7 +20,7 @@ pub(super) fn supports_calwt(
         return false;
     }
     (summary.parameter_family == CalibrationParameterFamily::Complex
-        && !is_leakage
+        && !mixes_correlations
         && !cross_hand_phase
         && !matches!(subtype, "GlinXph Jones" | "GlinXphf Jones"))
         || matches!(
