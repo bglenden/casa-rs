@@ -3,7 +3,7 @@
 """Run pinned upstream CASA suites against the original or native Python entry points."""
 
 import argparse
-from contextlib import redirect_stderr
+from contextlib import nullcontext, redirect_stderr
 from functools import wraps
 import json
 import os
@@ -83,7 +83,7 @@ def pytest_configure():
     if timings := os.environ.get("CASARS_UPSTREAM_TEST_TIMINGS"):
         entry_point = _timed_task(entry_point, Path(timings))
     if implementation == "casa-rs":
-        entry_point = _native_task(entry_point, casatasks.casalog)
+        entry_point = _native_task(entry_point, casatasks.casalog, task)
     setattr(casatasks, task, entry_point)
 
 
@@ -116,7 +116,7 @@ def _timed_task(task, output):
     return run
 
 
-def _native_task(task, casalog):
+def _native_task(task, casalog, name):
     @wraps(task)
     def run(*args, **kwargs):
         try:
@@ -127,7 +127,11 @@ def _native_task(task, casalog):
             # Upstream expected-failure assertions may catch this exception.
             _fixture_errors.append(str(error))
             raise
-        with log, redirect_stderr(log):
+        transport = nullcontext()
+        if name == "gencal":
+            from upstream_gencal_services import jyperk_transport
+            transport = jyperk_transport(kwargs)
+        with log, redirect_stderr(log), transport:
             return task(*args, **kwargs)
     return run
 
