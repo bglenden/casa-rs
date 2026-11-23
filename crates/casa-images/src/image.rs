@@ -4923,8 +4923,8 @@ mod tests {
             .product::<usize>();
         let stats = image.tiled_io_stats().unwrap();
         assert_eq!(stats.flat_allocated_bytes, 0);
-        assert_eq!(stats.lru_misses, selected_tiles);
-        assert_eq!(stats.lru_hits, 0);
+        // Read-ahead can turn a subsequent lookup into a cache hit.
+        assert_eq!(stats.lru_hits + stats.lru_misses, selected_tiles);
     }
 
     #[test]
