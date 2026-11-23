@@ -143,7 +143,9 @@ fn shadowed_rows(
                         .take_while(|candidate| candidate.centroid <= baseline.centroid);
                     shadowed = shadowed_antennas(&antennas, rows, options.tolerance_m, || {
                         if engine.is_none() {
-                            engine = Some(MsCalEngine::new(ms)?.with_field_ephemerides(ms)?);
+                            // CASA's visibility-buffer phase center also
+                            // accepts legacy geocentric apparent ephemerides.
+                            engine = Some(MsCalEngine::for_calibration(ms)?);
                             measures = Some(open_measures_runtime()?);
                         }
                         if center.is_none() {
