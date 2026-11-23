@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1029 (`stubs.rs`).
 
 mod data_description;
+mod names;
 mod spectral;
 mod stubs;
 pub(crate) mod surface;

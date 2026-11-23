@@ -121,3 +121,49 @@ def test_msmetadata_water_vapor_windows(native_dataset):
             assert len(metadata.wvrspws(complement=True)) == 0
         finally:
             assert metadata.done()
+
+
+def test_msmetadata_name_queries_preserve_selector_order_and_array_types(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    results = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        try:
+            assert metadata.open(str(native_dataset))
+            assert metadata.antennanames() == ["A1", "A2", "A3", "A4"]
+            assert metadata.antennanames(np.array([[0, 1], [2, 3]])) == ["A1", "A3", "A2", "A4"]
+            assert metadata.antennanames([[0, 1], [2, 3]]) == ["A1", "A3", "A2", "A4"]
+            assert metadata.antennanames([True, 0]) == ["A2", "A1"]
+            assert metadata.antennanames([False]) == ["A1", "A2", "A3", "A4"]
+            assert metadata.namesforfields("") == ["F"]
+            assert metadata.namesforfields(np.array([0, 0], dtype=np.uint64)) == ["F", "F"]
+            assert metadata.namesforspws(np.array([[0, 0]])) == ["L", "L"]
+            with pytest.raises(RuntimeError):
+                metadata.namesforfields([False])
+            with pytest.raises(RuntimeError):
+                metadata.antennanames([0.0])
+            with pytest.raises(RuntimeError):
+                metadata.bandwidths([0, -1])
+            assert type(metadata.bandwidths(0)) is float
+            results.append((
+                metadata.sourceidforfield(0), metadata.sourcenames(), metadata.nsources(),
+                metadata.bandwidths(), metadata.bandwidths([0]), metadata.sourceidsfromsourcetable(),
+            ))
+        finally:
+            assert metadata.done()
+    assert results[0][:3] == results[1][:3]
+    for expected, actual in zip(results[0][3:], results[1][3:]):
+        np.testing.assert_array_equal(actual, expected, strict=True)
+
+
+def test_msmetadata_empty_integer_arrays_select_all_without_aborting(native_dataset):
+    metadata = tools.msmetadata()
+    assert metadata.open(str(native_dataset))
+    try:
+        empty = np.array([], dtype=np.int64)
+        assert metadata.namesforfields(empty) == metadata.namesforfields()
+        assert metadata.namesforspws(empty) == metadata.namesforspws()
+        np.testing.assert_array_equal(metadata.bandwidths(empty), metadata.bandwidths(), strict=True)
+    finally:
+        assert metadata.done()

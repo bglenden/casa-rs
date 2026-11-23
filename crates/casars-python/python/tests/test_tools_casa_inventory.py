@@ -42,6 +42,8 @@ IMPLEMENTED["msmetadata"] = {
     "nchan", "chanfreqs", "chanwidths", "meanfreq", "sideband", "reffreq",
     "datadescids", "spwfordatadesc", "polidfordatadesc", "corrtypesforpol",
     "corrprodsforpol", "ncorrforpol", "wvrspws", "nspw",
+    "antennanames", "namesforfields", "namesforspws", "bandwidths", "sourceidforfield",
+    "sourceidsfromsourcetable", "sourcenames", "nsources",
 }
 IMPLEMENTED["atmosphere"] = set(casa_signatures("atmosphere")["methods"])
 IMPLEMENTED["wvr"] = {"gcal"}

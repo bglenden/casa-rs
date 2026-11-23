@@ -47,12 +47,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (antennaids = None), text_signature = "($self, antennaids=-1)")]
-    fn antennanames(&self, antennaids: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("antennanames")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (which = None), text_signature = "($self, which=0)")]
     fn antennaoffset(&self, which: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("antennaoffset")
@@ -83,12 +77,6 @@ impl PyMsMetadata {
         obsid: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("antennastations")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spw = None), text_signature = "($self, spw=-1)")]
-    fn bandwidths(&self, spw: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("bandwidths")
     }
 
     /// Not yet implemented in casa-rs.
@@ -269,18 +257,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (fieldids = None), text_signature = "($self, fieldids='')")]
-    fn namesforfields(&self, fieldids: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("namesforfields")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spwids = None), text_signature = "($self, spwids='')")]
-    fn namesforspws(&self, spwids: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("namesforspws")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
     fn narrays(&self) -> PyResult<Py<PyAny>> {
         stub("narrays")
@@ -306,12 +282,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn nscans(&self) -> PyResult<Py<PyAny>> {
         stub("nscans")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn nsources(&self) -> PyResult<Py<PyAny>> {
-        stub("nsources")
     }
 
     /// Not yet implemented in casa-rs.
@@ -469,24 +439,6 @@ impl PyMsMetadata {
     #[pyo3(signature = (), text_signature = "($self)")]
     fn sourcedirs(&self) -> PyResult<Py<PyAny>> {
         stub("sourcedirs")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (field = None), text_signature = "($self, field=-1)")]
-    fn sourceidforfield(&self, field: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("sourceidforfield")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn sourceidsfromsourcetable(&self) -> PyResult<Py<PyAny>> {
-        stub("sourceidsfromsourcetable")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn sourcenames(&self) -> PyResult<Py<PyAny>> {
-        stub("sourcenames")
     }
 
     /// Not yet implemented in casa-rs.
