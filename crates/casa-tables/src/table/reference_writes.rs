@@ -102,6 +102,9 @@ impl Table {
         if !self.is_reference_table()? {
             return Ok(false);
         }
+        for column in columns {
+            self.require_writable_column(column)?;
+        }
         let source = self.source_path.as_ref().expect("saved reference");
         let (root, chain) = reference_chain(source.clone(), false)?;
         self.check_reference_base(&root)?;

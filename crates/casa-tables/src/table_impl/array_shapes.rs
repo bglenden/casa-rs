@@ -4,8 +4,8 @@ use super::*;
 
 impl TableImpl {
     /// Use the retained shape map when validating writes to an existing
-    /// tiled cell. A pending override or row edit owns the current shape.
-    pub(crate) fn try_stored_tiled_shape(
+    /// stored array cell. A pending override or row edit owns the current shape.
+    pub(crate) fn try_retained_array_shape(
         &self,
         row: usize,
         column: &str,
