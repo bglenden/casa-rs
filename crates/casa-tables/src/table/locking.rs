@@ -583,6 +583,9 @@ impl Table {
         if dirty.whole || !dirty.added_columns.is_empty() {
             return self.flush_full_locked_layout();
         }
+        for column in dirty.cells.keys() {
+            self.require_writable_column(column)?;
+        }
         let mut groups = std::collections::BTreeMap::<Vec<usize>, Vec<String>>::new();
         for (column, rows) in dirty.cells {
             groups

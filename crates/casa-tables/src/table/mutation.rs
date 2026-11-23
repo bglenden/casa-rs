@@ -327,6 +327,7 @@ impl Table {
     ///
     /// C++ equivalent: `Table::removeRow`.
     pub fn remove_rows(&mut self, indices: &[usize]) -> Result<(), TableError> {
+        self.require_mutable_row_registration()?;
         let auto_unlock = self.begin_write_operation("remove_rows")?;
         let result = (|| {
             let row_count = self.row_count();
@@ -363,6 +364,7 @@ impl Table {
     ///
     /// C++ equivalent: constructing rows and adding them to a `Table`.
     pub fn insert_row(&mut self, index: usize, row: RecordValue) -> Result<(), TableError> {
+        self.require_mutable_row_registration()?;
         let auto_unlock = self.begin_write_operation("insert_row")?;
         let result = (|| {
             let row_count = self.row_count();
