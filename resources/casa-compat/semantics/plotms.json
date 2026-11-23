@@ -83,11 +83,12 @@
       "status": "Partial"
     },
     "xdatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or unaveraged vector residual for X independently of Y. A blank selector defaults to DATA for a new plot. Additional column forms remain open.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual for X independently of Y. A blank selector defaults to DATA for a new plot. Additional column forms remain open.",
       "evidence": [
         "paired",
         "ms-columns",
         "ms-residual-columns",
+        "ms-scalar-residual-columns",
         "ms-corrected-fallback",
         "callibrary"
       ],
@@ -125,11 +126,12 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or unaveraged vector residual for Y independently of X. A blank selector defaults to DATA for a new plot. Per-ordinate lists and additional column forms remain open.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual for Y independently of X. A blank selector defaults to DATA for a new plot. Per-ordinate lists and additional column forms remain open.",
       "evidence": [
         "paired",
         "ms-columns",
         "ms-residual-columns",
+        "ms-scalar-residual-columns",
         "ms-corrected-fallback",
         "callibrary"
       ],
@@ -1063,12 +1065,13 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector residuals with the shared sample mask. Use DATA for corrected axes and corrected vector residuals when the stored corrected column is absent on a complex MeasurementSet.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals with the shared sample mask. Use DATA for corrected axes and corrected residuals when the stored corrected column is absent on a complex MeasurementSet.",
       "evidence": [
         "paired",
         "selectors",
         "ms-columns",
         "ms-residual-columns",
+        "ms-scalar-residual-columns",
         "ms-corrected-fallback",
         "callibrary",
         "legacy-calibration"
@@ -1289,6 +1292,19 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-residual-columns-20261123.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2128"
+      ]
+    },
+    "ms-scalar-residual-columns": {
+      "kind": "Same-input scalar MeasurementSet residuals",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on the same unaveraged MeasurementSet plots of signed amplitude, phase and real and imaginary scalar residuals.",
+      "result": "Five paired text exports matched 60 selected points, metadata and headers, including a residual against time and fallback when CORRECTED_DATA was absent. Two 500 by 360 pixel PNGs matched 24 rendered coordinates, including phase residuals greater than 180 degrees, with CASA column labels and phase units. The source data and flags remained unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "98994593d4b9303fb1c90df8d52b5ae18268c4a5",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-scalar-residual-columns-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2131"
       ]
     },
     "ms-corrected-fallback": {

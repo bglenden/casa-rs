@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-23",
+  "revision": "98994593d4b9303fb1c90df8d52b5ae18268c4a5",
+  "baseline_revision": "7e11a0778f804cea273c41177108f57f521d6165",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "scope": "Independent unaveraged scalar residual columns and residuals against time, including corrected fallback, real and imaginary components, and phases outside the principal phase interval.",
+  "result": "passed",
+  "baseline_result": "CASA exported 12 selected points, starting at -8 amplitude and 116.565 degrees. casa-rs refused the derived column selectors.",
+  "text_exports": 5,
+  "points": 60,
+  "figures": 2,
+  "rendered_coordinates": 24,
+  "figure_size_px": [500, 360],
+  "pointwise_relative_tolerance": 1.2e-5,
+  "pointwise_absolute_tolerance": 1e-7,
+  "source_columns_preserved": ["DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_ROW"]
+}
