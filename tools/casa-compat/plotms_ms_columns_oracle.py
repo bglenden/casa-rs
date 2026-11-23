@@ -424,6 +424,13 @@ def compare_averaged_columns(root, native):
         copy_ms(vis, path)
         with opened(path, True) as table:
             table.removecols([column])
+    opposite_phase = work / "opposite-phase.ms"
+    copy_ms(vis, opposite_phase)
+    with opened(opposite_phase, True) as table:
+        observed = table.getcol("DATA")
+        observed[:, 1, :] *= -1
+        table.putcol("DATA", observed)
+
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
                               ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
                               avgchannel="2", spw="0:0~3")
@@ -438,6 +445,8 @@ def compare_averaged_columns(root, native):
                                 yaxislocation="left"), ((0, 200),)),
         ("avg-secondary-shares-x", dict(xdatacolumn="corrected", yaxis=["real", "amp"],
                                        ydatacolumn=["data", "corrected"]), ((28, 2.6), (28, 28))),
+        ("avg-scalar-without-time", dict(vis=str(opposite_phase), xaxis="amp", scalar=True),
+         ((2.2, 28), (2.2, 280))),
     )
     for name, overrides, first in cases:
         controls = base | overrides
@@ -457,6 +466,20 @@ def compare_averaged_columns(root, native):
         print(f"{name}: {len(selected)} matching channel-averaged coordinates", flush=True)
     compare_ordinate_figure(work, "avg-independent-weighted", native, base, "Real",
                             ["Real:corrected", "Real:model"])
+
+    from casars.tasks import TaskParameterError
+
+    average_time = base | dict(avgtime="20", expformat="txt")
+    expected, actual = (work / f"avg-with-time.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**average_time, plotfile=str(expected)) is None
+    assert len(rows(expected)) == 12
+    try:
+        native(**average_time, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS used a common column for independent time averages")
+    assert not actual.exists()
     with opened(vis) as table:
         for name, data in (columns | dict(FLAG=flags)).items():
             np.testing.assert_array_equal(table.getcol(name), data)

@@ -3959,6 +3959,8 @@ fn build_generic_visibility_scatter(
         && needs_visibility_grid
         && spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let project_plotms_columns = calibration.is_some_and(|input| input.rows.is_none());
+    // PlotMS applies scalar averaging only with the extended averaging path.
+    let scalar_average = spec.averaging.scalar && !project_plotms_columns;
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
             .y_axes
@@ -4385,7 +4387,7 @@ fn build_generic_visibility_scatter(
                     row_sigma,
                     field_id_value,
                     antenna1_value,
-                    spec.averaging.scalar,
+                    scalar_average,
                     bin,
                     spectral_context.as_ref(),
                     row_time_value,
@@ -4414,7 +4416,7 @@ fn build_generic_visibility_scatter(
                         row_sigma,
                         field_id_value,
                         antenna1_value,
-                        spec.averaging.scalar,
+                        scalar_average,
                         bin,
                         spectral_context.as_ref(),
                         row_time_value,
