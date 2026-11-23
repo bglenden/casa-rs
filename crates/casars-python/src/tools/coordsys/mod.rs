@@ -38,7 +38,7 @@ pub(super) use transform_single::{WorldArgument, image_pixel_argument};
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use casa_coordinates::{CoordinateSystem, ObsInfo, defaults};
+use casa_coordinates::{CoordinateModel, CoordinateSystem, ObsInfo, defaults};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MPosition};
 use casa_types::measures::{direction_to_record, epoch_to_record, position_to_record};
@@ -115,6 +115,44 @@ fn current_epoch(mut info: ObsInfo) -> ObsInfo {
     info
 }
 
+fn canonical_restored_coordinate(
+    original: &RecordValue,
+    model: &CoordinateModel,
+) -> PyResult<Option<RecordValue>> {
+    let CoordinateModel::Spectral(spectral) = model else {
+        return linear_transform::normalize_restored_matrix(original, model);
+    };
+    if !matches!(original.get("system"),
+        Some(Value::Scalar(ScalarValue::String(system))) if system == "LSR")
+    {
+        return linear_transform::normalize_restored_matrix(original, model);
+    }
+    // CASA reserializes the restored legacy axis as a current spectral record.
+    let mut normalized = model.to_record();
+    for field in ["coordinate_type", "formatUnit"] {
+        if let Some(value) = original.get(field) {
+            normalized.upsert(field, value.clone());
+        }
+    }
+    if let Some(unit) = original
+        .get("velUnit")
+        .or_else(|| original.get("prefVelUnit"))
+        .filter(|unit| matches!(unit, Value::Scalar(ScalarValue::String(name)) if !name.is_empty()))
+    {
+        normalized.upsert("velUnit", unit.clone());
+    }
+    if normalized.get("conversion").is_none()
+        || spectral.conversion_frequency_ref() == Some(spectral.frequency_ref())
+    {
+        let mut conversion = default_spectral_conversion();
+        if let Some(system) = normalized.get("system") {
+            conversion.upsert("system", system.clone());
+        }
+        normalized.upsert("conversion", Value::Record(conversion));
+    }
+    Ok(Some(normalized))
+}
+
 impl CoordinateState {
     fn from_coordinates(coordinates: CoordinateSystem, mut record: RecordValue) -> PyResult<Self> {
         coordinates
@@ -127,10 +165,8 @@ impl CoordinateState {
             .enumerate()
         {
             if let Some(Value::Record(original)) = record.get(&placement.field)
-                && let Some(normalized) = linear_transform::normalize_restored_matrix(
-                    original,
-                    coordinates.coordinate(index),
-                )?
+                && let Some(normalized) =
+                    canonical_restored_coordinate(original, coordinates.coordinate(index))?
             {
                 record.upsert(placement.field, Value::Record(normalized));
             }
