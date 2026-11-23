@@ -3655,6 +3655,7 @@ struct AveragedPointAccumulator {
     any_flag_row: bool,
     representative: Option<MsScatterPointRef>,
     display_channel: usize,
+    combined_primary_weight: Option<f64>,
 }
 
 #[derive(Debug)]
@@ -4828,6 +4829,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
+    let combined_vector_average =
+        time_weight_kinds.is_some() && spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let needs_observed_weights =
         time_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Observed));
     let needs_calibrated_weights =
@@ -5072,6 +5075,9 @@ fn build_generic_visibility_scatter_with_averaging(
             .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
             .map(weight_grid);
         let column_weights = visibility_columns.column_weights(axis_weights);
+        let primary_weight_grid = time_weight_kinds
+            .filter(|_| combined_vector_average)
+            .and_then(|kinds| weight_grid(kinds.primary));
 
         let selected_correlations =
             select_correlation_slots(corr_count, &corr_types, requested_corr_codes.as_deref());
@@ -5155,6 +5161,10 @@ fn build_generic_visibility_scatter_with_averaging(
                 let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(target)
                     if antenna1_value != antenna2_value && *target == antenna2_value);
                 for bin in channel_bins.iter() {
+                    // The time stage sums each column's weights. The channel
+                    // stage uses those sums and propagates the primary mask.
+                    let primary_weight = primary_weight_grid
+                        .map(|grid| plotms_columns::bin_weight(grid, *corr_index, bin, &flags));
                     for (index, (grid, buffer)) in
                         visibility_grids.iter().zip(&mut bin_buffers).enumerate()
                     {
@@ -5261,6 +5271,9 @@ fn build_generic_visibility_scatter_with_averaging(
                             }
                         });
                         let accumulator = series.points.entry(point_key.clone()).or_default();
+                        if let Some(weight) = primary_weight {
+                            *accumulator.combined_primary_weight.get_or_insert(0.0) += weight;
+                        }
                         if accumulator.representative.is_none() {
                             accumulator.display_channel = bin.display_channel();
                             accumulator.representative = Some(MsScatterPointRef {
@@ -5473,6 +5486,11 @@ fn build_generic_visibility_scatter_with_averaging(
                 None => points.next(),
             });
             for (group, accumulator) in ordered {
+                if accumulator.combined_primary_weight.is_some_and(|weight| {
+                    weight.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
+                }) {
+                    continue;
+                }
                 let Some(representative) = accumulator.representative.clone() else {
                     continue;
                 };
@@ -5551,6 +5569,12 @@ fn build_generic_visibility_scatter_with_averaging(
     }
 
     if contributing_points == 0 {
+        if combined_vector_average {
+            return Err(
+                "empty MeasurementSet plots after channel and time averaging are pending #1032"
+                    .into(),
+            );
+        }
         return Err(format!(
             "{} produced no unflagged visibility points for the current selection",
             spec.preset

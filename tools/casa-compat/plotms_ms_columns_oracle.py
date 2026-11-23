@@ -846,6 +846,20 @@ def compare_combined_averaged_columns(root, native):
         assert native(**controls, expformat="txt", plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching channel-and-time coordinates", flush=True)
+    from casars.tasks import TaskExecutionError
+
+    empty = base | dict(vis=str(work / "zero-primary-first-bin.ms"), expformat="txt")
+    expected, actual = (work / f"zero-primary-empty.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**empty, plotfile=str(expected)) is None
+    assert not rows(expected)
+    assert expected.read_text().count("# No data to export") == 2
+    try:
+        native(**empty, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "empty MeasurementSet plots after channel and time averaging are pending #1032" in str(error), error
+    else:
+        raise AssertionError("Expected a pending diagnostic for the empty averaged plot")
+    assert not actual.exists()
     figure = base | dict(vis=str(work / "spectra.ms"))
     compare_ordinate_figure(work, "spectra", native, figure, "Real", ["Real:corrected", "Real:model"])
 

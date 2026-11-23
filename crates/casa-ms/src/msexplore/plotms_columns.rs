@@ -126,11 +126,19 @@ pub(super) fn bin_has_weight(
     bin: &ChannelBin,
     flags: &ndarray::ArrayView2<'_, bool>,
 ) -> bool {
+    bin_weight(spectrum, corr, bin, flags) > 0.0
+}
+
+pub(super) fn bin_weight(
+    spectrum: &FloatGrid,
+    corr: usize,
+    bin: &ChannelBin,
+    flags: &ndarray::ArrayView2<'_, bool>,
+) -> f64 {
     bin.channels()
         .filter(|&channel| !flags[(corr, channel)])
         .map(|channel| spectrum.values[corr * spectrum.chan_count + channel])
-        .sum::<f64>()
-        > 0.0
+        .sum()
 }
 
 pub(super) fn inverse_variance(spectrum: &FloatGrid) -> FloatGrid {
