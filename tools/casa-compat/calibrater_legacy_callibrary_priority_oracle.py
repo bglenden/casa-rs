@@ -12,7 +12,7 @@ import numpy as np
 
 from blcal_oracle import copy_ms, source
 from calibration_smoothcal_oracle import opened
-from calibrater_apply_tool_oracle import same_record
+from calibrater_apply_tool_oracle import result, same_record
 
 
 def fixture(work):
@@ -59,6 +59,21 @@ def run_case(factory, vis, library, legacy, operation, selection):
         np.testing.assert_array_equal(table.getcol('FLAG_ROW'), flag_row)
         np.testing.assert_array_equal(table.getcol('WEIGHT'), weights)
     return activity, actual, data, field, scan
+
+
+def check_reselection(factory, vis, table, legacy, selection):
+    tool = factory()
+    assert tool.setvi(legacy, True) and tool.open(str(vis), addmodel=True)
+    library = {str(table): {str(index): {'scan': str(scan), 'tinterp': 'linear', 'calwt': False,
+                                       'fldmap': [index, index]}
+                           for index, scan in enumerate((1, 2))}}
+    assert tool.setcallib(library) and tool.selectvis(**selection)
+    assert tool.returndict()['apply_tables'].size == 0
+    for method in ('correct', 'corrupt'):
+        origin = 'corrupt2' if method == 'corrupt' and not legacy else method
+        assert result(getattr(tool, method)) == (
+            False, ('RuntimeError', f'Error in Calibrater::{origin}.'))
+    assert tool.close()
 
 
 def experiment(work, reference_only):
@@ -126,6 +141,10 @@ def experiment(work, reference_only):
                                                        atol=4e-7, rtol=4e-7)
                     print(legacy, operation, selection, explicit_field, ordered[0][:2],
                           'reference' if reference_only else 'matched', flush=True)
+            for selection in ({}, {'scan': '2'}):
+                for engine, factory in factories.items():
+                    check_reselection(factory, datasets[engine], cal, legacy, selection)
+                print(legacy, selection, 'clears registered slices', flush=True)
 
 
 if __name__ == '__main__':
