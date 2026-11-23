@@ -119,6 +119,14 @@ def compare(root, vis, native):
         "zero-channel-and-time": {"xdatacolumn": "data-model_vector", "avgchannel": "0", "avgtime": "0"},
         "vector-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data-model_vector",
                               "ydatacolumn": "corrected-model_vector"},
+        "implicit-vector-ratio": {"xdatacolumn": "data/model", "ydatacolumn": "corrected/model"},
+        "explicit-vector-ratio": {"xdatacolumn": "data/model_vector", "ydatacolumn": "corrected/model_vector"},
+        "vector-ratio-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data/model_vector",
+                                    "ydatacolumn": "corrected/model_vector"},
+        "scalar-amp-phase-ratio": {"xdatacolumn": "data/model_scalar", "ydatacolumn": "corrected/model_scalar"},
+        "scalar-ratio-components": {"xaxis": "real", "yaxis": "imag", "xdatacolumn": "data/model_scalar",
+                                    "ydatacolumn": "corrected/model_scalar"},
+        "scalar-ratio-vs-time": {"xaxis": "time", "yaxis": "amp", "ydatacolumn": "data/model_scalar"},
         "scalar-amp-phase": {"xdatacolumn": "data-model_scalar", "ydatacolumn": "corrected-model_scalar"},
         "scalar-components": {"xaxis": "imag", "yaxis": "real", "xdatacolumn": "data-model_scalar",
                               "ydatacolumn": "corrected-model_scalar"},
@@ -153,6 +161,12 @@ def compare(root, vis, native):
     compare_figure(root, native, base | cases["scalar-amp-phase"], root / "scalar-amp-phase.casa.txt",
                    ("Phase:corrected-model (scalar) vs. Amp:data-model (scalar)",
                     "Amp:data-model (scalar)", "Phase:corrected-model (scalar) (degrees)"))
+    compare_figure(root, native, base | cases["explicit-vector-ratio"], root / "explicit-vector-ratio.casa.txt",
+                   ("Phase:corrected/model (vector) vs. Amp:data/model (vector)",
+                    "Amp:data/model (vector)", "Phase:corrected/model (vector) (degrees)"))
+    compare_figure(root, native, base | cases["scalar-amp-phase-ratio"], root / "scalar-amp-phase-ratio.casa.txt",
+                   ("Phase:corrected/model (scalar) vs. Amp:data/model (scalar)",
+                    "Amp:data/model (scalar)", "Phase:corrected/model (scalar) (degrees)"))
     pending_cases(root, native, vis)
 
 
@@ -167,6 +181,8 @@ def compare_missing_corrected(root, vis, source, native):
         "residual-on-x": dict(xdatacolumn="residual", ydatacolumn="data"),
         "residual-on-y": dict(ydatacolumn="corrected-model_vector"),
         "corrected-vs-time": dict(xaxis="time", xdatacolumn=""),
+        "vector-ratio-without-corrected": dict(xdatacolumn="corrected/model_vector", ydatacolumn="data/model_vector"),
+        "scalar-ratio-without-corrected": dict(xdatacolumn="data/model_scalar", ydatacolumn="corrected/model_scalar"),
         "scalar-without-corrected": dict(xdatacolumn="corrected-model_scalar", ydatacolumn="data-model_scalar"),
     }
     for name, options in cases.items():
@@ -203,6 +219,30 @@ def compare_scalar_phase_boundary(root, vis, source, native):
                     "Amp:data-model (scalar)", "Phase:corrected-model (scalar) (degrees)"))
 
 
+def compare_zero_model(root, vis, source, native):
+    zero_model = root / "zero-model.ms"
+    copy_ms(vis, zero_model)
+    model = source["MODEL_DATA"].copy()
+    model[0, 1, 0] = 0
+    model[0, 3, 0] = 0
+    with opened(zero_model, True) as table:
+        table.putcol("MODEL_DATA", model)
+    cases = (
+        ("vector-zero-phase", "amp", "phase", "data/model_vector", np.inf, np.nan),
+        ("vector-zero-complex", "real", "imag", "corrected/model_vector", np.inf, np.inf),
+        ("scalar-zero-phase", "amp", "phase", "corrected/model_scalar", np.inf, np.inf),
+        ("scalar-zero-components", "real", "imag", "data/model_scalar", 2, 0),
+    )
+    for name, x, y, column, expected_x, expected_y in cases:
+        controls = request(zero_model) | dict(xaxis=x, yaxis=y, xdatacolumn=column, ydatacolumn=column)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        np.testing.assert_array_equal(np.array(rows(expected)[0][:2], dtype=float), [expected_x, expected_y])
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: matched defined and nonfinite values for 12 selected points", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -224,6 +264,7 @@ def main():
                 np.testing.assert_array_equal(table.getcol(name), values, err_msg=name)
         compare_missing_corrected(root, vis, source, native)
         compare_scalar_phase_boundary(root, vis, source, native)
+        compare_zero_model(root, vis, source, native)
 
 
 if __name__ == "__main__":
