@@ -179,7 +179,7 @@ fn prepare_mosaic_models(
                 return Err(invalid("FLAG is not a defined Bool array"));
             };
             if scratch {
-                models.predict_scratch(ms, row.row_index, &correlations, &flags, None)
+                models.predict_scratch(ms, row.row_index, &correlations, &flags, None, None)
             } else {
                 models.predict(ms, row.row_index, &correlations, &flags)
             }
@@ -205,6 +205,11 @@ impl Prediction<'_> {
     ) -> MsResult<MeasurementSetMutationBatch> {
         let row_indices: Vec<_> = rows.iter().map(|row| row.row_index).collect();
         let main = ms.main_table();
+        // CASA can store UVW in IncrementalStMan, where a single-cell read
+        // decodes its whole storage bucket. Read each selected batch together.
+        let uvw = main
+            .column_accessor("UVW")?
+            .array_cells_owned_uncached(&row_indices)?;
         let mut existing = (self.incremental
             || rows
                 .iter()
@@ -248,9 +253,19 @@ impl Prediction<'_> {
             } else {
                 None
             };
+            let coordinates = uvw[offset]
+                .as_ref()
+                .ok_or_else(|| invalid("UVW must contain three real coordinates"))?;
             let sampled = self
                 .models
-                .predict_scratch(ms, row.row_index, correlation, flags, starting)
+                .predict_scratch(
+                    ms,
+                    row.row_index,
+                    correlation,
+                    flags,
+                    starting,
+                    Some(coordinates),
+                )
                 .map_err(invalid)?
                 .ok_or_else(|| invalid("the selected row is absent from the prediction"))?;
             let value = if let Some((span, step)) = slice {
