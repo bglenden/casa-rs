@@ -74,22 +74,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (source = None, asnames = None), text_signature = "($self, source=-1, asnames=False)")]
-    fn fieldsforsource(
-        &self,
-        source: Option<&Bound<'_, PyAny>>,
-        asnames: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("fieldsforsource")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (asnames = None), text_signature = "($self, asnames=False)")]
-    fn fieldsforsources(&self, asnames: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("fieldsforsources")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (autoc = None, flagged = None), text_signature = "($self, autoc=True, flagged=True)")]
     fn nrows(
         &self,
@@ -127,12 +111,6 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn propermotions(&self) -> PyResult<Py<PyAny>> {
-        stub("propermotions")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (field = None, epoch = None), text_signature = "($self, field=0, epoch={})")]
     fn refdir(
         &self,
@@ -143,31 +121,9 @@ impl PyMsMetadata {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (sourceid = None, spw = None), text_signature = "($self, sourceid=0, spw=0)")]
-    fn restfreqs(
-        &self,
-        sourceid: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("restfreqs")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (obsid = None), text_signature = "($self, obsid=-1)")]
     fn schedule(&self, obsid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("schedule")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn sourcedirs(&self) -> PyResult<Py<PyAny>> {
-        stub("sourcedirs")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn sourcetimes(&self) -> PyResult<Py<PyAny>> {
-        stub("sourcetimes")
     }
 
     /// Not yet implemented in casa-rs.
@@ -180,15 +136,5 @@ impl PyMsMetadata {
     #[pyo3(signature = (obsid = None), text_signature = "($self, obsid=-1)")]
     fn timerangeforobs(&self, obsid: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("timerangeforobs")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (sourceid = None, spw = None), text_signature = "($self, sourceid=0, spw=0)")]
-    fn transitions(
-        &self,
-        sourceid: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("transitions")
     }
 }
