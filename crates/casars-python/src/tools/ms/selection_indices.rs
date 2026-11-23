@@ -18,19 +18,16 @@ use crate::convert::selector::listing_selector;
 use crate::convert::value::CasaValue;
 
 #[derive(Default)]
-pub(super) enum SelectionState {
-    #[default]
-    Empty,
-    Parsed(Box<MsSelectionIndices>),
-    Invalid(String),
+pub(super) struct SelectionState {
+    indices: MsSelectionIndices,
+    error: Option<String>,
 }
 
 impl SelectionState {
     fn record(&self) -> PyResult<CasaValue> {
-        match self {
-            Self::Empty => Ok(index_record(&MsSelectionIndices::default(), true)),
-            Self::Parsed(indices) => Ok(index_record(indices, true)),
-            Self::Invalid(error) => Err(runtime_error(error)),
+        match &self.error {
+            None => Ok(index_record(&self.indices, true)),
+            Some(error) => Err(runtime_error(error)),
         }
     }
 }
@@ -53,29 +50,24 @@ impl PyMsTool {
             let Some(attached) = attached.as_mut() else {
                 return Ok(false);
             };
-            let Some(request) = request else {
-                attached.selection_state = SelectionState::Empty;
-                return Ok(false);
-            };
+            let request = request.unwrap_or_default();
             let snapshot = attached
                 .metadata_link()
                 .snapshot(None)
                 .map_err(runtime_error)?;
             let ms = &snapshot.ms;
-            let parsed = ms.parse_ms_tool_selection(&request).and_then(|parsed| {
-                parsed.validate_taql(ms)?;
-                Ok(parsed)
-            });
+            let parsed =
+                ms.parse_ms_tool_selection(&request, &mut attached.selection_state.indices);
             let parsed = match parsed {
                 Ok(parsed) => parsed,
                 Err(error) => {
-                    attached.selection_state = SelectionState::Invalid(error.to_string());
+                    attached.selection_state.error = Some(error.to_string());
                     return Ok(false);
                 }
             };
             let has_expression = parsed.has_row_expression();
             let rows = (!onlyparse && has_expression).then(|| parsed.select_rows(ms));
-            attached.selection_state = SelectionState::Parsed(Box::new(parsed.indices));
+            attached.selection_state.error = None;
             if let Some(rows) = rows {
                 let Ok(mut rows) = rows else {
                     return Ok(false);
@@ -145,11 +137,10 @@ impl PyMsTool {
                 ));
             }
 
-            let parsed = ms
-                .parse_ms_tool_selection(&request)
+            let mut indices = MsSelectionIndices::default();
+            ms.parse_ms_tool_selection(&request, &mut indices)
                 .map_err(runtime_error)?;
-            parsed.validate_taql(ms).map_err(runtime_error)?;
-            Ok(parsed.indices)
+            Ok(indices)
         })?;
         index_record(&indices, false).into_python(py)
     }

@@ -143,8 +143,7 @@ pub fn call_function(
 ///
 /// # Errors
 /// The builtin is unknown or its number of arguments is invalid.
-#[doc(hidden)]
-pub fn validate_function_call(name: &str, arguments: usize) -> Result<(), TaqlError> {
+pub(super) fn validate_function_call(name: &str, arguments: usize) -> Result<(), TaqlError> {
     let lower = name.to_lowercase();
     if with_registry(|reg| reg.contains_key(&lower)) {
         return Ok(());
@@ -162,6 +161,10 @@ pub fn validate_function_call(name: &str, arguments: usize) -> Result<(), TaqlEr
         }
         _ => Ok(()),
     }
+}
+
+pub(super) fn has_udf(name: &str) -> bool {
+    with_registry(|registry| registry.contains_key(&name.to_ascii_lowercase()))
 }
 
 #[expect(

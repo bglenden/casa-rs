@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA MSSelection side records for the Python MeasurementSet tool.
 
+use casa_coordinates::StokesType;
+use casa_tables::taql::RecordExpressionType;
+
 use super::antenna_expr::AntennaSelectionIndices;
 use super::syntax::{row_id_interval, trim_row_id_space};
 use super::{
@@ -60,13 +63,11 @@ impl MsSelectionIndices {
     }
 }
 
-/// A parsed MeasurementSet tool selection with its auxiliary index records
-/// and the corresponding row predicate.
+/// The compiled row predicate of a MeasurementSet tool selection.
 pub struct ParsedMsToolSelection {
-    /// Identifier and channel lists reported by CASA's tool.
-    pub indices: MsSelectionIndices,
     compiled: CompiledMsSelection,
     rows_per_block: usize,
+    taql_is_row_predicate: bool,
 }
 
 impl ParsedMsToolSelection {
@@ -75,103 +76,127 @@ impl ParsedMsToolSelection {
         !self.compiled.where_clauses().is_empty()
     }
 
-    /// Validate a user TaQL clause even when no row view is requested.
-    ///
-    /// # Errors
-    /// The supplied predicate is invalid for this MS.
-    pub fn validate_taql(&self, ms: &MeasurementSet) -> MsResult<()> {
-        if !self.compiled.taql_exprs.is_empty() {
-            super::taql_selection::validate_predicate(
-                ms,
-                &self.compiled.to_taql(),
-                Some(self.rows_per_block),
-            )?;
-        }
-        Ok(())
-    }
-
     /// Apply the predicate and return matching indices in the supplied view.
     ///
     /// # Errors
     /// A selection column or predicate cannot be evaluated.
     pub fn select_rows(&self, ms: &MeasurementSet) -> MsResult<Vec<usize>> {
+        if !self.taql_is_row_predicate {
+            return Err(MsError::InvalidInput(
+                "TaQL row predicate is not a Boolean scalar".into(),
+            ));
+        }
         self.compiled
             .apply_internal(ms, Some(self.rows_per_block), false)
     }
 }
 
 impl MeasurementSet {
-    /// Parse the auxiliary identifier lists for a CASA MS tool selection.
+    /// Compile one CASA MS tool selection and update its auxiliary lists.
+    /// An omitted antenna, field, window, or polarization clause retains
+    /// its previous list. The compiled predicate describes only this request.
     ///
     /// # Errors
     /// A supplied selector cannot be parsed or names invalid metadata.
     pub fn parse_ms_tool_selection(
         &self,
         request: &MsSelection,
+        indices: &mut MsSelectionIndices,
     ) -> MsResult<ParsedMsToolSelection> {
         let budget = default_selection_budget()?;
         let rows_per_block = rows_per_block_for_budget(budget)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        let poldd = nonempty(request.correlation.as_deref())
-            .map(|text| polarization_indices(self, text))
-            .transpose()?
-            .unwrap_or_default();
+        indices.update_antenna_field_and_spw(self, request)?;
+        indices.scan.clear();
+        if let Some(text) = nonempty(request.scan.as_deref()) {
+            indices.scan = scan_indices(text, rows_per_block)?;
+        }
         let mut rows = request.clone();
         rows.correlation = None;
-        if !poldd.is_empty() {
-            rows.data_description = Some(int_list(&poldd));
+        if let Some(text) = nonempty(request.correlation.as_deref()) {
+            indices.poldd = polarization_indices(self, text)?;
+            if !indices.poldd.is_empty() {
+                rows.data_description = Some(int_list(&indices.poldd));
+            }
         }
-        let compiled =
-            rows.compile_with_row_grammar(self, RowGrammar::Casa, Some(rows_per_block))?;
-        let field = compiled.field_ids.clone().unwrap_or_default();
-        if field.is_empty()
-            && let Some(text) = nonempty(request.field.as_deref())
-        {
-            return Err(MsError::InvalidInput(format!(
-                "field selector {text:?} did not match any existing fields"
-            )));
-        }
-        let mut table = MsSelectionIndices {
-            field,
-            state: compiled.state_ids.clone(),
-            poldd,
-            ..MsSelectionIndices::default()
+        let taql = rows.msselect.take();
+        let taql_type = if let Some(text) = nonempty(taql.as_deref().map(str::trim)) {
+            super::taql_selection::validate_predicate(
+                self,
+                &format!("SELECT * WHERE ({text})"),
+                Some(rows_per_block),
+            )?
+        } else {
+            RecordExpressionType::PossibleRowPredicate
         };
-        if let Some(text) = nonempty(request.spw.as_deref()) {
-            let spw = self.resolve_spw_selector(text)?;
-            table
-                .spw
-                .extend(spw.spw_ids().iter().map(|&value| value as i32));
-            table
-                .spwdd
-                .extend(spw.data_description_ids().iter().map(|&value| value as i32));
-            table.channel.extend(
-                spw.channel_list()
-                    .iter()
-                    .map(|row| [row.spw_id as i32, row.start, row.stop, row.step.max(1)]),
-            );
+        let taql_is_row_predicate = taql_type == RecordExpressionType::PossibleRowPredicate;
+        if (taql_type == RecordExpressionType::NonBoolean && rows.has_text_selection())
+            || (!taql_is_row_predicate && rows.timerange.is_some())
+        {
+            return Err(MsError::InvalidInput(
+                "TaQL expression cannot be combined with the other row selectors".into(),
+            ));
         }
+        rows.msselect = taql;
+        let compiled =
+            rows.compile_with_row_grammar(self, RowGrammar::Transform, Some(rows_per_block))?;
+        indices.state.clone_from(&compiled.state_ids);
+        indices.observation.clear();
+        if let Some(text) = nonempty(request.observation.as_deref()) {
+            indices.observation = observation_indices(text, self.observation()?.row_count())?;
+        }
+        Ok(ParsedMsToolSelection {
+            compiled,
+            rows_per_block,
+            taql_is_row_predicate,
+        })
+    }
+}
+
+impl MsSelectionIndices {
+    fn update_antenna_field_and_spw(
+        &mut self,
+        ms: &MeasurementSet,
+        request: &MsSelection,
+    ) -> MsResult<()> {
         if let Some(text) = nonempty(request.antenna.as_deref()) {
+            self.antenna1.clear();
+            self.antenna2.clear();
+            self.baselines = Some(Vec::new());
             let AntennaSelectionIndices {
                 first,
                 second,
                 baselines,
-            } = self.antenna_selection_indices(text)?;
-            table.antenna1 = first;
-            table.antenna2 = second;
-            table.baselines = Some(baselines);
+            } = ms.antenna_selection_indices(text)?;
+            self.antenna1 = first;
+            self.antenna2 = second;
+            self.baselines = Some(baselines);
         }
-        if let Some(text) = nonempty(request.scan.as_deref()) {
-            table.scan = scan_indices(text, rows_per_block)?;
+        if let Some(text) = nonempty(request.field.as_deref()) {
+            self.field.clear();
+            self.field = ms.resolve_field_selector(text)?;
+            if self.field.is_empty() {
+                return Err(MsError::InvalidInput(format!(
+                    "field selector {text:?} did not match any existing fields"
+                )));
+            }
         }
-        if let Some(text) = nonempty(request.observation.as_deref()) {
-            table.observation = observation_indices(text, self.observation()?.row_count())?;
+        if let Some(text) = nonempty(request.spw.as_deref()) {
+            self.spw.clear();
+            let spw = ms.resolve_spw_selector(text)?;
+            self.spw = spw.spw_ids().iter().map(|&value| value as i32).collect();
+            self.spwdd = spw
+                .data_description_ids()
+                .iter()
+                .map(|&value| value as i32)
+                .collect();
+            self.channel = spw
+                .channel_list()
+                .iter()
+                .map(|row| [row.spw_id as i32, row.start, row.stop, row.step.max(1)])
+                .collect();
         }
-        Ok(ParsedMsToolSelection {
-            indices: table,
-            compiled,
-            rows_per_block,
-        })
+        Ok(())
     }
 }
 
@@ -253,9 +278,41 @@ fn polarization_indices(ms: &MeasurementSet, text: &str) -> MsResult<Vec<i32>> {
             ))
         })
         .collect::<MsResult<Vec<_>>>()?;
-    for term in text.split(';').filter(|term| !term.trim().is_empty()) {
-        let (window, correlation) = term.split_once(':').unwrap_or(("*", term));
-        let codes = super::parser::parse_correlation_selector(correlation)?;
+    for term in text
+        .split(';')
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+    {
+        let fields = term
+            .split(':')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let (window, correlation) = match fields.as_slice() {
+            [correlation] => ("*", *correlation),
+            [window, correlation] => (*window, *correlation),
+            _ => {
+                return Err(MsError::InvalidInput(format!(
+                    "invalid polarization term {term:?}"
+                )));
+            }
+        };
+        let codes = correlation
+            .split(',')
+            .map(str::trim)
+            .filter(|code| !code.is_empty())
+            .map(|code| {
+                StokesType::from_name(code)
+                    .filter(|stokes| *stokes != StokesType::Undefined)
+                    .map(StokesType::code)
+                    .ok_or_else(|| MsError::InvalidInput(format!("invalid polarization {code:?}")))
+            })
+            .collect::<MsResult<Vec<_>>>()?;
+        if codes.is_empty() {
+            return Err(MsError::InvalidInput(
+                "polarization selector was empty".into(),
+            ));
+        }
         let spectral_windows = ms.resolve_spw_selector(window)?;
         let mut matches = Vec::new();
         for pol_id in 0..polarization.row_count() {

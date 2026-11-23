@@ -92,8 +92,8 @@ def test_ms_selection_to_index_preserves_input_forms_without_attachment(native_d
     same_record(results[0], results[1])
 
 
-def test_ms_selection_indices_report_independent_polarization_and_spw_lists(tmp_path, measures):
-    casa = pinned_casa()
+@pytest.fixture
+def two_spws_dataset(tmp_path, measures):
     dataset = tmp_path / "two-spws.ms"
     simulator = tools.simulator()
     assert simulator.open(str(dataset))
@@ -105,10 +105,14 @@ def test_ms_selection_indices_report_independent_polarization_and_spw_lists(tmp_
     assert simulator.observe("F", "L", starttime="0s", stoptime="30s")
     assert simulator.observe("F", "H", starttime="30s", stoptime="60s")
     assert simulator.done()
+    return str(dataset)
 
+
+def test_ms_selection_indices_report_independent_polarization_and_spw_lists(two_spws_dataset):
+    casa = pinned_casa()
     for api in (casa, tools):
         ms = api.ms()
-        assert ms.open(str(dataset))
+        assert ms.open(two_spws_dataset)
         assert ms.msselect({"spw": "0:0~2", "polarization": "1:RR"}, onlyparse=True)
         parsed = ms.msselectedindices()
         np.testing.assert_array_equal(parsed["poldd"], np.array([1], dtype=np.int64), strict=True)
@@ -118,6 +122,78 @@ def test_ms_selection_indices_report_independent_polarization_and_spw_lists(tmp_
         assert not ms.msselect({"spw": "0:0~2", "polarization": "1:RR"})
         assert ms.nrow(True) == 0
         same_record(ms.msselectedindices(), parsed)
+        assert ms.done()
+
+
+def test_ms_selection_chain_keeps_omitted_clause_indices(two_spws_dataset):
+    casa = pinned_casa()
+    results = []
+    for api in (casa, tools):
+        ms = api.ms()
+        assert ms.open(two_spws_dataset)
+        assert ms.msselect({"polarization": "RR", "field": "0", "baseline": "A1&A3"})
+        initial = ms.msselectedindices()
+        assert ms.msselect({"spw": "0:0~2", "scan": "1", "observation": "0"}, onlyparse=True)
+        assert not ms.msselect({})
+        assert ms.msselect({"taql": "FIELD_ID == 0"})
+        indices = ms.msselectedindices()
+        for key in ("antenna1", "antenna2", "baselines", "field", "poldd"):
+            np.testing.assert_array_equal(indices[key], initial[key], strict=True)
+        np.testing.assert_array_equal(indices["poldd"], np.array([0, 1], dtype=np.int64))
+        np.testing.assert_array_equal(indices["spwdd"], np.array([0], dtype=np.int64))
+        np.testing.assert_array_equal(indices["dd"], np.array([0], dtype=np.int64))
+        assert all(indices[key].size == 0 for key in ("scan", "stateid", "observationid"))
+
+        count = ms.nrow(True)
+        assert not ms.msselect({"field": "no_such_field"})
+        with pytest.raises(RuntimeError):
+            ms.msselectedindices()
+        assert ms.msselect({"taql": "FIELD_ID == 0"}, onlyparse=True)
+        recovered = ms.msselectedindices()
+        assert recovered["field"].size == 0
+        np.testing.assert_array_equal(recovered["poldd"], indices["poldd"], strict=True)
+        assert ms.nrow(True) == count
+        assert ms.reset()
+        assert ms.msselectedindices()["dd"].size == 0
+        assert ms.done()
+        results.append((indices, recovered))
+    for native, reference in zip(results[1], results[0], strict=True):
+        same_record(native, reference)
+
+
+def test_ms_selection_time_defaults_and_selector_grammars(two_spws_dataset):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        ms = api.ms()
+        assert ms.open(two_spws_dataset)
+        assert ms.msselect({"polarization": "1:RR", "time": "*"})
+        assert ms.nrow(True) == 10
+        assert ms.reset()
+        for selector in ({"array": "<1"}, {"array": ">=0&<=1"}, {"uvdist": "1000m:20%"}):
+            assert ms.msselect(selector, onlyparse=True)
+        assert not ms.msselect({"array": ">0"})
+        assert ms.nrow(True) == 0
+        assert ms.reset()
+
+        for token, expected in ((":RR", [0, 1]), ("RR:", [0, 1]), ("0::RR", [0])):
+            indices = ms.msseltoindex(two_spws_dataset, polarization=token)
+            np.testing.assert_array_equal(indices["poldd"], np.array(expected, dtype=np.int64))
+        with pytest.raises(RuntimeError):
+            ms.msseltoindex(two_spws_dataset, polarization='"RR"')
+        assert ms.msselect({"polarization": "0::RR"})
+        assert ms.nrow(True) == 30
+        assert ms.reset()
+
+        # The first logical row satisfies the left branch. Evaluating the
+        # rest of MAIN in order to choose time defaults instead raises.
+        time = "1995/04/13/09:18:58.5+0:0:1.7"
+        taql = ("rownumber() <= 1 || "
+                "datetime(iif(abs(DATA[1,1]) >= 0, 'not-a-date', '2020/01/01')) "
+                "== datetime('2020/01/01')")
+        same_record(ms.msseltoindex(two_spws_dataset, time=time, taql=taql),
+                    ms.msseltoindex(two_spws_dataset, time=time))
+        assert ms.msselect({"time": time, "taql": taql}, onlyparse=True)
+        assert ms.nrow(True) == 60
         assert ms.done()
 
 
@@ -173,19 +249,38 @@ def test_ms_index_queries_parse_taql_without_reading_visibility_cells(native_dat
         ms = api.ms()
         empty = ms.msseltoindex(dataset)
         same_record(ms.msseltoindex(dataset, taql=expression), empty)
-        same_record(ms.msseltoindex(dataset, taql="TIME"), empty)
-        for invalid in ("noSuchColumn > 0", "noSuchFunction(TIME) > 0"):
+        for bare in ("TIME", "ANTENNA1", "FLAG", "DATA[abs(ANTENNA1),1]", "DATA[square(1),1]"):
+            same_record(ms.msseltoindex(dataset, taql=bare), empty)
+        invalid_expressions = (
+            "noSuchColumn > 0", "noSuchFunction(TIME) > 0", "TIME + 'abc' > 0",
+            "TIME[1]>0", "abs('abc') > 0", "!TIME", "FIELD_ID in ['a']",
+            "FIELD_ID==0 && 1", "DATA[TIME,1] > 0", "TIME IN []",
+        )
+        for invalid in invalid_expressions:
             with pytest.raises(RuntimeError):
                 ms.msseltoindex(dataset, taql=invalid)
 
         assert ms.open(dataset)
         count = ms.nrow(True)
+        for invalid in invalid_expressions:
+            assert not ms.msselect({"taql": invalid}, onlyparse=True)
+            assert not ms.msselect({"taql": invalid})
+            assert ms.nrow(True) == count
+            with pytest.raises(RuntimeError):
+                ms.msselectedindices()
         assert ms.msselect({"taql": expression}, onlyparse=True)
         assert ms.nrow(True) == count
-        assert ms.msselect({"taql": "TIME"}, onlyparse=True)
-        assert not ms.msselect({"taql": "TIME"})
+        for bare in ("TIME", "ANTENNA1", "FLAG"):
+            assert ms.msselect({"taql": bare}, onlyparse=True)
+            assert not ms.msselect({"taql": bare})
+            assert ms.nrow(True) == count
+            assert ms.msselectedindices()["field"].size == 0
+        with pytest.raises(RuntimeError):
+            ms.msseltoindex(dataset, field="0", taql="TIME")
+        assert not ms.msselect({"field": "0", "taql": "TIME"}, onlyparse=True)
+        assert ms.msselect({"field": "0", "taql": "FLAG"}, onlyparse=True)
+        assert not ms.msselect({"field": "0", "taql": "FLAG"})
         assert ms.nrow(True) == count
-        assert ms.msselectedindices()["field"].size == 0
         if api is tools:
             assert not ms.msselect({"taql": expression})
             assert ms.nrow(True) == count
