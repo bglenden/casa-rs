@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Row numbers in the root of a reference table chain.
+//! Row locations through reference and concatenation descriptors.
+
+use std::path::PathBuf;
+
+use crate::storage::table_control::{TableDatResult, read_table_dat_dispatch};
+use crate::storage::{CompositeStorage, TABLE_CONTROL_FILE};
+use crate::table_path::add_directory_for_link;
 
 use super::{Table, TableError};
 
@@ -45,5 +51,50 @@ impl Table {
                 _ => return Ok(rows),
             }
         }
+    }
+
+    /// Find the physical table directory containing a logical row. This
+    /// follows reference row maps and concatenated member boundaries without
+    /// loading any cells. A memory table returns `None`.
+    ///
+    /// # Errors
+    /// The view row is invalid or a source descriptor is unreadable or cyclic.
+    pub fn physical_row_path(&self, row: usize) -> Result<Option<PathBuf>, TableError> {
+        self.require_row_index_without_loading_rows(row)?;
+        let Some(mut path) = self.source_path.clone() else {
+            return Ok(None);
+        };
+        let mut row = row;
+        for _ in 0..128 {
+            match read_table_dat_dispatch(&path.join(TABLE_CONTROL_FILE))? {
+                TableDatResult::Plain(_) => return Ok(Some(path)),
+                TableDatResult::Ref(reference) => {
+                    row = reference
+                        .row_map
+                        .get(row)
+                        .and_then(|&index| usize::try_from(index).ok())
+                        .ok_or_else(|| TableError::Storage("invalid reference row".into()))?;
+                    path = add_directory_for_link(&reference.parent_relative_path, &path);
+                }
+                TableDatResult::Concat(concat) => {
+                    let mut found = None;
+                    for link in &concat.table_paths {
+                        let member = add_directory_for_link(link, &path);
+                        let count = CompositeStorage.load_metadata_only(&member)?.row_count;
+                        if row < count {
+                            found = Some(member);
+                            break;
+                        }
+                        row -= count;
+                    }
+                    path = found.ok_or_else(|| {
+                        TableError::Storage("invalid concatenated table row".into())
+                    })?;
+                }
+            }
+        }
+        Err(TableError::Storage(
+            "table row source chain is too deep".into(),
+        ))
     }
 }

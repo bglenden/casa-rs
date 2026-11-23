@@ -10836,6 +10836,17 @@ changes. In CASA, calling `scannumbers()` before selecting scans 3–5
 in `ngc5921_ut.ms` can keep returning all seven scans even though
 `nrows()` reports the selected row count (#1030).
 
+## Concatenated FIELD tables can hide their ephemerides
+
+Create a Multi-MS with two members carrying FIELD ephemerides and list
+FIELD among the tables to concatenate. CASA 6.7.6.14 can search a
+transient, nonexistent table directory for both members' ephemerides.
+`ms.getfielddirmeas()` then returns an empty direction and
+`ms.metadata().phasecenter()` raises an error. casa-rs finds each
+ephemeris beside its physical FIELD table. Each combined direction
+matches CASA's direction for the corresponding member opened on its
+own (#1030).
+
 ## An unobserved antenna name can return every antenna station
 
 With CASA 6.7.6.14, attach a MeasurementSet whose ANTENNA table includes

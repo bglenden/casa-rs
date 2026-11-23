@@ -10,12 +10,13 @@ use casa_tables::{Table, TableOptions, TablePartNames};
 use pyo3::prelude::*;
 use tempfile::TempDir;
 
+use super::attachment_info::PlainRows;
 use super::{AttachedMs, PyMsTool, runtime_error};
 use crate::tools::msmetadata::PyMsMetadata;
 
-#[derive(Default)]
 struct State {
     selected: Option<Arc<[usize]>>,
+    plain_rows: Option<PlainRows>,
     view: Option<Arc<MetadataView>>,
 }
 
@@ -23,6 +24,7 @@ struct State {
 pub(in crate::tools) struct MetadataLink {
     path: PathBuf,
     name: PathBuf,
+    original_rows: usize,
     state: Mutex<State>,
 }
 
@@ -45,12 +47,17 @@ impl MetadataSnapshot {
 }
 
 impl MetadataLink {
-    pub(super) fn new(path: PathBuf, name: PathBuf, selected: Option<Arc<[usize]>>) -> Self {
+    fn new(attached: &AttachedMs) -> Self {
         Self {
-            path,
-            name,
+            path: attached.path.clone(),
+            name: attached.name.clone(),
+            original_rows: attached.original_rows,
             state: Mutex::new(State {
-                selected,
+                selected: attached.selected_rows.as_deref().map(Arc::from),
+                plain_rows: attached
+                    .plain_rows
+                    .as_ref()
+                    .map(|_| PlainRows::new(&attached.path)),
                 view: None,
             }),
         }
@@ -58,6 +65,29 @@ impl MetadataLink {
 
     pub(in crate::tools) fn name(&self) -> &Path {
         &self.name
+    }
+
+    pub(in crate::tools) fn row_count(&self) -> MsResult<usize> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        if let Some(rows) = &state.selected {
+            return Ok(rows.len());
+        }
+        match &state.plain_rows {
+            Some(rows) => Ok(rows.count(&self.path)?),
+            None => Ok(self.original_rows),
+        }
+    }
+
+    pub(in crate::tools) fn spectral_window_count(&self) -> MsResult<usize> {
+        // A MAIN row selection leaves its linked spectral-window table intact.
+        let main = Table::open(TableOptions::new(&self.path))?;
+        let paths = MeasurementSet::linked_subtable_paths(&main, SubtableId::SpectralWindow)?;
+        paths.into_iter().try_fold(0, |count, path| {
+            Ok(count + Table::open(TableOptions::new(path))?.row_count())
+        })
     }
 
     pub(super) fn set_selected(&self, selected: Option<Arc<[usize]>>) -> MsResult<()> {
@@ -189,13 +219,10 @@ impl AttachedMs {
     }
 
     fn metadata_link(&self) -> Arc<MetadataLink> {
-        Arc::clone(self.metadata.get_or_init(|| {
-            Arc::new(MetadataLink::new(
-                self.path.clone(),
-                self.name.clone(),
-                self.selected_rows.as_deref().map(Arc::from),
-            ))
-        }))
+        Arc::clone(
+            self.metadata
+                .get_or_init(|| Arc::new(MetadataLink::new(self))),
+        )
     }
 }
 

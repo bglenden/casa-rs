@@ -119,6 +119,45 @@ def test_ms_metadata_selected_reference_preserves_field_ephemeris(ephemeris_data
         assert actual[axis]["value"] == pytest.approx(expected[axis]["value"], abs=2e-11)
 
 
+def test_ms_metadata_resolves_each_multi_ms_field_ephemeris(ephemeris_dataset, tmp_path):
+    first, mjd = ephemeris_dataset
+    second = tmp_path / "second.ms"
+    shutil.copytree(first, second)
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(second / "FIELD" / "EPHEM0_TEST.tab"), nomodify=False)
+    assert table.putcol("RA", table.getcol("RA") + 0.4)
+    assert table.done()
+
+    epoch = {"type": "epoch", "refer": "UTC", "m0": {"value": mjd + 0.75, "unit": "d"}}
+    expected = []
+    for member in (first, second):
+        standalone = casa.ms()
+        assert standalone.open(str(member))
+        metadata = standalone.metadata()
+        expected.append(metadata.phasecenter(0, epoch))
+        assert metadata.done() and standalone.done()
+    assert abs(expected[1]["m0"]["value"] - expected[0]["m0"]["value"]) > 0.005
+
+    combined = tmp_path / "with-ephemerides.mms"
+    creator = casa.ms()
+    assert creator.createmultims(
+        str(combined), [str(first), str(second)],
+        ["ANTENNA", "DATA_DESCRIPTION", "FEED", "FIELD"],
+    )
+    assert creator.done()
+    native = tools.ms()
+    assert native.open(str(combined))
+    metadata = native.metadata()
+    for field, reference in enumerate(expected):
+        actual = metadata.phasecenter(field, epoch)
+        assert (actual["type"], actual["refer"]) == (reference["type"], reference["refer"])
+        for axis in ("m0", "m1"):
+            assert actual[axis]["unit"] == reference[axis]["unit"]
+            assert actual[axis]["value"] == pytest.approx(reference[axis]["value"], abs=2e-11)
+    assert metadata.done() and native.done()
+
+
 def test_ms_metadata_without_cache_reads_published_field_changes(native_dataset):
     casa = pinned_casa()
     table = casa.table()

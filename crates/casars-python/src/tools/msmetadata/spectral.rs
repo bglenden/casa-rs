@@ -8,7 +8,7 @@ use casa_types::{ArrayValue, ScalarValue, Value};
 use numpy::IntoPyArray;
 use pyo3::prelude::*;
 
-use super::PyMsMetadata;
+use super::{PyMsMetadata, Source};
 use crate::convert::value::CasaValue;
 
 pub(super) fn spw_row(spw: &MsSpectralWindow<'_>, id: i64) -> MsResult<usize> {
@@ -145,14 +145,18 @@ fn channel_resolution(
 impl PyMsMetadata {
     #[pyo3(signature = (includewvr = true), text_signature = "($self, includewvr=True)")]
     fn nspw(&self, py: Python<'_>, includewvr: bool) -> PyResult<usize> {
-        self.with_ms(py, |ms| {
-            let windows = ms.spectral_window()?;
-            let total = windows.row_count();
-            if includewvr {
-                Ok(total)
-            } else {
-                Ok(total - water_vapor_windows(&windows)?.len())
+        self.with_attachment(py, |attached| {
+            if includewvr && let Source::Linked(link) = &attached.source {
+                return link.spectral_window_count();
             }
+            let snapshot = attached.snapshot()?;
+            let windows = snapshot.ms.spectral_window()?;
+            Ok(windows.row_count()
+                - if includewvr {
+                    0
+                } else {
+                    water_vapor_windows(&windows)?.len()
+                })
         })
     }
 
