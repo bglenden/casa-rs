@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use casa_ms::MeasurementSet;
-use casa_tables::{Table, TableOptions, TableWriteLock, table_cache_name};
+use casa_tables::{Table, TableOptions, TablePartNames, TableWriteLock, table_cache_name};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBoolMethods};
@@ -41,7 +41,7 @@ struct AttachedMs {
     writable: bool,
     original_rows: usize,
     plain_rows: Option<attachment_info::PlainRows>,
-    part_names: Vec<PathBuf>,
+    part_names: TablePartNames,
     is_multi_ms: bool,
     sources: Vec<PathBuf>,
     selected_rows: Option<Vec<usize>>,
@@ -57,13 +57,9 @@ impl AttachedMs {
         let main = Table::open(TableOptions::new(&path)).map_err(runtime_error)?;
         let original_rows = main.row_count();
         let is_multi_ms = main.info().sub_type == "CONCATENATED";
-        let mut part_names = Table::immediate_part_names(&path).map_err(runtime_error)?;
-        let plain_rows = if part_names.as_slice() == std::slice::from_ref(&path) {
-            part_names[0] = name.clone();
-            Some(attachment_info::PlainRows::new(&path))
-        } else {
-            None
-        };
+        let part_names = Table::immediate_part_names(&path, &name).map_err(runtime_error)?;
+        let plain_rows = matches!(part_names, TablePartNames::Plain(_))
+            .then(|| attachment_info::PlainRows::new(&path));
         let mut attached = Self {
             name,
             path,

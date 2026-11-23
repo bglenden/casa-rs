@@ -10890,3 +10890,13 @@ to open `ANTENNA/table.f0` through the new target and returns `False`.
 casa-rs keeps the public link name and resolves reads and writes against
 the MS captured at open, so changing the link cannot redirect an
 attached operation (#1030).
+
+## An MS opened read-only can start writing through another handle
+
+In CASA 6.7.6.14, open an MS with `ms.open(path, nomodify=True)` and
+call `hanningsmooth("data")`. It initially returns `False` and asks for
+`nomodify=False`. Open and close the same path for update with a second
+`ms` or `table` tool. The first handle now reports `iswritable() == True`
+and `hanningsmooth("data")` writes to MAIN, even after the writer closed.
+casa-rs retains the requested access mode per handle. A read-only handle
+continues to report `False` and refuses writes (#1030).

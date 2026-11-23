@@ -10,7 +10,7 @@ use std::path::Path;
 #[cfg(unix)]
 use std::path::PathBuf;
 
-use casa_tables::Table;
+use casa_tables::{Table, TablePartNames};
 use pyo3::prelude::*;
 
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -162,7 +162,17 @@ impl PyMsTool {
     fn getreferencedtables(&self, py: Python<'_>) -> PyResult<Vec<String>> {
         self.attachment_info(py, |attached| {
             Ok(attached.map_or_else(Vec::new, |ms| {
-                ms.part_names
+                let parts = match &ms.part_names {
+                    TablePartNames::Plain(path) | TablePartNames::Reference(path) => {
+                        std::slice::from_ref(path)
+                    }
+                    // A selection is a reference over the entire concat table.
+                    TablePartNames::Concatenation(_) if ms.selected_rows.is_some() => {
+                        std::slice::from_ref(&ms.name)
+                    }
+                    TablePartNames::Concatenation(parts) => parts.as_slice(),
+                };
+                parts
                     .iter()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect()

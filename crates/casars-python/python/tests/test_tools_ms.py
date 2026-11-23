@@ -47,6 +47,11 @@ def test_ms_attachment_reports_logical_name_and_selected_rows(native_dataset, tm
         assert ms.nrow() == len(first)
         assert ms.nrow(selected=True) == selected_rows
         assert ms.getreferencedtables() == [str(alias)]
+        assert not ms.msselect({"field": "99"}, onlyparse=True)
+        assert not ms.msselect({"field": "99"})
+        assert ms.nrow(selected=True) == selected_rows
+        assert not ms.msselect({"field": "0", "taql": "ANTENNA1 < 0"})
+        assert ms.nrow(selected=True) == 0
         assert ms.done()
         assert ms.name() == "none"
 
@@ -98,8 +103,22 @@ def test_ms_selection_stays_on_the_attached_symlink_target(native_dataset, tmp_p
     assert ms.done()
 
 
+def test_ms_read_only_open_cannot_be_upgraded_by_another_handle(native_dataset):
+    for factory in (tools.ms, tools.table):
+        reader, writer = tools.ms(), factory()
+        assert reader.open(str(native_dataset), nomodify=True)
+        assert writer.open(str(native_dataset), nomodify=False)
+        assert reader.iswritable() is False
+        assert writer.done()
+        assert reader.iswritable() is False
+        assert reader.uvsub() is False
+        assert reader.done()
+
+
 def test_ms_reports_casa_and_native_reference_tables(native_dataset, tmp_path):
     casa = pinned_casa()
+    alias = tmp_path / "linked-directory"
+    alias.symlink_to(".", target_is_directory=True)
     for name, maker in (("casa", casa), ("native", tools)):
         table = maker.table()
         view_path = tmp_path / f"{name}.ms"
@@ -110,12 +129,16 @@ def test_ms_reports_casa_and_native_reference_tables(native_dataset, tmp_path):
         assert table.done()
 
         for module in (casa, tools):
+            public_name = alias / view_path.name
             ms = module.ms()
-            assert ms.open(str(view_path))
-            assert ms.name() == str(view_path)
-            assert ms.getreferencedtables() == [str(native_dataset)]
+            assert ms.open(str(public_name))
+            assert ms.name() == str(public_name)
+            parent_name = str(alias / native_dataset.name)
+            assert ms.getreferencedtables() == [parent_name]
             assert ms.nrow() == ms.nrow(selected=True) == 3
             assert ms.ismultims() is False
+            assert ms.msselect({"taql": "ANTENNA1 >= 0"})
+            assert ms.getreferencedtables() == [parent_name]
             assert ms.done()
 
 
@@ -136,20 +159,23 @@ def test_ms_reads_ordered_casa_multi_ms_parts(native_dataset, tmp_path):
     expected_rows = 2 * before.nrows()
     assert before.done()
 
-    assert tool.open(str(output))
-    references = tool.getreferencedtables()
-    assert len(references) == len(parts)
-    assert references[0].endswith("part-b.ms")
-    assert references[1].endswith("part-a.ms")
-    assert tool.nrow() == expected_rows
-    assert tool.ismultims() is True
-    assert tool.done()
-
-    native = tools.ms()
-    assert native.open(str(output))
-    assert native.name() == str(output)
-    assert native.getreferencedtables() == references
-    assert native.nrow() == native.nrow(selected=True) == expected_rows
-    assert native.ismultims() is True
-    assert native.iswritable() is False
-    assert native.done()
+    alias = tmp_path / "linked-directory"
+    alias.symlink_to(".", target_is_directory=True)
+    public_name = alias / output.name
+    references = [str(public_name / "SUBMSS" / name) for name in ("part-b.ms", "part-a.ms")]
+    for module in (casa, tools):
+        ms = module.ms()
+        assert ms.open(str(public_name))
+        assert ms.name() == str(public_name)
+        assert ms.getreferencedtables() == references
+        assert ms.nrow() == ms.nrow(selected=True) == expected_rows
+        assert ms.ismultims() is True
+        assert ms.iswritable() is False
+        selection = {"baseline": "A1&A2"}
+        assert ms.msselect(selection, onlyparse=True)
+        assert ms.getreferencedtables() == references
+        assert ms.msselect(selection)
+        assert 0 < ms.nrow(selected=True) < expected_rows == ms.nrow()
+        assert ms.getreferencedtables() == [str(public_name)]
+        assert ms.ismultims() is True
+        assert ms.done()

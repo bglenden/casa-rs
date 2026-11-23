@@ -82,25 +82,39 @@ fn immediate_names(path: &Path, parts: &[String]) -> Result<Vec<PathBuf>, TableE
         .collect()
 }
 
+/// A persisted table's immediate parts, as reported by casacore.
+pub enum TablePartNames {
+    /// A plain table reports its own name.
+    Plain(PathBuf),
+    /// A reference table reports its directly referenced parent.
+    Reference(PathBuf),
+    /// A concatenation reports its constituent tables in descriptor order.
+    Concatenation(Vec<PathBuf>),
+}
+
 impl Table {
     /// Read the direct part names reported by casacore's `Table::getPartNames`.
     ///
-    /// A plain table contributes its own absolute name. A reference table
-    /// contributes the table it references and a concatenation contributes its
-    /// parts in descriptor order. Symlinks are retained in the names.
+    /// Read the descriptor at `path` and resolve relative links against the
+    /// public `name`. This lets an already captured path remain authoritative
+    /// for I/O while preserving symlinks in the reported names.
     ///
     /// # Errors
     ///
     /// The control file cannot be read or its descriptor is malformed.
-    pub fn immediate_part_names(path: &Path) -> Result<Vec<PathBuf>, TableError> {
-        let path = table_cache_name(path)?;
+    pub fn immediate_part_names(path: &Path, name: &Path) -> Result<TablePartNames, TableError> {
         let control = read_table_dat_dispatch(&path.join(crate::storage::TABLE_CONTROL_FILE))?;
+        let name = table_cache_name(name)?;
         match control {
-            TableDatResult::Plain(_) => Ok(vec![path]),
-            TableDatResult::Ref(reference) => {
-                immediate_names(&path, &[reference.parent_relative_path])
+            TableDatResult::Plain(_) => Ok(TablePartNames::Plain(name)),
+            TableDatResult::Ref(reference) => table_cache_name(&add_directory_for_link(
+                &reference.parent_relative_path,
+                &name,
+            ))
+            .map(TablePartNames::Reference),
+            TableDatResult::Concat(concat) => {
+                immediate_names(&name, &concat.table_paths).map(TablePartNames::Concatenation)
             }
-            TableDatResult::Concat(concat) => immediate_names(&path, &concat.table_paths),
         }
     }
 
