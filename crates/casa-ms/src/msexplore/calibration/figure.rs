@@ -401,7 +401,7 @@ fn right_side(locations: &[&str], index: usize) -> bool {
         == Some(&"right")
 }
 
-pub(super) fn shows_flagged(symbols: Option<&ParameterValue>, index: usize) -> bool {
+pub(in crate::msexplore) fn shows_flagged(symbols: Option<&ParameterValue>, index: usize) -> bool {
     let enabled = match symbols {
         Some(ParameterValue::Array(values)) => values.get(index),
         other => other,

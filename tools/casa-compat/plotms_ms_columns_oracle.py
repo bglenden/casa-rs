@@ -49,7 +49,7 @@ def rows(path):
     return [line.split() for line in path.read_text().splitlines() if not line.startswith("#")]
 
 
-def compare_figures(root, native, controls, expected):
+def compare_figure(root, native, controls, expected, labels):
     from casars import _plot_document
 
     capture = []
@@ -57,26 +57,50 @@ def compare_figures(root, native, controls, expected):
 
     def record(*args, **kwargs):
         figure, axis = render(*args, **kwargs)
-        capture.append((axis.get_xlabel(), axis.get_ylabel(), axis.lines[0].get_xydata()))
+        capture.append((axis.get_title(), axis.get_xlabel(), axis.get_ylabel(), axis.lines[0].get_xydata()))
         return figure, axis
 
-    outputs = [root / engine / "columns.png" for engine in ("casa", "native")]
+    outputs = [root / engine / expected.name.replace(".casa.txt", ".png") for engine in ("casa", "native")]
     for output in outputs:
-        output.parent.mkdir()
+        output.parent.mkdir(exist_ok=True)
     figure = dict(controls, expformat="png", width=500, height=360, dpi=100)
     assert reference(**figure, plotfile=str(outputs[0])) is None
     with patch.object(_plot_document, "render_document", record):
         assert native(**figure, plotfile=str(outputs[1])) is None
-    [(xlabel, ylabel, points)] = capture
-    # CASA's amplitude axis displays the visibility magnitude without a
-    # unit suffix. The phase coordinates and label both use degrees.
-    assert xlabel == "Amplitude" and ylabel == "Phase (deg)", (xlabel, ylabel)
-    coordinates = np.array([point[:2] for point in expected], dtype=float)
+    [(title, xlabel, ylabel, points)] = capture
+    assert (title, xlabel, ylabel) == labels, (title, xlabel, ylabel)
+    coordinates = np.array([point[:2] for point in rows(expected)], dtype=float)
     np.testing.assert_allclose(points, coordinates, rtol=1.2e-5, atol=1e-7)
     for output in outputs:
         with Image.open(output) as image:
             assert image.size == (500, 360), (output, image.size)
-    print(f"PNG: {len(points)} rendered coordinates, matching names and dimensions", flush=True)
+    print(f"{outputs[0].name}: {len(points)} matching rendered coordinates, labels and dimensions", flush=True)
+
+
+def pending_cases(root, native, vis):
+    from casars.tasks import TaskParameterError
+
+    cases = (
+        ("scalar-difference", dict(xdatacolumn="data-model_scalar"), 12, "derived data columns"),
+        ("visible-flags", dict(customflaggedsymbol=True), 18, "displaying flagged points"),
+    )
+    for name, options, point_count, diagnostic in cases:
+        controls = request(vis) | options | dict(expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == point_count
+        if name == "scalar-difference":
+            assert all(float(point[0]) < 0 for point in selected)
+        else:
+            assert {sample[2] for sample in selected} == {"1", "2", "3"}
+        try:
+            native(**controls, plotfile=str(actual))
+        except TaskParameterError as error:
+            assert diagnostic in str(error) and "#1032" in str(error)
+        else:
+            raise AssertionError(f"An unsupported {name} plot was exported")
+        assert not actual.exists()
 
 
 def compare(root, vis, native):
@@ -103,7 +127,12 @@ def compare(root, vis, native):
         count = compare_text(actual, expected)
         print(f"{name}: {count} points, CASA {casa_seconds:.3f}s, casa-rs {native_seconds:.3f}s",
               flush=True)
-    compare_figures(root, native, base, rows(root / "data-and-corrected.casa.txt"))
+    compare_figure(root, native, base, root / "data-and-corrected.casa.txt",
+                   ("Phase:corrected vs. Amp", "Amp", "Phase:corrected (degrees)"))
+    real = base | cases["same-axis-distinct-columns"] | dict(xlabel="Model real part")
+    compare_figure(root, native, real, root / "same-axis-distinct-columns.casa.txt",
+                   ("Real:corrected vs. Real:model", "Model real part", "Real:corrected"))
+    pending_cases(root, native, vis)
 
 
 def main():

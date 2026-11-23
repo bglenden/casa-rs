@@ -220,6 +220,30 @@ fn run_task(
         let atmosphere = super::calibration::atmosphere::Options::from_task(task)?;
         let visibility_document = calibration.is_some() || atmosphere.is_some();
         let options = options_from_plotms(task, visibility_document)?;
+        if calibration.is_none()
+            && let Some(x_column) = options.x_data_column
+        {
+            if [x_column, options.data_column].into_iter().any(|column| {
+                !matches!(
+                    column,
+                    MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+                )
+            }) {
+                return Err(TaskFailure::validation(
+                    "distinct MeasurementSet X and Y derived data columns are pending #1032",
+                ));
+            }
+            let symbols = task.value("customflaggedsymbol");
+            let ordinate_count = 1 + usize::from(options.y_axis2.is_some());
+            if (0..ordinate_count)
+                .any(|index| super::calibration::figure::shows_flagged(symbols, index))
+            {
+                return Err(TaskFailure::validation(
+                    "displaying flagged points with distinct MeasurementSet X and Y data columns is pending #1032",
+                )
+                .at("customflaggedsymbol"));
+            }
+        }
         if visibility_document || options.x_data_column.is_some() {
             return run_visibility_plot(task, options, payload, calibration, atmosphere);
         }
@@ -316,6 +340,10 @@ fn run_visibility_plot(
                 figure_file,
                 show,
                 &overlays,
+                options
+                    .x_data_column
+                    .filter(|_| calibrated.is_none())
+                    .map(|x_column| [x_column, options.data_column]),
             )?;
         }
         if let Some(path) = text_file {
