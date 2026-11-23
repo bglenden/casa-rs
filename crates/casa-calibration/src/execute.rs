@@ -4163,7 +4163,7 @@ enum TimeParameterFamily {
 impl TimeParameterFamily {
     fn from_subtype(subtype: &str) -> Option<Self> {
         match subtype {
-            "K Jones" | "Kcross Jones" => Some(Self::Delay),
+            "K Jones" | "KMBD Jones" | "Kcross Jones" => Some(Self::Delay),
             "KAntPos Jones" => Some(Self::Antpos),
             "EGainCurve" => Some(Self::GainCurve { power: false }),
             "EPowerCurve" => Some(Self::GainCurve { power: true }),
@@ -5104,7 +5104,7 @@ fn load_parameters(
             CalibrationParameterFamily::Float
                 if matches!(
                     table_plan.summary.table_subtype.as_str(),
-                    "K Jones" | "Kcross Jones"
+                    "K Jones" | "KMBD Jones" | "Kcross Jones"
                 ) =>
             {
                 let delays = read_fparam()?;

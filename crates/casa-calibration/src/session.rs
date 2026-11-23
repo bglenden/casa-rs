@@ -229,7 +229,7 @@ fn solve_open_dataset(
             let result = if let Some(settings) = tf {
                 crate::solve::solve_tf(measurement_set, &request, settings, mode, activity)
             } else {
-                solve_gain(measurement_set, &request, mode, activity)
+                solve_gain(measurement_set, &request, mode, activity, legacy_iterator)
             };
             result
                 .map(CalibrationSolveResult::Gain)

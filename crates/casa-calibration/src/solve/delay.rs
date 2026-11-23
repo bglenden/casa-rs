@@ -11,7 +11,7 @@ use casa_types::Complex32;
 
 use super::grouping::{
     DelaySpectrum, PriorCalibrationMode, SelectedSolveRow, SolveAccumulator, SolveGroupOptions,
-    build_solve_groups, correlation_types_for_ddid, selected_channels,
+    SolveInputRows, build_solve_groups, correlation_types_for_ddid, selected_channels,
 };
 use super::kernel::SolutionRow;
 use super::{
@@ -26,6 +26,7 @@ pub(super) fn solve(
     ms: &MeasurementSet,
     request: &GainSolveRequest,
     activity: Option<&mut ToolSolveActivity>,
+    legacy: bool,
 ) -> Result<SolvedGains, GainSolveError> {
     if matches!(request.refant, RefAntSelector::Unspecified) {
         return Err(delay_error("specify a reference antenna explicitly"));
@@ -58,7 +59,11 @@ pub(super) fn solve(
         context.preapplied_rows.as_ref(),
         &BTreeMap::new(),
         SolveGroupOptions {
-            input_rows: Default::default(),
+            input_rows: if legacy {
+                SolveInputRows::LegacyDelay
+            } else {
+                SolveInputRows::default()
+            },
             gain_type: request.gain_type,
             model_source: request.model_source,
             point_stokes: if request.model_source == GainSolveModelSource::PointSource {
@@ -131,6 +136,7 @@ pub(super) fn solve(
             context.refant_id,
             &windows,
             &mut transforms,
+            legacy,
         )?;
         rows.extend(context.available_antennas.iter().map(|&antenna| {
             let delays = if cross_hand {
@@ -254,6 +260,7 @@ fn group_delays(
     reference: i32,
     windows: &BTreeMap<i32, DelayWindow>,
     transforms: &mut BTreeMap<i32, DelayTransform>,
+    legacy: bool,
 ) -> Result<DelaySolutions, GainSolveError> {
     let mut buffers = BTreeMap::<_, Vec<DelaySpectrum<'_>>>::new();
     for spectrum in group.delay_spectra() {
@@ -270,6 +277,7 @@ fn group_delays(
             reference,
             mode,
             cross_hand,
+            legacy,
         );
     }
     let Some((&(dd, _, _), spectra)) = buffers.first_key_value() else {

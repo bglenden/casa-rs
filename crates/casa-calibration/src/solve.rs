@@ -59,6 +59,8 @@ pub enum GainType {
     T,
     /// Per-receptor delay in nanoseconds.
     K,
+    /// Multi-band K delay table.
+    KMbd,
     /// Shared cross-hand delay in nanoseconds.
     #[serde(rename = "KCROSS")]
     KCross,
@@ -75,6 +77,7 @@ impl GainType {
             Self::G => "G Jones",
             Self::T => "T Jones",
             Self::K => "K Jones",
+            Self::KMbd => "KMBD Jones",
             Self::KCross => "Kcross Jones",
             Self::KAntPos => "KAntPos Jones",
             Self::GSpline => "GSPLINE",
@@ -85,14 +88,14 @@ impl GainType {
     /// for both for T.
     pub(crate) fn polarizations(self) -> usize {
         match self {
-            Self::G | Self::K | Self::KCross | Self::GSpline => 2,
+            Self::G | Self::K | Self::KMbd | Self::KCross | Self::GSpline => 2,
             Self::KAntPos => 3,
             Self::T => 1,
         }
     }
 
     pub(crate) fn is_delay(self) -> bool {
-        matches!(self, Self::K | Self::KCross | Self::KAntPos)
+        matches!(self, Self::K | Self::KMbd | Self::KCross | Self::KAntPos)
     }
 }
 
@@ -546,11 +549,16 @@ pub(crate) fn solve_gain(
     request: &GainSolveRequest,
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
+    legacy_iterator: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
     if request.gain_type == GainType::GSpline {
         return gspline::solve(ms, request, GainSplineControls::default(), mode, None);
     }
-    let solved = solve_gain_rows(ms, request, activity)?;
+    let solved = if legacy_iterator && request.gain_type == GainType::KMbd {
+        delay::solve(ms, request, activity, true)?
+    } else {
+        solve_gain_rows(ms, request, activity)?
+    };
     write_gain_caltable(ms, request, &solved, mode)
 }
 
@@ -633,7 +641,7 @@ pub(crate) fn solve_gain_rows(
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<SolvedGains, GainSolveError> {
     if request.gain_type.is_delay() {
-        return delay::solve(ms, request, activity);
+        return delay::solve(ms, request, activity, false);
     }
     solve_gain_rows_with_settings(ms, request, activity, None, false).map(|(solved, _)| solved)
 }
