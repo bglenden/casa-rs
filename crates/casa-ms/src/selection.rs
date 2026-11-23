@@ -698,7 +698,15 @@ pub(crate) fn resolve_casa_row_indices(
     ms: &MeasurementSet,
     request: &MsSelection,
 ) -> MsResult<Vec<usize>> {
-    resolve_row_indices_with_grammar(ms, request, RowGrammar::Casa)
+    resolve_casa_selection_with_system_budget(ms, request)
+        .map(|selection| selection.row_indices().collect())
+}
+
+pub(crate) fn resolve_casa_selection_with_system_budget(
+    ms: &MeasurementSet,
+    request: &MsSelection,
+) -> MsResult<ResolvedMsSelection> {
+    resolve_selection_with_grammar(ms, request, RowGrammar::Casa)
 }
 
 pub(crate) fn compile_flagdata_agent_time(

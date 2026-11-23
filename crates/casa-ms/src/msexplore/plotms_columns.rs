@@ -7,6 +7,30 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use super::{MsAxis, MsDataColumn};
 use crate::MeasurementSet;
 
+pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) -> bool {
+    axes.into_iter()
+        .zip(columns)
+        .any(|(axis, column)| axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model())
+}
+
+pub(super) fn check_averaging(
+    averaging: bool,
+    independent_ordinates: bool,
+    columns: [MsDataColumn; 3],
+) -> Result<(), TaskFailure> {
+    if averaging && independent_ordinates {
+        return Err(TaskFailure::validation(
+            "averaging independent MeasurementSet ordinate columns is pending #1032",
+        ));
+    }
+    if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
+        return Err(TaskFailure::validation(
+            "averaging derived data columns in this MeasurementSet plot is pending #1032",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn ordinate_columns(
     task: &TaskInvocation<'_>,
     y_axis: MsAxis,
