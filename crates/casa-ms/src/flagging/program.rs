@@ -287,7 +287,8 @@ fn select_agent(
         );
     let mut averaged_time = None;
     let mut unfiltered;
-    let input = if averages_time
+    let input = if request.casa_row_selection
+        && averages_time
         && request.selection.selectdata
         && request
             .selection

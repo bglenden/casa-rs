@@ -667,24 +667,60 @@ def check_averaged_agent_time(libraries):
 
     midpoint = first + (second - first) / 2
     assert not np.any(np.abs(times - midpoint) <= 1)
+    cases = [
+        ("midpoint", midpoint, np.zeros_like(data, dtype=bool), [first, second], 640),
+        ("flagged-tail", first, np.broadcast_to((times == second)[:, None, None], data.shape),
+         [first], 320),
+    ]
+    for label, center, original, accepted, changed in cases:
+        timerange = f"{stamp(center - 1)}~{stamp(center + 1)}"
+        expected = original | (np.isin(times, accepted)[:, None, None] & (data.real > 6.))
+        assert np.count_nonzero(expected != original) == changed
+        for name, task in libraries:
+            vis = f"averaged-agent-time-{label}-{name}.ms"
+            copytree(source, vis)
+            with table(vis, ack=False, readonly=False) as main:
+                main.putcol("FLAG", original.copy())
+            assert task(
+                vis=vis, mode="list", flagbackup=False,
+                inpfile=[
+                    f"mode='clip' datacolumn='DATA' timerange='{timerange}' "
+                    "timeavg=True timebin='20s' clipminmax=[0,6]",
+                    "mode='extend' scan='999'",
+                ],
+            ) == {}
+            samples, rows = flags(vis)
+            np.testing.assert_array_equal(samples, expected, err_msg=f"{label} {name} FLAG")
+            np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{label} {name} FLAG_ROW")
+
+    later = np.isin(times, np.unique(times)[2:4])
+    seed = np.zeros_like(data, dtype=bool)
+    seed[later, 5, 0] = True
+    expected = seed.copy()
+    expected[later, 5, 1] = True
     timerange = f"{stamp(midpoint - 1)}~{stamp(midpoint + 1)}"
-    expected = np.isin(times, [first, second])[:, None, None] & (data.real > 6.)
-    assert np.count_nonzero(expected) == 640
-    for name, task in libraries:
-        vis = f"averaged-agent-time-{name}.ms"
-        copytree(source, vis)
-        assert task(
-            vis=vis, mode="list", flagbackup=False,
-            inpfile=[
-                f"mode='clip' datacolumn='DATA' timerange='{timerange}' "
-                "timeavg=True timebin='20s' clipminmax=[0,6]",
-                "mode='extend' scan='999'",
-            ],
-        ) == {}
-        samples, rows = flags(vis)
-        np.testing.assert_array_equal(samples, expected, err_msg=f"{name} averaged FLAG")
-        np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{name} averaged FLAG_ROW")
-    return 1
+    for mode, controls in (
+        ("tfcrop", "timecutoff=100000.0 freqcutoff=100000.0"),
+        ("rflag", ""),
+    ):
+        for name, task in libraries:
+            vis = f"averaged-agent-extend-{mode}-{name}.ms"
+            copytree(source, vis)
+            with table(vis, ack=False, readonly=False) as main:
+                main.putcol("DATA", np.ones_like(data))
+                main.putcol("FLAG", seed)
+            assert task(
+                vis=vis, mode="list", flagbackup=False,
+                inpfile=[
+                    f"mode='{mode}' datacolumn='DATA' timerange='{timerange}' "
+                    f"timeavg=True timebin='20s' extendflags=True {controls}",
+                    "mode='extend' scan='999'",
+                ],
+            ) == {}
+            samples, rows = flags(vis)
+            np.testing.assert_array_equal(samples, expected, err_msg=f"{mode} {name} implicit Extend FLAG")
+            np.testing.assert_array_equal(rows, np.zeros_like(rows), err_msg=f"{mode} {name} implicit Extend FLAG_ROW")
+    return len(cases) + 2
 
 
 def check_agent_time_defaults(libraries):

@@ -804,7 +804,7 @@ fn report_after(
     };
     Ok(FlagDataReport {
         mode: request.mode,
-        selected_rows: rows.len(),
+        selected_rows: changes.selected_rows.unwrap_or(rows.len()),
         changed_rows: changes.changed_rows,
         changed_samples: changes.changed_samples,
         flagged_samples: summary.flagged_samples,
@@ -1533,8 +1533,9 @@ fn apply_tfcrop_flags(
             .collect()
     };
     if let Some(options) = &options {
+        let fit_groups = time_selected_autoflag_groups(&groups, &loaded.axes);
         fit_tfcrop_groups(
-            &groups,
+            &fit_groups,
             options,
             request,
             correlations.as_ref(),
@@ -1583,7 +1584,7 @@ fn apply_tfcrop_flags(
             },
         })
     });
-    let changes = apply_tfcrop_mask(
+    let mut changes = apply_tfcrop_mask(
         &samples,
         &modified,
         loaded.flags_by_row,
@@ -1592,6 +1593,7 @@ fn apply_tfcrop_flags(
         !request.casa_row_selection,
         request.action.value(),
     )?;
+    changes.selected_rows = loaded.axes.time_selected_rows(averaged_time);
     let applied_ms = started.elapsed().as_millis();
     trace_flagdata(|| {
         json!({
@@ -2051,16 +2053,18 @@ fn apply_rflag_flags(
             .map(|samples| (AutoflagChunk::default(), samples))
             .collect()
     };
+    let fit_groups = time_selected_autoflag_groups(&groups, &loaded.axes);
     if !calculate && active && casa_rflag {
-        validate_rflag_matrix_scales(&groups, request, context)?;
+        validate_rflag_matrix_scales(&fit_groups, request, context)?;
     }
     if calculate {
         let thresholds = if active {
-            rflag_threshold_maps_for_groups(&groups, request, context)?
+            rflag_threshold_maps_for_groups(&fit_groups, request, context)?
         } else {
             RFlagThresholds::default()
         };
         return Ok(ChangeSet {
+            selected_rows: loaded.axes.time_selected_rows(averaged_time),
             rflag_report: (active || request.extendflags)
                 .then(|| thresholds.public_report(request, active)),
             ..ChangeSet::default()
@@ -2076,7 +2080,7 @@ fn apply_rflag_flags(
         threshold_ms,
     } = if active {
         fit_rflag_chunks(
-            &groups,
+            &fit_groups,
             request,
             context,
             &mut TfcropFitMasks {
@@ -2137,6 +2141,7 @@ fn apply_rflag_flags(
         !request.casa_row_selection,
         request.action.value(),
     )?;
+    changes.selected_rows = loaded.axes.time_selected_rows(averaged_time);
     let applied_ms = started.elapsed().as_millis();
     changes.thresholds = if casa_rflag {
         buffer_cutoffs
@@ -2157,6 +2162,28 @@ fn apply_rflag_flags(
         })
     });
     Ok(changes)
+}
+
+fn time_selected_autoflag_groups<'a, K: Copy>(
+    groups: &'a [(K, Vec<Sample>)],
+    axes: &AveragedSampleAxes,
+) -> Cow<'a, [(K, Vec<Sample>)]> {
+    if axes.rows_outside_time.is_empty() {
+        return Cow::Borrowed(groups);
+    }
+    Cow::Owned(
+        groups
+            .iter()
+            .filter_map(|(key, samples)| {
+                let selected = samples
+                    .iter()
+                    .copied()
+                    .filter(|sample| !axes.rows_outside_time.contains(&sample.row))
+                    .collect::<Vec<_>>();
+                (!selected.is_empty()).then_some((*key, selected))
+            })
+            .collect(),
+    )
 }
 
 #[derive(Clone, Copy, Default)]
@@ -2816,6 +2843,19 @@ fn load_time_averaged_tfcrop(
     let mut flags_by_bin = BTreeMap::new();
     let mut channel_layouts = HashMap::<(i32, usize), Arc<[usize]>>::new();
     for group in averaging.groups(&timed) {
+        if averaging.filter.is_some() {
+            let last_unflagged = group
+                .iter()
+                .rfind(|entry| flags_by_row[&entry.row].iter().any(|&flag| !flag))
+                .map(clip_time::ClipTimedRow::time);
+            if !averaging.holds(group, last_unflagged) {
+                if !request.extendflags {
+                    continue;
+                }
+                // The implicit Extend agent has no local timerange.
+                axes.rows_outside_time.insert(group[0].row);
+            }
+        }
         let first = &group[0];
         let ddid = first.description();
         let spw = spw_for(ddid)?;
@@ -2839,7 +2879,7 @@ fn load_time_averaged_tfcrop(
                 clip_time::collect_time_bin(ms, group, rows_per_block, columns, &ddid_to_spw, &path)
             })
             .transpose()?
-            .map(|(average, _)| average);
+            .map(|(average, _, _)| average);
         let combined = average
             .as_mut()
             .map(|average| {
@@ -5354,6 +5394,19 @@ struct AveragedSampleAxes {
     channels_by_row: BTreeMap<usize, AveragedChannels>,
     rows_by_bin: BTreeMap<usize, Vec<usize>>,
     flags_by_bin: Option<BTreeMap<usize, ArrayD<bool>>>,
+    rows_outside_time: std::collections::BTreeSet<usize>,
+}
+
+impl AveragedSampleAxes {
+    fn time_selected_rows(&self, filter: Option<&TimeSelection>) -> Option<usize> {
+        filter.map(|_| {
+            self.rows_by_bin
+                .iter()
+                .filter(|(row, _)| !self.rows_outside_time.contains(row))
+                .map(|(_, members)| members.len())
+                .sum()
+        })
+    }
 }
 
 struct AveragedChannels {
@@ -5363,6 +5416,7 @@ struct AveragedChannels {
 
 #[derive(Default)]
 struct ChangeSet {
+    selected_rows: Option<usize>,
     changed_rows: usize,
     changed_samples: usize,
     changed_row_indices: Vec<usize>,
