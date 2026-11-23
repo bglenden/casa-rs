@@ -7126,8 +7126,8 @@ mod tests {
 
         let source = PreparedSelectedDataSource::new(&ms, MsDataColumn::Data, &[2, 0], None)
             .expect("prefetch");
-        let first = source.row(0).expect("selected row 0");
-        let second = source.row(1).expect("selected row 1");
+        let first = source.row(0, false).expect("selected row 0");
+        let second = source.row(1, false).expect("selected row 1");
 
         assert_eq!(first.corr_count, 1);
         assert_eq!(first.chan_count, 2);
