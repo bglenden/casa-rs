@@ -91,7 +91,7 @@ impl GainType {
         }
     }
 
-    fn is_delay(self) -> bool {
+    pub(crate) fn is_delay(self) -> bool {
         matches!(self, Self::K | Self::KCross | Self::KAntPos)
     }
 }
