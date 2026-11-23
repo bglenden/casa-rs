@@ -60,6 +60,7 @@ pub(crate) fn solve(
     };
     super::validate_solve_interval(request.solve_interval)?;
     let direct = activity.is_some();
+    let legacy_gather = legacy_iterator && (direct || additive);
     // The legacy self-gather does not use the modern per-hand flag controls
     // or publish the generic solve activity.
     let track_gather = direct && !legacy_iterator;
@@ -83,12 +84,12 @@ pub(crate) fn solve(
     .map_err(setup_error)?;
     let bin_widths = solution_frequency_bin_widths(ms, &context.rows, frequency_interval)
         .map_err(|error| GainSolveError::Baseline(error.to_string()))?;
-    let incompatible_legacy_windows = if direct && legacy_iterator && frequency_dependent {
+    let incompatible_legacy_windows = if legacy_gather && frequency_dependent {
         legacy_binned_windows(ms, &context.rows, &bin_widths)?
     } else {
         BTreeSet::new()
     };
-    let preaverage = if direct && legacy_iterator {
+    let preaverage = if legacy_gather {
         let requested = request.preaverage_seconds;
         (requested.is_finite() && requested >= 0.).then_some(if requested < f64::EPSILON {
             0.1
@@ -112,7 +113,7 @@ pub(crate) fn solve(
         context.preapplied_rows.as_ref(),
         &bin_widths,
         SolveGroupOptions {
-            input_rows: SolveInputRows::baseline(direct, legacy_iterator),
+            input_rows: SolveInputRows::baseline(direct || additive, legacy_iterator),
             gain_type: GainType::G,
             model_source,
             point_stokes,
@@ -207,7 +208,7 @@ pub(crate) fn solve(
         mode,
         subtype,
         channels,
-        direct && legacy_iterator,
+        legacy_gather,
     )
 }
 
