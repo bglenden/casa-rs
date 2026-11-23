@@ -549,11 +549,16 @@ pub(crate) fn solve_gain(
     request: &GainSolveRequest,
     mode: crate::CalibrationOutputMode,
     activity: Option<&mut ToolSolveActivity>,
+    legacy_iterator: bool,
 ) -> Result<GainSolveReport, GainSolveError> {
     if request.gain_type == GainType::GSpline {
         return gspline::solve(ms, request, GainSplineControls::default(), mode, None);
     }
-    let solved = solve_gain_rows(ms, request, activity)?;
+    let solved = if request.gain_type == GainType::KAntPos && legacy_iterator {
+        delay::solve(ms, request, activity, true)?
+    } else {
+        solve_gain_rows(ms, request, activity)?
+    };
     write_gain_caltable(ms, request, &solved, mode)
 }
 
@@ -636,7 +641,7 @@ pub(crate) fn solve_gain_rows(
     activity: Option<&mut ToolSolveActivity>,
 ) -> Result<SolvedGains, GainSolveError> {
     if request.gain_type.is_delay() {
-        return delay::solve(ms, request, activity);
+        return delay::solve(ms, request, activity, false);
     }
     solve_gain_rows_with_settings(ms, request, activity, None, None).map(|(solved, _)| solved)
 }
