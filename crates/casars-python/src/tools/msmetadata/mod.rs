@@ -74,7 +74,7 @@ impl PyMsMetadata {
             // These queries need no derived metadata cache.
             let _ = maxcache;
             let mut attached = self.attached.lock().map_err(runtime_error)?;
-            let path = lexical_absolute(Path::new(msfile));
+            let path = lexical_absolute(Path::new(if msfile.is_empty() { "." } else { msfile }));
             let ms = MeasurementSet::open(path).map_err(runtime_error)?;
             ms.check_referential_integrity().map_err(runtime_error)?;
             *attached = Some(ms);

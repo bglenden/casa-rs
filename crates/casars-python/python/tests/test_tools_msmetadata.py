@@ -20,7 +20,7 @@ def test_msmetadata_detached_queries():
 
 
 @needs_measures
-def test_msmetadata_reads_native_dataset_and_preserves_attachment_on_open_error(tmp_path):
+def test_msmetadata_reads_native_dataset_and_preserves_attachment_on_open_error(tmp_path, monkeypatch):
     casatools = pytest.importorskip("casatools")
     assert casatools.version_string().replace("-", ".") == "6.7.6.14"
     dataset = tmp_path / "metadata.ms"
@@ -46,6 +46,10 @@ def test_msmetadata_reads_native_dataset_and_preserves_attachment_on_open_error(
             assert metadata.name() == original_name
             assert metadata.open(str(alias))
             assert metadata.name() == str(alias)
+            with monkeypatch.context() as patch:
+                patch.chdir(dataset)
+                assert metadata.open()
+                assert metadata.name() == str(dataset)
             results.append((
                 metadata.nobservations(), metadata.nstates(), metadata.observatorynames(),
                 metadata.projects(), metadata.observers(),
