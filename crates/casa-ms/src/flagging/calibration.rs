@@ -230,9 +230,14 @@ fn grouped_flags(
             return Err(FlaggingError::InvalidAutomaticAverageVector(parameter));
         }
         match (request.mode, valid) {
-            (FlagDataMode::Tfcrop, true) => {
-                apply_tfcrop_flags(table, &selected.rows, channels, request, None, None)?
-            }
+            (FlagDataMode::Tfcrop, true) => apply_tfcrop_flags(
+                table,
+                &selected.rows,
+                channels,
+                request,
+                None,
+                super::AveragedAgentInput::default(),
+            )?,
             (FlagDataMode::Rflag, true) => apply_rflag_flags(
                 table,
                 &selected.rows,
@@ -240,7 +245,7 @@ fn grouped_flags(
                 request,
                 request.rflag_calculate.unwrap_or(calculate),
                 None,
-                None,
+                super::AveragedAgentInput::default(),
             )?,
             (FlagDataMode::Tfcrop, false) => return Err(FlaggingError::MissingTfcropColumn),
             _ => return Err(FlaggingError::UnsupportedCalibrationAgent("rflag")),
