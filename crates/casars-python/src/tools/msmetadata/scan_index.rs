@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
 
 use casa_ms::{MeasurementSet, MsError, MsResult};
-use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
-use casa_types::ScalarValue;
+
+use super::main_scalar_batches::main_scalar_batches;
 
 const CHUNK_ROWS: usize = 1 << 16;
 
@@ -81,121 +81,82 @@ pub(super) struct ScanIndex {
 
 impl ScanIndex {
     pub(super) fn read(ms: &MeasurementSet) -> MsResult<Self> {
-        let main = ms.main_table();
         let descriptions = ms.data_description()?;
         let windows = (0..descriptions.row_count())
             .map(|row| descriptions.spectral_window_id(row))
             .collect::<MsResult<Vec<_>>>()?;
-        let root = ms.path().expect("an attached MS has a path");
-        let direct =
-            !main.is_reference_table()? && Table::concatenated_source_paths(root)?.is_none();
         let mut result = Self::default();
-        let mut rows = Vec::new();
-        let [
-            mut observations,
-            mut arrays,
-            mut numbers,
-            mut fields,
-            mut ant1,
-            mut ant2,
-            mut dd_ids,
-            mut states,
-        ] = std::array::from_fn(|_| Vec::new());
-        let mut times = Vec::new();
         let mut last_max_array = -1;
-        for start in (0..main.row_count()).step_by(CHUNK_ROWS) {
-            rows.clear();
-            rows.extend(start..(start + CHUNK_ROWS).min(main.row_count()));
-            let columns = [
-                ("OBSERVATION_ID", &mut observations),
-                ("ARRAY_ID", &mut arrays),
-                ("SCAN_NUMBER", &mut numbers),
-                ("FIELD_ID", &mut fields),
-                ("ANTENNA1", &mut ant1),
-                ("ANTENNA2", &mut ant2),
-                ("DATA_DESC_ID", &mut dd_ids),
-                ("STATE_ID", &mut states),
-            ];
-            if direct {
-                let destinations = columns.map(|(name, values)| {
-                    RequiredScalarColumnDestination::new(
-                        name,
-                        RequiredScalarColumnValuesMut::Int32(values),
-                    )
-                });
-                let mut destinations = Vec::from(destinations);
-                destinations.push(RequiredScalarColumnDestination::new(
-                    "TIME",
-                    RequiredScalarColumnValuesMut::Float64(&mut times),
-                ));
-                main.required_scalar_columns_for_rows_into(&rows, &mut destinations)?;
-            } else {
-                // Reference and concatenation descriptors resolve row identity
-                // in the general selected-column path.
-                for (name, values) in columns {
-                    let cells = main
-                        .column_accessor(name)?
-                        .scalar_cells_owned_for_rows(&rows)?;
-                    values.clear();
-                    for cell in cells {
-                        let Some(ScalarValue::Int32(value)) = cell else {
-                            return Err(MsError::InvalidInput(format!(
-                                "MAIN column {name} has a missing or non-integer value"
-                            )));
-                        };
-                        values.push(value);
-                    }
-                }
-                times.clear();
-                for cell in main
-                    .column_accessor("TIME")?
-                    .scalar_cells_owned_for_rows(&rows)?
-                {
-                    let Some(ScalarValue::Float64(value)) = cell else {
-                        return Err(MsError::InvalidInput(
-                            "MAIN column TIME has a missing or non-floating-point value".into(),
-                        ));
+        main_scalar_batches(
+            ms,
+            [
+                "OBSERVATION_ID",
+                "ARRAY_ID",
+                "SCAN_NUMBER",
+                "FIELD_ID",
+                "ANTENNA1",
+                "ANTENNA2",
+                "DATA_DESC_ID",
+                "STATE_ID",
+            ],
+            ["TIME"],
+            false,
+            CHUNK_ROWS,
+            |rows,
+             [
+                observations,
+                arrays,
+                numbers,
+                fields,
+                ant1,
+                ant2,
+                dd_ids,
+                states,
+            ],
+             [times],
+             _| {
+                let mut previous_scan = None;
+                let mut previous_sample = None;
+                let mut scan = None;
+                for index in 0..rows.len() {
+                    let [first, second] = [ant1[index], ant2[index]];
+                    let key = ScanKey {
+                        observation: observations[index],
+                        array: arrays[index],
+                        number: numbers[index],
                     };
-                    times.push(value);
+                    if previous_scan != Some(key) {
+                        last_max_array = last_max_array.max(key.array);
+                        previous_scan = Some(key);
+                        previous_sample = None;
+                        scan = Some(result.scans.entry(key).or_default());
+                    }
+                    let scan = scan.as_deref_mut().expect("the current scan was inserted");
+                    scan.fields.insert(fields[index]);
+                    scan.antennas.extend([first, second]);
+                    let spw = *windows.get(dd_ids[index] as usize).ok_or_else(|| {
+                        MsError::InvalidInput(format!(
+                            "Unknown data description ID {}",
+                            dd_ids[index]
+                        ))
+                    })?;
+                    let sample = Sample {
+                        time: Time(times[index]),
+                        field: fields[index],
+                        spw,
+                        state: states[index],
+                    };
+                    if previous_sample != Some(sample) {
+                        scan.samples.insert(sample);
+                        previous_sample = Some(sample);
+                    }
+                    result
+                        .baselines
+                        .insert([first.min(second), first.max(second)]);
                 }
-            }
-            let mut previous_scan = None;
-            let mut previous_sample = None;
-            let mut scan = None;
-            for index in 0..rows.len() {
-                let [first, second] = [ant1[index], ant2[index]];
-                let key = ScanKey {
-                    observation: observations[index],
-                    array: arrays[index],
-                    number: numbers[index],
-                };
-                if previous_scan != Some(key) {
-                    last_max_array = last_max_array.max(key.array);
-                    previous_scan = Some(key);
-                    previous_sample = None;
-                    scan = Some(result.scans.entry(key).or_default());
-                }
-                let scan = scan.as_deref_mut().expect("the current scan was inserted");
-                scan.fields.insert(fields[index]);
-                scan.antennas.extend([first, second]);
-                let spw = *windows.get(dd_ids[index] as usize).ok_or_else(|| {
-                    MsError::InvalidInput(format!("Unknown data description ID {}", dd_ids[index]))
-                })?;
-                let sample = Sample {
-                    time: Time(times[index]),
-                    field: fields[index],
-                    spw,
-                    state: states[index],
-                };
-                if previous_sample != Some(sample) {
-                    scan.samples.insert(sample);
-                    previous_sample = Some(sample);
-                }
-                result
-                    .baselines
-                    .insert([first.min(second), first.max(second)]);
-            }
-        }
+                Ok(())
+            },
+        )?;
         result.arrays = (i64::from(last_max_array) + 1) as usize;
         Ok(result)
     }

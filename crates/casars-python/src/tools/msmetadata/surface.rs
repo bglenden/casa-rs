@@ -153,7 +153,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("done", &[], R::Any, Yes),
-    method("effexposuretime", &[], R::Any, No),
+    method("effexposuretime", &[], R::Any, Yes),
     method(
         "exposuretime",
         &[
@@ -164,7 +164,7 @@ const METHODS: &[Method] = &[
             param("arrayid", K::Int, Int(0)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("fdmspws", &[], R::Any, Yes),
     method("fieldnames", &[], R::Any, Yes),
@@ -308,7 +308,7 @@ const METHODS: &[Method] = &[
             param("flagged", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("nscans", &[], R::Any, Yes),
     method("nsources", &[], R::Any, Yes),
@@ -556,7 +556,7 @@ const METHODS: &[Method] = &[
         R::Any,
         Yes,
     ),
-    method("summary", &[], R::Any, No),
+    method("summary", &[], R::Any, Yes),
     method("tdmspws", &[], R::Any, Yes),
     method(
         "timerangeforobs",

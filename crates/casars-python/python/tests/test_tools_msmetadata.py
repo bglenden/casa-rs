@@ -948,3 +948,170 @@ def test_msmetadata_zero_interval_pointing_uses_the_distinct_neighbor(native_dat
             assert found["offset"]["m1"]["value"] == pytest.approx(-0.2, abs=2e-15)
         finally:
             assert metadata.done()
+
+
+def test_msmetadata_summary_and_flagged_row_exposure(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    a1, a2 = table.getcol("ANTENNA1"), table.getcol("ANTENNA2")
+    scan = int(table.getcell("SCAN_NUMBER", 0))
+    times = table.getcol("TIME")
+    exposure = table.getcol("EXPOSURE")
+    selected = np.flatnonzero(a1 != a2)
+    total_rows = table.nrows()
+    flag = np.zeros_like(table.getcol("FLAG"), dtype=bool, order="F")
+    row_flag = np.zeros(total_rows, dtype=bool)
+    row_flag[selected[0]] = True
+    assert table.putcol("FLAG", flag)
+    assert table.putcol("FLAG_ROW", row_flag)
+    assert table.done()
+
+    # The synthetic array has four antennas, so CASA normalizes cross
+    # exposure by six possible baselines.
+    all_exposure = sum(exposure[selected]) / 6
+    missing_exposure = float(exposure[selected[0]]) / 6
+    output = []
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            assert metadata.nrows() == total_rows
+            assert metadata.nrows(autoc=False) == len(selected)
+            summary = metadata.summary()
+            assert type(summary["nrows"]) is int
+            assert summary["nrows"] == total_rows
+            assert summary["begin time"] == min(times)
+            assert summary["end time"] == max(times)
+            np.testing.assert_array_equal(summary["fields"], np.array(["F"]), strict=True)
+            scan_record = summary["observationID=0"]["arrayID=0"][f"scan={scan}"]
+            np.testing.assert_array_equal(scan_record["antennas"], np.arange(4), strict=True)
+            field = scan_record["fieldID=0"]
+            assert field["nrows"] == total_rows
+            unique_times, counts = np.unique(times, return_counts=True)
+            for i, (time, rows) in enumerate(zip(unique_times, counts)):
+                assert field[str(i)]["nrows"] == rows
+                assert field[str(i)]["time"] == time
+                np.testing.assert_array_equal(field[str(i)]["data description IDs"], np.array([0]), strict=True)
+            output.append(summary)
+            # Open a fresh handle to check the count returned after CASA
+            # populates SUBSCAN statistics, before it can cache row counts.
+            assert metadata.done()
+            assert metadata.open(str(native_dataset))
+            metadata.summary()
+            cross = metadata.nrows(autoc=False)
+            assert cross == (float(2**64) if module is casatools else len(selected))
+            expected_rows = total_rows if module is casatools else total_rows - 1
+            assert metadata.nrows(flagged=False) == expected_rows
+            expected_exposure = all_exposure if module is casatools else all_exposure - missing_exposure
+            measured = metadata.effexposuretime()
+            assert measured["unit"] == "s"
+            assert measured["value"] == pytest.approx(expected_exposure, abs=2e-12)
+            assert metadata.exposuretime(scan=scan) == {"unit": "s", "value": float(exposure[0])}
+        finally:
+            assert metadata.done()
+
+    def compare(reference, native):
+        assert reference.keys() == native.keys()
+        for key, value in reference.items():
+            if isinstance(value, dict):
+                compare(value, native[key])
+            elif isinstance(value, np.ndarray):
+                np.testing.assert_array_equal(native[key], value, strict=True)
+            else:
+                assert native[key] == value
+
+    compare(*output)
+
+
+def test_msmetadata_exposure_with_multiple_polarizations(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "POLARIZATION"), nomodify=False)
+    assert table.nrows() == 1
+    names = ("CORR_TYPE", "CORR_PRODUCT", "NUM_CORR", "FLAG_ROW")
+    values = [(name, table.getcell(name, 0)) for name in names]
+    assert table.addrows(1)
+    for name, value in values:
+        assert table.putcell(name, 1, value)
+    assert table.done()
+    assert table.open(str(native_dataset / "DATA_DESCRIPTION"), nomodify=False)
+    assert table.nrows() == 1
+    assert table.addrows(1)
+    assert table.putcell("SPECTRAL_WINDOW_ID", 1, 0)
+    assert table.putcell("POLARIZATION_ID", 1, 1)
+    assert table.done()
+    assert table.open(str(native_dataset), nomodify=False)
+    scan = int(table.getcell("SCAN_NUMBER", 0))
+    assert table.putcell("DATA_DESC_ID", 0, 1)
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            assert metadata.exposuretime(scan=scan) == {}
+            assert metadata.exposuretime(scan=scan, polid=0) == {"unit": "s", "value": 10.0}
+            assert metadata.exposuretime(scan=scan, polid=1) == {"unit": "s", "value": 10.0}
+            with pytest.raises(RuntimeError):
+                metadata.exposuretime(scan=scan, polid=2)
+        finally:
+            assert metadata.done()
+
+
+def test_msmetadata_summary_handles_an_empty_reference_view(native_dataset, tmp_path):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    view = tmp_path / "empty.ms"
+    table = casatools.table()
+    assert table.open(str(native_dataset))
+    selected = table.selectrows(np.array([], dtype=np.int64), str(view))
+    assert selected.nrows() == 0
+    assert selected.done()
+    assert table.done()
+
+    metadata = tools.msmetadata()
+    assert metadata.open(str(view))
+    try:
+        assert metadata.nrows() == 0
+        with pytest.raises(RuntimeError, match="no MAIN rows"):
+            metadata.summary()
+        assert metadata.nrows() == 0
+    finally:
+        assert metadata.done()
+
+
+def test_msmetadata_exposure_weights_partial_flags_by_channel_width(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+    assert table.putcell("CHAN_WIDTH", 0, 1e6 * np.array([1.0, 2.0, 3.0, 4.0]))
+    assert table.putcell("TOTAL_BANDWIDTH", 0, 10e6)
+    assert table.done()
+
+    assert table.open(str(native_dataset), nomodify=False)
+    selected = np.flatnonzero(table.getcol("ANTENNA1") != table.getcol("ANTENNA2"))
+    exposure = table.getcol("EXPOSURE")
+    total_rows = table.nrows()
+    flags = np.zeros_like(table.getcol("FLAG"), dtype=bool, order="F")
+    flags[0, 1, selected[0]] = True
+    assert table.putcol("FLAG", flags)
+    assert table.putcol("FLAG_ROW", np.zeros(total_rows, dtype=bool))
+    assert table.done()
+
+    # One of two correlations loses a 2 MHz channel out of 10 MHz.
+    loss = 0.1
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            assert metadata.nrows(flagged=False) == pytest.approx(total_rows - loss)
+            measured = metadata.effexposuretime()
+            assert measured["unit"] == "s"
+            expected = (sum(exposure[selected]) - exposure[selected[0]] * loss) / 6
+            assert measured["value"] == pytest.approx(expected, abs=2e-12)
+        finally:
+            assert metadata.done()
