@@ -56,7 +56,7 @@ pub(crate) fn build_solve_groups(
     let baseline_solve = options.input_rows.is_baseline();
     let keep_autocorrelations = matches!(
         options.input_rows,
-        SolveInputRows::GainTool | SolveInputRows::OpacityTool
+        SolveInputRows::GainTool | SolveInputRows::GatherOnlyTool { .. }
     ) || options.input_rows.is_accor();
     let seed_combined_g = !baseline_solve
         && !options.input_rows.is_accor()
@@ -176,10 +176,10 @@ pub(crate) fn build_solve_groups(
                 &mut layouts,
                 (&inputs, index),
             )?;
-            if options.input_rows == SolveInputRows::OpacityTool
+            if matches!(options.input_rows, SolveInputRows::GatherOnlyTool { .. })
                 && (group.attempted || group.gather_attempted())
             {
-                return Err(GainSolveError::OpacityCannotFit);
+                return Err(GainSolveError::GatherOnlyCannotFit);
             }
         }
         Ok::<_, GainSolveError>(())
@@ -855,7 +855,7 @@ impl SolveAccumulator {
             && correlation_types.len() == 1;
         self.scalar_bandpass = scalar_bandpass && (self.sample_rows == 0 || self.scalar_bandpass);
         let graph_count = match options.gain_type {
-            GainType::G | GainType::K | GainType::GSpline => 2,
+            GainType::G | GainType::K | GainType::KMbd | GainType::KAntPos | GainType::GSpline => 2,
             GainType::T | GainType::KCross => {
                 self.parallel_hands = if matches!(correlation_types.len(), 2 | 4) {
                     2
@@ -919,12 +919,12 @@ impl SolveAccumulator {
             if no_weighted_data {
                 continue;
             }
-            let graph_index = match options.gain_type {
-                GainType::K if correlation_types.len() == 1 => 0,
-                GainType::G if scalar_bandpass => 0,
-                GainType::G | GainType::K | GainType::GSpline => receptors.0,
-                GainType::T | GainType::KCross => 0,
-            };
+            let graph_index =
+                if graph_count == 1 || scalar_bandpass || delay && correlation_types.len() == 1 {
+                    0
+                } else {
+                    receptors.0
+                };
             let point = if let Some(rotated) = samples.point_model {
                 rotated[corr_index]
             } else {
@@ -949,13 +949,7 @@ impl SolveAccumulator {
                     true,
                 );
             }
-            if !parallel_hand
-                && !baseline_solve
-                && matches!(
-                    options.gain_type,
-                    GainType::G | GainType::K | GainType::GSpline
-                )
-            {
+            if !parallel_hand && !baseline_solve && graph_count == 2 {
                 // CASA can use cross-hand weights for the averaged baseline's
                 // time even though only parallel hands enter these solves.
                 if !delay && !legacy_spline {

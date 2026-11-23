@@ -31,24 +31,7 @@ pub(super) fn apply(
     path: &str,
 ) -> Result<ChangeSet, FlaggingError> {
     let mut changed = ChangeSet::default();
-    // The CASA constructor uses these comparisons directly. A NaN disables
-    // its percentage test, so neighbor growth and polarization can still run.
-    let invalid = if request.extension_enabled {
-        [
-            ("growtime", request.growtime),
-            ("growfreq", request.growfreq),
-        ]
-        .into_iter()
-        .find(|(_, value)| !value.is_nan() && !(0.0..=100.0).contains(value))
-        .map(|(parameter, value)| {
-            format!("Unsupported value for {parameter}:{value}. Allowed range is 0.0 through 100.0")
-        })
-    } else {
-        Some("Parameter 'extendpols' must be of type 'bool'".to_owned())
-    };
-    if let Some(reason) = invalid {
-        tracing::warn!("Cannot create agent Extend: {reason}");
-        tracing::error!("There is no agent to run in list");
+    if !valid_request(request) {
         changed.agent_skipped = true;
         return Ok(changed);
     }
@@ -90,8 +73,32 @@ pub(super) fn apply(
     Ok(changed)
 }
 
+pub(super) fn valid_request(request: &FlagDataRequest) -> bool {
+    // The CASA constructor uses these comparisons directly. A NaN disables
+    // its percentage test, so neighbor growth and polarization can still run.
+    let invalid = if request.extension_enabled {
+        [
+            ("growtime", request.growtime),
+            ("growfreq", request.growfreq),
+        ]
+        .into_iter()
+        .find(|(_, value)| !value.is_nan() && !(0.0..=100.0).contains(value))
+        .map(|(parameter, value)| {
+            format!("Unsupported value for {parameter}:{value}. Allowed range is 0.0 through 100.0")
+        })
+    } else {
+        Some("Parameter 'extendpols' must be of type 'bool'".to_owned())
+    };
+    if let Some(reason) = invalid {
+        tracing::warn!("Cannot create agent Extend: {reason}");
+        tracing::error!("There is no agent to run in list");
+        return false;
+    }
+    true
+}
+
 /// Flag mask for one baseline's selected samples in time order.
-fn grow(samples: &[Sample], request: &FlagDataRequest) -> Vec<bool> {
+pub(super) fn grow(samples: &[Sample], request: &FlagDataRequest) -> Vec<bool> {
     let mut flags = samples.iter().map(|sample| sample.flag).collect::<Vec<_>>();
     let value = request.action.value();
     if value && (request.growaround || request.flagneartime || request.flagnearfreq) {

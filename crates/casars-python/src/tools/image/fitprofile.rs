@@ -4,11 +4,11 @@ use std::path::Path;
 
 use casa_images::analysis::{
     ImageProfileFit, ImageProfileFitResult, ProfileDivisor, ProfileEstimates, ProfileFitOptions,
-    ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma, SubimageRegion,
-    ensure_artifacts_do_not_overlap,
+    ProfileLineReport, ProfileOutputNames, ProfilePeaks, ProfileRegion, ProfileSigma,
+    SubimageRegion, ensure_artifacts_do_not_overlap,
 };
 use casa_images::{Image, ImageInterface};
-use casa_types::{ArrayD, ArrayValue, RecordValue, Value};
+use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::{Dimension, IxDyn, ShapeBuilder};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -291,7 +291,7 @@ impl ProfileRequest<'_> {
                 },
                 other_artifact: nonempty(self.logfile).map(Path::new),
                 beam_record: Some(&beam_record),
-                log_polynomials: self.logresults || !self.logfile.is_empty(),
+                log_details: self.logresults || !self.logfile.is_empty(),
             },
             self.outputs,
         )
@@ -376,15 +376,47 @@ impl ProfileRequest<'_> {
         let Some(Value::Array(ArrayValue::Bool(valid))) = record.get("valid") else {
             return text;
         };
+        let unit = |name| match record.get(name) {
+            Some(Value::Scalar(ScalarValue::String(unit))) => unit.as_str(),
+            _ => "",
+        };
+        let (x_unit, y_unit) = (unit("xUnit"), unit("yUnit"));
+        let integral_unit = if x_unit.is_empty() || y_unit.is_empty() {
+            format!("{x_unit}{y_unit}")
+        } else {
+            format!("{x_unit}.{y_unit}")
+        };
         for (pixel, &ok) in valid.indexed_iter() {
             let position = pixel.slice();
-            let _ = writeln!(
-                text,
-                "Fit at pixel {position:?}\n    Valid: {}",
-                if ok { "YES" } else { "NO" }
-            );
+            let Some(report) = fit.profile_reports.get(position) else {
+                continue;
+            };
+            let coordinates = report
+                .position
+                .iter()
+                .map(|coordinate| {
+                    coordinate.map_or_else(|| "*".into(), |coordinate| coordinate.to_string())
+                })
+                .collect::<Vec<_>>();
+            let _ = writeln!(text, "Fit\n    Pixel        : [{}]", coordinates.join(", "));
+            if let Some(Value::Array(ArrayValue::String(direction))) = record.get("direction") {
+                let _ = writeln!(text, "    Direction    : {}", direction[IxDyn(position)]);
+            }
+            for (key, label) in [("attempted", "Attempted"), ("converged", "Converged")] {
+                if let Some(Value::Array(ArrayValue::Bool(flags))) = record.get(key) {
+                    let status = if flags[IxDyn(position)] { "YES" } else { "NO" };
+                    let _ = writeln!(text, "    {label:12} : {status}");
+                }
+            }
+            if let Some(iterations) = report.iterations {
+                let _ = writeln!(text, "    Iterations   : {iterations}");
+            }
+            let _ = writeln!(text, "    Valid        : {}", if ok { "YES" } else { "NO" });
             if !ok {
                 continue;
+            }
+            for line in &report.lines {
+                write_profile_line(&mut text, line, (x_unit, y_unit, &integral_unit));
             }
             if let Some(polynomial) = fit.polynomials.get(position) {
                 let _ = writeln!(text, "    Type: POLYNOMIAL");
@@ -396,6 +428,9 @@ impl ProfileRequest<'_> {
                 }
             }
             for field in record.fields() {
+                if !matches!(field.name.as_str(), "plp" | "ltp") {
+                    continue;
+                }
                 let Value::Record(model) = &field.value else {
                     continue;
                 };
@@ -417,6 +452,62 @@ impl ProfileRequest<'_> {
             }
         }
         text
+    }
+}
+
+fn write_profile_line(
+    text: &mut String,
+    line: &ProfileLineReport,
+    (x_unit, y_unit, integral_unit): (&str, &str, &str),
+) {
+    use std::fmt::Write as _;
+
+    if line.subcomponent.is_none_or(|index| index == 0) {
+        let _ = writeln!(text, "    Results for component {}:", line.component);
+        let _ = writeln!(text, "        Type     : {}", line.kind);
+    }
+    if let Some(index) = line.subcomponent {
+        let _ = writeln!(text, "        Results for subcomponent {index}:");
+    }
+    let [peak_fixed, center_fixed, width_fixed] = line.fixed;
+    for (label, estimate, unit, fixed) in [
+        ("Peak", Some(line.peak), y_unit, peak_fixed),
+        ("Center", Some(line.center), x_unit, center_fixed),
+        ("Center", line.pixel_center, "pixel", center_fixed),
+        ("FWHM", Some(line.fwhm), x_unit, width_fixed),
+        ("FWHM", line.pixel_fwhm, "pixel", width_fixed),
+        (
+            "Integral",
+            Some(line.integral),
+            integral_unit,
+            peak_fixed && width_fixed,
+        ),
+    ] {
+        let fixed = if fixed { " (fixed)" } else { "" };
+        let Some([value, error]) = estimate else {
+            let _ = writeln!(
+                text,
+                "                   Could not convert {label} to pixel"
+            );
+            continue;
+        };
+        if unit == "pixel" {
+            let _ = writeln!(
+                text,
+                "                   {value:.12e} +/- {error:.12e} {unit}{fixed}"
+            );
+        } else {
+            let _ = writeln!(
+                text,
+                "        {label:8} : {value:.12e} +/- {error:.12e} {unit}{fixed}"
+            );
+        }
+    }
+    if line.channel_fwhm <= 3. {
+        let _ = writeln!(
+            text,
+            "        WARNING: The FWHM is at most three channel widths."
+        );
     }
 }
 

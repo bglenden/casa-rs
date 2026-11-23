@@ -176,7 +176,7 @@ pub(super) fn solve_polynomial(
         let output_window = combined_window.unwrap_or(group.spw_id);
         if frequencies.is_empty() {
             if let Some(activity) = activity.as_deref_mut() {
-                activity.count_polynomial_interval(group.spw_id, output_window, false, false);
+                activity.count_mapped_interval(group.spw_id, output_window, false, false);
             }
             continue;
         }
@@ -196,7 +196,7 @@ pub(super) fn solve_polynomial(
             Err(error) => return Err(error),
         };
         if let Some(activity) = activity.as_deref_mut() {
-            activity.count_polynomial_interval(group.spw_id, output_window, true, !rows.is_empty());
+            activity.count_mapped_interval(group.spw_id, output_window, true, !rows.is_empty());
         }
         if !rows.is_empty() {
             if let Some(spw) = combined_window {

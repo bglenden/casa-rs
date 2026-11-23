@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! CASA M/Mf Mueller corrections have one two-hand response per antenna pair.
+//! Mueller responses and additive noise terms for individual antenna pairs.
 
 use super::*;
 
 pub(crate) fn is_subtype(subtype: &str) -> bool {
-    matches!(subtype, "M Mueller" | "Mf Mueller" | "A Mueller")
+    matches!(
+        subtype,
+        "M Mueller" | "Mf Mueller" | "A Mueller" | NOISE_SUBTYPE
+    )
 }
+
+pub(super) const NOISE_SUBTYPE: &str = "A Noise";
 
 /// A stable triangular index, independent of MS antenna count and row order.
 pub(crate) fn index(p: i32, q: i32) -> Option<i32> {
@@ -43,6 +48,7 @@ pub(super) fn prepare(
             cache,
             table,
             solution.interpolated,
+            false,
         )
         .map(Some),
         _ => Err(ApplyExecutionError::UnsupportedCalibrationTable {
@@ -118,6 +124,59 @@ pub(super) fn apply(
             if flagged && output.propagate_flags && !output.flags[[corr, chan]] {
                 output.flags[[corr, chan]] = true;
                 *output.newly_flagged_samples += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn apply_noise(
+    grid: Option<&CalibrationGrid>,
+    path: &Path,
+    reversed: bool,
+    forward_model: bool,
+    output: &mut ApplyBuffer<'_>,
+) -> Result<(), ApplyExecutionError> {
+    let grid = grid.map(|grid| match grid {
+        CalibrationGrid::Complex(grid) => grid,
+        _ => unreachable!("baseline grid was prepared as CPARAM"),
+    });
+    let correlations = correlation_count(output)?;
+    for correlation in 0..correlations {
+        let parameter = match (correlations, correlation, reversed) {
+            (2, 1, _) => 3,
+            (4, 1, true) => 2,
+            (4, 2, true) => 1,
+            _ => correlation,
+        };
+        for channel in 0..output.corrected.shape()[1] {
+            let sample = match grid {
+                Some(grid) => grid.sample(
+                    parameter,
+                    channel,
+                    output.data_channels,
+                    &[],
+                    ApplyInterpolationMode::Nearest,
+                    path,
+                )?,
+                None => GainSample {
+                    value: Complex32::ZERO,
+                    flagged: true,
+                },
+            };
+            if sample.flagged {
+                if output.propagate_flags && !output.flags[[correlation, channel]] {
+                    output.flags[[correlation, channel]] = true;
+                    *output.newly_flagged_samples += 1;
+                }
+            } else {
+                let value = if reversed {
+                    sample.value.conj()
+                } else {
+                    sample.value
+                };
+                output.corrected[[correlation, channel]] +=
+                    if forward_model { value } else { -value };
             }
         }
     }
