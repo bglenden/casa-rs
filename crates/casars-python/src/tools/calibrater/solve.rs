@@ -93,6 +93,21 @@ fn setsolve_text(value: Option<&Bound<'_, PyAny>>, name: &str, default: &str) ->
     text(value.cloned(), name, default)
 }
 
+fn setsolve_mode(value: &str, phase_only: bool) -> (String, GainSolveMode, bool) {
+    let apmode = if phase_only {
+        "P".into()
+    } else {
+        value.to_ascii_uppercase()
+    };
+    let (mode, invalid) = match apmode.as_str() {
+        "P" => (GainSolveMode::Phase, false),
+        "A" => (GainSolveMode::Amplitude, false),
+        "AP" | "" => (GainSolveMode::AmplitudePhase, false),
+        _ => (GainSolveMode::AmplitudePhase, true),
+    };
+    (apmode, mode, invalid)
+}
+
 fn single_dish_controls(
     family: &str,
     fraction: Option<&Bound<'_, PyAny>>,
@@ -393,17 +408,7 @@ impl super::PyCalibrater {
                 .map_or((elapsed.as_str(), None), |(time, frequency)| {
                     (time, Some(frequency))
                 });
-            let apmode = if phase_only {
-                "P".into()
-            } else {
-                apmode.to_ascii_uppercase()
-            };
-            let (solve_mode_value, invalid_mode) = match apmode.as_str() {
-                "P" => (GainSolveMode::Phase, false),
-                "A" => (GainSolveMode::Amplitude, false),
-                "AP" | "" => (GainSolveMode::AmplitudePhase, false),
-                _ => (GainSolveMode::AmplitudePhase, true),
-            };
+            let (apmode, solve_mode_value, invalid_mode) = setsolve_mode(&apmode, phase_only);
             let normtype = normtype.to_ascii_uppercase();
             let normalization = if normtype.contains("MEAN") {
                 GainNormalization::Mean
