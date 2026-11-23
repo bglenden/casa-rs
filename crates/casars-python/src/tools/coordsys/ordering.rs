@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_coordinates::CoordinateSystem;
-use numpy::PyUntypedArray;
-use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError};
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
+use std::num::IntErrorKind;
 
-use crate::convert::{double_vector_element, numeric_text};
+use casa_coordinates::CoordinateSystem;
+use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
+use pyo3::exceptions::{PyRuntimeError, PySystemError, PyTypeError, PyValueError};
+use pyo3::prelude::*;
+use pyo3::types::{
+    PyBytes, PyComplex, PyComplexMethods, PyFloat, PyInt, PyList, PyString, PyTuple, PyTypeMethods,
+};
+
+use crate::convert::numeric_text;
 
 use super::inspect::numbered_coordinates;
 use super::{CoordinateState, PyCoordsys};
@@ -15,37 +19,195 @@ fn raised(error: impl std::fmt::Display) -> PyErr {
     PyRuntimeError::new_err(error.to_string())
 }
 
-fn is_array(value: &Bound<'_, PyAny>) -> bool {
-    value.is_instance_of::<PyList>() || value.cast::<PyUntypedArray>().is_ok()
+#[derive(Default)]
+pub(super) struct IntegerVector {
+    pub(super) values: Vec<i32>,
+    pub(super) overflowed: bool,
 }
 
-fn integer(value: &Bound<'_, PyAny>) -> PyResult<i32> {
-    if let Ok(integer) = value.extract::<i64>() {
-        return Ok(integer as i32);
-    }
-    if let Some(text) = numeric_text(value)? {
-        let text = text.to_string_lossy();
-        let trimmed = text.trim_start();
-        let number = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
-        let count = number.bytes().take_while(u8::is_ascii_digit).count();
-        let end = trimmed.len() - number.len() + count;
-        return Ok(trimmed[..end].parse::<i64>().unwrap_or(0) as i32);
-    }
-    let number = double_vector_element(value).unwrap_or(0.0);
-    Ok(if (i64::MIN as f64..-(i64::MIN as f64)).contains(&number) {
+fn narrow_real(number: f64) -> i32 {
+    // CASA converts to a native long and then takes its low 32 bits.
+    // ARM's FCVTZS saturates; x86-64's CVTTSD2SI yields INT64_MIN on overflow.
+    if cfg!(target_arch = "aarch64") || (i64::MIN as f64..-(i64::MIN as f64)).contains(&number) {
         number as i64 as i32
     } else {
         0
-    })
+    }
+}
+
+fn integer(value: &Bound<'_, PyAny>, overflowed: &mut bool) -> PyResult<i32> {
+    if value.is_instance_of::<PyInt>() {
+        // PyLong_AsLong returns -1 when the Python integer exceeds C long.
+        return Ok(match value.extract::<i64>() {
+            Ok(integer) => integer as i32,
+            Err(_) => {
+                *overflowed = true;
+                -1
+            }
+        });
+    }
+    if let Ok(number) = value.cast::<PyComplex>() {
+        return Ok(narrow_real(number.real()));
+    }
+    if let Some(text) = numeric_text(value)? {
+        let text = text.to_string_lossy();
+        let trimmed = text.trim_start_matches(|ch: char| ch.is_ascii_whitespace() || ch == '\u{b}');
+        let number = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
+        let count = number.bytes().take_while(u8::is_ascii_digit).count();
+        let end = trimmed.len() - number.len() + count;
+        let parsed = match trimmed[..end].parse::<i64>() {
+            Ok(value) => value,
+            Err(error) => match error.kind() {
+                IntErrorKind::PosOverflow => i64::MAX,
+                IntErrorKind::NegOverflow => i64::MIN,
+                _ => 0,
+            },
+        };
+        return Ok(parsed as i32);
+    }
+    if value.is_instance_of::<PyFloat>() {
+        return value.extract::<f64>().map(narrow_real);
+    }
+    // NumPy's signed integer and floating scalar families are the only
+    // extra number types recognized by CASA's list typemap.
+    let name = value.get_type().fully_qualified_name()?;
+    let name = name.to_str()?;
+    if name.starts_with("numpy.int") {
+        return value.extract::<i64>().map(|number| number as i32);
+    }
+    if name.starts_with("numpy.float") {
+        return value.extract::<f64>().map(narrow_real);
+    }
+    Ok(0)
+}
+
+fn sequence_length(value: &Bound<'_, PyAny>) -> Option<usize> {
+    value
+        .cast::<PyList>()
+        .ok()
+        .map(|list| list.len())
+        .or_else(|| value.cast::<PyTuple>().ok().map(|tuple| tuple.len()))
+}
+
+fn sequence_size_error() -> PyErr {
+    PyValueError::new_err("Coordinate integer vector is too deeply nested or too large")
+}
+
+fn fill_sequence(
+    sequence: &Bound<'_, PyAny>,
+    stride: usize,
+    offset: usize,
+    depth: usize,
+    output: &mut IntegerVector,
+) -> PyResult<bool> {
+    if depth >= 128 {
+        return Err(sequence_size_error());
+    }
+    let list = sequence.cast::<PyList>().ok();
+    let tuple = sequence.cast::<PyTuple>().ok();
+    let size = list.map_or_else(
+        || {
+            tuple
+                .expect("a coordinate sequence is a list or tuple")
+                .len()
+        },
+        |list| list.len(),
+    );
+    let mut layout = None;
+    for index in 0..size {
+        let item = match list {
+            Some(list) => list.get_item(index)?,
+            None => tuple
+                .expect("a coordinate sequence is a list or tuple")
+                .get_item(index)?,
+        };
+        let rows = sequence_length(&item);
+        if layout.is_some_and(|expected| expected != rows) {
+            // CASA keeps the Fortran-order prefix written before it saw
+            // an incompatible row or a mix of rows and scalar elements.
+            return Ok(false);
+        }
+        layout = Some(rows);
+        let position = index
+            .checked_mul(stride)
+            .and_then(|index| index.checked_add(offset))
+            .ok_or_else(sequence_size_error)?;
+        if rows.is_some() {
+            let next_stride = stride.checked_mul(size).ok_or_else(sequence_size_error)?;
+            if !fill_sequence(&item, next_stride, position, depth + 1, output)? {
+                return Ok(false);
+            }
+        } else {
+            if index == 0 {
+                let span = (size - 1)
+                    .checked_mul(stride)
+                    .and_then(|length| length.checked_add(offset))
+                    .and_then(|last| last.checked_add(1))
+                    .ok_or_else(sequence_size_error)?;
+                if span > output.values.len() {
+                    output
+                        .values
+                        .try_reserve(span - output.values.len())
+                        .map_err(|_| sequence_size_error())?;
+                    output.values.resize(span, 0);
+                }
+            }
+            output.values[position] = integer(&item, &mut output.overflowed)?;
+        }
+    }
+    Ok(true)
+}
+
+fn array_vector(array: &Bound<'_, PyUntypedArray>) -> PyResult<IntegerVector> {
+    let dtype = array.dtype();
+    let kind = dtype.kind();
+    let itemsize = dtype.itemsize();
+    let mut vector = IntegerVector::default();
+    if !matches!(kind, b'b' | b'i' | b'u' | b'f' | b'c' | b'S' | b'U')
+        || (kind == b'f' && itemsize == 2)
+    {
+        return Ok(vector);
+    }
+    let flat = array
+        .call_method1("ravel", ("F",))?
+        .call_method0("tolist")?;
+    vector.values = match kind {
+        b'u' => flat
+            .try_iter()?
+            .map(|item| item?.extract::<u64>().map(|number| number as i32))
+            .collect::<PyResult<_>>()?,
+        b'f' if itemsize > 8 => flat
+            .try_iter()?
+            .map(|item| wide_array_real(&item?))
+            .collect::<PyResult<_>>()?,
+        b'c' if itemsize > 16 => flat
+            .try_iter()?
+            .map(|item| wide_array_real(&item?.getattr("real")?))
+            .collect::<PyResult<_>>()?,
+        _ => flat
+            .try_iter()?
+            .map(|item| integer(&item?, &mut vector.overflowed))
+            .collect::<PyResult<_>>()?,
+    };
+    Ok(vector)
+}
+
+fn wide_array_real(value: &Bound<'_, PyAny>) -> PyResult<i32> {
+    let int = value.py().get_type::<PyInt>();
+    if let Ok(integer) = int.call1((value,)).and_then(|value| value.extract::<i64>()) {
+        return Ok(integer as i32);
+    }
+    value.extract::<f64>().map(narrow_real)
 }
 
 pub(super) fn integer_vector(
     value: &Bound<'_, PyAny>,
     method: &str,
     argument: &str,
-) -> PyResult<Vec<i32>> {
+) -> PyResult<IntegerVector> {
+    let mut vector = IntegerVector::default();
     if value.is_none() {
-        return Ok(Vec::new());
+        return Ok(vector);
     }
     if value.is_instance_of::<PyTuple>() {
         return Err(PySystemError::new_err(format!(
@@ -57,24 +219,14 @@ pub(super) fn integer_vector(
             "argument _{argument} must not be a string"
         )));
     }
-    if let Ok(list) = value.cast::<PyList>()
-        && list
-            .iter()
-            .all(|item| !is_array(&item) && !item.is_instance_of::<PyTuple>())
-    {
-        return list.iter().map(|item| integer(&item)).collect();
+    if value.is_instance_of::<PyList>() {
+        fill_sequence(value, 1, 0, 0, &mut vector)?;
+    } else if let Ok(array) = value.cast::<PyUntypedArray>() {
+        return array_vector(array);
+    } else if value.is_instance_of::<PyInt>() || value.is_instance_of::<PyFloat>() {
+        vector.values.push(integer(value, &mut vector.overflowed)?);
     }
-    if is_array(value) {
-        let array = value
-            .py()
-            .import("numpy")?
-            .call_method1("asarray", (value,))?;
-        let flat = array
-            .call_method1("ravel", ("F",))?
-            .call_method0("tolist")?;
-        return flat.try_iter()?.map(|item| integer(&item?)).collect();
-    }
-    Ok(vec![integer(value)?])
+    Ok(vector)
 }
 
 fn transpose(state: &mut CoordinateState, order: Vec<i32>) -> PyResult<bool> {
@@ -168,12 +320,12 @@ impl PyCoordsys {
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn transpose(&self, py: Python<'_>, order: &Bound<'_, PyAny>) -> PyResult<bool> {
         let order = integer_vector(order, "transpose", "order")?;
-        py.detach(|| transpose(&mut self.state(), order))
+        py.detach(|| transpose(&mut self.state(), order.values))
     }
 
     #[pyo3(signature = (order), text_signature = "($self, order)")]
     fn reorder(&self, py: Python<'_>, order: &Bound<'_, PyAny>) -> PyResult<bool> {
         let order = integer_vector(order, "reorder", "order")?;
-        py.detach(|| reorder(&mut self.state(), order))
+        py.detach(|| reorder(&mut self.state(), order.values))
     }
 }

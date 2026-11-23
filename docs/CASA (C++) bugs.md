@@ -9179,6 +9179,15 @@ pixels. For example, `(2, 152)` contains 150 instead of the original value
 cursor reads. casa-rs snapshots the selected pixels and validity before
 writing, using scratch storage when the overlap exceeds its memory budget.
 
+## A non-finite scalar coordinate order can terminate CASA
+
+Create a one-axis Linear coordinate system and pass a bare `float("inf")`
+to `transpose` or `reorder`. Both calls terminate the CASA 6.7.6.14 process
+on macOS arm64. With `[float("inf")]`, CASA raises its ordinary axis error.
+Casa-rs applies the arm64 axis conversion to either form and rejects the
+axis with an ordinary Python exception, preserving the coordinate system.
+See [#1626](https://github.com/bglenden/casa-rs/issues/1626).
+
 ## `coordsys.setrestfrequency` can store an infinite frequency
 
 CASA 6.7.6.14 accepts `cs.setrestfrequency(float('inf'))` and writes an

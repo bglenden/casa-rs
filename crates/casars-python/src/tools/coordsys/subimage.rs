@@ -6,13 +6,13 @@ use casa_coordinates::tabular::TabularEdit;
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, RecordCoordinate};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use numpy::{PyArrayDescrMethods, PyUntypedArray, PyUntypedArrayMethods};
-use pyo3::exceptions::{PyRuntimeError, PySystemError};
+use pyo3::exceptions::{PyOverflowError, PyRuntimeError, PySystemError};
 use pyo3::prelude::*;
 
 use crate::convert::Variant;
 use crate::tools::table::values;
 
-use super::ordering::integer_vector;
+use super::ordering::{IntegerVector, integer_vector};
 use super::transform_single::bool_vector;
 use super::{CoordinateState, PyCoordsys, default_spectral_conversion};
 
@@ -21,7 +21,7 @@ fn raised(error: impl ToString) -> PyErr {
 }
 
 #[derive(Default)]
-struct SubimageShape(Vec<i32>);
+struct SubimageShape(IntegerVector);
 
 impl<'a, 'py> FromPyObject<'a, 'py> for SubimageShape {
     type Error = PyErr;
@@ -272,10 +272,19 @@ impl PyCoordsys {
         newshape: SubimageShape,
     ) -> PyResult<Py<PyAny>> {
         let origin = origin_input(originshft)?;
-        py.detach(|| {
-            let record = subimage_record(&self.state(), &origin, &newshape.0)?;
-            Ok::<_, PyErr>(values::record(&record, Path::new(".")))
-        })?
-        .into_python(py)
+        let record = py.detach(|| subimage_record(&self.state(), &origin, &newshape.0.values))?;
+        if newshape.0.overflowed {
+            let error = PySystemError::new_err(
+                "<built-in function coordsys_subimage> returned a result with an exception set",
+            );
+            error.set_cause(
+                py,
+                Some(PyOverflowError::new_err(
+                    "Python int too large to convert to C long",
+                )),
+            );
+            return Err(error);
+        }
+        values::record(&record, Path::new(".")).into_python(py)
     }
 }
