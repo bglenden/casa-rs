@@ -6,14 +6,18 @@ use std::path::Path;
 
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use super::calibration::figure::plot_limits;
+use super::calibration::figure::{ordinate_locations, plot_limits, right_side};
 use super::plotms_atmosphere::Curve;
-use super::{MsAxis, MsDataColumn, MsPlotPayload, MsScatterGridPayload, plotms_text};
+use super::{
+    MsAxis, MsDataColumn, MsPlotPayload, MsScatterGridPayload, MsScatterPlotPayload, plotms_text,
+};
 use crate::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
-    PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy, PlotPayloadWriter,
-    plotms_visibility_document,
+    PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy, PlotPayloadWriter, label_unit,
+    plotms_visibility_document, series_y_bounds,
 };
+
+type VisibilityAxisColumns<'a> = ([MsDataColumn; 3], &'a [(MsAxis, MsDataColumn)]);
 
 pub(super) fn prepare(
     task: &TaskInvocation<'_>,
@@ -22,7 +26,7 @@ pub(super) fn prepare(
     output: Option<&Path>,
     show: bool,
     overlays: &[Vec<Curve>],
-    columns: Option<[MsDataColumn; 3]>,
+    columns: Option<VisibilityAxisColumns<'_>>,
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
     let (x, y, second, grid) = match payload {
         MsPlotPayload::Scatter(plot) => (plot.x_axis, plot.y_axis, plot.secondary_y_axis, None),
@@ -34,8 +38,18 @@ pub(super) fn prepare(
         }
     };
     let mut document = plotms_visibility_document(payload);
-    if let Some(columns) = columns {
+    if let Some((columns, additional)) = columns {
         label_visibility_columns(task, &mut document, [x, y], second, columns)?;
+        if let MsPlotPayload::Scatter(plot) = payload
+            && !additional.is_empty()
+            && let Some(second) = second
+        {
+            let choices = [(y, columns[1]), (second, columns[2])]
+                .into_iter()
+                .chain(additional.iter().copied())
+                .collect::<Vec<_>>();
+            group_ordinate_sides(task, &mut document, plot, &choices, columns[0])?;
+        }
     }
     document.show_legend = task.flag("showlegend")?;
     let limits = plot_limits(task.value("plotrange"))?;
@@ -90,6 +104,95 @@ pub(super) fn prepare(
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
     }
     Ok(figures)
+}
+
+fn group_ordinate_sides(
+    task: &TaskInvocation<'_>,
+    document: &mut PlotDocument,
+    plot: &MsScatterPlotPayload,
+    choices: &[(MsAxis, MsDataColumn)],
+    x_column: MsDataColumn,
+) -> Result<(), TaskFailure> {
+    let locations = ordinate_locations(task)?;
+    let right = |index| right_side(&locations, index);
+    let axis_id = |right| if right { "y-secondary" } else { "y" };
+    let supplied_label = task.text("ylabel")?.filter(|label| !label.is_empty());
+    if !task.text("title")?.is_some_and(|title| !title.is_empty()) {
+        let ordinates = choices
+            .iter()
+            .map(|&(axis, column)| column_axis_name(axis, column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let x_name = column_axis_name(plot.x_axis, x_column);
+        document.title = format!("{ordinates} vs. {x_name}");
+    }
+    document.axes.truncate(1);
+    for (series, layer) in plot.series.iter().zip(&mut document.layers) {
+        layer.y_axis_id = axis_id(right(series.y_index)).into();
+    }
+    for side in [false, true] {
+        let selected = choices
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(index, _)| right(*index) == side)
+            .map(|(_, choice)| choice)
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            continue;
+        }
+        let mut labels = selected
+            .iter()
+            .map(|&(axis, column)| {
+                if !axis.is_visibility_math() {
+                    return super::axis_label(axis);
+                }
+                let mut label = column_axis_name(axis, column);
+                if axis == MsAxis::Phase {
+                    label.push_str(" (degrees)");
+                }
+                label
+            })
+            .collect::<Vec<_>>();
+        labels.dedup();
+        let unit_for = |axis| {
+            if axis == MsAxis::Phase {
+                "degrees".into()
+            } else {
+                label_unit(&super::axis_label(axis))
+            }
+        };
+        let unit = unit_for(selected[0].0);
+        let unit = if selected.iter().all(|&(axis, _)| unit_for(axis) == unit) {
+            unit
+        } else {
+            String::new()
+        };
+        let (lower, upper) = if selected
+            .iter()
+            .all(|&(axis, column)| axis == MsAxis::Phase && !column.has_unbounded_phase())
+        {
+            (-180.0, 180.0)
+        } else {
+            series_y_bounds(
+                plot.series
+                    .iter()
+                    .filter(|series| right(series.y_index) == side)
+                    .flat_map(|series| series.points.iter().map(|&(_, y)| y)),
+            )
+        };
+        document.axes.push(PlotDocumentAxis {
+            id: axis_id(side).into(),
+            label: supplied_label.clone().unwrap_or_else(|| labels.join(", ")),
+            unit,
+            lower,
+            upper,
+            scale: PlotAxisScale::Linear,
+            lane_labels: Vec::new(),
+            draws_on_trailing_edge: side,
+        });
+    }
+    Ok(())
 }
 
 fn label_visibility_columns(

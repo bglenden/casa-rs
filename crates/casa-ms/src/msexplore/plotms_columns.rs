@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA PlotMS ordinate column selection.
 
+use std::collections::HashSet;
+
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
@@ -146,9 +148,8 @@ pub(super) fn inverse_variance(spectrum: &FloatGrid) -> FloatGrid {
 
 pub(super) fn ordinate_columns(
     task: &TaskInvocation<'_>,
-    y_axis: MsAxis,
-    secondary_axis: Option<MsAxis>,
-) -> Result<[MsDataColumn; 2], TaskFailure> {
+    ordinates: &[MsAxis],
+) -> Result<Vec<MsDataColumn>, TaskFailure> {
     let supplied = task.value("ydatacolumn");
     let names = super::calibration::axis_names(supplied)
         .map_err(TaskFailure::validation)?
@@ -163,12 +164,19 @@ pub(super) fn ordinate_columns(
     } else {
         &[]
     };
-    let name = |index| names.get(index).copied().unwrap_or("data");
-    if secondary_axis == Some(y_axis) && name(0) == name(1) {
-        return Err(TaskFailure::validation("Remove duplicate y-axes."));
-    }
-    let column = |index| MsDataColumn::parse(name(index)).map_err(TaskFailure::validation);
-    Ok([column(0)?, column(1)?])
+    let mut seen = HashSet::with_capacity(ordinates.len());
+    ordinates
+        .iter()
+        .enumerate()
+        .map(|(index, &axis)| {
+            let name = names.get(index).copied().unwrap_or("data");
+            let column = MsDataColumn::parse(name).map_err(TaskFailure::validation)?;
+            if !seen.insert((axis, column)) {
+                return Err(TaskFailure::validation("Remove duplicate y-axes."));
+            }
+            Ok(column)
+        })
+        .collect()
 }
 
 fn canonical_column(name: &str) -> Result<&str, TaskFailure> {
@@ -195,12 +203,12 @@ fn canonical_column(name: &str) -> Result<&str, TaskFailure> {
     }
 }
 
-pub(super) fn resolve_storage_columns(
+pub(super) fn resolve_storage_columns<const N: usize>(
     ms: &MeasurementSet,
-    requested: [MsDataColumn; 3],
-    axes: [Option<MsAxis>; 3],
+    requested: [MsDataColumn; N],
+    axes: [Option<MsAxis>; N],
     averaging: bool,
-) -> Result<([MsDataColumn; 3], bool), TaskFailure> {
+) -> Result<([MsDataColumn; N], bool), TaskFailure> {
     use MsDataColumn::*;
 
     let schema = ms.main_table().schema();
