@@ -209,6 +209,22 @@ or `--implementation casa` reruns one side. The runner uses the normal native
 Python task entry point and keeps each implementation's fixture copy and
 products isolated. The output directory retains logs and JUnit results.
 
+**Upstream CASA MeasurementSet task suites.** The same runner supports the
+imported MeasurementSet suites, with installed CASA 6.7.6.14 as the control.
+
+```bash
+CASA_PYTHON tools/casa-compat/upstream_ms_suite.py importvla \
+  --casatestdata /Volumes/home/casatestdata --out target/upstream-ms-tests
+```
+
+`--only` takes a pytest case-name expression for a focused run. An omitted
+filter runs the entire selected module. On a host with limited working space,
+use `--fixture NAME` to stage only the inputs needed by the selected cases.
+Repeat the flag for additional paths within that suite's fixture directory.
+For timing, use release task binaries and `--trials 3`. Trials alternate the
+implementation order. The JSONL output records public task call times separately
+from setup and verification. Compare runs with passing assertions on both sides.
+
 **Simulator.** Its Metal law, `cargo nextest run -p casa-simulation --test
 backends --no-capture`, run outside the sandbox, predicts sessions on both
 backends and prints each case's `max |metal − cpu| / max |cpu|` (the T0

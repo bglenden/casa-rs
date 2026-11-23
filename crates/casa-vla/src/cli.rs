@@ -102,6 +102,8 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<ImportVlaOptions, TaskFailu
             .transpose()
             .map_err(failure)?,
         frequencytol_hz: match frequency_tolerance(task)? {
+            // CASA 6.7.6.14's published default uses the first CDA channel width.
+            ParameterValue::String(text) if text == "150000.0Hz" => 0.0,
             ParameterValue::String(text) => {
                 ImportVlaOptions::parse_frequencytol(text).map_err(failure)?
             }
