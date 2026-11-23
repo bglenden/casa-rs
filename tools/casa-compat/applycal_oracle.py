@@ -871,6 +871,45 @@ def run(root, native_bin, only=None):
         ]:
             case(f'api-select-mscal-geometry-{label}', dict(msselect=predicate), input_vis=vis)
 
+    for label, predicate in [
+        ('default-i', 'real(mscal.stokes(DATA)[1,1]) > 2.1'),
+        ('rescaled-i', 'real(mscal.stokes(DATA,"I",TRUE)[1,1]) > 1.05'),
+        ('rescaled-weight', 'mscal.stokes(WEIGHT,"I",TRUE)[1] > 1 AND ANTENNA1 == 0'),
+        ('circular', 'abs(mscal.stokes(DATA,"circular")[1,1]) > 1.1'),
+        ('mixed', 'abs(mscal.stokes(DATA,"RX,LX")[1,1]) > 0.75 AND ANTENNA1 == 0'),
+        ('reordered', 'mscal.stokes(WEIGHT,"YY,XX")[1] == 1 AND ANTENNA1 == 0'),
+        ('scalar', 'mscal.stokes(ANTENNA1,"I")[1] > 0'),
+        ('row-dependent-output', 'mscal.stokes(DATA,FIELD_ID)[1,1] == 0'),
+        ('non-boolean-rescale', 'mscal.stokes(DATA,"I",1)[1,1] == 0'),
+    ]:
+        case(f'api-select-mscal-stokes-{label}', dict(msselect=predicate), input_vis=observation_source)
+    stokes_cases = [
+        ('flags', 'mscal.stokes(FLAG,"I")[1,1]'),
+        ('zero-weight', 'mscal.stokes(WEIGHT,"XX")[1] == 0'),
+        ('linear-intensity', 'real(mscal.stokes(DATA,"Plinear")[1,1]) > 0.25'),
+        ('linear-fraction', 'real(mscal.stokes(DATA,"PFlinear")[1,1]) > 0.1'),
+        ('polarization-angle', 'abs(real(mscal.stokes(DATA,"Pangle")[1,1])) > 1'),
+    ]
+    if only is None or any(re.search(only, f'api-select-mscal-stokes-{label}') for label, _ in stokes_cases):
+        stokes_source = root/'source-mscal-stokes.ms'
+        copy_ms(observation_source, stokes_source)
+        tool.open(str(stokes_source), nomodify=False)
+        try:
+            sample = int(np.flatnonzero(tool.getcol('ANTENNA1') == 1)[0])
+            data = tool.getcol('DATA')
+            data[1, :, sample] *= 1.5
+            tool.putcol('DATA', data)
+            flags = tool.getcol('FLAG')
+            flags[0, 0, sample] = True
+            tool.putcol('FLAG', flags)
+            weights = tool.getcol('WEIGHT')
+            weights[1, sample] = 0
+            tool.putcol('WEIGHT', weights)
+        finally:
+            tool.close()
+        for label, predicate in stokes_cases:
+            case(f'api-select-mscal-stokes-{label}', dict(msselect=predicate), input_vis=stokes_source)
+
     for label, arguments in [
         ('scalar-map', dict(spwmap=0, flagbackup=True)),
         ('empty-text-map', dict(spwmap='')),

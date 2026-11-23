@@ -41,6 +41,11 @@ fn bind_lookup(
             .join(", ")
     );
 
+    if function == "stokes" {
+        return super::mscal_stokes::bind(name, original, args, table, style)
+            .map(|function| Some(Expr::BoundRowFunction(function)));
+    }
+
     if matches!(function, "uvwwvl" | "uvwwvls") {
         check_arity(name, args, 0)?;
         return super::mscal_wavelengths::bind(original, table, function == "uvwwvls")

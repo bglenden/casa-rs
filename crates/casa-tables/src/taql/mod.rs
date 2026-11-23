@@ -56,6 +56,7 @@ pub mod format;
 pub mod functions;
 mod meas_udf;
 mod mscal_lookup;
+mod mscal_stokes;
 mod mscal_wavelengths;
 mod row_function;
 
