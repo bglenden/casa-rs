@@ -17,9 +17,9 @@ mod write_lock;
 #[cfg(unix)]
 pub(crate) use lock_file::read_sync_data_from_table_dir;
 #[cfg(unix)]
-pub(crate) use lock_file::{LOCK_FILE_NAME, LockFile, LockOutcome};
+pub use lock_file::{DelegatedTableWrite, table_holder};
 #[cfg(unix)]
-pub use lock_file::{process_holds_table_lock, table_holder};
+pub(crate) use lock_file::{LOCK_FILE_NAME, LockFile, LockOutcome};
 pub(crate) use sync_data::SyncData;
 pub use write_lock::{TableUseLock, TableWriteLock};
 #[cfg(unix)]

@@ -12,6 +12,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{PoisonError, TryLockError};
 
 use casa_tables::{EndianFormat, LockType, Table, TableOptions, add_directory};
 use casa_types::{RecordValue, Value};
@@ -329,12 +330,26 @@ impl State {
     }
 
     /// Gives up the lock an automatic mode keeps between calls.
-    pub(super) fn relinquish_auto_lock(&mut self, target: Option<&Path>) -> Result<(), Fail> {
+    pub(super) fn relinquish_auto_lock(&mut self, targets: Option<&[PathBuf]>) -> Result<(), Fail> {
         if let Some(open) = self.open.as_ref() {
-            let mut root = open.root();
+            let mut root = if let Some(targets) = targets {
+                let matches = std::iter::once(&open.root_name)
+                    .chain(&open.plain_paths)
+                    .filter_map(|path| path.canonicalize().ok())
+                    .any(|path| targets.contains(&path));
+                if !matches {
+                    return Ok(());
+                }
+                match open.root.try_lock() {
+                    Ok(root) => root,
+                    Err(TryLockError::Poisoned(error)) => error.into_inner(),
+                    Err(TryLockError::WouldBlock) => return Ok(()),
+                }
+            } else {
+                open.root()
+            };
             if root.lock.automatic()
                 && (root.table.has_lock(LockType::Read) || root.table.has_lock(LockType::Write))
-                && target.is_none_or(|path| root.name.canonicalize().is_ok_and(|name| name == path))
             {
                 root.table.unlock_metadata_only()?;
             }
