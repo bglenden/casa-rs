@@ -660,6 +660,7 @@ fn restore_rename<T>(
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
 
     use super::*;
 
@@ -778,5 +779,34 @@ mod tests {
                 assert_eq!(fs::read(previous.join("previous")).unwrap(), b"2");
             }
         }
+    }
+
+    #[test]
+    fn late_cleanup_failure_names_and_preserves_the_recovery_entry() {
+        Python::initialize();
+        let root = tempfile::tempdir().unwrap();
+        let published = root.path().join("published");
+        fs::write(&published, b"the published copy").unwrap();
+        let stage = tempfile::tempdir_in(root.path()).unwrap();
+        let recovery = stage.path().to_path_buf();
+        let retained = recovery.join("source");
+        fs::create_dir(&retained).unwrap();
+        fs::write(retained.join("keep"), b"data awaiting removal").unwrap();
+        fs::set_permissions(&retained, fs::Permissions::from_mode(0o555)).unwrap();
+        if fs::write(retained.join("permission-probe"), []).is_ok() {
+            // A privileged test process can still remove read-only entries.
+            return;
+        }
+
+        let error = close_stage(stage, &published).unwrap_err();
+        fs::set_permissions(&retained, fs::Permissions::from_mode(0o755)).unwrap();
+        let message = error.to_string();
+        assert!(message.contains("cleanup failed"), "{message}");
+        assert!(message.contains(recovery.to_str().unwrap()), "{message}");
+        assert_eq!(
+            fs::read(retained.join("keep")).unwrap(),
+            b"data awaiting removal"
+        );
+        assert_eq!(fs::read(&published).unwrap(), b"the published copy");
     }
 }

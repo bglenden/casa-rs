@@ -55,9 +55,6 @@ IMPLEMENTED["calibrater"] = {
 PARTIAL = {
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
-    "image": {
-        "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
-    },
 }
 
 IMPLEMENTED["coordsys"] = {
@@ -78,6 +75,7 @@ IMPLEMENTED["coordsys"] = {
     "torelmany", "toworld", "toworldmany", "type", "units",
 }
 IMPLEMENTED["image"] = {
+    "fromimage", "imageconcat", "newimage", "newimagefromfile", "newimagefromimage", "open",
     "boxcar", "collapse", "continuumsub", "convolve", "convolve2d", "decompose", "deviation", "fft", "findsources", "fitcomponents", "fitprofile", "hanning", "histograms",
     "maxfit",
     "moments",

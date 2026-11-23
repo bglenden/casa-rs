@@ -167,7 +167,7 @@ struct Input<'a> {
 
 impl<'a> Input<'a> {
     fn open(path: &'a Path, tempclose: bool) -> PyResult<Self> {
-        Self::open_resolved(path, path, tempclose, &mut HashSet::new())
+        Self::open_resolved(path, path, tempclose, &mut HashSet::new(), None)
     }
 
     fn open_resolved(
@@ -175,11 +175,13 @@ impl<'a> Input<'a> {
         resolved: &Path,
         tempclose: bool,
         active: &mut HashSet<PathBuf>,
+        output: Option<&saved_expression::StagedOutput<'_>>,
     ) -> PyResult<Self> {
         if !casa_images::concat_file::is_image_concat(resolved)
             && casa_images::expr_file::is_image_expr(resolved)
         {
-            let (image, inputs) = saved_expression::open_for_concatenation(resolved, active)?;
+            let (image, inputs) =
+                saved_expression::open_for_concatenation(resolved, active, output)?;
             return Self::from_image(path, image, tempclose, Some(inputs));
         }
         let image = ImageHandle::open_for_concatenation(resolved).map_err(raised)?;
@@ -273,29 +275,11 @@ impl<'a> Input<'a> {
 }
 
 fn protect_expression_sources(output: &Path, inputs: &[Input<'_>]) -> PyResult<()> {
-    let route = casa_tables::lexical_absolute(output);
-    let entry = route
-        .parent()
-        .and_then(|parent| parent.canonicalize().ok())
-        .zip(route.file_name())
-        .map(|(parent, name)| parent.join(name));
-    let referent = output.canonicalize().ok();
-    for input in inputs {
-        for path in &input.expression_operands {
-            if std::iter::once(&route)
-                .chain(entry.iter())
-                .chain(referent.iter())
-                .any(|output| path.starts_with(output) || output.starts_with(path))
-            {
-                return Err(raised(format!(
-                    "Cannot overwrite output {} because it overlaps a saved image expression input {}",
-                    output.display(),
-                    path.display(),
-                )));
-            }
-        }
-    }
-    Ok(())
+    saved_expression::check_output_dependencies(
+        output,
+        inputs.iter().flat_map(|input| &input.expression_operands),
+        true,
+    )
 }
 
 fn coordinate_record(first: &Input<'_>, plan: &ConcatenationPlan) -> PyResult<RecordValue> {
