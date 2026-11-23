@@ -90,9 +90,9 @@ pub(super) fn resolve_storage_columns(
                 "FLOAT_DATA is unavailable. Use DATA for PlotMS.",
             ));
         }
-        if axis != Some(MsAxis::Amplitude) {
+        if matches!(axis, Some(MsAxis::Phase | MsAxis::Imaginary)) {
             return Err(TaskFailure::validation(
-                "PlotMS requires an amplitude axis for FLOAT_DATA.",
+                "PlotMS requires an amplitude or real axis for FLOAT_DATA.",
             ));
         }
         if averaging {

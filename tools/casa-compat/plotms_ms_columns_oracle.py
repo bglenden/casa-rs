@@ -449,7 +449,7 @@ def compare_float_columns(root, vis, source, native):
 
     invalid = (
         ("missing-float", vis, "amp", "FLOAT_DATA is unavailable"),
-        ("non-amplitude-float", float_only, "real", "requires an amplitude axis"),
+        ("phase-float", float_only, "phase", "requires an amplitude or real axis"),
     )
     for name, destination, axis, diagnostic in invalid:
         controls = request(destination) | dict(xaxis="channel", yaxis=axis, xdatacolumn="", ydatacolumn="float")
@@ -462,6 +462,25 @@ def compare_float_columns(root, vis, source, native):
             else:
                 raise AssertionError(f"{engine} accepted {name}")
             assert not output.exists()
+
+    controls = request(float_only) | dict(xaxis="channel", yaxis="real", xdatacolumn="", ydatacolumn="float")
+    expected, actual = (root / f"real-float.{engine}.txt" for engine in ("casa", "native"))
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    # For real-valued cells, CASA's signed amplitude already gives the real coordinates.
+    amp_reference = rows(root / "float-explicit.casa.txt")
+    actual_real = rows(actual)
+    np.testing.assert_allclose(np.array([p[:2] for p in actual_real], dtype=float),
+                               np.array([p[:2] for p in amp_reference], dtype=float),
+                               rtol=1.2e-5, atol=1e-7)
+    assert [p[2:] for p in actual_real] == [p[2:] for p in amp_reference]
+    assert any(line.startswith("# Channel Real ") for line in actual.read_text().splitlines())
+    try:
+        reference(**controls, plotfile=str(expected), expformat="txt")
+    except Exception as error:
+        assert "plot parameters failed" in str(error) or "Stream removed (Socket closed)" in str(error), error
+        assert not expected.exists()
+    else:
+        assert compare_text(actual, expected) == 12
 
 
 def main():
