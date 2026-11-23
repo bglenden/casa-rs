@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::constants::{
-    COL_ANTENNA1, COL_ANTENNA2, COL_ARRAY_ID, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_INTERVAL,
+    COL_ANTENNA1, COL_ANTENNA2, COL_CPARAM, COL_FIELD_ID, COL_FLAG, COL_INTERVAL,
     COL_OBSERVATION_ID, COL_PARAMERR, COL_SCAN_NUMBER, COL_SNR, COL_SPECTRAL_WINDOW_ID, COL_TIME,
-    COL_TIME_EXTRA_PREC, COL_WEIGHT,
+    COL_WEIGHT,
 };
 use crate::selected_data::SelectedData;
 use crate::session::prepare_calibration_solve;
@@ -887,12 +887,11 @@ fn write_bandpass_caltable(
         ColumnSchema::scalar(COL_INTERVAL, casa_types::PrimitiveType::Float64),
         ColumnSchema::scalar(COL_SCAN_NUMBER, casa_types::PrimitiveType::Int32),
         ColumnSchema::scalar(COL_OBSERVATION_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_ARRAY_ID, casa_types::PrimitiveType::Int32),
-        ColumnSchema::scalar(COL_TIME_EXTRA_PREC, casa_types::PrimitiveType::Float64),
         ColumnSchema::array_variable(COL_CPARAM, casa_types::PrimitiveType::Complex32, Some(2)),
         ColumnSchema::array_variable(COL_PARAMERR, casa_types::PrimitiveType::Float32, Some(2)),
         ColumnSchema::array_variable(COL_FLAG, casa_types::PrimitiveType::Bool, Some(2)),
         ColumnSchema::array_variable(COL_SNR, casa_types::PrimitiveType::Float32, Some(2)),
+        // CASA declares WEIGHT but leaves it undefined in bandpass solutions.
         ColumnSchema::array_variable(COL_WEIGHT, casa_types::PrimitiveType::Float32, Some(2)),
     ])
     .expect("valid bandpass schema");
@@ -908,14 +907,13 @@ fn write_bandpass_caltable(
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "<in-memory>".to_string()),
             include_polarization_basis: true,
-            time_extra_precision_column: Some(COL_TIME_EXTRA_PREC),
+            time_extra_precision_column: None,
         },
         mode,
     )?;
 
     for row in rows {
         let receptor_count = 2;
-        let element_count = receptor_count * row.channel_count;
         writer.append(RecordValue::new(vec![
             RecordField::new(
                 COL_TIME,
@@ -946,11 +944,6 @@ fn write_bandpass_caltable(
             RecordField::new(
                 COL_OBSERVATION_ID,
                 Value::Scalar(ScalarValue::Int32(row.observation_id)),
-            ),
-            RecordField::new(COL_ARRAY_ID, Value::Scalar(ScalarValue::Int32(0))),
-            RecordField::new(
-                COL_TIME_EXTRA_PREC,
-                Value::Scalar(ScalarValue::Float64(0.0)),
             ),
             RecordField::new(
                 COL_CPARAM,
@@ -990,16 +983,6 @@ fn write_bandpass_caltable(
                         row.snrs.clone(),
                     )
                     .expect("bandpass snr should reshape to receptor x channel"),
-                )),
-            ),
-            RecordField::new(
-                COL_WEIGHT,
-                Value::Array(ArrayValue::Float32(
-                    ArrayD::from_shape_vec(
-                        IxDyn(&[receptor_count, row.channel_count]).f(),
-                        vec![1.0; element_count],
-                    )
-                    .expect("bandpass weight should reshape to receptor x channel"),
                 )),
             ),
         ]))?;
