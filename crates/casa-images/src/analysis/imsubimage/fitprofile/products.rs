@@ -9,6 +9,7 @@ use ndarray::{Axis, IxDyn};
 
 use crate::{Image, ImageError, MutableImageInterface};
 
+use super::super::collapse::collapsed_coordinate_record;
 use super::models::{LineKind, ProfileModels};
 use super::selection::Lane;
 use super::sigma::Sigma;
@@ -308,16 +309,20 @@ impl ProfileProducts {
         }
         let mut shape = self.shape;
         let axis = fit.selection.axis;
-        let mut solution_coordinates = self.coordinates;
-        if converged && fit.options.multifit && shape[axis] > 1 {
-            let reference = fit.selection.plan.coordinates.reference_pixel();
-            let offset = (shape[axis] - 1) as f64 * 0.5;
-            CoordinateSystem::set_reference_pixel_in_record(
-                &mut solution_coordinates,
-                axis,
-                reference[axis] - offset,
-            )?;
-        }
+        let writes_solution = fit.products.iter().zip(staged).any(|(product, path)| {
+            path.is_some() && matches!(product.kind, Kind::Line { .. } | Kind::Coefficient { .. })
+        });
+        let solution_coordinates =
+            if converged && fit.options.multifit && shape[axis] > 1 && writes_solution {
+                collapsed_coordinate_record(
+                    &fit.selection.plan.coordinates,
+                    &shape,
+                    self.coordinates,
+                    &[axis],
+                )?
+            } else {
+                self.coordinates
+            };
         shape[axis] = 1;
         for (product, path) in fit.products.iter().zip(staged) {
             let Some(path) = path else { continue };

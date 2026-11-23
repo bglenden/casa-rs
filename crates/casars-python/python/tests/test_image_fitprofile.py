@@ -179,6 +179,40 @@ def test_native_product_matrix_and_minimum_masked_points(casa, tmp_path):
             assert history[-1] == "Number valid             = 4"
 
 
+def test_profile_solution_images_use_the_collapsed_spectral_grid(casa, tmp_path):
+    pixels = _cube(_line(np.arange(31.), 7., 13., 4.7), (3, 2))
+    for writer in (casa, tools):
+        source = writer.image()
+        name = str(tmp_path / f"{writer.__name__}-amp")
+        try:
+            assert source.fromarray(pixels=pixels)
+            start = source.toworld([0, 0, 2])["numeric"][2]
+            end = source.toworld([2, 1, 22])["numeric"][2]
+            result = source.fitprofile(
+                chans="2~22", axis=2, multifit=True, logresults=False, amp=name,
+                pampest=7., pcenterest=11., pfwhmest=4.7,
+            )
+            assert result["valid"].all()
+        finally:
+            source.done()
+
+        for reader in (casa, tools):
+            product = reader.image()
+            try:
+                assert product.open(name + "_0")
+                coords = product.coordsys()
+                try:
+                    assert coords.referencepixel()["numeric"][2] == 0
+                    assert coords.referencevalue()["numeric"][2] == (start + end) / 2
+                finally:
+                    coords.done()
+                assert product.shape().tolist() == [3, 2, 1]
+                np.testing.assert_allclose(product.getchunk(), 7., atol=2e-6)
+                assert product.getchunk(getmask=True).all()
+            finally:
+                product.done()
+
+
 @pytest.mark.parametrize("form", ["vector", "array", "native"])
 def test_sigma_inverse_variance(casa, tmp_path, form):
     n = 51
