@@ -16,6 +16,25 @@ def casa():
     return package
 
 
+def test_sparse_getchunk_reads_a_casa_image_with_nine_axes(casa, tmp_path):
+    path = str(tmp_path / "nine-axes.im")
+    pixels = np.arange(41, dtype=np.float32).reshape((41,) + (1,) * 8)
+    source = casa.image()
+    try:
+        assert source.fromarray(path, pixels=pixels, linear=True)
+    finally:
+        source.done()
+
+    for backend in (casa, tools):
+        restored = backend.image()
+        try:
+            assert restored.open(path)
+            result = restored.getchunk(inc=[20] + [1] * 8)
+            np.testing.assert_array_equal(result, pixels[::20].astype(np.float64), strict=True)
+        finally:
+            restored.done()
+
+
 @pytest.mark.skipif(os.name != "posix", reason="casacore file locks require POSIX")
 def test_lazy_getregion_reads_and_locks_its_native_operand(casa, tmp_path):
     pixels = np.arange(12, dtype=np.float32).reshape(3, 4)

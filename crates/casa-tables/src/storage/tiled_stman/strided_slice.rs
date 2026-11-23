@@ -3,7 +3,7 @@
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use super::{
-    MAX_NDIM, StorageError, TilePixel, TiledFileIO, checked_storage_product, fortran_order_strides,
+    StorageError, TilePixel, TiledFileIO, checked_storage_product, fortran_order_strides,
     tile_as_typed,
 };
 
@@ -22,7 +22,6 @@ impl TiledFileIO {
     ) -> Result<ArrayD<T>, StorageError> {
         let rank = self.cube_shape.len();
         if rank == 0
-            || rank > MAX_NDIM
             || start.len() != rank
             || shape.len() != rank
             || stride.len() != rank
@@ -42,10 +41,9 @@ impl TiledFileIO {
 
         let mut values = vec![T::default(); checked_storage_product(shape, "slice size")?];
         let output_strides = fortran_order_strides(shape);
-        let mut samples = [0; MAX_NDIM];
-        let mut runs = [TileRun::default(); MAX_NDIM];
-        let mut tile_strides = [0; MAX_NDIM];
-        tile_strides[..rank].copy_from_slice(&self.tile_strides);
+        let mut samples = vec![0; rank];
+        let mut runs = vec![TileRun::default(); rank];
+        let tile_strides = self.tile_strides.clone();
 
         loop {
             let mut tile = 0;
@@ -66,14 +64,14 @@ impl TiledFileIO {
             gather_tile(
                 tile,
                 &mut values[output_base..],
-                &runs[..rank],
+                &runs,
                 stride,
-                &tile_strides[..rank],
+                &tile_strides,
                 &output_strides,
             );
 
-            // Move to the next tile containing a sample along the fastest
-            // remaining axis. Tiles skipped by the stride never enter the cache.
+            // Advance along the fastest remaining axis with selected samples.
+            // The traversal makes no lookups for tiles between samples.
             let mut more_tiles = false;
             for axis in 0..rank {
                 samples[axis] += runs[axis].count;
