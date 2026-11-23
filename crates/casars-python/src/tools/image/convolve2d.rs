@@ -18,7 +18,7 @@ use crate::convert::{IntList, Variant, quantity};
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
 use super::beams::{image_info_record, stored_beam_record};
-use super::create::publish_image;
+use super::create::publish_masked_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::{RegionArgument, mask_argument, require_bool};
 
@@ -80,11 +80,13 @@ struct Request<'a> {
 impl Request<'_> {
     fn run(&self, attachment: &AttachedImage) -> PyResult<AttachedImage> {
         let mut live_coordinates = None;
-        let mut output = publish_image(self.outfile, self.overwrite, |path| {
-            let staged = read_locked(attachment, |source| self.build(attachment, source, path))?;
-            live_coordinates = AttachedImage::capture_live_coordinates(&staged)?;
-            Ok(staged)
-        })?;
+        let mut output =
+            publish_masked_image(self.outfile, self.overwrite, Some(&self.mask), |path| {
+                let staged =
+                    read_locked(attachment, |source| self.build(attachment, source, path))?;
+                live_coordinates = AttachedImage::capture_live_coordinates(&staged)?;
+                Ok(staged)
+            })?;
         if let Some((record, system)) = live_coordinates {
             output.keep_live_coordinates(record, system);
         }

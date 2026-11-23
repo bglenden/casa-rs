@@ -1,5 +1,7 @@
 """Native, complex and FITS inputs for the public image.calcmask method."""
 
+import json
+
 import numpy as np
 import pytest
 
@@ -173,3 +175,130 @@ def test_calcmask_preserves_arithmetic_precision_at_promotion(reference_images, 
             np.testing.assert_array_equal(image.getchunk(getmask=True), expected)
         finally:
             image.done()
+
+
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+@pytest.mark.parametrize("kind", ["saved", "virtual", "nested"])
+@pytest.mark.parametrize("method", ["statistics", "getregion", "subimage", "moments", "histograms"])
+def test_analysis_mask_accepts_persisted_expression_operands(tmp_path, backend, kind, method):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    leaf, peer, operand, output = (tmp_path / name for name in
+                                   ("leaf.im", "peer.im", "operand.im", "output.im"))
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    tool = api.image()
+    reader = None
+    try:
+        assert tool.fromarray(str(leaf), pixels, linear=True) and tool.done()
+        if kind == "saved":
+            operand.mkdir()
+            (operand / "imageexpr.json").write_text(json.dumps({"ImageExpr": f'"{leaf}" * 3'}))
+            valid = pixels * 3 > 4
+        else:
+            assert tool.fromarray(str(peer), pixels, linear=True) and tool.done()
+            first, joined_path = leaf, operand
+            if kind == "nested":
+                first, joined_path = tmp_path / "inner.im", tmp_path / "joined.im"
+                first.mkdir()
+                (first / "imageexpr.json").write_text(json.dumps({"ImageExpr": f'"{leaf}" + 1'}))
+            joined = tool.imageconcat(str(joined_path), [str(first), str(peer)], axis=0,
+                                      mode="nomove", relax=True)
+            assert joined.done()
+            values = np.concatenate([pixels + (kind == "nested"), pixels])
+            if kind == "nested":
+                operand.mkdir()
+                (operand / "imageexpr.json").write_text(
+                    json.dumps({"ImageExpr": f'"{joined_path}" * 3'})
+                )
+                values *= 3
+            pixels = np.concatenate([pixels, pixels])
+            valid = values > 4
+        assert tool.fromarray(pixels=pixels, linear=True)
+        mask = f'"{operand}" > 4'
+        if method == "statistics":
+            stats = tool.statistics(mask=mask)
+            np.testing.assert_array_equal(stats["npts"], [valid.sum()])
+            np.testing.assert_array_equal(stats["sum"], [pixels[valid].sum()])
+        elif method == "getregion":
+            np.testing.assert_array_equal(tool.getregion(mask=mask, getmask=True), valid)
+        elif method == "subimage":
+            result = tool.subimage(outfile=str(output), mask=mask)
+            assert result.done()
+            reader_api = tools if backend == "casatools" else api
+            if backend == "casars":
+                import importlib.util
+                if importlib.util.find_spec("casatools") is not None:
+                    import casatools
+                    reader_api = casatools
+            reader = reader_api.image()
+            assert reader.open(str(output))
+            np.testing.assert_array_equal(reader.getchunk(getmask=True), valid)
+            np.testing.assert_array_equal(reader.getchunk()[valid], pixels[valid])
+        elif method == "moments":
+            reader = tool.moments(moments=[-1], axis=0, mask=mask)
+            accepted = valid.any(axis=0)
+            expected = [pixels[:, i][valid[:, i]].mean() for i in np.flatnonzero(accepted)]
+            np.testing.assert_array_equal(reader.getchunk(getmask=True), accepted)
+            np.testing.assert_allclose(reader.getchunk()[accepted], expected)
+        else:
+            distribution = tool.histograms(mask=mask)
+            assert distribution["counts"].sum() == valid.sum()
+    finally:
+        if reader is not None:
+            reader.done()
+        tool.done()
+
+
+@pytest.mark.parametrize("backend", ["casatools", "casars"])
+@pytest.mark.parametrize("method", ["subimage", "moments", "collapse"])
+def test_analysis_keeps_an_existing_transitive_mask_operand(tmp_path, backend, method):
+    api = tools if backend == "casars" else pytest.importorskip("casatools")
+    if backend == "casatools":
+        assert api.version_string().replace("-", ".") == "6.7.6.14"
+    source, destination, mask = (tmp_path / name for name in ("source.im", "output.im", "mask.im"))
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    image = api.image()
+    try:
+        assert image.fromarray(str(destination), pixels, linear=True) and image.done()
+        assert image.fromarray(str(source), pixels * 5, linear=True)
+        mask.mkdir()
+        (mask / "imageexpr.json").write_text(json.dumps({"ImageExpr": f'"{destination}" * 3'}))
+        arguments = dict(outfile=str(destination), mask=f'"{mask}" > 4', overwrite=True)
+        if method == "moments":
+            arguments.update(moments=[-1], axis=0)
+        elif method == "collapse":
+            arguments.update(function="mean", axes=[0])
+        with pytest.raises(RuntimeError, match="already opened|table cache|overlaps|matches"):
+            getattr(image, method)(**arguments)
+        assert image.isopen()
+        np.testing.assert_array_equal(image.getchunk(), pixels * 5)
+        assert image.done() and image.open(str(destination))
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        image.done()
+
+
+def test_analysis_rejects_a_cycle_between_mask_operand_formats(tmp_path):
+    leaf, peer, saved, virtual = (tmp_path / name for name in
+                                  ("leaf.im", "peer.im", "saved.im", "virtual.im"))
+    image = tools.image()
+    pixels = np.arange(6, dtype=np.float32).reshape(3, 2)
+    try:
+        for path in (leaf, peer):
+            assert image.fromarray(str(path), pixels, linear=True) and image.done()
+        joined = image.imageconcat(str(virtual), [str(leaf), str(peer)], axis=0, mode="nomove", relax=True)
+        assert joined.done()
+        saved.mkdir()
+        (saved / "imageexpr.json").write_text(json.dumps({"ImageExpr": f'"{virtual}" * 1'}))
+        descriptor = virtual / "imageconcat.json"
+        manifest = json.loads(descriptor.read_text())
+        manifest["Images"][0] = str(saved)
+        descriptor.write_text(json.dumps(manifest))
+
+        assert image.open(str(leaf))
+        with pytest.raises(RuntimeError, match="Cycle in image expression or concatenation"):
+            image.statistics(mask=f'"{saved}" > 1')
+        np.testing.assert_array_equal(image.getchunk(), pixels)
+    finally:
+        image.done()

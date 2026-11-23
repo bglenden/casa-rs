@@ -176,6 +176,8 @@ impl FitRequest<'_> {
                 ensure_artifacts_do_not_overlap(path, peer).map_err(raised)?;
             }
         }
+        casa_images::analysis::protect_composed_mask_outputs(&self.mask, paths.iter().copied())
+            .map_err(raised)?;
         let fit = publish_image_set([self.model, self.residual], true, |staged| {
             read_locked(attachment, |source| {
                 for target in &paths {

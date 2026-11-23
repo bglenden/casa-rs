@@ -2,6 +2,7 @@
 //! LEL mask evaluation, `image:maskname` resolution, and `stretch` handling
 //! for image tasks.
 
+mod composed;
 mod geometry;
 pub(super) use geometry::validate_mask;
 
@@ -461,14 +462,33 @@ fn open_operands(
     operands: &[ResolvedOperand],
     temporary_source_locks: bool,
 ) -> Result<Vec<(String, Operand)>, ImageError> {
+    open_operands_for_outputs(operands, temporary_source_locks, &[])
+}
+
+fn open_operands_for_outputs(
+    operands: &[ResolvedOperand],
+    temporary_source_locks: bool,
+    destinations: &[&Path],
+) -> Result<Vec<(String, Operand)>, ImageError> {
     operands
         .iter()
         .map(|operand| {
-            let image = open_path_with_mask_name(
-                &operand.path,
-                operand.mask.clone(),
-                temporary_source_locks,
-            )?;
+            let image = if composed::recognizes(&operand.path) {
+                let (image, dependencies) = composed::open(&operand.path, temporary_source_locks)?;
+                for destination in destinations {
+                    for dependency in &dependencies {
+                        super::ensure_outfile_does_not_alias_input(destination, dependency)?;
+                        super::ensure_artifacts_do_not_overlap(destination, dependency)?;
+                    }
+                }
+                image
+            } else {
+                open_path_with_mask_name(
+                    &operand.path,
+                    operand.mask.clone(),
+                    temporary_source_locks,
+                )?
+            };
             Ok((operand.name.clone(), image))
         })
         .collect()
@@ -573,6 +593,40 @@ fn mask_expression(raw: &str) -> String {
     }
 }
 
+/// Refuse to overwrite an existing output referenced by a composed image mask.
+///
+/// # Errors
+/// Returns an error for a composed mask dependency that overlaps an output.
+pub fn protect_composed_mask_outputs<'a>(
+    mask: &str,
+    outputs: impl IntoIterator<Item = &'a Path>,
+) -> Result<(), ImageError> {
+    let outputs: Vec<_> = outputs
+        .into_iter()
+        .filter(|path| path.symlink_metadata().is_ok())
+        .collect();
+    if outputs.is_empty() || mask.trim().is_empty() {
+        return Ok(());
+    }
+    // Leave invalid plain-text syntax and unknown inputs to the caller's
+    // normal mask validation. Only admitted composed operands need tracing.
+    let Ok(operands) = resolve_operands(&mask_expression(mask.trim())) else {
+        return Ok(());
+    };
+    for operand in operands {
+        if composed::recognizes(&operand.path) {
+            let dependencies = composed::dependencies(&operand.entry)?;
+            for output in &outputs {
+                for path in &dependencies {
+                    super::ensure_outfile_does_not_alias_input(output, path)?;
+                    super::ensure_artifacts_do_not_overlap(output, path)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) struct PreparedMask<'a> {
     expression: MaskExpression<f64>,
     target_shape: &'a [usize],
@@ -618,13 +672,14 @@ impl<'a> PreparedMask<'a> {
         let expr = mask_expression(raw);
         let names = referenced_images(&expr).map_err(mask_parse_error)?;
         let operands = resolve_named_operands(names)?;
-        for destination in destinations {
+        let destinations: Vec<_> = destinations.into_iter().collect();
+        for destination in &destinations {
             for operand in &operands {
                 super::ensure_outfile_does_not_alias_input(destination, &operand.path)?;
                 super::ensure_artifacts_do_not_overlap(destination, &operand.path)?;
             }
         }
-        let opened = open_operands(&operands, false)?;
+        let opened = open_operands_for_outputs(&operands, false, &destinations)?;
         let (real, complex) = operand_resolvers(&opened);
         let expression =
             parse_subimage_mask_expr(&expr, &real, &complex).map_err(mask_parse_error)?;

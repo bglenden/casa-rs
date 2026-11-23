@@ -92,6 +92,10 @@ impl PyImageTool {
                     .chain(operand_paths.iter().map(PathBuf::as_path)),
             )
             .map_err(raised)?;
+            if overwrite {
+                casa_images::analysis::protect_composed_mask_outputs(&mask, [Path::new(outfile)])
+                    .map_err(raised)?;
+            }
             attachment.require_pixel_read_lock(&mut handle)?;
             let ImageHandle::Float(storage) = &*handle else {
                 unreachable!("image storage stays fixed while locked");

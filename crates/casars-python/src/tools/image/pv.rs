@@ -20,7 +20,7 @@ use crate::tools::{LogLine, emit};
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
 use super::beams::subset_beam_record;
-use super::create::publish_image;
+use super::create::publish_masked_image;
 use super::handle::{ImageHandle, Storage, raised};
 use super::subimage::{RegionArgument, require_bool};
 
@@ -113,7 +113,7 @@ impl PyImageTool {
             let Some(input) = &state.image else {
                 return Ok(None);
             };
-            let result = publish_image(outfile.trim(), overwrite, |path| {
+            let result = publish_masked_image(outfile.trim(), overwrite, Some(mask), |path| {
                 build(
                     input,
                     path,

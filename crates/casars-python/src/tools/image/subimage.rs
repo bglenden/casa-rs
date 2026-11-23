@@ -16,7 +16,7 @@ use crate::convert::{IntList, Variant};
 use crate::tools::{LogLine, emit, table::casa_record};
 
 use super::PyImageTool;
-use super::create::publish_image;
+use super::create::publish_masked_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 
 pub(super) enum Region {
@@ -333,7 +333,7 @@ impl PyImageTool {
             if outfile.is_empty() && !wantreturn {
                 logs.push(LogLine::warning("outfile was not specified and wantreturn is false. The resulting image will be inaccessible"));
             }
-            publish_image(outfile, overwrite, |path| {
+            publish_masked_image(outfile, overwrite, Some(&request.mask), |path| {
                 // Release the source handle before publication takes the image registry lock.
                 let mut original = attached.lock();
                 attached.require_pixel_read_lock(&mut original)?;

@@ -18,7 +18,7 @@ use crate::convert::Variant;
 
 use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
-use super::create::publish_image;
+use super::create::publish_masked_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::pixels::snapshot_array;
 use super::subimage::{RegionArgument, mask_argument, require_bool};
@@ -159,30 +159,35 @@ impl Request<'_> {
             .map(AttachedImage::open_for_ordered_read)
             .transpose()?;
         let mut coordinates = None;
-        let mut output = publish_image(self.outfile, self.overwrite, |destination| {
-            let build = |image: &ImageHandle, kernel: Option<&ImageHandle>| {
-                self.build(source, image, kernel, destination)
-            };
-            let product = if let Some(kernel) = &kernel {
-                let source_first = source
-                    .native_path()
-                    .zip(kernel.native_path())
-                    .is_none_or(|(left, right)| left < right);
-                if source_first {
-                    read_locked(source, |image| {
-                        read_locked(kernel, |kernel| build(image, Some(kernel)))
-                    })?
+        let mut output = publish_masked_image(
+            self.outfile,
+            self.overwrite,
+            Some(self.mask),
+            |destination| {
+                let build = |image: &ImageHandle, kernel: Option<&ImageHandle>| {
+                    self.build(source, image, kernel, destination)
+                };
+                let product = if let Some(kernel) = &kernel {
+                    let source_first = source
+                        .native_path()
+                        .zip(kernel.native_path())
+                        .is_none_or(|(left, right)| left < right);
+                    if source_first {
+                        read_locked(source, |image| {
+                            read_locked(kernel, |kernel| build(image, Some(kernel)))
+                        })?
+                    } else {
+                        read_locked(kernel, |kernel| {
+                            read_locked(source, |image| build(image, Some(kernel)))
+                        })?
+                    }
                 } else {
-                    read_locked(kernel, |kernel| {
-                        read_locked(source, |image| build(image, Some(kernel)))
-                    })?
-                }
-            } else {
-                read_locked(source, |image| build(image, same.then_some(image)))?
-            };
-            coordinates = AttachedImage::capture_live_coordinates(&product)?;
-            Ok(product)
-        })?;
+                    read_locked(source, |image| build(image, same.then_some(image)))?
+                };
+                coordinates = AttachedImage::capture_live_coordinates(&product)?;
+                Ok(product)
+            },
+        )?;
         if let Some((record, system)) = coordinates {
             output.keep_live_coordinates(record, system);
         }

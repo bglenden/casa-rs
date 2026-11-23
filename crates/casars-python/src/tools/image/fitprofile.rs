@@ -306,6 +306,13 @@ impl ProfileRequest<'_> {
                 .chain(nonempty(self.estimates_file).map(Path::new))
                 .chain(region_file),
         )?;
+        casa_images::analysis::protect_composed_mask_outputs(
+            &self.mask,
+            fit.destinations()
+                .chain(nonempty(self.logfile))
+                .map(Path::new),
+        )
+        .map_err(raised)?;
         let output_is_spectrum: Vec<_> = fit
             .destinations()
             .map(|name| self.outputs.spectra.contains(&name) || self.outputs.sigma == name)

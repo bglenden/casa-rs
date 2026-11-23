@@ -13,7 +13,7 @@ use pyo3::prelude::*;
 
 use super::PyImageTool;
 use super::beam_view::BeamView;
-use super::create::publish_image;
+use super::create::publish_masked_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::Region;
 
@@ -95,7 +95,7 @@ impl PyImageTool {
                 return Ok(None);
             };
             let region = region?;
-            publish_image(outfile, overwrite, |path| {
+            publish_masked_image(outfile, overwrite, Some(mask), |path| {
                 let mut handle = attachment.lock();
                 if matches!(&*handle, ImageHandle::Double(_) | ImageHandle::DComplex(_)) {
                     return Err(raised("decimate does not support images with double precision pixel values"));

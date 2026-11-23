@@ -14,7 +14,7 @@ use pyo3::prelude::*;
 use super::PyImageTool;
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_image;
+use super::create::publish_masked_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::{RegionArgument, require_bool};
 
@@ -103,7 +103,7 @@ impl PyImageTool {
                     "Replaceable flag is false and there is already a file or directory named {outfile} so the output image will not be written"
                 )));
             }
-            let output = publish_image(outfile, overwrite, |path| {
+            let output = publish_masked_image(outfile, overwrite, Some(mask), |path| {
                 let mut input = attachment.lock();
                 if !outfile.is_empty() {
                     for source in input.path().into_iter().chain(attachment.operand_paths().iter().map(|path| path.as_path())) {

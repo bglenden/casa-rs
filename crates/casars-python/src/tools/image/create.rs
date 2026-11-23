@@ -557,6 +557,19 @@ pub(super) fn publish_image(
     })
 }
 
+pub(super) fn publish_masked_image(
+    outfile: &str,
+    overwrite: bool,
+    mask: Option<&str>,
+    build: impl FnOnce(Option<&Path>) -> PyResult<ImageHandle>,
+) -> PyResult<AttachedImage> {
+    if overwrite && let Some(mask) = mask {
+        casa_images::analysis::protect_composed_mask_outputs(mask, [Path::new(outfile)])
+            .map_err(raised)?;
+    }
+    publish_image(outfile, overwrite, build)
+}
+
 pub(super) fn publish_virtual_concat(
     outfile: &str,
     expanded: &str,

@@ -17,7 +17,7 @@ use crate::convert::IntList;
 use super::PyImageTool;
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_image;
+use super::create::publish_masked_image;
 use super::handle::{ImageHandle, Storage, raised, with_storage};
 use super::subimage::Region;
 
@@ -105,7 +105,7 @@ impl PyImageTool {
                 return Ok(None);
             };
             let region = region?;
-            publish_image(outfile, overwrite, |path| {
+            publish_masked_image(outfile, overwrite, Some(mask), |path| {
                 let mut original = attached.lock();
                 if !matches!(&*original, ImageHandle::Float(_)) {
                     return Err(raised("This method only supports Float valued images"));

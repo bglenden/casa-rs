@@ -165,6 +165,13 @@ fn build(
                 ensure_artifacts_do_not_overlap(destination, region).map_err(raised)?;
             }
         }
+        if overwrite && let Some(mask) = options.mask {
+            casa_images::analysis::protect_composed_mask_outputs(
+                mask,
+                destinations.iter().copied(),
+            )
+            .map_err(raised)?;
+        }
         let mut stages = NamedImageStages::new(names.iter().map(String::as_str), overwrite)?;
         let mut products = storage.with_float_view(|image| {
             let mut beams = image.image_info().map_err(raised)?.to_record();

@@ -23,7 +23,7 @@ use super::PyImageTool;
 use super::attachment::{AttachedImage, read_locked};
 use super::beam_view::BeamView;
 use super::beams::subset_beam_record;
-use super::create::publish_image;
+use super::create::publish_masked_image;
 use super::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
 use super::subimage::{Region, mask_argument, require_bool};
 
@@ -126,7 +126,7 @@ pub(super) fn publish_regridded_image(
     history: Option<(&str, String)>,
 ) -> PyResult<AttachedImage> {
     let destination = options.outfile;
-    publish_image(outfile, overwrite, |stage| {
+    publish_masked_image(outfile, overwrite, options.mask, |stage| {
         read_locked(input, |handle| {
             if let Some(destination) = destination {
                 for source in handle
