@@ -83,13 +83,14 @@
       "status": "Partial"
     },
     "xdatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. A blank selector defaults to DATA for a new plot. Additional column forms remain open.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Additional column forms remain open.",
       "evidence": [
         "paired",
         "ms-columns",
         "ms-residual-columns",
         "ms-scalar-residual-columns",
         "ms-model-ratios",
+        "ms-float-data",
         "ms-corrected-fallback",
         "callibrary"
       ],
@@ -127,7 +128,7 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Two unaveraged ordinates can choose independent columns, including ordinates of the same axis type. Missing column list entries default to DATA. Additional column forms and more than two ordinates remain open.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Two unaveraged ordinates can choose independent columns, including ordinates of the same axis type. Missing column list entries use observed data. Additional column forms and more than two ordinates remain open.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -135,6 +136,7 @@
         "ms-scalar-residual-columns",
         "ms-model-ratios",
         "ms-ordinate-columns",
+        "ms-float-data",
         "ms-corrected-fallback",
         "callibrary"
       ],
@@ -1069,7 +1071,7 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Keep the requested order and column identity for two independent unaveraged ordinates.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for two independent unaveraged ordinates.",
       "evidence": [
         "paired",
         "selectors",
@@ -1078,6 +1080,7 @@
         "ms-scalar-residual-columns",
         "ms-model-ratios",
         "ms-ordinate-columns",
+        "ms-float-data",
         "ms-corrected-fallback",
         "callibrary",
         "legacy-calibration"
@@ -1351,6 +1354,19 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-ordinary-visibility-20261123.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2137"
+      ]
+    },
+    "ms-float-data": {
+      "kind": "Same-input MeasurementSet FLOAT_DATA plotting",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with unaveraged float-only and mixed float/complex MeasurementSets.",
+      "result": "Ten paired texts matched 120 selected points, including signed values, default and corrected fallback, channel ordinates, and independent complex axes on mixed input. Two 500 by 360 pixel PNGs matched 24 artist coordinates. The native real axis matched the reference signed-amplitude coordinates after the CASA real-axis backend closed its RPC connection. Both tasks refused an absent FLOAT_DATA column, an explicit phase request and two residual requests on float-plus-model storage without DATA. A mixed-input average is refused with a #1032 diagnostic while support remains open.",
+      "casa_version": "6.7.6.14",
+      "revision": "e0c5ccb1135f7b6cf89d5cdec8129a22d82c9a0a",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-float-data-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2139"
       ]
     },
     "ms-corrected-fallback": {

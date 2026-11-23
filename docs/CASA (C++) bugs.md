@@ -10900,3 +10900,17 @@ call `hanningsmooth("data")`. It initially returns `False` and asks for
 and `hanningsmooth("data")` writes to MAIN, even after the writer closed.
 casa-rs retains the requested access mode per handle. A read-only handle
 continues to report `False` and refuses writes (#1030).
+
+## PlotMS can lose its backend on the real axis of FLOAT_DATA
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, select real versus channel on a
+float-only MeasurementSet using `ydatacolumn="float"`. The headless backend
+can close its RPC stream during export, producing no file. The cache fills
+the floating amplitude array. The real axis indexer reads a separate array
+that the cache leaves empty. The explicit axis validation permits real-valued plots.
+[Pinned cache](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+[Pinned indexer](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/PlotMSIndexer.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+
+casa-rs reads the real values directly. The regression checks the same
+selected samples against CASA's successful signed amplitude export, which
+has the same coordinates for float cells (#1032).

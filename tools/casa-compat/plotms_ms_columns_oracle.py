@@ -391,6 +391,120 @@ def compare_ordinate_columns(root, vis, native):
                 assert image.size == (500, 360), (output, image.size)
 
 
+def compare_float_columns(root, vis, source, native):
+    float_only = root / "float-only.ms"
+    mixed = root / "float-and-complex.ms"
+    floating = source["DATA"].real.astype(np.float32) - 6
+    for destination in (float_only, mixed):
+        copy_ms(vis, destination)
+        with opened(destination, True) as table:
+            desc = table.getcoldesc("DATA")
+            desc.update(name="FLOAT_DATA", valueType="float",
+                        dataManagerType="StandardStMan", dataManagerGroup="FloatVis")
+            table.addcols({"FLOAT_DATA": desc})
+            table.putcol("FLOAT_DATA", floating)
+            if destination == float_only:
+                table.removecols(["DATA", "CORRECTED_DATA", "MODEL_DATA"])
+
+    cases = (
+        ("float-explicit", float_only, {}, (1, -4)),
+        ("float-default", float_only, {"ydatacolumn": ""}, (1, -4)),
+        ("float-corrected-fallback", float_only, {"ydatacolumn": "corrected"}, (1, -4)),
+        ("float-x", float_only, dict(xaxis="amp", yaxis="channel",
+                                     xdatacolumn="float", ydatacolumn=""), (-4, 1)),
+        ("float-mixed-explicit", mixed, {}, (1, -4)),
+        ("float-mixed-observed", mixed, {"ydatacolumn": "data"}, (1, -4)),
+        ("float-mixed-with-corrected", mixed,
+         dict(xaxis="amp", xdatacolumn="float", ydatacolumn="corrected"), (-4, 4.47214)),
+        ("float-mixed-default-with-corrected", mixed,
+         dict(xaxis="amp", xdatacolumn="", ydatacolumn="corrected"), (-4, 4.47214)),
+        ("float-mixed-data-phase", mixed, dict(yaxis="phase", ydatacolumn="data"), (1, 180)),
+        ("float-mixed-vector-residual", mixed,
+         dict(xaxis="amp", xdatacolumn="data-model_vector"), (12.8062, -4)),
+    )
+    for name, destination, overrides, first in cases:
+        controls = request(destination) | dict(xaxis="channel", yaxis="amp",
+                                                xdatacolumn="", ydatacolumn="float") | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        np.testing.assert_allclose(np.array(rows(expected)[0][:2], dtype=float), first, rtol=1.2e-5, atol=1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 12
+        print(f"{name}: 12 matching points", flush=True)
+
+    for name, column in (("float-explicit", "float"), ("float-default", "")):
+        controls = request(float_only) | dict(xaxis="channel", yaxis="amp",
+                                               xdatacolumn="", ydatacolumn=column)
+        compare_figure(root, native, controls, root / f"{name}.casa.txt",
+                       ("Amp:float vs. Channel", "Channel", "Amp:float"))
+
+    for destination in (float_only, mixed):
+        with opened(destination) as table:
+            np.testing.assert_array_equal(table.getcol("FLOAT_DATA"), floating)
+            if destination == float_only:
+                assert {"DATA", "CORRECTED_DATA", "MODEL_DATA"}.isdisjoint(table.colnames())
+            for name, expected in source.items():
+                if name in table.colnames():
+                    np.testing.assert_array_equal(table.getcol(name), expected, err_msg=name)
+
+    float_model = root / "float-and-model.ms"
+    copy_ms(mixed, float_model)
+    with opened(float_model, True) as table:
+        table.removecols(["DATA", "CORRECTED_DATA"])
+    invalid = (
+        ("missing-float", vis, "amp", "float", "FLOAT_DATA is unavailable"),
+        ("phase-float", float_only, "phase", "float", "requires an amplitude or real axis"),
+        ("vector-float-residual", float_model, "amp", "data-model_vector", "Data residuals not valid"),
+        ("scalar-float-residual", float_model, "amp", "data-model_scalar", "Data residuals not valid"),
+    )
+    for name, destination, axis, column, diagnostic in invalid:
+        controls = request(destination) | dict(xaxis="channel", yaxis=axis, xdatacolumn="", ydatacolumn=column)
+        for engine, task, message in (("casa", reference, "plot parameters failed"), ("native", native, diagnostic)):
+            output = root / f"{name}.{engine}.txt"
+            try:
+                task(**controls, plotfile=str(output), expformat="txt")
+            except Exception as error:
+                assert message in str(error), error
+            else:
+                raise AssertionError(f"{engine} accepted {name}")
+            assert not output.exists()
+
+    from casars.tasks import TaskParameterError
+
+    controls = request(mixed) | dict(xaxis="channel", yaxis="amp", xdatacolumn="",
+                                     ydatacolumn="data", avgchannel="2", expformat="txt")
+    expected, actual = (root / f"average-mixed-float.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert len(selected) == 6 and all(float(point[1]) < 0 for point in selected)
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging MeasurementSet FLOAT_DATA is pending #1032" in str(error), error
+    else:
+        raise AssertionError("Observed FLOAT_DATA averaging silently exported complex DATA")
+    assert not actual.exists()
+
+    controls = request(float_only) | dict(xaxis="channel", yaxis="real", xdatacolumn="", ydatacolumn="float")
+    expected, actual = (root / f"real-float.{engine}.txt" for engine in ("casa", "native"))
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    # For real-valued cells, CASA's signed amplitude already gives the real coordinates.
+    amp_reference = rows(root / "float-explicit.casa.txt")
+    actual_real = rows(actual)
+    np.testing.assert_allclose(np.array([p[:2] for p in actual_real], dtype=float),
+                               np.array([p[:2] for p in amp_reference], dtype=float),
+                               rtol=1.2e-5, atol=1e-7)
+    assert [p[2:] for p in actual_real] == [p[2:] for p in amp_reference]
+    assert any(line.startswith("# Channel Real ") for line in actual.read_text().splitlines())
+    try:
+        reference(**controls, plotfile=str(expected), expformat="txt")
+    except Exception as error:
+        assert "plot parameters failed" in str(error) or "Stream removed (Socket closed)" in str(error), error
+        assert not expected.exists()
+    else:
+        assert compare_text(actual, expected) == 12
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -415,6 +529,7 @@ def main():
         compare_zero_model(root, vis, source, native)
         compare_ratio_float_range(root, vis, source, native)
         compare_ordinate_columns(root, vis, native)
+        compare_float_columns(root, vis, source, native)
 
 
 if __name__ == "__main__":
