@@ -2,92 +2,22 @@
 //! Bind the metadata lookup functions from casacore's UDFMSCal to stored table columns.
 
 use casa_types::quanta::{Quantity, Unit};
-use casa_types::{PrimitiveType, RecordValue, Value};
+use casa_types::{PrimitiveType, Value};
 
 use crate::{ColumnSchema, ColumnType, Table, TableError, TableOptions, add_directory};
 
-use super::ast::{ColumnRef, Expr, InSetElement, IndexElement, IndexStyle};
+use super::ast::{ColumnRef, Expr, IndexStyle};
 use super::error::TaqlError;
-use super::eval::{EvalContext, ExprValue, eval_expr};
+use super::eval::{ExprValue, eval_constant_string};
 
 pub(super) fn bind(expr: &mut Expr, table: &Table, style: IndexStyle) -> Result<(), TaqlError> {
-    visit_children(expr, &mut |child| bind(child, table, style))?;
+    expr.try_for_each_child_mut(&mut |child| bind(child, table, style))?;
     if let Expr::FunctionCall { name, args } = expr
         && let Some(lookup) = bind_lookup(name, args, table, style)?
     {
         *expr = lookup;
     }
     Ok(())
-}
-
-fn visit_children(
-    expr: &mut Expr,
-    visit: &mut impl FnMut(&mut Expr) -> Result<(), TaqlError>,
-) -> Result<(), TaqlError> {
-    match expr {
-        Expr::Unary { operand, .. }
-        | Expr::IsNull { expr: operand, .. }
-        | Expr::Aggregate { arg: operand, .. } => visit(operand),
-        Expr::Binary { left, right, .. }
-        | Expr::Like {
-            expr: left,
-            pattern: right,
-            ..
-        }
-        | Expr::RegexMatch {
-            expr: left,
-            pattern: right,
-            ..
-        } => {
-            visit(left)?;
-            visit(right)
-        }
-        Expr::FunctionCall { args, .. } | Expr::ArrayLiteral(args) => {
-            args.iter_mut().try_for_each(visit)
-        }
-        Expr::Between {
-            expr, low, high, ..
-        } => {
-            visit(expr)?;
-            visit(low)?;
-            visit(high)
-        }
-        Expr::In { expr, values, .. } => {
-            visit(expr)?;
-            values.iter_mut().try_for_each(visit)
-        }
-        Expr::InSet { expr, elements, .. } => {
-            visit(expr)?;
-            for element in elements {
-                match element {
-                    InSetElement::Value(value) => visit(value)?,
-                    InSetElement::Range { start, end, step } => {
-                        [start, end, step]
-                            .into_iter()
-                            .filter_map(Option::as_mut)
-                            .try_for_each(&mut *visit)?;
-                    }
-                }
-            }
-            Ok(())
-        }
-        Expr::ArrayIndex { array, indices } => {
-            visit(array)?;
-            for element in indices {
-                match element {
-                    IndexElement::Single(index) => visit(index)?,
-                    IndexElement::Slice { start, end, step } => {
-                        [start, end, step]
-                            .into_iter()
-                            .filter_map(Option::as_mut)
-                            .try_for_each(&mut *visit)?;
-                    }
-                }
-            }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
 }
 
 fn bind_lookup(
@@ -171,49 +101,13 @@ fn check_arity(name: &str, args: &[Expr], expected: usize) -> Result<(), TaqlErr
 }
 
 fn constant_string(expr: &Expr, name: &str, style: IndexStyle) -> Result<String, TaqlError> {
-    fn check(expr: &mut Expr, name: &str) -> Result<(), TaqlError> {
-        match expr {
-            Expr::ColumnRef(_)
-            | Expr::RowNumber
-            | Expr::Subquery(_)
-            | Expr::Aggregate { .. }
-            | Expr::BoundRowLookup { .. } => return Err(constant_string_error(name)),
-            Expr::FunctionCall { name: func, .. }
-                if [
-                    "rownumber",
-                    "rownr",
-                    "rowid",
-                    "iscolumn",
-                    "iskeyword",
-                    "rand",
-                ]
-                .iter()
-                .any(|key| func.eq_ignore_ascii_case(key)) =>
-            {
-                return Err(constant_string_error(name));
-            }
-            _ => {}
-        }
-        visit_children(expr, &mut |child| check(child, name))
+    let value = eval_constant_string(expr, name, style)?;
+    if value.is_empty() {
+        return Err(TaqlError::TypeError {
+            message: format!("{name} requires a nonempty metadata name"),
+        });
     }
-
-    check(&mut expr.clone(), name)?;
-    let ctx = EvalContext {
-        row: &RecordValue::default(),
-        row_index: 0,
-        style,
-        measures: None,
-    };
-    match eval_expr(expr, &ctx)? {
-        ExprValue::String(value) if !value.is_empty() => Ok(value),
-        _ => Err(constant_string_error(name)),
-    }
-}
-
-fn constant_string_error(name: &str) -> TaqlError {
-    TaqlError::TypeError {
-        message: format!("{name} requires a nonempty constant string for each metadata name"),
-    }
+    Ok(value)
 }
 
 fn column_ref(name: &str) -> Expr {

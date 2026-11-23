@@ -49,6 +49,7 @@ mod parser;
 
 pub mod eval;
 pub mod exec;
+mod expr_walk;
 
 pub mod aggregate;
 pub mod format;

@@ -352,9 +352,9 @@ impl MeasurementSet {
         self.with_antenna_rows(|rows| resolve_antenna_selector(rows, text))
     }
 
-    // CASA's agentflagger retains valid clauses when an antenna token
-    // does not match. The other MS consumers use the strict resolver.
-    pub(crate) fn resolve_flagdata_antenna_selector(
+    // Agentflagger and the MSCAL baseline UDF retain valid clauses when
+    // an antenna token does not match.
+    pub(crate) fn resolve_antenna_selector_with_warnings(
         &self,
         text: &str,
     ) -> MsResult<BaselineSelection> {

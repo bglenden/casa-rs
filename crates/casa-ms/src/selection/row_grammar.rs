@@ -41,7 +41,7 @@ pub(super) fn apply(
     }
     if let Some(text) = options.antenna.as_deref().filter(|text| !text.is_empty()) {
         let baseline = if flagdata {
-            ms.resolve_flagdata_antenna_selector(text)?
+            ms.resolve_antenna_selector_with_warnings(text)?
         } else {
             ms.resolve_antenna_selector(text)?
         };
@@ -325,7 +325,7 @@ fn disjunction(terms: Vec<String>) -> String {
 
 /// One compact condition per first antenna. The full grammar distinguishes
 /// equal and unequal out-of-range IDs, so keep those cases in the predicate.
-fn baseline_predicate(selection: &BaselineSelection) -> String {
+pub(super) fn baseline_predicate(selection: &BaselineSelection) -> String {
     let count = selection.antenna_count();
     let outside = |column| format!("({column}<0 OR {column}>={count})");
     let mut terms = Vec::new();

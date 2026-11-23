@@ -10808,3 +10808,13 @@ a replacement that refers to a nonexistent regex capture, dropping
 characters such as `+`. casa-rs treats `*` as the wildcard and matches
 all other characters literally in field, scan, and spectral-window
 intent selectors (#1029).
+
+## MSCAL predicates can crash or hang in `applycal`
+
+On the synthetic MeasurementSet in the [applycal oracle](../tools/casa-compat/applycal_oracle.py),
+CASA 6.7.6.14 terminates with SIGSEGV when `msselect` calls `mscal.scan("2")`
+or `mscal.time(">2019/12/31/21:53:15")`. An `mscal.uvdist("<40m")` predicate
+returns rows in a direct table query but times out with the MeasurementSet
+open for `applycal`. casa-rs evaluates these expressions through the shared
+scan, time and UV-distance grammars. The oracle uses equivalent ordinary CASA
+TaQL predicates to compare the calibrated and untouched rows and their flags.

@@ -428,6 +428,62 @@ pub struct EvalContext<'a> {
     pub measures: Option<&'a std::sync::Arc<dyn casa_types::measures::MeasuresProvider>>,
 }
 
+/// Evaluates a string argument that must be independent of any table row.
+///
+/// # Errors
+///
+/// Returns a type error for row-dependent or non-string expressions and
+/// propagates evaluation errors from invalid constant expressions.
+pub fn eval_constant_string(
+    expr: &Expr,
+    name: &str,
+    style: ast::IndexStyle,
+) -> Result<String, TaqlError> {
+    fn error(name: &str) -> TaqlError {
+        TaqlError::TypeError {
+            message: format!("{name} requires a constant string argument"),
+        }
+    }
+
+    fn check(expr: &mut Expr, name: &str) -> Result<(), TaqlError> {
+        match expr {
+            Expr::ColumnRef(_)
+            | Expr::RowNumber
+            | Expr::Subquery(_)
+            | Expr::Aggregate { .. }
+            | Expr::BoundRowLookup { .. } => return Err(error(name)),
+            Expr::FunctionCall { name: func, .. }
+                if [
+                    "rownumber",
+                    "rownr",
+                    "rowid",
+                    "iscolumn",
+                    "iskeyword",
+                    "rand",
+                ]
+                .iter()
+                .any(|key| func.eq_ignore_ascii_case(key)) =>
+            {
+                return Err(error(name));
+            }
+            _ => {}
+        }
+        expr.try_for_each_child_mut(&mut |child| check(child, name))
+    }
+
+    check(&mut expr.clone(), name)?;
+    let ctx = EvalContext {
+        row: &RecordValue::default(),
+        row_index: 0,
+        style,
+        measures: None,
+    };
+    match eval_expr(expr, &ctx)? {
+        ExprValue::String(value) => Ok(value),
+        _ => Err(error(name)),
+    }
+}
+
 /// Evaluate an expression against a row context.
 pub fn eval_expr(expr: &Expr, ctx: &EvalContext<'_>) -> Result<ExprValue, TaqlError> {
     match expr {
