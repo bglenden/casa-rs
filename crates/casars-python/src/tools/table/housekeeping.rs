@@ -12,7 +12,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{PoisonError, TryLockError};
+use std::sync::TryLockError;
 
 use casa_tables::{EndianFormat, LockType, Table, TableOptions, add_directory};
 use casa_types::{RecordValue, Value};
