@@ -65,13 +65,30 @@ fn four_antenna_group(perturbed: Complex32) -> SolveAccumulator {
 
 /// The antennas `cuts` leave an unflagged first-receptor solution.
 fn solved_antennas(group: &SolveAccumulator, cuts: BandpassSolveCuts) -> BTreeSet<i32> {
+    let request = BandpassSolveRequest {
+        selection: MsSelection::default(),
+        output_table: PathBuf::new(),
+        refant: RefAntSelector::AntennaId(0),
+        prior_calibration_tables: Vec::new(),
+        parang: false,
+        combine: BandpassSolveCombine::default(),
+        band_type: BandpassType::B,
+        normalize_average_amplitude: false,
+        amplitude_degree: 0,
+        phase_degree: 0,
+        model_source: GainSolveModelSource::PointSource,
+        solve_interval: GainSolveInterval::Infinite,
+        frequency_interval: None,
+        correlation_dependent_flags: false,
+        smodel: [1., 0., 0., 0.],
+        cuts: Some(cuts),
+    };
     let (rows, _) = solve_bandpass_group(
         group,
         &BTreeSet::from([0, 1, 2, 3]),
         0,
-        BandpassSolveCombine::default(),
-        Some(cuts),
-        BandpassType::B,
+        &request,
+        GainSolveMode::AmplitudePhase,
         (false, false),
     );
     rows.iter()

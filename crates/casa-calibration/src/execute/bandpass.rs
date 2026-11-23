@@ -133,41 +133,82 @@ pub(super) fn prepare(
 // time-interpolated solution, before any selection/frequency interpolation.
 fn mean_power(grid: &GainGrid, receptor: usize) -> f32 {
     let receptor = receptor.min(grid.receptor_count.saturating_sub(1));
-    let mut total = 0_f64;
+    let mut total = 0_f32;
     let mut count = 0;
     for channel in 0..grid.channel_count {
         if !grid.flag_at(receptor, channel) {
-            total += f64::from(grid.value_at(receptor, channel).norm_sqr());
+            let amplitude = grid.value_at(receptor, channel).norm();
+            total += amplitude * amplitude;
             count += 1;
         }
     }
     if count == 0 {
         1.
     } else {
-        (total / f64::from(count)) as f32
+        let rms = (total / count as f32).sqrt();
+        rms * rms
     }
 }
 
-pub(super) fn weight_factors(
+#[derive(Default)]
+pub(super) struct PowerCache {
+    recent: HashMap<(usize, i32), (Arc<CalibrationGrid>, [f32; 2])>,
+}
+
+impl PowerCache {
+    fn powers(&mut self, table: usize, antenna: (i32, &Arc<CalibrationGrid>)) -> Option<[f32; 2]> {
+        let (id, grid) = antenna;
+        let CalibrationGrid::Complex(values) = grid.as_ref() else {
+            return None;
+        };
+        let make_powers = || [mean_power(values, 0), mean_power(values, 1)];
+        // One solution per table and antenna suffices for a visibility chunk.
+        // Keep the owning Arc so pointer identity cannot survive address reuse.
+        let entry = self
+            .recent
+            .entry((table, id))
+            .or_insert_with(|| (Arc::clone(grid), make_powers()));
+        if !Arc::ptr_eq(&entry.0, grid) {
+            *entry = (Arc::clone(grid), make_powers());
+        }
+        Some(entry.1)
+    }
+
+    pub(super) fn factors(
+        &mut self,
+        table: usize,
+        first: (i32, &Arc<CalibrationGrid>),
+        second: (i32, &Arc<CalibrationGrid>),
+        correlations: &[i32],
+    ) -> Option<Vec<f32>> {
+        let first = self.powers(table, first)?;
+        let second = self.powers(table, second)?;
+        (0..correlations.len())
+            .map(|index| {
+                let (left, right) = receptors(correlations, index)?;
+                Some(first[left] * second[right])
+            })
+            .collect()
+    }
+}
+
+pub(super) fn temperature_weight_factors(
     first: &CalibrationGrid,
     second: &CalibrationGrid,
     correlations: &[i32],
-    temperature_channels: Option<DataChannelGrid<'_>>,
+    channels: DataChannelGrid<'_>,
 ) -> Option<Vec<f32>> {
     let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) = (first, second)
     else {
         return None;
     };
-    let scale = |grid: &GainGrid, receptor| {
-        temperature_channels.map_or_else(
-            || mean_power(grid, receptor),
-            |channels| inverse_mean_tsys(grid, receptor, channels),
-        )
-    };
     (0..correlations.len())
         .map(|index| {
             let (left, right) = receptors(correlations, index)?;
-            Some(scale(first, left) * scale(second, right))
+            Some(
+                inverse_mean_tsys(first, left, channels)
+                    * inverse_mean_tsys(second, right, channels),
+            )
         })
         .collect()
 }
@@ -206,6 +247,32 @@ pub(super) fn receptors(correlations: &[i32], index: usize) -> Option<(usize, us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bandpass_weights_use_float_full_band_power_for_each_receptor() {
+        let solution = |amplitudes: [f32; 8]| {
+            Arc::new(CalibrationGrid::Complex(GainGrid {
+                receptor_count: 2,
+                channel_count: 4,
+                values: ArrayD::from_shape_vec(
+                    IxDyn(&[2, 4]),
+                    amplitudes
+                        .into_iter()
+                        .map(|amplitude| Complex32::new(amplitude, 0.))
+                        .collect(),
+                )
+                .unwrap(),
+                flags: ArrayD::from_elem(IxDyn(&[2, 4]), false),
+            }))
+        };
+        let first = solution([4096., 1., 1., 1., 2., 2., 2., 2.]);
+        let second = solution([1., 1., 1., 1., 3., 3., 3., 3.]);
+        let mut powers = PowerCache::default();
+        assert_eq!(
+            powers.factors(0, (0, &first), (1, &second), &[5, 6, 7, 8]),
+            Some(vec![4_194_304., 37_748_736., 4., 36.])
+        );
+    }
 
     #[test]
     fn constant_wide_bandpass_shares_payload_and_resampling_across_times() {
@@ -373,14 +440,16 @@ mod tests {
             assert_eq!(mean_power(&gain, 0), 5.);
             let mut other = gain.clone();
             other.values.mapv_inplace(|value| value * 2.);
+            let original = Arc::new(CalibrationGrid::Complex(gain.clone()));
+            let scaled = Arc::new(CalibrationGrid::Complex(other));
+            let mut powers = PowerCache::default();
             assert_eq!(
-                weight_factors(
-                    &CalibrationGrid::Complex(gain.clone()),
-                    &CalibrationGrid::Complex(other),
-                    &[9],
-                    None,
-                ),
+                powers.factors(0, (0, &original), (1, &scaled), &[9]),
                 Some(vec![100.])
+            );
+            assert_eq!(
+                powers.factors(0, (0, &scaled), (1, &scaled), &[9]),
+                Some(vec![400.])
             );
             gain.flags.fill(true);
             let missing = resample(

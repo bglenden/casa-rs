@@ -89,7 +89,10 @@ pub(crate) fn solve(
     } else {
         BTreeSet::new()
     };
-    let preaverage = if legacy_gather {
+    let preaverage = if additive {
+        // CASA averages the whole solve interval for AMueller.
+        None
+    } else if legacy_gather {
         let requested = request.preaverage_seconds;
         (requested.is_finite() && requested >= 0.).then_some(if requested < f64::EPSILON {
             0.1
@@ -351,7 +354,11 @@ fn solve_group(
         .collect()
 }
 
-fn normalize(rows: &mut [SolutionRow], frequency_dependent: bool, method: GainNormalization) {
+pub(super) fn normalize(
+    rows: &mut [SolutionRow],
+    frequency_dependent: bool,
+    method: GainNormalization,
+) {
     if frequency_dependent {
         for row in rows {
             for receptor in 0..2 {

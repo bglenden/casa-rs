@@ -10410,6 +10410,8 @@ fit that antenna along with the connected array. The singular fit can
 publish nonfinite coefficients, including for antennas that have data.
 Casa-rs fits the connected array and omits antennas without accepted data.
 Both legacy readers then flag visibilities with a missing antenna gain.
+This rule also applies to generic `calibrater.setsolve(type='GSPLINE')`,
+which publishes the fitted antennas across every attached field.
 
 ## `fringefit` can abort with one selected channel per spectral window
 
@@ -10576,3 +10578,15 @@ In CASA 6.7.6.14, use the [direct fluxscale fixture](../tools/casa-compat/calibr
 CASA 6.7.6.14 accepts `calibrater.setsolve` for `TOpac` and `TfOpac`. With usable data, the first fit in either visibility iterator terminates the process with SIGSEGV and leaves no calibration table. An otherwise equivalent VI2 `T` solve completes. If every selected sample is flagged, both opacity families return success and preserve the configured solver. They record zero attempted and successful intervals and publish no table.
 
 Casa-rs preserves the setup, state and no-result behavior. When the selected data would reach a fit, it raises a recoverable solve error and clears the equation. The oracle runs the reference fits in child processes. [Direct opacity solve oracle](../tools/casa-compat/calibrater_opacity_solve_oracle.py)
+
+## An additive polynomial window can keep a degenerate frequency basis
+
+With a one-channel selection in each of two combined spectral windows, flagging one window throughout the first scan makes CASA 6.7.6.14 record the remaining channel's frequency as both domain endpoints. A later scan can have usable samples at both frequencies, but the saved basis still has coincident endpoints. Casa-rs derives the domain from both selected frequencies and retains a solvable linear fit in the later scan. [Additive Mueller polynomial oracle](../tools/casa-compat/calibrater_additive_polynomial_oracle.py)
+
+## Generic BPOLY setup can terminate Python
+
+CASA 6.7.6.14 can terminate with SIGSEGV during `calibrater.setsolve(type='BPOLY')` on an attached MeasurementSet in either visibility iterator. Casa-rs raises a recoverable setup error. The dedicated `setsolvebandpoly` entry point supplies the polynomial controls and supports the legacy fit. [Generic polynomial oracle](../tools/casa-compat/calibrater_generic_polynomial_oracle.py)
+
+## Generic GSPLINE phase wrapping can vary between CASA processes
+
+With the same data and generic `calibrater.setsolve(type='GSPLINE')` arguments, CASA 6.7.6.14 produced different phase coefficients in separate processes. One process was terminated during phase fitting under the local memory limit. The dedicated `setsolvegainspline` call uses explicit wrapping controls. Casa-rs uses 7,200-second spacing, two phase points, and a zero wrap threshold for the generic path. These controls reproduced the pinned phase coefficients in the dedicated reference and in three isolated generic preaveraged fits. [Generic polynomial oracle](../tools/casa-compat/calibrater_generic_polynomial_oracle.py)

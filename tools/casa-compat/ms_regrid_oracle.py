@@ -177,7 +177,7 @@ def float_visibilities(root, source):
     paired(root, source, "float", datacolumn="float_data", start=2, nchan=5,
            deviations={name: verify(name) for name in checks})
 
-def attached_ephemeris(source):
+def attached_ephemeris(source, radial_velocity=None):
     with table(str(source), ack=False) as ms:
         start = ms.getcell("TIME", 0)
     field = source / "FIELD"
@@ -197,7 +197,8 @@ def attached_ephemeris(source):
         ephemeris.putinfo({"type": "IERS", "subType": "ephemeris"})
         for name, unit, values in zip(names, ("d", "deg", "deg", "AU", "AU/d"), [
             np.arange(epoch - 2, epoch + 3), 15 + np.arange(5) * 0.1,
-            -30 + np.arange(5) * 0.1, np.full(5, 2.), np.linspace(0.001, 0.002, 5),
+            -30 + np.arange(5) * 0.1, np.full(5, 2.),
+            np.linspace(0.001, 0.002, 5) if radial_velocity is None else np.full(5, radial_velocity),
         ]):
             ephemeris.putcolkeyword(name, "UNIT", unit)
             ephemeris.putcol(name, values)
@@ -210,6 +211,23 @@ def attached_ephemeris(source):
             ephemeris.putkeyword(key, value)
     finally:
         ephemeris.done()
+
+
+def negligible_source_velocity(root):
+    grids = []
+    for label, velocity in (("zero", 0.), ("tiny", 4.6e-13)):
+        moving = root / f"moving-{label}.ms"
+        fixture(moving, 9, spectra=True)
+        attached_ephemeris(moving, radial_velocity=velocity)
+        products = paired(root, moving, f"source-{label}-velocity", outframe="SOURCE", field="0")
+        for engine, product in enumerate(products):
+            with table(str(product / "SPECTRAL_WINDOW"), ack=False) as spw:
+                axis = [spw.getcol(name) for name in ("CHAN_FREQ", "CHAN_WIDTH")]
+            if label == "zero":
+                grids.append(axis)
+            else:
+                for actual, expected in zip(axis, grids[engine]):
+                    np.testing.assert_array_equal(actual, expected)
 
 
 def refusal(root, source, case, options, *, error_type=RuntimeError, compare_casa=True):
@@ -307,6 +325,8 @@ def main(cases):
             if not cases or "source-fft" in cases:
                 paired(root, moving, "source-fft", outframe="SOURCE", field="0", interpolation="fftshift",
                        deviations={name: scientific_tolerance(name) for name in NOISE | {"DATA"}})
+        if not cases or "source-velocity-cutoff" in cases:
+            negligible_source_velocity(root)
         if not cases or "failures" in cases:
             refusal(root, source, "bad-quantity", dict(mode="frequency", width="3km/s"), error_type=TypeError)
             refusal(root, source, "no-rest-frequency", dict(mode="velocity", width="3km/s"), error_type=ValueError)

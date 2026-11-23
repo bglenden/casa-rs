@@ -360,23 +360,22 @@ mod tests {
         group.sample_rows = 2;
         group.scan_numbers.insert(6);
         group.antenna_ids.extend([0, 1]);
-        group.channel_graphs = vec![vec![SolveGraph {
-            robust_samples: Vec::new(),
-            edges: HashMap::from([
-                ((0, 1), Complex32::new(2.0, -1.0)),
-                ((1, 0), Complex32::new(2.0, 1.0)),
-            ]),
-            weights: HashMap::from([((0, 1), 3.5), ((1, 0), 3.5)]),
-            stats: HashMap::from([(
-                (0, 1),
-                SolveEdgeStats {
-                    weighted_sample_power: 7.0,
-                    raw_weighted_sample_power: 8.0,
-                    sample_count: 9,
-                    collapsed_count: 10,
-                },
-            )]),
-        }]];
+        let mut graph = SolveGraph::default();
+        graph.edges.extend([
+            ((0, 1), Complex32::new(2.0, -1.0)),
+            ((1, 0), Complex32::new(2.0, 1.0)),
+        ]);
+        graph.weights.extend([((0, 1), 3.5), ((1, 0), 3.5)]);
+        graph.stats.insert(
+            (0, 1),
+            SolveEdgeStats {
+                weighted_sample_power: 7.0,
+                raw_weighted_sample_power: 8.0,
+                sample_count: 9,
+                collapsed_count: 10,
+            },
+        );
+        group.channel_graphs = vec![vec![graph]];
         let request = test_request(dir.path().join("phase.cal"));
 
         trace_group(&base_key, &bucket_key, &group, &request);
