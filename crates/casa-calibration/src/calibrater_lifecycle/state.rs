@@ -240,7 +240,8 @@ impl<'a> SolveState<'a> {
                         Self::gain(gain, "Fringe Jones", append)
                     }
                     CalibrationSolveRequest::Accor(gain) => Self::gain(gain, "Accor Jones", append),
-                    CalibrationSolveRequest::AdditiveMueller(gain) => {
+                    CalibrationSolveRequest::AdditiveMueller(gain)
+                    | CalibrationSolveRequest::AdditiveMuellerPolynomial { gain, .. } => {
                         Self::gain(gain, "A Mueller", append)
                     }
                     CalibrationSolveRequest::Baseline {

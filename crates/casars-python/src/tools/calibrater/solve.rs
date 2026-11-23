@@ -234,7 +234,6 @@ fn standard_request(
             }
         }
         "ACCOR" | "ACCOR JONES" => CalibrationSolveRequest::Accor(standard.gain(GainType::G)),
-        "A" | "A MUELLER" => CalibrationSolveRequest::AdditiveMueller(standard.gain(GainType::G)),
         "FRINGE" | "FRINGE JONES" => {
             let (controls, active_phase) = fringe.expect("parsed fringe controls");
             CalibrationSolveRequest::FringeTool {
@@ -334,6 +333,12 @@ impl super::PyCalibrater {
             "M" | "M MUELLER" | "MF" | "MF MUELLER" | "A" | "A MUELLER"
         );
         let accor = matches!(family.as_str(), "ACCOR" | "ACCOR JONES");
+        let additive_order = matches!(family.as_str(), "A" | "A MUELLER")
+            .then(|| setsolve_long(fitorder, 19, 0))
+            .transpose()?
+            .map(i32::try_from)
+            .transpose()
+            .map_err(|_| setup_error())?;
         let fringe = if matches!(family.as_str(), "FRINGE" | "FRINGE JONES") {
             let active = paramactive
                 .map(|value| value.extract::<Vec<bool>>())
@@ -475,7 +480,14 @@ impl super::PyCalibrater {
                 state.record_solve_description(&elapsed, &apmode, &refant_mode, None);
                 return Ok(true);
             }
-            let request = standard_request(&family, standard, frequency, fill_gaps, fringe)?;
+            let request = match additive_order {
+                Some(0) => CalibrationSolveRequest::AdditiveMueller(standard.gain(GainType::G)),
+                Some(fit_order) => CalibrationSolveRequest::AdditiveMuellerPolynomial {
+                    gain: standard.gain(GainType::G),
+                    fit_order,
+                },
+                None => standard_request(&family, standard, frequency, fill_gaps, fringe)?,
+            };
             state
                 .set_tool_solve(
                     request,

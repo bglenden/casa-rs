@@ -89,7 +89,10 @@ pub(crate) fn solve(
     } else {
         BTreeSet::new()
     };
-    let preaverage = if legacy_gather {
+    let preaverage = if additive {
+        // CASA averages the whole solve interval for AMueller.
+        None
+    } else if legacy_gather {
         let requested = request.preaverage_seconds;
         (requested.is_finite() && requested >= 0.).then_some(if requested < f64::EPSILON {
             0.1
