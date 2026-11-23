@@ -254,6 +254,9 @@ fn standard_request(
         "T" | "T JONES" | "T NOISE" => CalibrationSolveRequest::Gain(standard.gain(GainType::T)),
         "K" | "K JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::K)),
         "KCROSS" | "KCROSS JONES" => CalibrationSolveRequest::Gain(standard.gain(GainType::KCross)),
+        "KANTPOS" | "KANTPOS JONES" => {
+            CalibrationSolveRequest::Gain(standard.gain(GainType::KAntPos))
+        }
         "B" | "B JONES" => CalibrationSolveRequest::Bandpass(
             standard.bandpass(bandpass_frequency(frequency)?, fill_gaps),
         ),
