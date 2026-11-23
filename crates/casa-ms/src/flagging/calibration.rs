@@ -231,7 +231,7 @@ fn grouped_flags(
         }
         match (request.mode, valid) {
             (FlagDataMode::Tfcrop, true) => {
-                apply_tfcrop_flags(table, &selected.rows, channels, request, None)?
+                apply_tfcrop_flags(table, &selected.rows, channels, request, None, None)?
             }
             (FlagDataMode::Rflag, true) => apply_rflag_flags(
                 table,
@@ -239,6 +239,7 @@ fn grouped_flags(
                 channels,
                 request,
                 request.rflag_calculate.unwrap_or(calculate),
+                None,
                 None,
             )?,
             (FlagDataMode::Tfcrop, false) => return Err(FlaggingError::MissingTfcropColumn),

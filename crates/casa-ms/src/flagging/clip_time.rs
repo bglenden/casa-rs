@@ -262,8 +262,34 @@ pub(super) fn mark_time_chunks(rows: &mut [ClipTimedRow], interval: f64) {
     }
 }
 
-pub(super) struct TimeClip<'a> {
+#[derive(Clone, Copy)]
+pub(super) struct TimeAveraging<'a> {
     pub(super) seconds: f64,
+    pub(super) filter: Option<&'a super::TimeSelection>,
+}
+
+impl TimeAveraging<'_> {
+    pub(super) fn groups(self, rows: &[ClipTimedRow]) -> impl Iterator<Item = &[ClipTimedRow]> {
+        clip_time_groups(rows, self.seconds)
+    }
+
+    pub(super) fn holds(&self, rows: &[ClipTimedRow], last_unflagged: Option<f64>) -> bool {
+        self.filter.is_none_or(|filter| {
+            filter.holds_agent_time(averaged_output_time(rows, last_unflagged))
+        })
+    }
+}
+
+pub(super) fn averaged_output_time(rows: &[ClipTimedRow], last_unflagged: Option<f64>) -> f64 {
+    // AveragingTvi2 anchors TIME at the first input center. Once any valid
+    // sample arrives, it excludes wholly flagged integrations from the end.
+    let start = rows[0].time();
+    let end = last_unflagged.unwrap_or_else(|| rows[rows.len() - 1].time());
+    start + (end - start) / 2.
+}
+
+pub(super) struct TimeClip<'a> {
+    pub(super) averaging: TimeAveraging<'a>,
     pub(super) chunk_seconds: Option<f64>,
     pub(super) column: FlagDataColumn,
     pub(super) widths: Option<&'a [u32]>,
@@ -319,9 +345,14 @@ impl TimeClip<'_> {
             total_samples: 0,
         };
         let mut matched = Vec::new();
-        for members in clip_time_groups(&timed, self.seconds) {
-            let (average, before) =
+        let mut selected = 0;
+        for members in self.averaging.groups(&timed) {
+            let (average, before, last_unflagged) =
                 collect_time_bin(ms, members, rows_per_block, columns, ddid_to_spw, self.path)?;
+            if !self.averaging.holds(members, last_unflagged) {
+                continue;
+            }
+            selected += members.len();
             counts.flagged_samples += before.flagged_samples;
             counts.total_samples += before.total_samples;
             let first = &members[0];
@@ -367,6 +398,7 @@ impl TimeClip<'_> {
             counts.flagged_samples += changed;
             changes.changed_samples += changed;
         }
+        changes.selected_rows = self.averaging.filter.map(|_| selected);
         changes.summary = Some(counts);
         Ok(changes)
     }
@@ -506,8 +538,9 @@ pub(super) fn collect_time_bin(
     columns: &mut ClipColumns,
     ddid_to_spw: &BTreeMap<i32, i32>,
     path: &str,
-) -> Result<(ClipTimeAccumulator, FlagSummary), FlaggingError> {
+) -> Result<(ClipTimeAccumulator, FlagSummary, Option<f64>), FlaggingError> {
     let mut result = None;
+    let mut last_unflagged = None;
     let mut summary = FlagSummary {
         flagged_samples: 0,
         total_samples: 0,
@@ -523,7 +556,11 @@ pub(super) fn collect_time_bin(
         let cells = columns.read(ms, &rows, &flags, Some(&ddids), ddid_to_spw, path)?;
         for (slot, (&row, flags)) in rows.iter().zip(&flags).enumerate() {
             summary.total_samples += flags.len();
-            summary.flagged_samples += flags.iter().filter(|&&flag| flag).count();
+            let flagged = flags.iter().filter(|&&flag| flag).count();
+            summary.flagged_samples += flagged;
+            if flagged < flags.len() {
+                last_unflagged = Some(block[slot].time());
+            }
             let data = cells.measurements(slot, flags, row, path)?;
             let model = cells.model(slot, flags, row, path)?;
             let weights = cells.weights(slot, flags, row, path)?;
@@ -550,6 +587,7 @@ pub(super) fn collect_time_bin(
     Ok((
         result.expect("time groups include their first row"),
         summary,
+        last_unflagged,
     ))
 }
 

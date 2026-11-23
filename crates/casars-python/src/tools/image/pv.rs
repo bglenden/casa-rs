@@ -196,13 +196,7 @@ fn build(
         if let Some(line) = history {
             result
                 .image
-                .append_history_at(
-                    "image::pv",
-                    &[
-                        concat!("version: casa-rs ", env!("CARGO_PKG_VERSION")).into(),
-                        line,
-                    ],
-                )
+                .append_history_at("image::pv", &["Ran ia.pv".into(), line])
                 .map_err(raised)?;
         }
         let record = result.coordinate_record;

@@ -99,7 +99,10 @@ def test_pv_diagonal_strip_and_native_writer_reader_matrix(casa, tmp_path):
             image = reader.image()
             try:
                 assert image.open(path)
-                assert any("source image history" in row for row in image.history())
+                history = image.history()
+                assert any("source image history" in row for row in history)
+                assert history[-2] == "Ran ia.pv"
+                assert history[-1].startswith("ia.pv(")
                 observed[writer.__name__, reader.__name__] = _read(image)
             finally:
                 image.done()

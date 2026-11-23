@@ -306,12 +306,16 @@ pub struct ApplyCalibrationTablePlan {
 impl ApplyCalibrationTablePlan {
     /// Whether this table contributes to the selected physical MS row.
     pub fn applies_to(&self, row: &ApplyRowPlan) -> bool {
+        self.applies_to_scan(row, row.scan_number)
+    }
+
+    pub(crate) fn applies_to_scan(&self, row: &ApplyRowPlan, scan: i32) -> bool {
         self.spec.apply_to.matches(row)
             && self.spec.callibrary.as_ref().is_none_or(|library| {
                 library
                     .observation_map
                     .covers(row.calibration_observation_id)
-                    && library.scan_map.covers(row.scan_number)
+                    && library.scan_map.covers(scan)
                     && (library.field_map.is_empty()
                         || usize::try_from(row.field_id)
                             .is_ok_and(|id| id < library.field_map.len()))
@@ -551,13 +555,18 @@ pub(crate) fn plan_with_visibility_metadata(
     preparation_error: Option<ApplyPreparationError<'_>>,
 ) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
     plan_with_selection(ms, request, preparation_error, None)
+        .map(|(plan, timings, _)| (plan, timings))
 }
+
+pub(crate) use library::LegacyScanOverrides;
+type PlannedApplication = (ApplyPlan, ApplyPlanTimings, LegacyScanOverrides);
 
 #[derive(Clone, Copy)]
 pub(crate) struct RegisteredApplySelection<'a> {
     pub(crate) selected: &'a ResolvedMsSelection,
     pub(crate) has_library_registration: bool,
     pub(crate) legacy_corruption: bool,
+    pub(crate) legacy_libraries: &'a [crate::execute::LibraryApplyRegistration],
 }
 
 pub(crate) fn plan_with_selection(
@@ -565,7 +574,7 @@ pub(crate) fn plan_with_selection(
     request: &ApplyPlanRequest,
     preparation_error: Option<ApplyPreparationError<'_>>,
     registered: Option<RegisteredApplySelection<'_>>,
-) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
+) -> Result<PlannedApplication, ApplyPlanError> {
     let selection_started_at = Instant::now();
     let resolved;
     let resolved_selection = if let Some(registration) = registered {
@@ -583,7 +592,7 @@ pub(crate) fn plan_with_selection(
     };
     let selected_row_indices = resolved_selection.row_indices().collect::<Vec<_>>();
     let selection_ns = selection_started_at.elapsed().as_nanos() as u64;
-    let (plan, mut timings) = plan_selected_rows(
+    let (plan, mut timings, legacy_scans) = plan_selected_rows(
         ms,
         request,
         preparation_error,
@@ -592,7 +601,7 @@ pub(crate) fn plan_with_selection(
         ApplyChannelInput::Ranges(&resolved_selection.channel_selections),
     )?;
     timings.selection_ns = selection_ns;
-    Ok((plan, timings))
+    Ok((plan, timings, legacy_scans))
 }
 
 pub(crate) fn plan_transform_rows(
@@ -609,7 +618,7 @@ pub(crate) fn plan_transform_rows(
         rows,
         ApplyChannelInput::Indices(channels),
     )
-    .map(|(plan, _)| plan)
+    .map(|(plan, _, _)| plan)
 }
 
 enum ApplyChannelInput<'a> {
@@ -624,7 +633,7 @@ fn plan_selected_rows(
     registered: Option<RegisteredApplySelection<'_>>,
     selected_row_indices: &[usize],
     requested_channels: ApplyChannelInput<'_>,
-) -> Result<(ApplyPlan, ApplyPlanTimings), ApplyPlanError> {
+) -> Result<PlannedApplication, ApplyPlanError> {
     let requires_corrected_data_column = request.apply_mode.writes_corrected_data()
         && match ms.data_column(VisibilityDataColumn::CorrectedData) {
             Ok(_) => false,
@@ -692,7 +701,7 @@ fn plan_selected_rows(
         });
     }
     let calibration_tables_started_at = Instant::now();
-    let calibration_tables = request
+    let mut calibration_tables = request
         .calibration_tables
         .iter()
         .map(|spec| {
@@ -718,6 +727,13 @@ fn plan_selected_rows(
     if registered.is_none() {
         library::validate_overlaps(&calibration_tables)?;
     }
+    let legacy_scans = registered.map_or_else(LegacyScanOverrides::new, |registration| {
+        library::choose_legacy_slices(
+            &mut calibration_tables,
+            &selected_rows,
+            registration.legacy_libraries,
+        )
+    });
     let calibration_tables = calibration_tables
         .into_iter()
         .map(|(table, _)| table)
@@ -745,6 +761,7 @@ fn plan_selected_rows(
             measurement_set_spectral_windows_ns,
             calibration_table_plans_ns,
         },
+        legacy_scans,
     ))
 }
 

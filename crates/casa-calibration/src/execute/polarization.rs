@@ -48,22 +48,34 @@ pub(super) fn apply_x_mueller(
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum Leakage {
-    Linearized,
-    Full,
+pub(super) enum JonesMatrix {
+    LinearizedLeakage,
+    FullLeakage,
+    General,
 }
 
-impl Leakage {
+impl JonesMatrix {
     pub(super) fn from_subtype(subtype: &str) -> Option<Self> {
         match subtype {
-            "D Jones" | "Df Jones" => Some(Self::Linearized),
-            "Dgen Jones" | "Dfgen Jones" | "DLLS Jones" | "DfLLS Jones" => Some(Self::Full),
+            "D Jones" | "Df Jones" => Some(Self::LinearizedLeakage),
+            "Dgen Jones" | "Dfgen Jones" | "DLLS Jones" | "DfLLS Jones" => Some(Self::FullLeakage),
+            "J Jones" | "Jf Jones" => Some(Self::General),
             _ => None,
         }
     }
 
     pub(super) fn is_channelized(subtype: &str) -> bool {
-        matches!(subtype, "Df Jones" | "Dfgen Jones" | "DfLLS Jones")
+        matches!(
+            subtype,
+            "Df Jones" | "Dfgen Jones" | "DfLLS Jones" | "Jf Jones"
+        )
+    }
+
+    pub(super) fn parameter_shape(self) -> (usize, &'static str) {
+        match self {
+            Self::LinearizedLeakage | Self::FullLeakage => (2, "leakage"),
+            Self::General => (4, "full Jones"),
+        }
     }
 
     pub(super) fn apply(
@@ -86,14 +98,37 @@ impl Leakage {
                     sampling,
                 )
             };
-            let left = [sample(0, 0)?, sample(0, 1)?];
-            let right = [sample(1, 0)?, sample(1, 1)?];
             let values = indices.map(|index| output.corrected[[index, channel]]);
             let propagate = output.propagate_flags;
             let flags = indices.map(|index| propagate && output.flags[[index, channel]]);
             let (values, flags) = match self {
-                Self::Linearized => linearized(values, flags, left, right, forward),
-                Self::Full => full(values, flags, left, right, forward),
+                Self::LinearizedLeakage => linearized(
+                    values,
+                    flags,
+                    [sample(0, 0)?, sample(0, 1)?],
+                    [sample(1, 0)?, sample(1, 1)?],
+                    forward,
+                ),
+                Self::FullLeakage => {
+                    let unity = GainSample {
+                        value: Complex32::ONE,
+                        flagged: false,
+                    };
+                    full(
+                        values,
+                        flags,
+                        [unity, sample(0, 0)?, sample(0, 1)?, unity],
+                        [unity, sample(1, 0)?, sample(1, 1)?, unity],
+                        forward,
+                    )
+                }
+                Self::General => full(
+                    values,
+                    flags,
+                    [sample(0, 0)?, sample(0, 1)?, sample(0, 2)?, sample(0, 3)?],
+                    [sample(1, 0)?, sample(1, 1)?, sample(1, 2)?, sample(1, 3)?],
+                    forward,
+                ),
             };
             for (slot, index) in indices.into_iter().enumerate() {
                 output.corrected[[index, channel]] = values[slot];
@@ -233,8 +268,8 @@ fn linearized(
 fn full(
     data: [Complex32; 4],
     flags: [bool; 4],
-    left: [GainSample; 2],
-    right: [GainSample; 2],
+    left: [GainSample; 4],
+    right: [GainSample; 4],
     forward: bool,
 ) -> ([Complex32; 4], [bool; 4]) {
     let (left, left_flag) = full_matrix(left, forward);
@@ -248,18 +283,25 @@ fn full(
     )
 }
 
-fn full_matrix(terms: [GainSample; 2], forward: bool) -> ([Complex32; 4], bool) {
-    let zero = Complex32::new(0.0, 0.0);
-    let one = Complex32::new(1.0, 0.0);
-    let [x, y] = terms.map(|sample| sample.value);
-    let det = one - x * y;
+fn full_matrix(terms: [GainSample; 4], forward: bool) -> ([Complex32; 4], bool) {
+    let values = terms.map(|sample| sample.value);
+    let [a, b, c, d] = values;
+    let det = a * d - b * c;
     let invertible = det.norm() > 0.0;
     if terms.into_iter().any(|sample| sample.flagged) || (!forward && !invertible) {
-        ([one, zero, zero, one], true)
+        (
+            [
+                Complex32::ONE,
+                Complex32::ZERO,
+                Complex32::ZERO,
+                Complex32::ONE,
+            ],
+            true,
+        )
     } else if forward {
-        ([one, x, y, one], false)
+        (values, false)
     } else {
-        ([one / det, -x / det, -y / det, one / det], false)
+        ([d / det, -b / det, -c / det, a / det], false)
     }
 }
 
