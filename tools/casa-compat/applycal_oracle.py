@@ -672,8 +672,38 @@ def run(root, native_bin, only=None):
         ('taql', dict(msselect='ANTENNA1==0 AND SCAN_NUMBER==2')),
         ('taql-empty', dict(msselect='ANTENNA1==999', flagbackup=True)),
         ('taql-invalid', dict(msselect='NONEXISTENT_COLUMN==0', flagbackup=True)),
+        ('mscal-antenna-name', dict(msselect='mscal.ant1name() == "A0"')),
+        ('mscal-antenna2-name', dict(msselect='derivedmscal.ant2name() == "A4"')),
+        ('mscal-antenna-column', dict(msselect='mscal.ant1col("DISH_DIAMETER") > 0 AND ANTENNA1 > 0')),
+        ('mscal-column-units', dict(msselect='mscal.ant1col("DISH_DIAMETER") != 1200cm OR ANTENNA1 == 0')),
+        ('mscal-column-unit-arithmetic', dict(msselect='mscal.ant1col("DISH_DIAMETER") + 10cm > 12m AND ANTENNA1 == 0')),
+        ('mscal-column-unit-product', dict(msselect='mscal.ant1col("DISH_DIAMETER") * 2 == 24m AND ANTENNA1 == 0')),
+        ('mscal-column-unit-ratio', dict(msselect='mscal.ant1col("DISH_DIAMETER") / 600cm == 2 AND ANTENNA1 == 0')),
+        ('mscal-column-unit-membership', dict(msselect='mscal.ant1col("DISH_DIAMETER") IN [12m, 3m] AND ANTENNA1 == 0')),
+        ('mscal-column-incompatible-units', dict(msselect='mscal.ant1col("DISH_DIAMETER") != 12s')),
+        ('mscal-array-column-units', dict(msselect='mscal.ant1col("POSITION")[1] > 1km AND ANTENNA1 == 0')),
+        ('mscal-field-column', dict(msselect='mscal.fieldcol(upper("name")) == "PHASE"')),
+        ('mscal-spw-column', dict(msselect='mscal.spwcol("NUM_CHAN") > 0')),
+        ('mscal-polarization-column', dict(msselect='mscal.polcol("NUM_CORR") == 2')),
+        ('mscal-subtable-column', dict(msselect='mscal.subcol("ANTENNA", "NAME", ANTENNA2) IN ["A3", "A4"]')),
+        ('mscal-nested-lookup', dict(msselect='mscal.subcol("SPECTRAL_WINDOW", "NUM_CHAN", mscal.subcol("DATA_DESCRIPTION", "SPECTRAL_WINDOW_ID", DATA_DESC_ID)) == 8')),
+        ('mscal-processor-default', dict(msselect='mscal.proccol("TYPE") == ""')),
+        ('mscal-invalid-row-argument', dict(msselect='mscal.subcol("ANTENNA", "NAME", 0.5) == "A0"')),
+        ('mscal-invalid-metadata-argument', dict(msselect='mscal.ant1col(ANTENNA1) == "A0"')),
+        ('mscal-random-metadata-argument', dict(msselect='mscal.ant1col(iif(rand() < 1, "NAME", "STATION")) == "A0"')),
     ]:
         case(f'api-select-{label}', arguments, input_vis=observation_source)
+    if only is None or re.search(only, 'api-select-mscal-processor-array-invalid-id'):
+        processor_source = root/'mscal-processor-array.ms'
+        copy_ms(observation_source, processor_source)
+        tool.open(str(processor_source/'PROCESSOR'), nomodify=False)
+        try:
+            assert tool.addcols({'EXTENSION_COEFF': {'valueType': 'double', 'ndim': 1, 'shape': [2]}})
+        finally:
+            tool.close()
+        case('api-select-mscal-processor-array-invalid-id',
+             dict(msselect='mscal.proccol("EXTENSION_COEFF")[1] == 0 OR ANTENNA1 == 0'),
+             input_vis=processor_source)
 
     for label, arguments in [
         ('scalar-map', dict(spwmap=0, flagbackup=True)),

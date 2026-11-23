@@ -11,9 +11,12 @@
 //! `TaQLInsertNodeRep`, `TaQLDeleteNodeRep`.
 
 use std::fmt;
+use std::sync::Arc;
 
 use casa_types::quanta::Unit;
 use num_complex::Complex64;
+
+use super::eval::ExprValue;
 
 /// Index and axis style for array subscripts and `ROWNUMBER()`.
 ///
@@ -423,6 +426,13 @@ pub enum Expr {
     },
     /// A function call.
     FunctionCall { name: String, args: Vec<Expr> },
+    /// A zero-based row lookup bound to a metadata column when preparing a query.
+    BoundRowLookup {
+        original: Arc<String>,
+        index: Box<Expr>,
+        values: Arc<[ExprValue]>,
+        missing: Option<ExprValue>,
+    },
     /// A vector expression such as `[ANTENNA1, ANTENNA2]`.
     ArrayLiteral(Vec<Expr>),
     /// `expr BETWEEN low AND high`
@@ -1023,6 +1033,7 @@ impl fmt::Display for Expr {
                 }
                 write!(f, ")")
             }
+            Self::BoundRowLookup { original, .. } => write!(f, "{original}"),
             Self::ArrayLiteral(values) => {
                 write!(f, "[")?;
                 for (index, value) in values.iter().enumerate() {
