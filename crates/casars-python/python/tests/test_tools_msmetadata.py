@@ -842,3 +842,109 @@ def test_msmetadata_pointing_interpolation_uses_each_antenna(native_dataset):
                 metadata.pointingdirection(-1)
         finally:
             assert metadata.done()
+
+
+def test_msmetadata_stored_direction_references_and_offsets(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset / "FIELD"), nomodify=False)
+    assert table.addcols({
+        "TIME_REF": {"valueType": "string"},
+        "PHASE_REF": {"valueType": "string", "ndim": 1},
+        "REFERENCE_REF": {"valueType": "int", "ndim": 1},
+    })
+    origin = 4.8e9
+    assert table.putcell("TIME", 0, origin)
+    assert table.putcell("TIME_REF", 0, "TAI")
+    assert table.putcolkeyword("TIME", "MEASINFO", {"type": "epoch", "VarRefCol": "TIME_REF"})
+    assert table.putcell("NUM_POLY", 0, 1)
+    coefficients = np.array([[0.1, 0.001], [0.2, 0.0]], order="F")
+    assert table.putcell("PHASE_DIR", 0, coefficients)
+    assert table.putcell("REFERENCE_DIR", 0, coefficients)
+    assert table.putcell("PHASE_REF", 0, np.array(["GALACTIC", "J2000"]))
+    assert table.putcell("REFERENCE_REF", 0, np.array([17, 23], dtype=np.int32))
+    offset = {
+        "type": "direction", "refer": "J2000",
+        "m0": {"value": 0.5, "unit": "rad"},
+        "m1": {"value": 0.1, "unit": "rad"},
+    }
+    assert table.putcolkeyword("PHASE_DIR", "MEASINFO", {
+        "type": "direction", "VarRefCol": "PHASE_REF", "RefOffMsr": offset,
+    })
+    assert table.putcolkeyword("REFERENCE_DIR", "MEASINFO", {
+        "type": "direction", "VarRefCol": "REFERENCE_REF",
+        "TabRefTypes": ["J2000", "GALACTIC"], "TabRefCodes": np.array([17, 23], dtype=np.uint32),
+    })
+    assert table.done()
+
+    utc = {"type": "epoch", "refer": "UTC", "m0": {"value": origin, "unit": "s"}}
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            phase = metadata.phasecenter(epoch=utc)
+            assert phase["refer"] == "GALACTIC"
+            assert phase["offset"]["refer"] == "J2000"
+            for axis, expected in enumerate((0.5, 0.1)):
+                q = phase["offset"][f"m{axis}"]
+                assert q["unit"] == "rad"
+                assert q["value"] == pytest.approx(expected, abs=2e-15)
+            reference = metadata.refdir(epoch=utc)
+            assert reference["refer"] == "J2000"
+            for result in (phase, reference):
+                assert result["m0"]["value"] == pytest.approx(0.134, abs=2e-9)
+                assert result["m1"]["value"] == pytest.approx(0.2, abs=2e-15)
+        finally:
+            assert metadata.done()
+
+
+def test_msmetadata_zero_interval_pointing_uses_the_distinct_neighbor(native_dataset):
+    casatools = pytest.importorskip("casatools")
+    assert casatools.version_string().replace("-", ".") == "6.7.6.14"
+    table = tools.table()
+    assert table.open(str(native_dataset))
+    a1, a2 = table.getcol("ANTENNA1"), table.getcol("ANTENNA2")
+    row = int(np.flatnonzero(a1 == a2)[0])
+    antenna = int(a1[row])
+    epoch = float(table.getcell("TIME", row))
+    assert table.done()
+    assert table.open(str(native_dataset / "POINTING"), nomodify=False)
+    if table.nrows():
+        assert table.removerows(np.arange(table.nrows(), dtype=np.int64))
+    count = 2048
+    assert table.addrows(count)
+    assert table.addcols({"OFFSET_DIR": {"valueType": "double", "ndim": 2}})
+    assert table.putcolkeyword("OFFSET_DIR", "MEASINFO", {"type": "direction", "Ref": "J2000"})
+    assert table.putcolkeyword("OFFSET_DIR", "QuantumUnits", ["rad", "rad"])
+    assert table.putcolkeyword("DIRECTION", "MEASINFO", {
+        "type": "direction", "Ref": "J2000", "RefOffCol": "OFFSET_DIR", "RefOffvarPerArr": True,
+    })
+    direction = np.empty((2, 1, count), dtype=np.float64, order="F")
+    direction[0, 0] = np.linspace(0.1, 0.2, count)
+    direction[1, 0] = 0.25
+    offsets = np.empty_like(direction, order="F")
+    offsets[0, 0] = 0.3
+    offsets[1, 0] = -0.2
+    assert table.putcol("ANTENNA_ID", np.full(count, antenna, dtype=np.int32))
+    assert table.putcol("TIME", epoch + np.arange(1 - count, 1, dtype=np.float64))
+    assert table.putcol("INTERVAL", np.zeros(count))
+    assert table.putcol("NUM_POLY", np.zeros(count, dtype=np.int32))
+    assert table.putcol("DIRECTION", direction)
+    assert table.putcol("TARGET", direction)
+    assert table.putcol("OFFSET_DIR", offsets)
+    assert table.done()
+
+    for module in (casatools, tools):
+        metadata = module.msmetadata()
+        assert metadata.open(str(native_dataset))
+        try:
+            result = metadata.pointingdirection(row)
+            assert result["antenna1"] == result["antenna2"]
+            found = result["antenna1"]["pointingdirection"]
+            assert found["m0"]["value"] == pytest.approx(0.2, abs=2e-15)
+            assert found["m1"]["value"] == pytest.approx(0.25, abs=2e-15)
+            assert found["offset"]["m0"]["value"] == pytest.approx(0.3, abs=2e-15)
+            assert found["offset"]["m1"]["value"] == pytest.approx(-0.2, abs=2e-15)
+        finally:
+            assert metadata.done()

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_ms::subtables::MetadataDirection;
 use casa_ms::{MeasurementSet, MsError, MsResult};
 use casa_tables::Table;
 use casa_types::ScalarValue;
 use casa_types::measures::MEpoch;
-use casa_types::measures::direction::MDirection;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
@@ -27,8 +27,16 @@ fn epoch_selection(epoch: &RecordArg) -> PyResult<Option<MEpoch>> {
         .ok_or_else(|| PyRuntimeError::new_err("Epoch cannot be converted to an MEpoch"))
 }
 
-fn direction_record(direction: MDirection) -> CasaValue {
-    Measure::from_casa(&CasaMeasure::Direction(direction)).to_value()
+fn direction_record(measure: MetadataDirection) -> CasaValue {
+    let record = Measure::from_casa(&CasaMeasure::Direction(measure.direction)).to_value();
+    let Some(offset) = measure.offset else {
+        return record;
+    };
+    let CasaValue::Record(mut fields) = record else {
+        unreachable!("direction measure serializes as a record");
+    };
+    fields.push(("offset".to_string(), direction_record(*offset)));
+    CasaValue::record(fields)
 }
 
 fn selected_value(table: &Table, row: usize, column: &str) -> MsResult<ScalarValue> {

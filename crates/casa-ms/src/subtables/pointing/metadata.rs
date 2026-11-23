@@ -3,10 +3,12 @@
 use casa_tables::{RequiredScalarColumnValues, Table};
 use casa_types::measures::direction::MDirection;
 
-use crate::derived::engine::resolve_direction_reference_selected;
 use crate::{MsError, MsResult};
 
 use super::super::metadata_field::signed_angles;
+use super::super::metadata_measure::{
+    MetadataDirection, direction_components, direction_with_reference,
+};
 use super::MsPointing;
 
 const FIRST_BATCH_ROWS: usize = 1 << 15;
@@ -21,12 +23,32 @@ struct Sample {
 
 struct PointingRows<'a>(&'a Table);
 
+struct PointingBatch<'a> {
+    rows: &'a [usize],
+    antennas: &'a [i32],
+    times: &'a [f64],
+}
+
+impl PointingBatch<'_> {
+    fn other_times(
+        &self,
+        antenna: i32,
+        time: f64,
+    ) -> impl DoubleEndedIterator<Item = Option<f64>> + ExactSizeIterator + '_ {
+        self.antennas
+            .iter()
+            .copied()
+            .zip(self.times.iter().copied())
+            .map(move |(id, other)| (antenna == id && time != other).then_some(other))
+    }
+}
+
 impl PointingRows<'_> {
     fn visit(
         &self,
         mut rows: impl Iterator<Item = usize>,
         antennas: &[i32],
-        mut stop: impl FnMut(i32, Sample) -> MsResult<bool>,
+        mut stop: impl FnMut(i32, Sample, &PointingBatch<'_>, usize) -> MsResult<bool>,
     ) -> MsResult<bool> {
         let mut indices = Vec::with_capacity(FIRST_BATCH_ROWS);
         let mut size = FIRST_BATCH_ROWS;
@@ -56,6 +78,11 @@ impl PointingRows<'_> {
                     "Invalid POINTING scalar columns".into(),
                 ));
             };
+            let batch = PointingBatch {
+                rows: &indices,
+                antennas: ids,
+                times,
+            };
             for (index, (&row, &id)) in indices.iter().zip(ids).enumerate() {
                 if antennas.contains(&id) {
                     let sample = Sample {
@@ -63,7 +90,7 @@ impl PointingRows<'_> {
                         time: times[index],
                         interval: intervals[index],
                     };
-                    if stop(id, sample)? {
+                    if stop(id, sample, &batch, index)? {
                         return Ok(true);
                     }
                 }
@@ -80,7 +107,7 @@ impl PointingRows<'_> {
         time: f64,
     ) -> MsResult<Option<f64>> {
         let mut found = None;
-        self.visit(rows, &[antenna], |_, other| {
+        self.visit(rows, &[antenna], |_, other, _, _| {
             if other.time != time {
                 found = Some(other.time);
             }
@@ -89,40 +116,67 @@ impl PointingRows<'_> {
         Ok(found)
     }
 
-    fn covers(&self, antenna: i32, sample: Sample, time: f64) -> MsResult<bool> {
-        let half = if sample.interval == 0.0 {
-            // A zero interval derives its coverage from the next sample at
-            // a different timestamp for this antenna, or the previous one.
-            let end = self.0.row_count();
-            let neighbor = match self.distinct_time(sample.row + 1..end, antenna, sample.time)? {
-                Some(next) => Some(next),
-                None => self.distinct_time((0..sample.row).rev(), antenna, sample.time)?,
-            };
-            neighbor.map_or(0.0, |other| (other - sample.time).abs() / 2.0)
-        } else {
-            sample.interval / 2.0
+    fn zero_interval_half_width(
+        &self,
+        antenna: i32,
+        sample: Sample,
+        batch: &PointingBatch<'_>,
+        index: usize,
+    ) -> MsResult<f64> {
+        let times = || batch.other_times(antenna, sample.time);
+        let next = match times().skip(index + 1).flatten().next() {
+            Some(next) => Some(next),
+            None => {
+                let start = batch.rows.last().expect("scanning a nonempty batch") + 1;
+                self.distinct_time(start..self.0.row_count(), antenna, sample.time)?
+            }
         };
-        // Preserve casacore's endpoint comparison. At MeasurementSet epochs
-        // an absolute difference can round to the other side of the boundary.
-        Ok(half <= 0.0 || (sample.time >= time - half && sample.time <= time + half))
+        let distinct = match next {
+            Some(next) => Some(next),
+            None => match times().take(index).rev().flatten().next() {
+                Some(previous) => Some(previous),
+                None => self.distinct_time((0..batch.rows[0]).rev(), antenna, sample.time)?,
+            },
+        };
+        Ok(distinct.map_or(0.0, |other| (other - sample.time).abs() / 2.0))
     }
 
     fn lookup(&self, antennas: [i32; 2], time: f64, guess: usize) -> MsResult<[Option<Sample>; 2]> {
         let end = self.0.row_count();
         let guess = guess.min(end);
         let mut samples = [None; 2];
-        let mut matched = |id, sample| {
-            let index = usize::from(id != antennas[0]);
-            if samples[index].is_none() && self.covers(id, sample, time)? {
-                samples[index] = Some(sample);
-                if antennas[0] == antennas[1] {
-                    samples[1] = Some(sample);
+        for segment in [guess..end, 0..guess] {
+            let mut zero_intervals = [None::<(f64, f64)>; 2];
+            let matched = self.visit(segment, &antennas, |id, sample, batch, position| {
+                let index = usize::from(id != antennas[0]);
+                if samples[index].is_some() {
+                    return Ok(false);
                 }
+                let cached = &mut zero_intervals[index];
+                if cached.is_some_and(|(time, _)| time != sample.time) {
+                    *cached = None;
+                }
+                let half = match (sample.interval, *cached) {
+                    (0.0, Some((_, half))) => half,
+                    (0.0, None) => {
+                        let half = self.zero_interval_half_width(id, sample, batch, position)?;
+                        *cached = Some((sample.time, half));
+                        half
+                    }
+                    (interval, _) => interval / 2.0,
+                };
+                // Preserve casacore's endpoint comparison at large epochs.
+                if half <= 0.0 || (sample.time >= time - half && sample.time <= time + half) {
+                    samples[index] = Some(sample);
+                    if antennas[0] == antennas[1] {
+                        samples[1] = Some(sample);
+                    }
+                }
+                Ok(samples.iter().all(Option::is_some))
+            })?;
+            if matched {
+                break;
             }
-            Ok(samples.iter().all(Option::is_some))
-        };
-        if !self.visit(guess..end, &antennas, &mut matched)? {
-            self.visit(0..guess, &antennas, matched)?;
         }
         Ok(samples)
     }
@@ -145,7 +199,7 @@ impl MsPointing<'_> {
         main_interval: f64,
         initial_row: usize,
         interpolate: bool,
-    ) -> MsResult<[MDirection; 2]> {
+    ) -> MsResult<[MetadataDirection; 2]> {
         let rows = PointingRows(self.table());
         let [first, second] = rows.lookup(antennas, time, initial_row)?;
         let require_sample = |antenna, sample: Option<Sample>| {
@@ -162,7 +216,7 @@ impl MsPointing<'_> {
         let mut directions = self
             .read_metadata_directions(&selected[..if autocorrelation { 1 } else { 2 }])?
             .into_iter();
-        let direction = |antenna, sample: Sample, left: MDirection| {
+        let direction = |antenna, sample: Sample, mut left: MetadataDirection| {
             if !interpolate || main_interval >= sample.interval {
                 return Ok(left);
             }
@@ -191,15 +245,16 @@ impl MsPointing<'_> {
                     "Pointing interpolation needs distinct times".into(),
                 ));
             }
-            let a = signed_angles(&left);
+            let a = signed_angles(&left.direction);
             let right = self.read_metadata_directions(&[neighbor.row])?;
-            let b = signed_angles(&right[0]);
+            let b = signed_angles(&right[0].direction);
             let delta = (time - sample.time) / (neighbor.time - sample.time);
-            Ok(MDirection::from_angles(
+            left.direction = MDirection::from_angles(
                 a[0] + (b[0] - a[0]) * delta,
                 a[1] + (b[1] - a[1]) * delta,
-                left.refer(),
-            ))
+                left.direction.refer(),
+            );
+            Ok(left)
         };
         let first = direction(
             antennas[0],
@@ -218,7 +273,7 @@ impl MsPointing<'_> {
         Ok([first, last])
     }
 
-    fn read_metadata_directions(&self, rows: &[usize]) -> MsResult<Vec<MDirection>> {
+    fn read_metadata_directions(&self, rows: &[usize]) -> MsResult<Vec<MetadataDirection>> {
         let table = self.table();
         let values = table
             .column_accessor("DIRECTION")?
@@ -228,10 +283,8 @@ impl MsPointing<'_> {
             .map(|(&row, values)| {
                 let values = values
                     .ok_or_else(|| MsError::InvalidInput("Missing POINTING direction".into()))?;
-                let angles = self.direction_angles(&values, row, "DIRECTION", None)?;
-                let reference =
-                    resolve_direction_reference_selected(table, "POINTING", "DIRECTION", row)?;
-                Ok(MDirection::from_angles(angles[0], angles[1], reference))
+                let angles = direction_components(table, "DIRECTION", &values, 0)?;
+                direction_with_reference(table, "DIRECTION", row, 0, angles)
             })
             .collect()
     }

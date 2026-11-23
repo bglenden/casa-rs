@@ -10,9 +10,12 @@ use casa_types::quanta::casacore::casacore_unit;
 use casa_types::quanta::{Dimension, UnitDim};
 use casa_types::{ArrayValue, ScalarValue, Value};
 
-use crate::derived::engine::{detect_epoch_reference, resolve_direction_reference};
 use crate::ephemeris::find_ephemeris_in_field;
 use crate::{MeasurementSet, MsError, MsResult, SubTable, open_measures_runtime};
+
+use super::metadata_measure::{
+    MetadataDirection, direction_components, direction_with_reference, field_epoch_reference,
+};
 
 impl MeasurementSet {
     /// Evaluate the FIELD phase centre or reference direction as a metadata
@@ -30,7 +33,7 @@ impl MeasurementSet {
         row: usize,
         reference: bool,
         epoch: Option<&MEpoch>,
-    ) -> MsResult<MDirection> {
+    ) -> MsResult<MetadataDirection> {
         let field = self.field()?;
         if row >= field.row_count() {
             return Err(MsError::InvalidIndex {
@@ -49,28 +52,11 @@ impl MeasurementSet {
         } else {
             field.phase_dir(row)?
         };
-        let ArrayValue::Float64(values) = values else {
-            return Err(MsError::InvalidInput(format!(
-                "FIELD.{column} must be double"
-            )));
-        };
-        let units = direction_radians(field.table(), column)?;
-        let refer = resolve_direction_reference(field.table(), "FIELD", column, row)?;
         let coefficient = |index| {
-            let angle = |axis| {
-                match values.shape() {
-                    [2] if index == 0 => values.get(ndarray::IxDyn(&[axis])),
-                    [2, _] => values.get(ndarray::IxDyn(&[axis, index])),
-                    _ => None,
-                }
-                .map(|value| value * units[axis])
-                .ok_or_else(|| {
-                    MsError::InvalidInput(format!("FIELD.{column} has an invalid direction shape"))
-                })
-            };
-            Ok::<_, MsError>(MDirection::from_angles(angle(0)?, angle(1)?, refer))
+            let angles = direction_components(field.table(), column, values, index)?;
+            direction_with_reference(field.table(), column, row, index, angles)
         };
-        let direction = coefficient(0)?;
+        let mut direction = coefficient(0)?;
         let order = usize::try_from(field.num_poly(row)?).map_err(|_| {
             MsError::InvalidInput("FIELD polynomial order must be nonnegative".into())
         })?;
@@ -78,7 +64,7 @@ impl MeasurementSet {
         if order == 0 && ephemeris_id.is_none() {
             return Ok(direction);
         }
-        let time_reference = detect_epoch_reference(field.table(), "TIME", EpochRef::UTC);
+        let time_reference = field_epoch_reference(field.table(), row)?;
         let origin = field.time(row)?;
         let seconds = match epoch {
             Some(epoch)
@@ -99,19 +85,17 @@ impl MeasurementSet {
                 return Ok(direction);
             }
             let delta = seconds - origin;
-            let mut angles = signed_angles(&direction);
+            let mut angles = signed_angles(&direction.direction);
             let mut factor = 1.0;
             for term in 1..=order {
                 factor *= delta;
-                let term = signed_angles(&coefficient(term)?);
+                let term = signed_angles(&coefficient(term)?.direction);
                 angles[0] += term[0] * factor;
                 angles[1] += term[1] * factor;
             }
-            return Ok(MDirection::from_angles(
-                angles[0],
-                angles[1],
-                direction.refer(),
-            ));
+            direction.direction =
+                MDirection::from_angles(angles[0], angles[1], direction.direction.refer());
+            return Ok(direction);
         }
         let id = ephemeris_id.expect("constant field without ephemeris already returned");
         let field_path = field.table().path().ok_or_else(|| {
@@ -137,10 +121,10 @@ impl MeasurementSet {
             .ok_or_else(|| {
                 MsError::InvalidInput(format!("No valid field ephemeris entry for MJD {utc_mjd}"))
             })?;
-        Ok(offset_true_angle(
+        Ok(MetadataDirection::new(offset_true_angle(
             &sample.direction,
-            signed_angles(&direction),
-        )?)
+            signed_angles(&direction.direction),
+        )?))
     }
 }
 
