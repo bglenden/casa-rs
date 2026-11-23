@@ -10658,3 +10658,7 @@ CASA 6.7.6.14 accepts direct `calibrater.setsolve(type='EVLASWP')` when the Meas
 ## Joint KMBD fitting can abort with single-correlation buffers
 
 When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 iterators refuse a mix of single- and dual-hand buffers. Two single-hand buffers instead terminate when the one-hand answer is assigned to the two-hand table array. Casa-rs reports a recoverable solve error in each case. [Paired KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+
+## A calibrater gain matrix can keep its correction direction during corruption
+
+In CASA 6.7.6.14, a VI2 session that calls `correct` and then `corrupt` with the same single-slot gain table can apply the inverse gain to both visibility columns. Casa-rs applies the inverse gain to `CORRECTED_DATA` and the forward gain to `MODEL_DATA`. The same planted session with VI1 terminates during its direct amplitude G fit in an isolated CASA process. The native VI1 session completes the fit and both visibility operations. [Paired session oracle](../tools/casa-compat/calibrater_session_oracle.py)
