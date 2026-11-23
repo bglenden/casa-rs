@@ -103,18 +103,27 @@ pub(super) fn apply(
 fn wrap_phase(phase: f32) -> f32 {
     let pi = std::f64::consts::PI;
     let tau = std::f64::consts::TAU;
-    let mut phase = phase;
     if !phase.is_finite() {
         return phase;
     }
-    if phase.abs() > 4096.0 {
-        return ((f64::from(phase) + pi).rem_euclid(tau) - pi) as f32;
+    let mut wrapped = phase.abs();
+    while f64::from(wrapped) > pi {
+        let current = f64::from(wrapped);
+        let next = (current - tau) as f32;
+        if next == wrapped {
+            // CASA's repeated subtraction makes no progress at this spacing.
+            return ((f64::from(phase) + pi).rem_euclid(tau) - pi) as f32;
+        }
+        // The rounded subtraction has a constant step within a float32
+        // exponent range. Leave a turn at the boundary for the finer spacing.
+        let boundary = f64::from(f32::from_bits(wrapped.to_bits() & 0x7f80_0000));
+        let step = current - f64::from(next);
+        let turns = ((current - boundary) / step).floor() - 1.0;
+        wrapped = if turns > 1.0 {
+            (current - turns * step) as f32
+        } else {
+            next
+        };
     }
-    while f64::from(phase) < -pi {
-        phase = (f64::from(phase) + tau) as f32;
-    }
-    while f64::from(phase) > pi {
-        phase = (f64::from(phase) - tau) as f32;
-    }
-    phase
+    wrapped * phase.signum()
 }
