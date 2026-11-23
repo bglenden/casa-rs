@@ -618,6 +618,21 @@ def compare_default_model(root, native):
     assert all(float(point[1]) < 0 for point in rows(expected))
     assert native(**residual_controls, plotfile=str(actual)) is None
     assert compare_text(actual, expected) == 6
+
+    from casars.tasks import TaskExecutionError
+
+    average = controls | dict(avgchannel="3")
+    expected, actual = (root / f"selected-virtual-averaged.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**average, plotfile=str(expected)) is None
+    assert len(rows(expected)) == 3
+    assert {float(point[1]) for point in rows(expected)} == {7.25}
+    try:
+        native(**average, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "virtual MeasurementSet models are pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS applied the unaveraged model path to an averaged request")
+    assert not actual.exists()
     with opened(virtual) as table:
         assert "MODEL_DATA" not in table.colnames()
         np.testing.assert_array_equal(table.getcol("DATA"), observed)

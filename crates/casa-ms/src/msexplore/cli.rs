@@ -10,6 +10,7 @@ use casa_task_runtime::{TaskFailure, TaskFrontEnd, TaskInvocation, TaskSuccess};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use serde::Deserialize;
 
+use super::plotms_columns;
 use super::task_contract::{
     MsExplorePlotArtifact, MsExploreRunTaskResult, msexplore_task_schema_bundle,
 };
@@ -247,7 +248,11 @@ fn run_task(
         if calibration.is_none()
             && let Some(columns) = options.plotms_axis_columns()
         {
-            check_plotms_columns(&options, columns)?;
+            plotms_columns::check_averaging(
+                options.plotms_averaging_active(),
+                options.secondary_y_data_column.is_some(),
+                columns,
+            )?;
             let symbols = task.value("customflaggedsymbol");
             let ordinate_count = 1 + usize::from(options.y_axis2.is_some());
             if (0..ordinate_count)
@@ -311,24 +316,6 @@ impl CliOptions {
     }
 }
 
-fn check_plotms_columns(
-    options: &CliOptions,
-    columns: [MsDataColumn; 3],
-) -> Result<(), TaskFailure> {
-    let averaging = options.plotms_averaging_active();
-    if averaging && options.secondary_y_data_column.is_some() {
-        return Err(TaskFailure::validation(
-            "averaging independent MeasurementSet ordinate columns is pending #1032",
-        ));
-    }
-    if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
-        return Err(TaskFailure::validation(
-            "averaging derived data columns in this MeasurementSet plot is pending #1032",
-        ));
-    }
-    Ok(())
-}
-
 fn run_visibility_plot(
     task: &TaskInvocation<'_>,
     mut options: CliOptions,
@@ -356,7 +343,7 @@ fn run_visibility_plot(
         && let Some(columns) = &mut axis_columns
     {
         let axes = [options.x_axis, options.y_axis, options.y_axis2];
-        let (adjusted, use_float) = super::plotms_columns::resolve_storage_columns(
+        let (adjusted, use_float) = plotms_columns::resolve_storage_columns(
             &ms,
             *columns,
             axes,
@@ -376,15 +363,10 @@ fn run_visibility_plot(
     if !options.selection.selectdata {
         options.selection = MsSelection::default();
     }
+    let axes = [options.x_axis, options.y_axis, options.y_axis2];
     let load_models = load_models.filter(|_| {
-        axis_columns.is_some_and(|columns| {
-            [options.x_axis, options.y_axis, options.y_axis2]
-                .into_iter()
-                .zip(columns)
-                .any(|(axis, column)| {
-                    axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model()
-                })
-        })
+        !options.plotms_averaging_active()
+            && axis_columns.is_some_and(|columns| plotms_columns::uses_model(axes, columns))
     });
     let library = calibration
         .as_ref()
@@ -1255,7 +1237,7 @@ fn options_from_plotms(
             .map_err(TaskFailure::validation)
     };
     let x_column = data_column(text("xdatacolumn")?)?.unwrap_or(MsDataColumn::Data);
-    let [y_column, secondary_y] = super::plotms_columns::ordinate_columns(task, y_axis, y_axis2)?;
+    let [y_column, secondary_y] = plotms_columns::ordinate_columns(task, y_axis, y_axis2)?;
     let secondary_uses_data = y_axis2.is_some_and(MsAxis::is_visibility_math);
     let data_column = if y_axis.is_visibility_math() {
         y_column
