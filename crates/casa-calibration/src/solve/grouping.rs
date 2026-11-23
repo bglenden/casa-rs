@@ -48,20 +48,8 @@ pub(crate) fn build_solve_groups(
     rows: &[SelectedSolveRow],
     preapplied_rows: Option<&PreappliedRows>,
     channel_bin_widths: &BTreeMap<i32, usize>,
-    mut options: SolveGroupOptions,
+    options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
-    if preapplied_rows.is_some()
-        && !options.channelized
-        && matches!(options.gain_type, GainType::G | GainType::T)
-        && matches!(
-            options.input_rows,
-            SolveInputRows::Interferometry | SolveInputRows::GainTool
-        )
-    {
-        // CalSolvingVi2 shares the input flags before applying priors.
-        // Flags added by a failed prior stay on the affected correlation.
-        options.correlation_dependent_flags = true;
-    }
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
@@ -431,6 +419,8 @@ pub(crate) struct SolveGroupOptions {
     pub(crate) preaverage_max_span: Option<f64>,
     pub(crate) correlation_dependent_flags: bool,
     pub(crate) robust_seed: bool,
+    /// Appending to an old native G table retains its physical receptor slots.
+    pub(crate) legacy_g_receptors: bool,
     /// Solve each data channel apart (`bandpass`) rather than the selected
     /// channels together (`gaincal`).
     pub(crate) channelized: bool,
@@ -604,6 +594,14 @@ pub(crate) struct SolveEdgeStats {
     pub(crate) raw_weighted_sample_power: f64,
     pub(crate) sample_count: usize,
     pub(crate) collapsed_count: usize,
+    pub(crate) single_sample: Option<CollapsedVisibility>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CollapsedVisibility {
+    pub(crate) value: Complex32,
+    pub(crate) weight: f32,
+    pub(crate) model: f32,
 }
 
 impl SolveEdgeStats {
@@ -612,6 +610,7 @@ impl SolveEdgeStats {
         self.raw_weighted_sample_power += other.raw_weighted_sample_power;
         self.sample_count += other.sample_count;
         self.collapsed_count += other.collapsed_count;
+        self.single_sample = None;
     }
 }
 
@@ -868,8 +867,10 @@ impl SolveAccumulator {
         }
 
         let baseline_solve = options.input_rows.is_baseline();
-        let single_parallel_hand =
-            !baseline_solve && options.gain_type == GainType::G && correlation_types.len() == 1;
+        let single_parallel_hand = !baseline_solve
+            && options.gain_type == GainType::G
+            && !options.legacy_g_receptors
+            && correlation_types.len() == 1;
         self.single_parallel_hand =
             single_parallel_hand && (self.sample_rows == 0 || self.single_parallel_hand);
         let graph_count = match options.gain_type {
@@ -1123,6 +1124,11 @@ impl SolveAccumulator {
                         raw_weighted_sample_power: accumulation.weighted_sample_power,
                         sample_count: accumulation.sample_count,
                         collapsed_count: 1,
+                        single_sample: Some(CollapsedVisibility {
+                            value: sample,
+                            weight,
+                            model,
+                        }),
                     };
                     self.channel_graphs[channel_index][receptor].accumulate(
                         key.baseline.antennas,

@@ -125,10 +125,15 @@ impl<'a> CalibrationTableWriter<'a> {
             .map_or(descriptor.measurement_set_name.clone(), |name| {
                 name.to_string_lossy().into_owned()
             });
+        let producer = if descriptor.subtype == "G Jones" {
+            concat!("casa-rs ", env!("CARGO_PKG_VERSION"))
+        } else {
+            "casa-rs"
+        };
         for (key, value) in [
             (KEY_VIS_CAL, descriptor.subtype.to_string()),
             (KEY_MS_NAME, measurement_set_name),
-            (KEY_CASA_VERSION, "casa-rs".to_string()),
+            (KEY_CASA_VERSION, producer.to_string()),
         ] {
             table
                 .keywords_mut()

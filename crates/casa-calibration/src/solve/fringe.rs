@@ -123,6 +123,7 @@ pub(crate) fn solve(
             correlation_dependent_flags: request.correlation_dependent_flags
                 || context.preapplied_rows.is_some(),
             robust_seed: false,
+            legacy_g_receptors: false,
             channelized: true,
             polynomial_bandpass: false,
         },

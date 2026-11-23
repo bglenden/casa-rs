@@ -76,6 +76,7 @@ fn observe(
         rotate_model: false,
         solve_interval: request.solve_interval,
         combine: request.combine,
+        legacy_g_receptors: false,
         channelized: false,
         polynomial_bandpass: false,
         preaverage_max_span: None,
@@ -181,9 +182,15 @@ fn finish(
     }
     group.finalize_for_solve(request.solve_mode, request.robustness.enabled());
     solved.rows.extend(
-        solve_closed_group(group, available, request, solved.refant_id)
-            .into_iter()
-            .flatten(),
+        solve_closed_group(
+            group,
+            available,
+            request,
+            solved.refant_id,
+            request.correlation_dependent_flags,
+        )
+        .into_iter()
+        .flatten(),
     );
 }
 

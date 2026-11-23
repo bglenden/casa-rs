@@ -18,6 +18,8 @@ pub const KEY_VIS_CAL: &str = "VisCal";
 pub const KEY_POL_BASIS: &str = "PolBasis";
 /// Table keyword naming the CASA writer version.
 pub const KEY_CASA_VERSION: &str = "CASA_Version";
+/// Producer tag written before CASA's single-correlation G receptor layout.
+pub(crate) const LEGACY_NATIVE_G_VERSION: &str = "casa-rs";
 
 /// Main-table time column.
 pub const COL_TIME: &str = "TIME";

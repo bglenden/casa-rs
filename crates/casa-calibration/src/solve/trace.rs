@@ -375,6 +375,7 @@ mod tests {
                 raw_weighted_sample_power: 8.0,
                 sample_count: 9,
                 collapsed_count: 10,
+                single_sample: None,
             },
         );
         group.channel_graphs = vec![vec![graph]];
