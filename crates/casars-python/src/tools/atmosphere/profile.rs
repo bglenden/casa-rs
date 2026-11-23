@@ -72,17 +72,17 @@ impl PyAtmosphere {
         dP: QuantityArg,
         dPm: f64,
         h0: QuantityArg,
-        atmType: u32,
+        atmType: i64,
         layerBoundaries: Vec<f64>,
         layerTemperature: Vec<f64>,
     ) -> PyResult<Py<PyAny>> {
         let weather = Weather::read(altitude, temperature, pressure, humidity, dTem_dh, h0)?;
         let top = maxAltitude.read("maxAltitude", (48., "km"))?;
         let step = dP.read("dP", (10., "mbar"))?;
-        let atmosphere = (1..=5)
-            .contains(&atmType)
-            .then(|| AtmosphereType::from_number(atmType))
-            .flatten()
+        let atmosphere = u32::try_from(atmType)
+            .ok()
+            .filter(|kind| (1..=5).contains(kind))
+            .and_then(AtmosphereType::from_number)
             .ok_or_else(|| error("Exception: atmType not in permissive range.."))?;
         let parameters = ProfileParameters {
             top_altitude_km: top.value_in("km")?,

@@ -426,7 +426,7 @@ impl PyAtmosphere {
         spwid: i64,
         read: impl Fn(&AtmosphereSpectrum, usize) -> f64 + Send,
     ) -> PyResult<Vec<f64>> {
-        self.with_spectrum(py, |spectrum| {
+        self.with_spectrum(py, move |spectrum| {
             Ok(channel_range(spectrum, spwid)?
                 .map(|channel| read(spectrum, channel))
                 .collect())

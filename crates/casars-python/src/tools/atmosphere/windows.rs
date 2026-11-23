@@ -2,7 +2,6 @@
 //! CASA window geometry, selection and channel coordinates.
 
 use casa_atmosphere::{AtmosphereSpectrum, SpectralGrid, SpectralWindow};
-use casa_provider_contracts::CasaValue;
 use pyo3::prelude::*;
 
 use super::quantity::{self, AtmosphereQuantity, QuantityArg};

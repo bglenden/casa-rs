@@ -47,6 +47,7 @@ def shape_state(factory):
     fails(tool.getDryOpacity, RuntimeError)
     fails(tool.initAtmProfile, TypeError, altitude=5000.)
     fails(tool.initAtmProfile, RuntimeError, atmType=0)
+    fails(tool.initAtmProfile, RuntimeError, atmType=-1)
     fails(tool.initAtmProfile, RuntimeError, layerBoundaries=[5100.], layerTemperature=[])
     assert tool.done() and tool.close()
     result = tool.initAtmProfile(altitude='5km', temperature=q([270.,280.], 'K'), pressure=q(56000., 'Pa'),
@@ -54,6 +55,7 @@ def shape_state(factory):
                                 dP=q(1000., 'Pa'), dPm=1.5, h0=q(2000.,'m'), atmType=2,
                                 layerBoundaries=[5100.,5500.], layerTemperature=[280.,290.])
     assert type(result) is tuple and len(result) == 8 and 'User-defined temperature profile: ON' in result[0]
+    assert 'Pressure step factor:         1.5 ' in result[0]
     close(quantity(result[1], 'km'), [5.])
     close(quantity(result[2], 'K', 2), [270.,280.])
     basic = tool.getBasicAtmParms()
@@ -136,6 +138,30 @@ def shape_state(factory):
     print(factory.__module__, 'profile/window/sky state and quantity forms passed',flush=True)
 
 
+def update_thresholds(factory):
+    # Each tuple gives the argument, reported record slot, canonical unit,
+    # initial value, and changes below and above the native ATM threshold.
+    cases = [('altitude',1,'m',5000.,.5,2.), ('pressure',3,'mbar',560.,.5,2.),
+             ('temperature',2,'K',270.,.2,1.), ('dTem_dh',6,'K/km',-5.6,.005,.02),
+             ('h0',9,'km',2.,.01,.05)]
+    for name,index,unit,initial,below,above in cases:
+        tool=factory()
+        assert tool.initAtmProfile()[0]
+        for delta in (below,below,above):
+            assert tool.updateAtmProfile(**{name:q(initial+delta,unit)})[0]
+            expected = initial if delta == below else initial+above
+            close(quantity(tool.getBasicAtmParms()[index],unit), expected)
+        assert tool.close()
+    tool=factory()
+    assert tool.initAtmProfile()[0]
+    assert tool.updateAtmProfile(humidity=55.)[0]
+    assert tool.getBasicAtmParms()[5] == 20.
+    assert tool.updateAtmProfile(humidity=55.,temperature=q(271.,'K'))[0]
+    close(tool.getBasicAtmParms()[5], 55.)
+    assert tool.close()
+    print(factory.__module__, 'all six profile-update controls passed',flush=True)
+
+
 def corrected_layers(factory):
     path = Path(__file__).resolve().parents[2]/'crates/casa-atmosphere/tests/data/absorption.json'
     fixture = json.loads(path.read_text())
@@ -175,7 +201,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     assert casatools.version_string() == '6.7.6-14'
     shape_state(casa_atmosphere)
+    update_thresholds(casa_atmosphere)
     if not args.reference_only:
         from casars.tools import atmosphere
         shape_state(atmosphere)
+        update_thresholds(atmosphere)
         corrected_layers(atmosphere)
