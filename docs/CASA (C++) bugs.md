@@ -10678,3 +10678,12 @@ In CASA 6.7.6.14, the [group-delay oracle](../tools/casa-compat/calanalysis_get_
 ## `calanalysis.fit` can overestimate a nearly exact fit's reduced chi-square
 
 In CASA 6.7.6.14, the [fit oracle](../tools/casa-compat/calanalysis_fit_oracle.py) supplies an almost exact linear series over eight channels near 100 GHz with uncertainty 0.001. CASA reports a reduced chi-square of about 0.0365. Its returned residuals and uncertainties imply about `2.33e-8`. The normal-equation calculation subtracts much larger quadratic terms. Casa-rs sums the squared, weighted residuals directly, after the existing flags and uncertainty exclusion, and uses that metric for reduced chi-square and unweighted covariance.
+
+## Layer absorption queries can terminate Python on an invalid layer
+
+With CASA 6.7.6.14, initialize a profile and spectral window, then call
+`getAbsTotalDry(getNumLayers(), 0)`. The C++ wrapper checks the window and
+channel but lets the layer's `std::out_of_range` escape, terminating Python.
+casa-rs raises `RuntimeError` for an invalid layer and preserves the tool state.
+The paired atmosphere oracle isolates the CASA call and checks all nine native
+layer getters, including a valid query after each error.

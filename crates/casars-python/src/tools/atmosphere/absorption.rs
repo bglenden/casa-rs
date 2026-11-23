@@ -453,7 +453,7 @@ impl PyAtmosphere {
                 .flat_index(spwid as usize, nf as usize)
                 .expect("validated channel");
             if layer >= spectrum.absorption.atmosphere().layers().len() {
-                return Ok(INVALID_CHANNEL);
+                return Err("Exception: Layer ID out of range..");
             }
             Ok(read(spectrum, channel, layer))
         })?;

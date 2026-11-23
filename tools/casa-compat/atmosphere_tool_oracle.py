@@ -5,6 +5,9 @@
 import argparse
 import json
 from pathlib import Path
+import signal
+import subprocess
+import sys
 
 from casatools import atmosphere as casa_atmosphere
 import casatools
@@ -162,6 +165,34 @@ def update_thresholds(factory):
     print(factory.__module__, 'all six profile-update controls passed',flush=True)
 
 
+def invalid_layer_reference():
+    # ATM's checked vector access throws std::out_of_range, which the pinned
+    # wrapper does not catch. Isolate the failing reference call.
+    program = """import resource
+from casatools import atmosphere
+
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+tool = atmosphere()
+assert tool.initAtmProfile()[0] and tool.initSpectralWindow() == 1
+tool.getAbsTotalDry(tool.getNumLayers(), 0)
+"""
+    child = subprocess.run([sys.executable, '-c', program], capture_output=True, text=True, timeout=20)
+    assert child.returncode == -signal.SIGABRT and 'std::out_of_range' in child.stderr, child.stderr
+    print('CASA out-of-range layer abort reproduced', flush=True)
+
+
+def invalid_layer(factory):
+    tool = factory()
+    assert tool.initAtmProfile()[0] and tool.initSpectralWindow() == 1
+    count = tool.getNumLayers()
+    for name in ('TotalDry', 'TotalWet', 'H2OLines', 'H2OCont', 'O2Lines', 'DryCont',
+                 'O3Lines', 'COLines', 'N2OLines'):
+        getter = getattr(tool, 'getAbs' + name)
+        fails(getter, RuntimeError, count, 0)
+        quantity(getter(count - 1, 0), 'm-1')
+    print('All nine layer getters reject out-of-range indices and remain usable', flush=True)
+
+
 def corrected_layers(factory):
     path = Path(__file__).resolve().parents[2]/'crates/casa-atmosphere/tests/data/absorption.json'
     fixture = json.loads(path.read_text())
@@ -202,8 +233,10 @@ if __name__ == '__main__':
     assert casatools.version_string() == '6.7.6-14'
     shape_state(casa_atmosphere)
     update_thresholds(casa_atmosphere)
+    invalid_layer_reference()
     if not args.reference_only:
         from casars.tools import atmosphere
         shape_state(atmosphere)
         update_thresholds(atmosphere)
+        invalid_layer(atmosphere)
         corrected_layers(atmosphere)
