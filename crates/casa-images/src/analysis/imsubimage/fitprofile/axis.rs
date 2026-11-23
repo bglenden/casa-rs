@@ -17,16 +17,18 @@ pub(super) struct ProfileAxis<'a> {
     pixel_axis: usize,
     world_axis: usize,
     spectral: Option<&'a SpectralCoordinate>,
+    source_spectral: Option<&'a SpectralCoordinate>,
     rest_hz: f64,
     speed_scale: f64,
-    pub(super) source_start: f64,
-    pub(super) source_stride: f64,
+    source_start: f64,
+    source_stride: f64,
     pub(super) unit: String,
 }
 
 impl<'a> ProfileAxis<'a> {
     pub(super) fn new(
         selection: &'a ProfileSelection,
+        source: &'a CoordinateSystem,
         power_law: bool,
     ) -> Result<Self, ImageError> {
         let coordinates = &selection.plan.coordinates;
@@ -45,6 +47,13 @@ impl<'a> ProfileAxis<'a> {
             CoordinateModel::Spectral(coordinate) => Some(coordinate.as_ref()),
             _ => None,
         });
+        let source_spectral =
+            source.pixel_axis_owner(pixel_axis).and_then(|(index, _)| {
+                match source.coordinate(index) {
+                    CoordinateModel::Spectral(coordinate) => Some(coordinate.as_ref()),
+                    _ => None,
+                }
+            });
         let rest_hz = if power_law {
             0.
         } else {
@@ -68,6 +77,7 @@ impl<'a> ProfileAxis<'a> {
             pixel_axis,
             world_axis,
             spectral,
+            source_spectral,
             rest_hz,
             speed_scale,
             source_start: selection.plan.selection.start[pixel_axis] as f64,
@@ -85,13 +95,40 @@ impl<'a> ProfileAxis<'a> {
             let spectral = self
                 .spectral
                 .expect("velocity fit uses a spectral coordinate");
-            let frequency = spectral.world_frequency_hz(center)?;
-            let velocity = MDoppler::new(frequency / self.rest_hz, DopplerRef::RATIO)
-                .convert_to(spectral.velocity_convention(), &MeasFrame::default())
-                .map_err(|error| invalid(error.to_string()))?;
-            return Ok(self.speed_scale * velocity.value());
+            return self.velocity(spectral, center);
         }
         self.native(position, center)
+    }
+
+    fn velocity(&self, spectral: &SpectralCoordinate, pixel: f64) -> Result<f64, ImageError> {
+        let frequency = spectral.world_frequency_hz(pixel)?;
+        let velocity = MDoppler::new(frequency / self.rest_hz, DopplerRef::RATIO)
+            .convert_to(spectral.velocity_convention(), &MeasFrame::default())
+            .map_err(|error| invalid(error.to_string()))?;
+        Ok(self.speed_scale * velocity.value())
+    }
+
+    pub(super) fn report_pixels(
+        &self,
+        center: f64,
+        center_world: [f64; 2],
+        width_world: [f64; 2],
+        selected_increment: f64,
+    ) -> Option<([f64; 2], [f64; 2])> {
+        let source_center = self.source_start + center * self.source_stride;
+        let increment = if self.rest_hz > 0. {
+            let spectral = self.source_spectral?;
+            (self.velocity(spectral, source_center + 1.).ok()? - center_world[0]).abs()
+        } else {
+            selected_increment / self.source_stride
+        };
+        if !increment.is_finite() || increment <= 0. {
+            return None;
+        }
+        Some((
+            [source_center, center_world[1] / increment],
+            width_world.map(|value| value / increment),
+        ))
     }
 
     pub(super) fn signed_increment(&self, position: &[f64]) -> Result<f64, ImageError> {

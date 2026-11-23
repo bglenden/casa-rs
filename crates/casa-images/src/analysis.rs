@@ -38,7 +38,7 @@ pub use imsubimage::ImageRegionSection;
 pub use imsubimage::{
     ChannelLineFit, ChannelLineShape, ImageProfileFit, ImageProfileFitResult, ProfileDivisor,
     ProfileEstimates, ProfileFitOptions, ProfileLineReport, ProfileOutputNames, ProfilePeaks,
-    ProfileRegion, ProfileSigma, fit_channel_lines,
+    ProfileRegion, ProfileReport, ProfileSigma, fit_channel_lines,
 };
 pub use imsubimage::{CollapseFunction, CollapsePixel, ImageCollapse, ImageCollapseOptions};
 pub use imsubimage::{

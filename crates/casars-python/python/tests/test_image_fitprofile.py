@@ -446,14 +446,80 @@ def test_fit_log_append_and_replace(casa, tmp_path):
         assert "Number valid" in first
         assert "Fit" in first
         assert all(field in first for field in ("Peak", "Center", "FWHM", "Integral"))
-        pixel_values = re.findall(
-            r"^\s+([-+\d.eE]+)\s+\+/-\s+[-+\d.eE]+\s+pixel\s*$", first, re.MULTILINE
-        )
+        pixel_values = _logged_pixel_values(first)
         assert len(pixel_values) >= 2
-        np.testing.assert_allclose([float(value) for value in pixel_values[:2]], [14., 4.5],
-                                   atol=1e-6)
+        np.testing.assert_allclose(pixel_values[:2], [14., 4.5], atol=1e-6)
         assert _fit(api, data, append=False, **common)["valid"].all()
         assert "previous fit" not in logfile.read_text()
+
+
+def _logged_pixel_values(report):
+    return [float(value) for value in re.findall(
+        r"^\s+([-+\d.eE]+)\s+\+/-\s+[-+\d.eE]+\s+pixel\s*$", report, re.MULTILINE
+    )]
+
+
+def test_fit_log_uses_local_optical_velocity_scale(casa, tmp_path):
+    data = _cube(_line(np.arange(51.), 5., 30., 4.))
+    reports = []
+    for api in (casa, tools):
+        source = api.image()
+        logfile = tmp_path / f"{api.__name__}.log"
+        try:
+            assert source.fromarray(pixels=data)
+            coords = source.coordsys()
+            try:
+                record = coords.torecord()
+            finally:
+                coords.done()
+            spectral = next(value for key, value in record.items() if key.startswith("spectral"))
+            spectral["velType"] = 1
+            spectral["wcs"]["cdelt"] = 1e7
+            assert source.setcoordsys(record)
+            result = source.fitprofile(
+                axis=2, multifit=True, logresults=False, logfile=str(logfile),
+                pampest=5., pcenterest=30., pfwhmest=4.,
+            )
+            assert result["valid"].all()
+            np.testing.assert_allclose(result["gs"]["fwhm"], 12443.12100631, rtol=1e-7)
+        finally:
+            source.done()
+        reports.append(_logged_pixel_values(logfile.read_text())[:2])
+    np.testing.assert_allclose(reports, [[30., 6.3143091955]] * 2, rtol=1e-7)
+
+
+def test_fit_log_preserves_multiplet_grouping(casa, tmp_path):
+    x = np.arange(55.)
+    data = _cube(_line(x, 6., 21., 4.) + _line(x, 3., 37., 6.), (1, 1))
+    for api in (casa, tools):
+        logfile = tmp_path / f"{api.__name__}.log"
+        fit = _fit(
+            api, data, ngauss=0, gmncomps=2, gmampest=[5., 2.5],
+            gmcenterest=[20., 36.], gmfwhmest=[3.7, 5.6],
+            gmampcon=[.5], gmcentercon=[16.], gmfwhmcon=[1.5], logfile=str(logfile),
+        )
+        assert fit["valid"].item() and fit["ncomps"].item() == 1
+        report = logfile.read_text()
+        assert len(re.findall(r"Type\s+: GAUSSIAN MULTIPLET", report)) == 1
+        assert "Results for subcomponent 0" in report
+        assert "Results for subcomponent 1" in report
+        assert "Results for component 1:" not in report
+
+
+def test_fit_log_uses_source_location_and_reports_rejected_iterations(casa, tmp_path):
+    data = _cube(_line(np.arange(55.), 5., 20., 4.), (3, 3))
+    for api in (casa, tools):
+        logfile = tmp_path / f"{api.__name__}.log"
+        fit = _fit(
+            api, data, box="1,1,1,1", pampest=5., pcenterest=20., pfwhmest=4.,
+            goodamprange=[0., 1.], logfile=str(logfile),
+        )
+        assert fit["converged"].item() and not fit["valid"].item()
+        assert fit["niter"].item() == -1
+        report = logfile.read_text()
+        source_location = re.search(r"Pixel\s*:\s*\[\s*1,\s*1,\s*\*\s*\]", report)
+        iterations = re.search(r"Iterations\s*:\s*[1-9]\d*", report)
+        assert (source_location is not None, iterations is not None) == (True, True)
 
 
 def test_output_failure_preserves_inputs_and_existing_image(tmp_path):

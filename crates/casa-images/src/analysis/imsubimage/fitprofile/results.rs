@@ -5,11 +5,11 @@ use std::collections::BTreeMap;
 use casa_types::{ArrayD, ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::IxDyn;
 
-use super::ProfileLineReport;
 use super::axis::ProfileAxis;
 use super::curve::Curve;
 use super::models::{LineKind, ProfileModels, SpectralPolynomial};
 use super::solver::Solution;
+use super::{ProfileLineReport, ProfileReport};
 
 const NAMES: [&str; 8] = [
     "amp",
@@ -35,7 +35,7 @@ pub(super) struct ProfileResults {
     lorentzian: LineResults,
     multiplets: Vec<LineResults>,
     spectral: Option<(SpectralPolynomial, ArrayD<f64>, ArrayD<f64>)>,
-    pub(super) line_reports: Option<BTreeMap<Vec<usize>, Vec<ProfileLineReport>>>,
+    pub(super) profile_reports: Option<BTreeMap<Vec<usize>, ProfileReport>>,
 }
 
 impl ProfileResults {
@@ -95,7 +95,7 @@ impl ProfileResults {
             lorentzian,
             multiplets,
             spectral,
-            line_reports: log_details.then(BTreeMap::new),
+            profile_reports: log_details.then(BTreeMap::new),
         }
     }
 
@@ -114,6 +114,14 @@ impl ProfileResults {
     ) -> Result<(), crate::ImageError> {
         self.succeeded[IxDyn(pixel)] = true;
         self.converged[IxDyn(pixel)] = solution.converged;
+        if solution.converged
+            && let Some(report) = self
+                .profile_reports
+                .as_mut()
+                .and_then(|reports| reports.get_mut(pixel))
+        {
+            report.iterations = Some(solution.iterations);
+        }
         if !valid || !solution.converged {
             return Ok(());
         }
@@ -127,7 +135,7 @@ impl ProfileResults {
         let mut lorentzian = 0;
         let mut last_group = None;
         let mut multi_index = 0;
-        let mut report = self.line_reports.is_some().then(Vec::new);
+        let mut report_lines = self.profile_reports.is_some().then(Vec::new);
         for line in &curve.lines {
             let (field, kind) = if let Some(group) = line.multiplet {
                 if last_group != Some(group) {
@@ -178,30 +186,30 @@ impl ProfileResults {
                     integral[1],
                 ],
             );
-            if let Some(report) = &mut report {
-                report.push(ProfileLineReport {
+            if let Some(report_lines) = &mut report_lines {
+                let pixels = axis.report_pixels(center, center_world, fwhm_world, increment);
+                report_lines.push(ProfileLineReport {
                     kind,
+                    component: types - 1,
+                    subcomponent: line.multiplet.map(|_| field),
                     peak: [peak, peak_error],
                     center: center_world,
-                    pixel_center: [
-                        axis.source_start + center * axis.source_stride,
-                        center_error * axis.source_stride,
-                    ],
+                    pixel_center: pixels.map(|(center, _)| center),
                     fwhm: fwhm_world,
-                    pixel_fwhm: [
-                        width.abs() * axis.source_stride,
-                        width_error * axis.source_stride,
-                    ],
+                    pixel_fwhm: pixels.map(|(_, width)| width),
                     channel_fwhm: width.abs(),
                     integral,
                     fixed: line.fixed(&curve.fixed),
                 });
             }
         }
-        if let Some((reports, report)) = self.line_reports.as_mut().zip(report)
-            && !report.is_empty()
+        if let Some((report, lines)) = self
+            .profile_reports
+            .as_mut()
+            .and_then(|reports| reports.get_mut(pixel))
+            .zip(report_lines)
         {
-            reports.insert(pixel.to_vec(), report);
+            report.lines = lines;
         }
         if let Some((kind, range)) = &curve.spectral {
             if let Some((_, values, errors)) = &mut self.spectral {

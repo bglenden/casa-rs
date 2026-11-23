@@ -205,24 +205,38 @@ pub struct ImageProfileFitResult {
     pub summary: [String; 5],
     /// Ordinary polynomial coefficients and errors keyed by the profile pixel.
     pub polynomials: BTreeMap<Vec<usize>, ProfilePolynomialFit>,
-    /// Line-component report data keyed by the selected profile pixel.
-    pub line_reports: BTreeMap<Vec<usize>, Vec<ProfileLineReport>>,
+    /// Optional report data keyed by the selected profile pixel.
+    pub profile_reports: BTreeMap<Vec<usize>, ProfileReport>,
+}
+
+/// Original image location and fitter state for a detailed profile report.
+pub struct ProfileReport {
+    /// Original image pixels. The fitted axis has no single pixel location.
+    pub position: Vec<Option<f64>>,
+    /// Number of iterations for a converged fit, including range-rejected fits.
+    pub iterations: Option<usize>,
+    /// Line components of an accepted fit.
+    pub lines: Vec<ProfileLineReport>,
 }
 
 /// Fitted line parameters and marginal errors for the detailed profile report.
 pub struct ProfileLineReport {
     /// Reported component type.
     pub kind: &'static str,
+    /// Index of the fitted component, shared by lines in one Gaussian multiplet.
+    pub component: usize,
+    /// Index of this line inside a Gaussian multiplet.
+    pub subcomponent: Option<usize>,
     /// Peak and standard error in input brightness units.
     pub peak: [f64; 2],
     /// Center and standard error in world units.
     pub center: [f64; 2],
     /// Center and standard error in original image pixels.
-    pub pixel_center: [f64; 2],
+    pub pixel_center: Option<[f64; 2]>,
     /// Width and standard error in world units.
     pub fwhm: [f64; 2],
     /// Width and standard error in original image pixels.
-    pub pixel_fwhm: [f64; 2],
+    pub pixel_fwhm: Option<[f64; 2]>,
     /// Width in fitted channels, accounting for the selection's stride.
     pub channel_fwhm: f64,
     /// Line integral and standard error in brightness times world units.
@@ -342,7 +356,11 @@ impl<'a> ImageProfileFit<'a> {
     /// # Errors
     /// Input reads, mask or sigma preparation, native metadata or output writes failed.
     pub fn fit(self, staged: &[Option<&Path>]) -> Result<ImageProfileFitResult, ImageError> {
-        let axis = ProfileAxis::new(&self.selection, self.models.spectral_polynomial.is_some())?;
+        let axis = ProfileAxis::new(
+            &self.selection,
+            self.source.coordinates(),
+            self.models.spectral_polynomial.is_some(),
+        )?;
         let plane_mask = self.selection.selected_planes(self.options.planes)?;
         let mut reader = self.selection.reader(
             self.source,
@@ -392,6 +410,26 @@ impl<'a> ImageProfileFit<'a> {
             )?;
             if let Some(outcome) = &outcome {
                 attempts += 1;
+                if let Some(reports) = &mut results.profile_reports {
+                    let source_position = world_pixel
+                        .iter()
+                        .enumerate()
+                        .map(|(axis, &pixel)| {
+                            (axis != self.selection.axis).then(|| {
+                                self.selection.plan.selection.start[axis] as f64
+                                    + pixel * self.selection.stride[axis] as f64
+                            })
+                        })
+                        .collect();
+                    reports.insert(
+                        position.clone(),
+                        ProfileReport {
+                            position: source_position,
+                            iterations: None,
+                            lines: Vec::new(),
+                        },
+                    );
+                }
                 results.attempted[IxDyn(&position)] = outcome.attempted;
                 results.direction(&position, axis.direction(&world_pixel));
                 if let Some((curve, solution)) = &outcome.solution {
@@ -438,7 +476,7 @@ impl<'a> ImageProfileFit<'a> {
             format!("Number converged         = {converged}"),
             format!("Number valid             = {valid}"),
         ];
-        let line_reports = results.line_reports.take().unwrap_or_default();
+        let profile_reports = results.profile_reports.take().unwrap_or_default();
         let record = results.finish(&axis.unit, self.source.units(), axis.has_direction());
         products.finish(
             &self,
@@ -452,7 +490,7 @@ impl<'a> ImageProfileFit<'a> {
             record,
             summary,
             polynomials,
-            line_reports,
+            profile_reports,
         })
     }
 
