@@ -396,6 +396,142 @@ def compare_ordinate_figure(root, name, native, controls, xlabel, labels, *, sha
             assert image.size == (500, 360), (output, image.size)
 
 
+def compare_multiple_ordinates(root, vis, native):
+    from casars import _plot_document
+
+    base = request(vis) | dict(xaxis="channel", xdatacolumn="", yaxis=["real", "phase", "amp"],
+                              ydatacolumn=["model", "data", "corrected"],
+                              yaxislocation=["left", "right", "left"])
+    virtual = root / "multiple-ordinates-virtual.ms"
+    copy_ms(vis, virtual)
+    with opened(virtual, True) as table:
+        table.removecols(["MODEL_DATA"])
+    assert casa.setjy(str(virtual), field="FLUX", standard="manual", usescratch=False,
+                      fluxdensity=[7.25, 0, 0, 0]) is not None
+    cases = (
+        ("three-ordinates", {}, [(1, 6), (1, 0), (1, 4.47213595)]),
+        ("three-ordinates-short-columns",
+         dict(ydatacolumn=["model"]), [(1, 6), (1, 0), (1, 2)]),
+        ("four-ordinates",
+         dict(xaxis="amp", xdatacolumn="corrected", yaxis=["real", "real", "amp", "phase"],
+              ydatacolumn=["model", "data", "corrected", "data"],
+              yaxislocation=["left", "left", "right", "right"]),
+         [(4.47213595, 6), (4.47213595, 2), (4.47213595, 4.47213595), (4.47213595, 0)]),
+        ("virtual-model-on-third-ordinate",
+         dict(vis=str(virtual), yaxis=["amp", "phase", "real"], ydatacolumn=["data", "data", "model"]),
+         [(1, 2), (1, 0), (1, 7.25)]),
+    )
+    for name, options, first in cases:
+        controls = base | options
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        points = rows(expected)
+        assert len(points) == 12 * len(first)
+        assert {point[2] for point in points} == {"1", "3"}
+        assert {point[12] for point in points} == {"XX"}
+        np.testing.assert_allclose(np.array([point[:2] for point in points[::12]], dtype=float),
+                                   first, rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(points)
+        print(f"{name}: {len(points)} matching coordinates in ordinate order", flush=True)
+
+    capture = []
+    render = _plot_document.render_document
+
+    def record(*args, **kwargs):
+        figure, primary = render(*args, **kwargs)
+        capture.append([(axis.get_yaxis().get_label_position(), axis.get_ylabel(),
+                         [layer.get_xydata() for layer in axis.lines]) for axis in figure.axes])
+        return figure, primary
+
+    dense = base | dict(correlation="")
+    expected, actual = (root / f"three-ordinates-two-correlations.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**dense, plotfile=str(expected), expformat="txt") is None
+    assert native(**dense, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 90
+    assert [point[0] for point in rows(expected)[:5]] == ["1", "1", "2", "3", "3"]
+
+    split = [("left", "Real:model, Amp:corrected", (0, 2)), ("right", "Phase (degrees)", (1,))]
+    figures = (
+        ("three-ordinates", base, "three-ordinates", split),
+        ("three-ordinates-scalar-side", base | dict(yaxislocation="right"), "three-ordinates",
+         [("left", "Real:model, Phase (degrees), Amp:corrected", (0, 1, 2))]),
+        ("three-ordinates-short-sides", base | dict(yaxislocation=["right"]), "three-ordinates",
+         [("left", "Phase (degrees), Amp:corrected", (1, 2)), ("right", "Real:model", (0,))]),
+        ("three-ordinates-two-correlations", dense | dict(xconnector="line"),
+         "three-ordinates-two-correlations", split),
+    )
+    for name, controls, text, expectations in figures:
+        figure = controls | dict(expformat="png", width=500, height=360, dpi=100)
+        expected, actual = (root / f"{name}.{engine}.png" for engine in ("casa", "native"))
+        assert reference(**figure, plotfile=str(expected)) is None
+        with patch.object(_plot_document, "render_document", record):
+            assert native(**figure, plotfile=str(actual)) is None
+        [axes] = capture
+        capture.clear()
+        coordinates = np.array([point[:2] for point in rows(root / f"{text}.casa.txt")], dtype=float)
+        ordinates = np.split(coordinates, 3)
+        assert len(axes) == len(expectations)
+        for (side, label, layers), (expected_side, expected_label, indices) in zip(axes, expectations, strict=True):
+            assert (side, label, len(layers)) == (expected_side, expected_label, len(indices))
+            for layer, index in zip(layers, indices, strict=True):
+                np.testing.assert_allclose(layer, ordinates[index], rtol=1.2e-5, atol=1e-7)
+        for output in (expected, actual):
+            with Image.open(output) as image:
+                assert image.size == (500, 360)
+    with opened(virtual) as table:
+        assert "MODEL_DATA" not in table.colnames()
+
+    duplicate = base | dict(yaxis=["real", "amp", "real"], ydatacolumn=["model", "data", "model"])
+    for engine, task in (("casa", reference), ("native", native)):
+        output = root / f"three-ordinate-duplicate.{engine}.txt"
+        try:
+            task(**duplicate, plotfile=str(output), expformat="txt")
+        except RuntimeError as error:
+            assert "Remove duplicate y-axes." in str(error), error
+        else:
+            raise AssertionError(f"{engine} accepted duplicate ordinate and column pairs")
+        assert not output.exists()
+
+    from casars.tasks import TaskParameterError
+
+    invalid = base | dict(yaxislocation=["left", "right", "left", "top"])
+    for engine, task in (("casa", reference), ("native", native)):
+        output = root / f"three-ordinate-invalid-location.{engine}.txt"
+        try:
+            task(**invalid, plotfile=str(output), expformat="txt")
+        except ValueError as error:
+            assert "invalid yaxislocation value 'top'" in str(error), error
+        else:
+            raise AssertionError(f"{engine} accepted an invalid ordinate location before export")
+        assert not output.exists()
+
+    for axis in ("u", "elevation"):
+        mixed = dense | dict(yaxis=["real", "phase", axis], expformat="txt")
+        expected, actual = (root / f"three-ordinate-mixed-{axis}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**mixed, plotfile=str(expected)) is None
+        assert len(rows(expected)) == 78
+        try:
+            native(**mixed, plotfile=str(actual))
+        except TaskParameterError as error:
+            assert "mixed MeasurementSet visibility and metadata ordinates or geometry abscissae are pending #1032" in str(error), error
+        else:
+            raise AssertionError(f"PlotMS used the visibility-only sample mask for the mixed {axis} plot")
+        assert not actual.exists()
+
+    averaged = base | dict(avgchannel="2", expformat="txt")
+    expected, actual = (root / f"three-ordinate-averaged.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**averaged, plotfile=str(expected)) is None
+    assert len(rows(expected)) == 18
+    try:
+        native(**averaged, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "more than two MeasurementSet ordinates with averaging" in str(error), error
+    else:
+        raise AssertionError("PlotMS used the unaveraged ordinate path for an averaged request")
+    assert not actual.exists()
+
+
 def compare_averaged_columns(root, native):
     work = root / "weighted-columns"
     work.mkdir()
@@ -849,6 +985,7 @@ def main():
         compare_zero_model(root, vis, source, native)
         compare_ratio_float_range(root, vis, source, native)
         compare_ordinate_columns(root, vis, native)
+        compare_multiple_ordinates(root, vis, native)
         compare_averaged_columns(root, native)
         compare_float_columns(root, vis, source, native)
         compare_default_model(root, native)

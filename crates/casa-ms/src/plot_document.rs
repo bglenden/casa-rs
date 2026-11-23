@@ -21,6 +21,7 @@ mod convert;
 mod payload;
 mod rich;
 
+pub(crate) use convert::{label_unit, series_y_bounds};
 pub use payload::{PlotPayloadWriter, plot_array_view};
 pub use rich::*;
 
