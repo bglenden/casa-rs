@@ -97,9 +97,54 @@ def check_law(columns, rows, product, interval, legacy, order):
         np.testing.assert_array_equal(columns['FLAG'][-1, 3, rows], False)
 
 
+def check_model_prior(work, product, factories, datasets):
+    offset = work/'solve-prior.cal'
+    copy_ms(product, offset)
+    with opened(offset, True) as table:
+        assert table.putcol('CPARAM', np.full_like(table.getcol('CPARAM'), 3.))
+        assert table.putcol('FLAG', np.zeros_like(table.getcol('FLAG')))
+
+    expected = 1.11 + .028 * np.arange(5)
+    for dataset in datasets.values():
+        with opened(dataset, True) as table:
+            p, q = (table.getcol(key) for key in ('ANTENNA1', 'ANTENNA2'))
+            template = table.getcol('DATA')
+            noise = .003 * np.random.default_rng(1528).normal(size=template.shape)
+            data = np.broadcast_to(5. * expected[p] * expected[q], template.shape) + noise
+            assert table.putcol('DATA', data.astype('complex64'))
+            assert table.putcol('MODEL_DATA', np.full_like(template, 2.))
+            assert table.putcol('FLAG', np.zeros_like(template, dtype=bool))
+
+    for use_point in (False, True):
+        values = {}
+        for label, factory in factories.items():
+            tool = factory()
+            output = work/f'gain-prior-{use_point}-{label}.cal'
+            assert tool.open(str(datasets[label]), addmodel=True) and tool.selectvis(field='FLUX')
+            if use_point:
+                assert tool.setptmodel([2., 0., 0., 0.])
+            assert tool.setapply(table=str(offset), calwt=False)
+            assert tool.setsolve('G', 'inf', str(output), refant='A0', minblperant=2)
+            assert tool.solve() and tool.close()
+            with opened(output) as table:
+                antennas = table.getcol('ANTENNA1')
+                gains = table.getcol('CPARAM')[:, 0, np.argsort(antennas)]
+                np.testing.assert_allclose(gains, np.broadcast_to(expected, gains.shape),
+                                           atol=.001, rtol=0.)
+                values[label] = gains
+        if 'native' in values:
+            np.testing.assert_allclose(values['native'], values['casa'], atol=2e-6, rtol=0.)
+        print('point-model' if use_point else 'physical-model', 'additive prior matched', flush=True)
+
+
 def compare(work, reference_only):
     assert casatasks.version_string() == '6.7.6.14'
     work.mkdir()
+    factories = {'casa': casa_calibrater}
+    if not reference_only:
+        from casars.tools import calibrater as native_calibrater
+
+        factories['native'] = native_calibrater
     for stokes in ('RR LL', 'RR RL LR LL'):
         case = work/f'{len(stokes.split())}-correlations'
         case.mkdir()
@@ -108,8 +153,6 @@ def compare(work, reference_only):
             tables = products(case, reference)
             native = case/'native.ms'
             if not reference_only:
-                from casars.tools import calibrater as native_calibrater
-
                 copy_ms(reference, native)
             for legacy in (True, False):
                 for interval, product in tables.items():
@@ -130,6 +173,11 @@ def compare(work, reference_only):
                                     np.testing.assert_array_equal(actual, values[key])
                         print(case.name, legacy, interval, order[0],
                               'reference' if reference_only else 'matched', flush=True)
+            if stokes == 'RR LL':
+                datasets = {'casa': reference}
+                if not reference_only:
+                    datasets['native'] = native
+                check_model_prior(case, tables['inf'], factories, datasets)
 
 
 if __name__ == '__main__':
