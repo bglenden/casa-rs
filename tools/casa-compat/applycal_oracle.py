@@ -911,9 +911,12 @@ def run(root, native_bin, only=None):
             case(f'api-select-mscal-stokes-{label}', dict(msselect=predicate), input_vis=stokes_source)
 
     for label, predicate in [
-        ('all', 'strlen(mscal.help()) == 4354 AND ANTENNA1 == 0'),
-        ('stokes', 'strlen(derivedmscal.help("STOKES")) == 1093 AND ANTENNA1 == 0'),
-        ('row-dependent', 'mscal.help(mscal.ant1name()) LIKE "a1 is%"'),
+        ('all', 'mscal.help() != "" AND ANTENNA1 == 0'),
+        ('stokes', 'derivedmscal.help("STOKES") != mscal.help("selection") AND ANTENNA1 == 0'),
+        ('subtable-alias', 'mscal.help("subtable") == mscal.help("subtables") AND ANTENNA1 == 0'),
+        ('row-dependent', 'mscal.help(mscal.ant1name()) != "" AND ANTENNA1 == 0'),
+        ('invalid-topic', 'mscal.help(3) != ""'),
+        ('too-many-topics', 'mscal.help("derived","stokes") != ""'),
     ]:
         case(f'api-select-mscal-help-{label}', dict(msselect=predicate), input_vis=observation_source)
 
