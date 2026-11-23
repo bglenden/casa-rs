@@ -48,8 +48,20 @@ pub(crate) fn build_solve_groups(
     rows: &[SelectedSolveRow],
     preapplied_rows: Option<&PreappliedRows>,
     channel_bin_widths: &BTreeMap<i32, usize>,
-    options: SolveGroupOptions,
+    mut options: SolveGroupOptions,
 ) -> Result<BTreeMap<(SolveBaseKey, SolveBucketKey), SolveAccumulator>, GainSolveError> {
+    if preapplied_rows.is_some()
+        && !options.channelized
+        && matches!(options.gain_type, GainType::G | GainType::T)
+        && matches!(
+            options.input_rows,
+            SolveInputRows::Interferometry | SolveInputRows::GainTool
+        )
+    {
+        // CalSolvingVi2 shares the input flags before applying priors.
+        // Flags added by a failed prior stay on the affected correlation.
+        options.correlation_dependent_flags = true;
+    }
     let mut groups = BTreeMap::<(SolveBaseKey, SolveBucketKey), SolveAccumulator>::new();
     let mut models = super::model::ModelInputs::new(ms, rows, options.model_source)?;
     let only_autocorrelations = options.input_rows == SolveInputRows::Autocorrelations;
