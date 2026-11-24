@@ -32,6 +32,7 @@ mod plotms_columns;
 mod plotms_figure;
 mod plotms_model;
 mod plotms_ordinates;
+mod plotms_row_axes;
 mod plotms_text;
 mod plotms_time_baselines;
 pub mod task_contract;
@@ -403,6 +404,20 @@ pub enum MsAxis {
     Correlation,
     /// Baseline metadata axis.
     Baseline,
+    /// Row number in the selected MeasurementSet.
+    Row,
+    /// First antenna identifier on the selected baseline.
+    Antenna1,
+    /// Second antenna identifier on the selected baseline.
+    Antenna2,
+    /// Observation identifier of the selected visibility buffer.
+    Observation,
+    /// Identifier of the selected visibility buffer's distinct observing mode.
+    Intent,
+    /// First feed identifier of the selected visibility buffer.
+    Feed1,
+    /// Second feed identifier of the selected visibility buffer.
+    Feed2,
     /// Antenna identifier metadata axis.
     Antenna,
     /// Azimuth geometry axis.
@@ -459,6 +474,13 @@ impl MsAxis {
             Self::SpectralWindow => "spectral_window",
             Self::Correlation => "correlation",
             Self::Baseline => "baseline",
+            Self::Row => "row",
+            Self::Antenna1 => "antenna1",
+            Self::Antenna2 => "antenna2",
+            Self::Observation => "observation",
+            Self::Intent => "intent",
+            Self::Feed1 => "feed1",
+            Self::Feed2 => "feed2",
             Self::Antenna => "antenna",
             Self::Azimuth => "azimuth",
             Self::Elevation => "elevation",
@@ -500,6 +522,13 @@ impl MsAxis {
             Self::SpectralWindow => "Spectral Window",
             Self::Correlation => "Correlation",
             Self::Baseline => "Baseline",
+            Self::Row => "Row",
+            Self::Antenna1 => "Antenna1",
+            Self::Antenna2 => "Antenna2",
+            Self::Observation => "Observation",
+            Self::Intent => "Intent",
+            Self::Feed1 => "Feed1",
+            Self::Feed2 => "Feed2",
             Self::Antenna => "Antenna",
             Self::Azimuth => "Azimuth",
             Self::Elevation => "Elevation",
@@ -541,6 +570,13 @@ impl MsAxis {
             "spw" | "spectral_window" | "spectral-window" => Ok(Self::SpectralWindow),
             "corr" | "correlation" => Ok(Self::Correlation),
             "baseline" => Ok(Self::Baseline),
+            "row" => Ok(Self::Row),
+            "ant1" | "antenna1" => Ok(Self::Antenna1),
+            "ant2" | "antenna2" => Ok(Self::Antenna2),
+            "observation" => Ok(Self::Observation),
+            "intent" => Ok(Self::Intent),
+            "feed1" => Ok(Self::Feed1),
+            "feed2" => Ok(Self::Feed2),
             "antenna" => Ok(Self::Antenna),
             "azimuth" => Ok(Self::Azimuth),
             "elevation" => Ok(Self::Elevation),
@@ -566,6 +602,19 @@ impl MsAxis {
         matches!(
             self,
             Self::Amplitude | Self::Phase | Self::Real | Self::Imaginary
+        )
+    }
+
+    fn is_row_identifier(self) -> bool {
+        matches!(
+            self,
+            Self::Row
+                | Self::Antenna1
+                | Self::Antenna2
+                | Self::Observation
+                | Self::Intent
+                | Self::Feed1
+                | Self::Feed2
         )
     }
 
@@ -1789,32 +1838,8 @@ impl MsPlotSpec {
                     .to_string(),
             );
         }
-        let has_interval_or_wavelength = self.x_axis.is_interval_or_wavelength()
-            || self
-                .y_axes
-                .iter()
-                .copied()
-                .any(MsAxis::is_interval_or_wavelength);
-        if has_interval_or_wavelength
-            && (uses_extended_averaging(self)
-                || self.averaging.avgchannel.is_some_and(|width| width > 1))
-        {
-            return Err(
-                "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
-            );
-        }
-        if has_interval_or_wavelength && self.transforms.freqframe.is_some() {
-            return Err(
-                "PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)"
-                    .into(),
-            );
-        }
-        if self.y_axes.iter().copied().any(|y| {
-            (self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
-                || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math())
-        }) {
-            return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
-        }
+        self.validate_interval_and_wavelength_axes()?;
+        plotms_row_axes::validate(self)?;
         let supported_x = matches!(
             self.x_axis,
             MsAxis::Time
@@ -1834,7 +1859,10 @@ impl MsPlotSpec {
                 | MsAxis::HourAngle
                 | MsAxis::ParallacticAngle
         );
-        if !supported_x && !self.x_axis.is_interval_or_wavelength() {
+        if !supported_x
+            && !self.x_axis.is_interval_or_wavelength()
+            && !self.x_axis.is_row_identifier()
+        {
             return Err(format!(
                 "msexplore x axis {} is modeled but not implemented yet",
                 self.x_axis
@@ -1873,7 +1901,7 @@ impl MsPlotSpec {
                     | MsAxis::HourAngle
                     | MsAxis::ParallacticAngle
             );
-            if !supported_y && !y_axis.is_interval_or_wavelength() {
+            if !supported_y && !y_axis.is_interval_or_wavelength() && !y_axis.is_row_identifier() {
                 return Err(format!(
                     "msexplore y axis {} is modeled but not implemented yet",
                     y_axis
@@ -1888,6 +1916,34 @@ impl MsPlotSpec {
                 .any(|axis| matches!(axis, MsAxis::Flag))
         {
             return Err("msexplore flag plots do not yet support avgchannel binning".to_string());
+        }
+        Ok(())
+    }
+
+    fn validate_interval_and_wavelength_axes(&self) -> Result<(), String> {
+        let requested = self.x_axis.is_interval_or_wavelength()
+            || self
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::is_interval_or_wavelength);
+        if !requested {
+            return Ok(());
+        }
+        if uses_extended_averaging(self) || self.averaging.avgchannel.is_some_and(|width| width > 1)
+        {
+            return Err(
+                "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
+            );
+        }
+        if self.transforms.freqframe.is_some() {
+            return Err("PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)".into());
+        }
+        if self.y_axes.iter().copied().any(|y| {
+            (self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
+                || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math())
+        }) {
+            return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
         }
         Ok(())
     }
@@ -3952,6 +4008,10 @@ fn build_generic_visibility_scatter(
     point_budget: &mut PointBudget,
     calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
+    let needs_row_axes = plotms_row_axes::requested(spec);
+    if needs_row_axes && calibration.is_none() {
+        return Err("MeasurementSet row identifier axes require the public plotms task".into());
+    }
     let timing_enabled = VisibilityScatterTiming::enabled();
     let scatter_started = Instant::now();
     let mut checkpoint_started = Instant::now();
@@ -3971,6 +4031,8 @@ fn build_generic_visibility_scatter(
         Some(calibration) => calibration.row_order.to_vec(),
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
+    let uses_row_numbers = spec.x_axis == MsAxis::Row || spec.y_axes.contains(&MsAxis::Row);
+    let selection_order = uses_row_numbers.then(|| row_numbers.clone());
     let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
     let use_ordinate_masks = spec.y_axes.len() > 2
         && calibration.is_some_and(|input| input.rows.is_none())
@@ -3982,16 +4044,17 @@ fn build_generic_visibility_scatter(
         .as_deref()
         .is_some_and(|feed| !feed.is_empty())
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
-    let use_iterator_order = calibration.is_some()
-        && (ordered_feed_selection
-            || use_ordinate_masks
-            || spec.x_axis.is_interval_or_wavelength()
-            || spec.y_axes.contains(&MsAxis::UvDistance)
-            || spec
-                .y_axes
-                .iter()
-                .copied()
-                .any(MsAxis::is_interval_or_wavelength));
+    let use_iterator_order = needs_row_axes
+        || calibration.is_some()
+            && (ordered_feed_selection
+                || use_ordinate_masks
+                || spec.x_axis.is_interval_or_wavelength()
+                || spec.y_axes.contains(&MsAxis::UvDistance)
+                || spec
+                    .y_axes
+                    .iter()
+                    .copied()
+                    .any(MsAxis::is_interval_or_wavelength));
     let (row_numbers, buffer_starts) = if use_iterator_order {
         let descriptions = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
         crate::transform::selected_plotms_integration_order(
@@ -4040,6 +4103,9 @@ fn build_generic_visibility_scatter(
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let field = ms.field().map_err(|error| error.to_string())?;
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
+    if uses_row_numbers && (spectral_window.row_count() > 1 || requested_freqframe.is_some()) {
+        return Err("PlotMS Row coordinates for multiple spectral windows or a reporting frame are pending (#1032)".into());
+    }
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
     if timing_enabled {
@@ -4103,6 +4169,18 @@ fn build_generic_visibility_scatter(
     let selected_scan_numbers = selected_i32_values(ms.main_table(), "SCAN_NUMBER", &row_numbers)?;
     let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
     let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
+    let row_axes = needs_row_axes
+        .then(|| {
+            plotms_row_axes::RowAxes::read(
+                ms,
+                spec,
+                &row_numbers,
+                selection_order.as_deref(),
+                &buffer_starts,
+                [&selected_antenna1, &selected_antenna2],
+            )
+        })
+        .transpose()?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
     let selected_intervals = if needs_interval {
         let mut intervals = selected_f64_values(ms.main_table(), "INTERVAL", &row_numbers)?;
@@ -4576,34 +4654,40 @@ fn build_generic_visibility_scatter(
                     scatter_timing.bin_collect += started.elapsed();
                 }
                 let axis_started = timing_enabled.then(Instant::now);
-                let axis_samples = |axis| {
-                    visibility_columns.samples(
-                        axis,
+                let axis_value = |axis_slot, axis| {
+                    if let Some(value) = row_axes
+                        .as_ref()
+                        .and_then(|axes| axes.value(axis, row_slot))
+                    {
+                        return Ok(Some(value));
+                    }
+                    let visibility = visibility_columns.samples(
+                        axis_slot,
                         &visibility_grids,
                         &bin_buffers,
                         *corr_index,
                         bin,
                         transformed_channel_weights,
+                    );
+                    compute_axis_value(
+                        axis,
+                        visibility,
+                        &flag_samples,
+                        &weight_spectrum_samples,
+                        &sigma_spectrum_samples,
+                        flag_row_value,
+                        row_weight,
+                        row_sigma,
+                        field_id_value,
+                        antenna1_value,
+                        scalar_average,
+                        bin,
+                        spectral_context.as_ref(),
+                        row_coordinates,
+                        derived_engine.as_ref(),
                     )
                 };
-                let Some(x_value) = compute_axis_value(
-                    spec.x_axis,
-                    axis_samples(0),
-                    &flag_samples,
-                    &weight_spectrum_samples,
-                    &sigma_spectrum_samples,
-                    flag_row_value,
-                    row_weight,
-                    row_sigma,
-                    field_id_value,
-                    antenna1_value,
-                    scalar_average,
-                    bin,
-                    spectral_context.as_ref(),
-                    row_coordinates,
-                    derived_engine.as_ref(),
-                )?
-                else {
+                let Some(x_value) = axis_value(0, spec.x_axis)? else {
                     continue;
                 };
                 let panel = panels
@@ -4637,24 +4721,7 @@ fn build_generic_visibility_scatter(
                     } else {
                         (row_slot, *corr_index)
                     };
-                    let Some(y_value) = compute_axis_value(
-                        *y_axis,
-                        axis_samples(*y_index + 1),
-                        &flag_samples,
-                        &weight_spectrum_samples,
-                        &sigma_spectrum_samples,
-                        flag_row_value,
-                        row_weight,
-                        row_sigma,
-                        field_id_value,
-                        antenna1_value,
-                        scalar_average,
-                        bin,
-                        spectral_context.as_ref(),
-                        row_coordinates,
-                        derived_engine.as_ref(),
-                    )?
-                    else {
+                    let Some(y_value) = axis_value(*y_index + 1, *y_axis)? else {
                         continue;
                     };
                     let projected_series = ((point_row_slot, point_correlation)
@@ -4813,7 +4880,7 @@ fn build_generic_visibility_scatter(
                 }
             } else {
                 series.sort_by_key(|entry| entry.y_index);
-                if ordered_feed_selection || spec.y_axes.len() > 2 {
+                if needs_row_axes || ordered_feed_selection || spec.y_axes.len() > 2 {
                     series.iter_mut().for_each(plotms_ordinates::order_series);
                 }
             }
