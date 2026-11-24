@@ -1058,7 +1058,10 @@ fn execute_apply_from_path_inner(
         let (mut report, trace_summary) = execute_apply_plan(
             &mut ms,
             plan,
-            observed_column,
+            ApplyInput {
+                observed_column,
+                use_row_cache: false,
+            },
             Some(&mut perf_tracer),
             None,
             None,
@@ -1170,7 +1173,10 @@ pub fn execute_apply(
     let (mut report, trace_summary) = execute_apply_plan(
         ms,
         plan,
-        observed_column,
+        ApplyInput {
+            observed_column,
+            use_row_cache: true,
+        },
         Some(&mut perf_tracer),
         None,
         None,
@@ -1280,9 +1286,26 @@ pub(crate) fn execute_tool_apply(
             |_, _| {},
         )?;
     } else {
-        execute_apply_plan(ms, plan, observed_column, None, Some(lock), Some(&mut run))?;
+        execute_apply_plan(
+            ms,
+            plan,
+            ApplyInput {
+                observed_column,
+                use_row_cache: true,
+            },
+            None,
+            Some(lock),
+            Some(&mut run),
+        )?;
     }
     Ok((all_calibrated, activity))
+}
+
+#[derive(Clone, Copy)]
+struct ApplyInput<'a> {
+    observed_column: &'a str,
+    /// An already-open MeasurementSet can contain unflushed array edits.
+    use_row_cache: bool,
 }
 
 #[expect(
@@ -1292,13 +1315,14 @@ pub(crate) fn execute_tool_apply(
 fn execute_apply_available(
     ms: &mut MeasurementSet,
     plan: ApplyPlan,
-    observed_column: &str,
+    input: ApplyInput<'_>,
     perf_tracer: Option<&mut CalibrationPerfTracer>,
     lock: Option<&mut TableWriteLock>,
     mut tool: Option<&mut ToolApplyExecution<'_>>,
     retained_chain: Option<&ApplyChain>,
 ) -> Result<(ApplyExecutionReport, ExecuteApplyPlanTraceSummary), ApplyExecutionError> {
     let ms_path = display_ms_path(ms);
+    let observed_column = input.observed_column;
     let execute_apply_plan_started_at = Instant::now();
     let calibration_load_started_at = Instant::now();
     let correction = tool.as_ref().map(|run| run.correction);
@@ -1467,85 +1491,40 @@ fn execute_apply_available(
                     .collect::<Vec<_>>();
                 let row_read_started_at = Instant::now();
                 let row_fetch_started_at = Instant::now();
-                let data_values = ms
-                    .main_table()
-                    .column_accessor(observed_column)
-                    .and_then(|column| column.array_cells_owned(&selected_row_indices))
-                    .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                        path: ms_path.clone(),
-                        source: MsError::from(source),
-                    })?;
-                let flag_values = if plan.apply_mode.writes_flags() || tool.is_some() {
-                    Some(
-                        ms.main_table()
-                            .column_accessor("FLAG")
-                            .and_then(|column| column.array_cells_owned(&selected_row_indices))
-                            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                                path: ms_path.clone(),
-                                source: MsError::from(source),
-                            })?,
-                    )
-                } else {
-                    None
+                let read_cells = |name: &str| {
+                    ms.main_table()
+                        .column_accessor(name)
+                        .and_then(|column| {
+                            if input.use_row_cache {
+                                column.array_cells_owned(&selected_row_indices)
+                            } else {
+                                column.array_cells_owned_uncached(&selected_row_indices)
+                            }
+                        })
+                        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
+                            path: ms_path.clone(),
+                            source: MsError::from(source),
+                        })
                 };
-                let weight_values = if any_calwt {
-                    Some(
-                        ms.main_table()
-                            .column_accessor("SIGMA")
-                            .and_then(|column| column.array_cells_owned(&selected_row_indices))
-                            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                                path: ms_path.clone(),
-                                source: MsError::from(source),
-                            })?,
-                    )
-                } else {
-                    None
-                };
-                let weight_spectrum_values = if has_sigma_spectrum {
-                    Some(
-                        ms.main_table()
-                            .column_accessor("SIGMA_SPECTRUM")
-                            .and_then(|column| column.array_cells_owned(&selected_row_indices))
-                            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                                path: ms_path.clone(),
-                                source: MsError::from(source),
-                            })?,
-                    )
-                } else {
-                    None
-                };
+                let data_values = read_cells(observed_column)?;
+                let flag_values = (plan.apply_mode.writes_flags() || tool.is_some())
+                    .then(|| read_cells("FLAG"))
+                    .transpose()?;
+                let weight_values = any_calwt.then(|| read_cells("SIGMA")).transpose()?;
+                let weight_spectrum_values = has_sigma_spectrum
+                    .then(|| read_cells("SIGMA_SPECTRUM"))
+                    .transpose()?;
                 let partial_channels = planned_rows
                     .iter()
                     .any(|row| plan.channel_selections.contains_key(&row.data_spw_id));
-                let preserved_corrected_values = if partial_channels
+                let preserved_corrected_values = (partial_channels
                     && plan.apply_mode.writes_corrected_data()
-                    && !created_corrected_data_column
-                {
-                    Some(
-                        ms.main_table()
-                            .column_accessor("CORRECTED_DATA")
-                            .and_then(|column| column.array_cells_owned(&selected_row_indices))
-                            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                                path: ms_path.clone(),
-                                source: MsError::from(source),
-                            })?,
-                    )
-                } else {
-                    None
-                };
-                let preserved_spectrum_values = if partial_channels && has_weight_spectrum {
-                    Some(
-                        ms.main_table()
-                            .column_accessor("WEIGHT_SPECTRUM")
-                            .and_then(|column| column.array_cells_owned(&selected_row_indices))
-                            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                                path: ms_path.clone(),
-                                source: MsError::from(source),
-                            })?,
-                    )
-                } else {
-                    None
-                };
+                    && !created_corrected_data_column)
+                    .then(|| read_cells("CORRECTED_DATA"))
+                    .transpose()?;
+                let preserved_spectrum_values = (partial_channels && has_weight_spectrum)
+                    .then(|| read_cells("WEIGHT_SPECTRUM"))
+                    .transpose()?;
                 row_fetch_ns += row_fetch_started_at.elapsed().as_nanos() as u64;
                 row_read_total_ns += row_read_started_at.elapsed().as_nanos() as u64;
                 let mut data_values = data_values.into_iter();
