@@ -201,9 +201,8 @@ def _run_task(
         if task == "setjy" and isinstance(fluxdict := values.get("fluxdict"), Mapping):
             names = fluxdict.get("spwName")
             if getattr(getattr(names, "dtype", None), "kind", None) == "S":
-                # The fluxscale record can contain fixed-width byte strings.
-                # The setjy model uses numeric spwID values and ignores these labels.
-                values["fluxdict"] = {key: value for key, value in fluxdict.items() if key != "spwName"}
+                # Keep the byte labels printable in HISTORY. Model selection uses spwID.
+                values["fluxdict"] = dict(fluxdict, spwName=repr(names.tolist()))
         if task in ("split", "mstransform"):
             if "correlation" in values:
                 try:
@@ -318,6 +317,15 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_jyperk(name, values)
     if name == "getantposalma":
         return _call_getantposalma(values)
+    if name == "setjy":
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            message = error.completion.message or ""
+            if (message.startswith("usescratch=False and standard=Butler-JPL-Horizons")
+                or (message.startswith("Table ") and message.endswith(" does not exist"))):
+                raise RuntimeError(message) from error
+            raise
     if name == "sdcal":
         _validate_required_path(values, "infile", arguments["infile"], search_data=True)
         if isinstance(arguments["spwmap"], dict):

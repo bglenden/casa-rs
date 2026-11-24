@@ -20,7 +20,7 @@ from setjy_manual_oracle import (
 )
 
 
-def compare_case(seed, root, name, fluxdict, **options):
+def compare_case(seed, root, name, fluxdict, *, history_labels=(), **options):
     with TemporaryDirectory(prefix=name + '-', dir=root) as directory:
         case = Path(directory)
         for scratch in (True, False):
@@ -30,6 +30,14 @@ def compare_case(seed, root, name, fluxdict, **options):
                 make_input(seed, path, scratch=scratch)
                 result = tasks.setjy(vis=str(path), standard='fluxscale', fluxdict=fluxdict,
                                      usescratch=scratch, **options)
+                if history_labels:
+                    reader = table()
+                    assert reader.open(str(path / 'HISTORY'))
+                    try:
+                        assert any('spwName' in row and all(label in row for label in history_labels)
+                                   for row in reader.getcol('MESSAGE'))
+                    finally:
+                        assert reader.done()
                 paths.append(path)
                 returned.append(result)
             compare_returns(returned[1], returned[0])
@@ -101,6 +109,9 @@ def synthetic_fits(seed, root):
     make_input(seed, source, scratch=True)
     add_second_window(source)
     reference = payload()
+    labels = ('First-window', 'Second-window')
+    with_names = dict(reference, spwName=np.array(labels, dtype='S'))
+    compare_case(source, root, 'byte-window-labels', with_names, history_labels=labels)
     compare_case(source, root, 'two-field-fit', reference, fluxdensity=0., spix=10.5, reffreq='bad')
     reversed_fields = {'1': reference['1'], '0': reference['0'],
                        'spwID': reference['spwID'], 'freq': reference['freq']}
