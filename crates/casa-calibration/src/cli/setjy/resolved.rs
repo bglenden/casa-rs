@@ -104,7 +104,13 @@ impl ImageParameters<'_> {
         .map_err(execution)?;
         if let Some(jy) = scalar_flux {
             let intensity = stream_double_precision(jy, 6);
-            let frequency = stream_double_precision(frequencies.samples[0], 6);
+            let normalization_hz = match flux {
+                ResolvedFlux::Manual(manual) if manual.has_spectral_dependence() => {
+                    frequencies.center()
+                }
+                _ => frequencies.samples[0],
+            };
+            let frequency = stream_double_precision(normalization_hz, 6);
             history.push(format!("Using model image {}", self.path.display()));
             history.push(format!(
                 "Scaling spw(s) {:?}'s model image to I = {intensity} Jy @ {frequency}Hz (LSRK) for visibility prediction.",

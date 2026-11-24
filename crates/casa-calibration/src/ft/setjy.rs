@@ -129,6 +129,10 @@ impl ManualFlux {
             .is_some_and(|&index| index != 0.0)
     }
 
+    pub(crate) fn has_spectral_dependence(&self) -> bool {
+        self.spectral_index.iter().any(|&index| index != 0.0)
+    }
+
     pub(crate) fn intensity_at(&self, frequency: &MFrequency, frame: &MeasFrame) -> MsResult<f64> {
         let i = self.intensity_jy();
         let f = frequency.hz();
