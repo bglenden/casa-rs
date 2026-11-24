@@ -428,6 +428,7 @@ def compare_antenna_averaged_export(root, native):
     weighted = compare_weighted_antenna_exports(root, native, source, start, base)
     compare_weighted_scalar_antenna(root, native, weighted, start, base)
     compare_antenna_flagged_integration(root, native, source, start, base)
+    compare_antenna_autocorrelation(root, native)
 
 
 def compare_antenna_ordinate_order(root, native, base):
@@ -555,7 +556,7 @@ def compare_weighted_scalar_antenna(root, native, weighted, start, base):
         amp = abscissa[x_column]
         phase = angles[y_column]
         coordinates = [(amp * 7 / 4, phase + 67.5), (amp, -phase), (2 * amp, -phase - 90)]
-        compare_weighted_scalar_antenna_case(root, native, name, request_args, coordinates,
+        compare_antenna_average_case(root, native, name, request_args, coordinates,
                                              [("0", "XX"), ("1", "XX"), ("2", "XX")], start)
         if name == "separate-spectra":
             compare_figure(root, native, request_args, root / f"{name}.casa.txt",
@@ -566,13 +567,13 @@ def compare_weighted_scalar_antenna(root, native, weighted, start, base):
     amp, angle = abscissa["data"], angles["corrected"]
     coordinates = [(amp * 7 / 4, angle + 67.5), (np.hypot(3, 5), phase_xy),
                    (amp, -angle), (np.hypot(3, 5), -phase_xy), (2 * amp, -angle - 90)]
-    compare_weighted_scalar_antenna_case(root, native, "masked-spectrum", request_args, coordinates,
+    compare_antenna_average_case(root, native, "masked-spectrum", request_args, coordinates,
                                          [("0", "XX"), ("0", "XY"), ("1", "XX"), ("1", "XY"), ("2", "XX")], start)
 
     components = controls | dict(xaxis="real", yaxis="imag")
     component_coordinates = [(amp * 7 / 4, np.radians(angle + 67.5)), (amp, np.radians(-angle)),
                              (2 * amp, np.radians(-angle - 90))]
-    compare_weighted_scalar_antenna_case(root, native, "packed-real-imag", components, component_coordinates,
+    compare_antenna_average_case(root, native, "packed-real-imag", components, component_coordinates,
                                          [("0", "XX"), ("1", "XX"), ("2", "XX")], start)
 
     for name, low, high, factor, offset in (
@@ -588,11 +589,11 @@ def compare_weighted_scalar_antenna(root, native, weighted, start, base):
             table.putcol("WEIGHT_SPECTRUM", np.broadcast_to(weights, shape).copy())
         request_args = controls | dict(vis=str(vis))
         coordinates = [(amp * factor, angle + offset), (amp, -angle), (2 * amp, -angle - 90)]
-        compare_weighted_scalar_antenna_case(root, native, name, request_args, coordinates,
+        compare_antenna_average_case(root, native, name, request_args, coordinates,
                                              [("0", "XX"), ("1", "XX"), ("2", "XX")], start)
 
 
-def compare_weighted_scalar_antenna_case(root, native, name, controls, coordinates, identifiers, start):
+def compare_antenna_average_case(root, native, name, controls, coordinates, identifiers, start):
     expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected), expformat="txt") is None
     selected = rows(expected)
@@ -604,7 +605,33 @@ def compare_weighted_scalar_antenna_case(root, native, name, controls, coordinat
                                coordinates, rtol=1.2e-5)
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == len(coordinates)
-    print(f"{name}: {len(coordinates)} matching weighted scalar antenna coordinates", flush=True)
+    print(f"{name}: {len(coordinates)} matching antenna average coordinates", flush=True)
+
+
+def compare_antenna_autocorrelation(root, native):
+    source = root / "autocorrelation.ms"
+    make_cal_ms(str(source), stokes="XX XY YX YY", autocorrelation_weight=1.0)
+    casa.clearcal(str(source), addmodel=True)
+    with opened(source, True) as table:
+        shape = table.getcol("DATA").shape
+        for column, values in (("DATA", (1, 3 + 5j, 3 - 5j, 7)),
+                               ("CORRECTED_DATA", (10, 13 + 16j, 13 - 16j, 19))):
+            array = np.asarray(values, dtype=np.complex64)[:, None, None]
+            table.putcol(column, np.broadcast_to(array, shape).copy())
+        table.putcol("FLAG", np.zeros(shape, dtype=bool))
+        table.putcol("FLAG_ROW", np.zeros(shape[2], dtype=bool))
+        start = table.getcol("TIME").min()
+    base = request(source) | dict(antenna="A0&&&", avgantenna=True, spw="0:1",
+                                  correlation="XY,YX", msselect=f"TIME < {start + 1:.3f}", scalar=True)
+    for name, overrides, x, correlations in (
+        ("scalar-autocorrelation", {}, np.hypot(3, 5), ("XY", "YX")),
+        ("scalar-one-hand-autocorrelation", dict(correlation="XY"), np.hypot(3, 5), ("XY",)),
+        ("vector-autocorrelation", dict(xaxis="real", yaxis="imag", scalar=False), 3, ("XY", "YX")),
+    ):
+        controls = base | overrides
+        compare_antenna_average_case(root, native, name, controls,
+                                             [(x, 0)] * len(correlations),
+                                             [("0", label) for label in correlations], start)
 
 
 def main():
