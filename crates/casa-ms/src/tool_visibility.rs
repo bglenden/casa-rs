@@ -65,7 +65,7 @@ pub fn heterogeneous_row_shapes(ms: &MeasurementSet) -> MsResult<Option<Vec<usiz
 /// Layout and reduction options for a visibility record.
 #[derive(Clone, Copy, Default)]
 pub struct VisibilityReadOptions<'a> {
-    /// Reduce visibility products across their row axis.
+    /// Reduce visibility products across rows or within each baseline over time.
     pub average: bool,
     /// Place rows on sorted baseline and integration axes with this many gaps
     /// between first-antenna groups. A negative gap is treated as zero.
@@ -76,8 +76,9 @@ pub struct VisibilityReadOptions<'a> {
 
 /// Read a visibility record for a logical set of rows.
 /// Complex and float operations retain the precision of the stored cells.
-/// With `average`, visibility products are reduced across rows using flags and
-/// the weight of each row and correlation before amplitude or phase projection.
+/// With `average`, visibility products are reduced using flags and each row
+/// and correlation's weight before amplitude or phase projection. With a
+/// baseline axis, each antenna pair is reduced over time.
 /// Contiguous groups of logical rows can reuse open plain members supplied in
 /// concatenation order. Other views use the table's persisted row projection.
 /// # Errors
@@ -96,9 +97,6 @@ pub fn read_tool_visibility(
         baseline_gap,
         time_measures,
     } = options;
-    if average && baseline_gap.is_some() {
-        return Err(input("baseline-axis averaging is not supported"));
-    }
     let mut names = items
         .iter()
         .map(|name| name.to_ascii_lowercase())
@@ -129,34 +127,37 @@ pub fn read_tool_visibility(
         let mut axes = axis_info(ms, ids, first_row)?;
         if let Some(grid) = &grid {
             let first_selected = rows.first().copied().unwrap_or(0);
-            grid.add_axes(
+            let (baseline_axis, time_axis) = grid.axes(
                 ms,
                 &names,
                 &read.scalar_columns,
                 time_measures,
                 first_selected,
-                &mut axes,
+                average,
             )?;
+            axes.push(RecordField::new("ifr_axis", Value::Record(baseline_axis)));
+            axes.push(RecordField::new("time_axis", Value::Record(time_axis)));
         }
         fields.insert("axis_info".into(), Value::Record(axes));
     }
-    let count_baseline_flags = grid.is_some() && names.remove("flag_sum");
-    let temporary_flags = count_baseline_flags && names.insert("flag".into());
     if let Some(grid) = &grid
         && names.remove("ifr_number")
     {
         fields.insert("ifr_number".into(), Value::Array(grid.numbers()?));
     }
-    read.scalars(&names, &mut fields, average)?;
-    if average {
-        let reduced = read.products(&names, &mut fields, true, items)?;
-        read.arrays(&names, &mut fields, true, reduced)?;
+    read.scalars(&names, &mut fields, average && grid.is_none())?;
+    let reduced = if average {
+        read.products(&names, &mut fields, true, items, grid.as_ref())?
     } else {
-        read.arrays(&names, &mut fields, false, None)?;
-        read.products(&names, &mut fields, false, items)?;
+        None
+    };
+    let reduced_flags = reduced.is_some();
+    read.arrays(&names, &mut fields, average, reduced, grid.as_ref())?;
+    if !average {
+        read.products(&names, &mut fields, false, items, grid.as_ref())?;
     }
     if let Some(grid) = grid {
-        grid.remap(&mut fields, count_baseline_flags, temporary_flags)?;
+        grid.remap(&mut fields, average, reduced_flags)?;
     }
     Ok(RecordValue::new(
         fields
@@ -367,7 +368,8 @@ impl<'a> VisibilityRead<'a> {
         names: &BTreeSet<String>,
         fields: &mut BTreeMap<String, Value>,
         average: bool,
-        reduced: Option<RowAverage>,
+        reduced: Option<RowAverage<'_>>,
+        grid: Option<&BaselineGrid>,
     ) -> MsResult<()> {
         let (raw_flags, reduced_flags) = if let Some(reduced) = reduced {
             let (raw, flags, weights) = reduced.into_fields();
@@ -387,7 +389,7 @@ impl<'a> VisibilityRead<'a> {
         if names.contains("sigma") {
             let values = self.vector_cells("SIGMA")?;
             let values = if average {
-                averaging::sigma(values)?
+                averaging::sigma(values, grid)?
             } else {
                 values
             };
@@ -402,25 +404,12 @@ impl<'a> VisibilityRead<'a> {
                 let ArrayValue::Bool(flag) = &flags else {
                     return Err(input("FLAG cells must be Boolean"));
                 };
-                let (shape, rows) = match flag.shape() {
-                    [correlations, channels, rows] => ([*correlations, *channels], *rows),
-                    _ if self.rows.is_empty() => ([0, 0], 0),
-                    _ => return Err(input("FLAG column has no row axis")),
+                let sums = if let Some(grid) = grid {
+                    grid.flag_sums(flag)?
+                } else {
+                    row_flag_sums(flag, self.rows.is_empty())?
                 };
-                let samples = shape.iter().product();
-                let mut sums = vec![0_i64; samples];
-                let memory = flag
-                    .as_slice_memory_order()
-                    .ok_or_else(|| input("FLAG block is not contiguous"))?;
-                for row in memory.chunks_exact(samples.max(1)).take(rows) {
-                    for (sum, &flagged) in sums.iter_mut().zip(row) {
-                        *sum += i64::from(flagged);
-                    }
-                }
-                fields.insert(
-                    "flag_sum".into(),
-                    Value::Array(ArrayValue::Int64(shaped(&shape, sums)?)),
-                );
+                fields.insert("flag_sum".into(), Value::Array(ArrayValue::Int64(sums)));
             }
             if names.contains("flag") {
                 let flags = reduced_flags.map_or(flags, ArrayValue::Bool);
@@ -468,13 +457,14 @@ impl<'a> VisibilityRead<'a> {
         Ok(())
     }
 
-    fn products(
+    fn products<'grid>(
         &self,
         names: &BTreeSet<String>,
         fields: &mut BTreeMap<String, Value>,
         average: bool,
         items: &[String],
-    ) -> MsResult<Option<RowAverage>> {
+        grid: Option<&'grid BaselineGrid>,
+    ) -> MsResult<Option<RowAverage<'grid>>> {
         let has_column = |column| {
             self.main
                 .schema()
@@ -564,7 +554,7 @@ impl<'a> VisibilityRead<'a> {
                 data
             };
             let data = if reduce {
-                let means = self.average_product(&mut reduction, &data)?;
+                let means = self.average_product(&mut reduction, &data, grid)?;
                 if let Some(aliases) = raw_aliases.take() {
                     insert_array_aliases(fields, aliases.into_iter(), data);
                 }
@@ -614,7 +604,7 @@ impl<'a> VisibilityRead<'a> {
             };
             let values = if average && raw_float.is_some() {
                 require_single_average(items, "float_data")?;
-                let means = self.average_product(&mut reduction, &values)?;
+                let means = self.average_product(&mut reduction, &values, grid)?;
                 if let Some(aliases) = float_aliases.take() {
                     insert_array_aliases(fields, aliases.into_iter(), values);
                 }
@@ -633,15 +623,17 @@ impl<'a> VisibilityRead<'a> {
         Ok(reduction)
     }
 
-    fn average_product(
+    fn average_product<'grid>(
         &self,
-        reduction: &mut Option<RowAverage>,
+        reduction: &mut Option<RowAverage<'grid>>,
         values: &ArrayValue,
+        grid: Option<&'grid BaselineGrid>,
     ) -> MsResult<ArrayValue> {
         if reduction.is_none() {
             *reduction = Some(RowAverage::new(
                 self.matrix_cells("FLAG", false)?,
                 self.vector_cells("WEIGHT")?,
+                grid,
             )?);
         }
         reduction
@@ -651,18 +643,40 @@ impl<'a> VisibilityRead<'a> {
     }
 }
 
+fn row_flag_sums(flags: &ArrayD<bool>, empty: bool) -> MsResult<ArrayD<i64>> {
+    let (shape, rows) = match flags.shape() {
+        [correlations, channels, rows] => ([*correlations, *channels], *rows),
+        _ if empty => ([0, 0], 0),
+        _ => return Err(input("FLAG column has no row axis")),
+    };
+    let samples = shape.iter().product();
+    let mut sums = vec![0_i64; samples];
+    let memory = flags
+        .as_slice_memory_order()
+        .ok_or_else(|| input("FLAG block is not contiguous"))?;
+    for row in memory.chunks_exact(samples.max(1)).take(rows) {
+        for (sum, &flagged) in sums.iter_mut().zip(row) {
+            *sum += i64::from(flagged);
+        }
+    }
+    shaped(&shape, sums)
+}
+
+fn visibility_product(name: &str) -> bool {
+    name == "float_data"
+        || COMPLEX_PRODUCTS.iter().any(|&(prefix, _, _)| {
+            name.strip_prefix(prefix)
+                .is_some_and(|part| PRODUCT_NAMES.contains(&part))
+        })
+}
+
 fn raw_visibility_alias(
     name: &str,
     names: &BTreeSet<String>,
     average: bool,
 ) -> MsResult<Option<(String, String)>> {
     let (alias, derived) = if average && PRODUCT_NAMES.iter().any(|&part| name.contains(part)) {
-        let supported = name == "float_data"
-            || COMPLEX_PRODUCTS.iter().any(|&(prefix, _, _)| {
-                name.strip_prefix(prefix)
-                    .is_some_and(|part| PRODUCT_NAMES.contains(&part))
-            });
-        if supported {
+        if visibility_product(name) {
             return Ok(None);
         }
         // CASA adds the prefix before recognizing the item. An unrecognized

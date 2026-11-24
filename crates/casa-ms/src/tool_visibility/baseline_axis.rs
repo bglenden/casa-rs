@@ -12,7 +12,7 @@ use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use ndarray::ArrayD;
 
-use super::{input, shaped, vector};
+use super::{averaging, input, shaped, vector, visibility_product};
 use crate::subtables::measured_columns::{TimeColumn, antenna_position};
 use crate::subtables::{FieldDirectionColumn, MetadataDirection, SubTable};
 use crate::{MeasurementSet, MsResult};
@@ -112,6 +112,16 @@ impl BaselineGrid {
         self.first_rows.first().copied()
     }
 
+    pub(super) fn baseline_count(&self) -> usize {
+        self.baseline_count
+    }
+
+    pub(super) fn reduction_rows(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.occupied
+            .iter()
+            .map(|&(slot, source)| (slot % self.baseline_count, source))
+    }
+
     pub(super) fn numbers(&self) -> MsResult<ArrayValue> {
         let mut numbers = filled(self.baseline_count, -1)?;
         for (&(first, second), &slot) in &self.baselines {
@@ -120,15 +130,15 @@ impl BaselineGrid {
         Ok(ArrayValue::Int32(vector(numbers)))
     }
 
-    pub(super) fn add_axes(
+    pub(super) fn axes(
         &self,
         ms: &MeasurementSet,
         names: &BTreeSet<String>,
         columns: &HashMap<String, RequiredScalarColumnValues>,
         measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
         first_selected: usize,
-        axes: &mut RecordValue,
-    ) -> MsResult<()> {
+        average: bool,
+    ) -> MsResult<(RecordValue, RecordValue)> {
         let antenna = ms.antenna()?;
         let mut metadata = HashMap::new();
         let mut labels = filled(self.baseline_count, String::new())?;
@@ -168,10 +178,8 @@ impl BaselineGrid {
                 Value::Array(ArrayValue::Float64(vector(lengths))),
             ),
         ]);
-        let time = self.time_axis(ms, names, columns, measures, first_selected)?;
-        axes.push(RecordField::new("ifr_axis", Value::Record(ifr)));
-        axes.push(RecordField::new("time_axis", Value::Record(time)));
-        Ok(())
+        let time = self.time_axis(ms, names, columns, measures, first_selected, average)?;
+        Ok((ifr, time))
     }
 
     fn time_axis(
@@ -181,19 +189,21 @@ impl BaselineGrid {
         columns: &HashMap<String, RequiredScalarColumnValues>,
         measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
         first_selected: usize,
+        average: bool,
     ) -> MsResult<RecordValue> {
         const DAY: f64 = 86400.0;
         let coordinate = |name, values| {
             RecordField::new(name, Value::Array(ArrayValue::Float64(vector(values))))
         };
-        let mut axis = RecordValue::new(vec![coordinate("MJDseconds", self.times.clone())]);
+        let times = self.integration_times(average);
+        let mut axis = RecordValue::new(vec![coordinate("MJDseconds", times.clone())]);
         if names.contains("ut")
-            && let Some(time) = self.times.get(1).or_else(|| self.times.first())
+            && let Some(time) = times.get(1).or_else(|| times.first())
         {
             let midnight = (time / DAY).trunc() * DAY;
             axis.push(coordinate(
                 "UT",
-                self.times.iter().map(|time| time - midnight).collect(),
+                times.iter().map(|time| time - midnight).collect(),
             ));
         }
         let want_ha = names.contains("ha");
@@ -220,10 +230,18 @@ impl BaselineGrid {
         let main = ms.main_table();
         let reference = TimeColumn::read(main)?.reference_at(main, first_selected)?;
         let fields = ms.field()?;
-        let mut ha = Vec::with_capacity(self.times.len());
-        let mut last = Vec::with_capacity(self.times.len());
-        for (&time, &row) in self.times.iter().zip(&self.first_rows) {
-            let field = usize::try_from(ids[row]).map_err(|_| input("negative FIELD_ID"))?;
+        let mut field_ids = self
+            .first_rows
+            .iter()
+            .map(|&row| ids[row])
+            .collect::<Vec<_>>();
+        if average {
+            averaging::common_id(&mut field_ids);
+        }
+        let mut ha = Vec::with_capacity(times.len());
+        let mut last = Vec::with_capacity(times.len());
+        for (&time, field) in times.iter().zip(field_ids) {
+            let field = usize::try_from(field).map_err(|_| input("negative FIELD_ID"))?;
             let field_time = if fields.num_poly(field)? == 0 {
                 0.0
             } else {
@@ -259,39 +277,52 @@ impl BaselineGrid {
         Ok(axis)
     }
 
+    fn integration_times(&self, average: bool) -> Vec<f64> {
+        if average && !self.times.is_empty() {
+            vec![self.times.iter().sum::<f64>() / self.times.len() as f64]
+        } else {
+            self.times.clone()
+        }
+    }
+
     pub(super) fn remap(
         &self,
         fields: &mut BTreeMap<String, Value>,
-        count_flags: bool,
-        temporary_flags: bool,
+        average: bool,
+        reduced_flags: bool,
     ) -> MsResult<()> {
-        if count_flags {
-            let Some(Value::Array(ArrayValue::Bool(flags))) = fields.get("flag") else {
-                return Err(input("FLAG cells must be Boolean"));
-            };
-            fields.insert(
-                "flag_sum".into(),
-                Value::Array(ArrayValue::Int64(self.flag_sums(flags)?)),
-            );
-            if temporary_flags {
-                fields.remove("flag");
+        let ids = |mut values| {
+            if average {
+                averaging::common_id(&mut values);
             }
-        }
+            vector(values)
+        };
         for (name, value) in fields {
             match (name.as_str(), value) {
-                ("ifr_number" | "flag_sum", _) => {}
+                ("flag_sum", _) => {}
+                ("flag", _) if reduced_flags => {}
+                ("ifr_number", Value::Array(ArrayValue::Int32(values))) => {
+                    if average {
+                        *values = ids(values.iter().copied().collect());
+                    }
+                }
                 ("time", Value::Array(value)) => {
-                    *value = ArrayValue::Float64(vector(self.times.clone()));
+                    *value = ArrayValue::Float64(vector(self.integration_times(average)));
                 }
                 (
                     "array_id" | "data_desc_id" | "feed1" | "feed2" | "field_id" | "scan_number",
                     Value::Array(ArrayValue::Int32(values)),
                 ) => {
-                    *values = vector(self.first_rows.iter().map(|&row| values[row]).collect());
+                    *values = ids(self.first_rows.iter().map(|&row| values[row]).collect());
                 }
                 ("antenna1" | "antenna2", Value::Array(ArrayValue::Int32(values))) => {
                     *values = self.scatter(values, true)?;
+                    if average {
+                        *values = ids(values.iter().copied().collect());
+                    }
                 }
+                ("sigma", _) if average => {}
+                (name, _) if average && visibility_product(name) => {}
                 (_, Value::Array(array)) if !array.is_empty() => {
                     self.scatter_array(array)?;
                 }
@@ -347,7 +378,7 @@ impl BaselineGrid {
         shaped(&shape, output)
     }
 
-    fn flag_sums(&self, flags: &ArrayD<bool>) -> MsResult<ArrayD<i64>> {
+    pub(super) fn flag_sums(&self, flags: &ArrayD<bool>) -> MsResult<ArrayD<i64>> {
         let shape = match flags.shape() {
             [correlations, channels, rows] if *rows == self.row_count => {
                 [*correlations, *channels, self.baseline_count]
@@ -374,7 +405,7 @@ impl BaselineGrid {
     }
 }
 
-fn element_count(shape: &[usize]) -> MsResult<usize> {
+pub(super) fn element_count(shape: &[usize]) -> MsResult<usize> {
     shape.iter().try_fold(1_usize, |length, &axis| {
         length
             .checked_mul(axis)
@@ -396,7 +427,7 @@ fn direction_at_frame(value: &MetadataDirection, frame: &MeasFrame) -> MsResult<
     ))
 }
 
-fn filled<T: Clone>(length: usize, value: T) -> MsResult<Vec<T>> {
+pub(super) fn filled<T: Clone>(length: usize, value: T) -> MsResult<Vec<T>> {
     let mut result = Vec::new();
     result
         .try_reserve_exact(length)

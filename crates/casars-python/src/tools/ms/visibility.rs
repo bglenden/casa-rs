@@ -15,7 +15,6 @@ use super::attachment_info::{TableFiles, TableStamp};
 use super::owned_record::visibility_record;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
-use crate::tools::not_yet_implemented_in;
 
 #[derive(Default)]
 pub(super) struct VisibilityState {
@@ -146,9 +145,6 @@ impl AttachedMs {
             .map_or_else(|| main.table.row_count(), <[usize]>::len);
         if count == 0 {
             return Ok(CasaValue::empty_record());
-        }
-        if options.baseline_gap.is_some() && options.average {
-            return not_yet_implemented_in("ms", "getdata ifraxis averaging", super::ISSUE);
         }
         let axis_info = items
             .iter()
