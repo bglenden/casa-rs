@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "d7b2327977c09373cf82ac073de318b003d68eac",
+  "source_revision": "d7b2327977c09373cf82ac073de318b003d68eac",
+  "baseline_revision": "2bf0d73c5260083e657daf373b91d146f045dc40",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_virtual_derived_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Read-only implicit virtual or default MeasurementSet model operands for channel-only, vector and scalar time, scalar baseline and scan-spanning residuals and ratios on independent visibility axes.",
+  "result": "passed",
+  "baseline_result": "Main rejects averaged residuals and ratios without physical MODEL_DATA. With competing stored cells it rejects a selected virtual model for these requests.",
+  "text_exports": 12,
+  "points": 56,
+  "figures": 1,
+  "rendered_coordinates": 3,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "refusal_controls": 2,
+  "weighted_fourier_coordinates": 3
+}
