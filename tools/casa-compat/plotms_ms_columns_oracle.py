@@ -1737,10 +1737,20 @@ def compare_virtual_fourier_model(root, native):
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == 12
 
-    channel = np.array([point[:2] for point in rows(expected) if point[2] == "1"], dtype=float)
-    integrations = channel.reshape(3, 2, 2)
+    # Give successive integrations distinct Fourier phases in the time test.
+    time_source = work / "time-varying-fourier.ms"
+    copy_ms(vis, time_source)
+    with opened(time_source, True) as table:
+        _, slots = np.unique(table.getcol("TIME"), return_inverse=True)
+        uvw = table.getcol("UVW")
+        uvw[:, slots % 2 == 1] *= 3
+        table.putcol("UVW", uvw)
+    samples = controls | dict(vis=str(time_source), spw="0:1")
+    raw = work / "fourier-time-input.casa.txt"
+    assert reference(**samples, plotfile=str(raw), expformat="txt") is None
+    integrations = np.array([point[:2] for point in rows(raw)], dtype=float).reshape(3, 2, 2)
     assert np.max(np.abs(integrations[:, 0] - integrations[:, 1])) > 1e-4
-    average = controls | dict(spw="0:1", avgtime="20")
+    average = samples | dict(avgtime="20")
     expected, actual = (work / f"fourier-time.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**average, plotfile=str(expected), expformat="txt") is None
     selected = np.array([point[:2] for point in rows(expected)], dtype=float)
@@ -1749,9 +1759,10 @@ def compare_virtual_fourier_model(root, native):
     assert compare_text(actual, expected) == 3
     print("fourier-time: 3 matching complex averages from distinct virtual model samples", flush=True)
 
-    with opened(vis) as table:
-        for name, values in columns.items():
-            np.testing.assert_array_equal(table.getcol(name), values)
+    for source in (vis, time_source):
+        with opened(source) as table:
+            for name, values in columns.items():
+                np.testing.assert_array_equal(table.getcol(name), values)
 
 
 def main():
