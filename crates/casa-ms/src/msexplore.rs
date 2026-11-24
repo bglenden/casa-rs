@@ -5986,7 +5986,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                 if let Some(grid) = visibility_columns.grid(axis, &visibility_grids)
                                 {
                                     series_used |= if scalar_time {
-                                        average.add_scalar_time_residual(
+                                        average.add_scalar_time_sample(
                                             grid,
                                             &flags,
                                             scalar_weight,
@@ -7022,15 +7022,11 @@ impl VisibilityColumnProjection {
                 value.is_finite().then_some(value)
             }
             Self::VectorRatio => {
-                let value = if model == Complex64::new(0.0, 0.0) {
-                    // Match C++ complex division at a zero denominator for text export.
-                    let infinity = f64::INFINITY.copysign(model.re);
-                    Complex64::new(infinity * observed.re, infinity * observed.im)
-                } else {
-                    observed / model
-                };
                 // CASA caches the complex float quotient before converting its axes.
-                Some(Self::vector_axis_value(axis, value))
+                Some(Self::vector_axis_value(
+                    axis,
+                    Self::complex_quotient(observed, model),
+                ))
             }
             Self::ScalarRatio => {
                 let observed = as_complex_float(observed);
@@ -7044,6 +7040,16 @@ impl VisibilityColumnProjection {
                     _ => unreachable!("visibility projection requires a visibility axis"),
                 }))
             }
+        }
+    }
+
+    fn complex_quotient(observed: Complex64, model: Complex64) -> Complex64 {
+        if model == Complex64::new(0.0, 0.0) {
+            // Match C++ complex division at a zero denominator for text export.
+            let infinity = f64::INFINITY.copysign(model.re);
+            Complex64::new(infinity * observed.re, infinity * observed.im)
+        } else {
+            observed / model
         }
     }
 

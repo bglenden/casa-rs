@@ -419,6 +419,38 @@ impl TimeProjection {
         self.project_operands(axis, means)
     }
 
+    fn project_scalar_time(&self, axis: MsAxis) -> Option<f64> {
+        use VisibilityColumnProjection::{
+            ScalarRatio, ScalarResidual, VectorRatio, VectorResidual,
+        };
+
+        let visibility = self.time_mean(0);
+        let model = self.time_mean(1);
+        let projected = match self.projection {
+            None => visibility,
+            Some(VectorResidual | ScalarResidual) => visibility - model,
+            Some(VectorRatio) => {
+                let widen =
+                    |value: Complex32| Complex64::new(f64::from(value.re), f64::from(value.im));
+                let ratio =
+                    VisibilityColumnProjection::complex_quotient(widen(visibility), widen(model));
+                Complex32::new(ratio.re as f32, ratio.im as f32)
+            }
+            // CASA divides the packed amplitude and phase components for these
+            // axes. Its scalar ratio uses their differences for Real and Imaginary.
+            Some(ScalarRatio) if matches!(axis, MsAxis::Amplitude | MsAxis::Phase) => {
+                Complex32::new(visibility.re / model.re, visibility.im / model.im)
+            }
+            Some(ScalarRatio) => visibility - model,
+        };
+        Some(f64::from(match axis {
+            MsAxis::Amplitude | MsAxis::Real => projected.re,
+            MsAxis::Phase => VisibilityColumnProjection::float_phase_degrees(projected.im),
+            MsAxis::Imaginary => projected.im,
+            _ => return None,
+        }))
+    }
+
     fn project_operands(&self, axis: MsAxis, means: [Complex64; 2]) -> Option<f64> {
         match self.projection {
             Some(projection) => projection.axis_value(axis, means, true),
@@ -587,7 +619,7 @@ impl AveragedVisibility {
         weights.resize(values.len(), weight);
     }
 
-    pub(super) fn add_scalar_time_residual(
+    pub(super) fn add_scalar_time_sample(
         &mut self,
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
@@ -613,13 +645,7 @@ impl AveragedVisibility {
 
     pub(super) fn project_scalar_time(&self, axis: MsAxis) -> Option<f64> {
         if let VisibilitySamples::TimeProjection(average) = &self.0 {
-            let residual = average.time_mean(0) - average.time_mean(1);
-            return Some(f64::from(match axis {
-                MsAxis::Amplitude | MsAxis::Real => residual.re,
-                MsAxis::Phase => VisibilityColumnProjection::float_phase_degrees(residual.im),
-                MsAxis::Imaginary => residual.im,
-                _ => return None,
-            }));
+            return average.project_scalar_time(axis);
         }
         let mean = self.vector_mean()?;
         match axis {

@@ -191,10 +191,11 @@ def compare_corrected_residuals(root, native):
 
 def compare_expressions(root, native):
     source, integration, start = make_fixture(root)
-    fallback, spectra, zero, unbounded = (
-        root / f"{name}.ms" for name in ("without-corrected", "spectra", "zero-model", "unbounded")
+    fallback, spectra, zero, unbounded, cube_flags = (
+        root / f"{name}.ms"
+        for name in ("without-corrected", "spectra", "zero-model", "unbounded", "cube-flags")
     )
-    for path in (fallback, spectra, zero, unbounded):
+    for path in (fallback, spectra, zero, unbounded, cube_flags):
         copy_ms(source, path)
     attach_spectra(spectra, integration)
     with opened(fallback, True) as table:
@@ -205,6 +206,10 @@ def compare_expressions(root, native):
     with opened(unbounded, True) as table:
         unit = np.ones_like(table.getcol("MODEL_DATA"))
         table.putcol("MODEL_DATA", unit * np.exp(1j * np.deg2rad(10)))
+    with opened(cube_flags, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, :] = integration % 3 == 1
+        table.putcol("FLAG", flags)
 
     corrected, model = 14 / 3 + 1j * np.deg2rad(74.5), 31 / 6 + 1j * np.deg2rad(45)
     quotient = corrected / model
@@ -234,6 +239,8 @@ def compare_expressions(root, native):
         ("derived-x-stored-y", source, "amp", "corrected-model_vector", "phase", "model", -.5, 45),
         ("derived-x-derived-y", source, "amp", "data-model_vector", "phase", "corrected/model_scalar",
          -1.5, phase_ratio),
+        ("paired-cube-mask", cube_flags, "amp", "data-model_vector", "phase", "corrected/model_scalar",
+         -1.75, np.rad2deg(156.75 / 127.5)),
         ("unbounded-ratio-x", unbounded, "phase", "corrected/model_scalar", "amp", "model",
          np.rad2deg(74.5 / 10), 1),
     )
