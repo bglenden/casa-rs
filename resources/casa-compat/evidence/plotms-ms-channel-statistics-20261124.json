@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "01cbd46c647a55c69fff2c85ed2003f3bb20d05a",
+  "source_revision": "01cbd46c647a55c69fff2c85ed2003f3bb20d05a",
+  "baseline_revision": "5f7c05653732475a1cfbcb2a24385dfbad3d273e",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs channel-only averages of MeasurementSet statistical axes against stored visibility coordinates.",
+  "result": "passed",
+  "baseline_result": "CASA exported weight 9.5 for 12 model points. Native exported 1.",
+  "text_exports": 42,
+  "points": 456,
+  "figures": 1,
+  "rendered_coordinates": 12,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}
