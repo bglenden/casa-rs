@@ -835,6 +835,7 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
     compare_scalar_shape_refusal(root, native, controls | dict(vis=str(mixed), expformat="txt"))
     print("scalar-antenna-time: matching unequal-shape refusal in a row-flagged buffer", flush=True)
     compare_scalar_antenna_time_virtual_guard(root, native, source, controls)
+    compare_vector_antenna_time_averages(root, native, source, start, controls, amplitudes, turns)
 
 
 def compare_scalar_antenna_time_virtual_guard(root, native, source, base):
@@ -863,6 +864,80 @@ def compare_scalar_antenna_time_virtual_guard(root, native, source, base):
     with opened(virtual) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical)
     print("scalar-antenna-time: refusing the pending averaged virtual model", flush=True)
+
+
+def compare_vector_antenna_time_averages(root, native, source, start, base, amplitudes, turns):
+    controls = base | dict(vis=str(source), xaxis="real", yaxis="imag", scalar=False,
+                           title="Vector antenna time averages")
+    rotations = amplitudes.astype(float) * np.exp(1j * np.radians(turns.astype(float)))
+    split = root / "vector-antenna-time-split-spectra.ms"
+    copy_ms(source, split)
+    with opened(split, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        distant = table.getcol("ANTENNA2") == 2
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        sigmas = table.getcol("SIGMA_SPECTRUM")
+        weights[0, 1, distant & (integration == 1)] = 9
+        sigmas[0, 1, distant & (integration == 0)] = 2
+        table.putcol("WEIGHT_SPECTRUM", weights)
+        table.putcol("SIGMA_SPECTRUM", sigmas)
+    cases = (
+        ("vector-antenna-time", {}, ((0, 4), (4, 6))),
+        ("vector-antenna-time-axis", dict(xaxis="time"), ((0, 4), (4, 6))),
+        ("vector-antenna-shorter-time", dict(avgtime="15"), ((0, 2), (2, 4), (4, 6))),
+        ("vector-antenna-row-only", dict(vis=str(root / "scalar-antenna-row-only-time.ms")),
+         ((0, 4), (4, 6))),
+        ("vector-antenna-split-spectra", dict(vis=str(split)), ((0, 4), (4, 6))),
+        ("vector-antenna-cube-flags", dict(vis=str(root / "scalar-antenna-flagged-time.ms")),
+         ((0, 4), (4, 6))),
+    )
+    for name, overrides, groups in cases:
+        request_args = controls | overrides
+        coordinates, centers, identifiers = [], [], []
+        for begin, end in groups:
+            center = start + (begin + end - 1) * 5
+            selected_rotations = rotations[begin:end]
+            if name == "vector-antenna-cube-flags" and begin == 0:
+                selected_rotations = selected_rotations[[0, 1, 3]]
+            averaged_rotation = selected_rotations.mean()
+            observed = (1 + 4j) * averaged_rotation
+            corrected = (10 + 14j) * averaged_rotation
+            antenna_visibility = [(observed * factor, corrected * factor) for factor in ((1 + 6j) / 4, 1, 2j)]
+            if name == "vector-antenna-split-spectra" and begin == 0:
+                # The distant baseline uses distinct per-column time weights.
+                # The antenna stage weights both columns by the transformed 12 and 6.
+                observed_rotation = np.average(
+                    (np.average(rotations[:2], weights=(.25, 1)), rotations[2:4].mean()),
+                    weights=(12, 6),
+                )
+                corrected_rotation = np.average(rotations[:4], weights=(3, 9, 3, 3))
+                distant = ((1 + 4j) * 2j * observed_rotation, (10 + 14j) * 2j * corrected_rotation)
+                antenna_visibility[0] = tuple(
+                    (4 * near + 18 * far) / 22
+                    for near, far in zip((observed, corrected), distant, strict=True)
+                )
+                antenna_visibility[2] = distant
+            for antenna, (antenna_observed, antenna_corrected) in enumerate(antenna_visibility):
+                x = center if request_args["xaxis"] == "time" else antenna_observed.real
+                y = antenna_corrected.imag
+                coordinates.append((x, y if antenna == 0 else -y))
+                centers.append(center)
+                identifiers.append((str(antenna), "-1", "XX"))
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**request_args, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[5], point[6], point[12]) for point in selected] == identifiers
+        assert {(point[2], point[10]) for point in selected} == {("1", "100.001000000")}
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        assert native(**request_args, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        if request_args["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+            compare_figure(root, native, request_args, expected,
+                           (controls["title"], "Time (MJD seconds)", "Imag:corrected"))
+        print(f"{name}: {len(coordinates)} matching vector antenna time coordinates", flush=True)
 
 
 def main():
