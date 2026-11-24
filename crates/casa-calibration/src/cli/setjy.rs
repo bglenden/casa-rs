@@ -11,7 +11,8 @@ use casa_ms::virtual_model::{
     VirtualModelPublication, selected_model_combinations, virtual_model_clear_ids,
 };
 use casa_ms::{
-    MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+    MeasurementSet, MsSelection, MsSpectralWindow, ResolvedMsSelection, VirtualModelEntry,
+    VirtualModelKind,
 };
 use casa_provider_contracts::{
     CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype, ParameterValue,
@@ -609,19 +610,7 @@ fn prepare(
         let mut field_flux = BTreeMap::new();
         let mut first_jy = None;
         for &spw in spws {
-            let all_hz = windows.chan_freq(spw as usize).map_err(execution)?;
-            let frequency_frame = windows
-                .frequency_reference(spw as usize)
-                .map_err(execution)?;
-            let num_channels = i32::try_from(all_hz.len()).map_err(execution)?;
-            // CASA assigns the scalar median through Vector::set, which
-            // constructs an MFrequency in the default LSRK frame.
-            let frame_ref = if by_channel {
-                frequency_frame
-            } else {
-                FrequencyRef::LSRK
-            };
-            let planned = selected_frequencies(all_hz, frame_ref, by_channel)?;
+            let (planned, num_channels) = model_frequencies(&windows, spw as usize, by_channel)?;
             let (component, stokes) = if image.is_some() {
                 (
                     None,
@@ -811,11 +800,21 @@ fn flux_dictionary(mut entries: Vec<CasaEntry>) -> CasaValue {
     CasaValue::Dict { entries }
 }
 
-fn selected_frequencies(
-    mut frequencies: Vec<f64>,
-    frame: FrequencyRef,
+fn model_frequencies(
+    windows: &MsSpectralWindow<'_>,
+    spw: usize,
     by_channel: bool,
-) -> Result<Vec<MFrequency>, TaskFailure> {
+) -> Result<(Vec<MFrequency>, i32), TaskFailure> {
+    let mut frequencies = windows.chan_freq(spw).map_err(execution)?;
+    let frequency_frame = windows.frequency_reference(spw).map_err(execution)?;
+    let num_channels = i32::try_from(frequencies.len()).map_err(execution)?;
+    // CASA assigns the scalar median through Vector::set, which constructs
+    // an MFrequency in the default LSRK frame.
+    let frame = if by_channel {
+        frequency_frame
+    } else {
+        FrequencyRef::LSRK
+    };
     if frequencies.is_empty() || frequencies.iter().any(|f| !f.is_finite() || *f <= 0.) {
         return Err(execution("setjy needs positive finite channel frequencies"));
     }
@@ -831,10 +830,11 @@ fn selected_frequencies(
         };
         frequencies = vec![median];
     }
-    Ok(frequencies
+    let planned = frequencies
         .into_iter()
         .map(|hz| MFrequency::new(hz, frame))
-        .collect())
+        .collect();
+    Ok((planned, num_channels))
 }
 
 fn entry(key: impl Into<String>, value: CasaValue) -> CasaEntry {
