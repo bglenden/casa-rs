@@ -96,7 +96,8 @@ impl<'a> PhaseCenterShift<'a> {
             }
             for (value, phase) in grid.values.iter_mut().zip(self.phases.iter().cycle()) {
                 let visibility = Complex32::new(value.re as f32, value.im as f32);
-                *value = Complex64::from(*phase * visibility);
+                let shifted = *phase * visibility;
+                *value = Complex64::new(f64::from(shifted.re), f64::from(shifted.im));
             }
         }
         Ok([-rotated_u, -rotated_v, rotated_w])

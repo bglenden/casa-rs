@@ -4106,12 +4106,15 @@ fn build_generic_visibility_scatter(
         .as_deref()
         .is_some_and(|feed| !feed.is_empty())
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
+    let mut phase_shift = calibration
+        .and_then(|input| input.phasecenter.as_ref())
+        .map(plotms_phasecenter::PhaseCenterShift::new);
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
+        || phase_shift.is_some()
         || calibration.is_some()
-            && (calibration.is_some_and(|input| input.phasecenter.is_some())
-                || ordered_feed_selection
+            && (ordered_feed_selection
                 || use_ordinate_masks
                 || spec.x_axis.is_interval_or_wavelength()
                 || spec.y_axes.contains(&MsAxis::UvDistance)
@@ -4264,9 +4267,6 @@ fn build_generic_visibility_scatter(
     } else {
         Vec::new()
     };
-    let mut phase_shift = calibration
-        .and_then(|input| input.phasecenter.as_ref())
-        .map(plotms_phasecenter::PhaseCenterShift::new);
     let selected_uvw = if needs_uvw_values || phase_shift.is_some() {
         selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?
     } else {

@@ -11019,6 +11019,22 @@ paired fixture checks the selected bins and metadata in both modes (#1032).
 [Pinned transform setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/mstransform/MSTransform/MSTransformManager.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 [Pinned time averager](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/AveragingTvi2.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 
+## PlotMS can stall while exporting phase-shifted coordinates to text
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, plot U in metres against observed
+phase for selected XX channels on a complex MeasurementSet. Enable
+`transform=True` and set `phasecenter="J2000 00h00m02.00s -29d59m40.00s"`.
+The headless task writes the PNG and returns. A text export of the same
+phase shift can stop after the selection header and fail to return.
+
+casa-rs exports the selected coordinates and flags to text. The paired
+test compares them with pinned PlotMS on a separate MS written by the
+CASA `phaseshift` task. Both CASA paths use the same phase-shifting
+visibility iterator. The test also compares PNG export using the original
+MS and active transform in both public PlotMS tasks (#1032).
+[Pinned PlotMS iterator setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+[Pinned phase-shifting iterator](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/PhaseShiftingTVI.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
+
 ## Empty MS visibility strides can abort or change the attachment
 
 On a nonempty MS, `getdata(increment=4294967297)` can admit a
