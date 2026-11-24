@@ -3207,13 +3207,16 @@ fn apply_parallactic_step(
 ) -> Result<(), ApplyExecutionError> {
     let started = profile.as_ref().map(|_| Instant::now());
     let angle = |antenna, feed| {
-        state.feed_parallactic_angle(
-            row.time_seconds,
-            row.field_id,
-            antenna,
-            feed,
-            row.data_spw_id,
-        )
+        state
+            .feed_angle_components(
+                row.time_seconds,
+                row.field_id,
+                antenna,
+                feed,
+                row.data_spw_id,
+            )
+            // The visibility iterator adds the mount and receptor angles as CASA Floats.
+            .map(|(mount, receptor)| f64::from(mount as f32 + receptor as f32))
     };
     let apply = if forward {
         parang::corrupt
@@ -4101,6 +4104,18 @@ impl ParallacticAngleState {
         feed_id: i32,
         data_spw_id: i32,
     ) -> Result<f64, ApplyExecutionError> {
+        self.feed_angle_components(time_seconds, field_id, antenna_id, feed_id, data_spw_id)
+            .map(|(mount, receptor)| mount + receptor)
+    }
+
+    fn feed_angle_components(
+        &self,
+        time_seconds: f64,
+        field_id: i32,
+        antenna_id: i32,
+        feed_id: i32,
+        data_spw_id: i32,
+    ) -> Result<(f64, f64), ApplyExecutionError> {
         let receptor0_angle = self
             .lookup_receptor0_angle(antenna_id, feed_id, data_spw_id, time_seconds)
             .unwrap_or(0.0);
@@ -4110,7 +4125,7 @@ impl ParallacticAngleState {
                 usize::try_from(field_id).unwrap_or(usize::MAX),
                 usize::try_from(antenna_id).unwrap_or(usize::MAX),
             )
-            .map(|feed_angle| feed_angle + receptor0_angle)
+            .map(|mount_angle| (mount_angle, receptor0_angle))
             .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
                 path: "<measurement-set derived parallactic angle>".to_string(),
                 source,
