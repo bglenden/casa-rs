@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
+use casa_ms::tool_iteration::ToolIteration;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
@@ -14,6 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyInt, PyList, PyListMethods, PyString};
 
 use super::attachment_info::{TableFiles, TableStamp};
+use super::iteration::VisibilityIteration;
 use super::metadata_link::{MetadataLink, MetadataSnapshot};
 use super::owned_record::visibility_record;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -26,6 +28,7 @@ pub(super) struct VisibilityState {
     time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
     channels: Option<VisibilityChannels>,
     polarization: Option<Arc<VisibilityPolarization>>,
+    pub(super) iteration: Option<VisibilityIteration>,
 }
 
 struct VisibilityMain {
@@ -40,6 +43,9 @@ impl VisibilityState {
         self.initialized = false;
         self.channels = None;
         self.polarization = None;
+        if let Some(iteration) = &mut self.iteration {
+            iteration.cursor.reset_blocking();
+        }
     }
 
     pub(super) fn set_initialized(&mut self, initialized: bool) {
@@ -115,11 +121,21 @@ impl VisibilityMain {
                 *row = selected[*row];
             }
         }
+        self.read_rows(&rows, items, metadata, options)
+    }
+
+    fn read_rows(
+        &self,
+        rows: &[usize],
+        items: &[String],
+        metadata: Option<&MeasurementSet>,
+        options: tool_visibility::VisibilityReadOptions<'_>,
+    ) -> PyResult<CasaValue> {
         let record = tool_visibility::read_tool_visibility(
             &self.table,
             &self.members,
             self.reference.as_ref(),
-            &rows,
+            rows,
             items,
             metadata,
             options,
@@ -145,9 +161,11 @@ impl PyMsTool {
         let options = tool_visibility::VisibilityReadOptions {
             average,
             baseline_gap: ifraxis.then_some(ifraxisgap as i32),
+            baseline_pairs: None,
             channels: None,
             polarization: None,
             time_measures: None,
+            preserve_row_order: false,
         };
         let reply = py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
@@ -214,6 +232,112 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    pub(super) fn initialize_public_iteration(
+        &mut self,
+        columns: &[String],
+        interval: f64,
+        maxrows: i64,
+        defaults: bool,
+    ) -> PyResult<bool> {
+        self.visibility.iteration = None;
+        let link = self.metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        let main = self.visibility.main(&self.path)?;
+        let cursor = ToolIteration::new(
+            &main.table,
+            self.selected_rows.as_deref(),
+            columns,
+            interval,
+            maxrows,
+            defaults,
+        )
+        .map_err(runtime_error)?;
+        link.verify_directory().map_err(runtime_error)?;
+        let Some(cursor) = cursor else {
+            return Ok(false);
+        };
+        self.visibility.iteration = Some(VisibilityIteration {
+            cursor,
+            channels: self.visibility.channels,
+            polarization: self
+                .visibility
+                .polarization
+                .clone()
+                .filter(|plan| !plan.is_conversion()),
+        });
+        Ok(true)
+    }
+
+    fn getdata_iteration(
+        &mut self,
+        link: &MetadataLink,
+        items: &[String],
+        increment: i64,
+        options: tool_visibility::VisibilityReadOptions<'_>,
+    ) -> PyResult<CasaValue> {
+        let axis_info = items
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case("axis_info"));
+        let snapshot = if !self.visibility.initialized {
+            let Some(snapshot) = self.initialize_visibility(link)? else {
+                return Ok(CasaValue::empty_record());
+            };
+            Some(snapshot)
+        } else if axis_info {
+            Some(link.snapshot(None).map_err(runtime_error)?)
+        } else {
+            None
+        };
+        self.visibility.main(&self.path)?;
+        let iteration = self.visibility.iteration.as_ref().expect("active iterator");
+        let main = self.visibility.main.as_ref().expect("MAIN was opened");
+        let rows = iteration.cursor.rows().map_err(runtime_error)?;
+        let polarization = self
+            .visibility
+            .polarization
+            .as_deref()
+            .filter(|plan| plan.is_conversion())
+            .or(iteration.polarization.as_deref());
+        let baseline_pairs = options
+            .baseline_gap
+            .is_some()
+            .then(|| self.iteration_baselines(&main.table, increment))
+            .transpose()?;
+        let reply = main.read_rows(
+            rows,
+            items,
+            snapshot.as_ref().map(|snapshot| &snapshot.ms),
+            tool_visibility::VisibilityReadOptions {
+                channels: iteration.channels,
+                polarization,
+                baseline_pairs: baseline_pairs.as_deref(),
+                time_measures: axis_info.then_some(&self.visibility.time_measures),
+                preserve_row_order: true,
+                ..options
+            },
+        )?;
+        link.verify_directory().map_err(runtime_error)?;
+        Ok(reply)
+    }
+
+    fn iteration_baselines(&self, main: &Table, increment: i64) -> PyResult<Vec<(i32, i32)>> {
+        let selected = self.selected_rows.as_deref();
+        let count = selected.map_or_else(|| main.row_count(), <[usize]>::len);
+        let sampled = if increment > 1 && (increment as u32 as usize) <= count {
+            let mut rows = sampled_rows(count, count, increment)?;
+            if let Some(selected) = selected {
+                for row in &mut rows {
+                    *row = selected[*row];
+                }
+            }
+            Some(rows)
+        } else {
+            None
+        };
+        tool_visibility::tool_baseline_pairs(main, sampled.as_deref().or(selected))
+            .map_err(runtime_error)
+    }
+
     fn select_visibility_polarization(&mut self, wanted: &[String]) -> PyResult<bool> {
         let link = self.metadata_link();
         if link.row_count().map_err(runtime_error)? == 0 {
@@ -324,6 +448,9 @@ impl AttachedMs {
         {
             return Ok(CasaValue::empty_record());
         }
+        if self.visibility.iteration.is_some() {
+            return self.getdata_iteration(&link, items, increment, options);
+        }
         let initialized = self.visibility.initialized;
         let polarization = self.visibility.polarization.clone();
         let options = tool_visibility::VisibilityReadOptions {
@@ -397,7 +524,10 @@ fn requested_items(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
     requested_strings(value, "items")
 }
 
-fn requested_strings(value: Option<&Bound<'_, PyAny>>, argument: &str) -> PyResult<Vec<String>> {
+pub(super) fn requested_strings(
+    value: Option<&Bound<'_, PyAny>>,
+    argument: &str,
+) -> PyResult<Vec<String>> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };

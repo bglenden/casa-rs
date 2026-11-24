@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1030 (`stubs.rs`).
 
 mod attachment_info;
+mod iteration;
 pub(super) mod metadata_link;
 mod owned_record;
 mod selection_indices;

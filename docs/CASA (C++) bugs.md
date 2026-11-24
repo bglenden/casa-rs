@@ -11070,6 +11070,10 @@ array slice. casa-rs preserves the `-1` baseline number and puts empty
 names and a zero length at each gap. The other axis coordinates remain
 available (#1030).
 
+The same invalid access occurs in a row-blocked iterator when
+`axis_info` is requested with gaps. The baseline numbers and numeric
+visibility record remain readable on pinned CASA when `axis_info` is omitted.
+
 ## MS baseline-axis singleton integrations can return invalid coordinates or hang
 
 CASA 6.7.6.14 removes the time dimension of visibility arrays when exactly
@@ -11194,3 +11198,47 @@ to `['I', 'V']` can use the first description's order for a row in the
 second description. For a second-description row with real samples
 `[9, 10]`, CASA read RR as 9 and Stokes V as −0.5. casa-rs uses each row's
 recorded correlation order, giving RR 10 and V +0.5 (#1030).
+
+## MS iteration can reuse stale row blocking after a cursor is replaced
+
+On an MS with ten rows per integration, call `iterinit(maxrows=7)`
+and position the cursor. A subsequent `iterinit()` should restore ordinary
+chunk traversal. CASA 6.7.6.14 leaves the previous maxrows flag set and
+reads only the first integration of the new outer chunk. Ending the blocked
+iterator and then requesting a normal read with selected channels or
+correlations can also raise “Attempt to advance subchunk past end of
+chunk.” casa-rs keeps row blocking with the cursor that requested it.
+Reinitialization and ordinary reads use the requested layout (#1030).
+
+## MS iterator argument errors can replace an active cursor
+
+After starting a blocked cursor with `iterinit(maxrows=7)` and
+`iterorigin()`, pass an invalid interval such as `None` or the string
+`"15"`, or pass `maxrows=None`. CASA 6.7.6.14 reports a Python
+`SystemError` but replaces the active cursor before reporting it.
+The next `getdata('time')` raises “VisBuffer not positioned to a
+subchunk.” casa-rs retains the positioned cursor when Python argument
+conversion fails and returns the same exception class (#1030).
+
+## MS row-blocked baseline reads can lose an integration or average across baselines
+
+With ten baselines per integration, call `iterinit(maxrows=12)`,
+`iterorigin()`, and `getdata(['data', 'time'], ifraxis=True)`. The first
+block contains ten rows from the first integration and two from the second.
+CASA 6.7.6.14 replaces the first two baseline samples with the later values
+and reports only the first time. casa-rs returns both times on the integration
+axis and retains all twelve samples. With `maxrows=3` and `average=True`,
+CASA reduces the baseline axis and returns one value per correlation and
+channel. casa-rs averages across time for each baseline and retains the
+baseline axis, including flags for absent samples (#1030).
+
+## MS iterator frequency metadata can refer to a different data description
+
+On an MS with four channels in the first data description and three in the
+second, start ordinary iteration over all rows before requesting any
+visibility record. The first read initializes the ordinary attachment view
+to the first description, while the iterator still traverses both. CASA
+6.7.6.14 reads three-channel data in the second chunk but reports the first
+description's four-channel frequencies. casa-rs reports the frequencies of
+the iterator's data description while keeping the ordinary attachment
+selection separate (#1030).

@@ -151,6 +151,11 @@ pub struct VisibilityReadOptions<'a> {
     /// Place rows on sorted baseline and integration axes with this many gaps
     /// between first-antenna groups. A negative gap is treated as zero.
     pub baseline_gap: Option<i32>,
+    /// Use these antenna pairs for the baseline axis. An iterator reads only
+    /// the current chunk while retaining the attachment's baseline coverage.
+    pub baseline_pairs: Option<&'a [(i32, i32)]>,
+    /// Keep the row order supplied by a positioned visibility iterator.
+    pub preserve_row_order: bool,
     /// Channel selection applied on each logical row before visibility products.
     pub channels: Option<VisibilityChannels>,
     /// Correlation selection or Stokes projection on the active row view.
@@ -180,11 +185,16 @@ pub fn read_tool_visibility(
     let VisibilityReadOptions {
         average,
         baseline_gap,
+        baseline_pairs,
+        preserve_row_order,
         channels,
         polarization,
         time_measures,
     } = options;
-    let ordered_rows = if (channels.is_some() || polarization.is_some()) && baseline_gap.is_none() {
+    let ordered_rows = if !preserve_row_order
+        && (channels.is_some() || polarization.is_some())
+        && baseline_gap.is_none()
+    {
         rows_by_time(main, rows)?
     } else {
         Cow::Borrowed(rows)
@@ -208,7 +218,7 @@ pub fn read_tool_visibility(
         options,
     )?;
     let grid = baseline_gap
-        .map(|gap| BaselineGrid::new(&read.scalar_columns, gap))
+        .map(|gap| BaselineGrid::new(&read.scalar_columns, baseline_pairs, gap))
         .transpose()?;
     let mut fields = BTreeMap::new();
     if names.contains("axis_info") {
@@ -258,6 +268,32 @@ pub fn read_tool_visibility(
             .map(|(name, value)| RecordField { name, value })
             .collect(),
     ))
+}
+
+/// Return the sorted distinct baselines of the given MAIN row selection.
+/// Antenna pairs retain the order of the recorded baseline.
+///
+/// # Errors
+/// The ANTENNA1 and ANTENNA2 columns must be readable integer columns.
+pub fn tool_baseline_pairs(main: &Table, rows: Option<&[usize]>) -> MsResult<Vec<(i32, i32)>> {
+    let names = ["ANTENNA1", "ANTENNA2"];
+    let mut columns = match rows {
+        Some(rows) => main.required_scalar_columns_owned_for_rows(&names, rows)?,
+        None => main.required_scalar_columns_owned(&names)?,
+    };
+    let (
+        Some(RequiredScalarColumnValues::Int32(first)),
+        Some(RequiredScalarColumnValues::Int32(second)),
+    ) = (columns.remove(names[0]), columns.remove(names[1]))
+    else {
+        return Err(input("invalid antenna ID column type"));
+    };
+    Ok(first
+        .into_iter()
+        .zip(second)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
 }
 
 fn rows_by_time<'a>(main: &Table, rows: &'a [usize]) -> MsResult<Cow<'a, [usize]>> {

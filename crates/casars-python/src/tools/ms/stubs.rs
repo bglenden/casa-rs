@@ -204,26 +204,8 @@ impl PyMsTool {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn iterend(&self) -> PyResult<Py<PyAny>> {
-        stub("iterend")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
     fn iterendold(&self) -> PyResult<Py<PyAny>> {
         stub("iterendold")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columns = None, interval = None, maxrows = None, adddefaultsortcolumns = None), text_signature = "($self, columns=[], interval=0.0, maxrows=0, adddefaultsortcolumns=True)")]
-    fn iterinit(
-        &self,
-        columns: Option<&Bound<'_, PyAny>>,
-        interval: Option<&Bound<'_, PyAny>>,
-        maxrows: Option<&Bound<'_, PyAny>>,
-        adddefaultsortcolumns: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("iterinit")
     }
 
     /// Not yet implemented in casa-rs.
@@ -240,20 +222,8 @@ impl PyMsTool {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (), text_signature = "($self)")]
-    fn iternext(&self) -> PyResult<Py<PyAny>> {
-        stub("iternext")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
     fn iternextold(&self) -> PyResult<Py<PyAny>> {
         stub("iternextold")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn iterorigin(&self) -> PyResult<Py<PyAny>> {
-        stub("iterorigin")
     }
 
     /// Not yet implemented in casa-rs.
