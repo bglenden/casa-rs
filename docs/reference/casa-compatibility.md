@@ -36,6 +36,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | gencal | gencal | yes | 14 | 14 | 0 | 0 | 4 | 0 |
 | getantposalma | getantposalma | yes | 10 | 10 | 0 | 0 | 0 | 0 |
 | getcalmodvla | getcalmodvla | yes | 8 | 8 | 0 | 0 | 0 | 0 |
+| getephemtable | getephemtable | yes | 7 | 7 | 0 | 0 | 0 | 0 |
 | getjyperkalma | getjyperkalma | yes | 10 | 10 | 0 | 0 | 3 | 0 |
 | imhead | imhead | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | immath | immath | yes | 15 | 15 | 0 | 0 | 1 | 0 |
@@ -1260,6 +1261,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 8, in CASA's order: yes
+- Defaults that differ: none
+
+### getephemtable
+
+- CASA source: `casatasks/getephemtable.py`, 7 parameters
+- Implementation: `casatasks/private/task_getephemtable.py`, `getephemtable` (line 8): 0 return statements, 13 raise statements
+- Called with its defaults in an empty directory, CASA raises `ValueError`: objectname must be specified
+- CASA's signature: yes
+- CASA parameters casa-rs lacks: none
+- casa-rs parameters CASA lacks: none
+- Shared parameters: 7, in CASA's order: yes
 - Defaults that differ: none
 
 ### getjyperkalma

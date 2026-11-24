@@ -27,6 +27,7 @@ pub(crate) struct CalibrationOutput {
     pub(crate) staging: PathBuf,
     mode: CalibrationOutputMode,
     table_type: Option<&'static str>,
+    table_subtype: Option<&'static str>,
     _reservation: Reservation,
     simulated_marker: bool,
 }
@@ -46,7 +47,13 @@ impl CalibrationOutput {
         path: &Path,
         mode: CalibrationOutputMode,
     ) -> Result<Self, CalibrationTableWriteError> {
-        Self::prepare_type(path, mode, Some(crate::constants::TABLE_INFO_TYPE), false)
+        Self::prepare_type(
+            path,
+            mode,
+            Some(crate::constants::TABLE_INFO_TYPE),
+            None,
+            false,
+        )
     }
 
     /// CASA single-dish solves also allow explicit replacement of a separate MS.
@@ -72,6 +79,7 @@ impl CalibrationOutput {
             path,
             CalibrationOutputMode::Replace,
             Some(crate::constants::TABLE_INFO_TYPE),
+            None,
             true,
         )
     }
@@ -88,13 +96,14 @@ impl CalibrationOutput {
                 CalibrationOutputMode::Create
             },
             Some("Measurement Set"),
+            None,
             false,
         )
     }
 
     /// Detached imports replace any readable casacore destination table.
     pub(crate) fn prepare_import(path: &Path) -> Result<Self, CalibrationTableWriteError> {
-        Self::prepare_type(path, CalibrationOutputMode::Replace, None, false)
+        Self::prepare_type(path, CalibrationOutputMode::Replace, None, None, false)
     }
 
     pub(crate) fn prepare_baseline_table(
@@ -106,13 +115,26 @@ impl CalibrationOutput {
         } else {
             CalibrationOutputMode::Create
         };
-        Self::prepare_type(path, mode, Some("ApplyTable"), false)
+        Self::prepare_type(path, mode, Some("ApplyTable"), None, false)
+    }
+
+    pub(crate) fn prepare_ephemeris_table(
+        path: &Path,
+        overwrite: bool,
+    ) -> Result<Self, CalibrationTableWriteError> {
+        let mode = if overwrite {
+            CalibrationOutputMode::Replace
+        } else {
+            CalibrationOutputMode::Create
+        };
+        Self::prepare_type(path, mode, Some("IERS"), Some("Comet"), false)
     }
 
     fn prepare_type(
         path: &Path,
         mode: CalibrationOutputMode,
         table_type: Option<&'static str>,
+        table_subtype: Option<&'static str>,
         simulated_marker: bool,
     ) -> Result<Self, CalibrationTableWriteError> {
         let fail = |reason| CalibrationTableWriteError::Prepare {
@@ -157,7 +179,7 @@ impl CalibrationOutput {
                     "output already exists; use append or replacement explicitly".to_string(),
                 ));
             }
-            validate_product(path, table_type, simulated_marker)?;
+            validate_product(path, table_type, table_subtype, simulated_marker)?;
         }
         let staging = sibling(path, "casa-rs-incomplete")?;
         fs::create_dir(&staging).map_err(|e| fail(format!("cannot reserve staging path {} (an interrupted or concurrent write may exist): {e}", staging.display())))?;
@@ -166,6 +188,7 @@ impl CalibrationOutput {
             staging,
             mode,
             table_type,
+            table_subtype,
             _reservation: reservation,
             simulated_marker,
         })
@@ -185,7 +208,12 @@ impl CalibrationOutput {
                 "destination appeared while the table was being built".to_string(),
             ));
         }
-        validate_product(&self.destination, self.table_type, self.simulated_marker)?;
+        validate_product(
+            &self.destination,
+            self.table_type,
+            self.table_subtype,
+            self.simulated_marker,
+        )?;
         let replaced = sibling(&self.destination, "casa-rs-replaced")?;
         if replaced.exists() {
             return Err(fail(format!(
@@ -224,19 +252,21 @@ pub(crate) fn validate_destination(
     path: &Path,
     table_type: &str,
 ) -> Result<(), CalibrationTableWriteError> {
-    validate_product(path, Some(table_type), false)
+    validate_product(path, Some(table_type), None, false)
 }
 
 fn validate_product(
     path: &Path,
     table_type: Option<&str>,
+    table_subtype: Option<&str>,
     simulated_marker: bool,
 ) -> Result<(), CalibrationTableWriteError> {
     let table = casa_tables::Table::open(casa_tables::TableOptions::new(path));
-    if table
-        .as_ref()
-        .is_ok_and(|t| table_type.is_none_or(|kind| t.info().table_type == kind))
-    {
+    if table.as_ref().is_ok_and(|table| {
+        let info = table.info();
+        table_type.is_none_or(|kind| info.table_type == kind)
+            && table_subtype.is_none_or(|subtype| info.sub_type == subtype)
+    }) {
         return Ok(());
     }
     if simulated_marker && table.is_err() && path.is_dir() && path.join("table.dat").is_file() {
@@ -248,7 +278,11 @@ fn validate_product(
             "exists and is not a table; prior product is unchanged".to_string()
         } else {
             let table_type = table_type.unwrap_or("readable casacore");
-            format!("exists and is not a {table_type} table; prior product is unchanged")
+            let kind = table_subtype.map_or_else(
+                || table_type.to_owned(),
+                |subtype| format!("{table_type} {subtype}"),
+            );
+            format!("exists and is not a {kind} table; prior product is unchanged")
         },
     })
 }

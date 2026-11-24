@@ -44777,6 +44777,334 @@
     },
     {
       "kind": "task",
+      "id": "getephemtable",
+      "contract_version": 1,
+      "display_name": "Get Ephemeris Table",
+      "category": "Calibration",
+      "summary": "Retrieve a solar-system ephemeris from JPL Horizons.",
+      "provider_family": "calibration",
+      "casa_task": "getephemtable",
+      "execution": {
+        "invocation_name": "calibrate",
+        "fixed_args": [
+          "getephemtable"
+        ],
+        "products": {
+          "kind": "declared",
+          "products": [
+            {
+              "id": "outfile",
+              "role": "primary",
+              "resource_kind": "casa_table",
+              "source": {
+                "kind": "parameter",
+                "parameter": "outfile"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            },
+            {
+              "id": "rawdatafile",
+              "role": "auxiliary",
+              "resource_kind": "file",
+              "source": {
+                "kind": "parameter",
+                "parameter": "rawdatafile"
+              },
+              "cardinality": "one",
+              "optional": true,
+              "probe_supported": false
+            }
+          ]
+        }
+      },
+      "bindings": [
+        {
+          "name": "objectname",
+          "concept": {
+            "id": "ephemeris.object_name",
+            "semantic_revision": 1
+          },
+          "order": 0,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--objectname"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "objectname"
+            },
+            "python": {
+              "name": "objectname"
+            },
+            "presentation": {
+              "label": "Object",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "asis",
+          "concept": {
+            "id": "ephemeris.as_is",
+            "semantic_revision": 1
+          },
+          "order": 1,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--asis"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "asis"
+            },
+            "python": {
+              "name": "asis"
+            },
+            "presentation": {
+              "label": "Use Name As Given",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "timerange",
+          "concept": {
+            "id": "solar_system.ephemeris.time_range",
+            "semantic_revision": 1
+          },
+          "order": 2,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--timerange"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "timerange"
+            },
+            "python": {
+              "name": "timerange"
+            },
+            "presentation": {
+              "label": "Time Range",
+              "group": "Input"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#2159",
+            "reason": "Horizons start and stop times use calendar, JD or MJD syntax, distinct from MeasurementSet row selection."
+          }
+        },
+        {
+          "name": "interval",
+          "concept": {
+            "id": "ephemeris.interval",
+            "semantic_revision": 1
+          },
+          "order": 3,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "5m"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--interval"
+              ],
+              "metavar": "TEXT"
+            },
+            "provider": {
+              "field": "interval"
+            },
+            "python": {
+              "name": "interval"
+            },
+            "presentation": {
+              "label": "Sampling Interval",
+              "group": "Input"
+            }
+          }
+        },
+        {
+          "name": "outfile",
+          "concept": {
+            "id": "solar_system.ephemeris.output_table",
+            "semantic_revision": 1
+          },
+          "order": 4,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--outfile"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "outfile"
+            },
+            "python": {
+              "name": "outfile"
+            },
+            "presentation": {
+              "label": "Output Ephemeris Table",
+              "group": "Output"
+            }
+          },
+          "reviewed_homonym": {
+            "review_id": "#2159",
+            "reason": "The product is a MeasComet ephemeris table."
+          }
+        },
+        {
+          "name": "rawdatafile",
+          "concept": {
+            "id": "ephemeris.raw_output",
+            "semantic_revision": 1
+          },
+          "order": 5,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--rawdatafile"
+              ],
+              "metavar": "PATH"
+            },
+            "provider": {
+              "field": "rawdatafile"
+            },
+            "python": {
+              "name": "rawdatafile"
+            },
+            "presentation": {
+              "label": "Raw Horizons Output",
+              "group": "Output"
+            }
+          }
+        },
+        {
+          "name": "overwrite",
+          "concept": {
+            "id": "output.overwrite",
+            "semantic_revision": 1
+          },
+          "order": 6,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--overwrite"
+              ],
+              "metavar": "BOOL"
+            },
+            "provider": {
+              "field": "overwrite"
+            },
+            "python": {
+              "name": "overwrite"
+            },
+            "presentation": {
+              "label": "Overwrite",
+              "group": "Output"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "task",
       "id": "getcalmodvla",
       "contract_version": 1,
       "display_name": "Get VLA Calibrator Model",

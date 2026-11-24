@@ -21,6 +21,7 @@
     "gencal",
     "getantposalma",
     "getcalmodvla",
+    "getephemtable",
     "getjyperkalma",
     "imhead",
     "immath",

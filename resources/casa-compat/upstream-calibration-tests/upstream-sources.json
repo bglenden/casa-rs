@@ -56,6 +56,11 @@
       "sha256": "2d5df1c9dbed40cc52825b8f7aac33ddeff2e0eddacfe0decebff2bdbb2eebca",
       "size": 9068
     },
+    "test_task_getephemtable.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_getephemtable.py",
+      "sha256": "40160b052b244f3c4b26f99356ba96c71a16556b4e09b184248df654ceb616a2",
+      "size": 14797
+    },
     "test_task_initweights.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_initweights.py",
       "sha256": "5d5177a986f96c8711233d6e447b53c2731a98d5e81fe574b76e653ba586fdf0",

@@ -2,6 +2,122 @@
   "schema_version": 1,
   "concepts": [
     {
+      "id": "ephemeris.object_name",
+      "semantic_revision": 1,
+      "casa_name": "objectname",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Name or Horizons designation of the target.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ephemeris.as_is",
+      "semantic_revision": 1,
+      "casa_name": "asis",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Pass the supplied designation directly to Horizons.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "solar_system.ephemeris.time_range",
+      "semantic_revision": 1,
+      "casa_name": "timerange",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Start and stop times separated by a tilde, in calendar, JD or MJD form.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ephemeris.interval",
+      "semantic_revision": 1,
+      "casa_name": "interval",
+      "value_domain": {
+        "kind": "string"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Integer sample count or integer duration with a Horizons unit.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "solar_system.ephemeris.output_table",
+      "semantic_revision": 1,
+      "casa_name": "outfile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "table"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Write the MeasComet ephemeris table at this path.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "ephemeris.raw_output",
+      "semantic_revision": 1,
+      "casa_name": "rawdatafile",
+      "value_domain": {
+        "kind": "path",
+        "resource_kind": "file"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Optionally write the original Horizons response text.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "vla_calibrator.outfile",
       "semantic_revision": 1,
       "casa_name": "outfile",
