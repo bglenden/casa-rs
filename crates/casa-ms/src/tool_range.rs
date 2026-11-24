@@ -110,7 +110,14 @@ impl ToolRangeRequest {
             let description = linked_subtable(SubtableId::DataDescription)?;
             let windows = linked_subtable(SubtableId::SpectralWindow)?;
             let polarization = linked_subtable(SubtableId::Polarization)?;
-            let axes = RangeSpectralAxes::new(description, windows, polarization, descriptions)?;
+            let axes = RangeSpectralAxes::new(
+                description,
+                windows,
+                polarization,
+                descriptions,
+                self.wants_samples || self.names.contains("num_chan"),
+                self.wants_samples || self.names.contains("num_corr"),
+            )?;
             axes.selected_items(&self.names, &mut result)?;
             if axes.has_common_shape() && self.wants_samples {
                 result.extend(RangeSamples::new(main, &self.names, self.use_flags).read(
@@ -380,7 +387,9 @@ impl<'a> RangeSpectralAxes<'a> {
         descriptions_tables: &[Table],
         window_tables: &'a [Table],
         polarization_tables: &'a [Table],
-        descriptions: impl IntoIterator<Item = i32>,
+        descriptions: BTreeSet<i32>,
+        want_channel_counts: bool,
+        want_correlation_counts: bool,
     ) -> MsResult<Self> {
         let mut axes = Self {
             window_tables,
@@ -390,6 +399,9 @@ impl<'a> RangeSpectralAxes<'a> {
             channel_counts: Vec::new(),
             correlation_counts: Vec::new(),
         };
+        // With one description there is no second shape to compare. Read
+        // the counts only when requested or needed to size visibility blocks.
+        let compare_shapes = descriptions.len() > 1;
         for id in descriptions {
             let row = description_index(id, "DATA_DESC_ID")?;
             let (table, row) =
@@ -403,8 +415,12 @@ impl<'a> RangeSpectralAxes<'a> {
             let (pol_table, pol_row) = axes.polarization(polarization)?;
             axes.windows.push(window);
             axes.polarizations.push(polarization);
-            axes.channel_counts.push(window_table.num_chan(window_row)?);
-            axes.correlation_counts.push(pol_table.num_corr(pol_row)?);
+            if compare_shapes || want_channel_counts {
+                axes.channel_counts.push(window_table.num_chan(window_row)?);
+            }
+            if compare_shapes || want_correlation_counts {
+                axes.correlation_counts.push(pol_table.num_corr(pol_row)?);
+            }
         }
         Ok(axes)
     }

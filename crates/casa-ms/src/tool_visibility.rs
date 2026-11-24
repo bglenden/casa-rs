@@ -508,6 +508,14 @@ impl<'a> VisibilityRead<'a> {
     }
 
     fn raw_vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
+        if let Some(reference) = &self.reference {
+            return read_vector_cells(
+                reference.read.parent(),
+                reference.read.parent_column(name)?,
+                &reference.rows,
+                true,
+            );
+        }
         if self.members.is_empty() {
             return read_vector_cells(self.main, name, self.rows, self.plain);
         }

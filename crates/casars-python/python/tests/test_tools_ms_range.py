@@ -79,6 +79,30 @@ def test_ms_range_reads_live_reference_row_numbers(baseline_fixture):
         assert reader.done()
 
 
+def test_ms_reference_weight_and_sigma_keep_projected_rows(baseline_fixture, native_dataset):
+    casa, view, raw = baseline_fixture
+    weights = np.arange(1, raw["weight"].size + 1, dtype=np.float32)
+    weights = weights.reshape(raw["weight"].shape)
+    values = {"weight": weights, "sigma": 2 * weights + 1}
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    for name, vector in values.items():
+        assert table.putcol(name.upper(), vector)
+    assert table.done()
+    rows = [29, 3, 0, 11, 3, 25]
+    path = view("vector-order.ms", rows)
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        reads = reader.getdata(list(values))
+        ranges = reader.range(list(values))
+        for name, vector in values.items():
+            expected = vector[:, rows].astype(np.float64)
+            np.testing.assert_array_equal(reads[name], expected, strict=True)
+            np.testing.assert_array_equal(ranges[name], extrema(expected), strict=True)
+        assert reader.done()
+
+
 def test_ms_range_skips_an_entire_flagged_block_before_valid_extrema(baseline_fixture, native_dataset):
     casa, view, raw = baseline_fixture
     table = casa.table()
