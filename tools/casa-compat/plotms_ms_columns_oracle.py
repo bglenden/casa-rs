@@ -1745,19 +1745,34 @@ def compare_virtual_fourier_model(root, native):
         uvw = table.getcol("UVW")
         uvw[:, slots % 2 == 1] *= 3
         table.putcol("UVW", uvw)
+        weights = table.getcol("WEIGHT")
+        weights[:] = np.where(slots % 2 == 0, 1, 9)
+        table.putcol("WEIGHT", weights)
     samples = controls | dict(vis=str(time_source), spw="0:1")
     raw = work / "fourier-time-input.casa.txt"
     assert reference(**samples, plotfile=str(raw), expformat="txt") is None
-    integrations = np.array([point[:2] for point in rows(raw)], dtype=float).reshape(3, 2, 2)
+    raw_points = rows(raw)
+    integrations = np.array([point[:2] for point in raw_points], dtype=float).reshape(3, 2, 2)
     assert np.max(np.abs(integrations[:, 0] - integrations[:, 1])) > 1e-4
-    average = samples | dict(avgtime="20")
-    expected, actual = (work / f"fourier-time.{engine}.txt" for engine in ("casa", "native"))
-    assert reference(**average, plotfile=str(expected), expformat="txt") is None
-    selected = np.array([point[:2] for point in rows(expected)], dtype=float)
-    np.testing.assert_allclose(selected, integrations.mean(axis=1), rtol=1.2e-5)
-    assert native(**average, plotfile=str(actual), expformat="txt") is None
-    assert compare_text(actual, expected) == 3
-    print("fourier-time: 3 matching complex averages from distinct virtual model samples", flush=True)
+    means = integrations.mean(axis=1)
+    times = np.array([float(point[9]) for point in raw_points]).reshape(3, 2).mean(axis=1)
+    for name, axes, coordinates in (
+        ("fourier-time", {}, means),
+        ("fourier-time-model-x", dict(yaxis="channel", ydatacolumn=""),
+         np.column_stack((means[:, 0], np.ones(3)))),
+        ("fourier-time-model-y", dict(xaxis="time", xdatacolumn="", yaxis="real"),
+         np.column_stack((times, means[:, 0]))),
+    ):
+        average = samples | axes | dict(avgtime="20")
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**average, plotfile=str(expected), expformat="txt") is None
+        selected = np.array([point[:2] for point in rows(expected)], dtype=float)
+        np.testing.assert_allclose(selected, coordinates, rtol=1.2e-5)
+        if average["xaxis"] == "time":
+            np.testing.assert_allclose(selected[:, 0], times, rtol=0, atol=0.00051)
+        assert native(**average, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 3
+        print(f"{name}: 3 matching averages from distinct virtual model samples", flush=True)
 
     for source in (vis, time_source):
         with opened(source) as table:

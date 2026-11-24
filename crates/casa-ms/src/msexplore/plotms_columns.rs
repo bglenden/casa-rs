@@ -60,11 +60,31 @@ pub(super) fn uses_ordinary_time_visibility(spec: &MsPlotSpec) -> bool {
     uses_ordinary_time_averaging(spec) && supports_reduced_visibility_axes(spec)
 }
 
-pub(super) fn uses_direct_vector_time_projection(spec: &MsPlotSpec) -> bool {
-    uses_ordinary_time_visibility(spec)
-        && !spec.averaging.scalar
+pub(super) fn supports_ordinary_time_axes(spec: &MsPlotSpec) -> bool {
+    spec.iteration.iteraxis.is_none()
+        && spec.transforms.freqframe.is_none()
+        && std::iter::once(spec.x_axis)
+            .chain(spec.y_axes.iter().copied())
+            .all(|axis| {
+                axis.is_visibility_math()
+                    || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
+            })
+}
+
+pub(super) fn uses_direct_vector_time_projection(
+    spec: &MsPlotSpec,
+    x_column: Option<MsDataColumn>,
+) -> bool {
+    let model_only = spec.secondary_y_axis().is_none()
+        && spec.data_column == MsDataColumn::Model
+        && x_column.is_none_or(|column| column == MsDataColumn::Model)
+        && supports_ordinary_time_axes(spec);
+    let shared_or_channel = supports_reduced_visibility_axes(spec)
         && (spec.secondary_y_axis().is_some()
-            || spec.averaging.avgchannel.is_some_and(|width| width > 1))
+            || spec.averaging.avgchannel.is_some_and(|width| width > 1));
+    uses_ordinary_time_averaging(spec)
+        && !spec.averaging.scalar
+        && (model_only || shared_or_channel)
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
@@ -84,11 +104,17 @@ pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
 }
 
 pub(super) fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
+    let model_x_with_metadata_y = uses_ordinary_time_averaging(spec)
+        && spec.secondary_y_axis().is_none()
+        && spec.data_column == MsDataColumn::Model
+        && spec.x_axis.is_visibility_math()
+        && !spec.y_axis().is_visibility_math()
+        && supports_ordinary_time_axes(spec);
     spec.averaging.scalar
         && (spec.averaging.avgtime.is_some() || spec.averaging.avgbaseline)
         && !spec.averaging.avgantenna
         && !spec.averaging.avgspw
-        && supports_reduced_visibility_axes(spec)
+        && (supports_reduced_visibility_axes(spec) || model_x_with_metadata_y)
 }
 
 pub(super) fn uses_spectral_window_average(spec: &MsPlotSpec) -> bool {

@@ -43,6 +43,9 @@ def compare(root, native):
         ("virtual-time-model-x", dict(vis=str(mixed), xaxis="real", xdatacolumn="model",
                                       yaxis="channel", ydatacolumn="", yaxislocation="left"),
          (7.25,) * 3, [(1,) * 3]),
+        ("virtual-scalar-model-x", dict(vis=str(mixed), xaxis="real", xdatacolumn="model",
+                                       yaxis="channel", ydatacolumn="", yaxislocation="left", scalar=True),
+         (7.25,) * 2, [(1,) * 2]),
     )
     for name, overrides, x_values, ordinates in cases:
         controls = base | overrides | dict(expformat="txt")

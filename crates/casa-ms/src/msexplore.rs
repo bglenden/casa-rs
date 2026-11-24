@@ -3006,8 +3006,10 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
-    let direct_time_projection =
-        !extended_derived && plot.is_some_and(plotms_columns::uses_direct_vector_time_projection);
+    let direct_time_projection = !extended_derived
+        && plot.is_some_and(|plot| {
+            plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
+        });
     if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_projection {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
@@ -5472,7 +5474,10 @@ fn build_generic_visibility_scatter_with_averaging(
     let direct_time_projection = uncalibrated
         && time_bins.is_some()
         && !extended_derived
-        && plotms_columns::uses_direct_vector_time_projection(spec);
+        && plotms_columns::uses_direct_vector_time_projection(
+            spec,
+            calibration.and_then(|input| input.x_data_column),
+        );
     let average_operands = extended_derived
         || scalar_channels
         || scalar_spw_time

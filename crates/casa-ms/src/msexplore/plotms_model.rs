@@ -8,8 +8,10 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 
 use super::{
-    MsAxis, MsDataColumn, MsPlotSpec, PlotMsColumnSelection, cli::PlotMsModelLoader,
-    plotms_columns::uses_ordinary_time_averaging, selected_i32_values, uses_extended_averaging,
+    MsAxis, MsDataColumn, MsPlotSpec, PlotMsColumnSelection,
+    cli::PlotMsModelLoader,
+    plotms_columns::{supports_ordinary_time_axes, uses_ordinary_time_averaging},
+    selected_i32_values, uses_extended_averaging,
 };
 use crate::selection::ResolvedMsSelectionRow;
 use crate::virtual_model::{VirtualModelEntry, selected_model_combinations, virtual_model};
@@ -60,13 +62,7 @@ pub(super) fn selected_model_cells(
     }
     let extended = uses_extended_averaging(plot);
     let averaging = extended || plot.averaging.avgchannel.is_some_and(|width| width > 1);
-    let ordinary_time = uses_ordinary_time_averaging(plot)
-        && plot.iteration.iteraxis.is_none()
-        && plot.transforms.freqframe.is_none()
-        && axes.into_iter().flatten().all(|axis| {
-            axis.is_visibility_math()
-                || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
-        });
+    let ordinary_time = uses_ordinary_time_averaging(plot) && supports_ordinary_time_axes(plot);
     let standard_columns = visibility_columns.all(|column| {
         matches!(
             column,
