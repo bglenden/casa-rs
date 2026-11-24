@@ -680,7 +680,15 @@ def compare_combined_scalar_stored_columns(root, native, fixtures, start):
                             ["Amp:corrected", "Real:model"])
     compare_empty_export(root, native, "all-channel-cube-flags",
                          base | dict(vis=str(fixtures / "flagged.ms"), xaxis="channel", xdatacolumn="", yaxis="amp"),
-                         ("Channel", "Amp"))
+                         ("Channel", "Amp:corrected"))
+
+    zero = root / "zero-weight-spectrum.ms"
+    copy_ms(fixtures / "spectra.ms", zero)
+    with opened(zero, True) as table:
+        table.putcol("WEIGHT_SPECTRUM", np.zeros_like(table.getcol("WEIGHT_SPECTRUM")))
+    for column, label in (("corrected", "Amp:corrected"), ("corrected-model_vector", "Amp:corrected-model (vector)")):
+        controls = base | dict(vis=str(zero), xaxis="channel", xdatacolumn="", yaxis="amp", ydatacolumn=column)
+        compare_empty_export(root, native, f"zero-weight-{column}", controls, ("Channel", label))
 
 
 def main():
