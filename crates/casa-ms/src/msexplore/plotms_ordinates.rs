@@ -286,23 +286,26 @@ fn channel_averaged_operands<const N: usize>(
         } else {
             sample_count as f32
         };
-        let sum = sums[operand];
-        let mut mean = if normalization > 0.0 {
-            sum / normalization
-        } else {
-            Complex32::new(0.0, 0.0)
-        };
-        // CASA divides a weighted complex sum by a complex normalization.
-        // A nonfinite component affects its finite partner even for a real weight.
-        if spectra[operand].is_some() && normalization > 0.0 && normalization.is_finite() {
-            if sum.re.is_finite() && !sum.im.is_finite() {
-                mean.re = f32::NAN;
-            } else if sum.im.is_finite() && !sum.re.is_finite() {
-                mean.im = f32::NAN;
-            }
-        }
-        Complex64::new(f64::from(mean.re), f64::from(mean.im))
+        channel_visibility_mean(sums[operand], normalization, spectra[operand].is_some())
     }))
+}
+
+fn channel_visibility_mean(sum: Complex32, normalization: f32, weighted: bool) -> Complex64 {
+    let mut mean = if normalization > 0.0 {
+        sum / normalization
+    } else {
+        Complex32::default()
+    };
+    // CASA divides a weighted complex sum by a complex normalization.
+    // A nonfinite component affects its finite partner even for a real weight.
+    if weighted && normalization > 0.0 && normalization.is_finite() {
+        if sum.re.is_finite() && !sum.im.is_finite() {
+            mean.re = f32::NAN;
+        } else if sum.im.is_finite() && !sum.re.is_finite() {
+            mean.im = f32::NAN;
+        }
+    }
+    Complex64::new(f64::from(mean.re), f64::from(mean.im))
 }
 
 fn vector_mean(values: &[Complex64], weights: &[f64]) -> Option<Complex64> {
@@ -331,6 +334,7 @@ enum VisibilitySamples {
     },
     ChannelMeans(Vec<ChannelVisibilityMean>),
     TimeProjection(TimeProjection),
+    TimeChannelProjections(Vec<Option<TimeProjection>>),
 }
 
 impl Default for VisibilitySamples {
@@ -348,7 +352,7 @@ struct ChannelVisibilityMean {
     samples: usize,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct TimeProjection {
     projection: Option<VisibilityColumnProjection>,
     weighted_sums: [Complex32; 2],
@@ -356,14 +360,58 @@ struct TimeProjection {
 }
 
 impl TimeProjection {
+    fn channel_sample(
+        grid: &ComplexGrid,
+        spectra: [Option<&FloatGrid>; 2],
+        corr: usize,
+        channel: usize,
+    ) -> Self {
+        let index = corr * grid.chan_count + channel;
+        let (projection, model_value) = grid
+            .model
+            .as_ref()
+            .map_or((None, Complex64::default()), |(projection, model)| {
+                (Some(*projection), model[index])
+            });
+        // DATA uses inverse variance. MODEL_DATA uses calibrated weights if the
+        // iterator reads CORRECTED_DATA, and observed weights otherwise.
+        let total_weights =
+            spectra.map(|spectrum| spectrum.map_or(1.0, |grid| grid.values[index] as f32));
+        let values = [grid.values[index], model_value];
+        let weighted_sums = std::array::from_fn(|operand| {
+            let value = values[operand];
+            Complex32::new(value.re as f32, value.im as f32) * total_weights[operand]
+        });
+        Self {
+            projection,
+            weighted_sums,
+            total_weights,
+        }
+    }
+
+    fn accumulate(&mut self, sample: Self) {
+        for (operand, value) in sample.weighted_sums.into_iter().enumerate() {
+            self.weighted_sums[operand] += value;
+            self.total_weights[operand] += sample.total_weights[operand];
+        }
+    }
+
+    fn time_mean(&self, operand: usize) -> Complex32 {
+        let sum = self.weighted_sums[operand];
+        let weight = self.total_weights[operand];
+        // AveragingTvi2 keeps the accumulated value for a nonpositive weight.
+        if weight > 0.0 { sum / weight } else { sum }
+    }
+
     fn project(&self, axis: MsAxis) -> Option<f64> {
-        let means = std::array::from_fn(|index| {
-            let sum = self.weighted_sums[index];
-            let weight = self.total_weights[index];
-            // AveragingTvi2 keeps the accumulated value for a nonpositive weight.
-            let mean = if weight > 0.0 { sum / weight } else { sum };
+        let means = std::array::from_fn(|operand| {
+            let mean = self.time_mean(operand);
             Complex64::new(f64::from(mean.re), f64::from(mean.im))
         });
+        self.project_operands(axis, means)
+    }
+
+    fn project_operands(&self, axis: MsAxis, means: [Complex64; 2]) -> Option<f64> {
         match self.projection {
             Some(projection) => projection.axis_value(axis, means, true),
             None => Some(VisibilityColumnProjection::vector_axis_value(
@@ -371,6 +419,26 @@ impl TimeProjection {
             )),
         }
     }
+}
+
+fn project_time_channel(channels: &[Option<TimeProjection>], axis: MsAxis) -> Option<f64> {
+    let mut usable = channels.iter().flatten();
+    let first = usable.next()?;
+    let mut sums = [Complex32::default(); 2];
+    let mut totals = [0.0_f32; 2];
+    // The channel transform receives normalized Float means and accumulated
+    // spectra from the time iterator, including the rounding at that boundary.
+    for channel in std::iter::once(first).chain(usable) {
+        for (operand, sum) in sums.iter_mut().enumerate() {
+            let weight = channel.total_weights[operand];
+            *sum += channel.time_mean(operand) * weight;
+            totals[operand] += weight;
+        }
+    }
+    let means = std::array::from_fn(|operand| {
+        channel_visibility_mean(sums[operand], totals[operand], true)
+    });
+    first.project_operands(axis, means)
 }
 
 impl AveragedVisibility {
@@ -387,7 +455,7 @@ impl AveragedVisibility {
         weights.push(weight);
     }
 
-    pub(super) fn add_vector_time_sample(
+    pub(super) fn add_vector_time_samples(
         &mut self,
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
@@ -395,39 +463,49 @@ impl AveragedVisibility {
         corr: usize,
         bin: &ChannelBin,
     ) -> bool {
-        debug_assert_eq!(bin.channels().count(), 1);
+        if bin.averaged {
+            return self.add_time_channel_samples(grid, flags, spectra, corr, bin);
+        }
         if flags[(corr, bin.start)] {
             return false;
         }
-        let index = corr * grid.chan_count + bin.start;
-        let (projection, model_value) = grid
-            .model
-            .as_ref()
-            .map_or((None, Complex64::default()), |(projection, model)| {
-                (Some(*projection), model[index])
-            });
-        let weights =
-            spectra.map(|spectrum| spectrum.map_or(1.0, |grid| grid.values[index] as f32));
-        let values = [grid.values[index], model_value];
-        // DATA uses inverse variance. MODEL_DATA uses calibrated weights if the
-        // iterator reads CORRECTED_DATA, and observed weights otherwise.
-        let weighted_values = std::array::from_fn(|operand| {
-            let value = values[operand];
-            Complex32::new(value.re as f32, value.im as f32) * weights[operand]
-        });
+        let sample = TimeProjection::channel_sample(grid, spectra, corr, bin.start);
         if let VisibilitySamples::TimeProjection(average) = &mut self.0 {
-            for (operand, value) in weighted_values.into_iter().enumerate() {
-                average.weighted_sums[operand] += value;
-                average.total_weights[operand] += weights[operand];
-            }
+            average.accumulate(sample);
         } else {
-            self.0 = VisibilitySamples::TimeProjection(TimeProjection {
-                projection,
-                weighted_sums: weighted_values,
-                total_weights: weights,
-            });
+            self.0 = VisibilitySamples::TimeProjection(sample);
         }
         true
+    }
+
+    fn add_time_channel_samples(
+        &mut self,
+        grid: &ComplexGrid,
+        flags: &ArrayView2<'_, bool>,
+        spectra: [Option<&FloatGrid>; 2],
+        corr: usize,
+        bin: &ChannelBin,
+    ) -> bool {
+        if !matches!(self.0, VisibilitySamples::TimeChannelProjections(_)) {
+            self.0 = VisibilitySamples::TimeChannelProjections(vec![None; bin.channels().count()]);
+        }
+        let VisibilitySamples::TimeChannelProjections(channels) = &mut self.0 else {
+            unreachable!("time and channel projections initialize one accumulator per channel");
+        };
+        let mut used = false;
+        for (channel, average) in bin.channels().zip(channels) {
+            if flags[(corr, channel)] {
+                continue;
+            }
+            let sample = TimeProjection::channel_sample(grid, spectra, corr, channel);
+            if let Some(average) = average {
+                average.accumulate(sample);
+            } else {
+                *average = Some(sample);
+            }
+            used = true;
+        }
+        used
     }
 
     /// The CASA scalar reducer stores amplitude and phase as separate components.
@@ -489,7 +567,9 @@ impl AveragedVisibility {
                 }
                 (usable > 0).then(|| sum / usable as f64)
             }
-            VisibilitySamples::TimeProjection(_) => unreachable!("time operands project together"),
+            VisibilitySamples::TimeProjection(_) | VisibilitySamples::TimeChannelProjections(_) => {
+                unreachable!("time operands project together")
+            }
         }
     }
 
@@ -527,6 +607,9 @@ impl AveragedVisibility {
                 compute_visibility_math(axis, &[mean], scalar)
             }
             VisibilitySamples::TimeProjection(average) => average.project(axis),
+            VisibilitySamples::TimeChannelProjections(channels) => {
+                project_time_channel(channels, axis)
+            }
         }
     }
 }

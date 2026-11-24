@@ -83,7 +83,13 @@ impl CliOptions {
                 )
         };
         let supported_abscissa = self.x_axis.is_some_and(|axis| {
-            if axis == MsAxis::Time {
+            if self.avgchannel.is_some_and(|width| width > 1) {
+                matches!(axis, MsAxis::Time | MsAxis::Channel)
+                    && matches!(
+                        y,
+                        MsDataColumn::CorrectedMinusModel | MsDataColumn::CorrectedDivModel
+                    )
+            } else if axis == MsAxis::Time {
                 y.is_derived()
             } else {
                 axis.is_visibility_math()
@@ -97,7 +103,6 @@ impl CliOptions {
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
             && self.avgtime.is_some()
-            && self.avgchannel.is_none_or(|width| width <= 1)
             && !self.scalar
             && !self.avgscan
             && !self.avgfield

@@ -295,6 +295,12 @@ def compare_combined_time_channel_derived(root, native):
         sigma = table.getcol("SIGMA_SPECTRUM")
         sigma[:, :2] = 0
         table.putcol("SIGMA_SPECTRUM", sigma)
+    zero_calibrated = root / "zero-calibrated.ms"
+    copy_ms(vis, zero_calibrated)
+    with opened(zero_calibrated, True) as table:
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        weights[:, :2] = 0
+        table.putcol("WEIGHT_SPECTRUM", weights)
     rounded = root / "rounded-time-then-channel.ms"
     copy_ms(vis, rounded)
     with opened(rounded, True) as table:
@@ -321,12 +327,16 @@ def compare_combined_time_channel_derived(root, native):
     channel = np.tile([0, 1], 3)
     times = np.repeat(start + 5 + 20 * np.arange(3), 2)
     residual = (corrected - model).real
+    ratio = (corrected / model).real
+    zero_calibrated_ratio = np.where(channel == 0, np.nan, ratio)
     base = request(vis) | dict(spw="0:0~3", xdatacolumn="", yaxis="real", avgtime="20",
                                avgchannel="2", title="Combined visibility averages")
     cases = (
         ("combined-channel-residual", vis, "channel", "corrected-model_vector", channel, residual, channel, times),
-        ("combined-time-ratio", vis, "time", "corrected/model_vector", times, (corrected / model).real, channel, times),
+        ("combined-time-ratio", vis, "time", "corrected/model_vector", times, ratio, channel, times),
         ("zero-primary", zero, "channel", "corrected-model_vector", channel[1::2], residual[1::2], channel[1::2], times[1::2]),
+        ("zero-calibrated", zero_calibrated, "channel", "corrected/model_vector",
+         channel, zero_calibrated_ratio, channel, times),
         ("time-before-channel", rounded, "channel", "corrected-model_vector", channel, np.tile([.5, 4], 3), channel, times),
     )
     for name, source, axis, column, x, y, channels, metadata_time in cases:
