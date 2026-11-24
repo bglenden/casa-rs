@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "be2e40e1c79fc2fb7673aa601f26cf41cf1bac55",
+  "source_revision": "be2e40e1c79fc2fb7673aa601f26cf41cf1bac55",
+  "baseline_revision": "b3994691c9e505f5aed74d614699ca4a76914417",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs ordinary MeasurementSet vector channel and time averaging with no clear output.",
+  "result": "passed",
+  "baseline_result": "CASA exports both empty ordinate sections; casa-rs refuses the zero-primary-weight case.",
+  "empty_text_exports": 6,
+  "empty_text_sections": 12,
+  "empty_figures": 3,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "empty_figure_rendered_coordinates": 0,
+  "populated_weighted_controls": 19,
+  "populated_control_coordinates": 76
+}

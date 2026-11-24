@@ -1173,23 +1173,47 @@ def compare_combined_averaged_columns(root, native):
         assert native(**controls, expformat="txt", plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching channel-and-time coordinates", flush=True)
-    from casars.tasks import TaskExecutionError
-
-    empty = base | dict(vis=str(work / "zero-primary-first-bin.ms"), expformat="txt")
-    expected, actual = (work / f"zero-primary-empty.{engine}.txt" for engine in ("casa", "native"))
-    assert reference(**empty, plotfile=str(expected)) is None
-    assert not rows(expected)
-    assert expected.read_text().count("# No data to export") == 2
-    try:
-        native(**empty, plotfile=str(actual))
-    except TaskExecutionError as error:
-        assert "empty MeasurementSet plots after channel and time averaging are pending #1032" in str(error), error
-    else:
-        raise AssertionError("Expected a pending diagnostic for the empty averaged plot")
-    assert not actual.exists()
     figure = base | dict(vis=str(work / "spectra.ms"))
     compare_ordinate_figure(work, "spectra", native, figure, "Real", ["Real:corrected", "Real:model"])
     compare_mixed_float_time_normalization(work, source, native, base)
+    flagged = work / "all-cube-flags.ms"
+    copy_ms(work / "spectra.ms", flagged)
+    with opened(flagged, True) as table:
+        table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
+        assert not table.getcol("FLAG_ROW").any()
+    for name, vis in (("zero-primary-empty", work / "zero-primary-first-bin.ms"), ("cube-masked-empty", flagged)):
+        compare_empty_combined_average(work, native, name, base | dict(vis=str(vis)))
+
+
+def compare_empty_combined_average(work, native, name, controls):
+    from casars import _plot_document
+
+    render = _plot_document.render_document
+
+    def record(*args, **kwargs):
+        figure, axis = render(*args, **kwargs)
+        assert axis.get_xlabel() == "Real"
+        assert [item.get_ylabel() for item in figure.axes] == ["Real:corrected", "Real:model"]
+        assert all(not (item.lines or item.collections) for item in figure.axes)
+        return figure, axis
+
+    for verbose in (True, False):
+        expected, actual = (work / f"{name}-{verbose}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), verbose=verbose, expformat="txt") is None
+        assert not rows(expected) and expected.read_text().count("# No data to export") == 2
+        assert native(**controls, plotfile=str(actual), verbose=verbose, expformat="txt") is None
+        assert actual.read_bytes() == expected.read_bytes()
+
+    figure = controls | dict(width=500, height=360, dpi=100, expformat="png")
+    expected, actual = (work / f"{name}.{engine}.png" for engine in ("casa", "native"))
+    assert reference(**figure, plotfile=str(expected)) is None
+    with patch.object(_plot_document, "render_document", side_effect=record) as renderer:
+        assert native(**figure, plotfile=str(actual)) is None
+    renderer.assert_called_once()
+    for path in (expected, actual):
+        with Image.open(path) as image:
+            assert image.size == (500, 360), (path, image.size)
+    print(f"{name}: two matching empty text exports and a 500 by 360 PNG", flush=True)
 
 
 def compare_mixed_float_time_normalization(work, source, native, base):
@@ -1284,6 +1308,15 @@ def compare_time_scan_field_columns(root, native):
         figure = base | color_controls | dict(coloraxis=axis)
         compare_ordinate_figure(work, f"two-{axis}-colors", native, figure, "Real",
                                 ["Real:corrected", "Real:model"], color_groups=groups)
+    flagged = work / "masked-cross-both.ms"
+    copy_ms(vis, flagged)
+    with opened(flagged, True) as table:
+        table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
+        assert not table.getcol("FLAG_ROW").any()
+    compare_empty_combined_average(
+        work, native, "cross-both-channel-empty",
+        base | dict(vis=str(flagged), avgscan=True, avgfield=True, avgchannel="2", spw="0:0~1"),
+    )
     from casars.tasks import TaskParameterError
 
     transformed = base | dict(vis=str(field), xaxis="frequency", xdatacolumn="",
