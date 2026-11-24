@@ -127,7 +127,8 @@ def compare(root, native):
     compare_flags_and_calibration(root, native, fixture_data[0])
     check_frame_refusal(root, native, fixture_data[0])
     feed_fixture = compare_feed_selection(root, native)
-    compare_row_axes(root, native, feed_fixture)
+    row_fixture = compare_row_axes(root, native, feed_fixture)
+    compare_metadata_pairs(root, native, row_fixture)
 
 
 def compare_flags_and_calibration(root, native, vis):
@@ -324,6 +325,7 @@ def compare_row_axes(root, native, source):
         print(f"{name}: {count} matching row axis coordinates", flush=True)
     compare_figure(work, native, base, work / "row.casa.txt", ("Selected visibility rows", "Row", "Real"))
     check_mixed_row_geometry(work, native, base)
+    return vis
 
 
 def check_mixed_row_geometry(work, native, base):
@@ -342,6 +344,46 @@ def check_mixed_row_geometry(work, native, base):
     else:
         raise AssertionError("Row and Elevation were exported with a shared geometry mask")
     assert not actual.exists()
+
+
+def compare_metadata_pairs(root, native, source):
+    work = root / "metadata-pairs"
+    work.mkdir()
+    vis = work / "metadata.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        selection = (table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+        selection &= np.isin(table.getcol("ANTENNA2"), [1, 2])
+        flagged_row, flagged_channel = np.flatnonzero(selection)[:2]
+        flags = table.getcol("FLAG")
+        flags[:, :, flagged_row] = True
+        flags[:, 2, flagged_channel] = True
+        table.putcol("FLAG", flags)
+    base = request(vis) | dict(xdatacolumn="", ydatacolumn="", antenna="A0&A1;A0&A2",
+                               spw="0:0~4^2", correlation="XX,YY", title="Selected metadata")
+    cases = (
+        ("channel", "row", 32, ("Channel", "Row")),
+        ("time", "row", 11, None),
+        ("channel", "observation", 26, None),
+        ("time", "observation", 9, ("Time (MJD seconds)", "Observation")),
+    )
+    for x, y, count, labels in cases:
+        controls = base | dict(xaxis=x, yaxis=y)
+        name = f"{x}-{y}"
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        points = rows(expected)
+        assert len(points) == count, (name, len(points), count)
+        if y == "row":
+            assert {point[1] for point in points} == {str(row) for row in range(1, 12)}
+        if name == "channel-row":
+            assert not any(point[2] == "2" and point[1] == "1" for point in points)
+            assert any((point[2], point[1], point[12]) == ("2", "3", "XX") for point in points)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching collapsed metadata coordinates", flush=True)
+        if labels:
+            compare_figure(work, native, controls, expected, ("Selected metadata", *labels))
 
 
 def main():
