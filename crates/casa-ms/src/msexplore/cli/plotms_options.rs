@@ -83,8 +83,9 @@ impl CliOptions {
             && (!ordinary_only || !spans)
             && !self.avgbaseline
             && !self.avgantenna;
-        let reduce_baselines = (self.avgbaseline || self.avgantenna) && !ordinary_only && !spans;
-        let supported_reduction = (time_average || reduce_baselines)
+        let other_reduction =
+            (self.avgbaseline || self.avgantenna || self.avgspw) && !ordinary_only && !spans;
+        let supported_reduction = (time_average || other_reduction)
             && self.freqframe.is_none()
             && self.plotms_independent_average(!ordinary_only);
         (!self.plotms_extended_averaging() || supported_reduction)
@@ -224,7 +225,7 @@ impl CliOptions {
         plotms_phasecenter::parse(value)
     }
 
-    pub(super) fn plotms_independent_average(&self, allow_antenna: bool) -> bool {
+    pub(super) fn plotms_independent_average(&self, allow_extended_list: bool) -> bool {
         let transforms_frequency =
             self.x_axis == Some(MsAxis::Frequency) && self.freqframe.is_some();
         let crosses_boundary = self.avgscan || self.avgfield;
@@ -236,18 +237,25 @@ impl CliOptions {
             && !self.avgantenna
             && (!crosses_boundary || self.scalar)
             && !transforms_frequency;
-        let antenna_average = allow_antenna
+        let antenna_average = allow_extended_list
             && self.avgantenna
             && !self.avgbaseline
+            && !crosses_boundary
+            && self.freqframe.is_none();
+        let spectral_window_average = allow_extended_list
+            && self.avgspw
+            && !self.avgbaseline
+            && !self.avgantenna
             && !crosses_boundary
             && self.freqframe.is_none();
         let channel_average = self.avgchannel.is_some_and(|width| width > 1);
         let ordinary_time =
             time_average && !transforms_frequency && !crosses_boundary && !channel_average;
         let scalar_time = time_average && !transforms_frequency;
-        (time_average || baseline_average || antenna_average)
-            && !self.avgspw
-            && (!self.scalar || scalar_time || baseline_average || antenna_average)
+        (spectral_window_average
+            || (!self.avgspw
+                && (time_average || baseline_average || antenna_average)
+                && (!self.scalar || scalar_time || baseline_average || antenna_average)))
             && !self.has_mixed_ordinate_dimensions()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()
