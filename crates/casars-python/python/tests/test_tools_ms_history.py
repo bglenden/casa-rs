@@ -11,7 +11,7 @@ from test_tools_ms import pinned_casa
 from test_tools_msmetadata import measures, native_dataset
 
 
-def check_history(api, dataset, expected, start, end):
+def check_history(api, dataset, expected, start, end, epoch_offset=0):
     table = api.table()
     assert table.open(str(dataset / "HISTORY"))
     assert table.nrows() == len(expected)
@@ -24,7 +24,7 @@ def check_history(api, dataset, expected, start, end):
         assert table.getcell("PRIORITY", row) == "INFO"
         assert table.getcell("OBSERVATION_ID", row) == -1
         assert table.getcell("OBJECT_ID", row) == 0
-    epoch = 40_587 * 86_400
+    epoch = 40_587 * 86_400 + epoch_offset
     times = table.getcol("TIME")
     assert times.dtype == np.float64
     assert times.shape == (len(expected),)
@@ -109,3 +109,33 @@ def test_ms_first_write_creates_and_links_missing_history(native_dataset):
     ]
     for api in (casa, tools):
         check_history(api, native_dataset, expected, start, end)
+
+
+@pytest.mark.parametrize(("reference", "offset"), [("UTC", 0), ("TAI", 37)])
+def test_ms_write_history_converts_clock_with_retained_write_lock(native_dataset, reference, offset):
+    casa = pinned_casa()
+    t = casa.table()
+    assert t.open(str(native_dataset / "HISTORY"), nomodify=False)
+    measure = t.getcolkeyword("TIME", "MEASINFO")
+    measure["Ref"] = reference
+    assert t.putcolkeyword("TIME", "MEASINFO", measure)
+    assert t.done()
+
+    start = time.time()
+    messages = []
+    for api, writer in ((casa, "reference"), (tools, "native")):
+        ms = api.ms()
+        path = str(native_dataset)
+        assert ms.open(path, nomodify=False, lock=True)
+        assert ms.writehistory(f"{writer} attachment")
+        assert ms.writehistory_batch([f"{writer} explicit"], msname=path)
+        messages.extend((f"{writer} attachment", f"{writer} explicit"))
+        assert ms.listhistory()
+        assert ms.done()
+    end = time.time()
+    expected = [
+        (message, "", "MSHistoryHandler::addMessage()", "ms")
+        for message in messages
+    ]
+    for api in (casa, tools):
+        check_history(api, native_dataset, expected, start, end, epoch_offset=offset)

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read and append the standard HISTORY records used by the MS tool.
 
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
-use casa_tables::{Table, TableOptions, TablePartNames};
+use casa_tables::{Table, TableOptions, TablePartNames, TableWriteLock};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
@@ -14,7 +15,7 @@ use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use crate::column_def::build_table_schema;
 use crate::ms::{apply_column_metadata, measurement_set_table_options};
 use crate::transform::open_staged_subtable_for_write;
-use crate::{MeasurementSet, MsError, MsHistory, MsResult, SubtableId, schema};
+use crate::{MeasurementSet, MsError, MsResult, SubtableId, open_measures_runtime, schema};
 
 /// One entry displayed by `ms.listhistory()`.
 pub struct ToolHistoryEntry {
@@ -32,18 +33,36 @@ pub struct ToolHistoryEntry {
 ///
 /// # Errors
 /// The MAIN descriptor, HISTORY table or any of its required cells is unreadable.
-pub fn read_tool_history(path: &Path) -> MsResult<Vec<ToolHistoryEntry>> {
-    let main = Table::open(TableOptions::new(path))?;
+pub fn read_tool_history(main: &Table) -> MsResult<Vec<ToolHistoryEntry>> {
     let mut entries = Vec::new();
-    for path in MeasurementSet::linked_subtable_paths(&main, SubtableId::History)? {
+    for path in MeasurementSet::linked_subtable_paths(main, SubtableId::History)? {
         let table = Table::open(TableOptions::new(path))?;
-        let history = MsHistory::new(&table);
-        for row in 0..history.row_count() {
+        let mut columns = table.scalar_columns_owned(&["TIME", "PRIORITY", "ORIGIN", "MESSAGE"])?;
+        let mut column = |name: &str| {
+            columns
+                .remove(name)
+                .ok_or_else(|| MsError::InvalidInput(format!("missing HISTORY.{name}")))
+        };
+        for (((time, priority), origin), message) in column("TIME")?
+            .into_iter()
+            .zip(column("PRIORITY")?)
+            .zip(column("ORIGIN")?)
+            .zip(column("MESSAGE")?)
+        {
+            let (
+                Some(ScalarValue::Float64(time)),
+                Some(ScalarValue::String(priority)),
+                Some(ScalarValue::String(origin)),
+                Some(ScalarValue::String(message)),
+            ) = (time, priority, origin, message)
+            else {
+                return Err(MsError::InvalidInput("invalid HISTORY entry".into()));
+            };
             entries.push(ToolHistoryEntry {
-                time: history.f64(row, "TIME")?,
-                priority: history.string(row, "PRIORITY")?,
-                origin: history.string(row, "ORIGIN")?,
-                message: history.string(row, "MESSAGE")?,
+                time,
+                priority,
+                origin,
+                message,
             });
         }
     }
@@ -55,32 +74,60 @@ pub fn read_tool_history(path: &Path) -> MsResult<Vec<ToolHistoryEntry>> {
 ///
 /// If HISTORY is absent at a plain MS, create and link the standard table
 /// together with the first messages.
+/// Supply any write locks already held by this attachment, by canonical path.
 ///
 /// # Errors
 /// MAIN or HISTORY is missing, unreadable, read-only, has invalid metadata,
 /// or cannot be locked for the requested update.
 pub fn append_tool_history(
-    path: &Path,
+    main: &Table,
     messages: &[String],
     cli_command: &str,
     origin: &str,
     application: &str,
+    held_locks: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> MsResult<()> {
-    let main = Table::open(TableOptions::new(path))?;
+    let path = main.path().ok_or_else(|| {
+        MsError::InvalidInput("HISTORY requires a persisted MeasurementSet".into())
+    })?;
     OpenOptions::new()
         .write(true)
         .open(path.join("table.dat"))
         .map_err(|error| {
             MsError::InvalidInput(format!("cannot update {}: {error}", path.display()))
         })?;
-    let history = match history_path(&main)? {
+    let history = match history_path(main)? {
         Some(history) => history,
-        None => create_history(path)?,
+        None => with_history_write_lock(path, held_locks, create_history)?,
     };
-    let mut table = open_staged_subtable_for_write(&history)?;
-    let rows = history_rows(&table, messages, cli_command, origin, application)?;
-    table.append_records_in_place(&rows)?;
-    Ok(())
+    with_history_write_lock(&history, held_locks, |table, lock| {
+        let rows = history_rows(table, messages, cli_command, origin, application)?;
+        if let Some(lock) = lock
+            && !rows.is_empty()
+        {
+            lock.record_write();
+        }
+        table.append_records_in_place(&rows)?;
+        Ok(())
+    })
+}
+
+fn with_history_write_lock<T>(
+    path: &Path,
+    held_locks: &mut BTreeMap<PathBuf, TableWriteLock>,
+    write: impl FnOnce(&mut Table, Option<&mut TableWriteLock>) -> MsResult<T>,
+) -> MsResult<T> {
+    if !held_locks.is_empty() {
+        let canonical = path
+            .canonicalize()
+            .map_err(|error| MsError::InvalidInput(format!("{}: {error}", path.display())))?;
+        if let Some(lock) = held_locks.get_mut(&canonical) {
+            let mut table = Table::open(TableOptions::new(&canonical))?;
+            return write(&mut table, Some(lock));
+        }
+    }
+    let mut table = open_staged_subtable_for_write(path)?;
+    write(&mut table, None)
 }
 
 fn history_path(main: &Table) -> MsResult<Option<PathBuf>> {
@@ -105,17 +152,20 @@ fn history_path(main: &Table) -> MsResult<Option<PathBuf>> {
     }
 }
 
-fn create_history(path: &Path) -> MsResult<PathBuf> {
+fn create_history(main: &mut Table, lock: Option<&mut TableWriteLock>) -> MsResult<PathBuf> {
+    let path = main
+        .path()
+        .ok_or_else(|| MsError::InvalidInput("HISTORY requires a persisted MeasurementSet".into()))?
+        .to_path_buf();
     if !matches!(
-        Table::immediate_part_names(path, path)?,
+        Table::immediate_part_names(&path, &path)?,
         TablePartNames::Plain(_)
     ) {
         return Err(MsError::InvalidInput(
             "HISTORY is missing from the source of this MeasurementSet view".into(),
         ));
     }
-    let mut main = open_staged_subtable_for_write(path)?;
-    if let Some(history) = history_path(&main)? {
+    if let Some(history) = history_path(main)? {
         // Another writer may have created HISTORY while MAIN was being locked.
         return Ok(history);
     }
@@ -155,9 +205,12 @@ fn create_history(path: &Path) -> MsResult<PathBuf> {
     }
     // Publish the link before any messages are appended, so a failed link
     // update can be retried without duplicating messages.
+    if let Some(lock) = lock {
+        lock.record_write();
+    }
     main.keywords_mut()
         .upsert(name, Value::table_ref(format!("././{name}")));
-    main.save_metadata_only(TableOptions::new(path))?;
+    main.save_keywords_atomically(&path)?;
     Ok(history_path)
 }
 
@@ -168,6 +221,13 @@ fn history_rows(
     origin: &str,
     application: &str,
 ) -> MsResult<Vec<RecordValue>> {
+    let mut messages = messages
+        .iter()
+        .filter(|message| !message.is_empty() || !cli_command.is_empty())
+        .peekable();
+    if messages.peek().is_none() {
+        return Ok(Vec::new());
+    }
     let reference = TableMeasDesc::reconstruct(table, "TIME")
         .and_then(|measure| match measure.ref_desc() {
             MeasRefDesc::Fixed { refer } => Some(refer.clone()),
@@ -175,21 +235,23 @@ fn history_rows(
         })
         .ok_or_else(|| MsError::InvalidInput("HISTORY.TIME has no fixed epoch reference".into()))?
         .parse::<EpochRef>()?;
+    let mut frame = MeasFrame::new();
+    if reference != EpochRef::UTC {
+        frame = frame.with_measures(open_measures_runtime()?);
+    }
     let origin = if origin.is_empty() {
         "MSHistoryHandler::addMessage()"
     } else {
         origin
     };
     messages
-        .iter()
-        .filter(|message| !message.is_empty() || !cli_command.is_empty())
         .map(|message| {
             let unix_seconds = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_err(|error| MsError::InvalidInput(error.to_string()))?
                 .as_secs_f64();
             let epoch = MEpoch::from_mjd_seconds(unix_seconds + 40_587.0 * 86_400.0, EpochRef::UTC)
-                .convert_to(reference, &MeasFrame::new())?;
+                .convert_to(reference, &frame)?;
             let text = |value: &str| Value::Scalar(ScalarValue::String(value.to_owned()));
             let vector =
                 |value: &str| Value::Array(ArrayValue::from_string_vec(vec![value.into()]));

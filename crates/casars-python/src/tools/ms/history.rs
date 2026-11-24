@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_ms::tool_history::{append_tool_history, read_tool_history};
-use casa_tables::table_cache_name;
+use casa_tables::{Table, TableOptions, table_cache_name};
 use casa_types::quanta::format::{YMD, format_time};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use super::selection_indices::selection_text;
 use super::visibility::requested_strings;
-use super::{PyMsTool, runtime_error};
-use crate::tools::{LogLine, emit};
+use super::{AttachedMs, PyMsTool, runtime_error};
+use crate::tools::{Level, LogLine, emit, logger};
+
+const LOGGER: &str = "casars.tools.ms";
 
 #[pymethods]
 impl PyMsTool {
@@ -23,34 +26,49 @@ impl PyMsTool {
             };
             let link = attachment.working_metadata_link();
             link.verify_directory().map_err(runtime_error)?;
-            let entries = read_tool_history(&attachment.path).map_err(runtime_error)?;
+            let refreshed = attachment.refresh_history_main()?;
+            let main = refreshed.as_ref().unwrap_or(&attachment.main);
+            let entries = read_tool_history(main).map_err(runtime_error)?;
             link.verify_directory().map_err(runtime_error)?;
             Ok(Some(entries))
         })?;
         let Some(entries) = entries else {
             return Ok(false);
         };
+        let log = logger(py, LOGGER)?;
+        let enabled = |level| -> PyResult<bool> {
+            log.bind(py)
+                .call_method1("isEnabledFor", (level,))?
+                .extract()
+        };
+        let (debug, info, warning, error) =
+            (enabled(10)?, enabled(20)?, enabled(30)?, enabled(40)?);
         let mut lines = Vec::with_capacity(entries.len() + 1);
-        if entries.is_empty() {
-            lines.push(LogLine::info("The HISTORY table is empty"));
-        } else {
-            lines.push(LogLine::info(format!(
-                "History table entries: {}",
-                entries.len()
-            )));
+        if info {
+            let heading = if entries.is_empty() {
+                "The HISTORY table is empty".into()
+            } else {
+                format!("History table entries: {}", entries.len())
+            };
+            lines.push(LogLine::info(heading));
         }
-        lines.extend(entries.into_iter().map(|entry| {
-            let timestamp = format_time(entry.time / 86_400.0, YMD, 0);
-            let message = format!("{timestamp}\t::{}\t{}", entry.origin, entry.message);
-            match entry.priority.as_str() {
-                "SEVERE" => LogLine::error(message),
-                "WARN" => LogLine::warning(message),
+        lines.extend(entries.into_iter().filter_map(|entry| {
+            let (level, enabled) = match entry.priority.as_str() {
+                "SEVERE" => (Level::Error, error),
+                "WARN" => (Level::Warning, warning),
                 "NORMAL" | "INFO" | "NORMAL1" | "INFO1" | "NORMAL2" | "INFO2" | "NORMAL3"
-                | "INFO3" | "NORMAL4" | "INFO4" | "NORMAL5" | "INFO5" => LogLine::info(message),
-                _ => LogLine::debug(message),
-            }
+                | "INFO3" | "NORMAL4" | "INFO4" | "NORMAL5" | "INFO5" => (Level::Info, info),
+                _ => (Level::Debug, debug),
+            };
+            enabled.then(|| {
+                let timestamp = format_time(entry.time / 86_400.0, YMD, 0);
+                LogLine {
+                    level,
+                    message: format!("{timestamp}\t::{}\t{}", entry.origin, entry.message),
+                }
+            })
         }));
-        emit(py, "casars.tools.ms", &lines)?;
+        emit(py, LOGGER, &lines)?;
         Ok(true)
     }
 
@@ -102,23 +120,41 @@ impl PyMsTool {
         }
         let origin = origin.as_deref().unwrap_or("");
         let app = app.as_deref().unwrap_or("ms");
-        let write = |path: &Path| {
-            append_tool_history(path, &messages, parms, origin, app).map_err(runtime_error)?;
-            Ok(true)
-        };
-        if let Some(path) = target.filter(|path| !path.as_os_str().is_empty()) {
-            return py.detach(|| write(&table_cache_name(&path).map_err(runtime_error)?));
-        }
-        self.attachment_info(py, |attachment| {
-            if let Some(ms) = attachment {
+        let target = target.filter(|path| !path.as_os_str().is_empty());
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let mut no_locks = BTreeMap::new();
+            let result = if let (None, Some(ms)) = (&target, attached.as_mut()) {
                 ms.working_metadata_link()
                     .verify_directory()
                     .map_err(runtime_error)?;
-                write(&ms.path)
+                let refreshed = ms.refresh_history_main()?;
+                let main = refreshed.as_ref().unwrap_or(&ms.main);
+                append_tool_history(main, &messages, parms, origin, app, &mut ms.write_locks)
             } else {
-                write(&table_cache_name(Path::new("none")).map_err(runtime_error)?)
-            }
+                let path = target.as_deref().unwrap_or_else(|| Path::new("none"));
+                let path = table_cache_name(path).map_err(runtime_error)?;
+                let main = Table::open(TableOptions::new(path)).map_err(runtime_error)?;
+                let locks = attached
+                    .as_mut()
+                    .map_or(&mut no_locks, |ms| &mut ms.write_locks);
+                append_tool_history(&main, &messages, parms, origin, app, locks)
+            };
+            result.map_err(runtime_error)?;
+            Ok(true)
         })
+    }
+}
+
+impl AttachedMs {
+    fn refresh_history_main(&self) -> PyResult<Option<Table>> {
+        if self.main_stamp.is_some() && self.main_files.same_descriptor(self.main_stamp) {
+            return Ok(None);
+        }
+        // A table keyword can change while the MS tool remains attached.
+        Table::open(TableOptions::new(&self.path))
+            .map(Some)
+            .map_err(runtime_error)
     }
 }
 
