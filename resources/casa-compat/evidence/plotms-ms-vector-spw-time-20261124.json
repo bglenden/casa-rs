@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "409ace8585f4ce4319d872aa8d90ab7492d2cf63",
+  "source_revision": "409ace8585f4ce4319d872aa8d90ab7492d2cf63",
+  "baseline_revision": "7a2bd641451e111c6f296a7a05f664c04e3b1b0b",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "for cohort in vector-time vector-optional; do casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --work <new-dir>/$cohort --native-bin <msexplore> --calibrate-bin <calibrate> --only \"$cohort\"; done",
+  "scope": "Vector time and MeasurementSet SPW averages of stored visibility columns with retained baselines.",
+  "result": "passed",
+  "baseline_result": "In the 10-second case main exports two points at 4995075648 MJD seconds, where CASA and the candidate export one at 4995075647. In the long case, the observed Real coordinate changes from 11.625 to the CASA value 13.95.",
+  "text_exports": 13,
+  "points": 29,
+  "figures": 1,
+  "rendered_coordinates": 1,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
