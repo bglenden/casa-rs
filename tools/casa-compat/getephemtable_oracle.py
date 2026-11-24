@@ -22,7 +22,7 @@ from record_casa_returns import make_cal_ms
 
 
 @contextmanager
-def horizons(text):
+def horizons(text, status=200):
     requests = []
     payload = json.dumps({"result": text}).encode()
 
@@ -30,7 +30,7 @@ def horizons(text):
         def do_POST(self):
             form = self.rfile.read(int(self.headers["Content-Length"]))
             requests.append(parse_qs(form.decode(), strict_parsing=True))
-            self.send_response(200)
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -77,18 +77,24 @@ def equal(actual, expected):
         np.testing.assert_equal(actual, expected)
 
 
+@contextmanager
+def route_horizons_requests(url):
+    def redirect(request, *, context, timeout):
+        del context
+        assert request.full_url == "https://ssd.jpl.nasa.gov/api/horizons.api"
+        return urlopen(Request(url, data=request.data), timeout=timeout)
+
+    with patch("urllib.request.urlopen", redirect), patch.dict(os.environ, {"CASARS_JPL_HORIZONS_URL": url}):
+        yield
+
+
 def compare_case(work, raw, objectname, asis, timerange, interval, expected):
     with horizons(raw) as (url, requests):
-        def redirect(request, *, context, timeout):
-            del context
-            assert request.full_url == "https://ssd.jpl.nasa.gov/api/horizons.api"
-            return urlopen(Request(url, data=request.data), timeout=timeout)
-
         outputs = {}
         for label, api in (("casa", casatasks), ("native", tasks)):
             output = work / f"{label}.tab"
             rawfile = work / f"{label}.txt"
-            with patch("urllib.request.urlopen", redirect), patch.dict(os.environ, {"CASARS_JPL_HORIZONS_URL": url}):
+            with route_horizons_requests(url):
                 result = api.getephemtable(objectname, asis, timerange, interval, str(output), str(rawfile), False)
                 assert result is None
                 assert rawfile.read_bytes() == raw.encode()
@@ -110,6 +116,19 @@ def compare_case(work, raw, objectname, asis, timerange, interval, expected):
         assert measure.framecomet(str(written))
         measure.done()
     return len(oracle[1]["MJD"][1])
+
+
+def check_http_error(work, apis):
+    with horizons("No result", status=404) as (url, requests), route_horizons_requests(url):
+        for label, api in apis:
+            output = work / f"{label}-failed.tab"
+            rawfile = work / f"{label}-failed.txt"
+            assert api.getephemtable(
+                "Titan", timerange="2023/09/01/20:00~2023/09/04/20:00",
+                outfile=str(output), rawdatafile=str(rawfile),
+            ) is None
+            assert not output.exists() and not rawfile.exists()
+        assert len(requests) == len(apis)
 
 
 def compare_moving_field(work):
@@ -169,6 +188,8 @@ def main():
         if name == "calendar":
             compare_moving_field(case)
             print("Three moving J2000 phase centres agree through both MeasurementSet readers")
+    check_http_error(root, (("casa", casatasks), ("native", tasks)))
+    print("Both public tasks handle a real HTTP 404 without publishing products")
 
 
 if __name__ == "__main__":
