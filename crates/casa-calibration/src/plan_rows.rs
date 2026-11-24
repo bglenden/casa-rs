@@ -16,6 +16,7 @@ const INTEGER_COLUMNS: [&str; 8] = [
     "FEED2",
 ];
 const TIME_COLUMNS: [&str; 2] = ["TIME", "INTERVAL"];
+const ARRAY_COLUMN: &str = "ARRAY_ID";
 
 enum ScalarRows<T> {
     Defined(Vec<T>),
@@ -35,6 +36,7 @@ impl<T: Copy> ScalarRows<T> {
 type ApplyScalarRows = (
     [ScalarRows<i32>; INTEGER_COLUMNS.len()],
     [ScalarRows<f64>; TIME_COLUMNS.len()],
+    Option<Vec<i32>>,
 );
 
 pub(super) fn build_selected_rows(
@@ -57,6 +59,7 @@ pub(super) fn build_selected_rows(
             feed2s,
         ],
         [times, intervals],
+        array_ids,
     ) = read_apply_scalars(table, row_indices)?;
 
     let mut rows = row_indices
@@ -101,7 +104,11 @@ pub(super) fn build_selected_rows(
             })
         })
         .collect::<Result<Vec<_>, ApplyPlanError>>()?;
-    library::buffer_observations(ms, &mut rows)?;
+    let arrays = match array_ids {
+        Some(values) => ScalarRows::Defined(values),
+        None => ScalarRows::Optional(load_i32_column_rows(table, ARRAY_COLUMN, row_indices)?),
+    };
+    library::buffer_observations(&mut rows, |index| arrays.required(index, ARRAY_COLUMN))?;
     Ok(rows)
 }
 
@@ -124,6 +131,7 @@ fn read_apply_scalars(table: &Table, rows: &[usize]) -> Result<ApplyScalarRows, 
             integer("FEED2")?,
         ],
         [time("TIME")?, time("INTERVAL")?],
+        None,
     ))
 }
 
@@ -131,19 +139,26 @@ fn read_defined_apply_scalars(table: &Table, rows: &[usize]) -> Option<ApplyScal
     use RequiredScalarColumnValuesMut::{Float64, Int32};
 
     let schema = table.schema()?;
-    if !INTEGER_COLUMNS.into_iter().chain(TIME_COLUMNS).all(|name| {
-        schema.column(name).is_some_and(|column| {
-            matches!(column.column_type(), ColumnType::Scalar) && !column.options().undefined
+    if !INTEGER_COLUMNS
+        .into_iter()
+        .chain(TIME_COLUMNS)
+        .chain([ARRAY_COLUMN])
+        .all(|name| {
+            schema.column(name).is_some_and(|column| {
+                matches!(column.column_type(), ColumnType::Scalar) && !column.options().undefined
+            })
         })
-    }) {
+    {
         return None;
     }
     let mut integer = std::array::from_fn(|_| Vec::new());
     let mut time = std::array::from_fn(|_| Vec::new());
+    let mut array_ids = Vec::new();
     let mut destinations: Vec<_> = INTEGER_COLUMNS
         .into_iter()
         .zip(integer.iter_mut().map(Int32))
         .chain(TIME_COLUMNS.into_iter().zip(time.iter_mut().map(Float64)))
+        .chain([(ARRAY_COLUMN, Int32(&mut array_ids))])
         .map(|(name, values)| RequiredScalarColumnDestination::new(name, values))
         .collect();
     table
@@ -152,6 +167,7 @@ fn read_defined_apply_scalars(table: &Table, rows: &[usize]) -> Option<ApplyScal
     Some((
         integer.map(ScalarRows::Defined),
         time.map(ScalarRows::Defined),
+        Some(array_ids),
     ))
 }
 
