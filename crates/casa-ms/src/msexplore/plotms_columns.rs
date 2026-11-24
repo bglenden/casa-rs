@@ -39,7 +39,9 @@ pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
 
 pub(super) fn uses_antenna_visibility_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgantenna
-        && (spec.averaging.avgtime.is_none() || spec.averaging.scalar)
+        && (spec.averaging.avgtime.is_none()
+            || spec.averaging.scalar
+            || spec.averaging.avgchannel.is_none_or(|width| width <= 1))
         && !spec.averaging.avgbaseline
         && !spec.averaging.avgscan
         && !spec.averaging.avgfield

@@ -740,6 +740,14 @@ impl AveragedVisibility {
         }
     }
 
+    pub(super) fn time_vector_mean(&self) -> Option<Complex64> {
+        let VisibilitySamples::TimeProjection(average) = &self.0 else {
+            return None;
+        };
+        let value = average.time_mean(0);
+        Some(Complex64::new(f64::from(value.re), f64::from(value.im)))
+    }
+
     pub(super) fn add(
         &mut self,
         samples: VisibilityBinSamples<'_>,

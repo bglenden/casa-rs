@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Combine the visibility iterator's time-averaged rows into PlotMS baseline averages.
+//! Combine the visibility iterator's time-averaged rows across baselines or by antenna.
 
 use std::collections::HashMap;
 
 use ndarray::ArrayView2;
 
-use super::{AveragedSeriesAccumulator, AveragingTimeKey, ChannelBin, FloatGrid, plotms_columns};
+use super::{
+    AveragedSeriesAccumulator, AveragingBaselineToken, AveragingPointKey, AveragingTimeKey,
+    ChannelBin, FloatGrid, plotms_columns,
+};
 use crate::transform::{
     PlotTimeGroups, centered_time_and_interval, mean_weight_preferring_unflagged,
 };
@@ -20,7 +23,7 @@ pub(super) struct TimeBaselineRow<'a> {
     pub(super) time_group: usize,
     pub(super) partition: [i32; 4],
     pub(super) integration: Integration,
-    pub(super) first_correlation: usize,
+    pub(super) first_correlation: Option<usize>,
     pub(super) bins: &'a [ChannelBin],
     pub(super) flags: &'a ArrayView2<'a, bool>,
     pub(super) weights: Option<&'a FloatGrid>,
@@ -108,12 +111,13 @@ impl TimeBaselineStatistics {
                 first: row.integration,
                 last: row.integration,
                 last_usable: None,
-                weights: row
-                    .bins
-                    .iter()
-                    .flat_map(ChannelBin::channels)
-                    .map(|_| ChannelWeightSum::default())
-                    .collect(),
+                weights: row.first_correlation.map_or_else(Vec::new, |_| {
+                    row.bins
+                        .iter()
+                        .flat_map(ChannelBin::channels)
+                        .map(|_| ChannelWeightSum::default())
+                        .collect()
+                }),
                 channel_bin_widths: if row.bins.iter().any(|bin| bin.averaged) {
                     row.bins.iter().map(|bin| bin.channels().count()).collect()
                 } else {
@@ -133,17 +137,18 @@ impl TimeBaselineStatistics {
         {
             group.last_usable = Some(row.integration);
         }
-        for (channel, sample) in row
-            .bins
-            .iter()
-            .flat_map(ChannelBin::channels)
-            .zip(&mut group.weights)
-        {
-            let correlation = row.first_correlation;
-            let weight = row.weights.map_or(1.0, |grid| {
-                grid.values[correlation * grid.chan_count + channel] as f32
-            });
-            sample.observe(row.flags[(correlation, channel)], weight);
+        if let Some(correlation) = row.first_correlation {
+            for (channel, sample) in row
+                .bins
+                .iter()
+                .flat_map(ChannelBin::channels)
+                .zip(&mut group.weights)
+            {
+                let weight = row.weights.map_or(1.0, |grid| {
+                    grid.values[correlation * grid.chan_count + channel] as f32
+                });
+                sample.observe(row.flags[(correlation, channel)], weight);
+            }
         }
     }
 
@@ -208,6 +213,12 @@ pub(super) struct TimeBaselinePlan {
 }
 
 impl TimeBaselinePlan {
+    pub(super) fn output_group(&self, time_group: usize) -> Option<usize> {
+        self.rows_to_average
+            .get(&time_group)
+            .map(|&(group, _)| group)
+    }
+
     pub(super) fn center(&self, average: usize) -> Option<f64> {
         self.averages
             .get(average)
@@ -246,6 +257,49 @@ impl TimeBaselinePlan {
                 output.x_visibility.add_weighted_value(x, weight);
             }
             output.y_visibility.add_weighted_value(y, weight);
+        }
+    }
+
+    /// Reduce the complex means from each time-averaged baseline with its
+    /// transformed spectrum. The second antenna receives the conjugate.
+    pub(super) fn combine_antenna_series(&self, series: &mut AveragedSeriesAccumulator) {
+        for (key, point) in std::mem::take(&mut series.points) {
+            let AveragingBaselineToken::Baseline(first, second) = key.baseline else {
+                continue;
+            };
+            let Some(group) = key
+                .time_key
+                .group()
+                .and_then(|group| self.output_group(group))
+            else {
+                continue;
+            };
+            let Some(y) = point.y_visibility.time_vector_mean() else {
+                continue;
+            };
+            let x = point.x_visibility.time_vector_mean();
+            let weight =
+                plotms_columns::baseline_weight(point.combined_primary_weight.unwrap_or(1.0));
+            for (antenna, x, y) in [
+                (first, x, y),
+                (second, x.map(|value| value.conj()), y.conj()),
+            ] {
+                let key = AveragingPointKey {
+                    time_key: AveragingTimeKey::Group(group),
+                    baseline: AveragingBaselineToken::Antenna(antenna),
+                    ..key.clone()
+                };
+                let output = series.points.entry(key).or_default();
+                if output.representative.is_none() {
+                    output.representative = point.representative.clone();
+                    output.display_channel = point.display_channel;
+                    output.numeric_axis_samples = point.numeric_axis_samples.clone();
+                }
+                if let Some(x) = x {
+                    output.x_visibility.add_weighted_value(x, weight);
+                }
+                output.y_visibility.add_weighted_value(y, weight);
+            }
         }
     }
 }
