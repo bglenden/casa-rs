@@ -3015,6 +3015,7 @@ fn build_uncalibrated_plotms_payload(
         (plotms_columns::uses_channel_derived(plot, columns.x)
             || vector_baselines
             || scalar_average
+            || (antenna_average && plot.averaging.avgtime.is_some())
             || extended_derived
             || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
@@ -3025,6 +3026,7 @@ fn build_uncalibrated_plotms_payload(
     let time_bins = plot
         .filter(|_| {
             !scalar_average
+                && !antenna_average
                 && (columns.secondary_y.is_some()
                     || time_baselines
                     || weighted_time_uvw
@@ -5271,6 +5273,23 @@ fn push_time_interval_sample(accumulator: &mut AveragedPointAccumulator, interva
     accumulator.time_interval_samples.push(interval_seconds);
 }
 
+fn record_scalar_interval(
+    bounds: &mut HashMap<usize, (f64, f64)>,
+    group: usize,
+    time: f64,
+    interval: f64,
+) {
+    let start = time - interval / 2.0;
+    let end = time + interval / 2.0;
+    bounds
+        .entry(group)
+        .and_modify(|(first, last)| {
+            *first = first.min(start);
+            *last = last.max(end);
+        })
+        .or_insert((start, end));
+}
+
 fn finalize_averaged_axis_value(
     axis: MsAxis,
     accumulator: &AveragedPointAccumulator,
@@ -5359,6 +5378,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
     let scalar_average = uncalibrated && plotms_columns::uses_scalar_visibility_average(spec);
     let antenna_average = uncalibrated && plotms_columns::uses_antenna_visibility_average(spec);
+    let antenna_time = antenna_average && spec.averaging.avgtime.is_some();
+    let scalar_intervals = scalar_average || antenna_time;
     let scalar_visibility = scalar_average || (antenna_average && spec.averaging.scalar);
     let collapse_baselines = (plotms_columns::uses_vector_baseline_average(spec)
         || (scalar_average && spec.averaging.avgbaseline))
@@ -5512,7 +5533,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut time_scope_origins = std::collections::BTreeMap::<TimeAverageScopeKey, f64>::new();
     let mut shared_time_scope_bounds =
         std::collections::BTreeMap::<SharedTimeAverageScopeKey, (f64, f64)>::new();
-    if spec.averaging.avgtime.is_some() && time_bins.is_none() && !scalar_average {
+    if spec.averaging.avgtime.is_some() && time_bins.is_none() && !scalar_intervals {
         for (row_slot, _row) in row_numbers.iter().copied().enumerate() {
             let flag_row_value = selected_flag_rows[row_slot];
             if flag_row_value && !include_row_flagged_points {
@@ -5593,7 +5614,7 @@ fn build_generic_visibility_scatter_with_averaging(
             && !include_row_flagged_points
             && time_bins.is_none()
             && !collapse_baselines
-            && !scalar_average;
+            && !scalar_intervals;
         if skip_flagged_row && !antenna_average {
             continue;
         }
@@ -5609,6 +5630,9 @@ fn build_generic_visibility_scatter_with_averaging(
         let field_id_value = selected_field_ids[row_slot];
         let scan_number_value = selected_scan_numbers[row_slot];
         let row_time_value = selected_times[row_slot];
+        let row_interval_value = selected_intervals[row_slot];
+        let starts_buffer = scalar_intervals
+            && calibration.is_some_and(|input| input.starts_visibility_buffer[row_slot]);
         // The iterator counts a flagged integration before applying the plot mask.
         // It can separate two visible buffers that have the same timestamp.
         let antenna_group = selected_observations
@@ -5623,9 +5647,20 @@ fn build_generic_visibility_scatter_with_averaging(
                         spw_id,
                     ],
                     row_time_value,
-                    0.0,
+                    spec.averaging.avgtime.unwrap_or(0.0),
                 )
             });
+        if antenna_time
+            && starts_buffer
+            && let Some(group) = antenna_group
+        {
+            record_scalar_interval(
+                &mut scalar_time_bounds,
+                group,
+                row_time_value,
+                row_interval_value,
+            );
+        }
         if skip_flagged_row && !antenna_channels {
             continue;
         }
@@ -5801,7 +5836,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 )
             })
         });
-        if scalar_average && let Some(group) = group {
+        if scalar_intervals && let Some(group) = group {
             scalar_shapes.check_shape(group, selected_correlations.len(), channel_bins.len())?;
         }
         let representative_row = row_numbers[representative_slot];
@@ -5870,7 +5905,6 @@ fn build_generic_visibility_scatter_with_averaging(
                     .observe(row_time_value, unflagged);
             }
         }
-        let row_interval_value = selected_intervals[row_slot];
         if let Some(group) = group.filter(|_| scalar_average) {
             let (antenna1, antenna2) = if collapse_baselines {
                 (-1, -1)
@@ -5879,16 +5913,13 @@ fn build_generic_visibility_scatter_with_averaging(
             };
             averaged_rows.insert((group, antenna1, antenna2));
             // The scalar reducer uses the first row's interval for each buffer.
-            if calibration.is_some_and(|input| input.starts_visibility_buffer[row_slot]) {
-                let start = row_time_value - row_interval_value / 2.0;
-                let end = row_time_value + row_interval_value / 2.0;
-                scalar_time_bounds
-                    .entry(group)
-                    .and_modify(|(first, last)| {
-                        *first = first.min(start);
-                        *last = last.max(end);
-                    })
-                    .or_insert((start, end));
+            if starts_buffer {
+                record_scalar_interval(
+                    &mut scalar_time_bounds,
+                    group,
+                    row_time_value,
+                    row_interval_value,
+                );
             }
         }
         if antenna_average && let Some(group) = group {
@@ -6083,7 +6114,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             baseline: baseline_token.clone(),
                             // The scalar averager receives the selected cube. The raw
                             // slot can differ between data descriptions in the same bin.
-                            corr_index: if scalar_average {
+                            corr_index: if scalar_intervals {
                                 selected_slot
                             } else {
                                 *corr_index
@@ -6198,7 +6229,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         if calibration.is_some()
                             && spec.averaging.avgtime.is_some()
                             && time_group.is_none()
-                            && !scalar_average
+                            && !scalar_intervals
                         {
                             push_numeric_axis_sample(
                                 accumulator,
@@ -6423,6 +6454,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .collect::<HashMap<_, _>>();
     let retain_empty_panel = average_operands
         || antenna_channels
+        || antenna_time
         || (scalar_average && collapse_baselines)
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
@@ -6481,7 +6513,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     continue;
                 };
                 let planned_time = group.and_then(|group| {
-                    if scalar_average {
+                    if scalar_intervals {
                         scalar_time_bounds
                             .get(&group)
                             .map(|(start, end)| start + (end - start) / 2.0)
@@ -6496,7 +6528,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     }
                 });
                 let project = |axis: MsAxis, x_axis| {
-                    if axis == MsAxis::Time && (time_bins.is_some() || scalar_average) {
+                    if axis == MsAxis::Time && (time_bins.is_some() || scalar_intervals) {
                         planned_time
                     } else if weighted_time_uvw && axis.uses_uvw_metres() {
                         group
