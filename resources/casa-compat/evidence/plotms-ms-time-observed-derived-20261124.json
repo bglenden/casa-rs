@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "630d47afd51abb8fd05e514e26d0623f331db83e",
+  "source_revision": "630d47afd51abb8fd05e514e26d0623f331db83e",
+  "baseline_revision": "850e09d29061952da2262edf79e5707c4533313a",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Stored observed vector residual and ratio against Time after ordinary vector time averaging.",
+  "result": "passed",
+  "baseline_result": "Native refused a selected Time versus DATA/model vector expression after ordinary time averaging.",
+  "text_exports": 5,
+  "points": 15,
+  "figures": 1,
+  "rendered_coordinates": 3,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}
