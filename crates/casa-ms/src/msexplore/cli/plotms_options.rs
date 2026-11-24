@@ -77,13 +77,7 @@ impl CliOptions {
     pub(super) fn supports_time_derived(&self, [_, y, _]: [MsDataColumn; 3]) -> bool {
         self.x_axis == Some(MsAxis::Time)
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
-            && matches!(
-                y,
-                MsDataColumn::DataMinusModel
-                    | MsDataColumn::DataDivModel
-                    | MsDataColumn::CorrectedMinusModel
-                    | MsDataColumn::CorrectedDivModel
-            )
+            && y.is_derived()
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
             && self.avgtime.is_some()

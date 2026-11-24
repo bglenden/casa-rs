@@ -164,6 +164,63 @@ def compare_observed_time_derived(root, native):
                            (controls["title"], "Time (MJD seconds)", "Phase:data/model (vector) (degrees)"))
 
 
+def compare_scalar_expressions(root, native):
+    vis, integration, start = prepare_time_fixture(root)
+    with opened(vis, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[0, 1] = np.where(integration % 2 == 0, 1, .5)
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    rounded = root / "rounded-amplitudes.ms"
+    copy_ms(vis, rounded)
+    with opened(rounded, True) as table:
+        corrected = np.ones_like(table.getcol("CORRECTED_DATA"))
+        table.putcol("CORRECTED_DATA", corrected)
+        table.putcol("MODEL_DATA", corrected * (1 + (2**-13) * 1j))
+
+    wrapped = root / "phase-wrap.ms"
+    copy_ms(vis, wrapped)
+    with opened(wrapped, True) as table:
+        unit = np.ones_like(table.getcol("DATA"))
+        table.putcol("DATA", unit * (-1 + .1j))
+        table.putcol("MODEL_DATA", unit * (-1 - .1j))
+    wrapped_phase = np.degrees(np.angle(-1 + .1j) - np.angle(-1 - .1j))
+
+    offset = np.arange(0, 6, 2)
+    times = start + 5 + 10 * offset
+    observed = 3 + 6j + (1 + 2j) * (offset + .8)
+    corrected = 8 - 1j + (3 - 1j) * (offset + .75)
+    model = 2 + 2j + (.5 + .25j) * (offset + .75)
+    base = request(vis) | dict(xaxis="time", xdatacolumn="", spw="0:1", avgtime="20",
+                               title="Scalar model expressions after time averaging")
+    for name, source, column, axis, values in (
+        ("corrected-scalar-residual", vis, "corrected-model_scalar", "amp", np.abs(corrected) - np.abs(model)),
+        ("corrected-scalar-ratio", vis, "corrected/model_scalar", "phase", np.degrees(np.angle(corrected) / np.abs(model))),
+        ("observed-scalar-residual", vis, "data-model_scalar", "phase", np.degrees(np.angle(observed) - np.angle(model))),
+        ("observed-scalar-ratio", vis, "data/model_scalar", "real", (observed - model).real),
+        ("rounded-amplitudes", rounded, "corrected-model_scalar", "amp", np.zeros(3)),
+        ("phase-wrap", wrapped, "data-model_scalar", "phase", np.full(3, wrapped_phase)),
+    ):
+        controls = base | dict(vis=str(source), yaxis=axis, ydatacolumn=column)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [("1", "XX")] * 3
+        np.testing.assert_allclose([float(point[1]) for point in selected], values, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[0]) for point in selected], times, rtol=0, atol=.00051)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 3
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], times, rtol=0, atol=.00051)
+        if name == "rounded-amplitudes":
+            np.testing.assert_array_equal([float(point[1]) for point in rows(actual)], values)
+        print(f"{name}: 3 matching scalar coordinates after vector time averaging", flush=True)
+        if name == "corrected-scalar-ratio":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Time (MJD seconds)", "Phase:corrected/model (scalar) (degrees)"))
+        if name == "phase-wrap":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Time (MJD seconds)", "Phase:data-model (scalar) (degrees)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -187,6 +244,9 @@ def main():
         observed = root / "observed"
         observed.mkdir()
         compare_observed_time_derived(observed, native)
+        scalar = root / "scalar"
+        scalar.mkdir()
+        compare_scalar_expressions(scalar, native)
 
 
 if __name__ == "__main__":

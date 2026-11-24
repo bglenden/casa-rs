@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "f7b3325a59d8d643ccc5c2a640e0a4f1f74943ed",
+  "source_revision": "f7b3325a59d8d643ccc5c2a640e0a4f1f74943ed",
+  "baseline_revision": "5f65f30b2480b96d8aa226692985dccf55831c3c",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Single stored scalar observed or corrected model expressions against Time after ordinary vector time averaging.",
+  "result": "passed",
+  "baseline_result": "Native refused the selected scalar expression against Time after vector time averaging.",
+  "text_exports": 6,
+  "points": 18,
+  "figures": 2,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

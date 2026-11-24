@@ -364,7 +364,7 @@ impl TimeProjection {
             let mean = if weight > 0.0 { sum / weight } else { sum };
             Complex64::new(f64::from(mean.re), f64::from(mean.im))
         });
-        self.projection.axis_value(axis, means, false)
+        self.projection.axis_value(axis, means, true)
     }
 }
 

@@ -6180,7 +6180,8 @@ fn build_generic_visibility_scatter_with_averaging(
         .unwrap_or_else(|| axis_label(spec.y_axis()));
     let secondary_y_label = spec.secondary_y_axis().map(axis_label);
     let fixed_x_bounds = fixed_bounds(spec.x_axis);
-    let fixed_y_bounds = fixed_bounds(spec.y_axis());
+    let fixed_y_bounds = fixed_bounds(spec.y_axis())
+        .filter(|_| !(time_derived && spec.data_column.has_unbounded_phase()));
     let secondary_fixed_y_bounds = spec.secondary_y_axis().and_then(fixed_bounds);
 
     let time_baseline_plan = time_baseline_stats
@@ -6962,7 +6963,7 @@ impl VisibilityColumnProjection {
         self,
         axis: MsAxis,
         [observed, model]: [Complex64; 2],
-        channel_averaged: bool,
+        averaged_operands: bool,
     ) -> Option<f64> {
         let as_complex_float =
             |value: Complex64| num_complex::Complex32::new(value.re as f32, value.im as f32);
@@ -6978,7 +6979,7 @@ impl VisibilityColumnProjection {
         };
         match self {
             Self::VectorResidual => Some(complex_axis(observed - model)),
-            Self::ScalarResidual if channel_averaged => {
+            Self::ScalarResidual if averaged_operands => {
                 let observed = as_complex_float(observed);
                 let model = as_complex_float(model);
                 Some(f64::from(match axis {
