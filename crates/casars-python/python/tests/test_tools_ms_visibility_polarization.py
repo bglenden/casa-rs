@@ -6,6 +6,7 @@ import pytest
 from casars import tools
 from test_tools_ms import pinned_casa
 from test_tools_ms_selection_indices import two_spws_dataset
+from test_tools_ms_visibility_channel import add_description
 from test_tools_ms_visibility_ifraxis import baseline_fixture
 from test_tools_msmetadata import measures, native_dataset
 from test_tools_simulator import configure
@@ -75,20 +76,7 @@ def test_ms_parallel_hand_conversion_preserves_auxiliary_columns(
 def test_ms_four_stored_products_convert_to_stokes_with_selected_channels(
     tmp_path, measures, products,
 ):
-    path = str(tmp_path / "full-polarizations.ms")
-    simulator = tools.simulator()
-    assert simulator.open(path)
-    configure(simulator, stokes=products)
-    assert simulator.observe("F", "L", starttime="0s", stoptime="30s")
-    assert simulator.close()
-    casa = pinned_casa()
-    table = casa.table()
-    assert table.open(path, nomodify=False)
-    shape = table.getcol("DATA").shape
-    values = np.arange(1, np.prod(shape) + 1, dtype=np.float32).reshape(shape, order="F")
-    visibilities = (values + 0.25j * values[::-1]).astype(np.complex64)
-    assert table.putcol("DATA", visibilities)
-    assert table.done()
+    path, casa, visibilities = full_polarization_dataset(tmp_path, products)
     a, b, c, d = visibilities[:, ::2]
     if products.startswith("RR"):
         iquv = [(a + d) / 2, (b + c) / 2, (b - c) / (2j), (a - d) / 2]
@@ -110,6 +98,109 @@ def test_ms_four_stored_products_convert_to_stokes_with_selected_channels(
             result = reader.getdata(["data", "axis_info"])
             np.testing.assert_array_equal(result["axis_info"]["corr_axis"], labels)
             np.testing.assert_allclose(result["data"], analytic, atol=2e-7, rtol=2e-7)
+        assert reader.done()
+
+
+def full_polarization_dataset(directory, products):
+    path = str(directory / "full-polarizations.ms")
+    simulator = tools.simulator()
+    assert simulator.open(path)
+    configure(simulator, stokes=products)
+    assert simulator.observe("F", "L", starttime="0s", stoptime="30s")
+    assert simulator.close()
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    shape = table.getcol("DATA").shape
+    values = np.arange(1, np.prod(shape) + 1, dtype=np.float32).reshape(shape, order="F")
+    visibilities = (values + 0.25j * values[::-1]).astype(np.complex64)
+    assert table.putcol("DATA", visibilities)
+    assert table.done()
+    return path, casa, visibilities
+
+
+@pytest.mark.parametrize("left_circular", [True, False])
+def test_ms_mixed_receptor_basis_rotates_to_stokes(tmp_path, measures, left_circular):
+    path, casa, visibilities = full_polarization_dataset(tmp_path, "RR RL LR LL")
+    table = casa.table()
+    assert table.open(f"{path}/POLARIZATION", nomodify=False)
+    code = 13 if left_circular else 17
+    assert table.putcell("CORR_TYPE", 0, np.arange(code, code + 4, dtype=np.int32))
+    assert table.done()
+
+    circular = np.array([[1, 1j], [1, -1j]]) / np.sqrt(2)
+    linear = np.eye(2)
+    left, right = (circular, linear) if left_circular else (linear, circular)
+    shape = visibilities.shape
+    coherency = np.einsum("ia,ijcr,jb->abcr", left.conj(), visibilities.reshape(2, 2, *shape[1:]), right)
+    xx, xy, yx, yy = coherency.reshape(shape) * (np.sqrt(2) / 4)
+    stokes = [xx + yy, xx - yy, xy + yx, (xy - yx) / 1j]
+    labels = ["I", "Q", "U", "V"]
+
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        assert reader.selectpolarization(labels)
+        result = reader.getdata(["data", "axis_info"])
+        np.testing.assert_array_equal(result["axis_info"]["corr_axis"], labels)
+        np.testing.assert_allclose(result["data"], stokes, atol=1e-6, rtol=3e-7)
+        assert reader.done()
+
+
+def test_ms_correlation_clause_selects_first_matching_shared_description(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    add_description(casa, native_dataset)
+    path = str(native_dataset)
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    descriptions = np.arange(len(raw["time"]), dtype=np.int32) % 2
+    assert table.putcol("DATA_DESC_ID", descriptions)
+    assert table.done()
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        assert reader.selectpolarization("RR")
+        selected = np.count_nonzero(descriptions == 0)
+        assert reader.nrow(True) == selected
+        np.testing.assert_array_equal(reader.msselectedindices()["poldd"], [0])
+        result = reader.getdata(["data_desc_id", "time"])
+        np.testing.assert_array_equal(result["data_desc_id"], np.zeros(selected, np.int64), strict=True)
+        np.testing.assert_array_equal(result["time"], raw["time"][::2], strict=True)
+        assert reader.done()
+
+
+def test_ms_polarization_converts_each_complex_visibility_product(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    description = table.getcoldesc("DATA")
+    assert table.addcols({"CORRECTED_DATA": description, "MODEL_DATA": description})
+    observed = raw["data"].astype(np.complex64)
+    corrected = observed + np.complex64(5 + 10j)
+    factors = np.array([1 + 2j, 3 + 4j], dtype=np.complex64)
+    model = np.broadcast_to(factors[:, None, None], observed.shape).copy()
+    assert table.putcol("CORRECTED_DATA", corrected)
+    assert table.putcol("MODEL_DATA", model)
+    assert table.done()
+    products = {
+        "data": observed, "corrected_data": corrected, "model_data": model,
+        "ratio_data": corrected / model, "residual_data": corrected - model,
+        "obs_residual_data": observed - model,
+    }
+    predictions = {
+        name: np.stack([(values[0] + values[1]) / 2, (values[0] - values[1]) / 2])
+        for name, values in products.items()
+    }
+    fields = list(products) + ["ratio_amplitude", "model_imaginary"]
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.selectpolarization(["I", "V"])
+        result = reader.getdata(fields)
+        for name, expected in predictions.items():
+            np.testing.assert_allclose(result[name], expected, rtol=3e-7, atol=2e-6)
+        np.testing.assert_allclose(result["ratio_amplitude"], np.abs(predictions["ratio_data"]), rtol=3e-7)
+        np.testing.assert_array_equal(result["model_imaginary"], predictions["model_data"].imag)
         assert reader.done()
 
 
