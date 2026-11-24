@@ -34,13 +34,17 @@ pub(super) fn needs_model_references(
         && !averaging.avgspw;
     let vector_time = averaging.avgtime.is_some()
         && !averaging.scalar
-        && (time_spans || uses_unspanned_antenna_or_baseline(plot));
-    let spectral_windows = uses_spectral_window_average(plot);
-    columns.implicit_derived_model
-        && (vector_time || spectral_windows)
+        && (time_spans || uses_unspanned_antenna_or_baseline(plot))
         && plot.iteration.iteraxis.is_none()
         && supports_ordinary_time_axes(plot)
-        && plot.y_axes.iter().all(|axis| axis.is_visibility_math())
+        && plot.y_axes.iter().all(|axis| axis.is_visibility_math());
+    let spectral_windows = uses_spectral_window_average(plot)
+        && plot.transforms.freqframe.is_none()
+        && plot.iteration.iteraxis.is_none_or(|axis| {
+            !averaging.avgscan && !averaging.avgfield && axis.supports_averaged_ordinates()
+        });
+    columns.implicit_derived_model
+        && (vector_time || spectral_windows)
         && visibility_columns(plot, columns).any(MsDataColumn::needs_model)
         && {
             let fields = virtual_model_fields(ms);
