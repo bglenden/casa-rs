@@ -11133,3 +11133,12 @@ selection spans fields. With `ifraxis=True, average=True`, a request for
 and observatory position. casa-rs computes it in the first antenna's
 measure frame at the mean epoch, including when no single field describes
 the selection (#1030).
+
+## MS channel selection can accept an index one past the window
+
+On a four-channel MS, CASA 6.7.6.14 accepts
+`selectchannel(3, 0, 1, 2)`, which requests channels 0, 2 and 4.
+A later `getdata` aborts while using the invalid channel. casa-rs
+checks every selected bin against the active spectral windows,
+returns false at selection time and retains the previous channel
+selection (#1030).

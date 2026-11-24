@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Column reads for the legacy MeasurementSet tool visibility record.
 
+use std::borrow::Cow;
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock};
 
@@ -17,9 +19,12 @@ use crate::{MeasurementSet, MsError, MsResult};
 
 mod averaging;
 mod baseline_axis;
+mod channel_axis;
 mod concatenation;
 use averaging::RowAverage;
 use baseline_axis::BaselineGrid;
+pub use channel_axis::VisibilityChannels;
+use channel_axis::{ChannelWeightKind, ChannelWeights};
 use concatenation::{MemberRows, concatenate_arrays, concatenate_scalars, member_rows};
 
 /// Determine whether CASA's implicit initialization needs to narrow this view
@@ -62,6 +67,38 @@ pub fn heterogeneous_row_shapes(ms: &MeasurementSet) -> MsResult<Option<Vec<usiz
     Ok(None)
 }
 
+/// Smallest spectral-window channel count in the active row view.
+/// # Errors
+/// A data description or its spectral window cannot be read.
+pub fn selected_channel_count(ms: &MeasurementSet) -> MsResult<usize> {
+    let dd = ms.data_description()?;
+    let spw = ms.spectral_window()?;
+    let used = if dd.row_count() == 1 {
+        BTreeSet::from([0])
+    } else {
+        let rows = (0..ms.row_count()).collect::<Vec<_>>();
+        let values = ms
+            .main_table()
+            .column_accessor("DATA_DESC_ID")?
+            .scalar_cells_owned_for_rows(&rows)?;
+        let RequiredScalarColumnValues::Int32(ids) = typed_scalar_column("DATA_DESC_ID", values)?
+        else {
+            return Err(input("DATA_DESC_ID must contain an integer"));
+        };
+        ids.into_iter().collect()
+    };
+    let mut smallest = None;
+    for id in used {
+        let id = usize::try_from(id).map_err(|_| input("negative DATA_DESC_ID"))?;
+        let window = usize::try_from(dd.spectral_window_id(id)?)
+            .map_err(|_| input("negative SPECTRAL_WINDOW_ID"))?;
+        let count =
+            usize::try_from(spw.num_chan(window)?).map_err(|_| input("negative NUM_CHAN"))?;
+        smallest = Some(smallest.map_or(count, |old: usize| old.min(count)));
+    }
+    smallest.ok_or_else(|| input("no selected spectral windows"))
+}
+
 /// Layout and reduction options for a visibility record.
 #[derive(Clone, Copy, Default)]
 pub struct VisibilityReadOptions<'a> {
@@ -70,6 +107,8 @@ pub struct VisibilityReadOptions<'a> {
     /// Place rows on sorted baseline and integration axes with this many gaps
     /// between first-antenna groups. A negative gap is treated as zero.
     pub baseline_gap: Option<i32>,
+    /// Channel selection applied on each logical row before visibility products.
+    pub channels: Option<VisibilityChannels>,
     /// Reuse the attachment's Measures provider for HA and LAST coordinates.
     pub time_measures: Option<&'a OnceLock<Arc<dyn MeasuresProvider>>>,
 }
@@ -95,8 +134,14 @@ pub fn read_tool_visibility(
     let VisibilityReadOptions {
         average,
         baseline_gap,
+        channels,
         time_measures,
     } = options;
+    let ordered_rows = if channels.is_some() && baseline_gap.is_none() {
+        rows_by_time(main, rows)?
+    } else {
+        Cow::Borrowed(rows)
+    };
     let mut names = items
         .iter()
         .map(|name| name.to_ascii_lowercase())
@@ -110,9 +155,10 @@ pub fn read_tool_visibility(
         main,
         members,
         reference,
-        rows,
+        &ordered_rows,
+        rows.first().copied(),
         &names,
-        baseline_gap.is_some(),
+        options,
     )?;
     let grid = baseline_gap
         .map(|gap| BaselineGrid::new(&read.scalar_columns, gap))
@@ -124,7 +170,7 @@ pub fn read_tool_visibility(
         };
         let ms = metadata.ok_or_else(|| input("axis_info requires MeasurementSet metadata"))?;
         let first_row = grid.as_ref().and_then(BaselineGrid::first_row).unwrap_or(0);
-        let mut axes = axis_info(ms, ids, first_row)?;
+        let mut axes = axis_info(ms, ids, first_row, channels)?;
         if let Some(grid) = &grid {
             let first_selected = rows.first().copied().unwrap_or(0);
             let (baseline_axis, time_axis) = grid.axes(
@@ -167,14 +213,46 @@ pub fn read_tool_visibility(
     ))
 }
 
+fn rows_by_time<'a>(main: &Table, rows: &'a [usize]) -> MsResult<Cow<'a, [usize]>> {
+    if rows.len() < 2 {
+        return Ok(Cow::Borrowed(rows));
+    }
+    let values = main
+        .column_accessor("TIME")?
+        .scalar_cells_owned_for_rows(rows)?;
+    let RequiredScalarColumnValues::Float64(times) = typed_scalar_column("TIME", values)? else {
+        return Err(input("TIME must contain a double"));
+    };
+    if times.iter().any(|time| !time.is_finite()) {
+        return Err(input("TIME contains a nonfinite value"));
+    }
+    if times.is_sorted() {
+        return Ok(Cow::Borrowed(rows));
+    }
+    let mut ordered = times
+        .into_iter()
+        .zip(rows.iter().copied())
+        .collect::<Vec<_>>();
+    ordered.sort_by(|(left, _), (right, _)| left.partial_cmp(right).unwrap());
+    Ok(Cow::Owned(
+        ordered.into_iter().map(|(_, row)| row).collect(),
+    ))
+}
+
 struct VisibilityRead<'a> {
     main: &'a Table,
     rows: &'a [usize],
+    first_row: Option<usize>,
     plain: bool,
     members: Vec<MemberRows<'a>>,
     reference: Option<ReferenceRows<'a>>,
     scalar_columns: HashMap<String, RequiredScalarColumnValues>,
     baseline_axis: bool,
+    channels: Option<VisibilityChannels>,
+    raw_flags: OnceCell<ArrayD<bool>>,
+    selected_flags: OnceCell<ArrayD<bool>>,
+    sigma_weights: OnceCell<ChannelWeights>,
+    corrected_weights: OnceCell<ChannelWeights>,
 }
 
 struct ReferenceRows<'a> {
@@ -211,13 +289,22 @@ impl<'a> VisibilityRead<'a> {
         members: &'a [Table],
         reference: Option<&'a PlainReferenceRead>,
         rows: &'a [usize],
+        first_row: Option<usize>,
         names: &BTreeSet<String>,
-        baseline_axis: bool,
+        options: VisibilityReadOptions<'_>,
     ) -> MsResult<Self> {
+        let baseline_axis = options.baseline_gap.is_some();
+        let channels = options.channels;
         let hour_angle = baseline_axis && names.contains("axis_info") && names.contains("ha");
         let mut columns = SCALARS
             .into_iter()
             .filter_map(|(name, column)| {
+                if name == "flag_row"
+                    && channels.is_some_and(|channels| channels.width() > 1)
+                    && !rows.is_empty()
+                {
+                    return None;
+                }
                 (names.contains(name)
                     || (matches!(name, "antenna1" | "antenna2")
                         && (baseline_axis || names.contains("ifr_number")))
@@ -267,15 +354,42 @@ impl<'a> VisibilityRead<'a> {
         Ok(Self {
             main,
             rows,
+            first_row,
             plain,
             members,
             reference,
             scalar_columns,
             baseline_axis,
+            channels,
+            raw_flags: OnceCell::new(),
+            selected_flags: OnceCell::new(),
+            sigma_weights: OnceCell::new(),
+            corrected_weights: OnceCell::new(),
         })
     }
 
     fn vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
+        if let Some(channels) = self.channels
+            && channels.width() > 1
+            && !self.rows.is_empty()
+            && matches!(name, "WEIGHT" | "SIGMA")
+        {
+            let sigma = name == "SIGMA";
+            let kind = if sigma {
+                ChannelWeightKind::Observed
+            } else {
+                ChannelWeightKind::Corrected
+            };
+            return Ok(ArrayValue::Float32(channels.statistic(
+                self.raw_flags()?,
+                self.channel_weights(kind)?,
+                sigma,
+            )?));
+        }
+        self.raw_vector_cells(name)
+    }
+
+    fn raw_vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
         if self.members.is_empty() {
             return read_vector_cells(self.main, name, self.rows, self.plain);
         }
@@ -285,6 +399,17 @@ impl<'a> VisibilityRead<'a> {
     }
 
     fn matrix_cells(&self, name: &str, widen_complex: bool) -> MsResult<ArrayValue> {
+        let Some(channels) = self.channels.filter(|_| !self.rows.is_empty()) else {
+            return self.raw_matrix_cells(name, widen_complex);
+        };
+        if name == "FLAG" {
+            return Ok(ArrayValue::Bool(self.channel_flags(channels)?.clone()));
+        }
+        let values = self.raw_matrix_cells(name, widen_complex && channels.width() == 1)?;
+        self.select_channels(channels, name, &values)
+    }
+
+    fn raw_matrix_cells(&self, name: &str, widen_complex: bool) -> MsResult<ArrayValue> {
         if let Some(reference) = &self.reference {
             return read_matrix_cells(
                 reference.read.parent(),
@@ -299,6 +424,107 @@ impl<'a> VisibilityRead<'a> {
         concatenate_arrays(&self.members, |table, rows| {
             read_matrix_cells(table, name, rows, false)
         })
+    }
+
+    fn raw_flags(&self) -> MsResult<&ArrayD<bool>> {
+        if let Some(flags) = self.raw_flags.get() {
+            return Ok(flags);
+        }
+        let ArrayValue::Bool(flags) = self.raw_matrix_cells("FLAG", false)? else {
+            return Err(input("FLAG cells must be Boolean"));
+        };
+        Ok(self.raw_flags.get_or_init(|| flags))
+    }
+
+    fn channel_flags(&self, channels: VisibilityChannels) -> MsResult<&ArrayD<bool>> {
+        if let Some(flags) = self.selected_flags.get() {
+            return Ok(flags);
+        }
+        let flags = channels.flags(self.raw_flags()?)?;
+        Ok(self.selected_flags.get_or_init(|| flags))
+    }
+
+    fn channel_weights(&self, kind: ChannelWeightKind) -> MsResult<&ChannelWeights> {
+        let cache = match kind {
+            ChannelWeightKind::Observed => &self.sigma_weights,
+            ChannelWeightKind::Corrected => &self.corrected_weights,
+        };
+        if let Some(weights) = cache.get() {
+            return Ok(weights);
+        }
+        let column = kind.spectrum();
+        let spectral = if let Some(row) = self.first_row
+            && self
+                .main
+                .schema()
+                .is_some_and(|schema| schema.column(column).is_some())
+        {
+            // CASA tests the first cell of the selected table for content,
+            // including variable-shape columns with an empty first cell.
+            self.main
+                .array_shape_uncached(row, column)?
+                .is_some_and(|shape| !shape.is_empty() && !shape.contains(&0))
+        } else {
+            false
+        };
+        let values = if spectral {
+            self.raw_matrix_cells(column, false)?
+        } else {
+            self.raw_vector_cells(kind.fallback())?
+        };
+        let ArrayValue::Float32(values) = values else {
+            return Err(input("channel weights must contain Float values"));
+        };
+        Ok(cache.get_or_init(|| ChannelWeights::new(values, spectral, kind)))
+    }
+
+    fn select_channels(
+        &self,
+        channels: VisibilityChannels,
+        column: &str,
+        values: &ArrayValue,
+    ) -> MsResult<ArrayValue> {
+        if channels.width() == 1 {
+            return match values {
+                ArrayValue::Float32(values) => Ok(ArrayValue::Float32(channels.selects(values)?)),
+                ArrayValue::Complex32(values) => {
+                    Ok(ArrayValue::Complex32(channels.selects(values)?))
+                }
+                ArrayValue::Complex64(values) => {
+                    Ok(ArrayValue::Complex64(channels.selects(values)?))
+                }
+                _ => Err(input("unexpected channel-selected visibility type")),
+            };
+        }
+        let flags = self.raw_flags()?;
+        let weights = match column {
+            "MODEL_DATA" => None,
+            "DATA" => Some(self.channel_weights(ChannelWeightKind::Observed)?),
+            _ => Some(self.channel_weights(ChannelWeightKind::Corrected)?),
+        };
+        match values {
+            ArrayValue::Float32(values) => {
+                Ok(ArrayValue::Float32(channels.means(values, flags, weights)?))
+            }
+            ArrayValue::Complex32(values) => Ok(ArrayValue::Complex32(
+                channels.means(values, flags, weights)?,
+            )),
+            _ => Err(input("unexpected channel-averaged visibility type")),
+        }
+    }
+
+    fn observed_float(&self, raw: &ArrayValue) -> MsResult<ArrayValue> {
+        let selected = self
+            .channels
+            .filter(|_| !self.rows.is_empty())
+            .map(|channels| self.select_channels(channels, "DATA", raw))
+            .transpose()?;
+        let ArrayValue::Float32(samples) = selected.as_ref().unwrap_or(raw) else {
+            return Err(input("FLOAT_DATA cells must contain Float values"));
+        };
+        Ok(ArrayValue::Complex32(
+            samples.mapv(|sample| Complex32::new(sample, 0.0)),
+        ))
     }
 
     fn scalars(
@@ -322,9 +548,11 @@ impl<'a> VisibilityRead<'a> {
                 .iter()
                 .zip(second)
                 .map(|(&left, &right)| left.wrapping_mul(1000).wrapping_add(right))
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
+                .collect::<Vec<_>>();
+            if self.channels.is_none() {
+                ifrs.sort_unstable();
+                ifrs.dedup();
+            }
             if average {
                 averaging::common_id(&mut ifrs);
             }
@@ -335,6 +563,25 @@ impl<'a> VisibilityRead<'a> {
         }
         for (name, column) in SCALARS {
             if !names.contains(name) {
+                continue;
+            }
+            if name == "flag_row"
+                && let Some(channels) = self.channels.filter(|channels| channels.width() > 1)
+                && !self.rows.is_empty()
+            {
+                let flags = self.channel_flags(channels)?;
+                let cell_width = flags.shape()[0] * flags.shape()[1];
+                let memory = flags
+                    .as_slice_memory_order()
+                    .ok_or_else(|| input("FLAG block is not contiguous"))?;
+                let row_flags = memory
+                    .chunks_exact(cell_width)
+                    .map(|row| row.iter().all(|&flagged| flagged))
+                    .collect();
+                fields.insert(
+                    name.into(),
+                    Value::Array(ArrayValue::Bool(vector(row_flags))),
+                );
                 continue;
             }
             let value = match self
@@ -519,19 +766,18 @@ impl<'a> VisibilityRead<'a> {
                 && [&amplitude, &phase, &real, &imaginary]
                     .into_iter()
                     .all(Option::is_none);
-            let data = if self.baseline_axis && has_float && source == "DATA" {
-                // The CASA visibility iterator uses FLOAT_DATA for observed
-                // products whenever that column exists.
-                if float_cells.is_none() {
-                    float_cells = Some(self.matrix_cells("FLOAT_DATA", false)?);
-                }
-                let Some(ArrayValue::Float32(samples)) = &float_cells else {
-                    return Err(input("FLOAT_DATA cells must contain Float values"));
+            let data =
+                if (self.baseline_axis || self.channels.is_some()) && has_float && source == "DATA"
+                {
+                    // The CASA visibility iterator uses FLOAT_DATA for observed
+                    // products whenever that column exists.
+                    if float_cells.is_none() {
+                        float_cells = Some(self.raw_matrix_cells("FLOAT_DATA", false)?);
+                    }
+                    self.observed_float(float_cells.as_ref().expect("FLOAT_DATA was read"))?
+                } else {
+                    self.matrix_cells(source, only_raw && !reduce)?
                 };
-                ArrayValue::Complex32(samples.mapv(|sample| Complex32::new(sample, 0.0)))
-            } else {
-                self.matrix_cells(source, only_raw && !reduce)?
-            };
             let data = if uses_model {
                 let model_values = self.matrix_cells("MODEL_DATA", false)?;
                 let (ArrayValue::Complex32(mut observed), ArrayValue::Complex32(expected)) =
@@ -546,6 +792,20 @@ impl<'a> VisibilityRead<'a> {
                     observed.zip_mut_with(&expected, |observed, expected| {
                         *observed = divide_visibility(*observed, *expected);
                     });
+                    if !average
+                        && let Some(channels) = self.channels
+                        && channels.width() > 1
+                        && !self.rows.is_empty()
+                    {
+                        observed.zip_mut_with(
+                            self.channel_flags(channels)?,
+                            |observed, &flagged| {
+                                if flagged {
+                                    *observed = Complex32::default();
+                                }
+                            },
+                        );
+                    }
                 } else {
                     observed.zip_mut_with(&expected, |observed, expected| *observed -= *expected);
                 }
@@ -598,9 +858,12 @@ impl<'a> VisibilityRead<'a> {
             .then(|| "float_data".to_owned());
         let mut float_aliases = aliases.remove("float_data");
         if has_float && (raw_float.is_some() || float_aliases.is_some()) {
-            let values = match float_cells {
-                Some(values) => values,
-                None => self.matrix_cells("FLOAT_DATA", false)?,
+            let values = match (float_cells, self.channels.filter(|_| !self.rows.is_empty())) {
+                (Some(values), Some(channels)) => {
+                    self.select_channels(channels, "FLOAT_DATA", &values)?
+                }
+                (Some(values), None) => values,
+                (None, _) => self.matrix_cells("FLOAT_DATA", false)?,
             };
             let values = if average && raw_float.is_some() {
                 require_single_average(items, "float_data")?;
@@ -919,7 +1182,12 @@ fn pack_cells(column: TableColumn<'_>, rows: &[usize]) -> MsResult<ArrayValue> {
     }
 }
 
-fn axis_info(ms: &MeasurementSet, ids: &[i32], first_row: usize) -> MsResult<RecordValue> {
+fn axis_info(
+    ms: &MeasurementSet,
+    ids: &[i32],
+    first_row: usize,
+    channels: Option<VisibilityChannels>,
+) -> MsResult<RecordValue> {
     use casa_coordinates::StokesType;
 
     let indices = ids
@@ -954,8 +1222,12 @@ fn axis_info(ms: &MeasurementSet, ids: &[i32], first_row: usize) -> MsResult<Rec
     let mut resolution = Vec::new();
     for &window in &windows {
         let index = usize::try_from(window).map_err(|_| input("negative SPECTRAL_WINDOW_ID"))?;
-        let freq = spw.chan_freq(index)?;
-        let res = spw.resolution(index)?;
+        let mut freq = spw.chan_freq(index)?;
+        let mut res = spw.resolution(index)?;
+        if let Some(channels) = channels {
+            freq = channels.coordinates(&freq)?;
+            res = channels.coordinates(&res)?;
+        }
         if freq.len() != res.len() || lengths.is_some_and(|n| n != freq.len()) {
             return Err(input("spectral windows have different channel counts"));
         }

@@ -12,8 +12,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyBytesMethods, PyDict, PyDictMethods, PyString};
 
 use super::metadata_link::MetadataSnapshot;
+use super::visibility::missing_selection_integer;
 
-use super::{PyMsTool, runtime_error, strict_bool};
+use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::selector::listing_selector;
 use crate::convert::value::CasaValue;
 
@@ -57,39 +58,39 @@ impl PyMsTool {
             let Some(attached) = attached.as_mut() else {
                 return Ok(false);
             };
-            let request = request.unwrap_or_default();
-            let snapshot = attached
-                .metadata_link()
-                .snapshot(None)
-                .map_err(runtime_error)?;
-            let ms = &snapshot.ms;
-            let parsed =
-                ms.parse_ms_tool_selection(&request, &mut attached.selection_state.indices);
-            let parsed = match parsed {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    attached.selection_state.error = Some(error.to_string());
-                    return Ok(false);
-                }
+            attached.apply_tool_selection(&request.unwrap_or_default(), onlyparse)
+        })
+    }
+
+    #[pyo3(signature = (datadescid = 0, reset = false), text_signature = "($self, datadescid=0, reset=False)")]
+    fn selectinit(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = selectinit_id)] datadescid: i64,
+        #[pyo3(from_py_with = strict_bool)] reset: bool,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let Some(attached) = attached.as_mut() else {
+                return Ok(false);
             };
-            let has_expression = parsed.has_row_expression();
-            let rows = (!onlyparse && has_expression).then(|| parsed.select_rows(ms));
-            attached.selection_state.error = None;
-            if let Some(rows) = rows {
-                let Ok(mut rows) = rows else {
-                    return Ok(false);
-                };
-                if let Some(previous) = &attached.selected_rows {
-                    for row in &mut rows {
-                        *row = previous[*row];
-                    }
-                }
-                let nonempty = !rows.is_empty();
-                attached.set_selected_rows(Some(rows))?;
-                Ok(nonempty)
-            } else {
-                Ok(has_expression)
+            if reset {
+                attached.reset_visibility_selection()?;
+                return Ok(true);
             }
+            if (datadescid as i32) < 0 {
+                return Err(runtime_error(
+                    "The data description id must be a list of positive integers",
+                ));
+            }
+            let request = MsSelection {
+                msselect: Some(format!("DATA_DESC_ID IN [{datadescid}]")),
+                ..MsSelection::default()
+            };
+            let selected = attached.apply_tool_selection(&request, true)?
+                && attached.apply_tool_selection(&request, false)?;
+            attached.visibility.set_initialized(selected);
+            Ok(selected)
         })
     }
 
@@ -151,6 +152,48 @@ impl PyMsTool {
         })?;
         index_record(&indices, false).into_python(py)
     }
+}
+
+impl AttachedMs {
+    fn apply_tool_selection(&mut self, request: &MsSelection, onlyparse: bool) -> PyResult<bool> {
+        let snapshot = self.metadata_link().snapshot(None).map_err(runtime_error)?;
+        let ms = &snapshot.ms;
+        let parsed = ms.parse_ms_tool_selection(request, &mut self.selection_state.indices);
+        let parsed = match parsed {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                self.selection_state.error = Some(error.to_string());
+                return Ok(false);
+            }
+        };
+        let has_expression = parsed.has_row_expression();
+        let rows = (!onlyparse && has_expression).then(|| parsed.select_rows(ms));
+        self.selection_state.error = None;
+        if let Some(rows) = rows {
+            let Ok(mut rows) = rows else {
+                return Ok(false);
+            };
+            if let Some(previous) = &self.selected_rows {
+                for row in &mut rows {
+                    *row = previous[*row];
+                }
+            }
+            let nonempty = !rows.is_empty();
+            self.set_selected_rows(Some(rows))?;
+            Ok(nonempty)
+        } else {
+            Ok(has_expression)
+        }
+    }
+}
+
+fn selectinit_id(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    if missing_selection_integer(value)? {
+        return Ok(-1);
+    }
+    value
+        .extract::<i64>()
+        .map_err(|_| PyTypeError::new_err("argument _datadescid must be an integer"))
 }
 
 fn selector(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {

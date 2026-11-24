@@ -456,18 +456,6 @@ impl PyMsTool {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (nchan = None, start = None, width = None, inc = None), text_signature = "($self, nchan=1, start=0, width=1, inc=1)")]
-    fn selectchannel(
-        &self,
-        nchan: Option<&Bound<'_, PyAny>>,
-        start: Option<&Bound<'_, PyAny>>,
-        width: Option<&Bound<'_, PyAny>>,
-        inc: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("selectchannel")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (nchan = None, start = None, width = None, inc = None), text_signature = "($self, nchan=1, start=0, width=1, inc=1)")]
     fn selectchannelold(
         &self,
         nchan: Option<&Bound<'_, PyAny>>,
@@ -476,16 +464,6 @@ impl PyMsTool {
         inc: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("selectchannelold")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (datadescid = None, reset = None), text_signature = "($self, datadescid=0, reset=False)")]
-    fn selectinit(
-        &self,
-        datadescid: Option<&Bound<'_, PyAny>>,
-        reset: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("selectinit")
     }
 
     /// Not yet implemented in casa-rs.

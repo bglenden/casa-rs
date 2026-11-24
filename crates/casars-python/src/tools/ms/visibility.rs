@@ -4,14 +4,15 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use casa_ms::tool_visibility;
+use casa_ms::tool_visibility::{self, VisibilityChannels};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyListMethods, PyString};
+use pyo3::types::{PyInt, PyList, PyListMethods, PyString};
 
 use super::attachment_info::{TableFiles, TableStamp};
+use super::metadata_link::{MetadataLink, MetadataSnapshot};
 use super::owned_record::visibility_record;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
@@ -21,6 +22,7 @@ pub(super) struct VisibilityState {
     initialized: bool,
     main: Option<VisibilityMain>,
     time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
+    channels: Option<VisibilityChannels>,
 }
 
 struct VisibilityMain {
@@ -33,6 +35,11 @@ struct VisibilityMain {
 impl VisibilityState {
     pub(super) fn reset_selection(&mut self) {
         self.initialized = false;
+        self.channels = None;
+    }
+
+    pub(super) fn set_initialized(&mut self, initialized: bool) {
+        self.initialized = initialized;
     }
 
     fn main(&mut self, path: &Path) -> PyResult<&VisibilityMain> {
@@ -133,6 +140,7 @@ impl PyMsTool {
         let options = tool_visibility::VisibilityReadOptions {
             average,
             baseline_gap: ifraxis.then_some(ifraxisgap as i32),
+            channels: None,
             time_measures: None,
         };
         let reply = py.detach(|| {
@@ -144,9 +152,72 @@ impl PyMsTool {
         })?;
         reply.into_python(py)
     }
+
+    #[pyo3(signature = (nchan = 1, start = 0, width = 1, inc = 1), text_signature = "($self, nchan=1, start=0, width=1, inc=1)")]
+    fn selectchannel(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = nchan_argument)] nchan: i64,
+        #[pyo3(from_py_with = start_argument)] start: i64,
+        #[pyo3(from_py_with = width_argument)] width: i64,
+        #[pyo3(from_py_with = channel_increment)] inc: i64,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let Some(ms) = attached.as_mut() else {
+                return Ok(false);
+            };
+            let link = ms.metadata_link();
+            if link.row_count().map_err(runtime_error)? == 0 {
+                return Err(runtime_error(
+                    "MSIter::construct - Input MeasurementSet.has zero selected rows",
+                ));
+            }
+            let Some(snapshot) = ms.initialize_visibility(&link)? else {
+                return Ok(false);
+            };
+            if nchan < 1 || start < 0 || width < 1 || inc < 1 {
+                return Ok(false);
+            }
+            let channels =
+                tool_visibility::selected_channel_count(&snapshot.ms).map_err(runtime_error)?;
+            let Some(selection) = VisibilityChannels::new(nchan, start, width, inc, channels)
+            else {
+                return Ok(false);
+            };
+            ms.visibility.channels = Some(selection);
+            Ok(true)
+        })
+    }
 }
 
 impl AttachedMs {
+    fn initialize_visibility(
+        &mut self,
+        link: &MetadataLink,
+    ) -> PyResult<Option<Arc<MetadataSnapshot>>> {
+        let mut snapshot = link.snapshot(None).map_err(runtime_error)?;
+        if !self.visibility.initialized
+            && let Some(mut selected) =
+                tool_visibility::heterogeneous_row_shapes(&snapshot.ms).map_err(runtime_error)?
+        {
+            if let Some(prior) = &self.selected_rows {
+                for row in &mut selected {
+                    *row = prior[*row];
+                }
+            }
+            let selected_any = !selected.is_empty();
+            self.set_selected_rows(Some(selected))?;
+            self.selection_state.use_implicit_selection();
+            if !selected_any {
+                return Ok(None);
+            }
+            snapshot = link.snapshot(None).map_err(runtime_error)?;
+        }
+        self.visibility.initialized = true;
+        Ok(Some(snapshot))
+    }
+
     fn getdata_rows(
         &mut self,
         items: &[String],
@@ -163,6 +234,10 @@ impl AttachedMs {
             return Ok(CasaValue::empty_record());
         }
         let initialized = self.visibility.initialized;
+        let options = tool_visibility::VisibilityReadOptions {
+            channels: self.visibility.channels,
+            ..options
+        };
         let main = self.visibility.main(&self.path)?;
         let count = self
             .selected_rows
@@ -175,25 +250,9 @@ impl AttachedMs {
             .iter()
             .any(|item| item.eq_ignore_ascii_case("axis_info"));
         if !initialized || axis_info {
-            let mut snapshot = link.snapshot(None).map_err(runtime_error)?;
-            if !initialized
-                && let Some(mut selected) = tool_visibility::heterogeneous_row_shapes(&snapshot.ms)
-                    .map_err(runtime_error)?
-            {
-                if let Some(prior) = &self.selected_rows {
-                    for row in &mut selected {
-                        *row = prior[*row];
-                    }
-                }
-                let selected_any = !selected.is_empty();
-                self.set_selected_rows(Some(selected))?;
-                self.selection_state.use_implicit_selection();
-                if !selected_any {
-                    return Ok(CasaValue::empty_record());
-                }
-                snapshot = link.snapshot(None).map_err(runtime_error)?;
-            }
-            self.visibility.initialized = true;
+            let Some(snapshot) = self.initialize_visibility(&link)? else {
+                return Ok(CasaValue::empty_record());
+            };
             let rows = sampled_rows(count, snapshot.ms.row_count(), increment)?;
             if !axis_info {
                 let main = self.visibility.main(&self.path)?;
@@ -252,6 +311,42 @@ fn increment_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
 
 fn gap_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
     integer_argument(value, "ifraxisgap")
+}
+
+fn nchan_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    channel_argument(value, "nchan")
+}
+
+fn start_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    channel_argument(value, "start")
+}
+
+fn width_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    channel_argument(value, "width")
+}
+
+fn channel_increment(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    channel_argument(value, "inc")
+}
+
+fn channel_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i64> {
+    if missing_selection_integer(value)? {
+        Err(PySystemError::new_err(
+            "<built-in function ms_selectchannel> returned a result with an exception set",
+        ))
+    } else {
+        integer_argument(value, name)
+    }
+}
+
+pub(super) fn missing_selection_integer(value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if value.is_none() {
+        return Ok(true);
+    }
+    if value.is_instance_of::<PyInt>() {
+        return Ok(false);
+    }
+    value.is_instance(&value.py().import("numpy")?.getattr("bool_")?)
 }
 
 fn integer_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i64> {
