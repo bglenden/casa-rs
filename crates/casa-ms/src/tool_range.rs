@@ -2,7 +2,9 @@
 //! Metadata and visibility ranges over the public MS tool's selected rows.
 
 use casa_coordinates::StokesType;
+use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_tables::{PlainReferenceRead, RequiredScalarColumnValues, Table};
+use casa_types::measures::direction::DirectionRef;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{Array1, ArrayD, IxDyn, ShapeBuilder};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -253,9 +255,23 @@ fn scalar_ranges(
                 .into_iter()
                 .map(|row| row as i64)
                 .collect()
-        } else {
+        } else if main.is_reference_table()? {
             let root = main.root_row_numbers()?;
-            rows.iter().map(|&row| root[row] as i64).collect()
+            rows.iter()
+                .map(|&row| {
+                    root.get(row)
+                        .map(|&root| root as i64)
+                        .ok_or_else(|| MsError::InvalidIndex {
+                            context: "selected MAIN row".into(),
+                            index: row,
+                            max: root.len(),
+                        })
+                })
+                .collect::<MsResult<_>>()?
+        } else {
+            // Plain and concatenated MAIN tables are their own row-number
+            // roots. Keep the saved selection's row identities after an edit.
+            rows.iter().map(|&row| row as i64).collect()
         };
         result.insert("rows".into(), Value::Array(ArrayValue::Int64(vector(rows))));
     }
@@ -329,7 +345,6 @@ fn name_ranges<'a>(
     let tables = linked_subtable(SubtableId::Field)?;
     let mut names = Vec::new();
     let mut coordinates = Vec::new();
-    let mut frame = None;
     for table in tables.iter() {
         let field = MsField::new(table);
         for row in 0..field.row_count() {
@@ -340,7 +355,6 @@ fn name_ranges<'a>(
                 let direction = field
                     .metadata_direction_at_seconds(row, FieldDirectionColumn::Phase, 0.0)?
                     .direction;
-                frame.get_or_insert(direction.refer().as_str());
                 let [x, y, _] = direction.cosines();
                 coordinates.extend([y.atan2(x), direction.latitude_rad()]);
             }
@@ -355,13 +369,20 @@ fn name_ranges<'a>(
     if want_directions {
         let angles = ArrayD::from_shape_vec(IxDyn(&[2, coordinates.len() / 2]).f(), coordinates)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        let epoch =
-            frame.ok_or_else(|| MsError::InvalidInput("no FIELD phase direction".into()))?;
+        // CASA reports the column's reference, independently of the
+        // references of its rows and of any attached ephemeris.
+        let measure = tables
+            .first()
+            .and_then(|table| TableMeasDesc::reconstruct(table, "PHASE_DIR"));
+        let epoch = match measure.as_ref().map(TableMeasDesc::ref_desc) {
+            Some(MeasRefDesc::Fixed { refer }) => refer.parse::<DirectionRef>()?,
+            _ => DirectionRef::J2000,
+        };
         let record = RecordValue::new(vec![
             RecordField::new("direction", Value::Array(ArrayValue::Float64(angles))),
             RecordField::new(
                 "epoch",
-                Value::Scalar(ScalarValue::String(epoch.to_owned())),
+                Value::Scalar(ScalarValue::String(epoch.as_str().to_owned())),
             ),
         ]);
         result.insert("phase_dir".into(), Value::Record(record));

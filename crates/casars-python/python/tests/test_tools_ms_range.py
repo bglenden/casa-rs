@@ -6,7 +6,7 @@ from casars import tools
 from test_tools_ms import pinned_casa
 from test_tools_ms_selection_indices import two_spws_dataset
 from test_tools_ms_visibility_ifraxis import baseline_fixture
-from test_tools_msmetadata import measures, native_dataset
+from test_tools_msmetadata import ephemeris_dataset, measures, native_dataset
 
 
 def extrema(values):
@@ -79,6 +79,32 @@ def test_ms_range_reads_live_reference_row_numbers(baseline_fixture):
         assert reader.done()
 
 
+def test_ms_range_retains_selected_row_numbers_after_main_shrinks(native_dataset, tmp_path):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        path = str(tmp_path / f"{api.__name__}-standard.ms")
+        table = casa.table()
+        assert table.open(str(native_dataset))
+        manager = {"*1": {"TYPE": "StandardStMan", "NAME": "Main",
+                           "COLUMNS": table.colnames(), "SPEC": {}}}
+        expected = np.flatnonzero(table.getcol("ANTENNA1") == 0)
+        assert len(expected) > 1
+        copy = table.copy(path, deep=True, valuecopy=True, dminfo=manager)
+        assert copy.done()
+        assert table.done()
+        reader = api.ms()
+        assert reader.open(path)
+        assert reader.msselect({"taql": "ANTENNA1 == 0"})
+        np.testing.assert_array_equal(reader.range("rows")["rows"], expected, strict=True)
+
+        assert table.open(path, nomodify=False)
+        assert table.removerows(list(range(1, table.nrows())))
+        assert table.done()
+        np.testing.assert_array_equal(reader.range("rows")["rows"], expected, strict=True)
+        assert reader.nrow() == 1
+        assert reader.done()
+
+
 def test_ms_reference_weight_and_sigma_keep_projected_rows(baseline_fixture, native_dataset):
     casa, view, raw = baseline_fixture
     weights = np.arange(1, raw["weight"].size + 1, dtype=np.float32)
@@ -100,6 +126,40 @@ def test_ms_reference_weight_and_sigma_keep_projected_rows(baseline_fixture, nat
             expected = vector[:, rows].astype(np.float64)
             np.testing.assert_array_equal(reads[name], expected, strict=True)
             np.testing.assert_array_equal(ranges[name], extrema(expected), strict=True)
+        assert reader.done()
+
+
+def test_ms_range_reads_only_selected_incremental_cells(baseline_fixture, native_dataset, tmp_path):
+    casa, _, raw = baseline_fixture
+    path = tmp_path / "incremental.ms"
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    weights = np.arange(1, raw["weight"].size + 1, dtype=np.float32).reshape(raw["weight"].shape)
+    assert table.putcol("WEIGHT", weights)
+    managers = table.getdminfo()
+    for manager in managers.values():
+        if {"DATA", "WEIGHT"}.intersection(manager["COLUMNS"]):
+            manager.update(TYPE="IncrementalStMan", SPEC={})
+    copy = table.copy(str(path), deep=True, valuecopy=True, dminfo=managers)
+    reference = copy.selectrows([0], str(tmp_path / "first-row.ms"))
+    assert reference.done()
+    sequence = next(manager["SEQNR"] for manager in copy.getdminfo().values()
+                    if "DATA" in manager["COLUMNS"])
+    assert copy.done()
+    assert table.done()
+
+    readers = [api.ms() for api in (casa, tools)]
+    for reader in readers:
+        assert reader.open(str(tmp_path / "first-row.ms"))
+    # Damage only the final, unselected cell of this disposable copy. Reading
+    # the selected row must never require the rest of the indirect array file.
+    payload = path / f"table.f{sequence}i"
+    with payload.open("r+b") as file:
+        file.truncate(payload.stat().st_size - 32)
+    for reader in readers:
+        result = reader.range(["real", "weight"], useflags=False, blocksize=1)
+        np.testing.assert_array_equal(result["real"], extrema(raw["data"][..., 0].real), strict=True)
+        np.testing.assert_array_equal(result["weight"], extrema(weights[:, 0]), strict=True)
         assert reader.done()
 
 
@@ -189,6 +249,19 @@ def test_ms_range_returns_linked_metadata(baseline_fixture, native_dataset):
                                    rtol=1e-14, atol=1e-14, strict=True)
         assert result["phase_dir"]["epoch"] == reference
         assert reader.done()
+
+
+def test_ms_range_phase_direction_uses_ephemeris_column_reference(ephemeris_dataset):
+    dataset, _ = ephemeris_dataset
+    answers = []
+    for api in (pinned_casa(), tools):
+        reader = api.ms()
+        assert reader.open(str(dataset))
+        phase = reader.range("phase_dir")["phase_dir"]
+        assert phase["epoch"] == "J2000"
+        answers.append(phase["direction"])
+        assert reader.done()
+    np.testing.assert_allclose(*answers, rtol=1e-13, strict=True)
 
 
 @pytest.mark.parametrize("useflags", [False, True])
