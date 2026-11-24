@@ -136,11 +136,31 @@ def test_ms_getdata_preserves_casa_multi_ms_member_order(native_dataset, tmp_pat
         reader = api.ms()
         assert reader.open(dataset)
         assert reader.ismultims()
-        record = reader.getdata(["data", "flag", "weight", "sigma", "time", "uvw"], increment=7)
+        items = ["data", "flag", "flag_sum", "weight", "sigma", "time", "uvw",
+                 "antenna1", "antenna2", "ifr_number"]
+        record = reader.getdata(items, increment=7)
         np.testing.assert_array_equal(record["data"], want, strict=True)
+        same_visibility(reader.getdata(items, increment=7), record)
+        single = reader.getdata(["data"], increment=packed.shape[-1] - 1)
+        np.testing.assert_array_equal(single["data"], packed[:, :, :1], strict=True)
         results.append(record)
         assert reader.done()
     same_visibility(*results[::-1])
+
+    live = tools.ms()
+    assert live.open(dataset)
+    before = live.getdata("data")
+    same_visibility(live.getdata("data"), before)
+    second_member = live.getreferencedtables()[1]
+    writer = casa.table()
+    assert writer.open(second_member, nomodify=False)
+    updated = np.full(packed.shape[:2], 29 + 31j, dtype=np.complex64)
+    assert writer.putcell("DATA", writer.nrows() - 1, updated)
+    assert writer.done()
+    after = live.getdata("data")["data"]
+    np.testing.assert_array_equal(after[:, :, :-1], before["data"][:, :, :-1], strict=True)
+    np.testing.assert_array_equal(after[:, :, -1], updated.astype(np.complex128), strict=True)
+    assert live.done()
 
 
 def test_ms_getdata_empty_stride_keeps_safe_shapes_and_active_rows(native_dataset):
@@ -168,12 +188,176 @@ def test_ms_getdata_initializes_heterogeneous_descriptions(two_spws_dataset):
         assert tool.nrow(True) == 30
         first = tool.getdata(["Data", "AXIS_INFO", "TIME"])
         assert first["data"].shape == (2, 4, 30)
+        same_visibility(tool.getdata(["Data", "TIME"]), {key: first[key] for key in ("data", "time")})
         assert tool.reset()
         assert tool.nrow(True) == 60
         assert tool.msselect({"spw": "1"})
         second = tool.getdata(["data", "axis_info", "time"])
         assert second["data"].shape == (2, 3, 30)
+        same_visibility(tool.getdata(["data", "time"]), {key: second[key] for key in ("data", "time")})
         assert tool.done()
         records.append((first, second))
     for native, reference in zip(records[1], records[0], strict=True):
         same_visibility(native, reference)
+
+
+def test_ms_getdata_ratio_preserves_infinite_components(native_dataset):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    column = table.getcoldesc("DATA")
+    assert table.addcols({"CORRECTED_DATA": column, "MODEL_DATA": column})
+    data = table.getcol("DATA").astype(np.complex64)
+    numerator = np.ones_like(data)
+    denominator = np.ones_like(data)
+    numerator[:, :2, 0] = [[1 + 2j, 2j], [1, 0]]
+    denominator[:, :2, 0] = 0
+    assert table.putcol("CORRECTED_DATA", numerator)
+    assert table.putcol("MODEL_DATA", denominator)
+    assert table.done()
+
+    for api in (casa, tools):
+        tool = api.ms()
+        assert tool.open(str(native_dataset))
+        result = tool.getdata(["ratio_data", "ratio_amplitude", "ratio_phase"], increment=tool.nrow() - 1)
+        ratio = result["ratio_data"][:, :2, 0]
+        np.testing.assert_array_equal(np.isinf(ratio.real), [[True, False], [True, False]])
+        np.testing.assert_array_equal(np.isinf(ratio.imag), [[True, True], [False, False]])
+        np.testing.assert_array_equal(np.isnan(ratio.real), [[False, True], [False, True]])
+        np.testing.assert_array_equal(np.isnan(ratio.imag), [[False, False], [True, True]])
+        assert ratio[0, 0].real > 0 and ratio[0, 0].imag > 0
+        assert result["ratio_phase"][0, 0, 0] == pytest.approx(np.pi / 4, rel=1e-6)
+        assert np.isinf(result["ratio_amplitude"][0, 0, 0])
+        assert tool.done()
+
+
+def test_ms_getdata_reads_single_precision_float_visibilities(native_dataset):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    description = dict(table.getcoldesc("DATA"), valueType="float",
+                       dataManagerType="StandardStMan", dataManagerGroup="FLOAT_DATA")
+    assert table.addcols({"FLOAT_DATA": description})
+    shape = table.getcol("DATA").shape
+    samples = np.arange(np.prod(shape), dtype=np.float32).reshape(shape, order="F") / 5 - 2
+    assert table.putcol("FLOAT_DATA", samples)
+    assert table.done()
+
+    for api in (casa, tools):
+        tool = api.ms()
+        assert tool.open(str(native_dataset))
+        record = tool.getdata(["FLOAT_DATA"], increment=3)
+        expected = samples[:, :, ::3][:, :, :shape[-1] // 3].astype(np.float64)
+        np.testing.assert_array_equal(record["float_data"], expected, strict=True)
+        assert tool.done()
+
+
+def test_ms_getdata_literal_average_prefix_and_missing_items(native_dataset):
+    casa = pinned_casa()
+    items = ["Data", "AVG_AMPLITUDE", "avg_time", "avg_flag_sum", "model_unknown",
+             "unknown_corrected_data", "unknown_float_data", "unrecognized"]
+    records = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        record = reader.getdata(items, increment=7)
+        assert set(record) == {"data", "avg_amplitude", "avg_time", "model_unknown",
+                               "unknown_corrected_data", "unknown_float_data"}
+        for alias in ("avg_amplitude", "avg_time"):
+            np.testing.assert_array_equal(record[alias], record["data"], strict=True)
+        for key, dtype in [("model_unknown", np.float64), ("unknown_corrected_data", np.complex128),
+                           ("unknown_float_data", np.float64)]:
+            assert record[key].shape == (0,) and record[key].dtype == dtype
+        records.append(record)
+        assert reader.done()
+    same_visibility(*records[::-1])
+
+
+def test_ms_getdata_reads_rows_and_columns_published_by_casa(native_dataset):
+    casa = pinned_casa()
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    before = reader.getdata(["time", "model_data"])
+    assert before["model_data"].shape == (0,)
+    same_visibility(reader.getdata(["time", "model_data"]), before)
+
+    writer = casa.table()
+    assert writer.open(str(native_dataset), nomodify=False)
+    row_count = writer.nrows()
+    assert writer.addrows(1)
+    new_time = before["time"][-1] + 90
+    assert writer.putcell("TIME", row_count, new_time)
+    description = writer.getcoldesc("DATA")
+    assert writer.addcols({"MODEL_DATA": description})
+    shape = writer.getcell("DATA", 0).shape + (row_count + 1,)
+    model = np.full(shape, 3 - 4j, dtype=np.complex64)
+    assert writer.putcol("MODEL_DATA", model)
+    assert writer.done()
+
+    result = reader.getdata(["time", "model_data"])
+    np.testing.assert_array_equal(result["time"], np.append(before["time"], new_time), strict=True)
+    np.testing.assert_array_equal(result["model_data"], model.astype(np.complex128), strict=True)
+    assert reader.done()
+
+
+def test_ms_getdata_reads_published_referenced_cells(native_dataset, tmp_path):
+    casa = pinned_casa()
+    writer = casa.table()
+    assert writer.open(str(native_dataset))
+    reference = str(tmp_path / "published.ms")
+    selected = np.array([12, 4, 17, 9], dtype=np.int64)
+    view = writer.selectrows(selected, reference)
+    assert view.done()
+    assert writer.done()
+
+    reader = tools.ms()
+    assert reader.open(reference)
+    before = reader.getdata(["data", "time"], increment=2)
+    same_visibility(reader.getdata(["data", "time"], increment=2), before)
+
+    assert writer.open(str(native_dataset), nomodify=False)
+    updated = np.full(before["data"].shape[:2], 13 + 17j, dtype=np.complex64)
+    physical_row = int(selected[2])
+    assert writer.putcell("DATA", physical_row, updated)
+    assert writer.putcell("TIME", physical_row, before["time"][1] + 90)
+    assert writer.done()
+
+    expected = casa.ms()
+    assert expected.open(reference)
+    fresh = expected.getdata(["data", "time"], increment=2)
+    np.testing.assert_array_equal(fresh["data"][:, :, 1], updated.astype(np.complex128), strict=True)
+    assert fresh["time"][1] == before["time"][1] + 90
+    same_visibility(reader.getdata(["data", "time"], increment=2), fresh)
+    assert expected.done()
+    assert reader.done()
+
+
+def test_ms_getdata_reads_forwarded_vectors(native_dataset, tmp_path):
+    casa = pinned_casa()
+    writer = casa.table()
+    assert writer.open(str(native_dataset))
+    description = writer.getdesc()
+    names = writer.colnames()
+    rows = writer.nrows()
+    metadata = writer.getkeywords()
+    info = writer.info()
+    vectors = {name: writer.getcol(name.upper()) for name in ('weight', 'sigma', 'uvw')}
+    assert writer.done()
+    forwarded = str(tmp_path / 'forwarded.ms')
+    assert writer.create(forwarded, description, nrow=rows, dminfo={
+        '*1': {'TYPE': 'ForwardColumnEngine', 'NAME': 'ForwardColumnEngine',
+               'SPEC': {'FORWARDTABLE': str(native_dataset)}, 'COLUMNS': names},
+    })
+    for name, value in metadata.items():
+        if isinstance(value, str) and value.startswith('Table: '):
+            value = 'Table: ' + str(native_dataset / name)
+        assert writer.putkeyword(name, value)
+    assert writer.putinfo(info)
+    assert writer.done()
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(forwarded)
+        data = reader.getdata(list(vectors))
+        for name, array in vectors.items():
+            np.testing.assert_array_equal(data[name], array.astype(np.float64), strict=True)
+        assert reader.done()

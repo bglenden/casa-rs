@@ -12,6 +12,9 @@ use num_complex::Complex32;
 
 use crate::{MeasurementSet, MsError, MsResult};
 
+mod concatenation;
+use concatenation::{MemberRows, concatenate_arrays, concatenate_scalars, member_rows};
+
 /// Determine whether CASA's implicit initialization needs to narrow this view
 /// to data description zero. The iterator's row shape comes from its logical
 /// spectral window and polarization tables.
@@ -54,23 +57,28 @@ pub fn heterogeneous_row_shapes(ms: &MeasurementSet) -> MsResult<Option<Vec<usiz
 
 /// Read the ordinary row-axis visibility record for a logical set of rows.
 /// Complex and float operations retain the precision of the stored cells.
+/// Contiguous groups of logical rows can reuse open plain members supplied in
+/// concatenation order. Other views use the table's persisted row projection.
 /// # Errors
 /// A requested column cannot be read as a rectangular array.
 pub fn read_tool_visibility(
-    ms: &MeasurementSet,
+    main: &Table,
+    members: &[Table],
     rows: &[usize],
     items: &[String],
+    metadata: Option<&MeasurementSet>,
 ) -> MsResult<RecordValue> {
     let names = items
         .iter()
         .map(|name| name.to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
-    let mut read = VisibilityRead::new(ms.main_table(), rows, &names)?;
+    let mut read = VisibilityRead::new(main, members, rows, &names)?;
     let mut fields = BTreeMap::new();
     if names.contains("axis_info") {
         let RequiredScalarColumnValues::Int32(ids) = &read.scalar_columns["DATA_DESC_ID"] else {
             return Err(input("DATA_DESC_ID must contain an integer"));
         };
+        let ms = metadata.ok_or_else(|| input("axis_info requires MeasurementSet metadata"))?;
         fields.insert("axis_info".into(), Value::Record(axis_info(ms, ids)?));
     }
     read.scalars(&names, &mut fields)?;
@@ -88,6 +96,7 @@ struct VisibilityRead<'a> {
     main: &'a Table,
     rows: &'a [usize],
     plain: bool,
+    members: Vec<MemberRows<'a>>,
     scalar_columns: HashMap<String, RequiredScalarColumnValues>,
 }
 
@@ -105,7 +114,12 @@ const SCALARS: [(&str, &str); 10] = [
 ];
 
 impl<'a> VisibilityRead<'a> {
-    fn new(main: &'a Table, rows: &'a [usize], names: &BTreeSet<String>) -> MsResult<Self> {
+    fn new(
+        main: &'a Table,
+        members: &'a [Table],
+        rows: &'a [usize],
+        names: &BTreeSet<String>,
+    ) -> MsResult<Self> {
         let mut columns = SCALARS
             .into_iter()
             .filter_map(|(name, column)| {
@@ -117,7 +131,7 @@ impl<'a> VisibilityRead<'a> {
         if names.contains("axis_info") && !columns.contains(&"DATA_DESC_ID") {
             columns.push("DATA_DESC_ID");
         }
-        let plain = if let Some(path) = main.path() {
+        let plain = if let Some(path) = main.path().filter(|_| members.is_empty()) {
             matches!(
                 Table::immediate_part_names(path, path)?,
                 TablePartNames::Plain(_)
@@ -125,8 +139,11 @@ impl<'a> VisibilityRead<'a> {
         } else {
             false
         };
+        let members = member_rows(members, main.row_count(), rows);
         let scalar_columns = if columns.is_empty() {
             HashMap::new()
+        } else if !members.is_empty() {
+            concatenate_scalars(&members, &columns)?
         } else if plain && !rows.is_empty() {
             main.required_scalar_columns_owned_for_rows(&columns, rows)?
         } else {
@@ -144,7 +161,26 @@ impl<'a> VisibilityRead<'a> {
             main,
             rows,
             plain,
+            members,
             scalar_columns,
+        })
+    }
+
+    fn vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
+        if self.members.is_empty() {
+            return read_vector_cells(self.main, name, self.rows, self.plain);
+        }
+        concatenate_arrays(&self.members, |table, rows| {
+            read_vector_cells(table, name, rows, true)
+        })
+    }
+
+    fn matrix_cells(&self, name: &str, widen_complex: bool) -> MsResult<ArrayValue> {
+        if self.members.is_empty() {
+            return read_matrix_cells(self.main, name, self.rows, widen_complex);
+        }
+        concatenate_arrays(&self.members, |table, rows| {
+            read_matrix_cells(table, name, rows, false)
         })
     }
 
@@ -202,14 +238,11 @@ impl<'a> VisibilityRead<'a> {
     ) -> MsResult<()> {
         for (name, column) in [("weight", "WEIGHT"), ("sigma", "SIGMA")] {
             if names.contains(name) {
-                fields.insert(
-                    name.into(),
-                    Value::Array(read_vector_cells(self.main, column, self.rows, self.plain)?),
-                );
+                fields.insert(name.into(), Value::Array(self.vector_cells(column)?));
             }
         }
         if names.contains("flag") || names.contains("flag_sum") {
-            let flags = read_matrix_cells(self.main, "FLAG", self.rows, false)?;
+            let flags = self.matrix_cells("FLAG", false)?;
             if names.contains("flag_sum") {
                 let ArrayValue::Bool(flag) = &flags else {
                     return Err(input("FLAG cells must be Boolean"));
@@ -242,7 +275,7 @@ impl<'a> VisibilityRead<'a> {
             .iter()
             .any(|name| matches!(name.as_str(), "uvw" | "u" | "v" | "w" | "uvdist"))
         {
-            let uvw = read_vector_cells(self.main, "UVW", self.rows, self.plain)?;
+            let uvw = self.vector_cells("UVW")?;
             let ArrayValue::Float64(values) = &uvw else {
                 return Err(input("UVW cells must be double precision"));
             };
@@ -284,7 +317,43 @@ impl<'a> VisibilityRead<'a> {
         names: &BTreeSet<String>,
         fields: &mut BTreeMap<String, Value>,
     ) -> MsResult<()> {
-        for (prefix, source, model) in [
+        let has_column = |column| {
+            self.main
+                .schema()
+                .is_some_and(|schema| schema.column(column).is_some())
+        };
+        let has_model = has_column("MODEL_DATA");
+        let has_corrected = has_column("CORRECTED_DATA");
+        let has_float = has_column("FLOAT_DATA");
+        let mut aliases: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for name in names {
+            let missing_float = !has_float && name.contains("float");
+            let missing_complex = (!has_model
+                && ["model", "ratio", "residual"]
+                    .iter()
+                    .any(|&item| name.contains(item)))
+                || (!has_corrected
+                    && (name.contains("corrected")
+                        || name.contains("ratio")
+                        || (name.contains("residual") && !name.contains("obs"))));
+            if missing_float || missing_complex {
+                // CASA checks optional-column substrings before recognizing item names.
+                let empty = if !missing_float && name.contains("data") {
+                    ArrayValue::Complex32(vector(Vec::new()))
+                } else {
+                    ArrayValue::Float32(vector(Vec::new()))
+                };
+                fields.insert(name.clone(), Value::Array(empty));
+            } else if let Some(derived) = name.strip_prefix("avg_") {
+                // The ordinary CASA reader accepts this prefix and returns its
+                // underlying visibility column without applying a projection.
+                let base = derived
+                    .rsplit_once('_')
+                    .map_or_else(|| "data".to_owned(), |(prefix, _)| format!("{prefix}_data"));
+                aliases.entry(base).or_default().push(name.clone());
+            }
+        }
+        for (prefix, source, uses_model) in [
             ("", "DATA", false),
             ("corrected_", "CORRECTED_DATA", false),
             ("model_", "MODEL_DATA", false),
@@ -294,39 +363,20 @@ impl<'a> VisibilityRead<'a> {
         ] {
             let requested = ["data", "amplitude", "phase", "real", "imaginary"].map(|name| {
                 let key = format!("{prefix}{name}");
-                names.contains(&key).then_some(key)
+                (names.contains(&key) && !fields.contains_key(&key)).then_some(key)
             });
-            if requested.iter().all(Option::is_none) {
-                continue;
-            }
-            let has_column = |column| {
-                self.main
-                    .schema()
-                    .is_some_and(|schema| schema.column(column).is_some())
-            };
-            if (source != "DATA" && !has_column(source)) || (model && !has_column("MODEL_DATA")) {
-                for (index, key) in requested
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(index, key)| key.map(|key| (index, key)))
-                {
-                    let values = if index == 0 {
-                        ArrayValue::Complex32(vector(Vec::new()))
-                    } else {
-                        ArrayValue::Float32(vector(Vec::new()))
-                    };
-                    fields.insert(key, Value::Array(values));
-                }
+            let raw_aliases = aliases.remove(&format!("{prefix}data"));
+            if requested.iter().all(Option::is_none) && raw_aliases.is_none() {
                 continue;
             }
             let [raw, amplitude, phase, real, imaginary] = requested;
-            let only_raw = !model
+            let only_raw = !uses_model
                 && [&amplitude, &phase, &real, &imaginary]
                     .into_iter()
                     .all(Option::is_none);
-            let data = read_matrix_cells(self.main, source, self.rows, only_raw)?;
-            let data = if model {
-                let model_values = read_matrix_cells(self.main, "MODEL_DATA", self.rows, false)?;
+            let data = self.matrix_cells(source, only_raw)?;
+            let data = if uses_model {
+                let model_values = self.matrix_cells("MODEL_DATA", false)?;
                 let (ArrayValue::Complex32(mut observed), ArrayValue::Complex32(expected)) =
                     (data, model_values)
                 else {
@@ -336,7 +386,9 @@ impl<'a> VisibilityRead<'a> {
                     return Err(input("visibility columns have different shapes"));
                 }
                 if prefix == "ratio_" {
-                    observed.zip_mut_with(&expected, |observed, expected| *observed /= *expected);
+                    observed.zip_mut_with(&expected, |observed, expected| {
+                        *observed = divide_visibility(*observed, *expected);
+                    });
                 } else {
                     observed.zip_mut_with(&expected, |observed, expected| *observed -= *expected);
                 }
@@ -369,24 +421,87 @@ impl<'a> VisibilityRead<'a> {
                     fields.insert(name, Value::Array(ArrayValue::Float32(values)));
                 }
             }
-            if let Some(name) = raw {
-                fields.insert(name, Value::Array(data));
-            }
+            insert_array_aliases(
+                fields,
+                raw.into_iter().chain(raw_aliases.into_iter().flatten()),
+                data,
+            );
         }
-        if names.contains("float_data") {
-            let values = if self
-                .main
-                .schema()
-                .is_some_and(|schema| schema.column("FLOAT_DATA").is_some())
-            {
-                read_matrix_cells(self.main, "FLOAT_DATA", self.rows, false)?
-            } else {
-                ArrayValue::Float32(vector(Vec::new()))
-            };
-            fields.insert("float_data".into(), Value::Array(values));
+        let raw_float = names
+            .contains("float_data")
+            .then(|| "float_data".to_owned());
+        let float_aliases = aliases.remove("float_data");
+        if has_float && (raw_float.is_some() || float_aliases.is_some()) {
+            let values = self.matrix_cells("FLOAT_DATA", false)?;
+            insert_array_aliases(
+                fields,
+                raw_float
+                    .into_iter()
+                    .chain(float_aliases.into_iter().flatten()),
+                values,
+            );
         }
         Ok(())
     }
+}
+
+fn insert_array_aliases(
+    fields: &mut BTreeMap<String, Value>,
+    names: impl Iterator<Item = String>,
+    values: ArrayValue,
+) {
+    let mut names = names.peekable();
+    while let Some(name) = names.next() {
+        if names.peek().is_none() {
+            fields.insert(name, Value::Array(values));
+            break;
+        }
+        fields.insert(name, Value::Array(values.clone()));
+    }
+}
+
+fn divide_visibility(sample: Complex32, model: Complex32) -> Complex32 {
+    let [real, imaginary, model_real, model_imaginary] =
+        [sample.re, sample.im, model.re, model.im].map(f64::from);
+    // Every finite Float32 product, including two subnormal values, fits
+    // in Float64. Widened arithmetic avoids a spurious zero or infinite norm.
+    let norm = model_real * model_real + model_imaginary * model_imaginary;
+    let observed_dot = real * model_real + imaginary * model_imaginary;
+    let observed_cross = imaginary * model_real - real * model_imaginary;
+    let quotient = (observed_dot / norm, observed_cross / norm);
+    let signed_unit_for_infinity = |value: f64| {
+        let magnitude: f64 = if value.is_infinite() { 1.0 } else { 0.0 };
+        magnitude.copysign(value)
+    };
+    let (result_real, result_imaginary) = if !quotient.0.is_nan() || !quotient.1.is_nan() {
+        quotient
+    } else if norm == 0.0 {
+        let infinite = f64::INFINITY.copysign(model_real);
+        (infinite * real, infinite * imaginary)
+    } else if (real.is_infinite() || imaginary.is_infinite())
+        && model_real.is_finite()
+        && model_imaginary.is_finite()
+    {
+        let real = signed_unit_for_infinity(real);
+        let imaginary = signed_unit_for_infinity(imaginary);
+        (
+            f64::INFINITY * (real * model_real + imaginary * model_imaginary),
+            f64::INFINITY * (imaginary * model_real - real * model_imaginary),
+        )
+    } else if (model_real.is_infinite() || model_imaginary.is_infinite())
+        && real.is_finite()
+        && imaginary.is_finite()
+    {
+        let model_real = signed_unit_for_infinity(model_real);
+        let model_imaginary = signed_unit_for_infinity(model_imaginary);
+        (
+            0.0 * (real * model_real + imaginary * model_imaginary),
+            0.0 * (imaginary * model_real - real * model_imaginary),
+        )
+    } else {
+        quotient
+    };
+    Complex32::new(result_real as f32, result_imaginary as f32)
 }
 
 fn read_vector_cells(
@@ -399,7 +514,18 @@ fn read_vector_cells(
     if rows.is_empty() {
         return empty_array(main, name);
     }
-    if !plain {
+    let has_virtual_columns = main.schema().is_some_and(|schema| {
+        schema
+            .columns()
+            .iter()
+            .any(|desc| main.is_virtual_column(desc.name()))
+    });
+    let float_in_incremental_storage = name != "UVW"
+        && main.data_manager_info().iter().any(|manager| {
+            manager.dm_type == "IncrementalStMan"
+                && manager.columns.iter().any(|column| column == name)
+        });
+    if !plain || has_virtual_columns || float_in_incremental_storage {
         return pack_cells(column, rows);
     }
     let packed = column.array_cells_1d_typed_uncached(rows)?;

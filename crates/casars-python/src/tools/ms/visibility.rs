@@ -1,15 +1,86 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read row-axis visibility records from the current MS attachment.
 
+use std::path::Path;
+
 use casa_ms::tool_visibility;
+use casa_tables::{Table, TableOptions, TablePartNames};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyListMethods, PyString};
 
+use super::attachment_info::{TableFiles, TableStamp};
 use super::owned_record::visibility_record;
-use super::{PyMsTool, runtime_error, strict_bool};
+use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
 use crate::tools::not_yet_implemented_in;
+
+#[derive(Default)]
+pub(super) struct VisibilityState {
+    initialized: bool,
+    main: Option<VisibilityMain>,
+}
+
+struct VisibilityMain {
+    table: Table,
+    members: Vec<Table>,
+    publication: Vec<(TableFiles, Option<TableStamp>)>,
+}
+
+impl VisibilityState {
+    pub(super) fn reset_selection(&mut self) {
+        self.initialized = false;
+    }
+
+    fn main(&mut self, path: &Path) -> PyResult<&VisibilityMain> {
+        let current = self.main.as_ref().is_some_and(|main| {
+            main.publication
+                .iter()
+                .all(|(files, stamp)| stamp.is_some() && files.stamp() == *stamp)
+        });
+        if !current {
+            self.main = Some(VisibilityMain::open(path)?);
+        }
+        Ok(self.main.as_ref().expect("MAIN table was opened"))
+    }
+}
+
+impl VisibilityMain {
+    fn open(path: &Path) -> PyResult<Self> {
+        // Record publication stamps before opening the row metadata. A writer
+        // publishing during a read forces the next call to reopen the layout.
+        let mut publication = Vec::new();
+        let table = Table::open_with_layout_paths(TableOptions::new(path), |path| {
+            let files = TableFiles::new(path);
+            let stamp = files.stamp();
+            publication.push((files, stamp));
+        })
+        .map_err(runtime_error)?;
+        let members = Self::open_plain_members(path)?;
+        Ok(Self {
+            table,
+            members,
+            publication,
+        })
+    }
+
+    fn open_plain_members(path: &Path) -> PyResult<Vec<Table>> {
+        let Some(paths) = Table::concatenated_source_paths(path).map_err(runtime_error)? else {
+            return Ok(Vec::new());
+        };
+        let mut members = Vec::with_capacity(paths.len());
+        for path in paths {
+            if !matches!(
+                Table::immediate_part_names(&path, &path).map_err(runtime_error)?,
+                TablePartNames::Plain(_)
+            ) {
+                return Ok(Vec::new());
+            }
+            members.push(Table::open(TableOptions::new(path)).map_err(runtime_error)?);
+        }
+        Ok(members)
+    }
+}
 
 #[pymethods]
 impl PyMsTool {
@@ -30,41 +101,88 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
-            if ms.metadata_link().row_count().map_err(runtime_error)? == 0 {
-                return Ok(CasaValue::empty_record());
-            }
-            if ifraxis || average {
-                return not_yet_implemented_in("ms", "getdata ifraxis or average", super::ISSUE);
-            }
-            let mut snapshot = ms.metadata_link().snapshot(None).map_err(runtime_error)?;
-            if !ms.visibility_initialized {
-                if let Some(mut selected) = tool_visibility::heterogeneous_row_shapes(&snapshot.ms)
-                    .map_err(runtime_error)?
-                {
-                    if let Some(prior) = &ms.selected_rows {
-                        for row in &mut selected {
-                            *row = prior[*row];
-                        }
-                    }
-                    let selected_any = !selected.is_empty();
-                    ms.set_selected_rows(Some(selected))?;
-                    ms.selection_state.use_implicit_selection();
-                    if !selected_any {
-                        return Ok(CasaValue::empty_record());
-                    }
-                    snapshot = ms.metadata_link().snapshot(None).map_err(runtime_error)?;
-                }
-                ms.visibility_initialized = true;
-            }
-            if items.is_empty() {
-                return Ok(CasaValue::empty_record());
-            }
-            let rows = sampled_rows(snapshot.ms.row_count(), increment);
-            let read = tool_visibility::read_tool_visibility(&snapshot.ms, &rows, &items)
-                .map_err(runtime_error)?;
-            Ok(visibility_record(read))
+            ms.getdata_rows(&items, increment, ifraxis || average)
         })?;
         reply.into_python(py)
+    }
+}
+
+impl AttachedMs {
+    fn getdata_rows(
+        &mut self,
+        items: &[String],
+        increment: i64,
+        unsupported_axis: bool,
+    ) -> PyResult<CasaValue> {
+        let link = self.metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        if self
+            .selected_rows
+            .as_deref()
+            .is_some_and(<[usize]>::is_empty)
+        {
+            return Ok(CasaValue::empty_record());
+        }
+        let initialized = self.visibility.initialized;
+        let main = self.visibility.main(&self.path)?;
+        let count = self
+            .selected_rows
+            .as_deref()
+            .map_or_else(|| main.table.row_count(), <[usize]>::len);
+        if count == 0 {
+            return Ok(CasaValue::empty_record());
+        }
+        if unsupported_axis {
+            return not_yet_implemented_in("ms", "getdata ifraxis or average", super::ISSUE);
+        }
+        let axis_info = items
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case("axis_info"));
+        if !initialized || axis_info {
+            let mut snapshot = link.snapshot(None).map_err(runtime_error)?;
+            if !initialized
+                && let Some(mut selected) = tool_visibility::heterogeneous_row_shapes(&snapshot.ms)
+                    .map_err(runtime_error)?
+            {
+                if let Some(prior) = &self.selected_rows {
+                    for row in &mut selected {
+                        *row = prior[*row];
+                    }
+                }
+                let selected_any = !selected.is_empty();
+                self.set_selected_rows(Some(selected))?;
+                self.selection_state.use_implicit_selection();
+                if !selected_any {
+                    return Ok(CasaValue::empty_record());
+                }
+                snapshot = link.snapshot(None).map_err(runtime_error)?;
+            }
+            self.visibility.initialized = true;
+            let rows = sampled_rows(snapshot.ms.row_count(), increment);
+            let record = tool_visibility::read_tool_visibility(
+                snapshot.ms.main_table(),
+                &[],
+                &rows,
+                items,
+                Some(&snapshot.ms),
+            )
+            .map_err(runtime_error)?;
+            return Ok(visibility_record(record));
+        }
+        if items.is_empty() {
+            return Ok(CasaValue::empty_record());
+        }
+        let mut rows = sampled_rows(count, increment);
+        if let Some(prior) = &self.selected_rows {
+            for row in &mut rows {
+                *row = prior[*row];
+            }
+        }
+        let record =
+            tool_visibility::read_tool_visibility(&main.table, &main.members, &rows, items, None)
+                .map_err(runtime_error)?;
+        link.verify_directory().map_err(runtime_error)?;
+        Ok(visibility_record(record))
     }
 }
 
