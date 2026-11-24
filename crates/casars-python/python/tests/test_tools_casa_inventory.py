@@ -72,7 +72,8 @@ IMPLEMENTED["singledishms"] = {
 IMPLEMENTED["ms"] = {
     "close", "done", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "ismultims", "iswritable",
-    "metadata", "msselect", "name", "nrow", "open", "reset", "statwt", "uvsub",
+    "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
+    "open", "reset", "statwt", "uvsub",
 }
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",

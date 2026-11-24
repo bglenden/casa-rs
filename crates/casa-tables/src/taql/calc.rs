@@ -349,7 +349,11 @@ fn expr_uses_table_rows(expr: &Expr) -> bool {
     }
 }
 
-fn validate_calc_columns(expr: &Expr, table: &Table) -> Result<(), TaqlError> {
+/// Validate the column references of an expression against the table schema.
+///
+/// # Errors
+/// A column does not exist or a scalar aggregate is misplaced.
+pub(super) fn validate_calc_columns(expr: &Expr, table: &Table) -> Result<(), TaqlError> {
     let Some(schema) = table.schema() else {
         return Ok(());
     };

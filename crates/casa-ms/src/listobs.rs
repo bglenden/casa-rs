@@ -2752,9 +2752,14 @@ mod tests {
         options: ListObsOptions,
         expected: &str,
     ) {
-        let err =
-            selection_from_options(ms, &options, crate::selection::RowGrammar::Standard, None)
-                .expect_err("selector should fail");
+        let err = selection_from_options(
+            ms,
+            &options,
+            crate::selection::CompiledMsSelection::new(),
+            crate::selection::RowGrammar::Standard,
+            None,
+        )
+        .expect_err("selector should fail");
         assert!(
             format!("{err}").contains(expected),
             "expected {expected:?} in {err}"
