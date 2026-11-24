@@ -123,6 +123,7 @@ def compare(root, native):
 
     compare_flags_and_calibration(root, native, fixture_data[0])
     check_frame_refusal(root, native, fixture_data[0])
+    compare_feed_selection(root, native)
 
 
 def compare_flags_and_calibration(root, native, vis):
@@ -165,6 +166,56 @@ def check_frame_refusal(root, native, vis):
         else:
             raise AssertionError(f"Unsupported {name} reporting frame was exported")
         assert not output.exists()
+
+
+def compare_feed_selection(root, native):
+    work = root / "feed-selection"
+    work.mkdir()
+    vis, _ = fixture(work)
+    feed_table = vis / "FEED"
+    with opened(feed_table, True) as table:
+        count = table.nrows()
+        table.copyrows(str(feed_table), startrowout=count, nrow=count)
+        table.putcol("FEED_ID", np.ones(count, dtype=np.int32), startrow=count, nrow=count)
+    with opened(vis, True) as table:
+        times = table.getcol("TIME")
+        _, integrations = np.unique(times, return_inverse=True)
+        antenna1 = table.getcol("ANTENNA1")
+        antenna2 = table.getcol("ANTENNA2")
+        feed1 = (antenna2 == 2).astype(np.int32)
+        feed2 = (integrations % 2).astype(np.int32)
+        table.putcol("FEED1", feed1)
+        table.putcol("FEED2", feed2)
+        table.putcol("ARRAY_ID", feed2)
+        selected = (table.getcol("FIELD_ID") == 0) & (antenna1 == 0) & np.isin(antenna2, [1, 2])
+        flagged = np.flatnonzero(selected & (feed1 == 1) & (feed2 == 0))[0]
+        table.putcell("FLAG_ROW", int(flagged), True)
+
+    base = request(vis) | dict(xaxis="channel", yaxis="real", xdatacolumn="", ydatacolumn="data",
+                               antenna="A0&A1;A0&A2", spw="0:0~4^2", correlation="XX,YY",
+                               title="Feed selection")
+    cases = (
+        ("single-feed", "1", feed1 != feed2, 30),
+        ("cross-feed-pair", "0&1", feed1 != feed2, 30),
+        ("same-feed-pair", "1&&&", (feed1 == 1) & (feed2 == 1), 15),
+    )
+    for name, feed, matches, count in cases:
+        options = base | dict(feed=feed)
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected), expformat="txt") is None
+        points = rows(expected)
+        assert len(points) == count
+        assert {(point[6], point[9]) for point in points} == {
+            (str(antenna2[row]), f"{times[row]:.3f}") for row in np.flatnonzero(selected & matches)
+        }
+        assert {(point[2], point[12]) for point in points} == {
+            ("0", "XX"), ("0", "YY"), ("2", "YY"), ("4", "XX"), ("4", "YY"),
+        }
+        assert native(**options, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching selected feed coordinates", flush=True)
+    compare_figure(work, native, base | dict(feed="1"), work / "single-feed.casa.txt",
+                   ("Feed selection", "Channel", "Real"))
 
 
 def main():
