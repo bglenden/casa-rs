@@ -219,6 +219,27 @@ def compare(root, native):
         print(f"{name}: {count} matching time-averaged coordinates", flush=True)
     compare_sides(root, native, base, expected_x="Real")
     compare_empty_time(root, native, vis, base)
+    compare_vector_span_weights(root, native, base, signed, model_only)
+
+
+def compare_vector_span_weights(root, native, base, signed, model_only):
+    for name, overrides, y_values in (
+        ("spanned-signed-weight", dict(vis=str(signed), xaxis="time", xdatacolumn=""), (2, -2, -200)),
+        ("spanned-shared-model", model_only | dict(yaxis=["amp", "real", "phase"], ydatacolumn=["model"] * 3),
+         (600, 600, 0)),
+    ):
+        controls = base | overrides | dict(avgscan=True, expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert {point[3] for point in selected} == {"1"}
+        np.testing.assert_allclose([float(point[1]) for point in selected], np.repeat(y_values, 3), rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                                       [float(point[0]) for point in selected], rtol=0, atol=.00051)
+        print(f"{name}: {len(selected)} matching vector coordinates when a single scan is spanned", flush=True)
 
 
 def compare_spanned_ordinate_lists(root, native):
@@ -251,6 +272,24 @@ def compare_spanned_ordinate_lists(root, native):
             if scalar and name == "scans-and-fields":
                 compare_sides(root, native, controls, expected_x="Time (MJD seconds)", name=label)
     compare_span_controls(root, native, vis, base, times)
+    compare_empty_time(root, native, vis, base | dict(avgscan=True, avgfield=True))
+    check_spanned_overlay_refusal(root, native, base)
+
+
+def check_spanned_overlay_refusal(root, native, base):
+    from casars.tasks import TaskParameterError
+
+    output = root / "spanned-overlay.native.txt"
+    controls = base | dict(xaxis="channel", avgscan=True, avgfield=True, showatm=True,
+                           plotfile=str(output), expformat="txt")
+    try:
+        native(**controls)
+    except TaskParameterError as error:
+        assert "more than two MeasurementSet ordinates" in str(error) and "#1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS enabled an overlay with a scan- and field-spanning ordinate list")
+    assert not output.exists()
+    print("Spanned ordinate list overlay refusal preserved", flush=True)
 
 
 def compare_span_controls(root, native, vis, base, times):

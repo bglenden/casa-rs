@@ -270,7 +270,7 @@ fn run_task(
         if !options.additional_ordinates.is_empty() {
             if calibration.is_some()
                 || (options.plotms_averaging_active()
-                    && !options.supports_visibility_ordinate_averaging())
+                    && !options.supports_visibility_ordinate_averaging(atmosphere.is_none()))
             {
                 return Err(TaskFailure::validation(
                     "more than two MeasurementSet ordinates with this averaging or a callibrary are pending #1032",
