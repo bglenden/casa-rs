@@ -5273,8 +5273,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     &flags,
                 )
             });
-            let minimum = f64::from(f32::MIN_POSITIVE);
-            if weight < minimum { minimum } else { weight }
+            plotms_columns::baseline_weight(weight)
         });
         let mut row_panels = std::collections::BTreeSet::<String>::new();
         for (corr_index, corr_label) in &selected_correlations {

@@ -391,19 +391,17 @@ impl TimeCoordinatesAverage {
     }
 
     pub(super) fn finish(self) -> TimeCoordinates {
-        let elapsed = self.last.time - self.first.time;
-        let interval = if elapsed == 0.0 {
-            self.first.interval
-        } else {
-            elapsed + (self.first.interval + self.last.interval) * 0.5
-        };
+        let (time, interval) = centered_time_and_interval(
+            (self.first.time, self.first.interval),
+            (self.last.time, self.last.interval),
+        );
         let normalization = if self.weight == 0.0 {
             self.count.max(1) as f64
         } else {
             self.weight
         };
         TimeCoordinates {
-            time: self.first.time + elapsed * 0.5,
+            time,
             centroid: self.first.time + self.centroid_offset / normalization,
             interval,
             exposure: self.exposure,
@@ -413,6 +411,17 @@ impl TimeCoordinatesAverage {
             flag_row: false,
         }
     }
+}
+
+/// Center the first and last visibility times and span both integrations.
+pub(crate) fn centered_time_and_interval(first: (f64, f64), last: (f64, f64)) -> (f64, f64) {
+    let elapsed = last.0 - first.0;
+    let interval = if elapsed == 0.0 {
+        first.1
+    } else {
+        elapsed + (first.1 + last.1) * 0.5
+    };
+    (first.0 + elapsed * 0.5, interval)
 }
 
 use ndarray::{Array1, Array2, ArrayD, ArrayView2, Ix2};

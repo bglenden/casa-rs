@@ -5,8 +5,10 @@ use std::collections::HashMap;
 
 use ndarray::ArrayView2;
 
-use super::{AveragedSeriesAccumulator, AveragingTimeKey, ChannelBin, FloatGrid};
-use crate::transform::{PlotTimeGroups, mean_weight_preferring_unflagged};
+use super::{AveragedSeriesAccumulator, AveragingTimeKey, ChannelBin, FloatGrid, plotms_columns};
+use crate::transform::{
+    PlotTimeGroups, centered_time_and_interval, mean_weight_preferring_unflagged,
+};
 
 #[derive(Clone, Copy)]
 pub(super) struct Integration {
@@ -66,25 +68,17 @@ impl ChannelWeightSum {
 impl TimeAverageStatistics {
     fn integration(&self) -> Integration {
         let last = self.last_usable.unwrap_or(self.last);
-        let elapsed = last.time - self.first.time;
-        Integration {
-            time: self.first.time + elapsed * 0.5,
-            interval: if elapsed == 0.0 {
-                self.first.interval
-            } else {
-                elapsed + (self.first.interval + last.interval) * 0.5
-            },
-        }
+        let (time, interval) = centered_time_and_interval(
+            (self.first.time, self.first.interval),
+            (last.time, last.interval),
+        );
+        Integration { time, interval }
     }
 
     fn baseline_weight(&self) -> f64 {
         let weight =
             mean_weight_preferring_unflagged(self.weights.iter().map(|bin| (bin.flagged, bin.sum)));
-        f64::from(if weight < f32::MIN_POSITIVE {
-            f32::MIN_POSITIVE
-        } else {
-            weight
-        })
+        plotms_columns::baseline_weight(f64::from(weight))
     }
 }
 

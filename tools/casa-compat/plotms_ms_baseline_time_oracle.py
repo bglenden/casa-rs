@@ -55,6 +55,7 @@ def compare(root, native):
         yaxis=["real", "real"], ydatacolumn=["corrected", "model"],
         yaxislocation=["left", "right"], spw="0:1", avgbaseline=True, avgtime="20",
     )
+    late_baseline = dict(msselect=f"ANTENNA1 != 0 || ANTENNA2 != 2 || TIME > {start + 0.5:.3f}")
     cases = (
         ("equal-endpoint", {}, [(3.75, 33), (9, 1470 / 17)], [15, 45]),
         ("row-flags", dict(vis=str(flagged)), [(100 / 26, 920 / 26), (10.4, 1220 / 12)], [10, 45]),
@@ -64,6 +65,9 @@ def compare(root, native):
          [(49 / 21, 430 / 21), (101 / 19, 890 / 19), (9, 1470 / 17)], [5, 25, 45]),
         ("singleton-time-stage", dict(avgtime="4"),
          [(v, 10 * v) for v in (1.2, 31 / 11, 56 / 12, 33 / 7, 58 / 8, 89 / 9)], list(range(0, 60, 10))),
+        ("late-baseline", late_baseline, [(123.2 / 38, 1200 / 38), (8.6, 1560 / 18)], [15, 40]),
+        ("flagged-late-baseline", late_baseline | dict(vis=str(flagged)),
+         [(3.05, 800 / 24), (126.6 / 13, 1310 / 13)], [10, 40]),
     )
     for name, options, corrected, offsets in cases:
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
@@ -76,10 +80,19 @@ def compare(root, native):
         model = [(x, 10 * y) for x, y in corrected]
         np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
                                    corrected + model, rtol=1.2e-5)
+        if options["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in selected],
+                                       [start + offset for offset in offsets] * 2, rtol=0, atol=0.00051)
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching time-and-baseline coordinates", flush=True)
-    compare_ordinate_figure(root, "time-and-baseline", native, controls, "Real", ["Real:corrected", "Real:model"])
+    compare_ordinate_figure(root, "equal-endpoint", native, controls, "Real", ["Real:corrected", "Real:model"])
+
+    expected, actual = (root / f"single-ordinate.{engine}.txt" for engine in ("casa", "native"))
+    options = controls | dict(yaxis="real", ydatacolumn="corrected", yaxislocation="left", expformat="txt")
+    assert reference(**options, plotfile=str(expected)) is None
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
 
 
 def main():
