@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "e2d07790186f01c0bb50e5b0e86c836a3b6b5105",
+  "source_revision": "e2d07790186f01c0bb50e5b0e86c836a3b6b5105",
+  "baseline_revision": "a27b87f6e749f4ca65dce3ce2370b42f08d7cad8",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_scalar_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs ordinary scalar time averaging for one or two stored MeasurementSet visibility ordinates.",
+  "result": "passed",
+  "baseline_result": "CASA emitted two correct bins per ordinate. Native miscomputed the single ordinate and refused two.",
+  "text_exports": 10,
+  "points": 94,
+  "figures": 1,
+  "rendered_coordinates": 4,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}
