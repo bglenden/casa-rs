@@ -74,7 +74,7 @@ IMPLEMENTED["ms"] = {
     "ismultims", "iswritable",
     "iterend", "iterinit", "iternext", "iterorigin",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
-    "open", "reset", "selectinit", "statwt", "uvsub",
+    "open", "range", "reset", "selectinit", "statwt", "uvsub",
 }
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",

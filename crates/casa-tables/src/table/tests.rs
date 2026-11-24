@@ -3339,7 +3339,11 @@ fn lazy_disk_open_reads_selected_fixed_array_cells_without_loading_full_column()
     )])
     .expect("schema");
 
-    for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+    for dm in [
+        DataManagerKind::StManAipsIO,
+        DataManagerKind::StandardStMan,
+        DataManagerKind::IncrementalStMan,
+    ] {
         let mut table = Table::with_schema(schema_for_manager(&schema, dm));
         for row_idx in 0..6 {
             table

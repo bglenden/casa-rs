@@ -2,6 +2,7 @@
 mod array_shapes;
 mod dirty;
 mod fixed_arrays;
+mod read_cache;
 
 use std::collections::HashMap;
 use std::collections::HashSet;

@@ -10,12 +10,12 @@ use ndarray::ArrayD;
 use super::{input, shaped};
 use crate::MsResult;
 
-pub(super) struct MemberRows<'a> {
+pub(crate) struct MemberRows<'a> {
     table: &'a Table,
     rows: Vec<usize>,
 }
 
-pub(super) fn member_rows<'a>(
+pub(crate) fn member_rows<'a>(
     tables: &'a [Table],
     total_rows: usize,
     rows: &[usize],
@@ -50,7 +50,7 @@ pub(super) fn member_rows<'a>(
     selected
 }
 
-pub(super) fn concatenate_scalars(
+pub(crate) fn concatenate_scalars(
     members: &[MemberRows<'_>],
     columns: &[&str],
 ) -> MsResult<HashMap<String, RequiredScalarColumnValues>> {

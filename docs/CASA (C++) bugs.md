@@ -11332,3 +11332,21 @@ applies the live conversion to the captured data and its physical
 correlation label, giving half the recorded parallel-hand visibility
 for I when only that hand is present. The reduction uses the
 corresponding flags and variances (#1030).
+
+## MS visibility ranges can include a zero from an entirely flagged first block
+
+For a reference view with a fully flagged first block and a later
+unflagged sample with real values 9 through 16, CASA 6.7.6.14 reports a
+real range of `[0, 16]` with `blocksize=1`. The same rows read with
+`blocksize=10` report `[9, 16]`. CASA treats the earlier empty block's
+zero-initialized extrema as valid measurements. casa-rs initializes the
+range from the first included sample, independent of the block size.
+An entirely flagged selection still yields CASA's zero extrema (#1030).
+
+## An entirely flagged FLOAT_DATA range can abort CASA
+
+Call `ms.range('float_data')` when every sample is flagged. CASA 6.7.6.14
+aborts with an uncaught `ArrayError` from `MaskedArray::minMax`, which
+requires an unmasked sample. casa-rs uses the same zero extrema as an
+entirely flagged complex visibility range and keeps the tool attached.
+Calling again with `useflags=False` returns the recorded extrema (#1030).

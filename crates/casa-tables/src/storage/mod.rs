@@ -60,10 +60,10 @@ use crate::table_path::{add_directory_for_link, rebase_table_keywords};
 
 use self::array_sources::generated_array_group_sources;
 use self::incremental_stman::{
-    IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_required_scalar_columns_rows,
-    read_ism_required_scalar_columns_rows_reusing, read_ism_scalar_column,
-    read_ism_scalar_column_rows, write_ism_file, write_ism_file_column_sources,
-    write_ism_file_indexed,
+    IsmColumnResult, read_ism_array_column_rows, read_ism_file, read_ism_file_columns,
+    read_ism_required_scalar_columns_rows, read_ism_required_scalar_columns_rows_reusing,
+    read_ism_scalar_column, read_ism_scalar_column_rows, write_ism_file,
+    write_ism_file_column_sources, write_ism_file_indexed,
 };
 use self::scalar_sources::override_columns_for_group;
 pub use self::scalar_sources::streamed_scalar_columns_resident_bytes;
@@ -3147,6 +3147,18 @@ impl CompositeStorage {
                 read_ssm_array_column_rows(
                     &data_path,
                     &dm.data,
+                    &group_col_descs,
+                    target_col_idx,
+                    selected_rows,
+                )
+            }
+            "IncrementalStMan" => {
+                let group_col_descs: Vec<_> = bound_cols
+                    .iter()
+                    .map(|(bound_desc_idx, _)| &table_dat.table_desc.columns[*bound_desc_idx])
+                    .collect();
+                read_ism_array_column_rows(
+                    &data_path,
                     &group_col_descs,
                     target_col_idx,
                     selected_rows,
