@@ -2962,8 +2962,7 @@ fn build_uncalibrated_plotms_payload(
             .map_err(|error| error.to_string())?;
     let plot = spec.plots.first();
     let time_derived = columns.time_derived;
-    let scalar_time =
-        plot.is_some_and(|plot| plotms_columns::uses_scalar_time_average(plot, time_derived));
+    let scalar_time = plot.is_some_and(plotms_columns::uses_scalar_time_average);
     if time_derived && !scalar_time {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
@@ -5349,12 +5348,13 @@ fn build_generic_visibility_scatter_with_averaging(
     let weighted_time_uvw = time_bins.is_some() && plotms_columns::uses_weighted_time_uvw(spec);
     let collapse_baselines = plotms_columns::uses_vector_baseline_average(spec)
         && calibration.is_some_and(|input| input.rows.is_none());
-    let scalar_time = plotms_columns::uses_scalar_time_average(spec, time_derived)
+    let scalar_time = plotms_columns::uses_scalar_time_average(spec)
         && calibration.is_some_and(|input| input.rows.is_none());
     let time_baselines = collapse_baselines && time_bins.is_some();
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let scalar_time_channels = scalar_time && average_channels;
+    let average_operands = time_derived || scalar_time_channels;
     let channel_first = channel_baselines || scalar_time_channels;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
@@ -5410,7 +5410,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
-    let mut scalar_spans = (scalar_time && (spec.averaging.avgscan || spec.averaging.avgfield))
+    let scalar_spans = (scalar_time && (spec.averaging.avgscan || spec.averaging.avgfield))
         .then(|| {
             plotms_ordinates::ScalarSpanPlan::new(
                 plotms_ordinates::ScalarSpanColumns {
@@ -5563,6 +5563,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut scalar_time_rows = std::collections::BTreeSet::new();
+    let mut scalar_time_shapes = plotms_ordinates::ScalarTimeShapes::default();
     let mut time_baseline_stats =
         time_baselines.then(plotms_time_baselines::TimeBaselineStatistics::default);
     let mut scalar_channel_buffer_first = None;
@@ -5763,8 +5764,12 @@ fn build_generic_visibility_scatter_with_averaging(
                 )
             })
         });
-        if let (Some(spans), Some(group)) = (&mut scalar_spans, group) {
-            spans.check_shape(group, selected_correlations.len(), channel_bins.len())?;
+        if scalar_time && let Some(group) = group {
+            scalar_time_shapes.check_shape(
+                group,
+                selected_correlations.len(),
+                channel_bins.len(),
+            )?;
         }
         let representative_row = row_numbers[representative_slot];
         let span_metadata =
@@ -5899,7 +5904,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(target)
                     if antenna1_value != antenna2_value && *target == antenna2_value);
                 for bin in channel_bins.iter() {
-                    if channel_mask_grid.is_some_and(|grid| {
+                    let channel_masked = channel_mask_grid.is_some_and(|grid| {
                         if scalar_time_channels {
                             plotms_columns::channel_bin_weight(
                                 Some(grid),
@@ -5912,7 +5917,32 @@ fn build_generic_visibility_scatter_with_averaging(
                         } else {
                             !plotms_columns::bin_has_weight(grid, *corr_index, bin, &flags)
                         }
-                    }) {
+                    });
+                    if channel_masked && !scalar_time_channels {
+                        continue;
+                    }
+                    let (panel_key, panel_label) = iteration_group(
+                        iteraxis,
+                        representative_field,
+                        &field,
+                        spw_id,
+                        &spectral_window,
+                        representative_scan,
+                        Some(corr_label),
+                    );
+                    if !panels.contains_key(&panel_key) {
+                        panel_order.push(panel_key.clone());
+                        panels.insert(
+                            panel_key.clone(),
+                            AveragedPanelAccumulator {
+                                label: panel_label,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    if channel_masked {
+                        // Keep the scalar panel when the channel transform
+                        // masks every bin in the selection.
                         continue;
                     }
                     // The time stage sums each column's weights. The channel
@@ -5924,7 +5954,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         .iter()
                         .zip(&mut bin_buffers)
                         .enumerate()
-                        .filter(|_| !time_derived)
+                        .filter(|_| !average_operands)
                     {
                         buffer.collect(
                             grid,
@@ -5976,25 +6006,6 @@ fn build_generic_visibility_scatter_with_averaging(
                         antenna2_value,
                         Some(corr_label),
                     );
-                    let (panel_key, panel_label) = iteration_group(
-                        iteraxis,
-                        representative_field,
-                        &field,
-                        spw_id,
-                        &spectral_window,
-                        representative_scan,
-                        Some(corr_label),
-                    );
-                    if !panels.contains_key(&panel_key) {
-                        panel_order.push(panel_key.clone());
-                        panels.insert(
-                            panel_key.clone(),
-                            AveragedPanelAccumulator {
-                                label: panel_label.clone(),
-                                ..Default::default()
-                            },
-                        );
-                    }
                     let point_key = build_averaging_point_key(
                         AveragingPointKeyInputs {
                             field_id: field_id_value,
@@ -6042,7 +6053,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         let y_samples = samples(y_index + 1);
                         let mut series_used =
                             !x_samples.values.is_empty() || !y_samples.values.is_empty();
-                        if time_derived {
+                        if average_operands {
                             for (axis, average) in [
                                 (0, &mut accumulator.x_visibility),
                                 (y_index + 1, &mut accumulator.y_visibility),
@@ -6322,7 +6333,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .map(|(order, row)| (row, order))
         .collect::<HashMap<_, _>>();
     let retain_empty_panel =
-        time_derived || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
+        average_operands || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
     for panel_key in panel_order {

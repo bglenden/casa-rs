@@ -808,7 +808,6 @@ pub(super) struct ScalarSpanColumns<'a> {
 pub(super) struct ScalarSpanMetadata {
     pub(super) scan: i32,
     pub(super) field: i32,
-    shape: Option<(usize, usize)>,
 }
 
 pub(super) struct ScalarSpanPlan {
@@ -855,11 +854,7 @@ impl ScalarSpanPlan {
                 interval,
             );
             if group == metadata.len() {
-                metadata.push(ScalarSpanMetadata {
-                    scan,
-                    field,
-                    shape: None,
-                });
+                metadata.push(ScalarSpanMetadata { scan, field });
             } else if metadata[group].scan != scan {
                 // PlotMS marks a scalar buffer spanning scans with scan -1.
                 metadata[group].scan = -1;
@@ -879,23 +874,31 @@ impl ScalarSpanPlan {
     pub(super) fn metadata(&self, group: usize) -> &ScalarSpanMetadata {
         &self.metadata[group]
     }
+}
 
+#[derive(Default)]
+pub(super) struct ScalarTimeShapes {
+    previous: Option<(usize, usize, usize)>,
+}
+
+impl ScalarTimeShapes {
     pub(super) fn check_shape(
         &mut self,
         group: usize,
         correlations: usize,
         channels: usize,
     ) -> Result<(), String> {
-        let shape = (correlations, channels);
-        let expected = self.metadata[group].shape.get_or_insert(shape);
-        if *expected == shape {
-            Ok(())
-        } else {
-            Err(format!(
-                "PlotMS scalar time averaging requires equal correlation and channel counts within a bin; expected {} correlations and {} channels, found {correlations} correlations and {channels} channels",
-                expected.0, expected.1,
-            ))
+        // Rows in one scalar time group are consecutive in iterator order.
+        if let Some((previous_group, expected_correlations, expected_channels)) = self.previous
+            && previous_group == group
+            && (expected_correlations, expected_channels) != (correlations, channels)
+        {
+            return Err(format!(
+                "PlotMS scalar time averaging requires equal correlation and channel counts within a bin; expected {expected_correlations} correlations and {expected_channels} channels, found {correlations} correlations and {channels} channels",
+            ));
         }
+        self.previous = Some((group, correlations, channels));
+        Ok(())
     }
 }
 

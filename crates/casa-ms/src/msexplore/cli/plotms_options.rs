@@ -182,13 +182,15 @@ impl CliOptions {
             && !self.avgbaseline
             && !(transforms_frequency && crosses_boundary);
         let baseline_average = self.avgbaseline && !crosses_boundary && !transforms_frequency;
-        let time_only =
-            time_average && !transforms_frequency && self.avgchannel.is_none_or(|width| width <= 1);
-        let ordinary_time = time_only && !crosses_boundary;
+        let channel_average = self.avgchannel.is_some_and(|width| width > 1);
+        let ordinary_time =
+            time_average && !transforms_frequency && !crosses_boundary && !channel_average;
+        let scalar_time =
+            time_average && !transforms_frequency && !(crosses_boundary && channel_average);
         (time_average || baseline_average)
             && !self.avgantenna
             && !self.avgspw
-            && (!self.scalar || time_only)
+            && (!self.scalar || scalar_time)
             && !self.has_mixed_ordinate_dimensions()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()
