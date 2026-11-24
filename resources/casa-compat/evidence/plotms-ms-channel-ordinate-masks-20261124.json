@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "4a1e8d085bd0916e58a72f403f8a32a45d6a7c39",
+  "source_revision": "4a1e8d085bd0916e58a72f403f8a32a45d6a7c39",
+  "baseline_revision": "8f87833f949ac74f81404cfc5b4d5ecd6b37f7a5",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged MeasurementSet channel plots with multiple visibility and baseline or observatory elevation ordinates.",
+  "result": "passed",
+  "baseline_result": "CASA exports 30 Real, 30 Phase and 18 U or Elevation points. Native refuses the mixed ordinates.",
+  "text_exports": 4,
+  "points": 420,
+  "figures": 5,
+  "rendered_coordinates": 546,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}
