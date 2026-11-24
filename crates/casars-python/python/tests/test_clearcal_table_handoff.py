@@ -1,6 +1,10 @@
 """Exercise clearcal while its caller keeps a MeasurementSet table open."""
 
+from concurrent.futures import ThreadPoolExecutor
 import shutil
+import subprocess
+import sys
+import time
 
 import numpy as np
 import pytest
@@ -9,6 +13,49 @@ from casars.tasks import _runner
 
 from test_tools_ms import pinned_casa
 from test_tools_msmetadata import measures, native_dataset
+
+
+def test_clearcal_does_not_wait_for_an_unrelated_busy_table(native_dataset, tmp_path):
+    pinned_casa()
+    unrelated = tmp_path / "unrelated.ms"
+    shutil.copytree(native_dataset, unrelated)
+    table = tools.table()
+    assert table.open(str(unrelated))
+    row = table.row()
+    assert table.unlock()
+    lock = """
+import sys
+from casatools import table
+tool = table()
+assert tool.open(sys.argv[1], nomodify=False, lockoptions={'option': 'user'})
+assert tool.lock(write=True)
+print('held', flush=True)
+sys.stdin.readline()
+assert tool.done()
+"""
+    with subprocess.Popen([sys.executable, "-c", lock, str(unrelated)],
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as peer:
+        assert peer.stdout.readline().strip() == "held"
+        with ThreadPoolExecutor(max_workers=2) as threads:
+            reading = threads.submit(row.get, 0)
+            try:
+                # The request-count word changes after the row tool takes
+                # the shared root mutex and starts waiting for the peer.
+                lockfile = unrelated / "table.lock"
+                deadline = time.monotonic() + 10
+                while not int.from_bytes(lockfile.read_bytes()[:4], "big"):
+                    assert time.monotonic() < deadline
+                    time.sleep(0.01)
+                assert not reading.done()
+                assert threads.submit(tasks.clearcal, str(native_dataset), addmodel=True).result(timeout=10) is None
+                assert not reading.done()
+            finally:
+                peer.stdin.write("release\n")
+                peer.stdin.flush()
+                assert peer.wait(timeout=10) == 0
+            assert "DATA" in reading.result(timeout=10)
+    row.done()
+    assert table.done()
 
 
 def test_clearcal_updates_an_open_table(native_dataset, tmp_path):
