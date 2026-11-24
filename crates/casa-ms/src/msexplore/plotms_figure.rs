@@ -9,7 +9,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
 use super::{
-    MsAxis, MsDataColumn, MsPlotPayload, MsScatterGridPayload, MsScatterSeries, plotms_text,
+    MsAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsScatterGridPayload,
+    MsScatterPanelPayload, MsScatterSeries, plotms_text,
 };
 use crate::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
@@ -152,13 +153,46 @@ fn label_and_group_ordinates(
             group(&mut document.axes, &mut document.layers, &plot.series)
         }
         MsPlotPayload::ScatterGrid(grid) => {
+            let title = std::mem::take(&mut document.title);
+            let font = task.integer("titlefont")?;
+            let iteration = iteration_name(grid.iteraxis);
             for (panel, plot) in document.panels.iter_mut().zip(&grid.panels) {
                 group(&mut panel.axes, &mut panel.layers, &plot.series);
+                let label = iteration_value(grid.iteraxis, plot);
+                panel.title = format!("{title} {iteration}: {label}");
+                panel.title_font_size = (font > 0).then(|| font.to_string());
+            }
+            if task.flag("xsharedaxis")? {
+                unite_panel_bounds(document, "x");
+            }
+            if task.flag("ysharedaxis")? {
+                unite_panel_bounds(document, "y");
+                unite_panel_bounds(document, "y-secondary");
             }
         }
         _ => {}
     }
     Ok(())
+}
+
+fn unite_panel_bounds(document: &mut PlotDocument, axis_id: &str) {
+    let bounds = document
+        .panels
+        .iter()
+        .flat_map(|panel| &panel.axes)
+        .filter(|axis| axis.id == axis_id)
+        .fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(lower, upper), axis| (lower.min(axis.lower), upper.max(axis.upper)),
+        );
+    for axis in document
+        .panels
+        .iter_mut()
+        .flat_map(|panel| &mut panel.axes)
+        .filter(|axis| axis.id == axis_id)
+    {
+        (axis.lower, axis.upper) = bounds;
+    }
 }
 
 fn group_ordinate_sides(
@@ -531,15 +565,7 @@ fn paginate(
         let end = start + page_panels.len();
         let labels = grid.panels[start..end]
             .iter()
-            .map(|panel| match grid.iteraxis {
-                super::MsIterationAxis::Scan => {
-                    panel.label.strip_prefix("Scan ").unwrap_or(&panel.label)
-                }
-                super::MsIterationAxis::SpectralWindow => {
-                    panel.key.strip_prefix("spw-").unwrap_or(&panel.label)
-                }
-                _ => &panel.label,
-            });
+            .map(|panel| iteration_value(grid.iteraxis, panel));
         if offset != 0 {
             for (panel, scan) in document.panels.iter_mut().zip(labels.clone()) {
                 panel.title = format!("{} Scan: {scan}", document.title);
@@ -569,6 +595,14 @@ fn paginate(
     )
     .map_err(TaskFailure::validation)?;
     Ok(figures)
+}
+
+fn iteration_value(axis: MsIterationAxis, panel: &MsScatterPanelPayload) -> &str {
+    match axis {
+        MsIterationAxis::Scan => panel.label.strip_prefix("Scan ").unwrap_or(&panel.label),
+        MsIterationAxis::SpectralWindow => panel.key.strip_prefix("spw-").unwrap_or(&panel.label),
+        _ => &panel.label,
+    }
 }
 
 pub(in crate::msexplore) fn default_overlay_color(index: usize) -> &'static str {

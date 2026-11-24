@@ -175,7 +175,7 @@ fn parse_args_captures_dense_single_plot_configuration() {
     );
     assert_eq!(options.plot_format, MsExportFormat::Txt);
 
-    let spec = build_explore_spec(&options, false).expect("build spec");
+    let spec = build_explore_spec(&options, false, false).expect("build spec");
     assert_eq!(spec.ms_path, PathBuf::from("example.ms"));
     assert_eq!(spec.summary_format, MeasurementSetSummaryOutputFormat::Json);
     assert_eq!(
@@ -264,7 +264,7 @@ fn page_spec_build_merges_header_items_without_duplicates() {
         OsString::from("example.ms"),
     ])
     .expect("parse args");
-    let spec = build_explore_spec(&options, false).expect("build spec from page spec");
+    let spec = build_explore_spec(&options, false, false).expect("build spec from page spec");
 
     assert_eq!(spec.ms_path, PathBuf::from("example.ms"));
     assert_eq!(spec.summary_format, MeasurementSetSummaryOutputFormat::Json);
@@ -392,7 +392,7 @@ fn parse_and_build_helpers_reject_invalid_combinations() {
         line.extend(controls);
         line.push("example.ms");
         let options = parse_args(cli_args(&line)).expect("parse args");
-        let error = build_explore_spec(&options, false).unwrap_err();
+        let error = build_explore_spec(&options, false, false).unwrap_err();
         assert!(error.contains(refusal), "{error}");
     }
 }

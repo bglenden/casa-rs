@@ -14,10 +14,10 @@ import numpy as np
 from PIL import Image
 
 from plotms_ms_channel_ordinates_oracle import compare_model_provider, make_fixture, virtual_fixtures
-from plotms_ms_columns_oracle import compare_text, opened, plotms_launcher, reference, request
+from plotms_ms_columns_oracle import compare_text, copy_ms, opened, plotms_launcher, reference, request
 
 
-def compare_text_pages(root, native, name, controls, masks):
+def compare_text_pages(root, native, name, controls, masks, *, flagged_correlation="YY"):
     expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, expformat="txt", plotfile=str(expected)) is None
     sections = [[]]
@@ -30,7 +30,7 @@ def compare_text_pages(root, native, name, controls, masks):
     for panel, (metadata_index, label, count) in zip(sections, masks, strict=True):
         assert len(panel) == len(ordinates) * count
         assert {p[metadata_index] for p in panel} == {label}
-        assert all(int(p[2]) != 2 or p[12] == "XX" for p in panel)
+        assert all(int(p[2]) != 2 or p[12] != flagged_correlation for p in panel)
     count = sum(map(len, sections))
     assert native(**controls, expformat="txt", plotfile=str(actual)) is None
     assert compare_text(actual, expected) == count
@@ -38,7 +38,7 @@ def compare_text_pages(root, native, name, controls, masks):
     return [np.array([point[:2] for point in section], dtype=float) for section in sections]
 
 
-def compare_figures(root, native, name, controls, pages, file_tags, sides):
+def compare_figures(root, native, name, controls, pages, file_tags, sides, *, shared_right=None):
     from casars import _plot_document
 
     captured = []
@@ -51,7 +51,7 @@ def compare_figures(root, native, name, controls, pages, file_tags, sides):
         for axis in axes:
             local_axes = [drawn for drawn in figure.axes if drawn.get_subplotspec() == axis.get_subplotspec()]
             panels.append((axis.get_title(), axis.get_xlabel(), [
-                (drawn.yaxis.get_label_position(), drawn.get_ylabel(),
+                (drawn, drawn.yaxis.get_label_position(), drawn.get_ylabel(),
                  [line.get_xydata() for line in drawn.lines]) for drawn in local_axes
             ]))
         captured.append(panels)
@@ -70,13 +70,16 @@ def compare_figures(root, native, name, controls, pages, file_tags, sides):
         for filename in names:
             with Image.open(folder / filename) as image:
                 assert image.size == (500, 420)
+    iteration = {"corr": "Corr", "scan": "Scan"}[controls["iteraxis"]]
     for rendered, page in zip(captured, pages, strict=True):
         for (title, xlabel, axes), (label, coordinates) in zip(rendered, page, strict=True):
-            assert title == label
+            assert title == f"{controls['title']} {iteration}: {label}"
             assert xlabel == "Channel"
-            assert [(side, label) for side, label, _ in axes] == [(side, label) for side, label, _ in sides]
+            assert [(side, label) for _, side, label, _ in axes] == [(side, label) for side, label, _ in sides]
             layers = np.split(coordinates, len(controls["yaxis"]))
-            for (_, _, lines), (_, _, order) in zip(axes, sides, strict=True):
+            for (axis, side, _, lines), (_, _, order) in zip(axes, sides, strict=True):
+                if shared_right is not None and side == "right":
+                    np.testing.assert_array_equal(axis.get_ylim(), shared_right)
                 for line, index in zip(lines, order, strict=True):
                     np.testing.assert_allclose(line, layers[index], rtol=1.2e-5, atol=1e-7)
     print(f"{name}: matched rendered coordinates, sides and {len(names)} filenames", flush=True)
@@ -91,6 +94,7 @@ def compare(root, native):
         table.putcell("FLAG_ROW", 0, True)
     base = request(vis) | dict(xaxis="channel", xdatacolumn="", spw="0:0~3",
                                correlation="", iteraxis="corr", exprange="all",
+                               title="Visibility",
                                yaxis=["real", "real", "real"],
                                ydatacolumn=["data", "corrected", "model"],
                                yaxislocation=["left", "right", "left"])
@@ -132,6 +136,49 @@ def compare(root, native):
     two_sides = (("left", "Amp:corrected", (1,)), ("right", "Real", (0,)))
     compare_figures(root, native, "two-correlation-sides", two_axes,
                     [list(zip(("XX", "YY"), two, strict=True))], ["CorrXX,YY"], two_sides)
+
+    compare_review_cases(root, native, vis, base, polarizations, sides)
+
+
+def compare_review_cases(root, native, vis, base, polarizations, sides):
+    fields, corrs, scans, shared = (root / f"{name}.ms" for name in
+                                   ("reordered-fields", "reordered-corrs", "five-scans", "shared"))
+    for destination in (fields, corrs, scans, shared):
+        copy_ms(vis, destination)
+    with opened(fields, True) as table:
+        table.putcol("FIELD_ID", 1 - table.getcol("FIELD_ID"))
+    with opened(corrs / "POLARIZATION", True) as table:
+        table.putcell("CORR_TYPE", 0, table.getcell("CORR_TYPE", 0)[::-1])
+        table.putcell("CORR_PRODUCT", 0, table.getcell("CORR_PRODUCT", 0)[:, ::-1])
+    with opened(scans, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        table.putcol("SCAN_NUMBER", (1 + integration % 5).astype(np.int32))
+    with opened(shared, True) as table:
+        corrected = table.getcol("CORRECTED_DATA")
+        corrected[1, :, :] *= 10
+        table.putcol("CORRECTED_DATA", corrected)
+
+    compare_text_pages(root, native, "reordered-fields",
+                       base | dict(vis=str(fields), iteraxis="field", field="", correlation="XX"),
+                       ((4, "0", 24),))
+    compare_text_pages(root, native, "reordered-corrs", base | dict(vis=str(corrs)),
+                       ((12, "XX", 18),), flagged_correlation="XX")
+
+    five_scans = base | dict(vis=str(scans), iteraxis="scan", field="", correlation="XX",
+                             gridrows=2, gridcols=2)
+    first = compare_text_pages(root, native, "first-four-scans", five_scans,
+                               ((3, "1", 12), (3, "2", 12), (3, "3", 8), (3, "4", 8)))
+    final = compare_text_pages(root, native, "fifth-scan", five_scans | dict(scan="5"),
+                               ((3, "5", 8),))
+    page = list(zip(("1", "2", "3", "4"), first, strict=True))
+    compare_figures(root, native, "five-scan-pages", five_scans,
+                    [page, [("5", final[0])]], ["Scan1,2,3,4", "Scan5_2"], sides)
+
+    shared_axes = base | dict(vis=str(shared), gridcols=2, yselfscale=True, ysharedaxis=True)
+    coordinates = compare_text_pages(root, native, "shared-ordinates", shared_axes, polarizations)
+    compare_figures(root, native, "shared-ordinates", shared_axes,
+                    [list(zip(("XX", "YY"), coordinates, strict=True))], ["CorrXX,YY"], sides,
+                    shared_right=(10, 700))
 
 
 def main():

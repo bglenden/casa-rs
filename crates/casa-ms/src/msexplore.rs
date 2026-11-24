@@ -1726,13 +1726,17 @@ impl MsPlotSpec {
         pointing: bool,
         iterated_ordinates: bool,
     ) -> Result<(), String> {
-        self.validate_common(independent_ordinates, pointing)?;
+        let iterated = self.iteration.iteraxis.is_some();
+        self.validate_common(
+            independent_ordinates,
+            pointing,
+            iterated && self.y_axes.len() > 1 && iterated_ordinates,
+        )?;
         if self.layout.rowindex != 0 || self.layout.colindex != 0 || self.layout.plotindex != 0 {
             return Err(
                 "msexplore per-plot rowindex/colindex/plotindex placement is reserved for multi-plot page composition".to_string(),
             );
         }
-        let iterated = self.iteration.iteraxis.is_some();
         if iterated && self.y_axes.len() > 1 && !iterated_ordinates {
             return Err(
                 "msexplore multi-y plots are currently available for non-iterated plots only"
@@ -1748,7 +1752,7 @@ impl MsPlotSpec {
     }
 
     fn validate_for_page_child(&self) -> Result<(), String> {
-        self.validate_common(false, false)?;
+        self.validate_common(false, false, false)?;
         if self.flag_edit.is_some() {
             return Err(
                 "msexplore staged flag editing currently supports standalone scatter plots only"
@@ -1770,7 +1774,12 @@ impl MsPlotSpec {
         Ok(())
     }
 
-    fn validate_common(&self, independent_ordinates: bool, pointing: bool) -> Result<(), String> {
+    fn validate_common(
+        &self,
+        independent_ordinates: bool,
+        pointing: bool,
+        plotms_shared_axes: bool,
+    ) -> Result<(), String> {
         if self.y_axes.is_empty() {
             return Err("msexplore requires at least one y axis per plot".to_string());
         }
@@ -1788,12 +1797,12 @@ impl MsPlotSpec {
         if self.style.symbol_size.is_some_and(|size| size == 0) {
             return Err("msexplore symbolsize must be a positive integer".to_string());
         }
-        if self.iteration.xselfscale && self.iteration.xsharedaxis {
+        if !plotms_shared_axes && self.iteration.xselfscale && self.iteration.xsharedaxis {
             return Err(
                 "msexplore x-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
             );
         }
-        if self.iteration.yselfscale && self.iteration.ysharedaxis {
+        if !plotms_shared_axes && self.iteration.yselfscale && self.iteration.ysharedaxis {
             return Err(
                 "msexplore y-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
             );
@@ -3923,6 +3932,7 @@ fn render_listobs_manifest(payload: &ListObsPlotPayload) -> Result<String, Strin
 #[derive(Debug, Default)]
 struct ScatterPanelAccumulator {
     label: String,
+    iteration_rank: i32,
     series: std::collections::BTreeMap<String, MsScatterSeries>,
     contributing_rows: usize,
     contributing_points: usize,
@@ -4828,6 +4838,15 @@ fn build_generic_visibility_scatter(
                     panel_key.clone(),
                     ScatterPanelAccumulator {
                         label: panel_label.clone(),
+                        iteration_rank: match iteraxis {
+                            Some(MsIterationAxis::Correlation) => {
+                                corr_types.get(*corr_index).copied().unwrap_or_default()
+                            }
+                            Some(MsIterationAxis::Scan) => scan_number_value,
+                            Some(MsIterationAxis::Field) => field_id_value,
+                            Some(MsIterationAxis::SpectralWindow) => spw_id,
+                            None => 0,
+                        },
                         ..Default::default()
                     },
                 );
@@ -5134,6 +5153,9 @@ fn build_generic_visibility_scatter(
             visibility_columns.column(1).unwrap_or(spec.data_column),
         )
     });
+    if iterated_ordinate_list {
+        panel_order.sort_by_key(|key| panels[key].iteration_rank);
+    }
     let mut panels = panel_order
         .into_iter()
         .filter_map(|panel_key| {
@@ -5186,8 +5208,11 @@ fn build_generic_visibility_scatter(
         );
     }
     if let Some(iteraxis) = iteraxis {
-        let (gridrows, gridcols) =
-            resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?;
+        let (gridrows, gridcols) = if iterated_ordinate_list {
+            (spec.layout.gridrows, spec.layout.gridcols)
+        } else {
+            resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?
+        };
         let share_x_bounds =
             share_axis_bounds(spec.iteration.xselfscale, spec.iteration.xsharedaxis);
         let share_y_bounds =
