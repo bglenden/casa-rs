@@ -3977,11 +3977,10 @@ fn build_generic_visibility_scatter(
         && spec.iteration.iteraxis.is_none()
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
         && plotms_columns::uses_channel_ordinate_masks(spec.x_axis, spec.y_axes.iter().copied());
-    let ordered_feed_selection = calibration.is_some_and(|input| input.rows.is_none())
-        && selection
-            .feed
-            .as_deref()
-            .is_some_and(|feed| !feed.is_empty())
+    let ordered_feed_selection = selection
+        .feed
+        .as_deref()
+        .is_some_and(|feed| !feed.is_empty())
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
     let use_iterator_order = calibration.is_some()
         && (ordered_feed_selection

@@ -198,12 +198,13 @@ def compare_feed_selection(root, native):
                                antenna="A0&A1;A0&A2", spw="0:0~4^2", correlation="XX,YY",
                                title="Feed selection")
     cases = (
-        ("single-feed", "1", feed1 != feed2, 30),
-        ("cross-feed-pair", "0&1", feed1 != feed2, 30),
-        ("same-feed-pair", "1&&&", (feed1 == 1) & (feed2 == 1), 15),
+        ("single-feed", "1", "", feed1 != feed2, 30),
+        ("cross-feed-pair", "0&1", "", feed1 != feed2, 30),
+        ("same-feed-pair", "1&&&", "", (feed1 == 1) & (feed2 == 1), 15),
+        ("array-and-feed", "1", "1", (feed1 != feed2) & (feed2 == 1), 15),
     )
-    for name, feed, matches, count in cases:
-        options = base | dict(feed=feed)
+    for name, feed, array, matches, count in cases:
+        options = base | dict(feed=feed, array=array)
         expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**options, plotfile=str(expected), expformat="txt") is None
         points = rows(expected)
@@ -219,6 +220,14 @@ def compare_feed_selection(root, native):
         print(f"{name}: {count} matching selected feed coordinates", flush=True)
     compare_figure(work, native, base | dict(feed="1"), work / "single-feed.casa.txt",
                    ("Feed selection", "Channel", "Real"))
+    caltable = work / "feed-unity.cal"
+    casa.gencal(str(vis), str(caltable), "amp", parameter=[1.0])
+    calibrated = base | dict(feed="0&1", ydatacolumn="corrected", callib=library_entry(caltable))
+    expected, actual = (work / f"feed-callibrary.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**calibrated, plotfile=str(expected), expformat="txt") is None
+    assert native(**calibrated, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 30
+    print("feed-callibrary: 30 matching selected feed coordinates", flush=True)
     compare_feed_atmosphere(work, native, vis)
 
 
