@@ -85,8 +85,6 @@
 //!   refused: the `regex` crate has none of them.
 //! - ANTENNA `POSITION` is read as ITRF, as everywhere in casa-ms; CASA
 //!   converts other reference frames with `MPosition::Convert`.
-//! - The side lists `MSSelection::getAntenna1List`, `getAntenna2List` and
-//!   `getBaselineList` are not produced; only the row predicate is.
 //! - Messages follow CASA's wording but not its character positions
 //!   exactly.
 
@@ -247,6 +245,101 @@ pub fn resolve_antenna_lists(
         }
     }
     Ok((first.into_iter().collect(), second.into_iter().collect()))
+}
+
+#[derive(Default)]
+pub(super) struct AntennaSelectionIndices {
+    pub(super) first: Vec<i32>,
+    pub(super) second: Vec<i32>,
+    pub(super) baselines: Vec<[i32; 2]>,
+}
+
+impl MeasurementSet {
+    pub(super) fn antenna_selection_indices(
+        &self,
+        text: &str,
+    ) -> MsResult<AntennaSelectionIndices> {
+        use std::collections::HashSet;
+
+        self.with_antenna_rows(|rows| {
+            let mut result = AntennaSelectionIndices::default();
+            let mut seen_pairs = HashSet::new();
+            let mut first_ids = HashSet::new();
+            let mut second_ids = HashSet::new();
+            let count = rows.len();
+            let mut add = |first: i32, second: i32| {
+                let pair = (first.min(second), first.max(second));
+                if seen_pairs.insert(pair) {
+                    result.baselines.push([first, second]);
+                }
+            };
+            for clause in antenna_clauses(rows, text, true)? {
+                let signed = |id: usize| {
+                    let value = id as i32;
+                    if clause.negate { -value } else { value }
+                };
+                let (first, second, baseline_type) = match &clause.term {
+                    Term::Cross(ids) => (
+                        ids.iter().copied().map(signed).collect::<Vec<_>>(),
+                        (0..count as i32).collect::<Vec<_>>(),
+                        BaselineType::Cross,
+                    ),
+                    Term::AutoOnly(ids) => (
+                        ids.iter().copied().map(signed).collect(),
+                        (0..count as i32).collect(),
+                        BaselineType::Auto,
+                    ),
+                    Term::Pair {
+                        first,
+                        second,
+                        autocorrelations,
+                    } => (
+                        first.iter().copied().map(signed).collect(),
+                        second.iter().copied().map(signed).collect(),
+                        if *autocorrelations {
+                            BaselineType::Both
+                        } else {
+                            BaselineType::Cross
+                        },
+                    ),
+                    Term::Ordered(pairs) => {
+                        for (slot, &present) in pairs.iter().enumerate() {
+                            if present {
+                                add((slot / count) as i32, (slot % count) as i32);
+                            }
+                        }
+                        continue;
+                    }
+                };
+                result
+                    .first
+                    .extend(first.iter().copied().filter(|&id| first_ids.insert(id)));
+                result
+                    .second
+                    .extend(second.iter().copied().filter(|&id| second_ids.insert(id)));
+                for &left in &first {
+                    for &right in &second {
+                        let keep = match baseline_type {
+                            BaselineType::Cross => left != right,
+                            BaselineType::Auto => left == right,
+                            BaselineType::Both => true,
+                        };
+                        if keep {
+                            add(left, right);
+                        }
+                    }
+                }
+            }
+            Ok(result)
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BaselineType {
+    Cross,
+    Auto,
+    Both,
 }
 
 fn resolve_antenna_expression(

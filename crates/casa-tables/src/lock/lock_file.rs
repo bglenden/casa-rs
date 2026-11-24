@@ -77,6 +77,9 @@ use std::time::{Duration, Instant};
 use super::sync_data::SyncData;
 use super::{LockType, TableHolder};
 
+mod delegated_write;
+pub use delegated_write::DelegatedTableWrite;
+
 /// Size of a canonical `Int` in the lock file (4 bytes, big-endian).
 const SIZEINT: usize = 4;
 
@@ -168,6 +171,18 @@ struct ProcessLockState {
     blocked_readers: usize,
     /// Length of the in-use read lock at byte 1 (2 under permanent locking).
     in_use_len: i64,
+    /// Acquisitions that may still obtain the data lock, including kernel waits.
+    acquisitions: usize,
+    /// The Python caller is waiting for its provider to use the table.
+    delegated_write: bool,
+}
+
+struct Acquisition<'a>(&'a SharedLockFd);
+
+impl Drop for Acquisition<'_> {
+    fn drop(&mut self) {
+        self.0.state().acquisitions -= 1;
+    }
 }
 
 /// One registered lock file: its shared descriptor and the handles using it.
@@ -443,6 +458,18 @@ impl LockFile {
     /// Returns an I/O error when `fcntl` fails for a reason other than a held
     /// lock, a deadlock or missing lock support.
     pub fn acquire(&mut self, lock_type: LockType, nattempts: u32) -> io::Result<LockOutcome> {
+        let shared = Arc::clone(&self.shared);
+        let _acquisition = {
+            let mut state = shared.state();
+            if state.delegated_write {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "a task provider is using this table",
+                ));
+            }
+            state.acquisitions += 1;
+            Acquisition(&shared)
+        };
         let first = self.try_acquire(lock_type)?;
         let result = if first == LockOutcome::HeldByAnotherProcess && nattempts != 1 {
             let added = self.add_to_list && self.shared.writable && self.add_request_id().is_ok();

@@ -10838,6 +10838,17 @@ in `ngc5921_ut.ms` can keep returning all seven scans even though
 is removed or replaced, casa-rs reports an unavailable attachment on
 queries that need its data (#1030).
 
+## Out-of-range TaQL array indices can abort MS selection
+
+In CASA 6.7.6.14, open an MS with ordinary visibility arrays and pass
+`abs(DATA[999,1]) > 0` as `msselect`'s TaQL predicate.
+`msseltoindex` and `msselect(onlyparse=True)` accept the predicate
+without reading cells. Applying it can terminate the process with an
+uncaught array-slicing exception. casa-rs validates the expression
+without reading visibility cells and reports a failed selection when
+evaluation reaches an invalid index. The previously selected rows
+remain accessible (#1030).
+
 ## A Multi-MS metadata count can omit newly published member rows
 
 Open a genuine CASA Multi-MS and obtain its metadata with
@@ -10967,6 +10978,21 @@ that the cache leaves empty. The explicit axis validation permits real-valued pl
 casa-rs reads the real values directly. The regression checks the same
 selected samples against CASA's successful signed amplitude export, which
 has the same coordinates for float cells (#1032).
+
+## Clearcal releases a caller's explicit table lock
+
+In CASA 6.7.6.14, open a writable MeasurementSet with
+`table.open(vis, nomodify=False, lockoptions={'option': 'user'})` and take an
+explicit write lock with `table.lock(write=True)`. Calling
+`clearcal(vis, addmodel=True)` writes the scratch columns. The attached
+table then reports `haslock(write=True) == False` even though its owner never
+released the lock.
+
+CASA also releases automatic locks on unrelated tables open in the same process.
+casa-rs yields automatic locks on the input MeasurementSet before its
+clearcal provider starts and keeps the caller's table attached. An explicit
+or active lock still held by the caller produces a `RuntimeError` before
+the task writes. The caller retains ownership of that lock (#1520).
 
 ## PlotMS time averaging can dilute complex visibilities when FLOAT_DATA is present
 

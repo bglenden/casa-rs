@@ -78,6 +78,16 @@ impl RefTableDatContents {
             .get(row)
             .and_then(|&parent| usize::try_from(parent).ok())
     }
+
+    pub(super) fn parent_rows(&self, rows: &[usize]) -> Result<Vec<usize>, StorageError> {
+        rows.iter()
+            .map(|&row| {
+                self.parent_row(row).ok_or_else(|| {
+                    StorageError::FormatMismatch(format!("reference row {row} is out of bounds"))
+                })
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
