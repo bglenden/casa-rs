@@ -12,7 +12,7 @@ import numpy as np
 
 from plotms_ms_columns_oracle import (
     casa, compare_empty_export, compare_figure, compare_text, copy_ms, opened, plotms_launcher,
-    reference, request, rows,
+    reference, request, rows, time_scan_field_fixture,
 )
 from plotms_ms_derived_average_oracle import weighted_fixture
 
@@ -542,6 +542,68 @@ def compare_combined_axis_pairs(root, native):
                             "Real:corrected/model (vector)"))
 
 
+def compare_vector_scan_field_expressions(root, native):
+    source, times, scan, field, reversed_time = time_scan_field_fixture(root)
+    start = times[0]
+    masked = root / "masked-spans.ms"
+    copy_ms(source, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, :] = table.getcol("TIME") >= times[6]
+        table.putcol("FLAG", flags)
+    base = request(source) | dict(field="", xaxis="time", xdatacolumn="", yaxis="real",
+                                  ydatacolumn="corrected-model_vector", spw="0:1", avgtime="200",
+                                  title="Visibility averages across scans and fields")
+    split = [(None, -90., 25., "1", "0"), (None, -270., 85., "2", "1")]
+    joined = [(None, -252., 55., "1", "0")]
+    cross = dict(avgscan=True, avgfield=True)
+    cases = (
+        ("separate-boundaries", {}, split),
+        ("cross-scan", dict(vis=str(scan), avgscan=True), joined),
+        ("cross-field", dict(vis=str(field), avgfield=True), joined),
+        ("cross-scan-keeps-field", dict(avgscan=True), split),
+        ("cross-field-keeps-scan", dict(avgfield=True), split),
+        ("cross-both", cross, joined),
+        ("cross-both-reversed", cross | dict(vis=str(reversed_time)),
+         [(None, -252., 55., "2", "1")]),
+        ("cross-both-shorter", cross | dict(avgtime="75"),
+         [(None, -225., 35., "1", "0"), (None, -270., 95., "2", "1")]),
+        ("cross-both-masked", cross | dict(vis=str(masked)), [split[0]]),
+        ("cross-both-stored-pair", cross | dict(xaxis="real", xdatacolumn="data"),
+         [(2.6, -252., 55., "1", "0")]),
+        ("cross-both-derived-pair",
+         cross | dict(xaxis="real", xdatacolumn="data-model_vector", yaxis="amp",
+                      ydatacolumn="corrected/model_scalar"),
+         [(-277.4, .1, 55., "1", "0")]),
+        ("cross-both-channel",
+         cross | dict(xaxis="channel", ydatacolumn="data-model_vector", avgchannel="2", spw="0:0~1"),
+         [(0., -277.4, 55., "1", "0")]),
+    )
+    for name, overrides, coordinates in cases:
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        offsets = [start + point[2] for point in coordinates]
+        assert [(point[3], point[4]) for point in selected] == [(point[3], point[4]) for point in coordinates]
+        np.testing.assert_allclose([float(point[9]) for point in selected], offsets, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected],
+                                   [point[1] for point in coordinates], rtol=1.2e-5)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in selected], offsets, rtol=0, atol=.00051)
+        else:
+            np.testing.assert_allclose([float(point[0]) for point in selected],
+                                       [point[0] for point in coordinates], rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], offsets, rtol=0, atol=.00051)
+        print(f"{name}: {len(coordinates)} matching scan and field span coordinates", flush=True)
+        if name == "cross-both":
+            compare_figure(root, native, controls, expected, (controls["title"], "Time (MJD seconds)",
+                                                              "Real:corrected-model (vector)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -580,6 +642,9 @@ def main():
         paired = root / "combined-pairs"
         paired.mkdir()
         compare_combined_axis_pairs(paired, native)
+        spans = root / "scan-field-spans"
+        spans.mkdir()
+        compare_vector_scan_field_expressions(spans, native)
 
 
 if __name__ == "__main__":

@@ -76,7 +76,7 @@ impl CliOptions {
 
     pub(super) fn supports_time_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
         let channel_average = self.avgchannel.is_some_and(|width| width > 1);
-        if self.scalar && channel_average {
+        if self.scalar && (channel_average || self.avgscan || self.avgfield) {
             return false;
         }
         let visibility_column = |column: MsDataColumn| {
@@ -102,8 +102,6 @@ impl CliOptions {
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
             && self.avgtime.is_some()
-            && !self.avgscan
-            && !self.avgfield
             && !self.avgbaseline
             && !self.avgantenna
             && !self.avgspw
