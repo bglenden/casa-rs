@@ -257,7 +257,8 @@ fn run_task(
             .transpose()?;
         if options.iteraxis.is_some()
             && options.y_axis2.is_some()
-            && (options.plotms_averaging_active()
+            && ((options.plotms_averaging_active()
+                && !options.supports_averaged_ordinate_iteration())
                 || options.has_mixed_ordinate_dimensions()
                 || calibration.is_some()
                 || atmosphere.is_some())

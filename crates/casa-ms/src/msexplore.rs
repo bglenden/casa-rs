@@ -1144,6 +1144,10 @@ pub enum MsIterationAxis {
 }
 
 impl MsIterationAxis {
+    fn supports_averaged_ordinates(self) -> bool {
+        matches!(self, Self::Correlation | Self::Scan | Self::Field)
+    }
+
     /// All currently implemented iteration axes.
     pub const ALL: [Self; 4] = [
         Self::Field,
@@ -4006,6 +4010,7 @@ impl Default for AveragedSeriesAccumulator {
 #[derive(Debug, Default)]
 struct AveragedPanelAccumulator {
     label: String,
+    iteration_rank: i32,
     series: std::collections::BTreeMap<String, AveragedSeriesAccumulator>,
     contributing_rows: std::collections::BTreeSet<usize>,
 }
@@ -4201,9 +4206,7 @@ fn build_generic_visibility_scatter(
         && calibration.is_some_and(|input| input.rows.is_none())
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
-    let iterated_ordinate_list = calibration.is_some_and(|input| input.rows.is_none())
-        && spec.iteration.iteraxis.is_some()
-        && spec.secondary_y_axis().is_some();
+    let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
@@ -4770,14 +4773,17 @@ fn build_generic_visibility_scatter(
                 .as_ref()
                 .map_or(sigma_values[*corr_index], |statistics| statistics.sigma);
             let (group_key, group_label) = group_for(row_slot, Some(corr_label));
-            let (panel_key, panel_label) = iteration_group(
+            let (panel_key, panel_label, iteration_rank) = iteration_group(
                 iteraxis,
                 field_id_value,
                 &field,
                 spw_id,
                 &spectral_window,
                 scan_number_value,
-                Some(corr_label),
+                Some((
+                    corr_label,
+                    corr_types.get(*corr_index).copied().unwrap_or_default(),
+                )),
             );
             if !panels.contains_key(&panel_key) {
                 panel_order.push(panel_key.clone());
@@ -4785,15 +4791,7 @@ fn build_generic_visibility_scatter(
                     panel_key.clone(),
                     ScatterPanelAccumulator {
                         label: panel_label.clone(),
-                        iteration_rank: match iteraxis {
-                            Some(MsIterationAxis::Correlation) => {
-                                corr_types.get(*corr_index).copied().unwrap_or_default()
-                            }
-                            Some(MsIterationAxis::Scan) => scan_number_value,
-                            Some(MsIterationAxis::Field) => field_id_value,
-                            Some(MsIterationAxis::SpectralWindow) => spw_id,
-                            None => 0,
-                        },
+                        iteration_rank,
                         ..Default::default()
                     },
                 );
@@ -5596,6 +5594,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .map_err(|error| error.to_string())?;
 
     let iteraxis = spec.iteration.iteraxis;
+    let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
     let use_spectral_weights = calibration.is_some()
@@ -6190,17 +6189,25 @@ fn build_generic_visibility_scatter_with_averaging(
                         },
                         |(masked, _)| masked,
                     );
-                    if channel_masked && !(scalar_channels || antenna_channels || spw_channels) {
+                    if channel_masked
+                        && !(scalar_channels
+                            || antenna_channels
+                            || spw_channels
+                            || iterated_ordinate_list)
+                    {
                         continue;
                     }
-                    let (panel_key, panel_label) = iteration_group(
+                    let (panel_key, panel_label, iteration_rank) = iteration_group(
                         iteraxis,
                         representative_field,
                         &field,
                         spw_id,
                         &spectral_window,
                         representative_scan,
-                        Some(corr_label),
+                        Some((
+                            corr_label,
+                            corr_types.get(*corr_index).copied().unwrap_or_default(),
+                        )),
                     );
                     if !panels.contains_key(&panel_key) {
                         panel_order.push(panel_key.clone());
@@ -6208,6 +6215,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             panel_key.clone(),
                             AveragedPanelAccumulator {
                                 label: panel_label,
+                                iteration_rank,
                                 ..Default::default()
                             },
                         );
@@ -6698,6 +6706,7 @@ fn build_generic_visibility_scatter_with_averaging(
         || spw_average
         || antenna_channels
         || scalar_antenna_time
+        || iterated_ordinate_list
         || (scalar_average
             && spec.secondary_y_axis().is_some()
             && iteraxis.is_none()
@@ -6706,6 +6715,9 @@ fn build_generic_visibility_scatter_with_averaging(
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
+    if iterated_ordinate_list {
+        panel_order.sort_by_key(|key| panels[key].iteration_rank);
+    }
     for panel_key in panel_order {
         let Some(panel) = panels.remove(&panel_key) else {
             continue;
@@ -6897,11 +6909,15 @@ fn build_generic_visibility_scatter_with_averaging(
     }
 
     if let Some(iteraxis) = iteraxis {
-        let (gridrows, gridcols) = resolve_iterated_grid(
-            finalized_panels.len(),
-            spec.layout.gridrows,
-            spec.layout.gridcols,
-        )?;
+        let (gridrows, gridcols) = if iterated_ordinate_list {
+            (spec.layout.gridrows, spec.layout.gridcols)
+        } else {
+            resolve_iterated_grid(
+                finalized_panels.len(),
+                spec.layout.gridrows,
+                spec.layout.gridcols,
+            )?
+        };
         let share_x_bounds =
             share_axis_bounds(spec.iteration.xselfscale, spec.iteration.xsharedaxis);
         let share_y_bounds =
@@ -8033,6 +8049,12 @@ fn visibility_group(
     }
 }
 
+fn iterates_plotms_ordinates(spec: &MsPlotSpec, input: Option<&PlotMsInput<'_>>) -> bool {
+    input.is_some_and(|input| input.rows.is_none())
+        && spec.iteration.iteraxis.is_some()
+        && spec.secondary_y_axis().is_some()
+}
+
 fn iteration_group(
     iteraxis: Option<MsIterationAxis>,
     field_id: i32,
@@ -8040,10 +8062,10 @@ fn iteration_group(
     spw_id: i32,
     spectral_window: &crate::subtables::MsSpectralWindow<'_>,
     scan_number: i32,
-    correlation_label: Option<&str>,
-) -> (String, String) {
+    correlation: Option<(&str, i32)>,
+) -> (String, String, i32) {
     match iteraxis {
-        None => ("all".to_string(), "All data".to_string()),
+        None => ("all".to_string(), "All data".to_string(), 0),
         Some(MsIterationAxis::Field) => {
             let field_name = if field_id >= 0 && (field_id as usize) < field.row_count() {
                 field
@@ -8052,11 +8074,13 @@ fn iteration_group(
             } else {
                 format!("Field {field_id}")
             };
-            (format!("field-{field_id}"), field_name)
+            (format!("field-{field_id}"), field_name, field_id)
         }
-        Some(MsIterationAxis::Scan) => {
-            (format!("scan-{scan_number}"), format!("Scan {scan_number}"))
-        }
+        Some(MsIterationAxis::Scan) => (
+            format!("scan-{scan_number}"),
+            format!("Scan {scan_number}"),
+            scan_number,
+        ),
         Some(MsIterationAxis::SpectralWindow) => {
             let spw_name = if spw_id >= 0 && (spw_id as usize) < spectral_window.row_count() {
                 spectral_window
@@ -8065,11 +8089,11 @@ fn iteration_group(
             } else {
                 format!("SPW {spw_id}")
             };
-            (format!("spw-{spw_id}"), spw_name)
+            (format!("spw-{spw_id}"), spw_name, spw_id)
         }
         Some(MsIterationAxis::Correlation) => {
-            let label = correlation_label.unwrap_or("corr").to_string();
-            (format!("corr-{label}"), label)
+            let (label, code) = correlation.unwrap_or(("corr", 0));
+            (format!("corr-{label}"), label.to_string(), code)
         }
     }
 }

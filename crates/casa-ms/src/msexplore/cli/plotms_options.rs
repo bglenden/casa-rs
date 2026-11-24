@@ -66,6 +66,17 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
+    pub(super) fn supports_averaged_ordinate_iteration(&self) -> bool {
+        self.iteraxis
+            .is_some_and(MsIterationAxis::supports_averaged_ordinates)
+            && self.freqframe.is_none()
+            && self.x_axis.is_some_and(|axis| {
+                axis.is_visibility_math()
+                    || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
+            })
+            && self.supports_visibility_ordinate_averaging()
+    }
+
     pub(super) fn supports_visibility_ordinate_averaging(&self) -> bool {
         let ordinary_time = self.avgtime.is_some()
             && !self.avgscan
