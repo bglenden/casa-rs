@@ -948,6 +948,7 @@ def compare_vector_antenna_time_averages(root, native, source, start, base, ampl
     compare_vector_antenna_time_order(root, native, source, controls, start)
     compare_vector_antenna_time_polarizations(root, native, source, controls, start)
     compare_vector_antenna_time_cancellation(root, native, source, controls, start)
+    compare_vector_antenna_time_channels(root, native, source, controls, start, rotations)
 
 
 def compare_vector_antenna_time_order(root, native, source, controls, start):
@@ -1061,6 +1062,77 @@ def compare_vector_antenna_time_cancellation(root, native, source, controls, sta
     assert native(**args, plotfile=str(actual)) is None
     assert compare_text(actual, expected) == 4
     print("vector-antenna-cancellation: 4 matching second-stage Float coordinates", flush=True)
+
+
+def compare_vector_antenna_time_channels(root, native, source, controls, start, rotations):
+    split = root / "vector-antenna-time-channel-spectra.ms"
+    copy_ms(source, split)
+    with opened(split, True) as table:
+        distant = table.getcol("ANTENNA2") == 2
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        sigmas = table.getcol("SIGMA_SPECTRUM")
+        weights[0, 0, distant] = 15
+        sigmas[0, 0, distant] = 2
+        table.putcol("WEIGHT_SPECTRUM", weights)
+        table.putcol("SIGMA_SPECTRUM", sigmas)
+
+    zero_observed = root / "vector-time-channel-zero-observed.ms"
+    zero_corrected = root / "vector-time-channel-zero-corrected.ms"
+    for path, column in ((zero_observed, "SIGMA_SPECTRUM"), (zero_corrected, "WEIGHT_SPECTRUM")):
+        copy_ms(source, path)
+        with opened(path, True) as table:
+            weights = table.getcol(column)
+            weights[:, :4, :] = 0
+            table.putcol(column, weights)
+
+    args = controls | dict(avgchannel="2", spw="0:0~3", title="Vector time, channel and antenna averages")
+    cases = (
+        ("vector-time-channel-antenna", {}),
+        ("vector-time-channel-antenna-frequency", dict(xaxis="frequency")),
+        ("vector-time-channel-antenna-spectra", dict(vis=str(split))),
+        ("vector-time-channel-antenna-zero-observed", dict(vis=str(zero_observed))),
+    )
+    for name, overrides in cases:
+        request_args = args | overrides
+        coordinates, centers, identifiers, frequencies = [], [], [], []
+        for begin, end in ((0, 4), (4, 6)):
+            center = start + (begin + end - 1) * 5
+            rotation = rotations[begin:end].mean()
+            observed = 0j if name.endswith("-zero-observed") else (1 + 4j) * rotation
+            corrected = (10 + 14j) * rotation
+            for antenna in range(3):
+                for channel, frequency in enumerate((100.0005, 100.0025)):
+                    near_observed = observed * (1 if channel else .25)
+                    far_observed = near_observed * 2j
+                    ratio = 3
+                    if name.endswith("-spectra") and channel == 0:
+                        far_observed = observed * .7 * 2j
+                        ratio = 9
+                    x, y = (
+                        ((near_observed + ratio * far_observed) / (1 + ratio),
+                         corrected * (1 + ratio * 2j) / (1 + ratio)),
+                        (near_observed, corrected.conjugate()),
+                        (far_observed, (corrected * 2j).conjugate()),
+                    )[antenna]
+                    coordinates.append((frequency if request_args["xaxis"] == "frequency" else x.real, y.imag))
+                    centers.append(center)
+                    identifiers.append((str(antenna), "-1", str(channel), "XX"))
+                    frequencies.append(f"{frequency:.9f}")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**request_args, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[5], point[6], point[2], point[12]) for point in selected] == identifiers
+        assert [point[10] for point in selected] == frequencies
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        assert native(**request_args, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        if request_args["xaxis"] == "frequency":
+            compare_figure(root, native, request_args, expected, (args["title"], "Frequency (GHz)", "Imag:corrected"))
+        print(f"{name}: {len(coordinates)} matching vector time, channel and antenna coordinates", flush=True)
+    compare_empty_export(root, native, "vector-time-channel-antenna-zero-corrected",
+                         args | dict(vis=str(zero_corrected)), ("Real", "Imag:corrected"))
 
 
 def main():
