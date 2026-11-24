@@ -1119,6 +1119,7 @@ def compare_two_spw_ordinates(root, native, vis):
          [19.8503, 19.8503, -.418684, -.418684]),
         ("virtual-two-time-channel-spw-ordinates", time | dict(avgchannel="2", spw="0:0~3,1:0~3"),
          [4.25, 4.25, 3.25, 3.25, 11.25, 26.25, 11.25, 26.25]),
+        ("stored-two-time-spw-spans", stored | time | dict(avgscan=True, avgfield=True), [13, -5]),
     )
     for name, changes, values in cases:
         controls = base | changes
