@@ -1781,17 +1781,24 @@ impl MsPlotSpec {
                     .to_string(),
             );
         }
-        if (self.x_axis.is_interval_or_wavelength()
+        let has_interval_or_wavelength = self.x_axis.is_interval_or_wavelength()
             || self
                 .y_axes
                 .iter()
                 .copied()
-                .any(MsAxis::is_interval_or_wavelength))
+                .any(MsAxis::is_interval_or_wavelength);
+        if has_interval_or_wavelength
             && (uses_extended_averaging(self)
                 || self.averaging.avgchannel.is_some_and(|width| width > 1))
         {
             return Err(
                 "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
+            );
+        }
+        if has_interval_or_wavelength && self.transforms.freqframe.is_some() {
+            return Err(
+                "PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)"
+                    .into(),
             );
         }
         if self.y_axes.iter().copied().any(|y| {
@@ -4180,7 +4187,8 @@ fn build_generic_visibility_scatter(
     let mut bin_buffers = visibility_columns.buffers();
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
-        if flag_row_value && !include_row_flagged_points {
+        // Unaveraged PlotMS draws selected samples from the cube flag mask.
+        if flag_row_value && !include_row_flagged_points && !use_iterator_order {
             continue;
         }
 

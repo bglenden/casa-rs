@@ -11,6 +11,7 @@ from pathlib import Path
 import casatasks as casa
 import numpy as np
 
+from plotms_callibrary_oracle import library_entry
 from plotms_ms_columns_oracle import (
     compare_figure,
     compare_text,
@@ -23,6 +24,10 @@ from plotms_ms_columns_oracle import (
 )
 
 SPEED_OF_LIGHT = 299_792_458.0
+
+
+def controls(vis):
+    return request(vis) | dict(yaxis="amp", spw="0:1~3^2", xdatacolumn="", ydatacolumn="")
 
 
 def make_fixture(root, *, reverse_times=False):
@@ -70,9 +75,6 @@ def compare(root, native):
         ("reordered-interval", "time_interval", "Interval"),
         ("reordered-uvwave", "uvdist_l", "UVwave"),
     )
-    def controls(vis):
-        return request(vis) | dict(yaxis="amp", spw="0:1~3^2", xdatacolumn="", ydatacolumn="")
-
     for name, axis, label in cases:
         vis, uvw, intervals, lookup, first_intervals, frequencies = (
             reversed_data if name.startswith("reordered-") else fixture_data
@@ -118,6 +120,51 @@ def compare(root, native):
             root, native, controls(fixture_data[0]) | dict(xaxis=name), root / f"{name}.casa.txt",
             (f"Amp vs. {label}", xlabel, "Amp"),
         )
+
+    compare_flags_and_calibration(root, native, fixture_data[0])
+    check_frame_refusal(root, native, fixture_data[0])
+
+
+def compare_flags_and_calibration(root, native, vis):
+    base = controls(vis) | dict(xaxis="uwave", expformat="txt")
+
+    caltable = root / "unity.cal"
+    casa.gencal(str(vis), str(caltable), "amp", parameter=[1.0])
+    options = base | dict(correlation="XX,YY", callib=library_entry(caltable), ydatacolumn="corrected")
+    expected, actual = (root / f"callibrary.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    assert [(point[2], point[12]) for point in rows(expected)[:4]] == [
+        ("1", "XX"), ("1", "YY"), ("3", "XX"), ("3", "YY"),
+    ]
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 24
+    print("callibrary: 24 matching metadata coordinates and correlation order", flush=True)
+
+    with opened(vis, True) as table:
+        timestamp = f"{table.getcell('TIME', 0):.3f}"
+        table.putcell("FLAG_ROW", 0, True)
+    expected, actual = (root / f"row-flag-only.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**base, plotfile=str(expected)) is None
+    assert [point[9] for point in rows(expected)[:2]] == [timestamp, timestamp]
+    assert native(**base, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    print("row-flag-only: 12 matching coordinates with the cube flag mask", flush=True)
+
+
+def check_frame_refusal(root, native, vis):
+    from casars.tasks import TaskParameterError
+
+    for name in ("interval", "uwave"):
+        output = root / f"{name}-frame.native.txt"
+        options = controls(vis) | dict(xaxis=name, expformat="txt", transform=True, freqframe="BARY")
+        try:
+            native(**options, plotfile=str(output))
+        except TaskParameterError as error:
+            assert "reporting-frame transforms for interval and wavelength plots" in str(error)
+            assert "#1032" in str(error)
+        else:
+            raise AssertionError(f"Unsupported {name} reporting frame was exported")
+        assert not output.exists()
 
 
 def main():
