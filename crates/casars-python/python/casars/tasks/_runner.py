@@ -416,9 +416,13 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if value not in allowed:
                 message = "null value not allowed" if value is None else f"unallowed value {value}"
                 raise AssertionError(str({parameter: [message]}))
-        for parameter in ("addwn", "rejwn", "fftthresh"):
-            if arguments[parameter] is None:
-                raise AssertionError(str({parameter: ["null value not allowed"]}))
+        null_parameters = {
+            parameter: ["null value not allowed"]
+            for parameter in ("fftthresh", "addwn", "rejwn")
+            if arguments[parameter] is None
+        }
+        if null_parameters:
+            raise AssertionError(str(null_parameters))
         if arguments["blfunc"].lower() == "sinusoid" and str(arguments["blmode"]).lower() == "fit":
             import numpy as np
 
@@ -428,22 +432,16 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AssertionError(str({parameter: ["must be of cVariant type"]}))
                 if isinstance(value, np.ndarray):
                     raise ValueError("wrong value given for addwn/rejwn")
-                if isinstance(value, str):
-                    if not value:
-                        raise IndexError("string index out of range")
-                    if value.isspace():
-                        # CASA reaches integer conversion for a blank input.
-                        int(value)
         try:
             return run(name, **values).value
         except TaskParameterError as error:
             message = error.completion.message
-            if message == "Cannot sort a wavenumber list containing strings and numbers.":
-                # Preserve Python's comparison error for the actual element types.
-                sorted(set(arguments[error.completion.parameter]))
-                raise TypeError(message) from error
             if message in (
+                "Cannot sort a wavenumber list containing strings and numbers.",
                 "wrong value given for addwn/rejwn",
+            ):
+                _raise_sdbaseline_wavenumber_error(arguments.get(error.completion.parameter), error)
+            if message in (
                 "fftthresh must be float or integer or string.",
                 "fftthresh has a wrong format.",
                 "threshold given to fftthresh must be positive.",
@@ -1356,6 +1354,24 @@ def _present_listcal(report: Mapping[str, Any]) -> None:
         if listing["error"] is not None:
             raise RuntimeError(listing["error"])
     print(f"\nListed {solutions} antenna solutions.\n")
+
+
+
+def _raise_sdbaseline_wavenumber_error(value: Any, error: TaskParameterError) -> None:
+    """Reproduce CASA's lexical errors after the provider rejects this parameter."""
+    invalid = "wrong value given for addwn/rejwn"
+    if isinstance(value, str):
+        if not value:
+            raise IndexError("string index out of range") from error
+        if not any(delimiter in value for delimiter in ".,-~<>="):
+            int(value)
+    elif isinstance(value, list):
+        if any(int(element) < 0 for element in value):
+            raise ValueError(invalid) from error
+        if error.completion.message == "Cannot sort a wavenumber list containing strings and numbers.":
+            sorted(set(value))
+            raise TypeError(error.completion.message) from error
+    raise ValueError(invalid) from error
 
 
 def _call_sdatmcor(values: dict[str, Any]) -> None:
