@@ -5367,8 +5367,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let scalar_channels = scalar_average && average_channels;
+    let antenna_channels = antenna_average && average_channels;
     let average_operands = extended_derived || scalar_channels;
-    let channel_first = channel_baselines || scalar_channels;
+    let channel_first = channel_baselines || scalar_channels || antenna_channels;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
@@ -5491,7 +5492,7 @@ fn build_generic_visibility_scatter_with_averaging(
             .is_some();
     let channel_weight_mask = if !propagate_channel_weights {
         plotms_columns::ChannelWeightMask::FlagsOnly
-    } else if scalar_channels {
+    } else if scalar_channels || antenna_channels {
         plotms_columns::ChannelWeightMask::Nonzero
     } else {
         plotms_columns::ChannelWeightMask::Positive
@@ -5579,13 +5580,13 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut scalar_shapes = plotms_ordinates::ScalarAverageShapes::default();
     let mut time_baseline_stats =
         time_baselines.then(plotms_time_baselines::TimeBaselineStatistics::default);
-    let mut scalar_channel_buffer_first = None;
+    let mut channel_buffer_first = None;
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
-        if scalar_channels
+        if (scalar_channels || antenna_channels)
             && calibration.is_some_and(|input| input.starts_visibility_buffer[row_slot])
         {
-            scalar_channel_buffer_first = Some(row_slot);
+            channel_buffer_first = Some(row_slot);
         }
         let flag_row_value = selected_flag_rows[row_slot];
         let skip_flagged_row = flag_row_value
@@ -5625,7 +5626,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     0.0,
                 )
             });
-        if skip_flagged_row {
+        if skip_flagged_row && !antenna_channels {
             continue;
         }
         let pol_id = data_description
@@ -5670,7 +5671,7 @@ fn build_generic_visibility_scatter_with_averaging(
         let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
         let buffer_first = time_bins
             .and_then(|plan| plan.input_buffer_first_slot(row_slot))
-            .or(scalar_channel_buffer_first);
+            .or(channel_buffer_first);
         let weight_spectrum_grid = selected_weight_spectrum
             .as_ref()
             .map(|column| column.spectrum_in_buffer(row_slot, buffer_first))
@@ -5741,6 +5742,9 @@ fn build_generic_visibility_scatter_with_averaging(
         // transform. Mixed stored columns use the calibrated mask here.
         let channel_mask_grid = channel_first_kinds
             .filter(|_| propagate_channel_weights)
+            .and_then(|kinds| weight_grid(kinds.row_weight));
+        let antenna_channel_spectrum = channel_first_kinds
+            .filter(|_| antenna_channels)
             .and_then(|kinds| weight_grid(kinds.row_weight));
 
         let selected_correlations =
@@ -5944,21 +5948,39 @@ fn build_generic_visibility_scatter_with_averaging(
                     && endpoint == 1
                     && (antenna_average || antenna1_value != antenna2_value);
                 for bin in channel_bins.iter() {
-                    let channel_masked = channel_mask_grid.is_some_and(|grid| {
-                        if scalar_channels {
+                    let antenna_weight = antenna_channels.then(|| {
+                        if skip_flagged_row {
+                            (true, 0.0)
+                        } else {
                             plotms_columns::channel_bin_weight(
-                                Some(grid),
+                                antenna_channel_spectrum,
                                 *corr_index,
                                 bin,
                                 &flags,
                                 channel_weight_mask,
                             )
-                            .0
-                        } else {
-                            !plotms_columns::bin_has_weight(grid, *corr_index, bin, &flags)
                         }
                     });
-                    if channel_masked && !scalar_channels {
+                    let channel_masked = antenna_weight.map_or_else(
+                        || {
+                            channel_mask_grid.is_some_and(|grid| {
+                                if scalar_channels {
+                                    plotms_columns::channel_bin_weight(
+                                        Some(grid),
+                                        *corr_index,
+                                        bin,
+                                        &flags,
+                                        channel_weight_mask,
+                                    )
+                                    .0
+                                } else {
+                                    !plotms_columns::bin_has_weight(grid, *corr_index, bin, &flags)
+                                }
+                            })
+                        },
+                        |(masked, _)| masked,
+                    );
+                    if channel_masked && !(scalar_channels || antenna_channels) {
                         continue;
                     }
                     let (panel_key, panel_label) = iteration_group(
@@ -5981,10 +6003,13 @@ fn build_generic_visibility_scatter_with_averaging(
                         );
                     }
                     if channel_masked {
-                        // Keep the scalar panel when the channel transform
+                        // Keep the panel when the channel transform
                         // masks every bin in the selection.
                         continue;
                     }
+                    let scalar_weight = antenna_weight.map_or(scalar_weight, |(_, weight)| {
+                        plotms_columns::baseline_weight(f64::from(weight))
+                    });
                     // The time stage sums each column's weights. The channel
                     // stage uses those sums and propagates the primary mask.
                     let primary_weight = primary_weight_grid
@@ -5996,16 +6021,20 @@ fn build_generic_visibility_scatter_with_averaging(
                         .enumerate()
                         .filter(|_| !average_operands)
                     {
-                        buffer.collect(
-                            grid,
-                            &flags,
-                            column_weights.get(index).copied().flatten(),
-                            *corr_index,
-                            bin,
-                            false,
-                        );
-                        if channel_baselines {
-                            buffer.normalize_vector_average();
+                        let spectrum = column_weights.get(index).copied().flatten();
+                        if antenna_channels {
+                            buffer.collect_channel_average(
+                                grid,
+                                &flags,
+                                [spectrum, None],
+                                *corr_index,
+                                bin,
+                            );
+                        } else {
+                            buffer.collect(grid, &flags, spectrum, *corr_index, bin, false);
+                            if channel_baselines {
+                                buffer.normalize_vector_average();
+                            }
                         }
                     }
                     let samples = |axis| {
@@ -6393,6 +6422,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .map(|(order, row)| (row, order))
         .collect::<HashMap<_, _>>();
     let retain_empty_panel = average_operands
+        || antenna_channels
         || (scalar_average && collapse_baselines)
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "6732d965723304b3bef5b29a1596f5ed64dbe66f",
+  "source_revision": "6732d965723304b3bef5b29a1596f5ed64dbe66f",
+  "baseline_revision": "e89937a6e697b03b0aa459a3b2e62d3f2c507379",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Complex channel averaging followed by standalone scalar or vector per-antenna visibility reduction, including native output antenna IDs, spectra and row-weight fallback.",
+  "result": "passed",
+  "baseline_result": "Main exported amplitude 5.41158, phase 126.027 degrees and a baseline ID. CASA exported amplitude 1.80386, phase 121.962 degrees and the averaged antenna ID.",
+  "text_exports": 13,
+  "points": 54,
+  "figures": 4,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "frequency_coordinate_tolerance_ghz": 1e-07
+}
