@@ -69,6 +69,8 @@ impl CliOptions {
     pub(super) fn supports_averaged_ordinate_iteration(&self) -> bool {
         self.iteraxis
             .is_some_and(MsIterationAxis::supports_averaged_ordinates)
+            && !self.avgscan
+            && !self.avgfield
             && self.freqframe.is_none()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()
@@ -78,15 +80,13 @@ impl CliOptions {
     }
 
     pub(super) fn supports_visibility_ordinate_averaging(&self) -> bool {
-        let ordinary_time = self.avgtime.is_some()
-            && !self.avgscan
-            && !self.avgfield
+        let time = self.avgtime.is_some()
             && !self.avgbaseline
             && !self.avgantenna
             && !self.avgspw
             && self.freqframe.is_none()
             && self.plotms_independent_average();
-        (!self.plotms_extended_averaging() || ordinary_time)
+        (!self.plotms_extended_averaging() || time)
             && !self.has_mixed_ordinate_dimensions()
             && self.plotms_axis_columns().is_some_and(|columns| {
                 columns
