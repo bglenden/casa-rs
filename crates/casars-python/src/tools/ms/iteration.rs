@@ -8,13 +8,17 @@ use casa_ms::tool_visibility::{VisibilityChannels, VisibilityPolarization};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 
-use super::visibility::requested_strings;
+use super::metadata_link::MetadataSnapshot;
+use super::visibility::{VisibilityMain, requested_strings};
 use super::{PyMsTool, runtime_error, strict_bool};
 
 pub(super) struct VisibilityIteration {
     pub(super) cursor: ToolIteration,
+    pub(super) layout: Option<Arc<VisibilityMain>>,
+    pub(super) metadata: Option<Arc<MetadataSnapshot>>,
     pub(super) channels: Option<VisibilityChannels>,
     pub(super) polarization: Option<Arc<VisibilityPolarization>>,
+    pub(super) conversion: Option<Arc<VisibilityPolarization>>,
 }
 
 #[pymethods]

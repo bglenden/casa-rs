@@ -11242,3 +11242,15 @@ to the first description, while the iterator still traverses both. CASA
 description's four-channel frequencies. casa-rs reports the frequencies of
 the iterator's data description while keeping the ordinary attachment
 selection separate (#1030).
+
+## A live Stokes conversion can use the wrong stored hand of an MS iterator
+
+For a MeasurementSet recording RR and LL, select LL before starting and
+positioning an iterator, then select I before reading the chunk. CASA
+6.7.6.14 keeps the one-correlation flag and weight shapes but can read a
+contiguous prefix of the original two-correlation data into the one-hand
+shape. This mixes recorded correlations, channels, and rows. With RR
+selected, the same test also changes the sample amplitudes. casa-rs
+applies the live conversion to the captured data and its physical
+correlation label. The reduction uses the corresponding flags and variances
+(#1030).

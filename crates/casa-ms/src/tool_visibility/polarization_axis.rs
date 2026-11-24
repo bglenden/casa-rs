@@ -2,6 +2,7 @@
 //! Correlation selection and Stokes projection on the MS tool's leading axis.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use casa_coordinates::StokesType;
 use casa_types::ArrayValue;
@@ -19,11 +20,14 @@ pub struct VisibilityPolarization {
     project: Projection,
 }
 
+type RecordedCorrelations = Arc<HashMap<i32, ToolCorrelationSelection>>;
+
 enum Projection {
-    Stored(HashMap<i32, ToolCorrelationSelection>),
+    Stored(RecordedCorrelations),
     Converted {
         types: Vec<StokesType>,
         plans: HashMap<i32, Conversion>,
+        recorded: Option<RecordedCorrelations>,
     },
 }
 
@@ -31,12 +35,12 @@ impl VisibilityPolarization {
     /// Use the recorded products selected by the CASA MS selection grammar.
     pub fn stored(matches: Vec<ToolCorrelationSelection>) -> Self {
         Self {
-            project: Projection::Stored(
+            project: Projection::Stored(Arc::new(
                 matches
                     .into_iter()
                     .map(|plan| (plan.description_id, plan))
                     .collect(),
-            ),
+            )),
         }
     }
 
@@ -57,7 +61,42 @@ impl VisibilityPolarization {
             plans.insert(id as i32, Conversion::new(&codes, &types));
         }
         Ok(Self {
-            project: Projection::Converted { types, plans },
+            project: Projection::Converted {
+                types,
+                plans,
+                recorded: None,
+            },
+        })
+    }
+
+    /// Apply this conversion to products already selected by an iterator.
+    /// Each conversion uses the physical correlation labels of its input.
+    ///
+    /// # Errors
+    /// Requires a conversion and a stored-product selection respectively.
+    pub fn over_recorded_selection(&self, selection: &Self) -> MsResult<Self> {
+        let (Projection::Converted { types, .. }, Projection::Stored(recorded)) =
+            (&self.project, &selection.project)
+        else {
+            return Err(input("expected converted and recorded polarization plans"));
+        };
+        let plans = recorded
+            .iter()
+            .map(|(&id, selection)| {
+                let codes = selection
+                    .types
+                    .iter()
+                    .map(|kind| kind.code())
+                    .collect::<Vec<_>>();
+                (id, Conversion::new(&codes, types))
+            })
+            .collect();
+        Ok(Self {
+            project: Projection::Converted {
+                types: types.clone(),
+                plans,
+                recorded: Some(Arc::clone(recorded)),
+            },
         })
     }
 
@@ -77,8 +116,13 @@ impl VisibilityPolarization {
     }
 
     pub(super) fn gather(&self, values: ArrayValue, ids: &[i32]) -> MsResult<ArrayValue> {
-        let Projection::Stored(plans) = &self.project else {
-            return Ok(values);
+        let plans = match &self.project {
+            Projection::Stored(plans) => plans,
+            Projection::Converted {
+                recorded: Some(plans),
+                ..
+            } => plans,
+            Projection::Converted { recorded: None, .. } => return Ok(values),
         };
         macro_rules! gather {
             ($($kind:ident),+) => {
@@ -93,7 +137,7 @@ impl VisibilityPolarization {
     }
 
     pub(super) fn apply_conversion(&self, values: ArrayValue, ids: &[i32]) -> MsResult<ArrayValue> {
-        let Projection::Converted { types, plans } = &self.project else {
+        let Projection::Converted { types, plans, .. } = &self.project else {
             return Ok(values);
         };
         let ArrayValue::Complex32(values) = values else {
@@ -112,7 +156,7 @@ impl VisibilityPolarization {
         flags: &ArrayD<bool>,
         ids: &[i32],
     ) -> MsResult<ArrayD<bool>> {
-        let Projection::Converted { types, plans } = &self.project else {
+        let Projection::Converted { types, plans, .. } = &self.project else {
             return Err(input("Stokes projection is missing"));
         };
         project_rows(flags, ids, types.len(), plans, Conversion::append_flags)
@@ -124,7 +168,7 @@ impl VisibilityPolarization {
         weights: ArrayValue,
         ids: &[i32],
     ) -> MsResult<(ArrayValue, ArrayValue)> {
-        let Projection::Converted { types, plans } = &self.project else {
+        let Projection::Converted { types, plans, .. } = &self.project else {
             return Ok((flags, weights));
         };
         let (ArrayValue::Bool(flags), ArrayValue::Float32(weights)) = (flags, weights) else {

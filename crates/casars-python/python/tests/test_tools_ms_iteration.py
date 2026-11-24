@@ -1,5 +1,9 @@
 """Pinned public MS iterator chunk, cursor and attachment-state controls."""
 
+import os
+import shutil
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -351,4 +355,134 @@ def test_ms_iterator_reads_projected_keys_and_preserves_duplicate_rows(baseline_
             np.testing.assert_array_equal(result["data"], raw["data"][..., group], strict=True)
             np.testing.assert_array_equal(result["time"], raw["time"][group], strict=True)
             assert reader.iternext() is (description == 0)
+        assert reader.done()
+
+
+def test_ms_iterator_reads_observed_float_data(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    description = dict(table.getcoldesc("DATA"), valueType="float",
+                       dataManagerType="StandardStMan", dataManagerGroup="FLOAT_DATA")
+    assert table.addcols({"FLOAT_DATA": description})
+    float_samples = np.full(raw["data"].shape, -70.5, dtype=np.float32)
+    assert table.putcol("FLOAT_DATA", float_samples)
+    assert table.done()
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.iterinit(maxrows=3)
+        assert reader.iterorigin()
+        record = reader.getdata(["data", "float_data", "amplitude"])
+        expected = float_samples[..., :3].astype(np.float64)
+        np.testing.assert_array_equal(record["data"], expected.astype(np.complex128), strict=True)
+        np.testing.assert_array_equal(record["float_data"], expected, strict=True)
+        np.testing.assert_array_equal(record["amplitude"], np.abs(expected), strict=True)
+        assert reader.done()
+
+
+def test_ms_iterator_keeps_baseline_numbers_aligned_to_rows(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    expected = raw["antenna1"] * 1000 + raw["antenna2"]
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.iterinit()
+        assert reader.iterorigin()
+        record = reader.getdata(["antenna1", "antenna2", "ifr_number"])
+        np.testing.assert_array_equal(record["ifr_number"], expected, strict=True)
+        np.testing.assert_array_equal(record["antenna1"], raw["antenna1"], strict=True)
+        np.testing.assert_array_equal(record["antenna2"], raw["antenna2"], strict=True)
+        assert reader.done()
+
+
+@pytest.mark.parametrize("label", ["RR", "LL"])
+def test_ms_iterator_converts_the_captured_recorded_hand(baseline_fixture, native_dataset, label):
+    casa, _, raw = baseline_fixture
+    index = int(label == "LL")
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.selectpolarization(label)
+        assert reader.iterinit(maxrows=3)
+        assert reader.iterorigin()
+        assert reader.selectpolarization("I")
+        record = reader.getdata(["data", "flag", "axis_info"])
+        expected = raw["data"][index:index + 1, :, :3]
+        if api is casa:
+            expected = raw["data"][..., :3].ravel(order="F")[:expected.size].reshape(
+                expected.shape, order="F")
+            if label == "RR":
+                expected = expected - raw["data"][0, 0, 0] / 2
+        np.testing.assert_array_equal(record["data"], expected, strict=True)
+        np.testing.assert_array_equal(record["flag"], raw["flag"][index:index + 1, :, :3], strict=True)
+        np.testing.assert_array_equal(record["axis_info"]["corr_axis"], ["I"])
+        assert reader.done()
+
+
+def test_ms_iterator_keeps_the_reference_projection_after_row_removal(baseline_fixture):
+    casa, make_view, raw = baseline_fixture
+    rows = [0, 10, 20, 11, 21, 3]
+    for api in (casa, tools):
+        name = api.__name__.split(".")[-1]
+        path = make_view(f"{name}-iterator-remove.ms", rows)
+        reader = api.ms()
+        assert reader.open(path)
+        assert reader.iterinit(maxrows=3)
+        assert reader.iterorigin()
+        assert reader.iternext()
+        expected = [11, 20, 21]
+        before = reader.getdata(["data", "time"])
+        np.testing.assert_array_equal(before["data"], raw["data"][..., expected], strict=True)
+        np.testing.assert_array_equal(before["time"], raw["time"][expected], strict=True)
+        table = casa.table()
+        assert table.open(path, nomodify=False)
+        assert table.removerows([0])
+        assert table.done()
+        after = reader.getdata(["data", "time"])
+        np.testing.assert_array_equal(after["data"], raw["data"][..., expected], strict=True)
+        np.testing.assert_array_equal(after["time"], raw["time"][expected], strict=True)
+        assert reader.done()
+
+
+def test_ms_iterator_keeps_the_reference_projection_after_rebinding(baseline_fixture):
+    _, make_view, raw = baseline_fixture
+    original = Path(make_view("original-projection.ms", [0, 1, 2, 3, 4, 5]))
+    replacement = Path(make_view("other-projection.ms", [10, 11, 12, 13, 14, 15]))
+    reader = tools.ms()
+    assert reader.open(str(original))
+    assert reader.iterinit(maxrows=3)
+    assert reader.iterorigin()
+    descriptor = original / "new-table.dat"
+    shutil.copyfile(replacement / "table.dat", descriptor)
+    os.replace(descriptor, original / "table.dat")
+    record = reader.getdata(["data", "time"])
+    np.testing.assert_array_equal(record["data"], raw["data"][..., :3], strict=True)
+    np.testing.assert_array_equal(record["time"], raw["time"][:3], strict=True)
+    assert reader.done()
+
+
+@pytest.mark.parametrize("interval,chunks", [(5, [1, 2]), (-5, [2, 1])])
+def test_ms_iterator_respects_the_signed_interval_boundary(baseline_fixture, native_dataset,
+                                                          interval, chunks):
+    casa, make_view, _ = baseline_fixture
+    first = 5_000_000_000.0
+    times = np.array([first, first - 0.01 + 5.0, first + 8.0])
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    for row, time in enumerate(times):
+        assert table.putcell("TIME", row, time)
+    assert table.done()
+    path = make_view("signed-interval.ms", [0, 1, 2])
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        assert reader.iterinit(["TIME"], interval=interval, adddefaultsortcolumns=False)
+        assert reader.iterorigin()
+        start = 0
+        for index, count in enumerate(chunks):
+            record = reader.getdata("time")
+            np.testing.assert_array_equal(record["time"], times[start:start + count], strict=True)
+            assert reader.iternext() is (index + 1 < len(chunks))
+            start += count
         assert reader.done()

@@ -64,7 +64,6 @@ impl ToolIteration {
         } else {
             &[]
         };
-        let interval = interval.abs();
         let mut keys = Vec::new();
         if defaults {
             keys.extend(
@@ -257,7 +256,7 @@ fn same_interval(first: f64, row: f64, interval: f64) -> bool {
     if interval == 0.0 || first == row {
         return true;
     }
-    if interval < 2.0 * f64::MIN_POSITIVE {
+    if interval.abs() < 2.0 * f64::MIN_POSITIVE {
         return false;
     }
     let anchor = first - 0.01;
