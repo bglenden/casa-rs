@@ -7,6 +7,7 @@ mod attachment_info;
 mod iteration;
 pub(super) mod metadata_link;
 mod owned_record;
+mod range;
 mod selection_indices;
 mod statwt;
 mod stubs;

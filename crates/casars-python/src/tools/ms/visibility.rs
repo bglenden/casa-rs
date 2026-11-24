@@ -6,6 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
 use casa_ms::tool_iteration::ToolIteration;
+use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
@@ -268,6 +269,41 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    pub(super) fn visibility_range(&mut self, request: &ToolRangeRequest) -> PyResult<CasaValue> {
+        let link = self.metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        if self
+            .selected_rows
+            .as_deref()
+            .is_some_and(<[usize]>::is_empty)
+        {
+            return Ok(CasaValue::empty_record());
+        }
+        let snapshot = request
+            .needs_metadata()
+            .then(|| link.snapshot(None).map_err(runtime_error))
+            .transpose()?;
+        let main = self.visibility.main(&self.path)?;
+        let all_rows;
+        let rows = if let Some(rows) = self.selected_rows.as_deref() {
+            rows
+        } else {
+            all_rows = (0..main.table.row_count()).collect::<Vec<_>>();
+            &all_rows
+        };
+        let record = request
+            .read(
+                &main.table,
+                &main.members,
+                main.reference.as_ref(),
+                rows,
+                snapshot.as_ref().map(|snapshot| &snapshot.ms),
+            )
+            .map_err(runtime_error)?;
+        link.verify_directory().map_err(runtime_error)?;
+        Ok(visibility_record(record))
+    }
+
     pub(super) fn initialize_public_iteration(
         &mut self,
         columns: &[String],

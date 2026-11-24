@@ -381,17 +381,6 @@ impl PyMsTool {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (items = None, useflags = None, blocksize = None), text_signature = "($self, items=[], useflags=True, blocksize=10)")]
-    fn range(
-        &self,
-        items: Option<&Bound<'_, PyAny>>,
-        useflags: Option<&Bound<'_, PyAny>>,
-        blocksize: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("range")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (items = None, useflags = None, blocksize = None), text_signature = "($self, items=[], useflags=True, blocksize=10)")]
     fn rangeold(
         &self,
         items: Option<&Bound<'_, PyAny>>,
