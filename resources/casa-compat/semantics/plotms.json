@@ -73,13 +73,14 @@
       ]
     },
     "xaxis": {
-      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window.",
+      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks.",
       "evidence": [
         "paired",
         "ms-interval-wavelength",
         "ms-vector-time-uvw",
         "ms-channel-ordinate-masks",
-        "ms-row-axes"
+        "ms-row-axes",
+        "ms-metadata-pair-masks"
       ],
       "behaviors": [
         "coordinates"
@@ -128,7 +129,7 @@
       ]
     },
     "yaxis": {
-      "scope": "Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window.",
+      "scope": "Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks.",
       "evidence": [
         "paired",
         "ms-multiple-visibility-ordinates",
@@ -136,7 +137,8 @@
         "ms-channel-statistics",
         "ms-vector-time-uvw",
         "ms-channel-ordinate-masks",
-        "ms-row-axes"
+        "ms-row-axes",
+        "ms-metadata-pair-masks"
       ],
       "behaviors": [
         "coordinates"
@@ -1117,7 +1119,7 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine. Plot unaveraged visibility axes with integration interval and UVW in wavelengths using the selected visibility buffer and per-channel frequency. Unaveraged channel plots of three or more axes on Y use separate masks for visibility, U, V, W and observatory elevation ordinates. Plot raw row and buffer identifiers with selected visibility axes and use distinct STATE observing mode IDs for Intent.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine. Plot unaveraged visibility axes with integration interval and UVW in wavelengths using the selected visibility buffer and per-channel frequency. Unaveraged channel plots of three or more axes on Y use separate masks for visibility, U, V, W and observatory elevation ordinates. Plot raw row and buffer identifiers with selected visibility axes and use distinct STATE observing mode IDs for Intent. Use each metadata-only Time or Channel pair's dimensions to collapse selected visibility flags and report its compact point identifiers.",
       "evidence": [
         "paired",
         "selectors",
@@ -1137,7 +1139,8 @@
         "ms-time-columns",
         "ms-interval-wavelength",
         "ms-channel-ordinate-masks",
-        "ms-row-axes"
+        "ms-row-axes",
+        "ms-metadata-pair-masks"
       ],
       "gap": "Pointing-coordinate axes, sample masks for other mixed visibility and metadata axes, additional averaging modes and additional MS column forms are open. Averaged interval and wavelength coordinates and reporting-frame transforms for these axes remain open."
     },
@@ -1712,6 +1715,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-row-axes-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2193"
+      ]
+    },
+    "ms-metadata-pair-masks": {
+      "kind": "Same-input metadata-only MeasurementSet axis pairs",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged Time and Channel against selected MeasurementSet row and buffer identifiers.",
+      "result": "Six paired text exports match 100 points, including time and channel pairs, an entirely flagged row and channel, both selected correlations, one non-first correlation with the default spectral window, and explicit zero averaging. Coordinates use the pair's flag mask, and text identifiers follow its compact index. Two 500 by 360 pixel PNGs match 41 rendered coordinates, axis labels and titles.",
+      "casa_version": "6.7.6.14",
+      "revision": "ee3e0b7c2ed8d215d7f95dcb6e368cf96dc2e39d",
+      "source_revision": "ee3e0b7c2ed8d215d7f95dcb6e368cf96dc2e39d",
+      "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-metadata-pair-masks-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2195"
       ]
     }
   }

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "ee3e0b7c2ed8d215d7f95dcb6e368cf96dc2e39d",
+  "source_revision": "ee3e0b7c2ed8d215d7f95dcb6e368cf96dc2e39d",
+  "baseline_revision": "2b0182de5d1015e5127d60df3d9110eb85b4795c",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged Time and Channel against selected MeasurementSet row and buffer identifiers.",
+  "result": "passed",
+  "baseline_result": "CASA exports 32 selected Channel/Row points. Native refuses the metadata-only pair.",
+  "text_exports": 6,
+  "points": 100,
+  "figures": 2,
+  "rendered_coordinates": 41,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}

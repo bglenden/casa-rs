@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use super::plotms_ordinates::PointDimensions;
 use super::{MsAxis, MsPlotSpec, selected_i32_values, uses_extended_averaging};
 use crate::subtables::get_string;
 use crate::{MeasurementSet, SubtableId};
@@ -11,12 +12,31 @@ pub(super) fn requested(spec: &MsPlotSpec) -> bool {
     spec.x_axis.is_row_identifier() || spec.y_axes.iter().copied().any(MsAxis::is_row_identifier)
 }
 
+pub(super) fn metadata_pair(spec: &MsPlotSpec) -> Option<PointDimensions> {
+    let &[y] = spec.y_axes.as_slice() else {
+        return None;
+    };
+    (matches!(spec.x_axis, MsAxis::Channel | MsAxis::Time) && y.is_row_identifier()).then_some(
+        PointDimensions {
+            channel: spec.x_axis == MsAxis::Channel,
+            baseline: matches!(y, MsAxis::Row | MsAxis::Antenna1 | MsAxis::Antenna2),
+        },
+    )
+}
+
 pub(super) fn validate(spec: &MsPlotSpec) -> Result<(), String> {
     if !requested(spec) {
         return Ok(());
     }
     if uses_extended_averaging(spec) || spec.averaging.avgchannel.is_some_and(|width| width > 1) {
         return Err("averaged PlotMS row identifiers are pending (#1032)".into());
+    }
+    if metadata_pair(spec).is_some() {
+        return if spec.iteration.iteraxis.is_some() {
+            Err("iterated PlotMS metadata-only row identifier plots are pending (#1032)".into())
+        } else {
+            Ok(())
+        };
     }
     if spec.y_axes.iter().copied().any(|y| {
         (spec.x_axis.is_row_identifier() && !y.is_visibility_math())

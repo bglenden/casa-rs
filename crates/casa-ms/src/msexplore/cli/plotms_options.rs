@@ -180,9 +180,12 @@ pub(super) fn options_from_plotms(
     };
     let secondary_y_data_column =
         (y_axis2 == Some(y_axis) || secondary_y != data_column).then_some(secondary_y);
-    let visibility_axes =
-        x_axis.is_visibility_math() || y_axis.is_visibility_math() || y_axis2.is_some();
-    let visibility_document = visibility_document || visibility_axes;
+    let document_axes = x_axis.is_visibility_math()
+        || y_axis.is_visibility_math()
+        || y_axis2.is_some()
+        || x_axis.is_row_identifier()
+        || y_axis.is_row_identifier();
+    let visibility_document = visibility_document || document_axes;
     let plot_format = if visibility_document {
         MsExportFormat::Txt
     } else {
@@ -237,12 +240,12 @@ pub(super) fn options_from_plotms(
             .map(|value| number::<usize>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&width| !visibility_axes || width != 0),
+            .filter(|&width| !document_axes || width != 0),
         avgtime: average_text("avgtime")?
             .map(|value| number::<f64>(&value))
             .transpose()
             .map_err(TaskFailure::validation)?
-            .filter(|&interval| !visibility_axes || interval != 0.0),
+            .filter(|&interval| !document_axes || interval != 0.0),
         avgscan: average("avgscan")?,
         avgfield: average("avgfield")?,
         avgbaseline: average("avgbaseline")?,

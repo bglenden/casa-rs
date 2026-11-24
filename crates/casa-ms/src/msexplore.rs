@@ -4012,6 +4012,16 @@ fn build_generic_visibility_scatter(
     if needs_row_axes && calibration.is_none() {
         return Err("MeasurementSet row identifier axes require the public plotms task".into());
     }
+    let metadata_pair = if needs_row_axes {
+        plotms_row_axes::metadata_pair(spec)
+    } else {
+        None
+    };
+    if metadata_pair.is_some() && calibration.is_some_and(|input| input.rows.is_some()) {
+        return Err(
+            "PlotMS metadata-only row identifiers with a callibrary are pending (#1032)".into(),
+        );
+    }
     let timing_enabled = VisibilityScatterTiming::enabled();
     let scatter_started = Instant::now();
     let mut checkpoint_started = Instant::now();
@@ -4079,6 +4089,7 @@ fn build_generic_visibility_scatter(
             .copied()
             .any(MsAxis::uses_spectral_coordinates);
     let needs_flag_grid = needs_visibility_grid
+        || metadata_pair.is_some()
         || matches!(spec.x_axis, MsAxis::Flag)
         || spec.y_axes.iter().copied().any(|axis| {
             matches!(
@@ -4325,20 +4336,11 @@ fn build_generic_visibility_scatter(
 
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
-    let mut ordinate_points = use_ordinate_masks.then(|| {
-        (
-            std::collections::HashSet::<(usize, usize)>::new(),
-            std::collections::HashSet::<(usize, usize)>::new(),
-        )
-    });
-    let mut buffer_first_slot = 0;
+    let mut ordinate_points = (use_ordinate_masks || metadata_pair.is_some())
+        .then(plotms_ordinates::CollapsedPointMask::default);
     for (row_slot, _) in row_numbers.iter().enumerate() {
-        if let Some((row_points, buffer_points)) = &mut ordinate_points {
-            row_points.clear();
-            if buffer_starts[row_slot] {
-                buffer_points.clear();
-                buffer_first_slot = row_slot;
-            }
+        if let Some(mask) = &mut ordinate_points {
+            mask.begin_row(row_slot, buffer_starts[row_slot]);
         }
         let flag_row_value = selected_flag_rows[row_slot];
         // PlotMS iterator coordinates and channel statistics use the cube mask.
@@ -4489,7 +4491,8 @@ fn build_generic_visibility_scatter(
         if selected_correlations.is_empty() {
             continue;
         }
-        let correlation_required = spec.x_axis.uses_correlation_slots()
+        let correlation_required = metadata_pair.is_some()
+            || spec.x_axis.uses_correlation_slots()
             || spec
                 .y_axes
                 .iter()
@@ -4503,13 +4506,19 @@ fn build_generic_visibility_scatter(
             vec![selected_correlations[0].clone()]
         };
 
-        let channel_bins = plot_channel_bins_for_window(
-            chan_count,
-            spec,
-            spw_id,
-            calibration,
-            &mut selected_channel_bins,
-        )?;
+        let channel_bins = if metadata_pair.is_some()
+            && calibration.is_none_or(|input| !input.channels.contains_key(&spw_id))
+        {
+            Cow::Owned(channel_bins(chan_count, None)?)
+        } else {
+            plot_channel_bins_for_window(
+                chan_count,
+                spec,
+                spw_id,
+                calibration,
+                &mut selected_channel_bins,
+            )?
+        };
 
         let field_id_value = selected_field_ids[row_slot];
         let scan_number_value = selected_scan_numbers[row_slot];
@@ -4655,9 +4664,8 @@ fn build_generic_visibility_scatter(
                 }
                 let axis_started = timing_enabled.then(Instant::now);
                 let axis_value = |axis_slot, axis| {
-                    if let Some(value) = row_axes
-                        .as_ref()
-                        .and_then(|axes| axes.value(axis, row_slot))
+                    if let Some(axes) = &row_axes
+                        && let Some(value) = axes.value(axis, row_slot)
                     {
                         return Ok(Some(value));
                     }
@@ -4694,32 +4702,34 @@ fn build_generic_visibility_scatter(
                     .get_mut(&panel_key)
                     .expect("panel inserted before mutation");
                 for (y_index, y_axis, series_key, series_label, color_group) in &series_identity {
-                    let (point_row_slot, point_correlation) = if !y_axis.is_visibility_math()
-                        && let Some((row_points, buffer_points)) = &mut ordinate_points
+                    let (point_row_slot, point_correlation, point_bin) = if !y_axis
+                        .is_visibility_math()
+                        && let Some(mask) = &mut ordinate_points
                     {
-                        let (seen, point_row_slot, first_channel) =
-                            if y_axis.uses_derived_geometry() {
-                                (buffer_points, buffer_first_slot, 0)
-                            } else {
-                                (
-                                    row_points,
-                                    row_slot,
-                                    (row_slot - buffer_first_slot) * channel_bins.len(),
-                                )
-                            };
-                        if flag_samples.iter().all(|flag| *flag)
-                            || !seen.insert((*y_index, bin.ordinal))
-                        {
+                        if flag_samples.iter().all(|flag| *flag) {
                             continue;
                         }
-                        // PlotMS retains a point if any input sample is clear.
-                        // Its metadata indexes the selected correlations by the
-                        // point's linear index in the collapsed shape.
-                        let projected_index = first_channel + bin.ordinal;
-                        let correlation = projected_index % selected_correlations.len();
-                        (point_row_slot, selected_correlations[correlation].0)
+                        let dimensions =
+                            metadata_pair.unwrap_or_else(|| plotms_ordinates::PointDimensions {
+                                channel: true,
+                                baseline: !y_axis.uses_derived_geometry(),
+                            });
+                        let Some(point) = mask.project_clear_sample(
+                            *y_index,
+                            row_slot,
+                            bin.ordinal,
+                            dimensions,
+                            [channel_bins.len(), selected_correlations.len()],
+                        ) else {
+                            continue;
+                        };
+                        (
+                            point.row,
+                            selected_correlations[point.correlation].0,
+                            &channel_bins[point.channel],
+                        )
                     } else {
-                        (row_slot, *corr_index)
+                        (row_slot, *corr_index, bin)
                     };
                     let Some(y_value) = axis_value(*y_index + 1, *y_axis)? else {
                         continue;
@@ -4771,14 +4781,14 @@ fn build_generic_visibility_scatter(
                     series.provenance.push(MsScatterPointRef {
                         row: row_numbers[point_row_slot],
                         corr: point_correlation,
-                        chan_start: bin.start,
-                        chan_end: bin.end,
+                        chan_start: point_bin.start,
+                        chan_end: point_bin.end,
                     });
                     if use_iterator_order
                         || (calibration.is_some() && spec.averaging.avgchannel.is_some())
                     {
                         series.plotms_metadata.push(MsScatterPlotMsMetadata {
-                            channel: bin.display_channel(),
+                            channel: point_bin.display_channel(),
                             average_time: None,
                             averaging_group: use_iterator_order.then_some(point_row_slot),
                         });
@@ -4831,8 +4841,9 @@ fn build_generic_visibility_scatter(
         .clone()
         .or_else(|| spec.preset.map(|preset| preset.display_name().to_string()))
         .unwrap_or_else(|| {
+            let relation = if metadata_pair.is_some() { "vs." } else { "vs" };
             format!(
-                "{} vs {}",
+                "{} {relation} {}",
                 spec.y_axis().display_name(),
                 spec.x_axis.display_name()
             )

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Share selected visibility cells and channel-bin samples between plot axes.
 
+use std::collections::HashSet;
+
 use casa_types::Complex64;
 use ndarray::ArrayView2;
 
@@ -416,6 +418,64 @@ impl VisibilityTimeBounds {
         // CASA anchors on the first integration and ends at the last usable one.
         self.last_unflagged
             .map(|last| self.first + (last - self.first) / 2.0)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PointDimensions {
+    pub(super) channel: bool,
+    pub(super) baseline: bool,
+}
+
+pub(super) struct PointIndex {
+    pub(super) row: usize,
+    pub(super) channel: usize,
+    pub(super) correlation: usize,
+}
+
+/// Keep one clear sample per point in the pair's collapsed visibility shape.
+#[derive(Default)]
+pub(super) struct CollapsedPointMask {
+    row: HashSet<(usize, usize)>,
+    buffer: HashSet<(usize, usize)>,
+    first_buffer_row: usize,
+}
+
+impl CollapsedPointMask {
+    pub(super) fn begin_row(&mut self, row: usize, starts_buffer: bool) {
+        self.row.clear();
+        if starts_buffer {
+            self.buffer.clear();
+            self.first_buffer_row = row;
+        }
+    }
+
+    pub(super) fn project_clear_sample(
+        &mut self,
+        ordinate: usize,
+        row: usize,
+        channel: usize,
+        dimensions: PointDimensions,
+        [channels, correlations]: [usize; 2],
+    ) -> Option<PointIndex> {
+        let channel_slot = if dimensions.channel { channel } else { 0 };
+        let (seen, row) = if dimensions.baseline {
+            (&mut self.row, row)
+        } else {
+            (&mut self.buffer, self.first_buffer_row)
+        };
+        if !seen.insert((ordinate, channel_slot)) {
+            return None;
+        }
+        // PlotMS uses the collapsed point's linear index for the reported
+        // identifiers, including projected dimensions of the full cube.
+        let channels_per_point = if dimensions.channel { channels } else { 1 };
+        let index = (row - self.first_buffer_row) * channels_per_point + channel_slot;
+        Some(PointIndex {
+            row,
+            channel: index % channels,
+            correlation: index % correlations,
+        })
     }
 }
 
