@@ -98,3 +98,39 @@ def test_ms_sorted_named_selection_preserves_source_and_unrelated_target(native_
     np.testing.assert_array_equal(actual_time, selected_data["time"][order])
     np.testing.assert_array_equal(actual_data, selected_data["data"][:, :, order])
     assert tool.done()
+
+
+@pytest.mark.parametrize("column_link", [False, True])
+def test_ms_sort_materializes_custom_table_keywords(native_dataset, tmp_path, column_link):
+    casa = pinned_casa()
+    expected = read_columns(native_dataset / "FEED", "ANTENNA_ID", "NUM_RECEPTORS")
+    for index, api in enumerate((casa, tools)):
+        case = tmp_path / str(index)
+        case.mkdir()
+        source = case / "source.ms"
+        extra = case / "EXTRA_FEED"
+        output = case / "sorted.ms"
+        copytree(native_dataset, source)
+        copytree(native_dataset / "FEED", extra)
+        table = casa.table()
+        assert table.open(str(source), nomodify=False)
+        if column_link:
+            assert table.putcolkeyword("DATA", "CUSTOM", f"Table: {extra}")
+        else:
+            assert table.putkeyword("CUSTOM", f"Table: {extra}")
+        assert table.done()
+        tool = api.ms()
+        assert tool.open(str(source))
+        assert tool.timesort(str(output))
+        assert tool.done()
+
+        extra.rename(case / "previous-extra")
+        source.rename(case / "previous-source.ms")
+        assert table.open(str(output))
+        link = (table.getcolkeyword("DATA", "CUSTOM") if column_link
+                else table.getkeyword("CUSTOM"))
+        assert link == f"Table: {output / 'EXTRA_FEED'}"
+        assert table.done()
+        for read, wanted in zip(read_columns(output / "EXTRA_FEED", "ANTENNA_ID", "NUM_RECEPTORS"),
+                                expected):
+            np.testing.assert_array_equal(read, wanted)

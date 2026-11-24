@@ -8,6 +8,8 @@ use casa_tables::{SortOrder, TableOptions};
 use crate::transform::task_history::append_history_messages;
 use crate::{MeasurementSet, MsError, MsResult};
 
+mod subtables;
+
 /// Write a sorted, independent MeasurementSet at a staging path.
 ///
 /// The caller owns publication. `scratch` holds the temporary projection of
@@ -45,6 +47,7 @@ pub fn write_sorted_measurement_set(
         .keywords_mut()
         .remove("SORT_COLUMNS");
     ordered.save_as(staged_output)?;
+    subtables::copy_extra_links(main, staged_output)?;
     let (origin, names) = match columns {
         None => ("ms::timesort()", "TIME".to_string()),
         Some(columns) => ("ms::sort()", format!("[{}]", columns.join(","))),
