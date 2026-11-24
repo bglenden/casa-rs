@@ -69,6 +69,7 @@ pub(super) fn prepare(
             layout: Some(PlotLayout {
                 rows,
                 columns,
+                first_panel: None,
                 aspect: None,
                 margins: None,
                 font_size: None,

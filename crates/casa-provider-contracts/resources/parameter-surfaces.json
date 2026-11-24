@@ -24644,7 +24644,6 @@
         },
         {
           "name": "rowindex",
-          "unimplemented": {"issue": 1032},
           "concept": {
             "id": "plotms.rowindex",
             "semantic_revision": 1
@@ -24686,7 +24685,6 @@
         },
         {
           "name": "colindex",
-          "unimplemented": {"issue": 1032},
           "concept": {
             "id": "plotms.colindex",
             "semantic_revision": 1

@@ -459,6 +459,7 @@ fn paginate(
     document.layout = Some(PlotLayout {
         rows,
         columns,
+        first_panel: None,
         aspect: None,
         margins: None,
         font_size: None,
@@ -524,6 +525,40 @@ pub(super) fn requested_grid(task: &TaskInvocation<'_>) -> Result<[u32; 2], Task
             .map_err(|_| TaskFailure::validation(format!("{name} is too large")).at(name))
     };
     Ok([count("gridrows")?, count("gridcols")?])
+}
+
+pub(super) fn static_grid(
+    task: &TaskInvocation<'_>,
+    iterated: bool,
+) -> Result<Option<PlotLayout>, TaskFailure> {
+    let [rows, columns] = requested_grid(task)?;
+    let [row, column] = requested_position(task)?;
+    if row >= rows || column >= columns {
+        return Err(TaskFailure::validation("row/col index out of range"));
+    }
+    if iterated && [row, column] != [0, 0] {
+        return Err(TaskFailure::validation(
+            "nondefault grid placement with PlotMS iteration is pending #1032",
+        ));
+    }
+    Ok(
+        (!iterated && (rows > 1 || columns > 1)).then_some(PlotLayout {
+            rows,
+            columns,
+            first_panel: Some([row, column]),
+            aspect: None,
+            margins: None,
+            font_size: None,
+        }),
+    )
+}
+
+pub(super) fn requested_position(task: &TaskInvocation<'_>) -> Result<[u32; 2], TaskFailure> {
+    let index = |name| {
+        u32::try_from(task.integer(name)?)
+            .map_err(|_| TaskFailure::validation("row/col index out of range").at(name))
+    };
+    Ok([index("rowindex")?, index("colindex")?])
 }
 
 pub(in crate::msexplore) fn iteration_filename<'a>(
