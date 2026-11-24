@@ -65,12 +65,18 @@ pub fn read_tool_history(main: &Table, main_is_plain: bool) -> MsResult<Vec<Tool
     Ok(entries)
 }
 
+/// Resolve the linked HISTORY of an already verified plain MAIN.
+pub fn plain_history_path(main: &Table) -> MsResult<PathBuf> {
+    let path = main.path().ok_or_else(|| {
+        MsError::InvalidInput("HISTORY requires a persisted MeasurementSet".into())
+    })?;
+    let id = SubtableId::History;
+    strict_subtable_path(main, path, id)?.ok_or_else(|| MsError::MissingSubtable(id.name().into()))
+}
+
 fn history_paths(main: &Table, main_is_plain: bool) -> MsResult<Vec<PathBuf>> {
-    if main_is_plain && let Some(path) = main.path() {
-        let id = SubtableId::History;
-        return strict_subtable_path(main, path, id)?
-            .map(|path| vec![path])
-            .ok_or_else(|| MsError::MissingSubtable(id.name().into()));
+    if main_is_plain {
+        return plain_history_path(main).map(|path| vec![path]);
     }
     MeasurementSet::linked_subtable_paths_strict(main, SubtableId::History)
 }
