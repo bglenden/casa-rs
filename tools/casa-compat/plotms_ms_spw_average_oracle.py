@@ -135,17 +135,34 @@ def compare_sparse_baselines(root, native, base):
 def compare_disjoint_channels(root, native, base):
     disjoint = make_fixture(root, "disjoint-channels", channel_count=8)
     controls = base | dict(vis=str(disjoint), xaxis="frequency", xdatacolumn="",
-                           yaxis="amp", spw="0:0~2;5~7,1:0~2;5~7", avgchannel="2")
-    expected = export(root, "disjoint-channels.casa", reference, controls)
-    selected = rows(expected)
+                           yaxis="amp", avgchannel="2")
+    cases = (
+        ("disjoint-channels", "0:0~2;5~7", ["90.000500000", "90.005500000"],
+         [abs(5 + 6j) * scale for scale in (1.5, 4.5)]),
+        ("strided-channels", "0:0~7^2,1:0~7^2", ["90.001500000", "90.005500000"],
+         [abs(6.5 + 7.5j) * scale for scale in (2, 6)]),
+    )
+    for name, spw, frequencies, amplitudes in cases:
+        options = controls | dict(spw=spw)
+        expected = export(root, f"{name}.casa", reference, options)
+        selected = rows(expected)
+        assert [p[0] for p in selected] == [p[10] for p in selected] == frequencies * 2
+        np.testing.assert_allclose(coordinates(selected)[:, 1], amplitudes * 2, rtol=1.2e-5)
+        actual = export(root, f"{name}.native", native, options)
+        assert compare_text(actual, expected) == 4
+        assert [p[0] for p in rows(actual)] == frequencies * 2
+        print(f"{name}: 4 paired compressed samples at the physical frequency-bin centers", flush=True)
+
+    # CASA's transform can terminate when both windows have disjoint ranges.
+    # The first window already established the physical grid in the paired case.
+    multiple = controls | dict(spw="0:0~2;5~7,1:0~2;5~7")
+    selected = rows(export(root, "disjoint-windows.native", native, multiple))
     frequencies = ["90.000500000", "90.005500000"] * 2
     assert [p[0] for p in selected] == [p[10] for p in selected] == frequencies
+    assert [p[11] for p in selected] == ["0"] * 4
     np.testing.assert_allclose(coordinates(selected)[:, 1],
                                [abs(6.5 + 7.5j) * scale for scale in (1.5, 4.5)] * 2, rtol=1.2e-5)
-    actual = export(root, "disjoint-channels.native", native, controls)
-    assert compare_text(actual, expected) == 4
-    assert [p[0] for p in rows(actual)] == frequencies
-    print("disjoint-channels: 4 paired compressed samples at the physical frequency-bin centers", flush=True)
+    print("disjoint-windows: 4 native coordinates match the analytic average and CASA frequency grid", flush=True)
 
 
 def compare_malformed_shape(root, native, base, vis):
