@@ -7,8 +7,9 @@ use casa_types::ArrayValue;
 use casa_types::quanta::Quantity;
 use casa_types::quanta::casacore::{casacore_unit, get_value};
 use ndarray::ArrayD;
+use num_complex::Complex32;
 
-use super::cube::{SampleAxes, WeightCells, read_cells, required};
+use super::cube::{CubeInput, SampleAxes, WeightCells, read_cells, required};
 use super::reduction::Moments;
 use super::rows::Row;
 use super::spec::{Axis, Column, Weighting};
@@ -101,7 +102,7 @@ impl TimeAverage {
 
     pub(super) fn reduce(
         &self,
-        table: &Table,
+        input: &CubeInput<'_>,
         rows: &[Row],
         axes: &SampleAxes,
         column: Column,
@@ -113,7 +114,8 @@ impl TimeAverage {
             _ => unreachable!("only visibility cells are time averaged"),
         };
         let physical: Vec<_> = rows.iter().map(|row| row.physical).collect();
-        let cells = read_cells(table, name, &physical)?;
+        let cells = input.read_data(name, &physical)?;
+        let table = input.table;
         let flags = if self.mask {
             read_cells(table, "FLAG", &physical)?
         } else {
@@ -127,25 +129,46 @@ impl TimeAverage {
             for &channel in &axes.channels {
                 for &correlation in &axes.correlations {
                     let position = [correlation, channel];
-                    let value = match column {
-                        Column::Complex(_, component) => {
-                            let value = average(&grids, position, &weights, |data| match data {
-                                ArrayValue::Complex32(data) => data.get(position).copied(),
-                                _ => None,
-                            })?;
-                            component.project(value)
+                    let sample_index = index;
+                    index += 1;
+                    let (value, weight) = match column {
+                        Column::Complex(name, component) => {
+                            let (value, _, _) =
+                                average(&grids, position, &weights, |data| match data {
+                                    ArrayValue::Complex32(data) => data.get(position).copied(),
+                                    ArrayValue::Float32(data) if name == "FLOAT_DATA" => {
+                                        data.get(position).map(|&value| Complex32::new(value, 0.0))
+                                    }
+                                    _ => None,
+                                })?;
+                            (component.project(value), 1.0)
                         }
                         Column::FloatCube(_) => {
-                            average(&grids, position, &weights, |data| match data {
-                                ArrayValue::Float32(data) => data.get(position).copied(),
-                                _ => None,
-                            })?
+                            let (mean, weight, flagged) =
+                                average(&grids, position, &weights, |data| match data {
+                                    ArrayValue::Float32(data) => data.get(position).copied(),
+                                    _ => None,
+                                })?;
+                            if flagged && self.mask {
+                                continue;
+                            }
+                            let weight = if self.weighting == Weighting::Unweighted {
+                                1.0
+                            } else {
+                                weight
+                            };
+                            (mean, weight)
                         }
                         _ => unreachable!(),
                     };
                     let value = f64::from(value);
-                    moments.push(value, value * value, 1.0, dataset, index);
-                    index += 1;
+                    moments.push(
+                        value,
+                        value * value,
+                        f64::from(weight),
+                        dataset,
+                        sample_index,
+                    );
                 }
             }
         }
@@ -232,7 +255,7 @@ fn average<T>(
     position: [usize; 2],
     weights: &WeightCells,
     project: impl Fn(&ArrayValue) -> Option<T>,
-) -> MsResult<T>
+) -> MsResult<(T, f32, bool)>
 where
     T: AddAssign + Copy + Default + Mul<f32, Output = T> + Div<f32, Output = T>,
 {
@@ -257,11 +280,12 @@ where
         sum += value * weight;
         sum_weights += weight;
     }
-    Ok(if sum_weights > 0.0 {
+    let mean = if sum_weights > 0.0 {
         sum / sum_weights
     } else {
         sum
-    })
+    };
+    Ok((mean, sum_weights, all_flagged))
 }
 
 fn shape_error(column: &str) -> MsError {

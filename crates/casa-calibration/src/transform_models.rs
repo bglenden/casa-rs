@@ -31,10 +31,11 @@ pub fn transform_model_input(
     })
 }
 
-pub(crate) fn plotms_model_input() -> impl TransformInputView {
+/// Read stored, virtual or default model visibilities without publishing a column.
+pub fn visibility_model_input() -> impl TransformInputView {
     ModelView {
         calibration: None,
-        materialize: ModelMaterialization::SelectedPlot,
+        materialize: ModelMaterialization::ReadVisibility,
     }
 }
 
@@ -42,7 +43,7 @@ pub(crate) fn plotms_model_input() -> impl TransformInputView {
 enum ModelMaterialization {
     Disabled,
     SourceColumn,
-    SelectedPlot,
+    ReadVisibility,
 }
 
 #[derive(Debug)]
@@ -58,8 +59,7 @@ impl ModelView {
             ModelMaterialization::SourceColumn => input
                 .subtable(SubtableId::Source)
                 .is_some_and(|source| has_column(source, "SOURCE_MODEL")),
-            // The PlotMS loader calls the view only for selected virtual fields.
-            ModelMaterialization::SelectedPlot => true,
+            ModelMaterialization::ReadVisibility => true,
         }
     }
 }

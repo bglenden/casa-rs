@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use casa_tables::Table;
 use num_complex::Complex32;
 
 use crate::{MsError, MsResult};
@@ -97,13 +98,41 @@ impl Column {
         Ok((label.to_string(), Some(column)))
     }
 
+    pub(super) fn source_for_view(self, table: &Table, legacy: bool) -> MsResult<Self> {
+        let Column::Complex(name, component) = self else {
+            return Ok(self);
+        };
+        let present = |name| {
+            table
+                .schema()
+                .is_some_and(|schema| schema.column(name).is_some())
+        };
+        if !legacy && name == "DATA" && present("FLOAT_DATA") {
+            return Ok(Self::Complex("FLOAT_DATA", component));
+        }
+        if legacy && !present(name) {
+            let label = match name {
+                "DATA" => "Data",
+                "CORRECTED_DATA" => "Corrected Data",
+                "MODEL_DATA" => "Model Data",
+                _ => name,
+            };
+            return Err(MsError::InvalidInput(format!(
+                "{label} column is not present"
+            )));
+        }
+        Ok(self)
+    }
+
     pub(super) fn weighting(self, enabled: bool) -> Weighting {
         if !enabled {
             return Weighting::Unweighted;
         }
         match self {
-            Self::Complex("DATA", _) => Weighting::InverseSigmaSquared,
-            Self::Complex(_, _) | Self::FloatCube("FLOAT_DATA") => Weighting::VisibilityWeight,
+            Self::Complex("DATA" | "FLOAT_DATA", _) | Self::FloatCube("FLOAT_DATA") => {
+                Weighting::InverseSigmaSquared
+            }
+            Self::Complex(_, _) => Weighting::VisibilityWeight,
             _ => Weighting::Unweighted,
         }
     }

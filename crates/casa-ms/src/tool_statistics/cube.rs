@@ -3,12 +3,13 @@
 use casa_tables::{Table, TableError};
 use casa_types::ArrayValue;
 use ndarray::ArrayD;
+use num_complex::Complex32;
 
 use super::reduction::Moments;
 use super::rows::Row;
 use super::spec::{Column, Weighting};
 use crate::selection::ResolvedMsSelection;
-use crate::{MeasurementSet, MsError, MsResult};
+use crate::{MeasurementSet, MsError, MsResult, PreparedTransformInputView};
 
 pub(super) struct SampleAxes {
     pub(super) stored_correlations: usize,
@@ -62,6 +63,29 @@ fn checked_id(value: i32, name: &str) -> MsResult<usize> {
     usize::try_from(value).map_err(|_| MsError::InvalidInput(format!("negative {name}: {value}")))
 }
 
+pub(super) struct CubeInput<'a> {
+    pub(super) table: &'a Table,
+    pub(super) model: Option<&'a dyn PreparedTransformInputView>,
+}
+
+impl CubeInput<'_> {
+    pub(super) fn read_data(
+        &self,
+        name: &str,
+        rows: &[usize],
+    ) -> MsResult<Vec<Option<ArrayValue>>> {
+        if name == "MODEL_DATA"
+            && let Some(model) = self.model
+        {
+            let mut columns = model.read(self.table, rows, &["MODEL_DATA"])?;
+            if let Some(values) = columns.remove("MODEL_DATA") {
+                return Ok(values);
+            }
+        }
+        read_cells(self.table, name, rows)
+    }
+}
+
 pub(super) struct CubeReduction {
     pub(super) use_flags: bool,
     pub(super) weighting: Weighting,
@@ -71,7 +95,7 @@ pub(super) struct CubeReduction {
 impl CubeReduction {
     pub(super) fn reduce(
         &self,
-        table: &Table,
+        input: &CubeInput<'_>,
         rows: &[Row],
         axes: &SampleAxes,
         column: Column,
@@ -84,7 +108,8 @@ impl CubeReduction {
             _ => unreachable!("only array visibility columns use the cube reducer"),
         };
         let indices: Vec<_> = rows.iter().map(|row| row.physical).collect();
-        let cells = read_cells(table, name, &indices)?;
+        let cells = input.read_data(name, &indices)?;
+        let table = input.table;
         let flags = if self.use_flags && name != "FLAG" {
             read_cells(table, "FLAG", &indices)?
         } else {
@@ -120,6 +145,14 @@ impl CubeReduction {
                     options.reduce(
                         values,
                         |value| component.project(*value),
+                        moments,
+                        &mut buffer_index,
+                    )?;
+                }
+                (Column::Complex("FLOAT_DATA", component), ArrayValue::Float32(values)) => {
+                    options.reduce(
+                        values,
+                        |&value| component.project(Complex32::new(value, 0.0)),
                         moments,
                         &mut buffer_index,
                     )?;

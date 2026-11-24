@@ -205,3 +205,74 @@ def test_ms_statistics_applies_flags_and_weights_requested_for_time_averaging(st
             assert samples["min"] == pytest.approx(averages.min(), rel=2e-7)
     for tool in (actual, reference):
         assert tool.done()
+
+
+def test_ms_statistics_projects_float_and_alternate_visibility_columns(statistics_ms):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(statistics_ms), nomodify=False)
+    data = table.getcol("DATA")
+    flags = table.getcol("FLAG")
+    descriptor = table.getcoldesc("DATA")
+    storage = {key: descriptor[key] for key in ("ndim", "shape", "option", "maxlen")
+               if key in descriptor}
+    floating = data.real * 2.0 - 7.0
+    sigma = np.where(flags, 1.0, 1.5).astype(np.float32)
+    for name, values, primitive in (
+        ("CORRECTED_DATA", data * 1.5 + 5j, "complex"),
+        ("MODEL_DATA", data * 2.0 - 3j, "complex"),
+        ("FLOAT_DATA", floating, "float"),
+        ("WEIGHT_SPECTRUM", np.where(flags, 1.0, 2.0).astype(np.float32), "float"),
+        ("SIGMA_SPECTRUM", sigma, "float"),
+    ):
+        table.addcols({name: dict(storage, valueType=primitive, dataManagerType="StandardStMan",
+                                 dataManagerGroup=f"stats_{name}", comment=name)})
+        assert table.putcol(name, values)
+    assert table.done()
+
+    actual, reference = tools.ms(), casa.ms()
+    for tool in (actual, reference):
+        assert tool.open(str(statistics_ms))
+    for args in [
+        dict(column="DATA", complex_value="real"),
+        dict(column="CORRECTED_DATA", complex_value="amp", useweights=True),
+        dict(column="MODEL_DATA", complex_value="phase", useweights=True),
+        dict(column="FLOAT_DATA"),
+        dict(column="FLOAT_DATA", timeaverage=True, timebin="30s"),
+        dict(column="WEIGHT_SPECTRUM"),
+    ]:
+        assert_statistics(actual.statistics(**args), reference.statistics(**args))
+    args = dict(column="FLOAT_DATA", useweights=True, useflags=True)
+    stats = actual.statistics(**args)[""]
+    pinned = reference.statistics(**args)[""]
+    weights = 1.0 / np.square(sigma[~flags].astype(np.float64))
+    assert stats["npts"] == np.count_nonzero(~flags)
+    assert pinned["sumOfWeights"] == pytest.approx(stats["npts"] / 4)
+    assert stats["sumOfWeights"] == pytest.approx(weights.sum())
+    assert stats["mean"] == pytest.approx(np.average(floating[~flags], weights=weights))
+    for tool in (actual, reference):
+        assert tool.done()
+
+
+def test_ms_statistics_reads_default_and_virtual_model_without_materializing(statistics_ms):
+    casa = pinned_casa()
+    casatasks = pytest.importorskip("casatasks")
+    for value in (1.0, 2.5):
+        if value != 1.0:
+            casatasks.setjy(vis=str(statistics_ms), standard="manual",
+                            fluxdensity=[value, 0.0, 0.0, 0.0], usescratch=False)
+        expected, actual = casa.ms(), tools.ms()
+        records = []
+        for tool in (expected, actual):
+            assert tool.open(str(statistics_ms))
+            record = tool.statistics("MODEL_DATA", "amp")
+            assert record[""]["mean"] == value
+            with pytest.raises(RuntimeError, match="Model Data column is not present"):
+                tool.statisticsold("MODEL_DATA", "amp")
+            assert tool.done()
+            records.append(record)
+        assert_statistics(records[1], records[0])
+        table = casa.table()
+        assert table.open(str(statistics_ms))
+        assert "MODEL_DATA" not in table.colnames()
+        assert table.done()

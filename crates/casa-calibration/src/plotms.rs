@@ -11,7 +11,7 @@ use casa_types::ArrayValue;
 
 use crate::callib::{load_apply_specs_from_callib, parse_apply_specs};
 use crate::execute::evaluate_plot_rows;
-use crate::transform_models::plotms_model_input;
+use crate::transform_models::visibility_model_input;
 use crate::{ApplyMode, ApplyPlanRequest, plan_apply};
 
 /// Predict model visibilities for the exact PlotMS row selection without
@@ -26,7 +26,7 @@ pub fn load_models(
         return Ok(None);
     }
     let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
-    let prepared = plotms_model_input()
+    let prepared = visibility_model_input()
         .prepare(ms, rows, &BTreeMap::new())
         .map_err(|error| error.to_string())?;
     let mut columns = prepared

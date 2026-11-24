@@ -3,10 +3,13 @@
 
 use std::collections::BTreeMap;
 
+use casa_tables::{Table, TablePartNames};
 use casa_types::{RecordField, RecordValue, Value};
 
 use crate::selection::{ResolvedMsSelection, resolve_casa_selection_with_system_budget};
-use crate::{MeasurementSet, MsError, MsResult, MsSelection};
+use crate::{
+    MeasurementSet, MsError, MsResult, MsSelection, PreparedTransformInputView, TransformInputView,
+};
 
 mod cube;
 mod packed;
@@ -17,7 +20,7 @@ mod scalar;
 mod spec;
 mod time_average;
 
-use cube::{CubeReduction, SampleAxes};
+use cube::{CubeInput, CubeReduction, SampleAxes};
 use record::{legacy_record, modern_record};
 use reduction::Moments;
 use rows::{Row, read_rows};
@@ -59,6 +62,7 @@ pub struct ToolStatisticsOptions {
 pub fn tool_statistics(
     ms: &MeasurementSet,
     options: &ToolStatisticsOptions,
+    model_input: &dyn TransformInputView,
 ) -> MsResult<RecordValue> {
     let selection = if options.selection.has_text_selection() {
         Some(resolve_casa_selection_with_system_budget(
@@ -72,6 +76,7 @@ pub fn tool_statistics(
     let Some(column) = column else {
         return Ok(RecordValue::default());
     };
+    let column = column.source_for_view(ms.main_table(), options.legacy)?;
     let time_average = options
         .time_average
         .then(|| TimeAverage::new(ms, options, column))
@@ -87,6 +92,16 @@ pub fn tool_statistics(
             "MSIter::construct - Input MeasurementSet.has zero selected rows".into()
         }));
     }
+    let model = prepare_model(ms, column, options, selection.as_ref(), model_input)?;
+    let packed = !options.legacy
+        && time_average.is_none()
+        && model.is_none()
+        && matches!(column, Column::Complex(name, _) if name != "FLOAT_DATA")
+        && ms
+            .path()
+            .map(|path| Table::immediate_part_names(path, path))
+            .transpose()?
+            .is_some_and(|parts| matches!(parts, TablePartNames::Plain(_)));
     let mut reporting = Axis::parse_axes(&options.reporting_axes);
     if time_average.is_some() {
         TimeAverage::reporting_axes(&mut reporting, &options.time_span);
@@ -103,6 +118,8 @@ pub fn tool_statistics(
         },
         column,
         time_average,
+        model,
+        packed,
     };
     if options.legacy {
         return reducer.legacy(rows, &label);
@@ -129,10 +146,14 @@ pub fn tool_statistics(
         }
         let mut moments = Moments::new(options.quantiles);
         reducer.reduce(group, &mut moments)?;
+        // FLOAT keeps reporting the mask and weights after averaging;
+        // CASA's complex providers consume those switches in averaging.
+        let report_mask_and_weights =
+            !options.time_average || matches!(column, Column::FloatCube("FLOAT_DATA"));
         let stats = modern_record(
             moments,
-            options.use_flags && !options.time_average,
-            reducer.cube.weighting != Weighting::Unweighted && !options.time_average,
+            options.use_flags && report_mask_and_weights,
+            reducer.cube.weighting != Weighting::Unweighted && report_mask_and_weights,
             options.quantiles,
             column.is_boolean(),
         );
@@ -143,6 +164,46 @@ pub fn tool_statistics(
         .fields_mut()
         .sort_unstable_by(|a, b| a.name.cmp(&b.name));
     Ok(record)
+}
+
+fn prepare_model<'a>(
+    ms: &'a MeasurementSet,
+    column: Column,
+    options: &ToolStatisticsOptions,
+    selection: Option<&ResolvedMsSelection>,
+    input: &dyn TransformInputView,
+) -> MsResult<Option<Box<dyn PreparedTransformInputView + 'a>>> {
+    if options.legacy || !matches!(column, Column::Complex("MODEL_DATA", _)) {
+        return Ok(None);
+    }
+    let stored = ms
+        .main_table()
+        .schema()
+        .is_some_and(|schema| schema.column("MODEL_DATA").is_some());
+    let virtual_fields = crate::scratch_columns::virtual_model_fields(ms);
+    if stored && virtual_fields.is_empty() {
+        return Ok(None);
+    }
+    let all_rows;
+    let selection = if let Some(selection) = selection {
+        selection
+    } else {
+        all_rows = resolve_casa_selection_with_system_budget(ms, &options.selection)?;
+        &all_rows
+    };
+    if stored
+        && !selection
+            .selected_rows
+            .iter()
+            .any(|row| virtual_fields.contains(&row.field_id))
+    {
+        return Ok(None);
+    }
+    Ok(Some(input.prepare(
+        ms,
+        &selection.selected_rows,
+        &BTreeMap::new(),
+    )?))
 }
 
 const CHUNK_AXES: [Axis; 4] = [
@@ -183,12 +244,18 @@ struct Reduction<'a> {
     cube: CubeReduction,
     column: Column,
     time_average: Option<TimeAverage>,
+    model: Option<Box<dyn PreparedTransformInputView + 'a>>,
+    packed: bool,
 }
 
 impl Reduction<'_> {
     fn reduce(&mut self, rows: &[Row], moments: &mut Moments) -> MsResult<()> {
         let table = self.ms.main_table();
         let mut dataset = 0;
+        let input = CubeInput {
+            table,
+            model: self.model.as_deref(),
+        };
         match self.column {
             Column::Complex(_, _) | Column::FloatCube(_) | Column::Flag => {
                 let descriptions = &CHUNK_AXES[..CHUNK_AXES.len() - 1];
@@ -201,24 +268,26 @@ impl Reduction<'_> {
                         }
                     };
                     if let Some(average) = self.time_average.as_ref() {
-                        average.reduce(table, window, axes, self.column, dataset, moments)?;
+                        average.reduce(&input, window, axes, self.column, dataset, moments)?;
                         dataset += 1;
-                    } else if let Some(buffers) = packed::reduce(
-                        &self.cube,
-                        table,
-                        window,
-                        axes,
-                        self.column,
-                        dataset,
-                        moments,
-                    )? {
+                    } else if self.packed
+                        && let Some(buffers) = packed::reduce(
+                            &self.cube,
+                            table,
+                            window,
+                            axes,
+                            self.column,
+                            dataset,
+                            moments,
+                        )?
+                    {
                         dataset += buffers;
                     } else {
                         for chunk in window
                             .chunk_by(|left, right| same_group(left, right, &[Axis::Integration]))
                         {
                             self.cube
-                                .reduce(table, chunk, axes, self.column, dataset, moments)?;
+                                .reduce(&input, chunk, axes, self.column, dataset, moments)?;
                             dataset += 1;
                         }
                     }

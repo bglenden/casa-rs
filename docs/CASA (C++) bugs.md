@@ -11445,7 +11445,7 @@ grid (#1030).
 
 ## Observed MS statistics take inverse squares of the stored weights
 
-For `ms.statistics('DATA', 'real', useweights=True)`, CASA 6.7.6.14's
+For weighted observed `DATA` and `FLOAT_DATA` statistics, CASA 6.7.6.14's
 `Vi2StatsSigmasCubeIterator` computes `1 / sigma²`, but the
 `VisBufferImpl2::getSigmaScaled(correlation, channel, row)` it calls reads
 `WEIGHT_SPECTRUM` or `WEIGHT`. In a fixture with first-row sigma

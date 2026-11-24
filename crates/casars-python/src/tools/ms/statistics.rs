@@ -178,7 +178,9 @@ impl PyMsTool {
             };
             let link = attachment.working_metadata_link();
             let snapshot = link.snapshot(None).map_err(runtime_error)?;
-            let record = tool_statistics(&snapshot.ms, &options).map_err(runtime_error)?;
+            let model_input = casa_calibration::visibility_model_input();
+            let record =
+                tool_statistics(&snapshot.ms, &options, &model_input).map_err(runtime_error)?;
             link.verify_directory().map_err(runtime_error)?;
             Ok(visibility_record(record))
         })?;
