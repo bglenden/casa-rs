@@ -4841,8 +4841,9 @@ fn build_generic_visibility_scatter(
         .clone()
         .or_else(|| spec.preset.map(|preset| preset.display_name().to_string()))
         .unwrap_or_else(|| {
+            let relation = if metadata_pair.is_some() { "vs." } else { "vs" };
             format!(
-                "{} vs {}",
+                "{} {relation} {}",
                 spec.y_axis().display_name(),
                 spec.x_axis.display_name()
             )

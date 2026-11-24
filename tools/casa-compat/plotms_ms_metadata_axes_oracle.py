@@ -362,12 +362,15 @@ def compare_metadata_pairs(root, native, source):
     base = request(vis) | dict(xdatacolumn="", ydatacolumn="", antenna="A0&A1;A0&A2",
                                spw="0:0~4^2", correlation="XX,YY", title="Selected metadata")
     cases = (
-        ("channel-row", dict(xaxis="channel", yaxis="row"), 32, ("Channel", "Row")),
+        ("channel-row", dict(xaxis="channel", yaxis="row", title=""), 32,
+         ("Row vs. Channel", "Channel", "Row")),
         ("time-row", dict(xaxis="time", yaxis="row"), 11, None),
         ("channel-observation", dict(xaxis="channel", yaxis="observation"), 26, None),
         ("time-observation", dict(xaxis="time", yaxis="observation"), 9,
-         ("Time (MJD seconds)", "Observation")),
+         ("Selected metadata", "Time (MJD seconds)", "Observation")),
         ("default-window-time-row", dict(xaxis="time", yaxis="row", spw="", correlation="YY"), 11, None),
+        ("zero-average-time-row", dict(xaxis="time", yaxis="row", averagedata=True, avgchannel="0", avgtime="0"),
+         11, None),
     )
     for name, options, count, labels in cases:
         controls = base | options
@@ -386,7 +389,7 @@ def compare_metadata_pairs(root, native, source):
         assert compare_text(actual, expected) == count
         print(f"{name}: {count} matching collapsed metadata coordinates", flush=True)
         if labels:
-            compare_figure(work, native, controls, expected, ("Selected metadata", *labels))
+            compare_figure(work, native, controls, expected, labels)
     check_metadata_flagged_symbols(work, native, base)
 
 
