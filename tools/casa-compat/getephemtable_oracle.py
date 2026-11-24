@@ -90,7 +90,7 @@ def route_horizons_requests(url):
         yield
 
 
-def compare_case(work, raw, objectname, asis, timerange, interval, expected):
+def compare_case(work, raw, objectname, asis, timerange, interval, expected, *, usable_by_measures=True):
     with horizons(raw) as (url, requests):
         outputs = {}
         for label, api in (("casa", casatasks), ("native", tasks)):
@@ -115,7 +115,8 @@ def compare_case(work, raw, objectname, asis, timerange, interval, expected):
         for reader in (casatools, tools):
             equal(read(reader, written), oracle)
         measure = casatools.measures()
-        assert measure.framecomet(str(written))
+        # Casa measures rejects MJD0 below 10000 even in its own tables.
+        assert measure.framecomet(str(written)) == usable_by_measures
         measure.done()
     return len(oracle[1]["MJD"][1])
 
@@ -207,10 +208,11 @@ def main():
     args = parser.parse_args()
     assert casatasks.version_string() == "6.7.6.14"
     raw = args.raw_geocentric.read_text()
-    extra = [(name, file.read_text(), target, timerange)
-             for name, file, target, timerange in (
-                 ("jupiter", args.jupiter, "Jupiter", "2023/09/01~2023/09/04"),
-                 ("historical-moon", args.historical_moon, "Moon", "1500/09/01~1500/09/04"),
+    extra = [(name, file.read_text(), target, timerange, query_range)
+             for name, file, target, timerange, query_range in (
+                 ("jupiter", args.jupiter, "Jupiter", "2023/09/01~2023/09/04", "2023/09/01~2023/09/04"),
+                 # CASA's historical date formatting sends the previous day.
+                 ("historical-moon", args.historical_moon, "Moon", "1500/09/02~1500/09/05", "1500/09/01~1500/09/04"),
              ) if file is not None]
     root = args.work.resolve()
     root.mkdir()
@@ -234,14 +236,15 @@ def main():
     print("Both public tasks handle HTTP 404 and refused connections without publishing products")
     check_destination_protection(root, raw)
     print("An overlapping raw path and an unrelated IERS table retain their original storage")
-    for name, data, target, site_time in extra:
+    for name, data, target, timerange, query_range in extra:
         case = root / name
         case.mkdir()
-        start, stop = (f"{date}/00:00:00" for date in site_time.split("~"))
+        start, stop = (f"{date}/00:00:00" for date in query_range.split("~"))
         expected = {key: [value] for key, value in (common | dict(
             START_TIME=start, STOP_TIME=stop, COMMAND="'599'" if target == "Jupiter" else "'301'",
         )).items()}
-        compare_case(case, data, target, False, site_time, "1d", expected)
+        compare_case(case, data, target, False, timerange, "1d", expected,
+                     usable_by_measures=name != "historical-moon")
         print(f"{name} metadata matched in both writers and both readers")
 
 
