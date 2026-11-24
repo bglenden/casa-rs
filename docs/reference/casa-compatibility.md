@@ -1928,7 +1928,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 12, Implemented: 23, Not implemented: 1, Partial: 66, Unassessed: 0.
+Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 12, Implemented: 22, Not implemented: 1, Partial: 67, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1970,7 +1970,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `avgtime` | `''` | `''`; `avgtime` → `avgtime` | Partial | Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns) |
 | `avgscan` | `False` | `False`; `avgscan` → `avgscan` | Partial | Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-scan-field-time-columns](#plotms-evidence-ms-scan-field-time-columns) |
 | `avgfield` | `False` | `False`; `avgfield` → `avgfield` | Partial | Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-scan-field-time-columns](#plotms-evidence-ms-scan-field-time-columns) |
-| `avgbaseline` | `False` | `False`; `avgbaseline` → `avgbaseline` | Implemented | Average over all baselines (mutually exclusive with avgantenna) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgbaseline` | `False` | `False`; `avgbaseline` → `avgbaseline` | Partial | Vector-average selected baselines within each integration for stored MeasurementSet visibility axes. Use the scalar weight of the first selected correlation for all plotted visibility columns. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-baseline-columns](#plotms-evidence-ms-baseline-columns) |
 | `avgantenna` | `False` | `False`; `avgantenna` → `avgantenna` | Implemented | Average per antenna (mutually exclusive with avgbaseline) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `avgspw` | `False` | `False`; `avgspw` → `avgspw` | Implemented | Average over all spectral windows [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `scalar` | `False` | `False`; `scalar` → `scalar` | Partial | Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns) |
@@ -2069,11 +2069,11 @@ Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-select
 <a id="plotms-behavior-averaging"></a>
 ##### Average selected plot samples
 
-**Partial** — Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags. Ordinary vector time averaging uses the selected integrations, per-column weights and the MeasurementSet transform time groups. Channel averaging can follow ordinary vector time averaging. The primary channel weights determine which averaged bins render. Vector time bins can span the requested scan and field boundaries.
+**Partial** — Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags. Ordinary vector time averaging uses the selected integrations, per-column weights and the MeasurementSet transform time groups. Channel averaging can follow ordinary vector time averaging. The primary channel weights determine which averaged bins render. Vector time bins can span the requested scan and field boundaries. Vector baseline averages use the visibility iterator order and preserve separate observations. Text exports use synthetic antenna IDs.
 
-Scalar, baseline, antenna and spectral-window averaging cases, fully masked exports, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032.
+Combined baseline and time or channel cases, scalar, antenna and spectral-window averaging, fully masked exports, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032.
 
-Evidence: [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns), [ms-scan-field-time-columns](#plotms-evidence-ms-scan-field-time-columns).
+Evidence: [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns), [ms-scan-field-time-columns](#plotms-evidence-ms-scan-field-time-columns), [ms-baseline-columns](#plotms-evidence-ms-baseline-columns).
 
 <a id="plotms-behavior-pages"></a>
 ##### Lay out and export calibration pages
@@ -2375,6 +2375,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `8fc7e86358ae20807b5c9896d1e047eec7379e7e`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-scan-field-time-columns-20261124.json`.
+
+<a id="plotms-evidence-ms-baseline-columns"></a>
+##### ms-baseline-columns
+
+**Same-input MeasurementSet baseline-averaged visibility columns — passed.** Twelve paired text exports match 156 selected coordinates and metadata. The cases check the first selected correlation weight, the positive weight floor, cube and row flags, ignored spectra, synthetic antenna fields, vector cancellation and separate overlapping observations in iterator order. A 500 by 360 pixel PNG matches both labeled layers and 12 artist coordinates. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs vector baseline averaging at each integration for one or two stored MeasurementSet visibility ordinates.
+
+- [https://github.com/bglenden/casa-rs/pull/2168](https://github.com/bglenden/casa-rs/pull/2168)
+- Revision: `4250f63eb3105688b24aae3568fe6677f86872f3`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-baseline-columns-20261124.json`.
 
 ### plotweather
 

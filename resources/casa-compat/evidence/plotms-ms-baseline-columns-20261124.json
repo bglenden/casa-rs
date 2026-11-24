@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "4250f63eb3105688b24aae3568fe6677f86872f3",
+  "source_revision": "4250f63eb3105688b24aae3568fe6677f86872f3",
+  "baseline_revision": "462e0e5d1d87bb59062a9b6cdc69110a3bdecdf3",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs vector baseline averaging at each integration for one or two stored MeasurementSet visibility ordinates.",
+  "result": "passed",
+  "baseline_result": "CASA emitted twelve points with shared scalar row weights. Native refused the two-ordinate case and misweighted one-ordinate cases.",
+  "text_exports": 12,
+  "points": 156,
+  "figures": 1,
+  "rendered_coordinates": 12,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}
