@@ -267,7 +267,7 @@ pub mod taql;
 pub use concat_table::ConcatTable;
 pub use indexing::ColumnsIndex;
 #[cfg(unix)]
-pub use lock::table_holder;
+pub use lock::{DelegatedTableWrite, table_holder};
 pub use lock::{
     ExternalLockSync, LockMode, LockOptions, LockType, TableHolder, TableUseLock, TableWriteLock,
 };

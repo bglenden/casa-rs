@@ -246,4 +246,37 @@ fn narrow_selections_of_wide_cells_stay_within_the_published_footprint() {
             "TiledShapeStMan held {peak} bytes for a one-channel selection"
         );
     }
+    check_reference_cells(&path, stored_cell_bytes);
+}
+
+fn check_reference_cells(parent: &std::path::Path, cell_bytes: usize) {
+    let table = Table::open(TableOptions::new(parent)).expect("open parent");
+    let path = parent.with_file_name("reference.tbl");
+    let mut mapping = (0..ROWS).rev().collect::<Vec<_>>();
+    mapping[50] = 7;
+    table
+        .select_rows(&mapping)
+        .expect("selected rows")
+        .save(TableOptions::new(&path))
+        .expect("save RefTable");
+    let reference = Table::open(TableOptions::new(path)).expect("open RefTable");
+    let column = reference.column_accessor("DATA").expect("resolve DATA");
+    let rows = [50, ROWS - 1, 0, 50];
+    let mut result = Vec::new();
+    let peak = peak_temporary_heap(|| {
+        result = column
+            .array_cells_owned_uncached(&rows)
+            .expect("selected cells");
+    });
+    for (&view_row, value) in rows.iter().zip(&result) {
+        let Some(ArrayValue::Float32(value)) = value else {
+            panic!("expected floats");
+        };
+        assert_eq!(value.shape(), &[CORRELATIONS, CHANNELS]);
+        assert_eq!(value[[0, 0]], (mapping[view_row] * 1_000_000) as f32);
+    }
+    assert!(
+        peak < (ROWS - rows.len()) * cell_bytes,
+        "sparse RefTable read held {peak} temporary bytes, at least one unrequested parent array column"
+    );
 }

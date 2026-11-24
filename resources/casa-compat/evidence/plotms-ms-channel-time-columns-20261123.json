@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-23",
+  "revision": "ccebf2574c89d1b765a3ebed5329c7134cd75480",
+  "source_revision": "ccebf2574c89d1b765a3ebed5329c7134cd75480",
+  "baseline_revision": "ec5ec57d97c7c4ae21f8986a98b508a390d1f82f",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with two independent stored visibility ordinates and combined channel and ordinary vector time averaging.",
+  "result": "passed",
+  "baseline_result": "CASA exported the same six selected points with independent column weighting. Native refused the combined new case.",
+  "text_exports": 8,
+  "points": 54,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "native_pending_cases": 1,
+  "analytic_divergence_cases": 2,
+  "analytic_divergence_points": 18,
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}

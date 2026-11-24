@@ -313,30 +313,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn msselectedindices(&self) -> PyResult<Py<PyAny>> {
-        stub("msselectedindices")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (vis = None, spw = None, field = None, baseline = None, time = None, scan = None, uvrange = None, observation = None, polarization = None, taql = None), text_signature = "($self, vis='', spw=[], field=[], baseline=[], time=[], scan=[], uvrange=[], observation=[], polarization=[], taql='')")]
-    fn msseltoindex(
-        &self,
-        vis: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-        baseline: Option<&Bound<'_, PyAny>>,
-        time: Option<&Bound<'_, PyAny>>,
-        scan: Option<&Bound<'_, PyAny>>,
-        uvrange: Option<&Bound<'_, PyAny>>,
-        observation: Option<&Bound<'_, PyAny>>,
-        polarization: Option<&Bound<'_, PyAny>>,
-        taql: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("msseltoindex")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (items = None, ifraxis = None, ifraxisgap = None, increment = None, average = None), text_signature = "($self, items=[], ifraxis=False, ifraxisgap=0, increment=1, average=False)")]
     fn ngetdata(
         &self,

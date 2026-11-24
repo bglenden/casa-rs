@@ -10,10 +10,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::spw_expr::SpwSelection;
 use super::{
     BaselineSelection, CompiledMsSelection, TimeCondition, TimeDefaults, TimeSelectorDefaults,
-    int_list, resolve_time_selector,
+    default_selection_budget, int_list, resolve_time_selector, rows_per_block_for_budget,
 };
-use crate::subtables::{get_bool, get_f64, has_column};
-use crate::{ListObsOptions, MeasurementSet, MsResult};
+use crate::subtables::has_column;
+use crate::{ListObsOptions, MeasurementSet, MsError, MsResult};
+use casa_tables::Table;
+use casa_types::ScalarValue;
 
 pub(super) fn apply(
     ms: &MeasurementSet,
@@ -240,24 +242,7 @@ pub(super) fn with_time(
     } else {
         selection.first_match(ms, rows_per_block)?.unwrap_or(0)
     };
-    let table = ms.main_table();
-    let defaults = |row| -> MsResult<TimeDefaults> {
-        Ok(TimeDefaults {
-            time_mjd_s: get_f64(table, row, "TIME")?,
-            exposure_s: if has_column(table, "EXPOSURE") {
-                get_f64(table, row, "EXPOSURE")?
-            } else {
-                0.1
-            },
-        })
-    };
-    let mut time = resolve_time_selector(
-        text,
-        TimeSelectorDefaults {
-            first_term: defaults(first)?,
-            later_terms: defaults(0)?,
-        },
-    )?;
+    let mut time = resolve_time_selector(text, time_defaults(ms.main_table(), first)?)?;
     // AgentFlagger tests the closed endpoints of getTimeList().
     if agent_time_default_row.is_some() {
         time.use_agent_intervals();
@@ -280,14 +265,69 @@ pub(super) fn with_time(
     Ok(selection)
 }
 
+fn time_defaults(table: &Table, first: usize) -> MsResult<TimeSelectorDefaults> {
+    let rows = [first, 0];
+    let rows = if first == 0 { &rows[..1] } else { &rows[..] };
+    let float_column = |column: &str| {
+        table
+            .column_accessor(column)?
+            .scalar_cells_owned_for_rows(rows)?
+            .into_iter()
+            .map(|value| match value {
+                Some(ScalarValue::Float64(value)) => Ok(value),
+                _ => Err(MsError::InvalidInput(format!(
+                    "MAIN {column} must contain double-precision scalars"
+                ))),
+            })
+            .collect::<MsResult<Vec<_>>>()
+    };
+    let times = float_column("TIME")?;
+    let exposures = if has_column(table, "EXPOSURE") {
+        Some(float_column("EXPOSURE")?)
+    } else {
+        None
+    };
+    let at = |index| TimeDefaults {
+        time_mjd_s: times[index],
+        exposure_s: exposures.as_ref().map_or(0.1, |values| values[index]),
+    };
+    Ok(TimeSelectorDefaults {
+        first_term: at(0),
+        later_terms: at(rows.len() - 1),
+    })
+}
+
 pub(crate) fn first_unflagged_time_row(ms: &MeasurementSet) -> MsResult<usize> {
     let table = ms.main_table();
-    if has_column(table, "FLAG_ROW") {
-        for row in 0..table.row_count() {
-            if !get_bool(table, row, "FLAG_ROW")? {
-                return Ok(row);
+    if !has_column(table, "FLAG_ROW") {
+        return Ok(0);
+    }
+    let budget = default_selection_budget()?;
+    let limit = rows_per_block_for_budget(budget)
+        .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+    let flags = table.column_accessor("FLAG_ROW")?;
+    let mut start = 0_usize;
+    let mut block = 1_usize;
+    while start < table.row_count() {
+        let end = start.saturating_add(block).min(table.row_count());
+        let rows = (start..end).collect::<Vec<_>>();
+        for (row, flag) in rows
+            .iter()
+            .copied()
+            .zip(flags.scalar_cells_owned_for_rows(&rows)?)
+        {
+            match flag {
+                Some(ScalarValue::Bool(false)) => return Ok(row),
+                Some(ScalarValue::Bool(true)) => {}
+                _ => {
+                    return Err(MsError::InvalidInput(format!(
+                        "MAIN FLAG_ROW must contain a Boolean at row {row}"
+                    )));
+                }
             }
         }
+        start = end;
+        block = block.saturating_mul(2).min(limit);
     }
     Ok(0)
 }

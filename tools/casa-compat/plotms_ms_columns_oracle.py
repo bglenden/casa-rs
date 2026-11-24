@@ -366,16 +366,23 @@ def compare_ordinate_columns(root, vis, native):
                                 shared_limits=name == "ord-equal-coordinates")
 
 
-def compare_ordinate_figure(root, name, native, controls, xlabel, labels, *, shared_limits=False):
+def compare_ordinate_figure(root, name, native, controls, xlabel, labels, *, shared_limits=False,
+                            color_groups=()):
     from casars import _plot_document
 
     capture = []
+    captured_groups = []
     render = _plot_document.render_document
 
     def record(*args, **kwargs):
         figure, primary = render(*args, **kwargs)
-        capture.append((primary.get_xlabel(), [(axis.get_ylabel(), axis.lines[0].get_xydata(), axis.get_ylim())
-                                               for axis in figure.axes]))
+        layers = []
+        for axis in figure.axes:
+            lines = list(axis.lines) if color_groups else [axis.lines[0]]
+            layers.append((axis.get_ylabel(), np.vstack([line.get_xydata() for line in lines]), axis.get_ylim()))
+            if color_groups:
+                captured_groups.append([(line.get_label(), line.get_color(), len(line.get_xydata())) for line in lines])
+        capture.append((primary.get_xlabel(), layers))
         return figure, primary
 
     figure = controls | dict(expformat="png", width=500, height=360, dpi=100)
@@ -391,6 +398,12 @@ def compare_ordinate_figure(root, name, native, controls, xlabel, labels, *, sha
         np.testing.assert_allclose(layer, section, rtol=1.2e-5, atol=1e-7)
     if shared_limits:
         assert layers[0][2] == layers[1][2], (layers[0][2], layers[1][2])
+    if color_groups:
+        for label, grouped in zip(labels, captured_groups, strict=True):
+            assert [name for name, _, _ in grouped] == [f"{label} · {name}" for name in color_groups], grouped
+            assert len({color for _, color, _ in grouped}) == len(color_groups), grouped
+            assert all(size == 1 for _, _, size in grouped), grouped
+        assert [color for _, color, _ in captured_groups[0]] == [color for _, color, _ in captured_groups[1]]
     for output in (expected, actual):
         with Image.open(output) as image:
             assert image.size == (500, 360), (output, image.size)
@@ -639,22 +652,345 @@ def compare_averaged_columns(root, native):
                                [float(point[0]) for point in casa_rows], rtol=1.2e-5)
     assert [point[2:] for point in native_rows] == [point[2:] for point in casa_rows]
 
-    from casars.tasks import TaskParameterError
-
     average_time = base | dict(avgtime="20", expformat="txt")
     expected, actual = (work / f"avg-with-time.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**average_time, plotfile=str(expected)) is None
     assert len(rows(expected)) == 12
-    try:
-        native(**average_time, plotfile=str(actual))
-    except TaskParameterError as error:
-        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
-    else:
-        raise AssertionError("PlotMS used a common column for independent time averages")
-    assert not actual.exists()
+    assert native(**average_time, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
     with opened(vis) as table:
         for name, data in (columns | dict(FLAG=flags)).items():
             np.testing.assert_array_equal(table.getcol(name), data)
+
+
+def time_average_fixture(root):
+    vis, _ = fixture(root)
+    with opened(vis, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        shape = table.getcol("DATA").shape
+        base = np.where(integration % 2 == 0, 1, 3)
+        for factor, name in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            values = (10 ** factor * base).astype(np.complex64)[None, None, :]
+            table.putcol(name, np.broadcast_to(values, shape))
+        for name, later in (("WEIGHT", 9), ("SIGMA", 0.5)):
+            values = np.where(integration % 2 == 0, 1, later).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, (shape[0], shape[2])))
+    return vis, integration
+
+
+def compare_time_averaged_columns(root, native):
+    work = root / "time-averaged-columns"
+    work.mkdir()
+    vis, integration = time_average_fixture(work)
+    mixed_flags, spectra, zero_weights, zero_corrected, no_corrected = (
+        work / f"{name}.ms" for name in ("mixed-flags", "spectra", "zero-weight", "zero-corrected", "no-corrected")
+    )
+    for path in (mixed_flags, spectra, zero_weights, zero_corrected, no_corrected):
+        copy_ms(vis, path)
+    with opened(mixed_flags, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, :] = np.isin(integration, [0, 2, 3])
+        table.putcol("FLAG", flags)
+    with opened(spectra, True) as table:
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        for name, earlier, later in (("WEIGHT_SPECTRUM", 3, 1), ("SIGMA_SPECTRUM", 0.5, 1)):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            values = np.where(integration % 2 == 0, earlier, later).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, shape))
+    for path, columns in ((zero_weights, ("WEIGHT", "SIGMA")), (zero_corrected, ("WEIGHT",))):
+        with opened(path, True) as table:
+            for name in columns:
+                table.putcol(name, np.zeros_like(table.getcol(name)))
+    with opened(no_corrected, True) as table:
+        table.removecols(["CORRECTED_DATA"])
+    trailing, leading, row_flag_only, reversed_time, weighted_uvw = (
+        work / f"{name}.ms" for name in ("trailing", "leading", "row-flag-only", "reversed", "weighted-uvw")
+    )
+    odd = integration % 2 == 1
+    for path in (trailing, leading, row_flag_only, reversed_time, weighted_uvw):
+        copy_ms(vis, path)
+        with opened(path, True) as table:
+            if path == trailing:
+                flag = table.getcol("FLAG")
+                flag[0, 1, odd] = True
+                table.putcol("FLAG", flag)
+            elif path == leading:
+                flag = table.getcol("FLAG")
+                flag[:, :, ~odd] = True
+                table.putcol("FLAG", flag)
+                table.putcol("FLAG_ROW", ~odd)
+            elif path == row_flag_only:
+                table.putcol("FLAG_ROW", odd)
+            elif path == reversed_time:
+                times = np.unique(table.getcol("TIME"))
+                reversed_times = times[-1 - integration]
+                table.putcol("TIME", reversed_times)
+                table.putcol("TIME_CENTROID", reversed_times)
+                data = table.getcol("DATA")
+                data[:, :, odd] = -1
+                table.putcol("DATA", data)
+                table.putcol("SIGMA", np.ones_like(table.getcol("SIGMA")))
+            else:
+                uvw = np.zeros_like(table.getcol("UVW"))
+                uvw[0, odd] = 10
+                table.putcol("UVW", uvw)
+
+    base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
+                               ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
+                               spw="0:1", avgtime="20")
+    independent = [(2.6, 28)] * 3 + [(2.6, 280)] * 3
+    corrected = [(7 / 3, 290 / 11), (25 / 9, 550 / 19)]
+    model = [(7 / 3, 2900 / 11), (25 / 9, 5500 / 19)]
+    cases = (
+        ("time-independent", {}, independent, 20),
+        ("time-flagged-bins", dict(vis=str(mixed_flags)), [(3, 30), (2.6, 28), (3, 300), (2.6, 280)], 40),
+        ("time-spectral-weights", dict(vis=str(spectra)), [(1.4, 15)] * 3 + [(1.4, 150)] * 3, 20),
+        ("time-zero-weight", dict(vis=str(zero_weights)), [(0, 0)] * 6, 20),
+        ("time-zero-corrected", dict(vis=str(zero_corrected)), [(2.6, 0)] * 6, 20),
+        ("time-no-corrected", dict(vis=str(no_corrected), ydatacolumn=["data", "model"]),
+         [(2.6, 2.6)] * 3 + [(2.6, 260)] * 3, 20),
+        ("time-shared-abscissa", dict(xdatacolumn="corrected", yaxis=["real", "amp"],
+                                      ydatacolumn=["data", "corrected"]), [(28, 2.6)] * 3 + [(28, 28)] * 3, 20),
+        ("time-short-window", dict(avgtime="4"), [(1, 10), (3, 30)] * 3 + [(1, 100), (3, 300)] * 3, 10),
+        ("time-15-second-window", dict(avgtime="15"), independent, 20),
+        ("time-25-second-window", dict(avgtime="25"), corrected + model, 30),
+        ("time-scan-boundary", dict(avgtime="25", field=""), corrected * 2 + model * 2, 30),
+        ("time-trailing-cell-flag", dict(vis=str(trailing)), [(1, 10)] * 3 + [(1, 100)] * 3, 20),
+        ("time-leading-row-flag", dict(vis=str(leading)), [(3, 30)] * 3 + [(3, 300)] * 3, 20),
+        ("time-row-flag-only", dict(vis=str(row_flag_only)), independent, 20),
+        ("time-reversed-and-vector", dict(vis=str(reversed_time), xaxis="amp"),
+         [(0, 28)] * 3 + [(0, 280)] * 3, 20),
+    )
+    for name, overrides, coordinates, spacing in cases:
+        controls = base | overrides
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert len(selected) == len(coordinates)
+        assert {row[2] for row in selected} == {"1"}
+        assert {row[12] for row in selected} == {"XX"}
+        np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        times = [float(row[9]) for row in selected[:len(selected) // 2]]
+        np.testing.assert_allclose(np.diff(times), spacing, rtol=0, atol=0.001)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching time-averaged coordinates", flush=True)
+    for axis in ("time", "channel", "frequency"):
+        controls = base | dict(xaxis=axis, xdatacolumn="", expformat="txt")
+        expected, actual = (work / f"average-{axis}-axis.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 6
+        if axis == "time":
+            for path in (expected, actual):
+                assert all(float(row[0]) == float(row[9]) for row in rows(path))
+    from casars.tasks import TaskParameterError
+
+    controls = base | dict(vis=str(weighted_uvw), xaxis="u", xdatacolumn="", expformat="txt")
+    expected, actual = (work / f"time-weighted-u.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert len(rows(expected)) == 6
+    assert {float(row[0]) for row in rows(expected)} == {9}
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS admitted a request requiring weighted UVW coordinates")
+    assert not actual.exists()
+    compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
+
+
+def compare_combined_averaged_columns(root, native):
+    work = root / "combined-averaged-columns"
+    work.mkdir()
+    source, integration = time_average_fixture(work)
+    base = request(source) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
+                                  ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
+                                  spw="0:0~1", avgtime="20", avgchannel="2")
+    even = integration % 2 == 0
+    cases = (
+        ("spectra", {}, 0, 25 / 7, 550 / 15),
+        ("spectra-mixed", {}, 0, 3, 480 / 14),
+        ("row-mixed", {}, 0, 4, 490 / 11),
+        ("zero-primary-one-channel", {}, 0, 3.8, 550 / 15),
+        ("zero-primary-first-bin", dict(spw="0:0~3"), 1, 25 / 7, 550 / 15),
+        ("zero-secondary", {}, 0, 25 / 7, 0),
+        ("discarded-tail", dict(spw="0:0~2"), 0, 2.6, 28),
+    )
+    for name, overrides, channel, observed, corrected in cases:
+        vis = work / f"{name}.ms"
+        copy_ms(source, vis)
+        with opened(vis, True) as table:
+            shape = table.getcol("DATA").shape
+            odd_channel = np.arange(shape[1])[None, :, None] % 2 == 1
+            amplitude = (1 + 4 * (~even)[None, None, :] + 2 * odd_channel).astype(np.complex64)
+            for factor, column in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+                table.putcol(column, np.broadcast_to(amplitude * 10**factor, shape).copy())
+            flags = np.zeros(shape, dtype=bool)
+            if name.endswith("mixed"):
+                flags[0, 1, ~even] = True
+            if name == "discarded-tail":
+                flags[0, :2, ~even] = True
+            table.putcol("FLAG", flags)
+            if name != "row-mixed":
+                descriptor = table.getcoldesc("DATA")
+                for column, earlier, later in (("WEIGHT_SPECTRUM", [1, 9], [4, 1]),
+                                                ("SIGMA_SPECTRUM", [1, 0.5], [1, 1])):
+                    table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                                dataManagerGroup=column)})
+                    pattern = np.where(even[None, :], np.resize(earlier, shape[1])[:, None],
+                                       np.resize(later, shape[1])[:, None]).astype(np.float32)
+                    if name == "zero-primary-first-bin" and column == "SIGMA_SPECTRUM":
+                        pattern[:2, :] = 0
+                    if name == "zero-primary-one-channel" and column == "SIGMA_SPECTRUM":
+                        pattern[0, :] = 0
+                    if name == "zero-secondary" and column == "WEIGHT_SPECTRUM":
+                        pattern.fill(0)
+                    table.putcol(column, np.broadcast_to(pattern, shape).copy())
+        controls = base | dict(vis=str(vis)) | overrides
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, expformat="txt", plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 6
+        assert {point[2] for point in selected} == {str(channel)}
+        assert {point[10] for point in selected} == {f"{100.0005 + channel * 0.002:.9f}"}
+        assert {point[12] for point in selected} == {"XX"}
+        coordinates = [(observed, corrected)] * 3 + [(observed, 10 * corrected)] * 3
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        assert native(**controls, expformat="txt", plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching channel-and-time coordinates", flush=True)
+    from casars.tasks import TaskExecutionError
+
+    empty = base | dict(vis=str(work / "zero-primary-first-bin.ms"), expformat="txt")
+    expected, actual = (work / f"zero-primary-empty.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**empty, plotfile=str(expected)) is None
+    assert not rows(expected)
+    assert expected.read_text().count("# No data to export") == 2
+    try:
+        native(**empty, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "empty MeasurementSet plots after channel and time averaging are pending #1032" in str(error), error
+    else:
+        raise AssertionError("Expected a pending diagnostic for the empty averaged plot")
+    assert not actual.exists()
+    figure = base | dict(vis=str(work / "spectra.ms"))
+    compare_ordinate_figure(work, "spectra", native, figure, "Real", ["Real:corrected", "Real:model"])
+    compare_mixed_float_time_normalization(work, source, native, base)
+
+
+def compare_mixed_float_time_normalization(work, source, native, base):
+    vis = work / "unused-float.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        for name in ("DATA", "CORRECTED_DATA", "MODEL_DATA", "WEIGHT", "SIGMA"):
+            table.putcol(name, np.ones_like(table.getcol(name)))
+        descriptor = table.getcoldesc("DATA")
+        table.addcols({"FLOAT_DATA": dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                         dataManagerGroup="FLOAT_DATA")})
+        table.putcol("FLOAT_DATA", np.ones(table.getcol("DATA").shape, dtype=np.float32))
+    for width, count in (("", 12), ("2", 6)):
+        controls = base | dict(vis=str(vis), xaxis="channel", xdatacolumn="", avgchannel=width, expformat="txt")
+        name = f"unused-float-time-{width or 'only'}"
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        assert native(**controls, plotfile=str(actual)) is None
+        casa_rows, native_rows = rows(expected), rows(actual)
+        assert len(casa_rows) == len(native_rows) == count
+        np.testing.assert_allclose([float(point[1]) for point in casa_rows], 2 / 3, rtol=1.2e-5)
+        assert {float(point[1]) for point in native_rows} == {1.0}
+        assert [point[:1] + point[2:] for point in native_rows] == [point[:1] + point[2:] for point in casa_rows]
+        print(f"{name}: native preserves {count} constant unit visibilities", flush=True)
+
+
+def compare_time_scan_field_columns(root, native):
+    work = root / "scan-field-time-columns"
+    work.mkdir()
+    vis, integration = time_average_fixture(work)
+    with opened(vis, True) as table:
+        times = np.unique(table.getcol("TIME"))
+        shape = table.getcol("DATA").shape
+        first_scan = integration < 6
+        amplitude = np.where(first_scan, 1, 3).astype(np.complex64)
+        for factor, name in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            table.putcol(name, np.broadcast_to(amplitude * 10**factor, shape).copy())
+        for name, later in (("WEIGHT", 9), ("SIGMA", 0.5)):
+            values = np.where(first_scan, 1, later).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, (shape[0], shape[2])).copy())
+    scan, field, reversed_time = (work / f"{name}.ms" for name in ("scans", "fields", "reversed"))
+    for path in (scan, field, reversed_time):
+        copy_ms(vis, path)
+        with opened(path, True) as table:
+            if path == reversed_time:
+                reversed_times = times[-1 - integration]
+                table.putcol("TIME", reversed_times)
+                table.putcol("TIME_CENTROID", reversed_times)
+            else:
+                name = "FIELD_ID" if path == scan else "SCAN_NUMBER"
+                values = table.getcol(name)
+                table.putcol(name, np.full_like(values, values[0]))
+    base = request(vis) | dict(field="", xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
+                               ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
+                               spw="0:1", avgtime="200")
+    separate = [(1, 10), (3, 30), (1, 100), (3, 300)]
+    joined = [(2.6, 28), (2.6, 280)]
+    separate_ids = [("1", "0"), ("2", "1")] * 2
+    joined_ids = [("1", "0")] * 2
+    split = [(15 / 7, 25), (3, 30), (15 / 7, 250), (3, 300)]
+    color_controls = dict(avgscan=True, avgfield=True, avgtime="75")
+    cases = (
+        ("separate-boundaries", {}, separate, separate_ids),
+        ("cross-scan", dict(vis=str(scan), avgscan=True), joined, joined_ids),
+        ("cross-field", dict(vis=str(field), avgfield=True), joined, joined_ids),
+        ("cross-scan-color", dict(vis=str(scan), avgscan=True, coloraxis="scan"), joined, joined_ids),
+        ("cross-field-color", dict(vis=str(field), avgfield=True, coloraxis="field"), joined, joined_ids),
+        ("cross-scan-retains-field", dict(avgscan=True), separate, separate_ids),
+        ("cross-field-retains-scan", dict(avgfield=True), separate, separate_ids),
+        ("cross-both", dict(avgscan=True, avgfield=True), joined, joined_ids),
+        ("cross-both-channel", dict(avgscan=True, avgfield=True, avgchannel="2", spw="0:0~1"), joined, joined_ids),
+        ("cross-both-reversed", dict(vis=str(reversed_time), avgscan=True, avgfield=True), joined, [("2", "1")] * 2),
+        ("two-scan-colors", color_controls | dict(coloraxis="scan"), split, separate_ids),
+        ("two-field-colors", color_controls | dict(coloraxis="field"), split, separate_ids),
+    )
+    for name, overrides, coordinates, identifiers in cases:
+        controls = base | overrides
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [tuple(point[3:5]) for point in selected] == identifiers
+        np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float), coordinates, rtol=1.2e-5)
+        if len(selected) == 2:
+            midpoint = times[0] + (times[-1] - times[0]) / 2
+            np.testing.assert_allclose([float(row[9]) for row in selected], midpoint, rtol=0, atol=0.00051)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching independently weighted coordinates", flush=True)
+    figure = base | dict(avgscan=True, avgfield=True)
+    compare_ordinate_figure(work, "cross-both", native, figure, "Real", ["Real:corrected", "Real:model"])
+    for axis, groups in (("scan", ("Scan 1", "Scan 2")), ("field", ("FLUX", "PHASE"))):
+        figure = base | color_controls | dict(coloraxis=axis)
+        compare_ordinate_figure(work, f"two-{axis}-colors", native, figure, "Real",
+                                ["Real:corrected", "Real:model"], color_groups=groups)
+    from casars.tasks import TaskParameterError
+
+    transformed = base | dict(vis=str(field), xaxis="frequency", xdatacolumn="",
+                              transform=True, freqframe="BARY", expformat="txt")
+    ordinary = work / "ordinary-frequency-transform.native.txt"
+    assert native(**transformed, plotfile=str(ordinary)) is None
+    assert len(rows(ordinary)) == 4
+    actual = work / "cross-field-frequency-transform.native.txt"
+    try:
+        native(**transformed, avgfield=True, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS admitted spectral frame conversion across averaged fields")
+    assert not actual.exists()
 
 
 def compare_float_columns(root, vis, source, native):
@@ -926,6 +1262,30 @@ def compare_default_model(root, native):
         assert {float(point[1]) for point in rows(expected)} == {amplitude}
         assert native(**selected, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == count
+    average = controls | dict(vis=str(stored), xaxis="channel", xdatacolumn="",
+                              yaxis=["amp", "amp"], ydatacolumn=["data", "model"], avgtime="20")
+    for name, field, spw, amplitude in (
+        ("average-virtual-and-stored", "PHASE", "0:1", 7.25),
+        ("average-unmodeled-window-and-stored", "PHASE", "1:1", 1),
+        ("average-stored-only-field", "FLUX", "0:1", 19),
+    ):
+        selected = average | dict(field=field, spw=spw)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**selected, plotfile=str(expected)) is None
+        coordinates = rows(expected)
+        assert coordinates and len(coordinates) % 2 == 0
+        assert {float(point[1]) for point in coordinates[len(coordinates) // 2:]} == {amplitude}
+        if field == "FLUX":
+            assert native(**selected, plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == len(coordinates)
+        else:
+            try:
+                native(**selected, plotfile=str(actual))
+            except TaskExecutionError as error:
+                assert "virtual MeasurementSet models are pending #1032" in str(error), error
+            else:
+                raise AssertionError("PlotMS used the stored model for an averaged virtual-model field")
+            assert not actual.exists()
     with opened(stored) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
 
@@ -987,6 +1347,9 @@ def main():
         compare_ordinate_columns(root, vis, native)
         compare_multiple_ordinates(root, vis, native)
         compare_averaged_columns(root, native)
+        compare_time_averaged_columns(root, native)
+        compare_combined_averaged_columns(root, native)
+        compare_time_scan_field_columns(root, native)
         compare_float_columns(root, vis, source, native)
         compare_default_model(root, native)
         compare_virtual_fourier_model(root, native)

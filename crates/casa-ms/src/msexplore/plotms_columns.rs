@@ -49,22 +49,22 @@ pub(super) fn check_averaging(
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ChannelWeightKinds {
+pub(super) struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
     pub(super) primary: WeightKind,
 }
 
-impl ChannelWeightKinds {
+impl PlotMsWeightKinds {
     pub(super) fn uses(self, kind: WeightKind) -> bool {
         self.primary == kind || self.axes.contains(&kind)
     }
 }
 
-pub(super) fn channel_weight_kinds(
+pub(super) fn weight_kinds(
     ms: &MeasurementSet,
     spec: &MsPlotSpec,
     input: &PlotMsInput<'_>,
-) -> ChannelWeightKinds {
+) -> PlotMsWeightKinds {
     let primary = spec.data_column;
     let columns = [
         input.x_data_column.unwrap_or(primary),
@@ -114,7 +114,7 @@ pub(super) fn channel_weight_kinds(
         };
         visibility_weight_kind(column, has_observed, has_corrected, false)
     };
-    ChannelWeightKinds {
+    PlotMsWeightKinds {
         axes: columns.map(kind),
         primary: kind(primary),
     }
@@ -126,11 +126,19 @@ pub(super) fn bin_has_weight(
     bin: &ChannelBin,
     flags: &ndarray::ArrayView2<'_, bool>,
 ) -> bool {
+    bin_weight(spectrum, corr, bin, flags) > 0.0
+}
+
+pub(super) fn bin_weight(
+    spectrum: &FloatGrid,
+    corr: usize,
+    bin: &ChannelBin,
+    flags: &ndarray::ArrayView2<'_, bool>,
+) -> f64 {
     bin.channels()
         .filter(|&channel| !flags[(corr, channel)])
         .map(|channel| spectrum.values[corr * spectrum.chan_count + channel])
-        .sum::<f64>()
-        > 0.0
+        .sum()
 }
 
 pub(super) fn inverse_variance(spectrum: &FloatGrid) -> FloatGrid {
