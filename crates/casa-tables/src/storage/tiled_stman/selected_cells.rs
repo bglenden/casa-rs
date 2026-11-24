@@ -32,12 +32,13 @@ pub(super) fn load_selected_rows_from_touched_cubes(
         elem_size,
     };
     let mut outputs = vec![None; output_len];
-    let mut session = TileReadSession::default();
     for (cube_idx, patches) in patches_by_cube {
         let Some(cube) = header.cubes.get(cube_idx) else {
             continue;
         };
         if cube.file_seq_nr >= 0 && !cube.cube_shape.is_empty() {
+            // A completed cube no longer needs its file's read-ahead buffer.
+            let mut session = TileReadSession::default();
             column.read_cube(cube_idx, cube, &patches, &mut outputs, &mut session)?;
         }
     }
