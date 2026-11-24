@@ -3,7 +3,7 @@
 
 use casa_tables::TableError;
 use casa_tables::taql::ast::{Expr, Literal};
-use casa_tables::taql::{self, IndexStyle, Statement, TaqlError, TaqlResult};
+use casa_tables::taql::{self, IndexStyle, RecordExpressionType, Statement, TaqlError, TaqlResult};
 
 use super::intent::MatchMode;
 use super::taql_geometry::GeometryBinder;
@@ -14,13 +14,13 @@ pub(super) fn select_rows(
     ms: &MeasurementSet,
     query: &str,
     rows_per_block: Option<usize>,
+    first_only: bool,
 ) -> MsResult<Vec<usize>> {
-    let mut statement = taql::parse(query).map_err(taql_error)?;
-    if let Statement::Select(select) = &mut statement
-        && let Some(predicate) = &mut select.where_clause
-    {
-        let mut geometry = GeometryBinder::new(ms);
-        bind_selectors(predicate, ms, select.style, rows_per_block, &mut geometry)?;
+    let statement = selection_query(ms, query, rows_per_block)?;
+    if first_only && let Statement::Select(select) = &statement {
+        return taql::first_matching_row(select, ms.main_table())
+            .map(|row| row.into_iter().collect())
+            .map_err(taql_error);
     }
     match taql::exec::execute_readonly(&statement, ms.main_table()).map_err(taql_error)? {
         TaqlResult::Select { row_indices, .. } => Ok(row_indices),
@@ -28,6 +28,34 @@ pub(super) fn select_rows(
             "expected a TaQL SELECT statement".into(),
         )),
     }
+}
+
+pub(super) fn validate_predicate(
+    ms: &MeasurementSet,
+    query: &str,
+    rows_per_block: Option<usize>,
+) -> MsResult<RecordExpressionType> {
+    if let Statement::Select(select) = selection_query(ms, query, rows_per_block)?
+        && let Some(predicate) = &select.where_clause
+    {
+        return taql::validate_record_expression(predicate, ms.main_table()).map_err(taql_error);
+    }
+    Ok(RecordExpressionType::PossibleRowPredicate)
+}
+
+fn selection_query(
+    ms: &MeasurementSet,
+    query: &str,
+    rows_per_block: Option<usize>,
+) -> MsResult<Statement> {
+    let mut statement = taql::parse(query).map_err(taql_error)?;
+    if let Statement::Select(select) = &mut statement
+        && let Some(predicate) = &mut select.where_clause
+    {
+        let mut geometry = GeometryBinder::new(ms);
+        bind_selectors(predicate, ms, select.style, rows_per_block, &mut geometry)?;
+    }
+    Ok(statement)
 }
 
 fn bind_selectors(

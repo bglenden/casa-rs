@@ -265,6 +265,73 @@ pub(crate) fn task_executable(
         .map_err(PyFileNotFoundError::new_err)
 }
 
+/// Yield caller-owned automatic locks and keep local threads from taking
+/// data locks until the clearcal provider returns.
+#[pyfunction]
+pub(crate) fn prepare_task_table_write(py: Python<'_>, path: PathBuf) -> PyResult<TaskTableWrite> {
+    #[cfg(unix)]
+    {
+        let reservations = py.detach(|| {
+            let targets = clearcal_lock_targets(&path)?;
+            Ok::<_, PyErr>(crate::tools::table::prepare_provider_write(&targets)?)
+        })?;
+        Ok(TaskTableWrite { reservations })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (py, path);
+        Ok(TaskTableWrite {})
+    }
+}
+
+#[pyclass]
+pub(crate) struct TaskTableWrite {
+    #[cfg(unix)]
+    reservations: Vec<casa_tables::DelegatedTableWrite>,
+}
+
+#[pymethods]
+impl TaskTableWrite {
+    fn release(&mut self, py: Python<'_>) {
+        #[cfg(unix)]
+        {
+            let reservations = std::mem::take(&mut self.reservations);
+            py.detach(|| drop(reservations));
+        }
+        #[cfg(not(unix))]
+        let _ = py;
+    }
+}
+
+#[cfg(unix)]
+fn clearcal_lock_targets(path: &Path) -> PyResult<Vec<PathBuf>> {
+    use casa_tables::{Table, TableInfo};
+    use pyo3::exceptions::PyRuntimeError;
+
+    let concatenated = std::fs::read_to_string(path.join("table.info"))
+        .is_ok_and(|text| TableInfo::parse(&text).sub_type == "CONCATENATED");
+    let partitions = if concatenated {
+        Table::concatenated_source_paths(path)
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+            .unwrap_or_default()
+    } else {
+        vec![path.to_path_buf()]
+    };
+    let mut targets = std::collections::BTreeSet::new();
+    for table in std::iter::once(path.to_path_buf()).chain(
+        partitions
+            .iter()
+            .flat_map(|part| [part.clone(), part.join("HISTORY"), part.join("SOURCE")]),
+    ) {
+        if table.join("table.dat").is_file() {
+            targets.insert(table.canonicalize().map_err(|error| {
+                PyRuntimeError::new_err(format!("{}: {error}", table.display()))
+            })?);
+        }
+    }
+    Ok(targets.into_iter().collect())
+}
+
 /// How a task process ended, with a success's products. Releases the GIL
 /// while it checks them.
 #[pyfunction]

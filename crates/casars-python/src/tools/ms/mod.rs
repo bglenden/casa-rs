@@ -5,6 +5,7 @@
 
 mod attachment_info;
 pub(super) mod metadata_link;
+mod selection_indices;
 mod statwt;
 mod stubs;
 mod subtable_queries;
@@ -50,7 +51,8 @@ struct AttachedMs {
     part_names: TablePartNames,
     is_multi_ms: bool,
     sources: Vec<PathBuf>,
-    selected_rows: Option<Vec<usize>>,
+    selected_rows: Option<Arc<[usize]>>,
+    selection_state: selection_indices::SelectionState,
     metadata: OnceLock<Arc<metadata_link::MetadataLink>>,
     write_locks: BTreeMap<PathBuf, TableWriteLock>,
     read_locks: BTreeMap<PathBuf, Table>,
@@ -81,6 +83,7 @@ impl AttachedMs {
             is_multi_ms,
             sources,
             selected_rows: None,
+            selection_state: selection_indices::SelectionState::default(),
             metadata: OnceLock::new(),
             write_locks: BTreeMap::new(),
             read_locks: BTreeMap::new(),

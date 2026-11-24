@@ -1398,7 +1398,80 @@ def solve_preapply(root, source, native):
         case.mkdir()
         results[name] = gain_and_apply(case, source, native, 'T', 'inf', calmode='ap',
                                        field='0', minblperant=2, **options)
+    flagged = root/'reference-flagged.cal'
+    copy_ms(prior, flagged)
+    tb = table()
+    assert tb.open(str(flagged), nomodify=False)
+    try:
+        flags = tb.getcol('FLAG')
+        flags[1, :, tb.getcol('ANTENNA1') == 0] = True
+        assert tb.putcol('FLAG', flags)
+    finally:
+        assert tb.done()
+    for mode in ('flex', 'strict'):
+        options = dict(gaintable=[str(flagged)], field='0', minblperant=2,
+                       solint='inf', refantmode=mode, corrdepflags=False)
+        expected = solve(casa, root, f'prior-refant-{mode}-casa', source, **options)
+        actual = solve(native, root, f'prior-refant-{mode}-native', source, **options)
+        for column in ('ANTENNA1', 'ANTENNA2', 'FLAG'):
+            np.testing.assert_array_equal(actual[column], expected[column])
+        good = ~expected['FLAG']
+        if mode == 'flex':
+            assert good[1].any() and np.all(expected['ANTENNA2'] > 0)
+            assert relative_rms(actual['CPARAM'][good], expected['CPARAM'][good]) < 1e-3
+        else:
+            assert not good.any()
     return results
+
+
+def single_hand_gain(root, source, native):
+    options = dict(gaintype='G', calmode='a', field='0', solint='inf', minblperant=2, refant='')
+    original = solve(native, root, 'single-hand', source, **options)
+    expected = solve(casa, root, 'single-hand-casa', source, **options)
+    np.testing.assert_array_equal(original['FLAG'], expected['FLAG'])
+    assert np.any(~original['FLAG'][0]) and np.all(original['FLAG'][1])
+
+    current = root/'single-hand.cal'
+    legacy = root/'single-hand-legacy.cal'
+    copy_ms(current, legacy)
+    tool = table()
+    assert tool.open(str(legacy), nomodify=False)
+    try:
+        # Older native G tables stored the single YY solution in slot one.
+        assert tool.putkeyword('CASA_Version', 'casa-rs')
+        for column in ('CPARAM', 'FLAG', 'PARAMERR', 'SNR'):
+            assert tool.putcol(column, tool.getcol(column)[::-1].copy())
+    finally:
+        assert tool.done()
+
+    application_options = dict(field='0', applymode='calflag', calwt=[False], flagbackup=False)
+    applied = []
+    for name, calibration, engine in (
+        ('casa', root/'single-hand-casa.cal', casa), ('casa-reads-native', current, casa),
+        ('native-reads-casa', root/'single-hand-casa.cal', native),
+        ('native', current, native), ('native-reads-legacy', legacy, native),
+    ):
+        destination = root/name/source.name
+        destination.parent.mkdir()
+        copy_ms(source, destination)
+        engine.applycal(str(destination), gaintable=[str(calibration)], **application_options)
+        applied.append(contents(destination))
+    reference = applied[0]
+    good = ~reference['FLAG']
+    assert good.any()
+    for data in applied[1:]:
+        np.testing.assert_array_equal(data['FLAG'], reference['FLAG'])
+        assert relative_rms(data['CORRECTED_DATA'][good], reference['CORRECTED_DATA'][good]) < 1e-3
+
+    earlier = contents(legacy)
+    native.gaincal(str(source), str(legacy), **(options | {'field': '1', 'append': True}))
+    appended = contents(legacy)
+    new = appended['FIELD_ID'] == 1
+    assert new.any() and np.all(appended['FLAG'][0, :, new])
+    assert np.any(~appended['FLAG'][1, :, new])
+    for column in ('CPARAM', 'FLAG', 'PARAMERR', 'SNR'):
+        np.testing.assert_array_equal(appended[column][..., ~new], earlier[column])
+    return {'unflagged': int(good.sum()), 'legacy_rows': int(new.sum())}
 
 
 def separate_arrays(root, source, native):
@@ -1587,7 +1660,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
-    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components', 'virtual-fourier', 'descriptions', 'preapply', 'ephemeris'], default='intervals')
+    parser.add_argument('--case', choices=['intervals', 'combined-amplitude', 'finite-averaging', 'amplitude', 'median', 'preavg', 'refant', 'ranked-refant', 'spw-refant', 'corrflags', 'robust', 'robust-edges', 'selection', 'grouping', 'point-models', 'spectral-weights', 'virtual-components', 'virtual-fourier', 'descriptions', 'preapply', 'single-hand', 'ephemeris'], default='intervals')
     args = parser.parse_args()
     assert casa.version_string() == '6.7.6.14'
     os.environ['CASARS_CALIBRATE_BIN'] = str(args.native_bin.resolve())
@@ -1598,7 +1671,8 @@ def main():
     assert not any(root.iterdir()), 'work directory must be empty'
     os.chdir(root)
     source = root/'source.ms'
-    make_cal_ms(str(source), stokes='XX XY YX YY' if args.case == 'ephemeris' else 'XX YY')
+    stokes = {'ephemeris': 'XX XY YX YY', 'single-hand': 'YY'}
+    make_cal_ms(str(source), stokes=stokes.get(args.case, 'XX YY'))
     if args.case == 'amplitude':
         source = amplitude_data(root, source)
         results = {f'{gain}-{interval}-norm{int(norm)}': gain_and_apply(root, source, native, gain, interval, norm)
@@ -1661,6 +1735,8 @@ def main():
         results = shared_window_descriptions(root, amplitude_data(root, source), native)
     elif args.case == 'preapply':
         results = solve_preapply(root, amplitude_data(root, source), native)
+    elif args.case == 'single-hand':
+        results = single_hand_gain(root, amplitude_data(root, source), native)
     elif args.case == 'ephemeris':
         results = ephemeris_parallactic_angle(root, source, native)
     else:

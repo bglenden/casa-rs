@@ -74,6 +74,7 @@ pub(crate) fn solve(
                 .flatten(),
             correlation_dependent_flags: request.correlation_dependent_flags,
             robust_seed: false,
+            legacy_g_receptors: false,
             channelized: false,
             polynomial_bandpass: false,
         },

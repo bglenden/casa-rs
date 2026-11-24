@@ -715,7 +715,7 @@ fn document_lane_axis(id: &str, label: &str, lane_labels: Vec<String>) -> PlotDo
     }
 }
 
-fn series_y_bounds(values: impl Iterator<Item = f64>) -> (f64, f64) {
+pub(crate) fn series_y_bounds(values: impl Iterator<Item = f64>) -> (f64, f64) {
     expanded_bounds(values.fold(None, bounds_accumulator).unwrap_or((0.0, 1.0)))
 }
 
@@ -928,7 +928,7 @@ fn axis_metadata(id: &str, label: &str) -> PlotAxisMetadata {
     }
 }
 
-fn label_unit(label: &str) -> String {
+pub(crate) fn label_unit(label: &str) -> String {
     label
         .rsplit_once('(')
         .and_then(|(_, suffix)| suffix.strip_suffix(')'))

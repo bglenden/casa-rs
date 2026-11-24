@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-23",
+  "revision": "8120364a6e18c50406992d1c38ff53b8a91cd1cc",
+  "source_revision": "8120364a6e18c50406992d1c38ff53b8a91cd1cc",
+  "baseline_revision": "be8790ca39302d9b54160099bb5632ac6bb29ef9",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with two independent stored visibility ordinates and ordinary vector time averaging on the same selected MeasurementSets.",
+  "result": "passed",
+  "baseline_result": "CASA exported six points with separately weighted DATA, CORRECTED_DATA and MODEL_DATA. Native refused independent time averaging.",
+  "text_exports": 19,
+  "points": 118,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "native_pending_cases": 3,
+  "reference_points_in_pending_cases": 14,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_windows_seconds": [
+    4,
+    15,
+    20,
+    25
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}

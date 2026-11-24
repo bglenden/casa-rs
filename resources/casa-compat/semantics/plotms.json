@@ -83,7 +83,7 @@
       "status": "Partial"
     },
     "xdatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel averaging supports separately weighted stored visibility columns.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -95,7 +95,10 @@
         "callibrary",
         "ms-default-model",
         "ms-virtual-model",
-        "ms-channel-columns"
+        "ms-channel-columns",
+        "ms-multiple-visibility-ordinates",
+        "ms-time-columns",
+        "ms-channel-time-columns"
       ],
       "behaviors": [
         "coordinates"
@@ -121,9 +124,10 @@
       ]
     },
     "yaxis": {
-      "scope": "Plot y-axis (blank for default/current)",
+      "scope": "Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-multiple-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -131,7 +135,7 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Two unaveraged or channel-averaged ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and more than two ordinates remain open. Channel averaging supports separately weighted stored visibility columns.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged visibility ordinates and up to two channel-averaged ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -144,7 +148,10 @@
         "callibrary",
         "ms-default-model",
         "ms-virtual-model",
-        "ms-channel-columns"
+        "ms-channel-columns",
+        "ms-multiple-visibility-ordinates",
+        "ms-time-columns",
+        "ms-channel-time-columns"
       ],
       "behaviors": [
         "coordinates"
@@ -170,9 +177,10 @@
       ]
     },
     "yaxislocation": {
-      "scope": "Location of the y-axis (blank for default: left)",
+      "scope": "Choose the left or right side. PlotMS groups more than two unaveraged MeasurementSet visibility ordinates by side. An omitted position defaults to left. A scalar location does not apply to an ordinate list.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-multiple-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -344,10 +352,11 @@
       "status": "Implemented"
     },
     "avgchannel": {
-      "scope": "Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates.",
+      "scope": "Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging.",
       "evidence": [
         "paired",
-        "ms-channel-columns"
+        "ms-channel-columns",
+        "ms-channel-time-columns"
       ],
       "behaviors": [
         "averaging"
@@ -355,34 +364,38 @@
       "status": "Partial"
     },
     "avgtime": {
-      "scope": "Average over time (blank = False, otherwise value in seconds)",
+      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-time-columns",
+        "ms-channel-time-columns"
       ],
       "behaviors": [
         "averaging"
       ],
-      "status": "Implemented"
+      "status": "Partial"
     },
     "avgscan": {
-      "scope": "Average over scans. Only valid with time averaging",
+      "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-scan-field-time-columns"
       ],
       "behaviors": [
         "averaging"
       ],
-      "status": "Implemented"
+      "status": "Partial"
     },
     "avgfield": {
-      "scope": "Average over fields. Only valid with time averaging",
+      "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-scan-field-time-columns"
       ],
       "behaviors": [
         "averaging"
       ],
-      "status": "Implemented"
+      "status": "Partial"
     },
     "avgbaseline": {
       "scope": "Average over all baselines (mutually exclusive with avgantenna)",
@@ -1079,7 +1092,7 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for two independent unaveraged ordinates. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine.",
       "evidence": [
         "paired",
         "selectors",
@@ -1094,20 +1107,25 @@
         "legacy-calibration",
         "ms-default-model",
         "ms-virtual-model",
-        "ms-channel-columns"
+        "ms-channel-columns",
+        "ms-multiple-visibility-ordinates",
+        "ms-time-columns"
       ],
-      "gap": "Pointing-coordinate axes, more than two ordinates, time-averaged independent ordinate columns and additional MS column forms are open."
+      "gap": "Pointing-coordinate axes, mixed visibility and metadata ordinate masks, additional averaging modes and additional MS column forms are open."
     },
     {
       "id": "averaging",
       "title": "Average selected plot samples",
       "status": "Partial",
-      "scope": "Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags.",
+      "scope": "Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags. Ordinary vector time averaging uses the selected integrations, per-column weights and the MeasurementSet transform time groups. Channel averaging can follow ordinary vector time averaging. The primary channel weights determine which averaged bins render. Vector time bins can span the requested scan and field boundaries.",
       "evidence": [
         "paired",
-        "ms-channel-columns"
+        "ms-channel-columns",
+        "ms-time-columns",
+        "ms-channel-time-columns",
+        "ms-scan-field-time-columns"
       ],
-      "gap": "Independent time-averaged columns, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032."
+      "gap": "Scalar, baseline, antenna and spectral-window averaging cases, fully masked exports, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032."
     },
     {
       "id": "pages",
@@ -1440,7 +1458,7 @@
       "kind": "Same-input channel-averaged MeasurementSet visibility columns",
       "state": "passed",
       "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with independent stored visibility columns, selected channel bins and nonuniform spectral weights.",
-      "result": "Eleven paired text exports matched 228 averaged coordinates and their source metadata. Tests cover mixed flags, the separate DATA and CORRECTED_DATA weights, MODEL_DATA with and without additional columns, missing and undefined spectra, zero-weight bins, a shared abscissa column and an ignored scalar request. One 500 by 360 pixel PNG matched both ordinate layers and their 24 coordinates. Twelve additional model abscissa coordinates match with a weight ordinate. Independent time averaging remains pending.",
+      "result": "Eleven paired text exports matched 228 averaged coordinates and their source metadata. Tests cover mixed flags, the separate DATA and CORRECTED_DATA weights, MODEL_DATA with and without additional columns, missing and undefined spectra, zero-weight bins, a shared abscissa column and an ignored scalar request. One 500 by 360 pixel PNG matched both ordinate layers and their 24 coordinates. Twelve additional model abscissa coordinates match with a weight ordinate.",
       "casa_version": "6.7.6.14",
       "revision": "33caea79f77e79e183d1fd07e095f18b0caed403",
       "source_revision": "33caea79f77e79e183d1fd07e095f18b0caed403",
@@ -1448,6 +1466,63 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-channel-columns-20261123.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2150"
+      ]
+    },
+    "ms-multiple-visibility-ordinates": {
+      "kind": "Same-input multiple MeasurementSet visibility ordinates",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs for unaveraged MeasurementSet plots with three or four independent visibility ordinates.",
+      "result": "Five paired text exports matched 246 selected coordinates and source metadata, including repeated axis kinds, short column lists, shared source cells and a virtual model used only on the third ordinate. Four 500 by 360 pixel PNGs matched left and right grouping, labels and 198 artist coordinates, including connector order with two correlations and scalar or short side settings. Both tasks refused duplicate ordinates and invalid side settings.",
+      "casa_version": "6.7.6.14",
+      "revision": "aa362fcb0cc9517990409ad4403ad7a5c4e64d7e",
+      "source_revision": "aa362fcb0cc9517990409ad4403ad7a5c4e64d7e",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-multiple-visibility-ordinates-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2154"
+      ]
+    },
+    "ms-time-columns": {
+      "kind": "Same-input vector time-averaged MeasurementSet visibility columns",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with two independent stored visibility ordinates and ordinary vector time averaging on the same selected MeasurementSets.",
+      "result": "Nineteen paired text exports match 118 selected coordinates and their source metadata. The cases cover inverse sigma squared and corrected weights, model weights with and without CORRECTED_DATA, per-channel spectra, zero weights, mixed flags, omitted all-flagged bins, singleton timestamps, scan boundaries, reverse-ordered physical rows and complex cancellation. One 500 by 360 pixel PNG matches both labeled layers and all six artist coordinates. Three cases verify the pending diagnostics for weighted U and virtual models.",
+      "casa_version": "6.7.6.14",
+      "revision": "8120364a6e18c50406992d1c38ff53b8a91cd1cc",
+      "source_revision": "8120364a6e18c50406992d1c38ff53b8a91cd1cc",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-time-columns-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2160"
+      ]
+    },
+    "ms-channel-time-columns": {
+      "kind": "Same-input channel and vector time-averaged MeasurementSet visibility columns",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with two independent stored visibility ordinates and combined channel and ordinary vector time averaging.",
+      "result": "Eight paired text exports match 54 selected coordinates and metadata. The tests cover nonuniform spectral weights, time-derived row weights, mixed flags, discarded incomplete channel bins and zero primary or secondary weights. One 500 by 360 pixel PNG matches both labeled layers and six artist coordinates. A fully masked result has an explicit pending diagnostic. Two additional cases cover 18 coordinates on a mixed FLOAT_DATA input. The native complex ordinate averages retain their unit input values and match the exported CASA bin metadata.",
+      "casa_version": "6.7.6.14",
+      "revision": "ccebf2574c89d1b765a3ebed5329c7134cd75480",
+      "source_revision": "ccebf2574c89d1b765a3ebed5329c7134cd75480",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-channel-time-columns-20261123.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2163",
+        "docs/CASA (C++) bugs.md"
+      ]
+    },
+    "ms-scan-field-time-columns": {
+      "kind": "Same-input MeasurementSet vector time averaging across scans and fields",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with independent stored MeasurementSet visibility ordinates and vector time averaging across selected scans and fields.",
+      "result": "Twelve paired text exports match 34 coordinates, the time midpoint and the source scan and field. Cases cover each boundary alone, both boundaries together, retained boundaries, channel averaging, scan and field color grouping and reverse-ordered physical rows. Three 500 by 360 pixel PNGs match both labeled layers and ten artist coordinates. A cross-field BARY transform stays pending.",
+      "casa_version": "6.7.6.14",
+      "revision": "8fc7e86358ae20807b5c9896d1e047eec7379e7e",
+      "source_revision": "8fc7e86358ae20807b5c9896d1e047eec7379e7e",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-scan-field-time-columns-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2166"
       ]
     }
   }
