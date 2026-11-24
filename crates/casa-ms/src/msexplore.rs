@@ -5894,7 +5894,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 plotms_columns::baseline_weight(weight)
             });
         let mut row_panels = std::collections::BTreeSet::<String>::new();
-        for (corr_index, corr_label) in &selected_correlations {
+        for (selected_slot, (corr_index, corr_label)) in selected_correlations.iter().enumerate() {
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
             let mut flag_samples = Vec::<bool>::new();
@@ -6014,7 +6014,13 @@ fn build_generic_visibility_scatter_with_averaging(
                             scan_number: scan_number_value,
                             spw_id,
                             baseline: baseline_token.clone(),
-                            corr_index: *corr_index,
+                            // The scalar averager receives the selected cube. The raw
+                            // slot can differ between data descriptions in the same bin.
+                            corr_index: if scalar_average {
+                                selected_slot
+                            } else {
+                                *corr_index
+                            },
                             row_time_value,
                             group,
                             bin,
@@ -6335,8 +6341,9 @@ fn build_generic_visibility_scatter_with_averaging(
         .enumerate()
         .map(|(order, row)| (row, order))
         .collect::<HashMap<_, _>>();
-    let retain_empty_panel =
-        average_operands || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
+    let retain_empty_panel = average_operands
+        || (scalar_average && collapse_baselines)
+        || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
     for panel_key in panel_order {

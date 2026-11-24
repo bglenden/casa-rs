@@ -4093,6 +4093,18 @@ values for the buffer that lacks a spectrum. Its four exported coordinates
 match the separate CASA control with `WEIGHT_SPECTRUM` removed. Both
 implementations agree on the original chronological fixture (#2231).
 
+## PlotMS can refuse a correlation stored in different physical slots
+
+Select `YY` from two baselines in the same integration and spectral window.
+The first data description records `[XX, YY]`, and the second records `[YY]`.
+CASA 6.7.6.14 with casaplotms 2.9.1 exports either baseline separately and
+returns `INVALID_ARGUMENT` when both are selected for scalar baseline averaging.
+casa-rs reads each row's selected `YY` slot and combines the two samples in
+the scalar output. Its amplitude of 1.2 and phase of 64 degrees match a CASA
+control with the original samples and `YY` in slot zero in both descriptions.
+The control also uses different `XX` values to verify correlation selection
+and preserves the original collapsed baseline metadata (#2234).
+
 ## Time-averaged clipping and TFCrop can substitute zeros for defined inputs
 
 In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping or
