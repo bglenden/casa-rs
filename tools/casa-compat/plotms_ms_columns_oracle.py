@@ -932,6 +932,8 @@ def compare_time_scan_field_columns(root, native):
         ("separate-boundaries", {}, separate, separate_ids),
         ("cross-scan", dict(vis=str(scan), avgscan=True), joined, joined_ids),
         ("cross-field", dict(vis=str(field), avgfield=True), joined, joined_ids),
+        ("cross-scan-color", dict(vis=str(scan), avgscan=True, coloraxis="scan"), joined, joined_ids),
+        ("cross-field-color", dict(vis=str(field), avgfield=True, coloraxis="field"), joined, joined_ids),
         ("cross-scan-retains-field", dict(avgscan=True), separate, separate_ids),
         ("cross-field-retains-scan", dict(avgfield=True), separate, separate_ids),
         ("cross-both", dict(avgscan=True, avgfield=True), joined, joined_ids),

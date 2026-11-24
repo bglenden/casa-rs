@@ -44,8 +44,6 @@ impl CliOptions {
 
     pub(super) fn plotms_independent_vector_time_average(&self) -> bool {
         self.avgtime.is_some()
-            && !self.avgscan
-            && !self.avgfield
             && !self.avgbaseline
             && !self.avgantenna
             && !self.avgspw
