@@ -24,6 +24,8 @@ use crate::{MeasurementSet, MsError, MsResult};
 pub struct VisibilityWriteOptions<'a> {
     /// The number of gap slots between adjacent antenna groups.
     pub baseline_gap: Option<i32>,
+    /// Whether the baseline record was read with a stride that omits rows.
+    pub sampled_baselines: bool,
     /// The declared baselines when a positioned chunk represents a subset.
     pub baseline_pairs: Option<&'a [(i32, i32)]>,
     /// The recorded correlations selected by `selectpolarization`.
@@ -55,6 +57,11 @@ impl RecordedLayout<'_> {
 
 impl WriteGrid {
     fn new(main: &Table, rows: &[usize], options: VisibilityWriteOptions<'_>) -> MsResult<Self> {
+        if options.sampled_baselines {
+            return Err(input(
+                "putdata cannot write a downsampled baseline-axis record",
+            ));
+        }
         let gap = options.baseline_gap.ok_or_else(|| {
             input("call getdata with ifraxis=True before writing a baseline-axis record")
         })?;
@@ -63,7 +70,7 @@ impl WriteGrid {
         let grid = BaselineGrid::new(&columns, options.baseline_pairs, gap)?;
         Ok(Self {
             shape: [grid.baseline_count(), grid.time_count()],
-            positions: grid.write_positions()?,
+            positions: grid.write_positions(&columns)?,
         })
     }
 }
@@ -111,7 +118,14 @@ impl<'a> VisibilityWriteRecord<'a> {
         for field in &columns {
             let shape = field.values.shape();
             let axes = shape.get(field.column.cell_rank()..).unwrap_or_default();
-            if axes != [rows.len()] && !grid.as_ref().is_some_and(|grid| axes == grid.shape) {
+            let covers_selection = match axes {
+                [count] => *count >= rows.len(),
+                [baseline, time] => grid
+                    .as_ref()
+                    .is_some_and(|grid| *baseline >= grid.shape[0] && *time >= grid.shape[1]),
+                _ => false,
+            };
+            if !covers_selection {
                 return Err(input(format!(
                     "putdata {} shape {shape:?} requires {} selected rows",
                     field.column.name(),

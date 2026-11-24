@@ -408,6 +408,10 @@ impl AttachedMs {
             return Ok(false);
         }
         let layout = self.visibility.baseline_write;
+        let total_rows = self
+            .selected_rows
+            .as_ref()
+            .map_or_else(|| main.table.row_count(), |selected| selected.len());
         let baseline_pairs = if self.visibility.iteration.is_some() {
             layout
                 .map(|(_, increment)| self.iteration_baselines(&main, increment))
@@ -417,6 +421,9 @@ impl AttachedMs {
         };
         let options = tool_visibility::VisibilityWriteOptions {
             baseline_gap: layout.map(|(gap, _)| gap),
+            sampled_baselines: layout.is_some_and(|(_, increment)| {
+                increment > 1 && (increment as u32 as usize) <= total_rows
+            }),
             baseline_pairs: baseline_pairs.as_deref(),
             polarization: self
                 .visibility

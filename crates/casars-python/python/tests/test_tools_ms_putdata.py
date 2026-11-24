@@ -75,6 +75,36 @@ def test_ms_putdata_changes_selected_rows_and_stored_correlations(
     assert_main_columns(casa, path, {"DATA": expected, "FLAG": raw["flag"]})
 
 
+def test_ms_putdata_optional_visibility_columns(baseline_fixture, native_dataset, writer_api):
+    casa, _, raw = baseline_fixture
+    writer = writer_api.ms()
+    path = str(native_dataset)
+    assert writer.open(path, nomodify=False)
+    assert writer.putdata({"corrected_data": raw["data"], "model_data": raw["data"]}) is False
+    assert writer.done()
+
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    description = table.getcoldesc("DATA")
+    assert table.addcols({"CORRECTED_DATA": description, "MODEL_DATA": description})
+    expected = {"CORRECTED_DATA": raw["data"] + 55j, "MODEL_DATA": raw["data"] - 31}
+    for name, values in expected.items():
+        assert table.putcol(name, values)
+    assert table.done()
+
+    assert writer.open(path, nomodify=False)
+    assert writer.msselect({"taql": "ANTENNA1 == 0"})
+    assert writer.selectpolarization("LL")
+    selected = writer.getdata(["corrected_data", "model_data"])
+    changed = {name: values * (-0.5 + 2j) for name, values in selected.items()}
+    assert writer.putdata(changed)
+    assert writer.done()
+    rows = np.flatnonzero(raw["antenna1"] == 0)
+    for name, values in changed.items():
+        expected[name.upper()][1:, :, rows] = values
+    assert_main_columns(casa, path, expected | {"DATA": raw["data"]})
+
+
 def test_ms_putdata_round_trips_baseline_axis_records(baseline_fixture, native_dataset, writer_api):
     casa, _, raw = baseline_fixture
     path = str(native_dataset)
@@ -96,6 +126,56 @@ def test_ms_putdata_round_trips_baseline_axis_records(baseline_fixture, native_d
         "SIGMA": raw["sigma"] * 2,
         "WEIGHT": raw["weight"] * 0.5,
     })
+
+
+@pytest.mark.parametrize("baseline,extra", [(False, (4,)), (True, (2, 0)), (True, (0, 2))])
+def test_ms_putdata_ignores_surplus_record_axes(
+    baseline_fixture, native_dataset, writer_api, baseline, extra,
+):
+    casa, _, raw = baseline_fixture
+    writer = writer_api.ms()
+    assert writer.open(str(native_dataset), nomodify=False)
+    selected = writer.getdata("data", ifraxis=baseline)["data"]
+    shape = [(0, 0), (0, 0), *((0, size) for size in extra)]
+    assert writer.putdata({"data": np.pad(selected * 2, shape, constant_values=500)})
+    assert writer.done()
+    assert_main_columns(casa, native_dataset, {"DATA": raw["data"] * 2})
+
+
+def test_ms_putdata_writes_all_rows_at_the_same_baseline_time(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, _, raw = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    for column in ("ANTENNA1", "ANTENNA2", "TIME", "TIME_CENTROID", "UVW"):
+        assert table.putcell(column, 1, table.getcell(column, 0))
+    assert table.done()
+
+    writer = writer_api.ms()
+    assert writer.open(str(native_dataset), nomodify=False)
+    arranged = writer.getdata("data", ifraxis=True)["data"]
+    assert writer.putdata({"data": arranged * 2})
+    assert writer.done()
+    expected = raw["data"] * 2
+    expected[..., 0] = expected[..., 1]
+    assert_main_columns(casa, native_dataset, {"DATA": expected})
+
+
+def test_ms_putdata_rejects_a_downsampled_grid_without_writing(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    writer = tools.ms()
+    assert writer.open(str(native_dataset), nomodify=False)
+    arranged = writer.getdata(["data", "ifr_number"], ifraxis=True, increment=2)
+    full_ifr = raw["antenna1"] * 1000 + raw["antenna2"]
+    assert np.count_nonzero(~np.isin(full_ifr, arranged["ifr_number"])) == 15
+    with pytest.raises(RuntimeError, match="downsampled baseline-axis record"):
+        writer.putdata({"data": arranged["data"] * 2})
+    assert_main_columns(casa, native_dataset, {"DATA": raw["data"]})
+    complete = writer.getdata("data", ifraxis=True)["data"]
+    assert writer.putdata({"data": complete * 2})
+    assert writer.done()
+    assert_main_columns(casa, native_dataset, {"DATA": raw["data"] * 2})
 
 
 @pytest.mark.parametrize("mode", ["channels", "stokes", "average", "empty"])
