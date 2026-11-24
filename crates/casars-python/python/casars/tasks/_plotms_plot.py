@@ -168,6 +168,8 @@ def _line(line, layer, options):
         fill = _per_series(options.get(f"{prefix}fill"), series, "fill")
         outline = _per_series(options.get(f"{prefix}outline"), series, False)
         size = _per_series(options.get(f"{prefix}size"), series, 2)
+        # Explicit PlotMS marker colors carry their own opacity.
+        line.set_alpha(None)
         line.set_marker(_MARKERS[shape.lower()])
         line.set_markersize(size)
         line.set_markeredgecolor("black" if outline else _color(color))
