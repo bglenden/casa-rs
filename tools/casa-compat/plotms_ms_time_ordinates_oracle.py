@@ -17,7 +17,8 @@ from plotms_ms_baseline_channels_oracle import make_fixture as make_channel_base
 from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
 from plotms_ms_channel_ordinates_oracle import compare_sides
 from plotms_ms_columns_oracle import (
-    compare_text, copy_ms, opened, plotms_launcher, reference, request, rows, time_average_fixture,
+    compare_ordinate_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request,
+    rows, time_average_fixture, time_scan_field_fixture,
 )
 
 
@@ -220,6 +221,38 @@ def compare(root, native):
     compare_empty_time(root, native, vis, base)
 
 
+def compare_spanned_ordinate_lists(root, native):
+    root.mkdir()
+    vis, times, scans, fields, _ = time_scan_field_fixture(root)
+    base = request(vis) | dict(field="", xaxis="time", xdatacolumn="", spw="0:1", avgtime="200",
+                               yaxis=["real"] * 3, ydatacolumn=["data", "corrected", "model"],
+                               yaxislocation=["left", "right", "left"])
+    for mode, scalar, observed in (("vector", False, 2.6), ("scalar", True, 2.8)):
+        for name, bounds, spans_scans in (
+            ("scans", dict(vis=str(scans), avgscan=True), True),
+            ("fields", dict(vis=str(fields), avgfield=True), False),
+            ("scans-and-fields", dict(avgscan=True, avgfield=True), True),
+        ):
+            controls = base | bounds | dict(scalar=scalar)
+            label = f"{mode}-{name}-ordinate-list"
+            expected, actual = (root / f"{label}.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+            selected = rows(expected)
+            scan = "-1" if scalar and spans_scans else "1"
+            assert [(point[3], point[4], point[12]) for point in selected] == [(scan, "0", "XX")] * 3
+            np.testing.assert_allclose([float(point[0]) for point in selected], times[0] + 55,
+                                       rtol=0, atol=.00051)
+            np.testing.assert_allclose([float(point[1]) for point in selected], [observed, 28., 280.], rtol=1.2e-5)
+            assert native(**controls, plotfile=str(actual), expformat="txt") is None
+            assert compare_text(actual, expected) == 3
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], times[0] + 55,
+                                       rtol=0, atol=.00051)
+            print(f"{label}: 3 matching averaged visibility ordinates", flush=True)
+            if scalar and name == "scans-and-fields":
+                compare_ordinate_figure(root, label, native, controls, "Time (MJD seconds)",
+                                        ["Real", "Real:corrected", "Real:model"])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -238,6 +271,7 @@ def main():
 
     with chdir(root), plotms_launcher(args.app_run):
         compare(root, native)
+        compare_spanned_ordinate_lists(root / "spans", native)
 
 
 if __name__ == "__main__":
