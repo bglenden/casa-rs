@@ -44901,7 +44901,7 @@
         {
           "name": "timerange",
           "concept": {
-            "id": "ephemeris.time_range",
+            "id": "solar_system.ephemeris.time_range",
             "semantic_revision": 1
           },
           "order": 2,
@@ -44935,6 +44935,10 @@
               "label": "Time Range",
               "group": "Input"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#2159",
+            "reason": "Horizons start and stop times use calendar, JD or MJD syntax, distinct from MeasurementSet row selection."
           }
         },
         {
@@ -44979,7 +44983,7 @@
         {
           "name": "outfile",
           "concept": {
-            "id": "ephemeris.output_table",
+            "id": "solar_system.ephemeris.output_table",
             "semantic_revision": 1
           },
           "order": 4,
@@ -45013,6 +45017,10 @@
               "label": "Output Ephemeris Table",
               "group": "Output"
             }
+          },
+          "reviewed_homonym": {
+            "review_id": "#2159",
+            "reason": "The product is a MeasComet ephemeris table."
           }
         },
         {
