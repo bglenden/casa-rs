@@ -488,6 +488,12 @@ pub(super) struct VectorTimeWeights<'a> {
     pub(super) equal_channel_means: bool,
 }
 
+pub(super) struct ScalarTimeSample<'a> {
+    pub(super) row_weight: f64,
+    pub(super) channel_spectra: Option<[Option<&'a FloatGrid>; 2]>,
+    pub(super) conjugate: bool,
+}
+
 #[derive(Clone, Debug)]
 struct TimeChannelSample {
     operands: TimeProjection,
@@ -666,12 +672,11 @@ impl AveragedVisibility {
         &mut self,
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
-        row_weight: f64,
-        channel_spectra: Option<[Option<&FloatGrid>; 2]>,
+        options: ScalarTimeSample<'_>,
         corr: usize,
         bin: &ChannelBin,
     ) -> bool {
-        let mut sample = if let Some(spectra) = channel_spectra {
+        let mut sample = if let Some(spectra) = options.channel_spectra {
             let Some((projection, operands)) =
                 channel_averaged_grid(grid, flags, spectra, corr, bin)
             else {
@@ -689,12 +694,17 @@ impl AveragedVisibility {
             }
             TimeProjection::channel_sample(grid, [None; 2], corr, bin.start)
         };
-        let weight = row_weight as f32;
+        let weight = options.row_weight as f32;
         // The scalar reducer packs the channel means' amplitude and phase
         // into the two Float components before accumulating in time.
-        sample.weighted_sums = sample
-            .weighted_sums
-            .map(|value| Complex32::new(value.norm(), value.arg()) * weight);
+        sample.weighted_sums = sample.weighted_sums.map(|value| {
+            let value = if options.conjugate {
+                value.conj()
+            } else {
+                value
+            };
+            Complex32::new(value.norm(), value.arg()) * weight
+        });
         sample.total_weights = [weight; 2];
         self.add_time_projection(sample);
         true
