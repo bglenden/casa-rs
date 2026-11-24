@@ -334,7 +334,8 @@ fn run_task(
                         && options.secondary_y_data_column.is_some()
                         && !iterated_averaging
                         && !options.plotms_independent_average(
-                            atmosphere.is_none() && !options.additional_ordinates.is_empty(),
+                            atmosphere.is_none()
+                                && (options.avgspw || !options.additional_ordinates.is_empty()),
                         ),
                     options.supports_channel_derived(columns)
                         || options.supports_extended_derived(columns),
