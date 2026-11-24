@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
+use casa_ms::tool_iteration::ToolIteration;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
@@ -14,6 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyInt, PyList, PyListMethods, PyString};
 
 use super::attachment_info::{TableFiles, TableStamp};
+use super::iteration::VisibilityIteration;
 use super::metadata_link::{MetadataLink, MetadataSnapshot};
 use super::owned_record::visibility_record;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -22,17 +24,19 @@ use crate::convert::value::CasaValue;
 #[derive(Default)]
 pub(super) struct VisibilityState {
     initialized: bool,
-    main: Option<VisibilityMain>,
+    main: Option<Arc<VisibilityMain>>,
     time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
     channels: Option<VisibilityChannels>,
     polarization: Option<Arc<VisibilityPolarization>>,
+    pub(super) iteration: Option<VisibilityIteration>,
 }
 
-struct VisibilityMain {
+pub(super) struct VisibilityMain {
     table: Table,
     members: Vec<Table>,
     reference: Option<PlainReferenceRead>,
     publication: Vec<(TableFiles, Option<TableStamp>)>,
+    plain: bool,
 }
 
 impl VisibilityState {
@@ -40,10 +44,28 @@ impl VisibilityState {
         self.initialized = false;
         self.channels = None;
         self.polarization = None;
+        if let Some(iteration) = &mut self.iteration {
+            iteration.cursor.reset_blocking();
+            iteration.conversion = None;
+        }
     }
 
     pub(super) fn set_initialized(&mut self, initialized: bool) {
         self.initialized = initialized;
+    }
+
+    fn set_polarization(&mut self, plan: Option<Arc<VisibilityPolarization>>) -> PyResult<()> {
+        if let Some(iteration) = &mut self.iteration {
+            iteration.conversion = plan
+                .as_deref()
+                .filter(|plan| plan.is_conversion())
+                .zip(iteration.polarization.as_deref())
+                .map(|(live, captured)| live.over_recorded_selection(captured).map(Arc::new))
+                .transpose()
+                .map_err(runtime_error)?;
+        }
+        self.polarization = plan;
+        Ok(())
     }
 
     fn main(&mut self, path: &Path) -> PyResult<&VisibilityMain> {
@@ -53,9 +75,9 @@ impl VisibilityState {
                 .all(|(files, stamp)| stamp.is_some() && files.stamp() == *stamp)
         });
         if !current {
-            self.main = Some(VisibilityMain::open(path)?);
+            self.main = Some(Arc::new(VisibilityMain::open(path)?));
         }
-        Ok(self.main.as_ref().expect("MAIN table was opened"))
+        Ok(self.main.as_deref().expect("MAIN table was opened"))
     }
 }
 
@@ -70,9 +92,9 @@ impl VisibilityMain {
             publication.push((files, stamp));
         })
         .map_err(runtime_error)?;
-        let (members, reference) = match Table::immediate_part_names(path, path)
-            .map_err(runtime_error)?
-        {
+        let parts = Table::immediate_part_names(path, path).map_err(runtime_error)?;
+        let plain = matches!(&parts, TablePartNames::Plain(_));
+        let (members, reference) = match parts {
             TablePartNames::Plain(_) => (Vec::new(), None),
             TablePartNames::Reference(_) => (
                 Vec::new(),
@@ -85,7 +107,27 @@ impl VisibilityMain {
             members,
             reference,
             publication,
+            plain,
         })
+    }
+
+    fn verify_iterator_layout(&self) -> PyResult<()> {
+        // A direct reference carries its own saved row and column projection.
+        // Its physical parent still needs to describe the same rows.
+        let dependencies = if self.reference.is_some() {
+            &self.publication[1..]
+        } else {
+            &self.publication[..]
+        };
+        if !dependencies
+            .iter()
+            .all(|(files, stamp)| files.same_descriptor(*stamp))
+        {
+            return Err(runtime_error(
+                "MeasurementSet iterator row layout changed. Call iterinit again.",
+            ));
+        }
+        Ok(())
     }
 
     fn open_plain_members(paths: Vec<PathBuf>) -> PyResult<Vec<Table>> {
@@ -115,11 +157,21 @@ impl VisibilityMain {
                 *row = selected[*row];
             }
         }
+        self.read_rows(&rows, items, metadata, options)
+    }
+
+    fn read_rows(
+        &self,
+        rows: &[usize],
+        items: &[String],
+        metadata: Option<&MeasurementSet>,
+        options: tool_visibility::VisibilityReadOptions<'_>,
+    ) -> PyResult<CasaValue> {
         let record = tool_visibility::read_tool_visibility(
             &self.table,
             &self.members,
             self.reference.as_ref(),
-            &rows,
+            rows,
             items,
             metadata,
             options,
@@ -145,9 +197,11 @@ impl PyMsTool {
         let options = tool_visibility::VisibilityReadOptions {
             average,
             baseline_gap: ifraxis.then_some(ifraxisgap as i32),
+            baseline_pairs: None,
             channels: None,
             polarization: None,
             time_measures: None,
+            iterator_read: false,
         };
         let reply = py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
@@ -214,6 +268,162 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    pub(super) fn initialize_public_iteration(
+        &mut self,
+        columns: &[String],
+        interval: f64,
+        maxrows: i64,
+        defaults: bool,
+    ) -> PyResult<bool> {
+        self.visibility.iteration = None;
+        let link = self.metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        let main = self.visibility.main(&self.path)?;
+        let cursor = ToolIteration::new(
+            &main.table,
+            main.reference.as_ref(),
+            self.selected_rows.as_deref(),
+            columns,
+            interval,
+            maxrows,
+            defaults,
+        )
+        .map_err(runtime_error)?;
+        let preserve_layout = !main.plain;
+        let preserve_metadata = main.reference.is_some();
+        link.verify_directory().map_err(runtime_error)?;
+        let Some(cursor) = cursor else {
+            return Ok(false);
+        };
+        let layout = preserve_layout.then(|| {
+            self.visibility
+                .main
+                .as_ref()
+                .expect("MAIN was opened")
+                .clone()
+        });
+        let metadata = preserve_metadata
+            .then(|| link.snapshot(None).map_err(runtime_error))
+            .transpose()?;
+        self.visibility.iteration = Some(VisibilityIteration {
+            cursor,
+            layout,
+            metadata,
+            channels: self.visibility.channels,
+            polarization: self
+                .visibility
+                .polarization
+                .clone()
+                .filter(|plan| !plan.is_conversion()),
+            conversion: None,
+        });
+        Ok(true)
+    }
+
+    fn getdata_iteration(
+        &mut self,
+        link: &MetadataLink,
+        items: &[String],
+        increment: i64,
+        options: tool_visibility::VisibilityReadOptions<'_>,
+    ) -> PyResult<CasaValue> {
+        let axis_info = items
+            .iter()
+            .any(|item| item.eq_ignore_ascii_case("axis_info"));
+        let snapshot = if !self.visibility.initialized {
+            let Some(snapshot) = self.initialize_visibility(link)? else {
+                return Ok(CasaValue::empty_record());
+            };
+            Some(snapshot)
+        } else if axis_info
+            && self
+                .visibility
+                .iteration
+                .as_ref()
+                .is_some_and(|iteration| iteration.metadata.is_none())
+        {
+            Some(link.snapshot(None).map_err(runtime_error)?)
+        } else {
+            None
+        };
+        if self
+            .visibility
+            .iteration
+            .as_ref()
+            .is_some_and(|iteration| iteration.layout.is_none())
+        {
+            self.visibility.main(&self.path)?;
+        }
+        let iteration = self.visibility.iteration.as_ref().expect("active iterator");
+        let main = if let Some(layout) = &iteration.layout {
+            layout.verify_iterator_layout()?;
+            layout
+        } else {
+            self.visibility.main.as_ref().expect("MAIN was opened")
+        };
+        let rows = iteration.cursor.rows().map_err(runtime_error)?;
+        let polarization = iteration
+            .conversion
+            .as_deref()
+            .or_else(|| {
+                self.visibility
+                    .polarization
+                    .as_deref()
+                    .filter(|plan| plan.is_conversion())
+            })
+            .or(iteration.polarization.as_deref());
+        let baseline_pairs = options
+            .baseline_gap
+            .is_some()
+            .then(|| self.iteration_baselines(main, increment))
+            .transpose()?;
+        let reply = main.read_rows(
+            rows,
+            items,
+            iteration
+                .metadata
+                .as_ref()
+                .or(snapshot.as_ref())
+                .map(|snapshot| &snapshot.ms),
+            tool_visibility::VisibilityReadOptions {
+                channels: iteration.channels,
+                polarization,
+                baseline_pairs: baseline_pairs.as_deref(),
+                time_measures: axis_info.then_some(&self.visibility.time_measures),
+                iterator_read: true,
+                ..options
+            },
+        )?;
+        link.verify_directory().map_err(runtime_error)?;
+        Ok(reply)
+    }
+
+    fn iteration_baselines(
+        &self,
+        main: &VisibilityMain,
+        increment: i64,
+    ) -> PyResult<Vec<(i32, i32)>> {
+        let selected = self.selected_rows.as_deref();
+        let count = selected.map_or_else(|| main.table.row_count(), <[usize]>::len);
+        let sampled = if increment > 1 && (increment as u32 as usize) <= count {
+            let mut rows = sampled_rows(count, count, increment)?;
+            if let Some(selected) = selected {
+                for row in &mut rows {
+                    *row = selected[*row];
+                }
+            }
+            Some(rows)
+        } else {
+            None
+        };
+        tool_visibility::tool_baseline_pairs(
+            &main.table,
+            main.reference.as_ref(),
+            sampled.as_deref().or(selected),
+        )
+        .map_err(runtime_error)
+    }
+
     fn select_visibility_polarization(&mut self, wanted: &[String]) -> PyResult<bool> {
         let link = self.metadata_link();
         if link.row_count().map_err(runtime_error)? == 0 {
@@ -250,7 +460,7 @@ impl AttachedMs {
                         .as_deref()
                         .is_some_and(VisibilityPolarization::is_conversion)
                     {
-                        self.visibility.polarization = None;
+                        self.visibility.set_polarization(None)?;
                     }
                     return Ok(false);
                 };
@@ -259,7 +469,7 @@ impl AttachedMs {
             }
             Err(_) => return Ok(false),
         };
-        self.visibility.polarization = Some(Arc::new(plan));
+        self.visibility.set_polarization(Some(Arc::new(plan)))?;
         Ok(true)
     }
 
@@ -323,6 +533,9 @@ impl AttachedMs {
             .is_some_and(<[usize]>::is_empty)
         {
             return Ok(CasaValue::empty_record());
+        }
+        if self.visibility.iteration.is_some() {
+            return self.getdata_iteration(&link, items, increment, options);
         }
         let initialized = self.visibility.initialized;
         let polarization = self.visibility.polarization.clone();
@@ -397,7 +610,10 @@ fn requested_items(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
     requested_strings(value, "items")
 }
 
-fn requested_strings(value: Option<&Bound<'_, PyAny>>, argument: &str) -> PyResult<Vec<String>> {
+pub(super) fn requested_strings(
+    value: Option<&Bound<'_, PyAny>>,
+    argument: &str,
+) -> PyResult<Vec<String>> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };

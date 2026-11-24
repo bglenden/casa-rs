@@ -77,6 +77,20 @@ impl TableFiles {
         }
     }
 
+    pub(super) fn same_descriptor(&self, stamp: Option<TableStamp>) -> bool {
+        #[cfg(unix)]
+        {
+            stamp.is_some_and(|stamp| {
+                FileStamp::read(&self.control).is_ok_and(|now| now == stamp.control)
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = stamp;
+            true
+        }
+    }
+
     #[cfg(unix)]
     fn read_stamp(&self) -> io::Result<TableStamp> {
         let control = FileStamp::read(&self.control)?;

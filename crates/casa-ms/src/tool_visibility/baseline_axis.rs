@@ -30,6 +30,7 @@ pub(super) struct BaselineGrid {
 impl BaselineGrid {
     pub(super) fn new(
         columns: &HashMap<String, RequiredScalarColumnValues>,
+        selection: Option<&[(i32, i32)]>,
         gap: i32,
     ) -> MsResult<Self> {
         let (
@@ -52,7 +53,11 @@ impl BaselineGrid {
             .copied()
             .zip(second.iter().copied())
             .collect::<Vec<_>>();
-        let ordered = row_baselines.iter().copied().collect::<BTreeSet<_>>();
+        let ordered = selection
+            .unwrap_or(&row_baselines)
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
         let mut previous = None;
         let mut baseline_count = 0_usize;
         let mut baselines = BTreeMap::new();
@@ -94,7 +99,9 @@ impl BaselineGrid {
                 times.push(time[row]);
                 first_rows.push(row);
             }
-            occupied.push((time_start + baselines[&row_baselines[row]], row));
+            if let Some(&baseline) = baselines.get(&row_baselines[row]) {
+                occupied.push((time_start + baseline, row));
+            }
         }
         occupied.sort_unstable_by_key(|&(slot, row)| (slot, Reverse(row)));
         occupied.dedup_by_key(|entry| entry.0);

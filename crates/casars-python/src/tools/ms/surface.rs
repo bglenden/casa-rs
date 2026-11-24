@@ -224,7 +224,7 @@ const METHODS: &[Method] = &[
     ),
     method("ismultims", &[], R::Any, Yes),
     method("iswritable", &[], R::Any, Yes),
-    method("iterend", &[], R::Any, No),
+    method("iterend", &[], R::Bool, Yes),
     method("iterendold", &[], R::Any, No),
     method(
         "iterinit",
@@ -234,8 +234,8 @@ const METHODS: &[Method] = &[
             param("maxrows", K::Int, Int(0)),
             param("adddefaultsortcolumns", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "iterinitold",
@@ -248,9 +248,9 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("iternext", &[], R::Any, No),
+    method("iternext", &[], R::Bool, Yes),
     method("iternextold", &[], R::Any, No),
-    method("iterorigin", &[], R::Any, No),
+    method("iterorigin", &[], R::Bool, Yes),
     method("iteroriginold", &[], R::Any, No),
     method(
         "lister",

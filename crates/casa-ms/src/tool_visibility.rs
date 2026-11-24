@@ -22,12 +22,14 @@ mod baseline_axis;
 mod channel_axis;
 mod concatenation;
 mod polarization_axis;
+mod projection;
 use averaging::RowAverage;
 use baseline_axis::BaselineGrid;
 pub use channel_axis::VisibilityChannels;
 use channel_axis::{ChannelWeightKind, ChannelWeights};
 use concatenation::{MemberRows, concatenate_arrays, concatenate_scalars, member_rows};
 pub use polarization_axis::VisibilityPolarization;
+pub(crate) use projection::read_reference_scalars;
 
 /// Determine whether CASA's implicit initialization needs to narrow this view
 /// to data description zero. The iterator's row shape comes from its logical
@@ -151,6 +153,12 @@ pub struct VisibilityReadOptions<'a> {
     /// Place rows on sorted baseline and integration axes with this many gaps
     /// between first-antenna groups. A negative gap is treated as zero.
     pub baseline_gap: Option<i32>,
+    /// Use these antenna pairs for the baseline axis. An iterator reads only
+    /// the current chunk while retaining the attachment's baseline coverage.
+    pub baseline_pairs: Option<&'a [(i32, i32)]>,
+    /// Read a positioned visibility buffer, preserving its iteration order
+    /// and applying the visibility iterator's observed-data conventions.
+    pub iterator_read: bool,
     /// Channel selection applied on each logical row before visibility products.
     pub channels: Option<VisibilityChannels>,
     /// Correlation selection or Stokes projection on the active row view.
@@ -180,11 +188,16 @@ pub fn read_tool_visibility(
     let VisibilityReadOptions {
         average,
         baseline_gap,
+        baseline_pairs,
+        iterator_read,
         channels,
         polarization,
         time_measures,
     } = options;
-    let ordered_rows = if (channels.is_some() || polarization.is_some()) && baseline_gap.is_none() {
+    let ordered_rows = if !iterator_read
+        && (channels.is_some() || polarization.is_some())
+        && baseline_gap.is_none()
+    {
         rows_by_time(main, rows)?
     } else {
         Cow::Borrowed(rows)
@@ -208,7 +221,7 @@ pub fn read_tool_visibility(
         options,
     )?;
     let grid = baseline_gap
-        .map(|gap| BaselineGrid::new(&read.scalar_columns, gap))
+        .map(|gap| BaselineGrid::new(&read.scalar_columns, baseline_pairs, gap))
         .transpose()?;
     let mut fields = BTreeMap::new();
     if names.contains("axis_info") {
@@ -260,6 +273,46 @@ pub fn read_tool_visibility(
     ))
 }
 
+/// Return the sorted distinct baselines of the given MAIN row selection.
+/// Antenna pairs retain the order of the recorded baseline.
+///
+/// # Errors
+/// The ANTENNA1 and ANTENNA2 columns must be readable integer columns.
+pub fn tool_baseline_pairs(
+    main: &Table,
+    reference: Option<&PlainReferenceRead>,
+    rows: Option<&[usize]>,
+) -> MsResult<Vec<(i32, i32)>> {
+    let names = ["ANTENNA1", "ANTENNA2"];
+    let mut columns = match (reference, rows) {
+        (Some(reference), rows) => {
+            let all_rows;
+            let rows = if let Some(rows) = rows {
+                rows
+            } else {
+                all_rows = (0..main.row_count()).collect::<Vec<_>>();
+                &all_rows
+            };
+            read_reference_scalars(reference, &names, &reference.parent_rows(rows)?)?
+        }
+        (None, Some(rows)) => main.required_scalar_columns_owned_for_rows(&names, rows)?,
+        (None, None) => main.required_scalar_columns_owned(&names)?,
+    };
+    let (
+        Some(RequiredScalarColumnValues::Int32(first)),
+        Some(RequiredScalarColumnValues::Int32(second)),
+    ) = (columns.remove(names[0]), columns.remove(names[1]))
+    else {
+        return Err(input("invalid antenna ID column type"));
+    };
+    Ok(first
+        .into_iter()
+        .zip(second)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
 fn rows_by_time<'a>(main: &Table, rows: &'a [usize]) -> MsResult<Cow<'a, [usize]>> {
     if rows.len() < 2 {
         return Ok(Cow::Borrowed(rows));
@@ -295,6 +348,7 @@ struct VisibilityRead<'a> {
     reference: Option<ReferenceRows<'a>>,
     scalar_columns: HashMap<String, RequiredScalarColumnValues>,
     baseline_axis: bool,
+    iterator_read: bool,
     channels: Option<VisibilityChannels>,
     polarization: Option<&'a VisibilityPolarization>,
     raw_flags: OnceCell<ArrayD<bool>>,
@@ -389,6 +443,8 @@ impl<'a> VisibilityRead<'a> {
             HashMap::new()
         } else if !members.is_empty() {
             concatenate_scalars(&members, &columns)?
+        } else if let Some(reference) = &reference {
+            read_reference_scalars(reference.read, &columns, &reference.rows)?
         } else if plain && !rows.is_empty() {
             main.required_scalar_columns_owned_for_rows(&columns, rows)?
         } else {
@@ -411,6 +467,7 @@ impl<'a> VisibilityRead<'a> {
             reference,
             scalar_columns,
             baseline_axis,
+            iterator_read: options.iterator_read,
             channels,
             polarization: options.polarization,
             raw_flags: OnceCell::new(),
@@ -627,7 +684,7 @@ impl<'a> VisibilityRead<'a> {
                 .zip(second)
                 .map(|(&left, &right)| left.wrapping_mul(1000).wrapping_add(right))
                 .collect::<Vec<_>>();
-            if self.channels.is_none() && self.polarization.is_none() {
+            if !self.iterator_read && self.channels.is_none() && self.polarization.is_none() {
                 ifrs.sort_unstable();
                 ifrs.dedup();
             }
@@ -863,20 +920,22 @@ impl<'a> VisibilityRead<'a> {
                     .into_iter()
                     .all(Option::is_none);
             let convert = self.polarization.filter(|plan| plan.is_conversion());
-            let data =
-                if (self.baseline_axis || self.channels.is_some() || self.polarization.is_some())
-                    && has_float
-                    && source == "DATA"
-                {
-                    // The CASA visibility iterator uses FLOAT_DATA for observed
-                    // products whenever that column exists.
-                    if float_cells.is_none() {
-                        float_cells = Some(self.raw_matrix_cells("FLOAT_DATA", false)?);
-                    }
-                    self.observed_float(float_cells.as_ref().expect("FLOAT_DATA was read"))?
-                } else {
-                    self.matrix_cells(source, only_raw && !reduce && convert.is_none())?
-                };
+            let data = if (self.iterator_read
+                || self.baseline_axis
+                || self.channels.is_some()
+                || self.polarization.is_some())
+                && has_float
+                && source == "DATA"
+            {
+                // The CASA visibility iterator uses FLOAT_DATA for observed
+                // products whenever that column exists.
+                if float_cells.is_none() {
+                    float_cells = Some(self.raw_matrix_cells("FLOAT_DATA", false)?);
+                }
+                self.observed_float(float_cells.as_ref().expect("FLOAT_DATA was read"))?
+            } else {
+                self.matrix_cells(source, only_raw && !reduce && convert.is_none())?
+            };
             let data = if uses_model {
                 let model_values = self.matrix_cells("MODEL_DATA", false)?;
                 let (ArrayValue::Complex32(mut observed), ArrayValue::Complex32(expected)) =
