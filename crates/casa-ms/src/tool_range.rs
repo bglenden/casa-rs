@@ -2,10 +2,11 @@
 //! Metadata and visibility ranges over the public MS tool's selected rows.
 
 use casa_coordinates::StokesType;
-use casa_tables::{PlainReferenceRead, RequiredScalarColumnValues, Table, TableOptions};
+use casa_tables::{PlainReferenceRead, RequiredScalarColumnValues, Table};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{Array1, ArrayD, IxDyn, ShapeBuilder};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::ops::Deref;
 
 use crate::subtables::{
     FieldDirectionColumn, MsAntenna, MsDataDescription, MsField, MsPolarization, MsSpectralWindow,
@@ -15,7 +16,7 @@ use crate::tool_visibility::{
     VisibilityReadOptions, concatenate_scalars, member_rows, read_reference_scalars,
     read_tool_visibility,
 };
-use crate::{MeasurementSet, MsError, MsResult, SubtableId};
+use crate::{MsError, MsResult, SubtableId};
 
 mod samples;
 use samples::RangeSamples;
@@ -68,12 +69,13 @@ impl ToolRangeRequest {
     ///
     /// # Errors
     /// A requested column, descriptor, or subtable cannot be read.
-    pub fn read(
+    pub fn read<T: Deref<Target = [Table]>>(
         &self,
         main: &Table,
         members: &[Table],
         reference: Option<&PlainReferenceRead>,
         rows: &[usize],
+        read_linked: impl FnOnce(&[SubtableId]) -> MsResult<HashMap<SubtableId, T>>,
     ) -> MsResult<RecordValue> {
         if rows.is_empty() {
             return Ok(RecordValue::new(Vec::new()));
@@ -95,22 +97,12 @@ impl ToolRangeRequest {
                 SubtableId::Polarization,
             ]);
         }
-        let links = if ids.is_empty() {
-            Default::default()
-        } else {
-            let owner = reference.map_or(main, PlainReferenceRead::parent);
-            MeasurementSet::linked_subtables(owner, &ids)?
-        };
-        let linked_subtable = |id: SubtableId| -> MsResult<Vec<Table>> {
-            let paths = links
+        let linked = read_linked(&ids)?;
+        let linked_subtable = |id: SubtableId| -> MsResult<&[Table]> {
+            linked
                 .get(&id)
-                .ok_or_else(|| MsError::MissingSubtable(id.name().into()))?;
-            // C++ can publish in-place storage changes without touching the
-            // control or lock files. Open each required subtable for this read.
-            paths
-                .iter()
-                .map(|path| Table::open(TableOptions::new(path)).map_err(MsError::from))
-                .collect()
+                .map(Deref::deref)
+                .ok_or_else(|| MsError::MissingSubtable(id.name().into()))
         };
         name_ranges(&linked_subtable, &self.names, &mut result)?;
         if spectral {
@@ -118,7 +110,7 @@ impl ToolRangeRequest {
             let description = linked_subtable(SubtableId::DataDescription)?;
             let windows = linked_subtable(SubtableId::SpectralWindow)?;
             let polarization = linked_subtable(SubtableId::Polarization)?;
-            let axes = RangeSpectralAxes::new(&description, &windows, &polarization, descriptions)?;
+            let axes = RangeSpectralAxes::new(description, windows, polarization, descriptions)?;
             axes.selected_items(&self.names, &mut result)?;
             if axes.has_common_shape() && self.wants_samples {
                 result.extend(RangeSamples::new(main, &self.names, self.use_flags).read(
@@ -303,8 +295,8 @@ fn project_scalar_ranges(
     }
 }
 
-fn name_ranges(
-    linked_subtable: &impl Fn(SubtableId) -> MsResult<Vec<Table>>,
+fn name_ranges<'a>(
+    linked_subtable: &impl Fn(SubtableId) -> MsResult<&'a [Table]>,
     want: &BTreeSet<String>,
     result: &mut BTreeMap<String, Value>,
 ) -> MsResult<()> {

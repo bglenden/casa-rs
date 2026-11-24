@@ -142,6 +142,25 @@ impl PlainReferenceRead {
 }
 
 impl Table {
+    /// Drop cached cells on an unmodified lazy read handle while preserving
+    /// the parsed descriptor. The caller must first check that the table
+    /// layout and row count are current. When this returns false, reopen the
+    /// table to read fresh cells.
+    #[doc(hidden)]
+    pub fn try_clear_read_cells(&mut self) -> bool {
+        // These storage managers read payloads using the current data files
+        // and do not retain a separate per-file index in the table handle.
+        if !self.dm_info.iter().all(|manager| {
+            matches!(
+                manager.dm_type.as_str(),
+                "StandardStMan" | "IncrementalStMan" | "StManAipsIO"
+            )
+        }) {
+            return false;
+        }
+        self.inner.try_clear_read_cells()
+    }
+
     /// Read the direct part names reported by casacore's `Table::getPartNames`.
     ///
     /// Read the descriptor at `path` and resolve relative links against the

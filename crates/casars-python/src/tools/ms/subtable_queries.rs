@@ -2,7 +2,8 @@
 //! FIELD and spectral-window metadata on the current MS view.
 
 use std::cell::{Ref, RefCell};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::path::PathBuf;
 
 use casa_ms::subtables::{
     FieldDirectionColumn, MetadataDirection, MsDataDescription, MsField, MsPolarization,
@@ -21,10 +22,43 @@ use crate::tools::{LogLine, emit};
 
 #[derive(Default)]
 pub(super) struct Subtables {
+    antenna: Subtable,
     field: Subtable,
     data_description: Subtable,
     spectral_window: Subtable,
     polarization: Subtable,
+}
+
+impl Subtables {
+    pub(super) fn read_range(
+        &self,
+        main: &Table,
+        ids: &[SubtableId],
+    ) -> MsResult<HashMap<SubtableId, Ref<'_, [Table]>>> {
+        let mut links = None;
+        ids.iter()
+            .map(|&id| {
+                let subtable = match id {
+                    SubtableId::Antenna => &self.antenna,
+                    SubtableId::DataDescription => &self.data_description,
+                    SubtableId::Field => &self.field,
+                    SubtableId::Polarization => &self.polarization,
+                    SubtableId::SpectralWindow => &self.spectral_window,
+                    _ => return Err(MsError::MissingSubtable(id.name().into())),
+                };
+                let tables = subtable.read_using(true, || {
+                    if links.is_none() {
+                        links = Some(MeasurementSet::linked_subtables(main, ids)?);
+                    }
+                    links
+                        .as_mut()
+                        .and_then(|links| links.remove(&id))
+                        .ok_or_else(|| MsError::MissingSubtable(id.name().into()))
+                })?;
+                Ok((id, tables))
+            })
+            .collect()
+    }
 }
 
 #[derive(Default)]
@@ -37,16 +71,29 @@ struct SubtableSnapshot {
 
 impl Subtable {
     fn read(&self, main: &Table, id: SubtableId) -> MsResult<Ref<'_, [Table]>> {
-        let current = self.0.borrow().as_ref().is_some_and(|snapshot| {
+        self.read_using(false, || MeasurementSet::linked_subtable_paths(main, id))
+    }
+
+    fn read_using(
+        &self,
+        refresh_cells: bool,
+        paths: impl FnOnce() -> MsResult<Vec<PathBuf>>,
+    ) -> MsResult<Ref<'_, [Table]>> {
+        let mut cached = self.0.borrow_mut();
+        let current = cached.as_mut().is_some_and(|snapshot| {
             snapshot.publication.len() == snapshot.tables.len()
                 && snapshot
                     .publication
                     .iter()
                     .all(|(files, stamp)| files.stamp() == Some(*stamp))
+                // The descriptor can stay current when casacore writes a
+                // cell in place without updating table.dat or table.lock.
+                && (!refresh_cells || snapshot.tables.iter_mut().all(Table::try_clear_read_cells))
         });
         if !current {
-            *self.0.borrow_mut() = Some(Self::open(main, id)?);
+            *cached = Some(Self::open(paths()?)?);
         }
+        drop(cached);
         Ok(Ref::map(self.0.borrow(), |snapshot| {
             snapshot
                 .as_ref()
@@ -56,8 +103,7 @@ impl Subtable {
         }))
     }
 
-    fn open(main: &Table, id: SubtableId) -> MsResult<SubtableSnapshot> {
-        let paths = MeasurementSet::linked_subtable_paths(main, id)?;
+    fn open(paths: Vec<PathBuf>) -> MsResult<SubtableSnapshot> {
         let mut tables = Vec::with_capacity(paths.len());
         let mut publication = Vec::with_capacity(paths.len());
         for path in paths {
