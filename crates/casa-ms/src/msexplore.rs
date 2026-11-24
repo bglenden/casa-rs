@@ -5475,6 +5475,11 @@ fn build_generic_visibility_scatter_with_averaging(
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let scalar_channels = (scalar_average || scalar_spw_time) && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
+    // The unbinned antenna reducer uses the selected visibility cube flags.
+    let antenna_cube_flags = antenna_average
+        && spec.y_axes.len() > 2
+        && spec.averaging.avgtime.is_none()
+        && !average_channels;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
     let direct_time_projection = uncalibrated
@@ -5742,6 +5747,7 @@ fn build_generic_visibility_scatter_with_averaging(
             && !include_row_flagged_points
             && time_bins.is_none()
             && !collapse_baselines
+            && !antenna_cube_flags
             && !spw_average
             && !scalar_intervals;
         if skip_flagged_row && !antenna_average {

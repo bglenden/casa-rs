@@ -48,6 +48,7 @@ def compare_antenna_ordinate_lists(root, native):
             figure = controls | overrides | dict(xlabel="Channel bin")
             compare_sides(root, native, figure, expected_x="Channel bin", name=name)
     compare_antenna_ordinate_edges(root, native, vis, controls)
+    compare_antenna_row_flags(root, native, vis, controls)
 
 
 def compare_antenna_ordinate_edges(root, native, vis, controls):
@@ -100,6 +101,33 @@ def compare_antenna_ordinate_edges(root, native, vis, controls):
             raise AssertionError(f"PlotMS accepted the pending antenna-averaged list with {name}")
         assert not output.exists()
         print(f"antenna-list-{name}: existing refusal preserved", flush=True)
+
+
+def compare_antenna_row_flags(root, native, source, controls):
+    for name, cube_flagged, count in (("row-only", False, 162), ("row-and-cube", True, 0)):
+        vis = root / f"{name}.ms"
+        copy_ms(source, vis)
+        with opened(vis, True) as table:
+            row_flags = table.getcol("FLAG_ROW")
+            row_flags[:] = True
+            table.putcol("FLAG_ROW", row_flags)
+            if cube_flagged:
+                flags = table.getcol("FLAG")
+                flags[:] = True
+                table.putcol("FLAG", flags)
+        for mode, scalar in (("vector", False), ("scalar", True)):
+            case = f"{mode}-{name}"
+            options = controls | dict(vis=str(vis), scalar=scalar, expformat="txt")
+            expected, actual = (root / f"{case}.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**options, plotfile=str(expected)) is None
+            assert len(rows(expected)) == count
+            assert native(**options, plotfile=str(actual)) is None
+            if count:
+                assert compare_text(actual, expected) == count
+            else:
+                assert expected.read_text().count("# No data to export") == 3
+                assert actual.read_bytes() == expected.read_bytes()
+            print(f"{case}: {count if count else 'three empty sections'} matched", flush=True)
 
 
 def main():
