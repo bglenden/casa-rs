@@ -6,6 +6,7 @@ import pytest
 from casars import tools
 from test_tools_ms import pinned_casa
 from test_tools_ms_selection_indices import two_spws_dataset
+from test_tools_ms_visibility_channel import add_description
 from test_tools_ms_visibility_ifraxis import baseline_fixture
 from test_tools_msmetadata import measures, native_dataset
 
@@ -318,4 +319,36 @@ def test_ms_iterator_uses_the_frequency_axis_of_each_chunk(two_spws_dataset):
             assert reader.iternext() is (description == 0)
         assert reader.iterend()
         assert reader.getdata("data")["data"].shape == (2, 4, 30)
+        assert reader.done()
+
+
+def test_ms_iterator_reads_projected_keys_and_preserves_duplicate_rows(baseline_fixture, native_dataset):
+    casa, make_view, raw = baseline_fixture
+    add_description(casa, native_dataset)
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    alternate = (np.arange(raw["time"].size) % 2).astype(np.int32)
+    assert table.addcols({"ALTERNATE_DESC": table.getcoldesc("DATA_DESC_ID")})
+    assert table.putcol("ALTERNATE_DESC", alternate)
+    assert table.done()
+    rows = np.array([13, 2, 13, 0, 11, 8], dtype=np.int64)
+    path = make_view("iteration-rebound-description.ms", rows)
+    assert table.open(path, nomodify=False)
+    assert table.renamecol("DATA_DESC_ID", "PHYSICAL_DESC")
+    assert table.renamecol("ALTERNATE_DESC", "DATA_DESC_ID")
+    assert table.done()
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        assert reader.iterinit(["DATA_DESC_ID"], adddefaultsortcolumns=False)
+        assert reader.iterorigin()
+        for description in (0, 1):
+            group = rows[alternate[rows] == description]
+            group = group[np.argsort(raw["time"][group], kind="stable")]
+            result = reader.getdata(["data_desc_id", "data", "time"])
+            np.testing.assert_array_equal(result["data_desc_id"], np.full(group.size, description),
+                                          strict=True)
+            np.testing.assert_array_equal(result["data"], raw["data"][..., group], strict=True)
+            np.testing.assert_array_equal(result["time"], raw["time"][group], strict=True)
+            assert reader.iternext() is (description == 0)
         assert reader.done()

@@ -22,12 +22,14 @@ mod baseline_axis;
 mod channel_axis;
 mod concatenation;
 mod polarization_axis;
+mod projection;
 use averaging::RowAverage;
 use baseline_axis::BaselineGrid;
 pub use channel_axis::VisibilityChannels;
 use channel_axis::{ChannelWeightKind, ChannelWeights};
 use concatenation::{MemberRows, concatenate_arrays, concatenate_scalars, member_rows};
 pub use polarization_axis::VisibilityPolarization;
+pub(crate) use projection::read_reference_scalars;
 
 /// Determine whether CASA's implicit initialization needs to narrow this view
 /// to data description zero. The iterator's row shape comes from its logical
@@ -425,6 +427,8 @@ impl<'a> VisibilityRead<'a> {
             HashMap::new()
         } else if !members.is_empty() {
             concatenate_scalars(&members, &columns)?
+        } else if let Some(reference) = &reference {
+            read_reference_scalars(reference.read, &columns, &reference.rows)?
         } else if plain && !rows.is_empty() {
             main.required_scalar_columns_owned_for_rows(&columns, rows)?
         } else {

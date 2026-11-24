@@ -3,12 +3,13 @@
 
 use std::cmp::Ordering;
 
-use casa_tables::{ColumnType, RequiredScalarColumnValues, Table};
+use casa_tables::{ColumnType, PlainReferenceRead, RequiredScalarColumnValues, Table};
 use casa_types::{ArrayValue, Value};
 
 use crate::error::{MsError, MsResult};
 use crate::grouping::DEFAULT_SORT_COLUMNS;
 use crate::schema::main_table::{OPTIONAL_COLUMNS, REQUIRED_COLUMNS};
+use crate::tool_visibility::read_reference_scalars;
 
 /// A snapshot of the selected MAIN rows in iteration order.
 ///
@@ -32,6 +33,7 @@ impl ToolIteration {
     /// Returns an error for an empty view, an invalid sort key or a read error.
     pub fn new(
         main: &Table,
+        reference: Option<&PlainReferenceRead>,
         selected: Option<&[usize]>,
         columns: &[String],
         interval: f64,
@@ -103,7 +105,10 @@ impl ToolIteration {
             }
         }
 
-        let values = if selected.is_some() {
+        let values = if let Some(reference) = reference {
+            let parent_rows = reference.parent_rows(&rows)?;
+            read_reference_scalars(reference, &read_keys, &parent_rows)?
+        } else if selected.is_some() {
             main.required_scalar_columns_owned_for_rows(&read_keys, &rows)?
         } else {
             main.required_scalar_columns_owned(&read_keys)?

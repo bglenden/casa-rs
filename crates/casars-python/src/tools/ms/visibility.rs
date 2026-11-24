@@ -245,6 +245,7 @@ impl AttachedMs {
         let main = self.visibility.main(&self.path)?;
         let cursor = ToolIteration::new(
             &main.table,
+            main.reference.as_ref(),
             self.selected_rows.as_deref(),
             columns,
             interval,
