@@ -357,6 +357,44 @@ def compare_combined_time_channel_derived(root, native):
         if name == "combined-time-ratio":
             compare_figure(root, native, controls, expected,
                            (controls["title"], "Time (MJD seconds)", "Real:corrected/model (vector)"))
+    compare_combined_weight_edges(root, native, vis, base)
+
+
+def compare_combined_weight_edges(root, native, vis, base):
+    controls = base | dict(xaxis="channel", ydatacolumn="corrected-model_vector", expformat="txt")
+    cases = (
+        ("signed", "WEIGHT_SPECTRUM", -1, False, [(0, -2), (1, 1)], None),
+        ("signed-without-data", "WEIGHT_SPECTRUM", -1, True, [(0, -2), (1, 1)], None),
+        ("overflow-observed", "SIGMA_SPECTRUM", 1e-20, False, [(1, 1)], None),
+        ("tiny-calibrated", "WEIGHT_SPECTRUM", 1e-25, False, [(0, 0), (1, 1)], [(0, 1), (1, 1)]),
+        ("tiny-observed", "SIGMA_SPECTRUM", 1e13, False, [(1, 1)], [(0, 1), (1, 1)]),
+    )
+    for name, column, weight, remove_data, casa_values, native_values in cases:
+        source = root / f"{name}.ms"
+        copy_ms(vis, source)
+        with opened(source, True) as table:
+            model = np.ones_like(table.getcol("MODEL_DATA"))
+            table.putcol("CORRECTED_DATA", 2 * model)
+            table.putcol("MODEL_DATA", model)
+            spectrum = table.getcol(column)
+            spectrum[:, :2] = weight
+            table.putcol(column, spectrum)
+            if remove_data:
+                table.removecols(["DATA"])
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        selection = controls | dict(vis=str(source))
+        assert reference(**selection, plotfile=str(expected)) is None
+        assert native(**selection, plotfile=str(actual)) is None
+        np.testing.assert_array_equal(np.array([point[:2] for point in rows(expected)], dtype=float),
+                                      casa_values * 3)
+        if native_values is None:
+            assert compare_text(actual, expected) == len(casa_values) * 3
+        else:
+            # The finite nonzero normalization and corresponding residual
+            # survive the channel transform even when squaring would underflow.
+            np.testing.assert_array_equal(np.array([point[:2] for point in rows(actual)], dtype=float),
+                                          native_values * 3)
+        print(f"{name}: {len(rows(actual))} verified weight-edge coordinates", flush=True)
 
 
 def main():

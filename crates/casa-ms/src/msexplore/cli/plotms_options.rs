@@ -111,6 +111,25 @@ impl CliOptions {
             && !self.avgspw
     }
 
+    pub(super) fn derived_average_storage(
+        &self,
+        requested: [MsDataColumn; 3],
+        adjusted: [MsDataColumn; 3],
+    ) -> Option<([MsDataColumn; 3], &'static str)> {
+        if self.supports_channel_derived(requested) {
+            Some((adjusted, "channel"))
+        } else if self.supports_time_derived(requested) {
+            if self.avgchannel.is_some_and(|width| width > 1) {
+                // This composition currently requires the physical corrected column.
+                Some((requested, "time- and channel"))
+            } else {
+                Some((adjusted, "time"))
+            }
+        } else {
+            None
+        }
+    }
+
     pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
         self.x_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
