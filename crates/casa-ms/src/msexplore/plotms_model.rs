@@ -11,8 +11,8 @@ use super::{
     MsAxis, MsDataColumn, MsPlotSpec, PlotMsColumnSelection,
     cli::{PlotMsModelLoader, PlotMsModelReferences},
     plotms_columns::{
-        supports_ordinary_time_axes, uses_channel_derived, uses_ordinary_time_averaging,
-        uses_scalar_visibility_average,
+        supports_ordinary_time_axes, uses_antenna_visibility_average, uses_channel_derived,
+        uses_ordinary_time_averaging, uses_scalar_visibility_average, uses_vector_baseline_average,
     },
     selected_i32_values, uses_extended_averaging,
 };
@@ -104,6 +104,14 @@ pub(super) fn selected_model_cells(
         && plot.iteration.iteraxis.is_none()
         && supports_ordinary_time_axes(plot)
         && uses_scalar_visibility_average(plot);
+    let antenna_or_baseline = columns.implicit_derived_model
+        && !plot.averaging.avgscan
+        && !plot.averaging.avgfield
+        && plot.iteration.iteraxis.is_none()
+        && supports_ordinary_time_axes(plot)
+        && (uses_antenna_visibility_average(plot)
+            || uses_vector_baseline_average(plot)
+            || (plot.averaging.avgbaseline && uses_scalar_visibility_average(plot)));
     let standard_columns = visibility_columns.all(|column| {
         matches!(
             column,
@@ -116,7 +124,8 @@ pub(super) fn selected_model_cells(
         && field_models_supported
         && (columns.extended_derived || (!extended && uses_channel_derived(plot, columns.x)));
     let can_predict = !averaging
-        || ((!extended || ordinary_time || scalar_span || vector_span) && standard_columns)
+        || ((!extended || ordinary_time || scalar_span || vector_span || antenna_or_baseline)
+            && standard_columns)
         || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {
         return load(ms, rows, model_references);
