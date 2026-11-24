@@ -35,6 +35,15 @@ struct LazyRowsSource {
 
 impl LazyRowsSource {
     fn read_metadata(&self) -> Result<&RetainedTableReadMetadata, TableError> {
+        self.try_read_plain_metadata()?.ok_or_else(|| {
+            TableError::Storage(format!(
+                "typed selected reads require a plain table at {}",
+                self.path.display()
+            ))
+        })
+    }
+
+    fn try_read_plain_metadata(&self) -> Result<Option<&RetainedTableReadMetadata>, TableError> {
         if self.read_metadata.get().is_none() {
             let control_path = self.path.join(TABLE_CONTROL_FILE);
             let parsed = read_table_dat_dispatch(&control_path).map_err(|error| {
@@ -45,12 +54,7 @@ impl LazyRowsSource {
             })?;
             let table_dat = match parsed {
                 TableDatResult::Plain(table_dat) => table_dat,
-                TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
-                    return Err(TableError::Storage(format!(
-                        "typed selected reads require a plain table at {}",
-                        self.path.display()
-                    )));
-                }
+                TableDatResult::Ref(_) | TableDatResult::Concat(_) => return Ok(None),
             };
             let read_metadata =
                 RetainedTableReadMetadata::open(&self.path, table_dat).map_err(|error| {
@@ -61,10 +65,7 @@ impl LazyRowsSource {
                 })?;
             let _ = self.read_metadata.set(read_metadata);
         }
-        Ok(self
-            .read_metadata
-            .get()
-            .expect("table read metadata initialized before shared access"))
+        Ok(self.read_metadata.get())
     }
 
     fn plain_table_dat(&self) -> Result<&TableDatContents, TableError> {
@@ -1439,11 +1440,16 @@ impl TableImpl {
             .lazy_rows
             .as_ref()
             .expect("lazy source checked before selected scalar load");
+        let Some(metadata) = source.try_read_plain_metadata()? else {
+            // Let the logical column reader resolve view and concatenation
+            // rows. The manager fast path below uses plain-table indices.
+            return Ok(None);
+        };
         let requested = columns.iter().copied().collect::<HashSet<_>>();
         let mut values_by_column = CompositeStorage
             .load_named_required_scalar_column_rows_from_plain(
                 &source.path,
-                source.plain_table_dat()?,
+                &metadata.table_dat,
                 &requested,
                 row_indices,
                 Some(source.row_count_hint as u64),

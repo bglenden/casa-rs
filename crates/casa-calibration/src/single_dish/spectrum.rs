@@ -171,7 +171,16 @@ pub(super) fn write(
 ) -> Result<usize, String> {
     let scans = ScanTiming::read(ms.main_table())?;
     let spectral = ms.spectral_window().map_err(error_text)?;
-    let mut writer = CalibrationTableWriter::with_mode(
+    let existing_ms = mode == CalibrationOutputMode::Replace
+        && std::fs::read_to_string(destination.join("table.info"))
+            .is_ok_and(|text| casa_tables::TableInfo::parse(&text).table_type == "Measurement Set");
+    let output = if existing_ms {
+        crate::output::CalibrationOutput::prepare_measurement_set(destination, true)
+    } else {
+        crate::output::CalibrationOutput::prepare(destination, mode)
+    }
+    .map_err(error_text)?;
+    let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
             output: destination,
@@ -184,9 +193,9 @@ pub(super) fn write(
             include_polarization_basis: true,
             time_extra_precision_column: None,
         },
+        output,
         mode,
-    )
-    .map_err(error_text)?;
+    );
     let mut written = 0;
     let mut present_windows = BTreeSet::new();
     let mut channel_widths = BTreeMap::new();
