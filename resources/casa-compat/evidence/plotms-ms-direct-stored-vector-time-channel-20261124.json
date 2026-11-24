@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "801f7049d5ff80cc3ab987de81ca4ae640ea9a48",
+  "source_revision": "801f7049d5ff80cc3ab987de81ca4ae640ea9a48",
+  "baseline_revision": "0ca415208da74f5a9106f0df00933c9b517b9fba",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Ordinary vector time and complex channel averaging of stored MeasurementSet visibility columns with one ordinate and retained baselines.",
+  "result": "passed",
+  "baseline_result": "The first selected distant baseline had DATA Real 3.05644 on main. CASA and the candidate give -8.55803 with the chosen independent spectra.",
+  "text_exports": 11,
+  "points": 84,
+  "figures": 3,
+  "rendered_coordinates": 12,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051,
+  "pending_virtual_model_reference_points": 12
+}
