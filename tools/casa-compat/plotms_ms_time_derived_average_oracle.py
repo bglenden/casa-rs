@@ -287,6 +287,68 @@ def compare_two_visibility_axes(root, native):
                             "Real:corrected/model (vector)"))
 
 
+def compare_combined_time_channel_derived(root, native):
+    vis, integration, start = prepare_time_fixture(root)
+    zero = root / "zero-primary.ms"
+    copy_ms(vis, zero)
+    with opened(zero, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[:, :2] = 0
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    rounded = root / "rounded-time-then-channel.ms"
+    copy_ms(vis, rounded)
+    with opened(rounded, True) as table:
+        corrected = np.zeros_like(table.getcol("CORRECTED_DATA"))
+        corrected[:, 0] = np.where(integration % 2 == 0, 1e8, -1e8)
+        corrected[:, 1] = 1
+        corrected[:, 3] = 4
+        table.putcol("CORRECTED_DATA", corrected)
+        table.putcol("MODEL_DATA", np.zeros_like(corrected))
+        table.putcol("WEIGHT_SPECTRUM", np.ones_like(table.getcol("WEIGHT_SPECTRUM")))
+
+    expected_operands = []
+    for index in range(3):
+        integrations = np.array([2 * index, 2 * index + 1])
+        offset = np.tile(integrations, 2)
+        weights = [1, 1, 1, 3]
+        corrected = np.repeat([2 + 3j, 8 - 1j], 2) + (3 - 1j) * offset
+        model = np.repeat([1 - 1j, 2 + 2j], 2) + (.5 + .25j) * offset
+        expected_operands.extend([
+            (np.average(corrected, weights=weights), np.average(model, weights=weights)),
+            (12 + 4j + (3 - 1j) * integrations.mean(), 5 - 3j + (.5 + .25j) * integrations.mean()),
+        ])
+    corrected, model = np.asarray(expected_operands).T
+    channel = np.tile([0, 1], 3)
+    times = np.repeat(start + 5 + 20 * np.arange(3), 2)
+    residual = (corrected - model).real
+    base = request(vis) | dict(spw="0:0~3", xdatacolumn="", yaxis="real", avgtime="20",
+                               avgchannel="2", title="Combined visibility averages")
+    cases = (
+        ("combined-channel-residual", vis, "channel", "corrected-model_vector", channel, residual, channel, times),
+        ("combined-time-ratio", vis, "time", "corrected/model_vector", times, (corrected / model).real, channel, times),
+        ("zero-primary", zero, "channel", "corrected-model_vector", channel[1::2], residual[1::2], channel[1::2], times[1::2]),
+        ("time-before-channel", rounded, "channel", "corrected-model_vector", channel, np.tile([.5, 4], 3), channel, times),
+    )
+    for name, source, axis, column, x, y, channels, metadata_time in cases:
+        controls = base | dict(vis=str(source), xaxis=axis, ydatacolumn=column)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [(str(chan), "XX") for chan in channels]
+        np.testing.assert_allclose([float(point[0]) for point in selected], x, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected], y, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], metadata_time, rtol=0, atol=.00051)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], x, rtol=0, atol=.00051)
+        if name == "time-before-channel":
+            np.testing.assert_array_equal([float(point[1]) for point in rows(actual)], y)
+        print(f"{name}: {len(selected)} matching coordinates after time and channel averaging", flush=True)
+        if name == "combined-time-ratio":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Time (MJD seconds)", "Real:corrected/model (vector)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -316,6 +378,9 @@ def main():
         two_axes = root / "two-axes"
         two_axes.mkdir()
         compare_two_visibility_axes(two_axes, native)
+        combined = root / "combined"
+        combined.mkdir()
+        compare_combined_time_channel_derived(combined, native)
 
 
 if __name__ == "__main__":
