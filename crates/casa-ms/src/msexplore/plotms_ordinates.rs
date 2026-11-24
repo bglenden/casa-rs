@@ -12,6 +12,7 @@ use super::{
     scatter_series_identity,
 };
 use crate::MeasurementSet;
+use crate::selection::ChannelRange;
 
 pub(super) struct VisibilityColumns<'a> {
     sources: Vec<(MsDataColumn, PreparedSelectedDataSource<'a>)>,
@@ -224,6 +225,25 @@ impl AveragedVisibility {
 pub(super) struct VisibilityTimeBounds {
     first: f64,
     last_unflagged: Option<f64>,
+}
+
+pub(super) fn has_unflagged_input(
+    flags: &ArrayView2<'_, bool>,
+    correlations: &[(usize, String)],
+    selection: Option<&[ChannelRange]>,
+) -> bool {
+    correlations.iter().any(|(corr, _)| {
+        let unflagged = |channel| !flags[(*corr, channel)];
+        match selection {
+            Some(ranges) => ranges
+                .iter()
+                .filter_map(ChannelRange::channels)
+                .flatten()
+                .filter(|&channel| channel < flags.ncols())
+                .any(unflagged),
+            None => (0..flags.ncols()).any(unflagged),
+        }
+    })
 }
 
 impl VisibilityTimeBounds {
