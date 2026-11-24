@@ -5410,7 +5410,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
-    let mut scalar_spans = (scalar_time && (spec.averaging.avgscan || spec.averaging.avgfield))
+    let scalar_spans = (scalar_time && (spec.averaging.avgscan || spec.averaging.avgfield))
         .then(|| {
             plotms_ordinates::ScalarSpanPlan::new(
                 plotms_ordinates::ScalarSpanColumns {
@@ -5563,6 +5563,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut scalar_time_rows = std::collections::BTreeSet::new();
+    let mut scalar_time_shapes = plotms_ordinates::ScalarTimeShapes::default();
     let mut time_baseline_stats =
         time_baselines.then(plotms_time_baselines::TimeBaselineStatistics::default);
     let mut scalar_channel_buffer_first = None;
@@ -5763,8 +5764,12 @@ fn build_generic_visibility_scatter_with_averaging(
                 )
             })
         });
-        if let (Some(spans), Some(group)) = (&mut scalar_spans, group) {
-            spans.check_shape(group, selected_correlations.len(), channel_bins.len())?;
+        if scalar_time && let Some(group) = group {
+            scalar_time_shapes.check_shape(
+                group,
+                selected_correlations.len(),
+                channel_bins.len(),
+            )?;
         }
         let representative_row = row_numbers[representative_slot];
         let span_metadata =

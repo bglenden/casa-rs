@@ -344,11 +344,7 @@ def compare_scalar_time_spans(root, native):
     compare_scalar_span_shapes(root, native, source, base | cross, start + 55.)
 
 
-def compare_scalar_span_shapes(root, native, source, controls, center):
-    from casars.tasks import TaskExecutionError
-    from grpc import RpcError, StatusCode
-
-    vis = root / "mixed-polarization.ms"
+def make_mixed_polarization(source, vis, reduced_rows):
     copy_ms(source, vis)
     with opened(vis / "POLARIZATION", True) as pol:
         polarization = pol.nrows()
@@ -365,7 +361,7 @@ def compare_scalar_span_shapes(root, native, source, controls, center):
         dd.putcell("FLAG_ROW", description, False)
     with opened(vis, True) as table:
         descriptions = table.getcol("DATA_DESC_ID")
-        reduced = (descriptions == 0) & (table.getcol("SCAN_NUMBER") == 2)
+        reduced = (descriptions == 0) & reduced_rows(table)
         for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_CATEGORY", "WEIGHT", "SIGMA"):
             descriptor = table.getcoldesc(column)
             descriptor.pop("shape", None)
@@ -380,7 +376,12 @@ def compare_scalar_span_shapes(root, native, source, controls, center):
             table.removecols(original)
         descriptions[reduced] = description
         table.putcol("DATA_DESC_ID", descriptions)
+    return vis
 
+
+def compare_scalar_span_shapes(root, native, source, controls, center):
+    vis = make_mixed_polarization(source, root / "mixed-polarization.ms",
+                                  lambda table: table.getcol("SCAN_NUMBER") == 2)
     controls |= dict(vis=str(vis), expformat="txt")
     expected, actual = (root / f"selected-polarization.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected)) is None
@@ -388,8 +389,15 @@ def compare_scalar_span_shapes(root, native, source, controls, center):
     assert compare_text(actual, expected) == 1
     np.testing.assert_allclose([float(point[0]) for point in rows(actual)], center, rtol=0, atol=.00051)
     assert [(point[1], point[3], point[12]) for point in rows(expected)] == [("-252", "-1", "XX")]
+    compare_scalar_shape_refusal(root, native, controls)
+    print("selected-polarization: 1 matching point and matching incompatible-shape refusals", flush=True)
 
-    controls |= dict(correlation="")
+
+def compare_scalar_shape_refusal(root, native, controls):
+    from casars.tasks import TaskExecutionError
+    from grpc import RpcError, StatusCode
+
+    controls = controls | dict(correlation="")
     expected, actual = (root / f"mixed-polarization.{engine}.txt" for engine in ("casa", "native"))
     try:
         reference(**controls, plotfile=str(expected))
@@ -404,7 +412,6 @@ def compare_scalar_span_shapes(root, native, source, controls, center):
     else:
         raise AssertionError("native PlotMS admitted unequal selected shapes into a scalar time bin")
     assert not expected.exists() and not actual.exists()
-    print("selected-polarization: 1 matching point and matching incompatible-shape refusals", flush=True)
 
 
 def compare_combined_scalar_time(root, native):
@@ -689,6 +696,27 @@ def compare_combined_scalar_stored_columns(root, native, fixtures, start):
     for column, label in (("corrected", "Amp:corrected"), ("corrected-model_vector", "Amp:corrected-model (vector)")):
         controls = base | dict(vis=str(zero), xaxis="channel", xdatacolumn="", yaxis="amp", ydatacolumn=column)
         compare_empty_export(root, native, f"zero-weight-{column}", controls, ("Channel", label))
+
+    def second_baseline_at_start(table):
+        return ((table.getcol("TIME") == start) & (table.getcol("ANTENNA1") == 0)
+                & (table.getcol("ANTENNA2") == 2))
+
+    mixed = make_mixed_polarization(source, root / "mixed-polarization.ms", second_baseline_at_start)
+    controls = base | dict(vis=str(mixed), xaxis="time", xdatacolumn="", yaxis="amp", expformat="txt",
+                           antenna="A0&A1;A0&A2", msselect=f"TIME < {start + 5.:.9f}")
+    expected, actual = (root / f"selected-polarization.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [(point[2], point[6], point[12]) for point in selected] == [
+        (channel, antenna, "XX") for antenna in ("1", "2") for channel in ("0", "1")
+    ]
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(start, 0.), (start, 5.)] * 2, rtol=0, atol=.00051)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 4
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)], start, rtol=0, atol=.00051)
+    compare_scalar_shape_refusal(root, native, controls)
+    print("selected-polarization: 4 matching points and matching incompatible-shape refusals", flush=True)
 
 
 def main():
