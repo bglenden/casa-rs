@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["EarthMagneticRef"],"fn":["calculate_igrf"],"struct":["IgrfSample","MEarthMagnetic"]};
+window.SIDEBAR_ITEMS = {"enum":["EarthMagneticRef"],"fn":["calculate_igrf","calculate_igrf_at_shell_offset","ionospheric_pierce_point"],"struct":["IgrfSample","MEarthMagnetic"]};

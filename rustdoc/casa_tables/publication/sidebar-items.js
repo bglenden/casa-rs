@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["check_write_access","exchange_directories","rename_without_replacing"]};
+window.SIDEBAR_ITEMS = {"fn":["check_write_access","copy_locked_external_tree","copy_locked_table_tree","exchange_directories","lock_table_tree_for_replacement","open_directory_identity","open_regular_directory_entry","open_symlink_directory_entry","rename_without_replacing"],"struct":["StagedDirectoryFile"]};

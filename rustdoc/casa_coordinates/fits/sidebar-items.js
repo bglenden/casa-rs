@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["coordinate_util","header"]};
+window.SIDEBAR_ITEMS = {"fn":["canonical_unit_name"],"mod":["coordinate_util","header"]};

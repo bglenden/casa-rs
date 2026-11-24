@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ExprValue"],"fn":["eval_expr","like_match","promote"],"struct":["ArrayValue","EvalContext"]};
+window.SIDEBAR_ITEMS = {"enum":["ExprValue"],"fn":["eval_constant","eval_constant_string","eval_expr","like_match","promote"],"struct":["ArrayValue","EvalContext"]};

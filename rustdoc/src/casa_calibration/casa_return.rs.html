@@ -58,139 +58,143 @@
 <a href=#58 id=58 data-nosnippet>58</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 <a href=#59 id=59 data-nosnippet>59</a>    apply_tables.sort();
 <a href=#60 id=60 data-nosnippet>60</a>    apply_tables.dedup();
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">let </span>ids = |ids: <span class="kw-2">&amp;</span>[i32]| CasaValue::int64_vector(ids.iter().map(|<span class="kw-2">&amp;</span>id| i64::from(id)));
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">let </span>selection = selected.map_or_else(
-<a href=#63 id=63 data-nosnippet>63</a>        || CasaValue::dict(std::iter::empty::&lt;(<span class="kw-2">&amp;</span>str, CasaValue)&gt;()),
-<a href=#64 id=64 data-nosnippet>64</a>        |selected| {
-<a href=#65 id=65 data-nosnippet>65</a>            CasaValue::dict([
-<a href=#66 id=66 data-nosnippet>66</a>                (<span class="string">"antennas"</span>, ids(<span class="kw-2">&amp;</span>selected.antennas)),
-<a href=#67 id=67 data-nosnippet>67</a>                (<span class="string">"field"</span>, ids(<span class="kw-2">&amp;</span>selected.fields)),
-<a href=#68 id=68 data-nosnippet>68</a>                (<span class="string">"intents"</span>, CasaValue::str_vector(selected.intents.clone())),
-<a href=#69 id=69 data-nosnippet>69</a>                (<span class="string">"observation"</span>, ids(<span class="kw-2">&amp;</span>selected.observations)),
-<a href=#70 id=70 data-nosnippet>70</a>                (<span class="string">"scan"</span>, ids(<span class="kw-2">&amp;</span>selected.scans)),
-<a href=#71 id=71 data-nosnippet>71</a>                (<span class="string">"spw"</span>, ids(<span class="kw-2">&amp;</span>selected.spectral_windows)),
-<a href=#72 id=72 data-nosnippet>72</a>            ])
-<a href=#73 id=73 data-nosnippet>73</a>        },
-<a href=#74 id=74 data-nosnippet>74</a>    );
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = <span class="macro">vec!</span>[
-<a href=#76 id=76 data-nosnippet>76</a>        (<span class="string">"apply_tables"</span>, CasaValue::str_vector(apply_tables)),
-<a href=#77 id=77 data-nosnippet>77</a>        (<span class="string">"selectvis"</span>, selection),
-<a href=#78 id=78 data-nosnippet>78</a>        (
-<a href=#79 id=79 data-nosnippet>79</a>            <span class="string">"solve_tables"</span>,
-<a href=#80 id=80 data-nosnippet>80</a>            CasaValue::str_vector(solved.map(|path| path.display().to_string())),
-<a href=#81 id=81 data-nosnippet>81</a>        ),
-<a href=#82 id=82 data-nosnippet>82</a>    ];
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(stats) = stats {
-<a href=#84 id=84 data-nosnippet>84</a>        result.push((<span class="string">"solvestats"</span>, solvestats(stats)));
-<a href=#85 id=85 data-nosnippet>85</a>    }
-<a href=#86 id=86 data-nosnippet>86</a>    CasaValue::dict(result)
-<a href=#87 id=87 data-nosnippet>87</a>}
-<a href=#88 id=88 data-nosnippet>88</a>
-<a href=#89 id=89 data-nosnippet>89</a><span class="doccomment">/// CASA's `solvestats`: the counts summed over the windows, then each
-<a href=#90 id=90 data-nosnippet>90</a>/// window's as `spw&lt;id&gt;`, each with its antennas' as `ant&lt;id&gt;`. CASA sorts
-<a href=#91 id=91 data-nosnippet>91</a>/// every dictionary's keys as text, so `ant10` comes before `ant2`.
-<a href=#92 id=92 data-nosnippet>92</a></span><span class="kw">fn </span>solvestats(stats: <span class="kw-2">&amp;</span>SolveStats) -&gt; CasaValue {
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">let </span>windows = stats.windows.iter().map(|window| {
-<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">let </span>antennas = window.antennas.iter().map(|antenna| {
-<a href=#95 id=95 data-nosnippet>95</a>            <span class="kw">let </span><span class="kw-2">mut </span>entries = counts(<span class="kw-2">&amp;</span>antenna.counts);
-<a href=#96 id=96 data-nosnippet>96</a>            entries.push((
-<a href=#97 id=97 data-nosnippet>97</a>                <span class="string">"used_as_refant"</span>.to_string(),
-<a href=#98 id=98 data-nosnippet>98</a>                CasaValue::int64_vector([antenna.used_as_refant <span class="kw">as </span>i64]),
-<a href=#99 id=99 data-nosnippet>99</a>            ));
-<a href=#100 id=100 data-nosnippet>100</a>            (<span class="macro">format!</span>(<span class="string">"ant{}"</span>, antenna.antenna_id), sorted(entries))
-<a href=#101 id=101 data-nosnippet>101</a>        });
-<a href=#102 id=102 data-nosnippet>102</a>        <span class="kw">let </span><span class="kw-2">mut </span>entries = counts(<span class="kw-2">&amp;</span>window.counts);
-<a href=#103 id=103 data-nosnippet>103</a>        entries.extend(antennas);
-<a href=#104 id=104 data-nosnippet>104</a>        (<span class="macro">format!</span>(<span class="string">"spw{}"</span>, window.spw_id), sorted(entries))
-<a href=#105 id=105 data-nosnippet>105</a>    });
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span><span class="kw-2">mut </span>entries = counts(<span class="kw-2">&amp;</span>stats.total().unwrap_or_default());
-<a href=#107 id=107 data-nosnippet>107</a>    entries.extend(windows);
-<a href=#108 id=108 data-nosnippet>108</a>    sorted(entries)
-<a href=#109 id=109 data-nosnippet>109</a>}
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a><span class="doccomment">/// One stage's counts, as CASA names them.
-<a href=#112 id=112 data-nosnippet>112</a></span><span class="kw">fn </span>counts(counts: <span class="kw-2">&amp;</span>SolveCounts) -&gt; Vec&lt;(String, CasaValue)&gt; {
-<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">let </span>vector = |values: <span class="kw-2">&amp;</span>[u64]| CasaValue::int64_vector(values.iter().map(|<span class="kw-2">&amp;</span>v| v <span class="kw">as </span>i64));
-<a href=#114 id=114 data-nosnippet>114</a>    <span class="macro">vec!</span>[
-<a href=#115 id=115 data-nosnippet>115</a>        (
-<a href=#116 id=116 data-nosnippet>116</a>            <span class="string">"above_minblperant"</span>.to_string(),
-<a href=#117 id=117 data-nosnippet>117</a>            vector(<span class="kw-2">&amp;</span>counts.above_minblperant),
-<a href=#118 id=118 data-nosnippet>118</a>        ),
-<a href=#119 id=119 data-nosnippet>119</a>        (<span class="string">"above_minsnr"</span>.to_string(), vector(<span class="kw-2">&amp;</span>counts.above_minsnr)),
-<a href=#120 id=120 data-nosnippet>120</a>        (<span class="string">"data_unflagged"</span>.to_string(), vector(<span class="kw-2">&amp;</span>counts.data_unflagged)),
-<a href=#121 id=121 data-nosnippet>121</a>        (<span class="string">"expected"</span>.to_string(), vector(<span class="kw-2">&amp;</span>counts.expected)),
-<a href=#122 id=122 data-nosnippet>122</a>    ]
-<a href=#123 id=123 data-nosnippet>123</a>}
-<a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a><span class="doccomment">/// `entries` as a dictionary sorted by key.
-<a href=#126 id=126 data-nosnippet>126</a></span><span class="kw">fn </span>sorted(<span class="kw-2">mut </span>entries: Vec&lt;(String, CasaValue)&gt;) -&gt; CasaValue {
-<a href=#127 id=127 data-nosnippet>127</a>    entries.sort_by(|(left, <span class="kw">_</span>), (right, <span class="kw">_</span>)| left.cmp(right));
-<a href=#128 id=128 data-nosnippet>128</a>    CasaValue::dict(entries)
-<a href=#129 id=129 data-nosnippet>129</a>}
-<a href=#130 id=130 data-nosnippet>130</a>
-<a href=#131 id=131 data-nosnippet>131</a><span class="doccomment">/// `fluxscale`'s return: each transfer field's flux densities, keyed by its
-<a href=#132 id=132 data-nosnippet>132</a>/// id, then the windows' frequencies, ids and names.
-<a href=#133 id=133 data-nosnippet>133</a></span><span class="kw">pub fn </span>fluxscale_record(report: <span class="kw-2">&amp;</span>FluxScaleReport) -&gt; CasaValue {
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">let </span>fields = report
-<a href=#135 id=135 data-nosnippet>135</a>        .fields
-<a href=#136 id=136 data-nosnippet>136</a>        .iter()
-<a href=#137 id=137 data-nosnippet>137</a>        .map(|(field_id, field)| (field_id.to_string(), field_record(field)));
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">let </span>windows = [
-<a href=#139 id=139 data-nosnippet>139</a>        (
-<a href=#140 id=140 data-nosnippet>140</a>            <span class="string">"freq"</span>.to_string(),
-<a href=#141 id=141 data-nosnippet>141</a>            CasaValue::float64_vector(report.frequencies_hz.iter().copied()),
-<a href=#142 id=142 data-nosnippet>142</a>        ),
+<a href=#61 id=61 data-nosnippet>61</a>    <span class="kw">let </span>selection = selectvis_record(selected);
+<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = <span class="macro">vec!</span>[
+<a href=#63 id=63 data-nosnippet>63</a>        (<span class="string">"apply_tables"</span>, CasaValue::str_vector(apply_tables)),
+<a href=#64 id=64 data-nosnippet>64</a>        (<span class="string">"selectvis"</span>, selection),
+<a href=#65 id=65 data-nosnippet>65</a>        (
+<a href=#66 id=66 data-nosnippet>66</a>            <span class="string">"solve_tables"</span>,
+<a href=#67 id=67 data-nosnippet>67</a>            CasaValue::str_vector(solved.map(|path| path.display().to_string())),
+<a href=#68 id=68 data-nosnippet>68</a>        ),
+<a href=#69 id=69 data-nosnippet>69</a>    ];
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(stats) = stats {
+<a href=#71 id=71 data-nosnippet>71</a>        result.push((<span class="string">"solvestats"</span>, solvestats(stats)));
+<a href=#72 id=72 data-nosnippet>72</a>    }
+<a href=#73 id=73 data-nosnippet>73</a>    CasaValue::dict(result)
+<a href=#74 id=74 data-nosnippet>74</a>}
+<a href=#75 id=75 data-nosnippet>75</a>
+<a href=#76 id=76 data-nosnippet>76</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>selectvis_record(selected: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>SelectedData&gt;) -&gt; CasaValue {
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">let </span>ids = |ids: <span class="kw-2">&amp;</span>[i32]| CasaValue::int64_vector(ids.iter().map(|<span class="kw-2">&amp;</span>id| i64::from(id)));
+<a href=#78 id=78 data-nosnippet>78</a>    selected.map_or_else(
+<a href=#79 id=79 data-nosnippet>79</a>        || CasaValue::dict(std::iter::empty::&lt;(<span class="kw-2">&amp;</span>str, CasaValue)&gt;()),
+<a href=#80 id=80 data-nosnippet>80</a>        |selected| {
+<a href=#81 id=81 data-nosnippet>81</a>            CasaValue::dict([
+<a href=#82 id=82 data-nosnippet>82</a>                (<span class="string">"antennas"</span>, ids(<span class="kw-2">&amp;</span>selected.antennas)),
+<a href=#83 id=83 data-nosnippet>83</a>                (<span class="string">"field"</span>, ids(<span class="kw-2">&amp;</span>selected.fields)),
+<a href=#84 id=84 data-nosnippet>84</a>                (<span class="string">"intents"</span>, CasaValue::str_vector(selected.intents.clone())),
+<a href=#85 id=85 data-nosnippet>85</a>                (<span class="string">"observation"</span>, ids(<span class="kw-2">&amp;</span>selected.observations)),
+<a href=#86 id=86 data-nosnippet>86</a>                (<span class="string">"scan"</span>, ids(<span class="kw-2">&amp;</span>selected.scans)),
+<a href=#87 id=87 data-nosnippet>87</a>                (<span class="string">"spw"</span>, ids(<span class="kw-2">&amp;</span>selected.spectral_windows)),
+<a href=#88 id=88 data-nosnippet>88</a>            ])
+<a href=#89 id=89 data-nosnippet>89</a>        },
+<a href=#90 id=90 data-nosnippet>90</a>    )
+<a href=#91 id=91 data-nosnippet>91</a>}
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a><span class="doccomment">/// CASA's `solvestats`: the counts summed over the windows, then each
+<a href=#94 id=94 data-nosnippet>94</a>/// window's as `spw&lt;id&gt;`, each with its antennas' as `ant&lt;id&gt;`. CASA sorts
+<a href=#95 id=95 data-nosnippet>95</a>/// every dictionary's keys as text, so `ant10` comes before `ant2`.
+<a href=#96 id=96 data-nosnippet>96</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>solvestats(stats: <span class="kw-2">&amp;</span>SolveStats) -&gt; CasaValue {
+<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">let </span>windows = stats.windows.iter().map(|window| {
+<a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">let </span>antennas = window.antennas.iter().map(|antenna| {
+<a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">let </span><span class="kw-2">mut </span>entries = counts(<span class="kw-2">&amp;</span>antenna.counts);
+<a href=#100 id=100 data-nosnippet>100</a>            entries.push((
+<a href=#101 id=101 data-nosnippet>101</a>                <span class="string">"used_as_refant"</span>.to_string(),
+<a href=#102 id=102 data-nosnippet>102</a>                CasaValue::int64_vector([antenna.used_as_refant <span class="kw">as </span>i64]),
+<a href=#103 id=103 data-nosnippet>103</a>            ));
+<a href=#104 id=104 data-nosnippet>104</a>            (<span class="macro">format!</span>(<span class="string">"ant{}"</span>, antenna.antenna_id), sorted(entries))
+<a href=#105 id=105 data-nosnippet>105</a>        });
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">let </span><span class="kw-2">mut </span>entries = counts(<span class="kw-2">&amp;</span>window.counts);
+<a href=#107 id=107 data-nosnippet>107</a>        entries.extend(antennas);
+<a href=#108 id=108 data-nosnippet>108</a>        (<span class="macro">format!</span>(<span class="string">"spw{}"</span>, window.spw_id), sorted(entries))
+<a href=#109 id=109 data-nosnippet>109</a>    });
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">let </span><span class="kw-2">mut </span>entries = counts(<span class="kw-2">&amp;</span>stats.total().unwrap_or_default());
+<a href=#111 id=111 data-nosnippet>111</a>    entries.extend(windows);
+<a href=#112 id=112 data-nosnippet>112</a>    sorted(entries)
+<a href=#113 id=113 data-nosnippet>113</a>}
+<a href=#114 id=114 data-nosnippet>114</a>
+<a href=#115 id=115 data-nosnippet>115</a><span class="doccomment">/// One stage's counts, as CASA names them.
+<a href=#116 id=116 data-nosnippet>116</a></span><span class="kw">fn </span>counts(counts: <span class="kw-2">&amp;</span>SolveCounts) -&gt; Vec&lt;(String, CasaValue)&gt; {
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="kw">let </span>vector = |values: <span class="kw-2">&amp;</span>[u64]| CasaValue::int64_vector(values.iter().map(|<span class="kw-2">&amp;</span>v| v <span class="kw">as </span>i64));
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="macro">vec!</span>[
+<a href=#119 id=119 data-nosnippet>119</a>        (
+<a href=#120 id=120 data-nosnippet>120</a>            <span class="string">"above_minblperant"</span>.to_string(),
+<a href=#121 id=121 data-nosnippet>121</a>            vector(<span class="kw-2">&amp;</span>counts.above_minblperant),
+<a href=#122 id=122 data-nosnippet>122</a>        ),
+<a href=#123 id=123 data-nosnippet>123</a>        (<span class="string">"above_minsnr"</span>.to_string(), vector(<span class="kw-2">&amp;</span>counts.above_minsnr)),
+<a href=#124 id=124 data-nosnippet>124</a>        (<span class="string">"data_unflagged"</span>.to_string(), vector(<span class="kw-2">&amp;</span>counts.data_unflagged)),
+<a href=#125 id=125 data-nosnippet>125</a>        (<span class="string">"expected"</span>.to_string(), vector(<span class="kw-2">&amp;</span>counts.expected)),
+<a href=#126 id=126 data-nosnippet>126</a>    ]
+<a href=#127 id=127 data-nosnippet>127</a>}
+<a href=#128 id=128 data-nosnippet>128</a>
+<a href=#129 id=129 data-nosnippet>129</a><span class="doccomment">/// `entries` as a dictionary sorted by key.
+<a href=#130 id=130 data-nosnippet>130</a></span><span class="kw">fn </span>sorted(<span class="kw-2">mut </span>entries: Vec&lt;(String, CasaValue)&gt;) -&gt; CasaValue {
+<a href=#131 id=131 data-nosnippet>131</a>    entries.sort_by(|(left, <span class="kw">_</span>), (right, <span class="kw">_</span>)| left.cmp(right));
+<a href=#132 id=132 data-nosnippet>132</a>    CasaValue::dict(entries)
+<a href=#133 id=133 data-nosnippet>133</a>}
+<a href=#134 id=134 data-nosnippet>134</a>
+<a href=#135 id=135 data-nosnippet>135</a><span class="doccomment">/// `fluxscale`'s return: each transfer field's flux densities, keyed by its
+<a href=#136 id=136 data-nosnippet>136</a>/// id, then the windows' frequencies, ids and names.
+<a href=#137 id=137 data-nosnippet>137</a></span><span class="kw">pub fn </span>fluxscale_record(report: <span class="kw-2">&amp;</span>FluxScaleReport) -&gt; CasaValue {
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">let </span>fields = report
+<a href=#139 id=139 data-nosnippet>139</a>        .fields
+<a href=#140 id=140 data-nosnippet>140</a>        .iter()
+<a href=#141 id=141 data-nosnippet>141</a>        .map(|(field_id, field)| (field_id.to_string(), field_record(field)));
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">let </span>windows = [
 <a href=#143 id=143 data-nosnippet>143</a>        (
-<a href=#144 id=144 data-nosnippet>144</a>            <span class="string">"spwID"</span>.to_string(),
-<a href=#145 id=145 data-nosnippet>145</a>            CasaValue::int64_vector(report.spw_ids.iter().map(|<span class="kw-2">&amp;</span>id| i64::from(id))),
+<a href=#144 id=144 data-nosnippet>144</a>            <span class="string">"freq"</span>.to_string(),
+<a href=#145 id=145 data-nosnippet>145</a>            CasaValue::float64_vector(report.frequencies_hz.iter().copied()),
 <a href=#146 id=146 data-nosnippet>146</a>        ),
 <a href=#147 id=147 data-nosnippet>147</a>        (
-<a href=#148 id=148 data-nosnippet>148</a>            <span class="string">"spwName"</span>.to_string(),
-<a href=#149 id=149 data-nosnippet>149</a>            CasaValue::str_vector(report.spw_names.clone()),
+<a href=#148 id=148 data-nosnippet>148</a>            <span class="string">"spwID"</span>.to_string(),
+<a href=#149 id=149 data-nosnippet>149</a>            CasaValue::int64_vector(report.spw_ids.iter().map(|<span class="kw-2">&amp;</span>id| i64::from(id))),
 <a href=#150 id=150 data-nosnippet>150</a>        ),
-<a href=#151 id=151 data-nosnippet>151</a>    ];
-<a href=#152 id=152 data-nosnippet>152</a>    CasaValue::dict(fields.chain(windows))
-<a href=#153 id=153 data-nosnippet>153</a>}
-<a href=#154 id=154 data-nosnippet>154</a>
-<a href=#155 id=155 data-nosnippet>155</a><span class="doccomment">/// One field's flux densities per window, keyed by the window's id, and
-<a href=#156 id=156 data-nosnippet>156</a>/// its fit across windows.
-<a href=#157 id=157 data-nosnippet>157</a></span><span class="kw">fn </span>field_record(field: <span class="kw-2">&amp;</span>FluxScaleFieldResult) -&gt; CasaValue {
-<a href=#158 id=158 data-nosnippet>158</a>    <span class="kw">let </span>windows = field.spw_results.iter().map(|(spw_id, result)| {
-<a href=#159 id=159 data-nosnippet>159</a>        (
-<a href=#160 id=160 data-nosnippet>160</a>            spw_id.to_string(),
-<a href=#161 id=161 data-nosnippet>161</a>            CasaValue::dict([
-<a href=#162 id=162 data-nosnippet>162</a>                (<span class="string">"fluxd"</span>, CasaValue::float64_vector(result.fluxd)),
-<a href=#163 id=163 data-nosnippet>163</a>                (<span class="string">"fluxdErr"</span>, CasaValue::float64_vector(result.fluxd_err)),
-<a href=#164 id=164 data-nosnippet>164</a>                (<span class="string">"numSol"</span>, CasaValue::float64_vector(result.num_sol)),
-<a href=#165 id=165 data-nosnippet>165</a>            ]),
-<a href=#166 id=166 data-nosnippet>166</a>        )
-<a href=#167 id=167 data-nosnippet>167</a>    });
-<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">let </span>fit = [
-<a href=#169 id=169 data-nosnippet>169</a>        (<span class="string">"covarMat"</span>, matrix(<span class="kw-2">&amp;</span>field.covar_mat)),
-<a href=#170 id=170 data-nosnippet>170</a>        (<span class="string">"fieldName"</span>, CasaValue::string(field.field_name.clone())),
-<a href=#171 id=171 data-nosnippet>171</a>        (<span class="string">"fitFluxd"</span>, CasaValue::float(field.fit_fluxd)),
-<a href=#172 id=172 data-nosnippet>172</a>        (<span class="string">"fitFluxdErr"</span>, CasaValue::float(field.fit_fluxd_err)),
-<a href=#173 id=173 data-nosnippet>173</a>        (<span class="string">"fitRefFreq"</span>, CasaValue::float(field.fit_ref_frequency_hz)),
-<a href=#174 id=174 data-nosnippet>174</a>        (
-<a href=#175 id=175 data-nosnippet>175</a>            <span class="string">"spidx"</span>,
-<a href=#176 id=176 data-nosnippet>176</a>            CasaValue::float64_vector(field.spidx.iter().copied()),
-<a href=#177 id=177 data-nosnippet>177</a>        ),
+<a href=#151 id=151 data-nosnippet>151</a>        (
+<a href=#152 id=152 data-nosnippet>152</a>            <span class="string">"spwName"</span>.to_string(),
+<a href=#153 id=153 data-nosnippet>153</a>            CasaValue::str_vector(report.spw_names.clone()),
+<a href=#154 id=154 data-nosnippet>154</a>        ),
+<a href=#155 id=155 data-nosnippet>155</a>    ];
+<a href=#156 id=156 data-nosnippet>156</a>    CasaValue::dict(fields.chain(windows))
+<a href=#157 id=157 data-nosnippet>157</a>}
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a><span class="doccomment">/// One field's flux densities per window, keyed by the window's id, and
+<a href=#160 id=160 data-nosnippet>160</a>/// its fit across windows.
+<a href=#161 id=161 data-nosnippet>161</a></span><span class="kw">fn </span>field_record(field: <span class="kw-2">&amp;</span>FluxScaleFieldResult) -&gt; CasaValue {
+<a href=#162 id=162 data-nosnippet>162</a>    <span class="kw">let </span>windows = field.spw_results.iter().map(|(spw_id, result)| {
+<a href=#163 id=163 data-nosnippet>163</a>        (
+<a href=#164 id=164 data-nosnippet>164</a>            spw_id.to_string(),
+<a href=#165 id=165 data-nosnippet>165</a>            CasaValue::dict([
+<a href=#166 id=166 data-nosnippet>166</a>                (<span class="string">"fluxd"</span>, CasaValue::float64_vector(result.fluxd)),
+<a href=#167 id=167 data-nosnippet>167</a>                (<span class="string">"fluxdErr"</span>, CasaValue::float64_vector(result.fluxd_err)),
+<a href=#168 id=168 data-nosnippet>168</a>                (<span class="string">"numSol"</span>, CasaValue::float64_vector(result.num_sol)),
+<a href=#169 id=169 data-nosnippet>169</a>            ]),
+<a href=#170 id=170 data-nosnippet>170</a>        )
+<a href=#171 id=171 data-nosnippet>171</a>    });
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="kw">let </span>fit = [
+<a href=#173 id=173 data-nosnippet>173</a>        (<span class="string">"covarMat"</span>, matrix(<span class="kw-2">&amp;</span>field.covar_mat)),
+<a href=#174 id=174 data-nosnippet>174</a>        (<span class="string">"fieldName"</span>, CasaValue::string(field.field_name.clone())),
+<a href=#175 id=175 data-nosnippet>175</a>        (<span class="string">"fitFluxd"</span>, CasaValue::float(field.fit_fluxd)),
+<a href=#176 id=176 data-nosnippet>176</a>        (<span class="string">"fitFluxdErr"</span>, CasaValue::float(field.fit_fluxd_err)),
+<a href=#177 id=177 data-nosnippet>177</a>        (<span class="string">"fitRefFreq"</span>, CasaValue::float(field.fit_ref_frequency_hz)),
 <a href=#178 id=178 data-nosnippet>178</a>        (
-<a href=#179 id=179 data-nosnippet>179</a>            <span class="string">"spidxerr"</span>,
-<a href=#180 id=180 data-nosnippet>180</a>            CasaValue::float64_vector(field.spidx_err.iter().copied()),
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="string">"spidx"</span>,
+<a href=#180 id=180 data-nosnippet>180</a>            CasaValue::float64_vector(field.spidx.iter().copied()),
 <a href=#181 id=181 data-nosnippet>181</a>        ),
-<a href=#182 id=182 data-nosnippet>182</a>    ]
-<a href=#183 id=183 data-nosnippet>183</a>    .map(|(key, value)| (key.to_string(), value));
-<a href=#184 id=184 data-nosnippet>184</a>    CasaValue::dict(windows.chain(fit))
-<a href=#185 id=185 data-nosnippet>185</a>}
-<a href=#186 id=186 data-nosnippet>186</a>
-<a href=#187 id=187 data-nosnippet>187</a><span class="doccomment">/// `rows` as a two-dimensional `float64` array; none is CASA's `(0, 0)`.
-<a href=#188 id=188 data-nosnippet>188</a></span><span class="kw">fn </span>matrix(rows: <span class="kw-2">&amp;</span>[Vec&lt;f64&gt;]) -&gt; CasaValue {
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span>columns = rows.first().map_or(<span class="number">0</span>, Vec::len);
-<a href=#190 id=190 data-nosnippet>190</a>    CasaValue::FloatArray {
-<a href=#191 id=191 data-nosnippet>191</a>        dtype: FloatDtype::Float64,
-<a href=#192 id=192 data-nosnippet>192</a>        shape: <span class="macro">vec!</span>[rows.len(), columns],
-<a href=#193 id=193 data-nosnippet>193</a>        data: rows.iter().flatten().copied().map(CasaFloat).collect(),
-<a href=#194 id=194 data-nosnippet>194</a>    }
-<a href=#195 id=195 data-nosnippet>195</a>}
+<a href=#182 id=182 data-nosnippet>182</a>        (
+<a href=#183 id=183 data-nosnippet>183</a>            <span class="string">"spidxerr"</span>,
+<a href=#184 id=184 data-nosnippet>184</a>            CasaValue::float64_vector(field.spidx_err.iter().copied()),
+<a href=#185 id=185 data-nosnippet>185</a>        ),
+<a href=#186 id=186 data-nosnippet>186</a>    ]
+<a href=#187 id=187 data-nosnippet>187</a>    .map(|(key, value)| (key.to_string(), value));
+<a href=#188 id=188 data-nosnippet>188</a>    CasaValue::dict(windows.chain(fit))
+<a href=#189 id=189 data-nosnippet>189</a>}
+<a href=#190 id=190 data-nosnippet>190</a>
+<a href=#191 id=191 data-nosnippet>191</a><span class="doccomment">/// `rows` as a two-dimensional `float64` array; none is CASA's `(0, 0)`.
+<a href=#192 id=192 data-nosnippet>192</a></span><span class="kw">fn </span>matrix(rows: <span class="kw-2">&amp;</span>[Vec&lt;f64&gt;]) -&gt; CasaValue {
+<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span>columns = rows.first().map_or(<span class="number">0</span>, Vec::len);
+<a href=#194 id=194 data-nosnippet>194</a>    CasaValue::FloatArray {
+<a href=#195 id=195 data-nosnippet>195</a>        dtype: FloatDtype::Float64,
+<a href=#196 id=196 data-nosnippet>196</a>        shape: <span class="macro">vec!</span>[rows.len(), columns],
+<a href=#197 id=197 data-nosnippet>197</a>        data: rows.iter().flatten().copied().map(CasaFloat).collect(),
+<a href=#198 id=198 data-nosnippet>198</a>    }
+<a href=#199 id=199 data-nosnippet>199</a>}
 </code></pre></div></section></main></body></html>

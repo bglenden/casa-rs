@@ -346,7 +346,7 @@
 <a href=#346 id=346 data-nosnippet>346</a>            phase: <span class="number">0.7</span>,
 <a href=#347 id=347 data-nosnippet>347</a>            plane,
 <a href=#348 id=348 data-nosnippet>348</a>            spectral,
-<a href=#349 id=349 data-nosnippet>349</a>            cf: CfKey { group: cf, cube: <span class="number">0 </span>},
+<a href=#349 id=349 data-nosnippet>349</a>            cf: CfKey::new(cf, <span class="number">0</span>),
 <a href=#350 id=350 data-nosnippet>350</a>            gradient,
 <a href=#351 id=351 data-nosnippet>351</a>        }
 <a href=#352 id=352 data-nosnippet>352</a>    }
@@ -948,10 +948,10 @@
 <a href=#948 id=948 data-nosnippet>948</a>                    phase: <span class="number">0.0</span>,
 <a href=#949 id=949 data-nosnippet>949</a>                    plane: <span class="number">0</span>,
 <a href=#950 id=950 data-nosnippet>950</a>                    spectral: spectral[(draw &gt;&gt; <span class="number">1</span>) <span class="kw">as </span>usize % <span class="number">3</span>],
-<a href=#951 id=951 data-nosnippet>951</a>                    cf: CfKey {
-<a href=#952 id=952 data-nosnippet>952</a>                        group: u16::try_from((draw &gt;&gt; <span class="number">3</span>) % u64::from(keys)).expect(<span class="string">"a key"</span>),
-<a href=#953 id=953 data-nosnippet>953</a>                        cube: <span class="number">0</span>,
-<a href=#954 id=954 data-nosnippet>954</a>                    },
+<a href=#951 id=951 data-nosnippet>951</a>                    cf: CfKey::new(
+<a href=#952 id=952 data-nosnippet>952</a>                        u16::try_from((draw &gt;&gt; <span class="number">3</span>) % u64::from(keys)).expect(<span class="string">"a key"</span>),
+<a href=#953 id=953 data-nosnippet>953</a>                        <span class="number">0</span>,
+<a href=#954 id=954 data-nosnippet>954</a>                    ),
 <a href=#955 id=955 data-nosnippet>955</a>                    gradient: gradients[(draw &gt;&gt; <span class="number">7</span>) <span class="kw">as </span>usize % <span class="number">3</span>],
 <a href=#956 id=956 data-nosnippet>956</a>                },
 <a href=#957 id=957 data-nosnippet>957</a>                <span class="kw-2">&amp;</span>[Complex32::default(); <span class="number">4</span>],

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["SpectralCoordinate"]};
+window.SIDEBAR_ITEMS = {"enum":["SpectralNativeType"],"struct":["SpectralCoordinate"]};

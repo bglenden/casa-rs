@@ -59,41 +59,42 @@
 <a href=#59 id=59 data-nosnippet>59</a>    lhs: <span class="kw-2">&amp;</span>ExprValue,
 <a href=#60 id=60 data-nosnippet>60</a>    rhs: <span class="kw-2">&amp;</span>ExprValue,
 <a href=#61 id=61 data-nosnippet>61</a>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ExprValue, TaqlError&gt;&gt; {
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">let </span>(left, right) = (
-<a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">if let </span>ExprValue::Array(value) = lhs {
-<a href=#64 id=64 data-nosnippet>64</a>            <span class="prelude-val">Some</span>(value)
-<a href=#65 id=65 data-nosnippet>65</a>        } <span class="kw">else </span>{
-<a href=#66 id=66 data-nosnippet>66</a>            <span class="prelude-val">None
-<a href=#67 id=67 data-nosnippet>67</a>        </span>},
-<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">if let </span>ExprValue::Array(value) = rhs {
-<a href=#69 id=69 data-nosnippet>69</a>            <span class="prelude-val">Some</span>(value)
-<a href=#70 id=70 data-nosnippet>70</a>        } <span class="kw">else </span>{
-<a href=#71 id=71 data-nosnippet>71</a>            <span class="prelude-val">None
-<a href=#72 id=72 data-nosnippet>72</a>        </span>},
-<a href=#73 id=73 data-nosnippet>73</a>    );
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">let </span>array = left.or(right)<span class="question-mark">?</span>;
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">if </span>left
-<a href=#76 id=76 data-nosnippet>76</a>        .zip(right)
-<a href=#77 id=77 data-nosnippet>77</a>        .is_some_and(|(left, right)| left.shape != right.shape)
-<a href=#78 id=78 data-nosnippet>78</a>    {
-<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(TaqlError::TypeError {
-<a href=#80 id=80 data-nosnippet>80</a>            message: <span class="string">"array operand shapes differ"</span>.into(),
-<a href=#81 id=81 data-nosnippet>81</a>        }));
-<a href=#82 id=82 data-nosnippet>82</a>    }
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">let </span>values = (<span class="number">0</span>..array.data.len())
-<a href=#84 id=84 data-nosnippet>84</a>        .map(|index| {
-<a href=#85 id=85 data-nosnippet>85</a>            eval_binary(
-<a href=#86 id=86 data-nosnippet>86</a>                op,
-<a href=#87 id=87 data-nosnippet>87</a>                left.map_or(lhs, |array| <span class="kw-2">&amp;</span>array.data[index]).clone(),
-<a href=#88 id=88 data-nosnippet>88</a>                right.map_or(rhs, |array| <span class="kw-2">&amp;</span>array.data[index]).clone(),
-<a href=#89 id=89 data-nosnippet>89</a>            )
-<a href=#90 id=90 data-nosnippet>90</a>        })
-<a href=#91 id=91 data-nosnippet>91</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;();
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="prelude-val">Some</span>(values.map(|data| {
-<a href=#93 id=93 data-nosnippet>93</a>        ExprValue::Array(ArrayValue {
-<a href=#94 id=94 data-nosnippet>94</a>            shape: array.shape.clone(),
-<a href=#95 id=95 data-nosnippet>95</a>            data,
-<a href=#96 id=96 data-nosnippet>96</a>        })
-<a href=#97 id=97 data-nosnippet>97</a>    }))
-<a href=#98 id=98 data-nosnippet>98</a>}
+<a href=#62 id=62 data-nosnippet>62</a>    <span class="kw">let </span>left_data = lhs.array_with_mask();
+<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">let </span>right_data = rhs.array_with_mask();
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">let </span>left = left_data.map(|(array, <span class="kw">_</span>)| array);
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">let </span>right = right_data.map(|(array, <span class="kw">_</span>)| array);
+<a href=#66 id=66 data-nosnippet>66</a>    <span class="kw">let </span>array = left.or(right)<span class="question-mark">?</span>;
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">if </span>left
+<a href=#68 id=68 data-nosnippet>68</a>        .zip(right)
+<a href=#69 id=69 data-nosnippet>69</a>        .is_some_and(|(left, right)| left.shape != right.shape)
+<a href=#70 id=70 data-nosnippet>70</a>    {
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(TaqlError::TypeError {
+<a href=#72 id=72 data-nosnippet>72</a>            message: <span class="string">"array operand shapes differ"</span>.into(),
+<a href=#73 id=73 data-nosnippet>73</a>        }));
+<a href=#74 id=74 data-nosnippet>74</a>    }
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>values = (<span class="number">0</span>..array.data.len())
+<a href=#76 id=76 data-nosnippet>76</a>        .map(|index| {
+<a href=#77 id=77 data-nosnippet>77</a>            eval_binary(
+<a href=#78 id=78 data-nosnippet>78</a>                op,
+<a href=#79 id=79 data-nosnippet>79</a>                left.map_or(lhs, |array| <span class="kw-2">&amp;</span>array.data[index]).clone(),
+<a href=#80 id=80 data-nosnippet>80</a>                right.map_or(rhs, |array| <span class="kw-2">&amp;</span>array.data[index]).clone(),
+<a href=#81 id=81 data-nosnippet>81</a>            )
+<a href=#82 id=82 data-nosnippet>82</a>        })
+<a href=#83 id=83 data-nosnippet>83</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;();
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">let </span>left_mask = left_data.and_then(|(<span class="kw">_</span>, mask)| mask);
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="kw">let </span>right_mask = right_data.and_then(|(<span class="kw">_</span>, mask)| mask);
+<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span>mask = <span class="kw">match </span>(left_mask, right_mask) {
+<a href=#87 id=87 data-nosnippet>87</a>        (<span class="prelude-val">Some</span>(left), <span class="prelude-val">Some</span>(right)) =&gt; <span class="prelude-val">Some</span>(left.iter().zip(right).map(|(<span class="kw-2">&amp;</span>a, <span class="kw-2">&amp;</span>b)| a || b).collect()),
+<a href=#88 id=88 data-nosnippet>88</a>        (left, right) =&gt; left.or(right).map(&lt;[bool]&gt;::to_vec),
+<a href=#89 id=89 data-nosnippet>89</a>    };
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="prelude-val">Some</span>(values.map(|data| {
+<a href=#91 id=91 data-nosnippet>91</a>        ExprValue::from_array_with_mask(
+<a href=#92 id=92 data-nosnippet>92</a>            ArrayValue {
+<a href=#93 id=93 data-nosnippet>93</a>                shape: array.shape.clone(),
+<a href=#94 id=94 data-nosnippet>94</a>                data,
+<a href=#95 id=95 data-nosnippet>95</a>            },
+<a href=#96 id=96 data-nosnippet>96</a>            mask,
+<a href=#97 id=97 data-nosnippet>97</a>        )
+<a href=#98 id=98 data-nosnippet>98</a>    }))
+<a href=#99 id=99 data-nosnippet>99</a>}
 </code></pre></div></section></main></body></html>

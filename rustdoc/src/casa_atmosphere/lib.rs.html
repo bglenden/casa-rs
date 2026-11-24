@@ -76,19 +76,21 @@
 <a href=#76 id=76 data-nosnippet>76</a></span><span class="kw">pub mod </span>absorption;
 <a href=#77 id=77 data-nosnippet>77</a><span class="kw">mod </span>profile;
 <a href=#78 id=78 data-nosnippet>78</a><span class="kw">pub mod </span>refractivity;
-<a href=#79 id=79 data-nosnippet>79</a><span class="kw">mod </span>sky;
-<a href=#80 id=80 data-nosnippet>80</a><span class="kw">mod </span>spectral_grid;
-<a href=#81 id=81 data-nosnippet>81</a>
-<a href=#82 id=82 data-nosnippet>82</a><span class="kw">pub use </span>absorption::{AbsorptionProfile, ChannelAbsorption, ChannelTotals};
-<a href=#83 id=83 data-nosnippet>83</a><span class="kw">pub use </span>profile::{AtmosphereProfile, AtmosphereType, Layer, ProfileParameters};
-<a href=#84 id=84 data-nosnippet>84</a><span class="kw">pub use </span>sky::{Sky, SkyColumn};
-<a href=#85 id=85 data-nosnippet>85</a><span class="kw">pub use </span>spectral_grid::{SpectralGrid, SpectralWindow};
-<a href=#86 id=86 data-nosnippet>86</a>
-<a href=#87 id=87 data-nosnippet>87</a><span class="doccomment">/// Errors building atmospheric models.
-<a href=#88 id=88 data-nosnippet>88</a></span><span class="attr">#[derive(Debug, thiserror::Error, PartialEq)]
-<a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">pub enum </span>AtmosphereError {
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// A parameter is outside the range the model accepts.
-<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="attr">#[error(<span class="string">"invalid atmosphere parameter: {0}"</span>)]
-<a href=#92 id=92 data-nosnippet>92</a>    </span>InvalidParameter(String),
-<a href=#93 id=93 data-nosnippet>93</a>}
+<a href=#79 id=79 data-nosnippet>79</a><span class="kw">mod </span>session;
+<a href=#80 id=80 data-nosnippet>80</a><span class="kw">mod </span>sky;
+<a href=#81 id=81 data-nosnippet>81</a><span class="kw">mod </span>spectral_grid;
+<a href=#82 id=82 data-nosnippet>82</a>
+<a href=#83 id=83 data-nosnippet>83</a><span class="kw">pub use </span>absorption::{AbsorptionProfile, ChannelAbsorption, ChannelTotals};
+<a href=#84 id=84 data-nosnippet>84</a><span class="kw">pub use </span>profile::{AtmosphereProfile, AtmosphereType, Layer, ProfileParameters};
+<a href=#85 id=85 data-nosnippet>85</a><span class="kw">pub use </span>session::{AtmosphereSession, AtmosphereSpectrum};
+<a href=#86 id=86 data-nosnippet>86</a><span class="kw">pub use </span>sky::{Sky, SkyColumn};
+<a href=#87 id=87 data-nosnippet>87</a><span class="kw">pub use </span>spectral_grid::{SpectralGrid, SpectralWindow};
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a><span class="doccomment">/// Errors building atmospheric models.
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="attr">#[derive(Debug, thiserror::Error, PartialEq)]
+<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">pub enum </span>AtmosphereError {
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// A parameter is outside the range the model accepts.
+<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="attr">#[error(<span class="string">"invalid atmosphere parameter: {0}"</span>)]
+<a href=#94 id=94 data-nosnippet>94</a>    </span>InvalidParameter(String),
+<a href=#95 id=95 data-nosnippet>95</a>}
 </code></pre></div></section></main></body></html>

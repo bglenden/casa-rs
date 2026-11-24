@@ -81,12 +81,12 @@
 <a href=#81 id=81 data-nosnippet>81</a>        cube_idx: usize,
 <a href=#82 id=82 data-nosnippet>82</a>        cube: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>TsmCubeInfo,
 <a href=#83 id=83 data-nosnippet>83</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, StorageError&gt; {
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">if </span>cube.cube_shape.len() &lt; <span class="number">2
-<a href=#85 id=85 data-nosnippet>85</a>            </span>|| cube.tile_shape.len() != cube.cube_shape.len()
+<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">if </span>cube.cube_shape.is_empty()
+<a href=#85 id=85 data-nosnippet>85</a>            || cube.tile_shape.len() != cube.cube_shape.len()
 <a href=#86 id=86 data-nosnippet>86</a>            || cube.tile_shape.contains(<span class="kw-2">&amp;</span><span class="number">0</span>)
 <a href=#87 id=87 data-nosnippet>87</a>        {
 <a href=#88 id=88 data-nosnippet>88</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(StorageError::FormatMismatch(<span class="macro">format!</span>(
-<a href=#89 id=89 data-nosnippet>89</a>                <span class="string">"typed selected read found tile shape {:?} for cube shape {:?}"</span>,
+<a href=#89 id=89 data-nosnippet>89</a>                <span class="string">"selected read found tile shape {:?} for cube shape {:?}"</span>,
 <a href=#90 id=90 data-nosnippet>90</a>                cube.tile_shape, cube.cube_shape
 <a href=#91 id=91 data-nosnippet>91</a>            )));
 <a href=#92 id=92 data-nosnippet>92</a>        }
@@ -345,7 +345,7 @@
 <a href=#345 id=345 data-nosnippet>345</a>            (<span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">10</span>], <span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">0</span>]),
 <a href=#346 id=346 data-nosnippet>346</a>            (<span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">6</span>, <span class="number">10</span>], <span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">0</span>, <span class="number">5</span>]),
 <a href=#347 id=347 data-nosnippet>347</a>            (<span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">6</span>, <span class="number">10</span>], <span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">5</span>]),
-<a href=#348 id=348 data-nosnippet>348</a>            (<span class="macro">vec!</span>[<span class="number">10</span>], <span class="macro">vec!</span>[<span class="number">5</span>]),
+<a href=#348 id=348 data-nosnippet>348</a>            (<span class="macro">vec!</span>[], <span class="macro">vec!</span>[]),
 <a href=#349 id=349 data-nosnippet>349</a>        ] {
 <a href=#350 id=350 data-nosnippet>350</a>            <span class="kw">let </span>cube = cube(cube_shape, tile_shape);
 <a href=#351 id=351 data-nosnippet>351</a>            <span class="kw">let </span>tiles = SelectedTiles::new(
@@ -371,5 +371,47 @@
 <a href=#371 id=371 data-nosnippet>371</a>        <span class="kw">let </span>short = cube(<span class="macro">vec!</span>[<span class="number">4</span>, <span class="number">6</span>, <span class="number">10</span>], <span class="macro">vec!</span>[<span class="number">4</span>]);
 <a href=#372 id=372 data-nosnippet>372</a>        <span class="macro">assert!</span>(<span class="kw">super</span>::<span class="kw">super</span>::typed_2d_cube_shape(<span class="kw-2">&amp;</span>short, <span class="number">0</span>, <span class="number">1</span>).is_err());
 <a href=#373 id=373 data-nosnippet>373</a>    }
-<a href=#374 id=374 data-nosnippet>374</a>}
+<a href=#374 id=374 data-nosnippet>374</a>
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="attr">#[test]
+<a href=#376 id=376 data-nosnippet>376</a>    </span><span class="kw">fn </span>row_axis_only_supports_complete_cells() {
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">let </span>header = header();
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">let </span>row_axis = cube(<span class="macro">vec!</span>[<span class="number">10</span>], <span class="macro">vec!</span>[<span class="number">5</span>]);
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>tiles = SelectedTiles::new(
+<a href=#380 id=380 data-nosnippet>380</a>            Path::new(<span class="string">""</span>),
+<a href=#381 id=381 data-nosnippet>381</a>            <span class="number">0</span>,
+<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw-2">&amp;</span>header,
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="number">0</span>,
+<a href=#384 id=384 data-nosnippet>384</a>            CasacoreDataType::TpFloat,
+<a href=#385 id=385 data-nosnippet>385</a>            <span class="number">0</span>,
+<a href=#386 id=386 data-nosnippet>386</a>            <span class="kw-2">&amp;</span>row_axis,
+<a href=#387 id=387 data-nosnippet>387</a>        )
+<a href=#388 id=388 data-nosnippet>388</a>        .expect(<span class="string">"a row-axis-only cube stores scalar-shaped array cells"</span>);
+<a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">let </span>patch = SelectedCubeRow {
+<a href=#390 id=390 data-nosnippet>390</a>            out_idx: <span class="number">0</span>,
+<a href=#391 id=391 data-nosnippet>391</a>            pos_in_cube: <span class="number">7</span>,
+<a href=#392 id=392 data-nosnippet>392</a>        };
+<a href=#393 id=393 data-nosnippet>393</a>        <span class="macro">assert_eq!</span>(
+<a href=#394 id=394 data-nosnippet>394</a>            tiles
+<a href=#395 id=395 data-nosnippet>395</a>                .rows_by_tile(<span class="kw-2">&amp;</span>[patch])
+<a href=#396 id=396 data-nosnippet>396</a>                .keys()
+<a href=#397 id=397 data-nosnippet>397</a>                .copied()
+<a href=#398 id=398 data-nosnippet>398</a>                .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#399 id=399 data-nosnippet>399</a>            [<span class="number">1</span>]
+<a href=#400 id=400 data-nosnippet>400</a>        );
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="macro">assert_eq!</span>(tiles.row_offset(patch), <span class="number">2</span>);
+<a href=#402 id=402 data-nosnippet>402</a>        <span class="macro">assert!</span>(<span class="kw">super</span>::<span class="kw">super</span>::typed_1d_cube_shape(<span class="kw-2">&amp;</span>row_axis).is_err());
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="macro">assert!</span>(<span class="kw">super</span>::<span class="kw">super</span>::typed_2d_cube_shape(<span class="kw-2">&amp;</span>row_axis, <span class="number">0</span>, <span class="number">1</span>).is_err());
+<a href=#404 id=404 data-nosnippet>404</a>    }
+<a href=#405 id=405 data-nosnippet>405</a>
+<a href=#406 id=406 data-nosnippet>406</a>    <span class="attr">#[test]
+<a href=#407 id=407 data-nosnippet>407</a>    </span><span class="kw">fn </span>streaming_does_not_prefetch_across_a_bucket_wider_than_its_window() {
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::{STREAMING_TILED_READ_AHEAD_BYTES, read_ahead_span};
+<a href=#409 id=409 data-nosnippet>409</a>
+<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>flags = <span class="number">128 </span>* <span class="number">1024</span>;
+<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">let </span>bucket = STREAMING_TILED_READ_AHEAD_BYTES + flags;
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="macro">assert_eq!</span>(read_ahead_span(<span class="number">9</span>, bucket, flags), <span class="prelude-val">Some</span>(flags));
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="macro">assert_eq!</span>(read_ahead_span(<span class="number">9</span>, <span class="number">3 </span>* flags, flags), <span class="prelude-val">Some</span>(<span class="number">25 </span>* flags));
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="macro">assert_eq!</span>(read_ahead_span(<span class="number">0</span>, bucket, flags), <span class="prelude-val">None</span>);
+<a href=#415 id=415 data-nosnippet>415</a>    }
+<a href=#416 id=416 data-nosnippet>416</a>}
 </code></pre></div></section></main></body></html>

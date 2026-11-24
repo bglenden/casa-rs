@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["fits_stokes_axis","from_fits_header","from_fits_header_with_axis_order","to_fits_header","try_to_fits_header"]};
+window.SIDEBAR_ITEMS = {"fn":["align_fits_pc_rows","fallback_fits_linear_coordinates","fits_stokes_axis","from_fits_header","from_fits_header_with_axis_order","to_fits_header","try_to_fits_header"]};

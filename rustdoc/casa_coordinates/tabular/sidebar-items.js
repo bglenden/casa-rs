@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["TabularCoordinate"]};
+window.SIDEBAR_ITEMS = {"enum":["TabularEdit"],"struct":["TabularCoordinate"]};

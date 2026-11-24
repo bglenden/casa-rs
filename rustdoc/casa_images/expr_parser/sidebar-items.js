@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["parse_image_expr","parse_mask_expr","referenced_images"],"struct":["ExprParseError","HashMapResolver"],"trait":["ExprValueConvert","ImageResolver"]};
+window.SIDEBAR_ITEMS = {"enum":["ImageToolPixelExpression"],"fn":["parse_image_expr","parse_mask_expr","referenced_images"],"struct":["ExprParseError","HashMapResolver"],"trait":["ExprValueConvert","ImageResolver"]};

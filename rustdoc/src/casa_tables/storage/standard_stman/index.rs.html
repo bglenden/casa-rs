@@ -148,7 +148,7 @@
 <a href=#148 id=148 data-nosnippet>148</a>/// each object's length once the object ends. The bucket being filled is
 <a href=#149 id=149 data-nosnippet>149</a>/// held until the stream moves into the next; a length that falls in an
 <a href=#150 id=150 data-nosnippet>150</a>/// earlier bucket is written straight to the file.
-<a href=#151 id=151 data-nosnippet>151</a></span><span class="kw">struct </span>IndexBucketSink {
+<a href=#151 id=151 data-nosnippet>151</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IndexBucketSink {
 <a href=#152 id=152 data-nosnippet>152</a>    file: File,
 <a href=#153 id=153 data-nosnippet>153</a>    first_bucket: usize,
 <a href=#154 id=154 data-nosnippet>154</a>    bucket_bytes: usize,
@@ -161,7 +161,7 @@
 <a href=#161 id=161 data-nosnippet>161</a>}
 <a href=#162 id=162 data-nosnippet>162</a>
 <a href=#163 id=163 data-nosnippet>163</a><span class="kw">impl </span>IndexBucketSink {
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">fn </span>new(file: File, first_bucket: usize, bucket_bytes: usize) -&gt; <span class="self">Self </span>{
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(file: File, first_bucket: usize, bucket_bytes: usize) -&gt; <span class="self">Self </span>{
 <a href=#165 id=165 data-nosnippet>165</a>        <span class="self">Self </span>{
 <a href=#166 id=166 data-nosnippet>166</a>            file,
 <a href=#167 id=167 data-nosnippet>167</a>            first_bucket,
@@ -175,7 +175,7 @@
 <a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Stream the `SSMIndex` of `n_used` data buckets of `rows_per_bucket`
 <a href=#176 id=176 data-nosnippet>176</a>    /// rows, their last rows and their bucket numbers, in the file's byte
 <a href=#177 id=177 data-nosnippet>177</a>    /// order.
-<a href=#178 id=178 data-nosnippet>178</a>    </span><span class="kw">fn </span>write_index(
+<a href=#178 id=178 data-nosnippet>178</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>write_index(
 <a href=#179 id=179 data-nosnippet>179</a>        <span class="self">self</span>,
 <a href=#180 id=180 data-nosnippet>180</a>        n_used: u32,
 <a href=#181 id=181 data-nosnippet>181</a>        rows_per_bucket: u32,
@@ -221,7 +221,7 @@
 <a href=#221 id=221 data-nosnippet>221</a>
 <a href=#222 id=222 data-nosnippet>222</a>    <span class="doccomment">/// End the chain at the last bucket and write it; return the number of
 <a href=#223 id=223 data-nosnippet>223</a>    /// index buckets and the length of the index.
-<a href=#224 id=224 data-nosnippet>224</a>    </span><span class="kw">fn </span>finish(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; io::Result&lt;(usize, usize)&gt; {
+<a href=#224 id=224 data-nosnippet>224</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>finish(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; io::Result&lt;(usize, usize)&gt; {
 <a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>buckets = <span class="kw">match </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.open {
 <a href=#226 id=226 data-nosnippet>226</a>            <span class="prelude-val">Some</span>((bucket, bytes)) =&gt; {
 <a href=#227 id=227 data-nosnippet>227</a>                write_chain_header(bytes, -<span class="number">1</span>);

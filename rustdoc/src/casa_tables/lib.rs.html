@@ -267,7 +267,7 @@
 <a href=#267 id=267 data-nosnippet>267</a><span class="kw">pub use </span>concat_table::ConcatTable;
 <a href=#268 id=268 data-nosnippet>268</a><span class="kw">pub use </span>indexing::ColumnsIndex;
 <a href=#269 id=269 data-nosnippet>269</a><span class="attr">#[cfg(unix)]
-<a href=#270 id=270 data-nosnippet>270</a></span><span class="kw">pub use </span>lock::table_holder;
+<a href=#270 id=270 data-nosnippet>270</a></span><span class="kw">pub use </span>lock::{DelegatedTableWrite, table_holder};
 <a href=#271 id=271 data-nosnippet>271</a><span class="kw">pub use </span>lock::{
 <a href=#272 id=272 data-nosnippet>272</a>    ExternalLockSync, LockMode, LockOptions, LockType, TableHolder, TableUseLock, TableWriteLock,
 <a href=#273 id=273 data-nosnippet>273</a>};
@@ -297,15 +297,15 @@
 <a href=#297 id=297 data-nosnippet>297</a>    ColumnAddition, ColumnBinding, ColumnCellIter, ColumnCellRef, ColumnChunkIter, ColumnOverride,
 <a href=#298 id=298 data-nosnippet>298</a>    ColumnOverrides, CompressedComplexArray, DataManagerKind, EndianFormat, GeneratedArrayColumn,
 <a href=#299 id=299 data-nosnippet>299</a>    GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun, IncrementalCorruption,
-<a href=#300 id=300 data-nosnippet>300</a>    IncrementalLayoutCheck, ManagerAddition, PreparedRowAppender, PreparedTableRow,
-<a href=#301 id=301 data-nosnippet>301</a>    PreparedTableRowMut, QueryResult, RecordColumnCell, RecordColumnIter,
+<a href=#300 id=300 data-nosnippet>300</a>    IncrementalLayoutCheck, ManagerAddition, PlainReferenceRead, PreparedRowAppender,
+<a href=#301 id=301 data-nosnippet>301</a>    PreparedTableRow, PreparedTableRowMut, QueryResult, RecordColumnCell, RecordColumnIter,
 <a href=#302 id=302 data-nosnippet>302</a>    RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
 <a href=#303 id=303 data-nosnippet>303</a>    RowRange, STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,
 <a href=#304 id=304 data-nosnippet>304</a>    SelectedArray1DShape, SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut,
 <a href=#305 id=305 data-nosnippet>305</a>    SelectedArray2DShape, SelectedReadFootprint, Slicer, SortOrder, StoredTableDescription,
 <a href=#306 id=306 data-nosnippet>306</a>    StreamedScalarColumn, StreamedScalarType, StreamedScalarValues, StreamingScalarColumnWriter,
 <a href=#307 id=307 data-nosnippet>307</a>    Table, TableCell, TableCellMut, TableColumn, TableColumnMut, TableError, TableKind,
-<a href=#308 id=308 data-nosnippet>308</a>    TableOptions, TableRow, TableRowMut, TableWritePlan, table_cache_name,
+<a href=#308 id=308 data-nosnippet>308</a>    TableOptions, TablePartNames, TableRow, TableRowMut, TableWritePlan, table_cache_name,
 <a href=#309 id=309 data-nosnippet>309</a>};
-<a href=#310 id=310 data-nosnippet>310</a><span class="kw">pub use </span>table_path::{add_directory, strip_directory};
+<a href=#310 id=310 data-nosnippet>310</a><span class="kw">pub use </span>table_path::{add_directory, lexical_absolute, strip_directory};
 </code></pre></div></section></main></body></html>

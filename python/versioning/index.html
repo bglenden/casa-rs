@@ -835,12 +835,6 @@ Rust binaries:</p>
 <li>runtime contract compatibility with the resolved suite and its
    catalog-owned task executables</li>
 </ol>
-<p>The <code>casars.data</code> surface has its own narrower stability boundary in v1:</p>
-<ul>
-<li>stable in v1: reading existing persistent images</li>
-<li>stable in v1: writing pixel slices into existing persistent images with <code>Image.put_slice</code></li>
-<li>deferred from v1: image creation, coordinate-system authoring, and broader image metadata editing</li>
-</ul>
 <p>The direct object-surface contract published by <code>casars.data.protocol_info()</code>
 and <code>casars.data.schema_bundle()</code> is currently:</p>
 <ul>
@@ -848,10 +842,11 @@ and <code>casars.data.schema_bundle()</code> is currently:</p>
 <li>protocol version: <code>1</code></li>
 <li>surface kind: <code>object</code></li>
 </ul>
-<p>Persistent table access uses the CASA tool <code>casars.tools.table</code>; the old
-<code>casars.data.Table</code> and <code>casars.Table</code> names were retired. The image data
-surface continues to cover file-backed reads and pixel updates.</p>
-<p>The same bundle, still at protocol version 1, also describes the <code>casars.tools</code>
+<p>Persistent image and table access use <code>casars.tools.image</code> and
+<code>casars.tools.table</code>. The former <code>casars.data.Image</code>, <code>casars.Image</code>,
+<code>casars.data.Table</code> and <code>casars.Table</code> exports are retired. See the
+<a href="../data/#migrate-an-existing-image-reader-or-writer">Data API</a> for image migration.</p>
+<p>The bundle describes the <code>casars.tools</code>
 classes (<code>simulator</code>, <code>measures</code>, <code>quanta</code>, <code>componentlist</code>, <code>image</code>,
 <code>coordsys</code>, <code>table</code>, <code>msmetadata</code>, <code>ms</code>). The bundle's Python projection
 names <code>casars.data</code> as its module; a tool's projection entry names its own

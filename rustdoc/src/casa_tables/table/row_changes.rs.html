@@ -119,142 +119,178 @@
 <a href=#119 id=119 data-nosnippet>119</a>        <span class="self">self</span>.edit_rows_in_place(Rows::Append { count, defaults })
 <a href=#120 id=120 data-nosnippet>120</a>    }
 <a href=#121 id=121 data-nosnippet>121</a>
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Keep the given rows in an existing plain table, in ascending order,
-<a href=#123 id=123 data-nosnippet>123</a>    /// and delete all others. This operation preserves manager bindings.
-<a href=#124 id=124 data-nosnippet>124</a>    ///
-<a href=#125 id=125 data-nosnippet>125</a>    /// # Errors
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Append distinct records in a single edit, preserving the table's
+<a href=#123 id=123 data-nosnippet>123</a>    /// existing manager bindings. Standard, AipsIO and incremental managers
+<a href=#124 id=124 data-nosnippet>124</a>    /// accept explicit record values. Omitted cells keep the manager's
+<a href=#125 id=125 data-nosnippet>125</a>    /// normal append defaults, including inherited incremental values.
 <a href=#126 id=126 data-nosnippet>126</a>    ///
-<a href=#127 id=127 data-nosnippet>127</a>    /// The row sequence is unsorted or contains repetitions or invalid row
-<a href=#128 id=128 data-nosnippet>128</a>    /// numbers; the table cannot be written or has a manager that refuses
-<a href=#129 id=129 data-nosnippet>129</a>    /// to remove rows (for example, IncrementalStMan).
-<a href=#130 id=130 data-nosnippet>130</a>    </span><span class="kw">pub fn </span>retain_rows_in_place(<span class="kw-2">&amp;mut </span><span class="self">self</span>, kept: <span class="kw-2">&amp;</span>[usize]) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
-<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">if </span>kept.windows(<span class="number">2</span>).any(|pair| pair[<span class="number">0</span>] &gt;= pair[<span class="number">1</span>]) {
-<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(
-<a href=#133 id=133 data-nosnippet>133</a>                <span class="string">"retained rows must strictly increase"</span>.into(),
-<a href=#134 id=134 data-nosnippet>134</a>            ));
-<a href=#135 id=135 data-nosnippet>135</a>        }
-<a href=#136 id=136 data-nosnippet>136</a>        <span class="self">self</span>.edit_rows_in_place(Rows::Keep(kept))
-<a href=#137 id=137 data-nosnippet>137</a>    }
-<a href=#138 id=138 data-nosnippet>138</a>
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Add columns without changing the files for managers that do not
-<a href=#140 id=140 data-nosnippet>140</a>    /// receive a column. When supplied, `manager` binds all the new
-<a href=#141 id=141 data-nosnippet>141</a>    /// columns to one new manager. Otherwise the first manager that
-<a href=#142 id=142 data-nosnippet>142</a>    /// accepts addition supplies the storage, as in casacore.
-<a href=#143 id=143 data-nosnippet>143</a>    ///
-<a href=#144 id=144 data-nosnippet>144</a>    /// # Errors
-<a href=#145 id=145 data-nosnippet>145</a>    ///
-<a href=#146 id=146 data-nosnippet>146</a>    /// The table is not a clean plain table, a column or manager name
-<a href=#147 id=147 data-nosnippet>147</a>    /// already exists, the selected binding is unsupported, or a storage
-<a href=#148 id=148 data-nosnippet>148</a>    /// file cannot be read or written.
-<a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">pub fn </span>add_columns_in_place(
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#151 id=151 data-nosnippet>151</a>        columns: Vec&lt;ColumnAddition&gt;,
-<a href=#152 id=152 data-nosnippet>152</a>        manager: <span class="prelude-ty">Option</span>&lt;ManagerAddition&gt;,
-<a href=#153 id=153 data-nosnippet>153</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
-<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">if </span>columns.is_empty() {
-<a href=#155 id=155 data-nosnippet>155</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#156 id=156 data-nosnippet>156</a>        }
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="self">self</span>.edit_clean_layout(<span class="string">"add columns in place"</span>, <span class="kw">move </span>|this, path, <span class="kw-2">mut </span>dat, old| {
-<a href=#158 id=158 data-nosnippet>158</a>            dat.raise_row_count(old);
-<a href=#159 id=159 data-nosnippet>159</a>            <span class="kw">let </span>plan =
-<a href=#160 id=160 data-nosnippet>160</a>                StagedEdit::stage_columns(path, dat, columns, manager, this.data_manager_info())<span class="question-mark">?</span>;
-<a href=#161 id=161 data-nosnippet>161</a>            this.note_persisted_write(path);
-<a href=#162 id=162 data-nosnippet>162</a>            plan.publish()<span class="question-mark">?</span>;
-<a href=#163 id=163 data-nosnippet>163</a>            this.reload_disk_state_at(path)
-<a href=#164 id=164 data-nosnippet>164</a>        })
-<a href=#165 id=165 data-nosnippet>165</a>    }
-<a href=#166 id=166 data-nosnippet>166</a>
-<a href=#167 id=167 data-nosnippet>167</a>    <span class="doccomment">/// Install complete CASA CompressComplex arrays with their packed cells
-<a href=#168 id=168 data-nosnippet>168</a>    /// and automatic per-row scale and offset. Stage all requested groups
-<a href=#169 id=169 data-nosnippet>169</a>    /// before publishing a single descriptor update.
-<a href=#170 id=170 data-nosnippet>170</a>    ///
-<a href=#171 id=171 data-nosnippet>171</a>    /// # Errors
-<a href=#172 id=172 data-nosnippet>172</a>    /// A binding conflicts with the current table, the data do not match
-<a href=#173 id=173 data-nosnippet>173</a>    /// the requested columns, or a storage file cannot be published.
-<a href=#174 id=174 data-nosnippet>174</a>    </span><span class="kw">pub fn </span>add_compressed_complex_arrays_in_place(
-<a href=#175 id=175 data-nosnippet>175</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#176 id=176 data-nosnippet>176</a>        arrays: <span class="kw-2">&amp;</span>[CompressedComplexArray&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#177 id=177 data-nosnippet>177</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">if </span>arrays.iter().any(|array| {
-<a href=#179 id=179 data-nosnippet>179</a>            array.schema.data_type() != <span class="prelude-val">Some</span>(PrimitiveType::Complex32)
-<a href=#180 id=180 data-nosnippet>180</a>                || [
-<a href=#181 id=181 data-nosnippet>181</a>                    array.packed.row_count(),
-<a href=#182 id=182 data-nosnippet>182</a>                    array.scales.len(),
-<a href=#183 id=183 data-nosnippet>183</a>                    array.offsets.len(),
-<a href=#184 id=184 data-nosnippet>184</a>                ]
-<a href=#185 id=185 data-nosnippet>185</a>                .into_iter()
-<a href=#186 id=186 data-nosnippet>186</a>                .any(|count| count != <span class="self">self</span>.row_count())
-<a href=#187 id=187 data-nosnippet>187</a>        }) {
-<a href=#188 id=188 data-nosnippet>188</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(
-<a href=#189 id=189 data-nosnippet>189</a>                <span class="string">"compressed complex layout requires one packed cell, scale and offset per row"
-<a href=#190 id=190 data-nosnippet>190</a>                    </span>.into(),
-<a href=#191 id=191 data-nosnippet>191</a>            ));
+<a href=#127 id=127 data-nosnippet>127</a>    /// # Errors
+<a href=#128 id=128 data-nosnippet>128</a>    /// The table cannot be locked or written, a row disagrees with its
+<a href=#129 id=129 data-nosnippet>129</a>    /// schema, or a manager cannot append explicit records.
+<a href=#130 id=130 data-nosnippet>130</a>    </span><span class="kw">pub fn </span>append_records_in_place(<span class="kw-2">&amp;mut </span><span class="self">self</span>, records: <span class="kw-2">&amp;</span>[RecordValue]) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">if </span>records.is_empty() {
+<a href=#132 id=132 data-nosnippet>132</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#133 id=133 data-nosnippet>133</a>        }
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">let </span>schema = <span class="self">self</span>.schema().ok_or(TableError::PreparedRowRequiresSchema)<span class="question-mark">?</span>;
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">for </span>(offset, row) <span class="kw">in </span>records.iter().enumerate() {
+<a href=#136 id=136 data-nosnippet>136</a>            <span class="kw">let </span>row_index = <span class="self">self</span>.row_count() + offset;
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">for </span>field <span class="kw">in </span>row.fields() {
+<a href=#138 id=138 data-nosnippet>138</a>                <span class="kw">let </span>column = schema.column(<span class="kw-2">&amp;</span>field.name).ok_or_else(|| {
+<a href=#139 id=139 data-nosnippet>139</a>                    TableError::RowContainsUnknownColumn {
+<a href=#140 id=140 data-nosnippet>140</a>                        row_index,
+<a href=#141 id=141 data-nosnippet>141</a>                        column: field.name.clone(),
+<a href=#142 id=142 data-nosnippet>142</a>                    }
+<a href=#143 id=143 data-nosnippet>143</a>                })<span class="question-mark">?</span>;
+<a href=#144 id=144 data-nosnippet>144</a>                <span class="kw">super</span>::columns::validate_cell_against_schema_column(
+<a href=#145 id=145 data-nosnippet>145</a>                    row_index,
+<a href=#146 id=146 data-nosnippet>146</a>                    column,
+<a href=#147 id=147 data-nosnippet>147</a>                    <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>field.value),
+<a href=#148 id=148 data-nosnippet>148</a>                )<span class="question-mark">?</span>;
+<a href=#149 id=149 data-nosnippet>149</a>            }
+<a href=#150 id=150 data-nosnippet>150</a>        }
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span>defaults = schema.default_row();
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="self">self</span>.edit_rows_in_place(Rows::AppendRecords {
+<a href=#153 id=153 data-nosnippet>153</a>            records,
+<a href=#154 id=154 data-nosnippet>154</a>            defaults: <span class="kw-2">&amp;</span>defaults,
+<a href=#155 id=155 data-nosnippet>155</a>        })
+<a href=#156 id=156 data-nosnippet>156</a>    }
+<a href=#157 id=157 data-nosnippet>157</a>
+<a href=#158 id=158 data-nosnippet>158</a>    <span class="doccomment">/// Keep the given rows in an existing plain table, in ascending order,
+<a href=#159 id=159 data-nosnippet>159</a>    /// and delete all others. This operation preserves manager bindings.
+<a href=#160 id=160 data-nosnippet>160</a>    ///
+<a href=#161 id=161 data-nosnippet>161</a>    /// # Errors
+<a href=#162 id=162 data-nosnippet>162</a>    ///
+<a href=#163 id=163 data-nosnippet>163</a>    /// The row sequence is unsorted or contains repetitions or invalid row
+<a href=#164 id=164 data-nosnippet>164</a>    /// numbers; the table cannot be written or has a manager that refuses
+<a href=#165 id=165 data-nosnippet>165</a>    /// to remove rows (for example, IncrementalStMan).
+<a href=#166 id=166 data-nosnippet>166</a>    </span><span class="kw">pub fn </span>retain_rows_in_place(<span class="kw-2">&amp;mut </span><span class="self">self</span>, kept: <span class="kw-2">&amp;</span>[usize]) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">if </span>kept.windows(<span class="number">2</span>).any(|pair| pair[<span class="number">0</span>] &gt;= pair[<span class="number">1</span>]) {
+<a href=#168 id=168 data-nosnippet>168</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(
+<a href=#169 id=169 data-nosnippet>169</a>                <span class="string">"retained rows must strictly increase"</span>.into(),
+<a href=#170 id=170 data-nosnippet>170</a>            ));
+<a href=#171 id=171 data-nosnippet>171</a>        }
+<a href=#172 id=172 data-nosnippet>172</a>        <span class="self">self</span>.edit_rows_in_place(Rows::Keep(kept))
+<a href=#173 id=173 data-nosnippet>173</a>    }
+<a href=#174 id=174 data-nosnippet>174</a>
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Add columns without changing the files for managers that do not
+<a href=#176 id=176 data-nosnippet>176</a>    /// receive a column. When supplied, `manager` binds all the new
+<a href=#177 id=177 data-nosnippet>177</a>    /// columns to one new manager. Otherwise the first manager that
+<a href=#178 id=178 data-nosnippet>178</a>    /// accepts addition supplies the storage, as in casacore.
+<a href=#179 id=179 data-nosnippet>179</a>    ///
+<a href=#180 id=180 data-nosnippet>180</a>    /// # Errors
+<a href=#181 id=181 data-nosnippet>181</a>    ///
+<a href=#182 id=182 data-nosnippet>182</a>    /// The table is not a clean plain table, a column or manager name
+<a href=#183 id=183 data-nosnippet>183</a>    /// already exists, the selected binding is unsupported, or a storage
+<a href=#184 id=184 data-nosnippet>184</a>    /// file cannot be read or written.
+<a href=#185 id=185 data-nosnippet>185</a>    </span><span class="kw">pub fn </span>add_columns_in_place(
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#187 id=187 data-nosnippet>187</a>        columns: Vec&lt;ColumnAddition&gt;,
+<a href=#188 id=188 data-nosnippet>188</a>        manager: <span class="prelude-ty">Option</span>&lt;ManagerAddition&gt;,
+<a href=#189 id=189 data-nosnippet>189</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
+<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">if </span>columns.is_empty() {
+<a href=#191 id=191 data-nosnippet>191</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#192 id=192 data-nosnippet>192</a>        }
-<a href=#193 id=193 data-nosnippet>193</a>        <span class="self">self</span>.edit_clean_layout(
-<a href=#194 id=194 data-nosnippet>194</a>            <span class="string">"add compressed arrays in place"</span>,
-<a href=#195 id=195 data-nosnippet>195</a>            <span class="kw">move </span>|this, path, <span class="kw-2">mut </span>dat, old| {
-<a href=#196 id=196 data-nosnippet>196</a>                dat.raise_row_count(old);
-<a href=#197 id=197 data-nosnippet>197</a>                <span class="kw">let </span>groups = arrays.iter().flat_map(CompressedComplexArray::groups);
-<a href=#198 id=198 data-nosnippet>198</a>                <span class="kw">let </span>plan =
-<a href=#199 id=199 data-nosnippet>199</a>                    StagedEdit::stage_column_groups(path, dat, groups, this.data_manager_info())<span class="question-mark">?</span>;
-<a href=#200 id=200 data-nosnippet>200</a>                this.note_persisted_write(path);
-<a href=#201 id=201 data-nosnippet>201</a>                plan.publish()<span class="question-mark">?</span>;
-<a href=#202 id=202 data-nosnippet>202</a>                this.reload_disk_state_at(path)
-<a href=#203 id=203 data-nosnippet>203</a>            },
-<a href=#204 id=204 data-nosnippet>204</a>        )
-<a href=#205 id=205 data-nosnippet>205</a>    }
-<a href=#206 id=206 data-nosnippet>206</a>
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">fn </span>edit_rows_in_place(<span class="kw-2">&amp;mut </span><span class="self">self</span>, rows: Rows&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
-<a href=#208 id=208 data-nosnippet>208</a>        <span class="self">self</span>.edit_clean_layout(<span class="string">"edit rows in place"</span>, |this, path, dat, old| {
-<a href=#209 id=209 data-nosnippet>209</a>            <span class="kw">if let </span>Rows::Keep(kept) = rows {
-<a href=#210 id=210 data-nosnippet>210</a>                <span class="kw">if </span>kept.last().is_some_and(|<span class="kw-2">&amp;</span>row| row <span class="kw">as </span>u64 &gt;= old) {
-<a href=#211 id=211 data-nosnippet>211</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="string">"retained row is out of range"</span>.into()));
-<a href=#212 id=212 data-nosnippet>212</a>                }
-<a href=#213 id=213 data-nosnippet>213</a>                <span class="kw">if </span>kept.len() <span class="kw">as </span>u64 == old {
-<a href=#214 id=214 data-nosnippet>214</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#215 id=215 data-nosnippet>215</a>                }
-<a href=#216 id=216 data-nosnippet>216</a>            }
-<a href=#217 id=217 data-nosnippet>217</a>            <span class="kw">let </span>plan = StagedEdit::stage(path, dat, old, rows)<span class="question-mark">?</span>;
-<a href=#218 id=218 data-nosnippet>218</a>            this.note_persisted_write(path);
-<a href=#219 id=219 data-nosnippet>219</a>            plan.publish()<span class="question-mark">?</span>;
-<a href=#220 id=220 data-nosnippet>220</a>            <span class="comment">// Publish the new count before reopening; the old lock sync
-<a href=#221 id=221 data-nosnippet>221</a>            // count otherwise hides removals.
-<a href=#222 id=222 data-nosnippet>222</a>            </span>this.note_full_save(path)<span class="question-mark">?</span>;
-<a href=#223 id=223 data-nosnippet>223</a>            this.reload_disk_state_at(path)
-<a href=#224 id=224 data-nosnippet>224</a>        })
-<a href=#225 id=225 data-nosnippet>225</a>    }
-<a href=#226 id=226 data-nosnippet>226</a>
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">fn </span>edit_clean_layout(
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#229 id=229 data-nosnippet>229</a>        operation: <span class="kw-2">&amp;</span>str,
-<a href=#230 id=230 data-nosnippet>230</a>        edit: <span class="kw">impl </span>FnOnce(
-<a href=#231 id=231 data-nosnippet>231</a>            <span class="kw-2">&amp;mut </span><span class="self">Self</span>,
-<a href=#232 id=232 data-nosnippet>232</a>            <span class="kw-2">&amp;</span>Path,
-<a href=#233 id=233 data-nosnippet>233</a>            <span class="kw">crate</span>::storage::TableDatContents,
-<a href=#234 id=234 data-nosnippet>234</a>            u64,
-<a href=#235 id=235 data-nosnippet>235</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt;,
-<a href=#236 id=236 data-nosnippet>236</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
-<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>path = <span class="self">self</span>.source_path.clone().ok_or_else(|| {
-<a href=#238 id=238 data-nosnippet>238</a>            TableError::Storage(<span class="string">"in-place row edits require an existing table"</span>.into())
-<a href=#239 id=239 data-nosnippet>239</a>        })<span class="question-mark">?</span>;
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="kw">if </span><span class="self">self</span>.kind != TableKind::Plain || <span class="self">self</span>.holds_unflushed_changes() {
-<a href=#241 id=241 data-nosnippet>241</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(
-<a href=#242 id=242 data-nosnippet>242</a>                <span class="string">"in-place row edits require a clean plain table"</span>.into(),
-<a href=#243 id=243 data-nosnippet>243</a>            ));
-<a href=#244 id=244 data-nosnippet>244</a>        }
-<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>auto_unlock = <span class="self">self</span>.begin_write_operation(operation)<span class="question-mark">?</span>;
-<a href=#246 id=246 data-nosnippet>246</a>        <span class="kw">let </span>result = (|| {
-<a href=#247 id=247 data-nosnippet>247</a>            <span class="attr">#[cfg(unix)]
-<a href=#248 id=248 data-nosnippet>248</a>            </span><span class="kw">if </span>auto_unlock {
-<a href=#249 id=249 data-nosnippet>249</a>                <span class="self">self</span>.reload_if_published()<span class="question-mark">?</span>;
-<a href=#250 id=250 data-nosnippet>250</a>            }
-<a href=#251 id=251 data-nosnippet>251</a>            <span class="kw">let </span>dat = <span class="kw">crate</span>::storage::table_control::read_table_dat(
-<a href=#252 id=252 data-nosnippet>252</a>                <span class="kw-2">&amp;</span>path.join(<span class="kw">crate</span>::storage::TABLE_CONTROL_FILE),
-<a href=#253 id=253 data-nosnippet>253</a>            )<span class="question-mark">?</span>;
-<a href=#254 id=254 data-nosnippet>254</a>            <span class="kw">let </span>old = <span class="self">self</span>.require_persisted_rows(<span class="kw-2">&amp;</span>path, <span class="kw-2">&amp;</span>dat)<span class="question-mark">?</span>;
-<a href=#255 id=255 data-nosnippet>255</a>            edit(<span class="self">self</span>, <span class="kw-2">&amp;</span>path, dat, old)
-<a href=#256 id=256 data-nosnippet>256</a>        })();
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="self">self</span>.finish_write_operation(auto_unlock, result)
-<a href=#258 id=258 data-nosnippet>258</a>    }
-<a href=#259 id=259 data-nosnippet>259</a>}
+<a href=#193 id=193 data-nosnippet>193</a>        <span class="self">self</span>.edit_clean_layout(<span class="string">"add columns in place"</span>, <span class="kw">move </span>|this, path, <span class="kw-2">mut </span>dat, old| {
+<a href=#194 id=194 data-nosnippet>194</a>            dat.raise_row_count(old);
+<a href=#195 id=195 data-nosnippet>195</a>            <span class="kw">let </span>plan =
+<a href=#196 id=196 data-nosnippet>196</a>                StagedEdit::stage_columns(path, dat, columns, manager, this.data_manager_info())<span class="question-mark">?</span>;
+<a href=#197 id=197 data-nosnippet>197</a>            this.note_persisted_write(path);
+<a href=#198 id=198 data-nosnippet>198</a>            plan.publish()<span class="question-mark">?</span>;
+<a href=#199 id=199 data-nosnippet>199</a>            this.reload_disk_state_at(path)
+<a href=#200 id=200 data-nosnippet>200</a>        })
+<a href=#201 id=201 data-nosnippet>201</a>    }
+<a href=#202 id=202 data-nosnippet>202</a>
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="doccomment">/// Install complete CASA CompressComplex arrays with their packed cells
+<a href=#204 id=204 data-nosnippet>204</a>    /// and automatic per-row scale and offset. Stage all requested groups
+<a href=#205 id=205 data-nosnippet>205</a>    /// before publishing a single descriptor update.
+<a href=#206 id=206 data-nosnippet>206</a>    ///
+<a href=#207 id=207 data-nosnippet>207</a>    /// # Errors
+<a href=#208 id=208 data-nosnippet>208</a>    /// A binding conflicts with the current table, the data do not match
+<a href=#209 id=209 data-nosnippet>209</a>    /// the requested columns, or a storage file cannot be published.
+<a href=#210 id=210 data-nosnippet>210</a>    </span><span class="kw">pub fn </span>add_compressed_complex_arrays_in_place(
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#212 id=212 data-nosnippet>212</a>        arrays: <span class="kw-2">&amp;</span>[CompressedComplexArray&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#213 id=213 data-nosnippet>213</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">if </span>arrays.iter().any(|array| {
+<a href=#215 id=215 data-nosnippet>215</a>            array.schema.data_type() != <span class="prelude-val">Some</span>(PrimitiveType::Complex32)
+<a href=#216 id=216 data-nosnippet>216</a>                || [
+<a href=#217 id=217 data-nosnippet>217</a>                    array.packed.row_count(),
+<a href=#218 id=218 data-nosnippet>218</a>                    array.scales.len(),
+<a href=#219 id=219 data-nosnippet>219</a>                    array.offsets.len(),
+<a href=#220 id=220 data-nosnippet>220</a>                ]
+<a href=#221 id=221 data-nosnippet>221</a>                .into_iter()
+<a href=#222 id=222 data-nosnippet>222</a>                .any(|count| count != <span class="self">self</span>.row_count())
+<a href=#223 id=223 data-nosnippet>223</a>        }) {
+<a href=#224 id=224 data-nosnippet>224</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(
+<a href=#225 id=225 data-nosnippet>225</a>                <span class="string">"compressed complex layout requires one packed cell, scale and offset per row"
+<a href=#226 id=226 data-nosnippet>226</a>                    </span>.into(),
+<a href=#227 id=227 data-nosnippet>227</a>            ));
+<a href=#228 id=228 data-nosnippet>228</a>        }
+<a href=#229 id=229 data-nosnippet>229</a>        <span class="self">self</span>.edit_clean_layout(
+<a href=#230 id=230 data-nosnippet>230</a>            <span class="string">"add compressed arrays in place"</span>,
+<a href=#231 id=231 data-nosnippet>231</a>            <span class="kw">move </span>|this, path, <span class="kw-2">mut </span>dat, old| {
+<a href=#232 id=232 data-nosnippet>232</a>                dat.raise_row_count(old);
+<a href=#233 id=233 data-nosnippet>233</a>                <span class="kw">let </span>groups = arrays.iter().flat_map(CompressedComplexArray::groups);
+<a href=#234 id=234 data-nosnippet>234</a>                <span class="kw">let </span>plan =
+<a href=#235 id=235 data-nosnippet>235</a>                    StagedEdit::stage_column_groups(path, dat, groups, this.data_manager_info())<span class="question-mark">?</span>;
+<a href=#236 id=236 data-nosnippet>236</a>                this.note_persisted_write(path);
+<a href=#237 id=237 data-nosnippet>237</a>                plan.publish()<span class="question-mark">?</span>;
+<a href=#238 id=238 data-nosnippet>238</a>                this.reload_disk_state_at(path)
+<a href=#239 id=239 data-nosnippet>239</a>            },
+<a href=#240 id=240 data-nosnippet>240</a>        )
+<a href=#241 id=241 data-nosnippet>241</a>    }
+<a href=#242 id=242 data-nosnippet>242</a>
+<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">fn </span>edit_rows_in_place(<span class="kw-2">&amp;mut </span><span class="self">self</span>, rows: Rows&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="self">self</span>.edit_clean_layout(<span class="string">"edit rows in place"</span>, |this, path, dat, old| {
+<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">if let </span>Rows::Keep(kept) = rows {
+<a href=#246 id=246 data-nosnippet>246</a>                <span class="kw">if </span>kept.last().is_some_and(|<span class="kw-2">&amp;</span>row| row <span class="kw">as </span>u64 &gt;= old) {
+<a href=#247 id=247 data-nosnippet>247</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(<span class="string">"retained row is out of range"</span>.into()));
+<a href=#248 id=248 data-nosnippet>248</a>                }
+<a href=#249 id=249 data-nosnippet>249</a>                <span class="kw">if </span>kept.len() <span class="kw">as </span>u64 == old {
+<a href=#250 id=250 data-nosnippet>250</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#251 id=251 data-nosnippet>251</a>                }
+<a href=#252 id=252 data-nosnippet>252</a>            }
+<a href=#253 id=253 data-nosnippet>253</a>            <span class="kw">let </span>plan = StagedEdit::stage(path, dat, old, rows)<span class="question-mark">?</span>;
+<a href=#254 id=254 data-nosnippet>254</a>            this.note_persisted_write(path);
+<a href=#255 id=255 data-nosnippet>255</a>            plan.publish()<span class="question-mark">?</span>;
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="comment">// Publish the new count before reopening; the old lock sync
+<a href=#257 id=257 data-nosnippet>257</a>            // count otherwise hides removals.
+<a href=#258 id=258 data-nosnippet>258</a>            </span>this.note_full_save(path)<span class="question-mark">?</span>;
+<a href=#259 id=259 data-nosnippet>259</a>            this.reload_disk_state_at(path)
+<a href=#260 id=260 data-nosnippet>260</a>        })
+<a href=#261 id=261 data-nosnippet>261</a>    }
+<a href=#262 id=262 data-nosnippet>262</a>
+<a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">fn </span>edit_clean_layout(
+<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#265 id=265 data-nosnippet>265</a>        operation: <span class="kw-2">&amp;</span>str,
+<a href=#266 id=266 data-nosnippet>266</a>        edit: <span class="kw">impl </span>FnOnce(
+<a href=#267 id=267 data-nosnippet>267</a>            <span class="kw-2">&amp;mut </span><span class="self">Self</span>,
+<a href=#268 id=268 data-nosnippet>268</a>            <span class="kw-2">&amp;</span>Path,
+<a href=#269 id=269 data-nosnippet>269</a>            <span class="kw">crate</span>::storage::TableDatContents,
+<a href=#270 id=270 data-nosnippet>270</a>            u64,
+<a href=#271 id=271 data-nosnippet>271</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt;,
+<a href=#272 id=272 data-nosnippet>272</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), TableError&gt; {
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">let </span>path = <span class="self">self</span>.source_path.clone().ok_or_else(|| {
+<a href=#274 id=274 data-nosnippet>274</a>            TableError::Storage(<span class="string">"in-place row edits require an existing table"</span>.into())
+<a href=#275 id=275 data-nosnippet>275</a>        })<span class="question-mark">?</span>;
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">if </span><span class="self">self</span>.kind != TableKind::Plain || <span class="self">self</span>.holds_unflushed_changes() {
+<a href=#277 id=277 data-nosnippet>277</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(TableError::Storage(
+<a href=#278 id=278 data-nosnippet>278</a>                <span class="string">"in-place row edits require a clean plain table"</span>.into(),
+<a href=#279 id=279 data-nosnippet>279</a>            ));
+<a href=#280 id=280 data-nosnippet>280</a>        }
+<a href=#281 id=281 data-nosnippet>281</a>        <span class="kw">let </span>auto_unlock = <span class="self">self</span>.begin_write_operation(operation)<span class="question-mark">?</span>;
+<a href=#282 id=282 data-nosnippet>282</a>        <span class="kw">let </span>result = (|| {
+<a href=#283 id=283 data-nosnippet>283</a>            <span class="attr">#[cfg(unix)]
+<a href=#284 id=284 data-nosnippet>284</a>            </span><span class="kw">if </span>auto_unlock {
+<a href=#285 id=285 data-nosnippet>285</a>                <span class="self">self</span>.reload_if_published()<span class="question-mark">?</span>;
+<a href=#286 id=286 data-nosnippet>286</a>            }
+<a href=#287 id=287 data-nosnippet>287</a>            <span class="kw">let </span>dat = <span class="kw">crate</span>::storage::table_control::read_table_dat(
+<a href=#288 id=288 data-nosnippet>288</a>                <span class="kw-2">&amp;</span>path.join(<span class="kw">crate</span>::storage::TABLE_CONTROL_FILE),
+<a href=#289 id=289 data-nosnippet>289</a>            )<span class="question-mark">?</span>;
+<a href=#290 id=290 data-nosnippet>290</a>            <span class="kw">let </span>old = <span class="self">self</span>.require_persisted_rows(<span class="kw-2">&amp;</span>path, <span class="kw-2">&amp;</span>dat)<span class="question-mark">?</span>;
+<a href=#291 id=291 data-nosnippet>291</a>            edit(<span class="self">self</span>, <span class="kw-2">&amp;</span>path, dat, old)
+<a href=#292 id=292 data-nosnippet>292</a>        })();
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="self">self</span>.finish_write_operation(auto_unlock, result)
+<a href=#294 id=294 data-nosnippet>294</a>    }
+<a href=#295 id=295 data-nosnippet>295</a>}
 </code></pre></div></section></main></body></html>

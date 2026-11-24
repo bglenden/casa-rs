@@ -590,21 +590,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#access-an-existing-image-through-the-data-api" class="md-nav__link">
+  <a href="#migrate-an-existing-image-reader-or-writer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Access an existing image through the Data API
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#v1-write-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        V1 write policy
+        Migrate an existing image reader or writer
       
     </span>
   </a>
@@ -826,21 +815,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#access-an-existing-image-through-the-data-api" class="md-nav__link">
+  <a href="#migrate-an-existing-image-reader-or-writer" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Access an existing image through the Data API
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#v1-write-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        V1 write policy
+        Migrate an existing image reader or writer
       
     </span>
   </a>
@@ -892,13 +870,12 @@
 
 
 <h1 id="data-api">Data API<a class="headerlink" href="#data-api" title="Permanent link">&para;</a></h1>
-<p><code>casars.data</code> exposes persistent file-backed objects only.</p>
-<p>The module also publishes its canonical object-surface contract directly from
-Rust:</p>
+<p>Use <code>casars.tools</code> to work with image and table files in process.
+<code>casars.data</code> provides data helpers and publishes the native object protocol.</p>
 <ul>
-<li><code>protocol_info()</code> returns the stable object protocol descriptor</li>
-<li><code>schema_bundle()</code> returns the canonical schema bundle for <code>Image</code>
-  and the <code>casars.tools</code> classes</li>
+<li><code>protocol_info()</code> returns the stable object protocol descriptor.</li>
+<li><code>schema_bundle()</code> returns the canonical schema bundle for the
+  <code>casars.tools</code> classes.</li>
 </ul>
 <h2 id="images">Images<a class="headerlink" href="#images" title="Permanent link">&para;</a></h2>
 <h3 id="create-and-edit-a-native-casa-image">Create and edit a native CASA image<a class="headerlink" href="#create-and-edit-a-native-casa-image" title="Permanent link">&para;</a></h3>
@@ -917,6 +894,10 @@ coordinates through the CASA Python interface:</p>
 <span class="n">ia</span><span class="o">.</span><span class="n">done</span><span class="p">()</span>
 </code></pre></div>
 
+<p>Use <code>ia.addnoise(seeds=[1, 2])</code> to add reproducible normal noise. Pass
+<code>type</code> and <code>pars</code> for another CASA noise distribution, or <code>zero=True</code>
+to replace the selected pixels with noise. The region selects the lattice
+section and the image's validity mask is retained.</p>
 <p>A coordinate tool returned by <code>ia.coordsys()</code> has its own state. Inspect the
 direction axes with <code>cs.findcoordinate("direction")["pixel"]</code> or identify the
 coordinate for a particular axis with <code>cs.findaxis(world=False, axis=0)</code>.
@@ -926,13 +907,37 @@ persist the edits to the image.</p>
 <p>Use <code>cs.projection()</code> to inspect the direction projection and
 <code>cs.referencecode()</code> to list stored frames in coordinate order.
 <code>cs.getconversiontype("direction")</code> reports the current conversion frame.
+Use <code>cs.lineartransform(type)</code> and <code>cs.setlineartransform(type, matrix)</code>
+to read or edit the linear coupling between axes of the selected coordinate.
+On a sampled tabular coordinate, saving its record folds the current
+transform into the lookup values used on reopen.
 Use <code>cs.setnames(values)</code> to replace the world-axis labels in order, or
 pass <code>type</code> to replace one coordinate's labels. <code>cs.setstokes(values)</code>
 sets the polarization labels in pixel order.</p>
 <p>Use <code>cs.referencevalue()</code> and <code>cs.increment()</code> to read the world-axis
 reference values and spacing. Pass <code>type</code> to select a coordinate, or combine
 <code>n</code>, <code>q</code>, <code>s</code>, and <code>m</code> in <code>format</code> to request numbers, quantities, display
-strings, and CASA measures.</p>
+strings, and CASA measures.
+Use <code>cs.setreferencevalue(values)</code> and <code>cs.setincrement(values)</code> to edit
+the coordinate record. Numeric values use the declared world-axis units.
+Quantity strings can specify their own units, and <code>type</code> selects one
+coordinate.
+Use <code>cs.setreferencelocation(pixel, world, mask)</code> to set pixel and world
+references together. A full-length boolean mask can limit the edit to
+specific axes. Stokes references stay fixed.
+Use <code>cs.setunits(values)</code> to change the declared units and rescale the
+coordinate values. On a selected linear or tabular coordinate,
+<code>overwrite=True</code> relabels units while keeping the numeric values.
+Use <code>cs.setrestfrequency(values, which=0, append=False)</code> to choose the active
+spectral rest frequency. Floating-point inputs use the coordinate's unit.
+Pass quantity strings or a quantity record to supply units explicitly.
+With <code>append=True</code>, <code>which</code> indexes the combined old and new list.
+Use <code>cs.frequencytovelocity(values)</code> and <code>cs.velocitytofrequency(values)</code>
+to convert relative to the active rest frequency. The default convention is
+radio Doppler and the default velocity unit is <code>km/s</code>. Pass <code>doppler</code>,
+<code>velunit</code>, or <code>frequnit</code> to choose other conventions or units.
+Use <code>cs.frequencytofrequency(values, velocity="10km/s")</code> to shift a vector
+by a velocity. A dimensionless <code>velocity</code> is a fraction of the speed of light.</p>
 <p>To build a coordinate system without an image, call
 <code>tools.coordsys().newcoordsys(direction=True, spectral=True, stokes=["I", "Q"])</code>.
 Use <code>addcoordinate</code> to append axes and <code>fromrecord</code> to restore a coordinate
@@ -943,17 +948,41 @@ returns the epoch in days with its reference code and any reference offset.</p>
 <p>Use <code>cs.setobserver(name)</code> and <code>cs.settelescope(name)</code> to update observation
 metadata. An unknown telescope name is stored and the setter returns
 <code>False</code>. The record retains the last known telescope position.</p>
-<p>Use <code>cs.toworldmany(pixels)["numeric"]</code> and
+<p>Use <code>cs.toworld(pixel)</code> and <code>cs.topixel(world)</code> for a single absolute
+coordinate. <code>toworld</code> supports the same numeric, quantity, string, and
+measure format letters as <code>referencevalue</code>.
+Use <code>cs.toworldmany(pixels)["numeric"]</code> and
 <code>cs.topixelmany(world)["numeric"]</code> to convert a floating-point matrix with
 one point per column. The rows follow the coordinate system's axis order.
 World values use the units reported by <code>cs.units()</code>.
 NumPy <code>float32</code>, <code>float64</code>, <code>longdouble</code>, <code>longlong</code>, and <code>ulonglong</code>
 matrices are converted to double precision, as in CASA.</p>
+<p>Use <code>cs.torel(value, isworld=1)</code> for world offsets from the reference and
+<code>cs.toabs</code> to recover absolute positions. Use <code>isworld=0</code> for pixels, or
+pass the tagged record from a coordinate conversion. The corresponding
+<code>torelmany</code> and <code>toabsmany</code> methods take matrices with one coordinate per
+column.</p>
+<p>Use <code>ia.toworld(pixels, format="nqsm")</code> to convert one image position.
+Each format letter requests numeric values, quantities, strings, or
+measures. Pass <code>dovelocity=False</code> to omit spectral velocities from the
+measure record. Pass one of these representations to <code>ia.topixel(world)</code>
+to obtain the zero-based pixel coordinates in its <code>numeric</code> field.
+<code>ia.coordmeasures(pixel)</code> returns world measures and the pixel's intensity
+and validity. Pass <code>dframe</code> or <code>sframe</code> to request specific direction or
+spectral frames.</p>
 <p>Use <code>ia.open("example.im")</code> to reopen the product. Use
 <code>outfile=""</code> with <code>fromshape</code> or <code>fromarray</code> for a temporary image. Use <code>ia.setmiscinfo(record)</code> to replace an image’s miscellaneous metadata, and
 <code>ia.sethistory(origin, messages)</code> to append provenance. For an image with stored
 restoring beams, <code>ia.restoringbeam()</code> reads the beam quantities and
 <code>ia.restoringbeam(mbret="matrix")</code> reads a per-plane beam grid.
+Use <code>ia.beamforconvolvedsize(source, convolved)</code> to calculate the Gaussian
+beam needed to reach a target resolution. Use <code>ia.deconvolvefrombeam(source,
+beam)</code> to recover a fitted source size and see whether the source is resolved.
+Pass the major axis, minor axis and position angle as angular quantity strings.
+Use <code>ia.rotatebeam("15deg")</code> to rotate all stored restoring beams. On a
+directly opened FITS image, the rotation applies only to the open tool.
+Each open tool keeps its own view of the restoring beams. Reopen a native
+image to read beam changes made through another tool.
 Use <code>ia.summary(list=False)</code> to read the shape, coordinate axes, mask names
 and restoring beams and return the two report messages. The default
 <code>list=True</code> sends the report to the logger.
@@ -966,23 +995,109 @@ shape and compatible coordinates as a native float or complex image.
 Use <code>ia.convertflux(value, major, minor)</code> to convert a Gaussian's integrated
 flux to peak brightness. Pass <code>topeak=False</code> for the reverse conversion and
 select the channel and polarization for an image with per-plane beams.
+Use <code>ia.deconvolvecomponentlist(cl.torecord())</code> to remove the restoring beam
+from Gaussian components on an attached float or complex image. Point
+components are returned intact. For a per-plane beam grid, select the
+channel and polarization on each nondegenerate axis.
+Use <code>ia.modify(cl.torecord(), subtract=False)</code> to add a component model to a
+float image. The default subtracts the model. A region limits the pixel
+section. CASA validates an explicit mask and applies the edit to the stored
+pixels in that section.
+Use <code>ia.imageconcat(infiles=["a.im", "b.im"], axis=0)</code> for a temporary
+concatenation, or give <code>outfile</code> for a native image. The default
+concatenation axis is spectral. <code>reorder=True</code> sorts inputs along the
+selected coordinate. Virtual modes are tracked in #1749.
 Use <code>ia.replacemaskedpixels(pixels=0)</code> to replace invalid pixels in an attached
 float or complex image. Use <code>update=True</code> to validate the selected native
 pixel mask after replacement.
-Use <code>ia.fitsheader()</code> to inspect the FITS header for a float image without
+Use <code>ia.set(pixels=3.5)</code> to fill the attached float image. <code>pixels</code> can also
+be a scalar lattice expression. Use <code>region</code> to restrict the edit and set
+<code>pixelmask=0</code> to invalidate the selected pixels or <code>pixelmask=1</code> to validate
+them in the default mask.</p>
+<p>Use <code>ia.calc(pixels=...)</code> to evaluate a numeric expression into a writable
+float or complex image. An existing default mask limits writes to its valid
+pixels. The operation preserves the destination coordinates and metadata.
+Use <code>ia.imagecalc(outfile=..., pixels=...)</code> to create a native product with
+the expression's validity mask. An empty <code>outfile</code> returns a read-only image
+whose pixel reads evaluate the expression against its source images. Use
+<code>prec="double"</code> for double precision or <code>imagemd</code> to copy metadata from a
+separate image.
+Use <code>ia.calcmask(...)</code> to save a Boolean expression as a named native image
+mask. Expressions can combine real, complex, and FITS images and read named
+masks using <code>mask("image.im:maskname")</code> where CASA accepts that source type.</p>
+<p>Use <code>ia.fitsheader()</code> to inspect the FITS header for a float image without
 exporting the pixels. Pass <code>exclude="HISTORY"</code> to omit the log from the returned
-dictionary. Use <code>retstr=True</code> to return the complete string of 80-byte cards.</p>
+dictionary. Use <code>retstr=True</code> to return the complete string of 80-byte cards.
+Use <code>ia.tofits("example.fits")</code> to write FITS from an attached float image.
+It accepts region and mask selection, scaled integer pixels with <code>bitpix=16</code>,
+spectral velocity or wavelength axes, and export axis ordering controls.
+Pass <code>history=False</code> to omit the image log from the output.</p>
+<p>For a native image, <code>ia.haslock()</code> reports its read and write locks in that
+order. Use <code>ia.lock(writelock=True, nattempts=1)</code> to try for a write lock
+without waiting. <code>ia.unlock()</code> flushes pending changes and releases the
+lock. <code>putchunk</code> normally releases the lock after writing. Pass
+<code>locking=False</code> to keep it while making several updates.</p>
+<p>Use <code>ia.putregion(pixels, pixelmask, region)</code> to edit pixels and validity in
+the same region. The default <code>usemask=True</code> skips masked pixels after applying
+the supplied mask. Pass <code>replicate=True</code> to fill omitted axes and use the
+region's stride.</p>
 <p>Use <code>ia.open("example.fits")</code> to read pixels and their validity mask directly
 from a FITS file. Metadata edits apply for the life of the attachment.
+Use <code>ia.subimage(...)</code> on that attachment for a temporary or native
+section with its WCS and validity mask. With <code>wantreturn=False</code>
+and an output path, the tool publishes the section and returns a detached
+image tool.
 Use <code>ia.rename("new-name.fits")</code> to move an attached FITS file. The tool
-reopens the moved file and reads its stored metadata again.
-Use <code>ia.fromfits("example.im", "example.fits")</code> to import a FITS image as a
-writable native CASA image for pixel edits and <code>ia.subimage(...)</code>. <code>whichhdu</code>
+reopens the moved file and reads its stored metadata again.</p>
+<p>Use <code>ia.insert("source.im")</code> to place a source image by aligning reference
+pixels, or supply <code>locate</code> to set the lower corner. A region record may
+select a strided section. CRTF text uses the attached destination's
+coordinates before applying the selection to the source. An existing writable
+destination mask receives the source validity over the inserted section.</p>
+<p>Use <code>ia.fromfits("example.im", "example.fits")</code> to import a FITS image as a
+writable native CASA image for pixel edits. <code>whichhdu</code>
 selects the image HDU and <code>whichrep</code> selects the coordinate representation.
 <code>zeroblanks=True</code> writes zero at blank pixels
 while preserving their invalid mask values. <code>ia.newimagefromfits(...)</code> returns
-a separate image tool. The remaining
-CASA image and coordinate operations are tracked in
+a separate image tool.</p>
+<p><code>ia.torecord()</code> captures the pixels, coordinates and image info, including
+restoring beams. <code>ia.fromrecord(record)</code> restores a temporary image. Pass an
+output path to write a native CASA image. As in CASA, restoring a record uses
+single-precision pixels and starts a new history.</p>
+<p>Use <code>ia.fromimage(outfile="copy.im", infile="example.im")</code> to copy an image
+with its coordinates, active pixel mask, metadata and history. Use
+<code>newimagefromimage</code> to keep the current attachment and receive a separate tool.
+An absolute CASA <code>LCSlicer</code> region selects a pixel box and its stride. The
+copy retains the selected frequencies and restoring beams. Additional region
+forms are tracked in #1625.</p>
+<p>Use <code>ia.getregion(region=...)</code> to read that same selection. Pass
+<code>getmask=True</code> to read validity, <code>mask</code> to apply a lattice expression,
+or <code>axes</code> to average the valid pixels along selected axes.
+Use <code>ia.boundingbox(region=...)</code> to inspect the inclusive pixel corners,
+stride, sampled shape and world coordinates of the corners.
+Use <code>ia.crop(axes=...)</code> to trim fully masked edge planes along the selected
+axes. The method applies the region and optional mask expression before
+finding the crop bounds. Pass <code>region=[]</code> when using <code>box</code>, <code>chans</code>, or
+<code>stokes</code> separately.
+Use <code>ia.decimate(axis=..., factor=..., method="copy")</code> to keep every nth
+plane. With <code>method="mean"</code>, it averages valid samples in each complete
+group and drops the trailing partial group.
+Use <code>ia.rebin(outfile="", bin=[...])</code> to average valid pixels over bins on
+several axes. Trailing partial bins are included unless <code>crop=True</code>. A bin
+with no valid pixels is masked. Binning supports real and complex
+single-precision images.</p>
+<p><code>ia.statistics()</code> returns statistics over a real native CASA image, an
+attached FITS image, or a temporary image. Pass <code>axes</code> for per-plane results,
+<code>region</code> or <code>mask</code> to select pixels, and <code>robust=True</code> for the median,
+quartiles, and median absolute deviation. The tool supports classical,
+biweight, Chauvenet, fit-to-half and hinges-and-fences statistics. Supply
+<code>logfile</code> for a report with labeled planes. <code>append=False</code> replaces that
+file. <code>list=True</code> adds a summary, and <code>verbose=True</code> sends the table to the
+logger. Flux density for a retained channel or polarization uses that
+plane's restoring beam. An all-axis reduction over a selected single
+polarization integrates the channel flux densities. Disk storage is tracked in
+<a href="https://github.com/bglenden/casa-rs/issues/1627">#1627</a>.</p>
+<p>The remaining CASA image and coordinate operations are tracked in
 <a href="https://github.com/bglenden/casa-rs/issues/1027">#1027</a>.</p>
 <p>Use <code>ia.maketestimage()</code> to load <code>demo/Images/imagetestimage.fits</code> as a
 temporary image. Pass <code>outfile</code> to write a native image. The tool searches
@@ -1000,23 +1115,64 @@ to keep in <code>keepaxes</code>. Region inputs include CRTF text and files, sav
 references, and unit-stride boxes and polygon records.
 An existing entry inside the input image cannot be replaced, protecting
 the source's history and mask tables.</p>
-<h3 id="access-an-existing-image-through-the-data-api">Access an existing image through the Data API<a class="headerlink" href="#access-an-existing-image-through-the-data-api" title="Permanent link">&para;</a></h3>
-<p>Use <code>Image.open(path, writable=False)</code> to open an existing CASA-compatible image. The v1 surface is intentionally narrow:</p>
-<ul>
-<li>metadata access through <code>shape</code>, <code>pixel_type</code>, <code>units</code>, <code>image_info</code>, <code>misc_info</code>, <code>mask_names</code>, and <code>default_mask_name</code></li>
-<li>pixel I/O through <code>get_slice</code>, <code>put_slice</code>, <code>get_plane</code>, and <code>get_mask_slice</code></li>
-</ul>
-<p>Read operations return NumPy arrays for numeric payloads. Writes accept NumPy-compatible inputs and materialize them into the image as owned copies.</p>
-<h3 id="v1-write-policy">V1 write policy<a class="headerlink" href="#v1-write-policy" title="Permanent link">&para;</a></h3>
-<p>Image writes are part of the supported v1 API, but only in a narrow form:</p>
-<ul>
-<li>supported: pixel-slice updates on existing persistent images via <code>put_slice</code></li>
-<li>supported: reads from the persisted default mask via <code>get_mask_slice</code></li>
-<li>not part of v1: image creation from Python</li>
-<li>not part of v1: coordinate-system authoring or editing from Python</li>
-<li>not part of v1: general metadata authoring beyond the persisted fields exposed for read access</li>
-</ul>
-<p>In other words, <code>casars.data.Image</code> is a stable read/write pixel-access surface for existing images, not a full Python image-construction or image-metadata editing API.</p>
+<p>Use <code>ia.adddegaxes(stokes="I", spectral=True)</code> to make a copy with new
+singleton axes. Pass <code>outfile</code> to save the copy as a native image. The copy
+preserves the source pixels, existing coordinates, named masks and history.
+Set <code>silent=True</code> to skip requested coordinate types that already exist.
+Sources with image attribute groups are tracked in
+<a href="https://github.com/bglenden/casa-rs/issues/1625">#1625</a>.</p>
+<h3 id="migrate-an-existing-image-reader-or-writer">Migrate an existing image reader or writer<a class="headerlink" href="#migrate-an-existing-image-reader-or-writer" title="Permanent link">&para;</a></h3>
+<p>The former <code>casars.data.Image</code> and <code>casars.Image</code> exports have been retired.
+Create an <code>image()</code> tool, call <code>open(path)</code>, and call <code>done()</code> when finished.</p>
+<table>
+<thead>
+<tr>
+<th>Previous operation</th>
+<th>CASA image tool</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>shape</code>, <code>pixel_type</code>, <code>units</code></td>
+<td><code>shape()</code>, <code>pixeltype()</code>, <code>brightnessunit()</code></td>
+</tr>
+<tr>
+<td><code>coordinate_system</code>, <code>misc_info</code></td>
+<td><code>coordsys().torecord()</code>, <code>miscinfo()</code></td>
+</tr>
+<tr>
+<td><code>image_info</code></td>
+<td><code>torecord()["imageinfo"]</code>, or <code>restoringbeam()</code> for beam quantities</td>
+</tr>
+<tr>
+<td><code>mask_names</code>, <code>default_mask_name</code></td>
+<td><code>maskhandler("get")</code>, <code>maskhandler("default")</code></td>
+</tr>
+<tr>
+<td><code>get_slice(start, shape, stride=...)</code></td>
+<td><code>getchunk(blc=start, trc=last, inc=stride)</code></td>
+</tr>
+<tr>
+<td><code>get_mask_slice(...)</code></td>
+<td><code>getchunk(..., getmask=True)</code></td>
+</tr>
+<tr>
+<td><code>put_slice(pixels, start)</code></td>
+<td><code>putchunk(pixels, blc=start)</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>blc</code> and <code>trc</code> are inclusive zero-based pixel coordinates.
+For each axis, calculate <code>last = start + (shape - 1) * stride</code>.
+To read a plane, give that axis the same start and end, and squeeze that
+axis from the resulting array. Use <code>casars.imexplore.data</code> for a plane with
+its native NumPy dtype, mask and WCS.</p>
+<p>Like CASA, <code>getchunk</code> returns real pixels as <code>float64</code> and complex pixels as
+<code>complex128</code>. Use the storage type from <code>pixeltype()</code> if your caller needs
+the original width. An unmasked chunk returns an all-true mask. Use
+<code>maskhandler("default")</code> if your caller distinguishes a missing default mask.
+CASA returns <code>[""]</code> for a missing default mask and <code>["T"]</code> when listing an
+unmasked image.</p>
 <h3 id="stitch-independently-cleaned-pointings">Stitch independently CLEANed pointings<a class="headerlink" href="#stitch-independently-cleaned-pointings" title="Permanent link">&para;</a></h3>
 <p>Run <code>tclean</code> for each field with the same spectral selection, reference
 frequency and restoring beam. Pass each restored <code>.image</code> and its <code>.pb</code> to

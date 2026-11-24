@@ -103,19 +103,28 @@
 <a href=#103 id=103 data-nosnippet>103</a><span class="kw">fn </span>wrap_phase(phase: f32) -&gt; f32 {
 <a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">let </span>pi = std::f64::consts::PI;
 <a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">let </span>tau = std::f64::consts::TAU;
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span><span class="kw-2">mut </span>phase = phase;
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">if </span>!phase.is_finite() {
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">return </span>phase;
-<a href=#109 id=109 data-nosnippet>109</a>    }
-<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">if </span>phase.abs() &gt; <span class="number">4096.0 </span>{
-<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">return </span>((f64::from(phase) + pi).rem_euclid(tau) - pi) <span class="kw">as </span>f32;
-<a href=#112 id=112 data-nosnippet>112</a>    }
-<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">while </span>f64::from(phase) &lt; -pi {
-<a href=#114 id=114 data-nosnippet>114</a>        phase = (f64::from(phase) + tau) <span class="kw">as </span>f32;
-<a href=#115 id=115 data-nosnippet>115</a>    }
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">while </span>f64::from(phase) &gt; pi {
-<a href=#117 id=117 data-nosnippet>117</a>        phase = (f64::from(phase) - tau) <span class="kw">as </span>f32;
-<a href=#118 id=118 data-nosnippet>118</a>    }
-<a href=#119 id=119 data-nosnippet>119</a>    phase
-<a href=#120 id=120 data-nosnippet>120</a>}
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">if </span>!phase.is_finite() {
+<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">return </span>phase;
+<a href=#108 id=108 data-nosnippet>108</a>    }
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">let </span><span class="kw-2">mut </span>wrapped = phase.abs();
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="kw">while </span>f64::from(wrapped) &gt; pi {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span>current = f64::from(wrapped);
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">let </span>next = (current - tau) <span class="kw">as </span>f32;
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">if </span>next == wrapped {
+<a href=#114 id=114 data-nosnippet>114</a>            <span class="comment">// CASA's repeated subtraction makes no progress at this spacing.
+<a href=#115 id=115 data-nosnippet>115</a>            </span><span class="kw">return </span>((f64::from(phase) + pi).rem_euclid(tau) - pi) <span class="kw">as </span>f32;
+<a href=#116 id=116 data-nosnippet>116</a>        }
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="comment">// The rounded subtraction has a constant step within a float32
+<a href=#118 id=118 data-nosnippet>118</a>        // exponent range. Leave a turn at the boundary for the finer spacing.
+<a href=#119 id=119 data-nosnippet>119</a>        </span><span class="kw">let </span>boundary = f64::from(f32::from_bits(wrapped.to_bits() &amp; <span class="number">0x7f80_0000</span>));
+<a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">let </span>step = current - f64::from(next);
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">let </span>turns = ((current - boundary) / step).floor() - <span class="number">1.0</span>;
+<a href=#122 id=122 data-nosnippet>122</a>        wrapped = <span class="kw">if </span>turns &gt; <span class="number">1.0 </span>{
+<a href=#123 id=123 data-nosnippet>123</a>            (current - turns * step) <span class="kw">as </span>f32
+<a href=#124 id=124 data-nosnippet>124</a>        } <span class="kw">else </span>{
+<a href=#125 id=125 data-nosnippet>125</a>            next
+<a href=#126 id=126 data-nosnippet>126</a>        };
+<a href=#127 id=127 data-nosnippet>127</a>    }
+<a href=#128 id=128 data-nosnippet>128</a>    wrapped * phase.signum()
+<a href=#129 id=129 data-nosnippet>129</a>}
 </code></pre></div></section></main></body></html>

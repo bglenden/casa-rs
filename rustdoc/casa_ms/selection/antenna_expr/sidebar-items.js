@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["resolve_antenna_selector"],"struct":["AntennaRow","BaselineSelection"]};
+window.SIDEBAR_ITEMS = {"fn":["resolve_antenna_lists","resolve_antenna_selector"],"struct":["AntennaRow","BaselineSelection"]};

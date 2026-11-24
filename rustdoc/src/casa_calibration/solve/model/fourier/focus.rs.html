@@ -78,7 +78,7 @@
 <a href=#78 id=78 data-nosnippet>78</a>        .ok_or_else(|| model_error(<span class="string">"virtual Fourier focus has no visibility buffer"</span>))<span class="question-mark">?</span>;
 <a href=#79 id=79 data-nosnippet>79</a>    <span class="kw">let </span><span class="kw-2">mut </span>sums = BTreeMap::&lt;i32, ([f64; <span class="number">3</span>], usize)&gt;::new();
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">for </span>sample <span class="kw">in </span>row.focus_rows {
-<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">let </span>(uvw, <span class="kw">_</span>) = projection.apply(uvw(row.ms, sample.index)<span class="question-mark">?</span>);
+<a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">let </span>(uvw, <span class="kw">_</span>) = projection.apply(uvw(row.ms, sample.index, row.uncached_main_reads)<span class="question-mark">?</span>);
 <a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">for </span>(antenna, sign) <span class="kw">in </span>sample.antennas.into_iter().zip([<span class="number">1.0</span>, -<span class="number">1.0</span>]) {
 <a href=#83 id=83 data-nosnippet>83</a>            <span class="kw">let </span>(sum, count) = sums.entry(antenna).or_default();
 <a href=#84 id=84 data-nosnippet>84</a>            <span class="kw">for </span>(coordinate, value) <span class="kw">in </span>sum.iter_mut().zip(uvw) {

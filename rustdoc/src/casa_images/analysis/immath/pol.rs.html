@@ -828,94 +828,89 @@
 <a href=#828 id=828 data-nosnippet>828</a>    coords: <span class="kw-2">&amp;</span>casa_coordinates::CoordinateSystem,
 <a href=#829 id=829 data-nosnippet>829</a>    axis: usize,
 <a href=#830 id=830 data-nosnippet>830</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;StokesType&gt;, ImageError&gt; {
-<a href=#831 id=831 data-nosnippet>831</a>    <span class="kw">let </span><span class="kw-2">mut </span>offset = <span class="number">0usize</span>;
-<a href=#832 id=832 data-nosnippet>832</a>    <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..coords.n_coordinates() {
-<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">let </span>c = coords.coordinate(i);
-<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span>next = offset + c.n_pixel_axes();
-<a href=#835 id=835 data-nosnippet>835</a>        <span class="kw">if </span>(offset..next).contains(<span class="kw-2">&amp;</span>axis)
-<a href=#836 id=836 data-nosnippet>836</a>            &amp;&amp; <span class="kw">let </span>CoordinateModel::Stokes(stokes) = c
-<a href=#837 id=837 data-nosnippet>837</a>        {
-<a href=#838 id=838 data-nosnippet>838</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(stokes.stokes().to_vec());
-<a href=#839 id=839 data-nosnippet>839</a>        }
-<a href=#840 id=840 data-nosnippet>840</a>        offset = next;
-<a href=#841 id=841 data-nosnippet>841</a>    }
-<a href=#842 id=842 data-nosnippet>842</a>    <span class="prelude-val">Err</span>(ImageError::InvalidMetadata(
-<a href=#843 id=843 data-nosnippet>843</a>        <span class="string">"missing Stokes coordinate on Stokes axis"</span>.into(),
-<a href=#844 id=844 data-nosnippet>844</a>    ))
-<a href=#845 id=845 data-nosnippet>845</a>}
-<a href=#846 id=846 data-nosnippet>846</a>
-<a href=#847 id=847 data-nosnippet>847</a><span class="kw">type </span>PolInputSlice = (<span class="prelude-ty">Option</span>&lt;ArrayD&lt;f32&gt;&gt;, <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt;);
-<a href=#848 id=848 data-nosnippet>848</a>
-<a href=#849 id=849 data-nosnippet>849</a><span class="kw">fn </span>extract_stokes_plane(
-<a href=#850 id=850 data-nosnippet>850</a>    raws: <span class="kw-2">&amp;</span>[RawImage&lt;f32&gt;],
-<a href=#851 id=851 data-nosnippet>851</a>    loc: <span class="prelude-ty">Option</span>&lt;(usize, usize)&gt;,
-<a href=#852 id=852 data-nosnippet>852</a>    stokes_axis: usize,
-<a href=#853 id=853 data-nosnippet>853</a>    sel: <span class="kw-2">&amp;</span>ImmathSelection,
-<a href=#854 id=854 data-nosnippet>854</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PolInputSlice, ImageError&gt; {
-<a href=#855 id=855 data-nosnippet>855</a>    <span class="kw">let </span><span class="prelude-val">Some</span>((file_idx, plane_idx)) = loc <span class="kw">else </span>{
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="prelude-val">None</span>, <span class="prelude-val">None</span>));
-<a href=#857 id=857 data-nosnippet>857</a>    };
-<a href=#858 id=858 data-nosnippet>858</a>    <span class="kw">let </span>iface = raws[file_idx].as_interface();
-<a href=#859 id=859 data-nosnippet>859</a>    <span class="kw">let </span><span class="kw-2">mut </span>plane_sel = sel.clone();
-<a href=#860 id=860 data-nosnippet>860</a>    plane_sel.start[stokes_axis] = plane_idx;
-<a href=#861 id=861 data-nosnippet>861</a>    plane_sel.shape[stokes_axis] = <span class="number">1</span>;
-<a href=#862 id=862 data-nosnippet>862</a>    plane_sel.stokes_axis = <span class="prelude-val">None</span>;
-<a href=#863 id=863 data-nosnippet>863</a>    plane_sel.stokes_indices = <span class="prelude-val">None</span>;
-<a href=#864 id=864 data-nosnippet>864</a>    <span class="kw">let </span>stride = <span class="macro">vec!</span>[<span class="number">1</span>; iface.ndim()];
-<a href=#865 id=865 data-nosnippet>865</a>    <span class="kw">let </span>data = iface.get_slice(<span class="kw-2">&amp;</span>plane_sel.start, <span class="kw-2">&amp;</span>plane_sel.shape, <span class="kw-2">&amp;</span>stride)<span class="question-mark">?</span>;
-<a href=#866 id=866 data-nosnippet>866</a>    <span class="kw">let </span>mask = <span class="kw">super</span>::selection::selection_and_mask(iface, <span class="kw-2">&amp;</span>plane_sel, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
-<a href=#867 id=867 data-nosnippet>867</a>    <span class="prelude-val">Ok</span>((<span class="prelude-val">Some</span>(data), mask))
-<a href=#868 id=868 data-nosnippet>868</a>}
-<a href=#869 id=869 data-nosnippet>869</a>
-<a href=#870 id=870 data-nosnippet>870</a><span class="attr">#[allow(clippy::too_many_arguments)]
-<a href=#871 id=871 data-nosnippet>871</a></span><span class="kw">fn </span>save_pol_output(
-<a href=#872 id=872 data-nosnippet>872</a>    request: <span class="kw-2">&amp;</span>ImmathRequest,
-<a href=#873 id=873 data-nosnippet>873</a>    outfile: <span class="kw-2">&amp;</span>Path,
-<a href=#874 id=874 data-nosnippet>874</a>    filenames: <span class="kw-2">&amp;</span>[PathBuf],
-<a href=#875 id=875 data-nosnippet>875</a>    data: ArrayD&lt;f32&gt;,
-<a href=#876 id=876 data-nosnippet>876</a>    valid: ArrayD&lt;bool&gt;,
-<a href=#877 id=877 data-nosnippet>877</a>    valid_pixels: usize,
-<a href=#878 id=878 data-nosnippet>878</a>    inputs: <span class="kw-2">&amp;</span>PolInputs,
-<a href=#879 id=879 data-nosnippet>879</a>    out_stokes: StokesType,
-<a href=#880 id=880 data-nosnippet>880</a>    bunit: <span class="kw-2">&amp;</span>str,
-<a href=#881 id=881 data-nosnippet>881</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImageMathSummary, ImageError&gt; {
-<a href=#882 id=882 data-nosnippet>882</a>    <span class="kw">let </span><span class="kw-2">mut </span>sub_start = inputs.sel.start.clone();
-<a href=#883 id=883 data-nosnippet>883</a>    sub_start[inputs.stokes_axis] = <span class="number">0</span>;
-<a href=#884 id=884 data-nosnippet>884</a>    <span class="kw">let </span><span class="kw-2">mut </span>sub_shape = inputs.sel.shape.clone();
-<a href=#885 id=885 data-nosnippet>885</a>    sub_shape[inputs.stokes_axis] = <span class="number">1</span>;
-<a href=#886 id=886 data-nosnippet>886</a>
-<a href=#887 id=887 data-nosnippet>887</a>    <span class="kw">let </span>out_coords = subimage_coordinates_with_stokes(
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw-2">&amp;</span>inputs.ref_coords,
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw-2">&amp;</span>sub_start,
-<a href=#890 id=890 data-nosnippet>890</a>        <span class="kw-2">&amp;</span>sub_shape,
-<a href=#891 id=891 data-nosnippet>891</a>        <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>[out_stokes]),
-<a href=#892 id=892 data-nosnippet>892</a>    )<span class="question-mark">?</span>;
-<a href=#893 id=893 data-nosnippet>893</a>    <span class="kw">let </span>has_false = valid_pixels != valid.len();
-<a href=#894 id=894 data-nosnippet>894</a>
-<a href=#895 id=895 data-nosnippet>895</a>    <span class="kw">super</span>::remove_existing_outfile_if_overwrite(outfile, request.overwrite)<span class="question-mark">?</span>;
-<a href=#896 id=896 data-nosnippet>896</a>
-<a href=#897 id=897 data-nosnippet>897</a>    <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(inputs.out_shape.clone(), out_coords, outfile)<span class="question-mark">?</span>;
-<a href=#898 id=898 data-nosnippet>898</a>    image.set_units(bunit.to_string())<span class="question-mark">?</span>;
-<a href=#899 id=899 data-nosnippet>899</a>    image.set_image_info(<span class="kw-2">&amp;</span>inputs.ref_image_info)<span class="question-mark">?</span>;
-<a href=#900 id=900 data-nosnippet>900</a>    image.set_misc_info(inputs.ref_misc_info.clone())<span class="question-mark">?</span>;
-<a href=#901 id=901 data-nosnippet>901</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>lc) = inputs.ref_legacy_coords.clone() {
-<a href=#902 id=902 data-nosnippet>902</a>        <span class="kw">let _ </span>= replace_stokes_in_record(<span class="kw-2">&amp;mut </span>lc, <span class="kw-2">&amp;</span>[out_stokes]);
-<a href=#903 id=903 data-nosnippet>903</a>        image.set_coords_record_keyword(lc);
-<a href=#904 id=904 data-nosnippet>904</a>    }
-<a href=#905 id=905 data-nosnippet>905</a>    image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0</span>; inputs.out_shape.len()])<span class="question-mark">?</span>;
-<a href=#906 id=906 data-nosnippet>906</a>    <span class="kw">if </span>has_false {
-<a href=#907 id=907 data-nosnippet>907</a>        image.put_mask(<span class="string">"mask0"</span>, <span class="kw-2">&amp;</span>valid)<span class="question-mark">?</span>;
-<a href=#908 id=908 data-nosnippet>908</a>        image.set_default_mask(<span class="string">"mask0"</span>)<span class="question-mark">?</span>;
-<a href=#909 id=909 data-nosnippet>909</a>    }
-<a href=#910 id=910 data-nosnippet>910</a>    image.save()<span class="question-mark">?</span>;
-<a href=#911 id=911 data-nosnippet>911</a>
-<a href=#912 id=912 data-nosnippet>912</a>    <span class="prelude-val">Ok</span>(ImageMathSummary {
-<a href=#913 id=913 data-nosnippet>913</a>        imagename: filenames.iter().map(|p| p.display().to_string()).collect(),
-<a href=#914 id=914 data-nosnippet>914</a>        outfile: outfile.display().to_string(),
-<a href=#915 id=915 data-nosnippet>915</a>        expr: request.expr.clone(),
-<a href=#916 id=916 data-nosnippet>916</a>        shape: inputs.out_shape.clone(),
-<a href=#917 id=917 data-nosnippet>917</a>        units: bunit.to_string(),
-<a href=#918 id=918 data-nosnippet>918</a>        valid_pixels,
-<a href=#919 id=919 data-nosnippet>919</a>    })
-<a href=#920 id=920 data-nosnippet>920</a>}
+<a href=#831 id=831 data-nosnippet>831</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>((index, <span class="kw">_</span>)) = coords.pixel_axis_owner(axis)
+<a href=#832 id=832 data-nosnippet>832</a>        &amp;&amp; <span class="kw">let </span>CoordinateModel::Stokes(stokes) = coords.coordinate(index)
+<a href=#833 id=833 data-nosnippet>833</a>    {
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(stokes.stokes().to_vec());
+<a href=#835 id=835 data-nosnippet>835</a>    }
+<a href=#836 id=836 data-nosnippet>836</a>    <span class="prelude-val">Err</span>(ImageError::InvalidMetadata(
+<a href=#837 id=837 data-nosnippet>837</a>        <span class="string">"missing Stokes coordinate on Stokes axis"</span>.into(),
+<a href=#838 id=838 data-nosnippet>838</a>    ))
+<a href=#839 id=839 data-nosnippet>839</a>}
+<a href=#840 id=840 data-nosnippet>840</a>
+<a href=#841 id=841 data-nosnippet>841</a><span class="kw">type </span>PolInputSlice = (<span class="prelude-ty">Option</span>&lt;ArrayD&lt;f32&gt;&gt;, <span class="prelude-ty">Option</span>&lt;ArrayD&lt;bool&gt;&gt;);
+<a href=#842 id=842 data-nosnippet>842</a>
+<a href=#843 id=843 data-nosnippet>843</a><span class="kw">fn </span>extract_stokes_plane(
+<a href=#844 id=844 data-nosnippet>844</a>    raws: <span class="kw-2">&amp;</span>[RawImage&lt;f32&gt;],
+<a href=#845 id=845 data-nosnippet>845</a>    loc: <span class="prelude-ty">Option</span>&lt;(usize, usize)&gt;,
+<a href=#846 id=846 data-nosnippet>846</a>    stokes_axis: usize,
+<a href=#847 id=847 data-nosnippet>847</a>    sel: <span class="kw-2">&amp;</span>ImmathSelection,
+<a href=#848 id=848 data-nosnippet>848</a>) -&gt; <span class="prelude-ty">Result</span>&lt;PolInputSlice, ImageError&gt; {
+<a href=#849 id=849 data-nosnippet>849</a>    <span class="kw">let </span><span class="prelude-val">Some</span>((file_idx, plane_idx)) = loc <span class="kw">else </span>{
+<a href=#850 id=850 data-nosnippet>850</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((<span class="prelude-val">None</span>, <span class="prelude-val">None</span>));
+<a href=#851 id=851 data-nosnippet>851</a>    };
+<a href=#852 id=852 data-nosnippet>852</a>    <span class="kw">let </span>iface = raws[file_idx].as_interface();
+<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">let </span><span class="kw-2">mut </span>plane_sel = sel.clone();
+<a href=#854 id=854 data-nosnippet>854</a>    plane_sel.start[stokes_axis] = plane_idx;
+<a href=#855 id=855 data-nosnippet>855</a>    plane_sel.shape[stokes_axis] = <span class="number">1</span>;
+<a href=#856 id=856 data-nosnippet>856</a>    plane_sel.stokes_axis = <span class="prelude-val">None</span>;
+<a href=#857 id=857 data-nosnippet>857</a>    plane_sel.stokes_indices = <span class="prelude-val">None</span>;
+<a href=#858 id=858 data-nosnippet>858</a>    <span class="kw">let </span>stride = <span class="macro">vec!</span>[<span class="number">1</span>; iface.ndim()];
+<a href=#859 id=859 data-nosnippet>859</a>    <span class="kw">let </span>data = iface.get_slice(<span class="kw-2">&amp;</span>plane_sel.start, <span class="kw-2">&amp;</span>plane_sel.shape, <span class="kw-2">&amp;</span>stride)<span class="question-mark">?</span>;
+<a href=#860 id=860 data-nosnippet>860</a>    <span class="kw">let </span>mask = <span class="kw">super</span>::selection::selection_and_mask(iface, <span class="kw-2">&amp;</span>plane_sel, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
+<a href=#861 id=861 data-nosnippet>861</a>    <span class="prelude-val">Ok</span>((<span class="prelude-val">Some</span>(data), mask))
+<a href=#862 id=862 data-nosnippet>862</a>}
+<a href=#863 id=863 data-nosnippet>863</a>
+<a href=#864 id=864 data-nosnippet>864</a><span class="attr">#[allow(clippy::too_many_arguments)]
+<a href=#865 id=865 data-nosnippet>865</a></span><span class="kw">fn </span>save_pol_output(
+<a href=#866 id=866 data-nosnippet>866</a>    request: <span class="kw-2">&amp;</span>ImmathRequest,
+<a href=#867 id=867 data-nosnippet>867</a>    outfile: <span class="kw-2">&amp;</span>Path,
+<a href=#868 id=868 data-nosnippet>868</a>    filenames: <span class="kw-2">&amp;</span>[PathBuf],
+<a href=#869 id=869 data-nosnippet>869</a>    data: ArrayD&lt;f32&gt;,
+<a href=#870 id=870 data-nosnippet>870</a>    valid: ArrayD&lt;bool&gt;,
+<a href=#871 id=871 data-nosnippet>871</a>    valid_pixels: usize,
+<a href=#872 id=872 data-nosnippet>872</a>    inputs: <span class="kw-2">&amp;</span>PolInputs,
+<a href=#873 id=873 data-nosnippet>873</a>    out_stokes: StokesType,
+<a href=#874 id=874 data-nosnippet>874</a>    bunit: <span class="kw-2">&amp;</span>str,
+<a href=#875 id=875 data-nosnippet>875</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ImageMathSummary, ImageError&gt; {
+<a href=#876 id=876 data-nosnippet>876</a>    <span class="kw">let </span><span class="kw-2">mut </span>sub_start = inputs.sel.start.clone();
+<a href=#877 id=877 data-nosnippet>877</a>    sub_start[inputs.stokes_axis] = <span class="number">0</span>;
+<a href=#878 id=878 data-nosnippet>878</a>    <span class="kw">let </span><span class="kw-2">mut </span>sub_shape = inputs.sel.shape.clone();
+<a href=#879 id=879 data-nosnippet>879</a>    sub_shape[inputs.stokes_axis] = <span class="number">1</span>;
+<a href=#880 id=880 data-nosnippet>880</a>
+<a href=#881 id=881 data-nosnippet>881</a>    <span class="kw">let </span>out_coords = subimage_coordinates_with_stokes(
+<a href=#882 id=882 data-nosnippet>882</a>        <span class="kw-2">&amp;</span>inputs.ref_coords,
+<a href=#883 id=883 data-nosnippet>883</a>        <span class="kw-2">&amp;</span>sub_start,
+<a href=#884 id=884 data-nosnippet>884</a>        <span class="kw-2">&amp;</span>sub_shape,
+<a href=#885 id=885 data-nosnippet>885</a>        <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>[out_stokes]),
+<a href=#886 id=886 data-nosnippet>886</a>    )<span class="question-mark">?</span>;
+<a href=#887 id=887 data-nosnippet>887</a>    <span class="kw">let </span>has_false = valid_pixels != valid.len();
+<a href=#888 id=888 data-nosnippet>888</a>
+<a href=#889 id=889 data-nosnippet>889</a>    <span class="kw">super</span>::remove_existing_outfile_if_overwrite(outfile, request.overwrite)<span class="question-mark">?</span>;
+<a href=#890 id=890 data-nosnippet>890</a>
+<a href=#891 id=891 data-nosnippet>891</a>    <span class="kw">let </span><span class="kw-2">mut </span>image = PagedImage::&lt;f32&gt;::create(inputs.out_shape.clone(), out_coords, outfile)<span class="question-mark">?</span>;
+<a href=#892 id=892 data-nosnippet>892</a>    image.set_units(bunit.to_string())<span class="question-mark">?</span>;
+<a href=#893 id=893 data-nosnippet>893</a>    image.set_image_info(<span class="kw-2">&amp;</span>inputs.ref_image_info)<span class="question-mark">?</span>;
+<a href=#894 id=894 data-nosnippet>894</a>    image.set_misc_info(inputs.ref_misc_info.clone())<span class="question-mark">?</span>;
+<a href=#895 id=895 data-nosnippet>895</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>lc) = inputs.ref_legacy_coords.clone() {
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let _ </span>= replace_stokes_in_record(<span class="kw-2">&amp;mut </span>lc, <span class="kw-2">&amp;</span>[out_stokes]);
+<a href=#897 id=897 data-nosnippet>897</a>        image.set_coords_record_keyword(lc);
+<a href=#898 id=898 data-nosnippet>898</a>    }
+<a href=#899 id=899 data-nosnippet>899</a>    image.put_slice(<span class="kw-2">&amp;</span>data, <span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">0</span>; inputs.out_shape.len()])<span class="question-mark">?</span>;
+<a href=#900 id=900 data-nosnippet>900</a>    <span class="kw">if </span>has_false {
+<a href=#901 id=901 data-nosnippet>901</a>        image.put_mask(<span class="string">"mask0"</span>, <span class="kw-2">&amp;</span>valid)<span class="question-mark">?</span>;
+<a href=#902 id=902 data-nosnippet>902</a>        image.set_default_mask(<span class="string">"mask0"</span>)<span class="question-mark">?</span>;
+<a href=#903 id=903 data-nosnippet>903</a>    }
+<a href=#904 id=904 data-nosnippet>904</a>    image.save()<span class="question-mark">?</span>;
+<a href=#905 id=905 data-nosnippet>905</a>
+<a href=#906 id=906 data-nosnippet>906</a>    <span class="prelude-val">Ok</span>(ImageMathSummary {
+<a href=#907 id=907 data-nosnippet>907</a>        imagename: filenames.iter().map(|p| p.display().to_string()).collect(),
+<a href=#908 id=908 data-nosnippet>908</a>        outfile: outfile.display().to_string(),
+<a href=#909 id=909 data-nosnippet>909</a>        expr: request.expr.clone(),
+<a href=#910 id=910 data-nosnippet>910</a>        shape: inputs.out_shape.clone(),
+<a href=#911 id=911 data-nosnippet>911</a>        units: bunit.to_string(),
+<a href=#912 id=912 data-nosnippet>912</a>        valid_pixels,
+<a href=#913 id=913 data-nosnippet>913</a>        beam_warnings: Vec::new(),
+<a href=#914 id=914 data-nosnippet>914</a>    })
+<a href=#915 id=915 data-nosnippet>915</a>}
 </code></pre></div></section></main></body></html>

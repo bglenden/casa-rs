@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["raw_field_phase_direction"],"struct":["MsCalEngine"]};
+window.SIDEBAR_ITEMS = {"fn":["raw_field_phase_direction","raw_field_reference_direction"],"struct":["MsCalEngine"]};

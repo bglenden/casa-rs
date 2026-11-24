@@ -4,8 +4,8 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">impl </span>TableImpl {
 <a href=#6 id=6 data-nosnippet>6</a>    <span class="doccomment">/// Use the retained shape map when validating writes to an existing
-<a href=#7 id=7 data-nosnippet>7</a>    /// tiled cell. A pending override or row edit owns the current shape.
-<a href=#8 id=8 data-nosnippet>8</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>try_stored_tiled_shape(
+<a href=#7 id=7 data-nosnippet>7</a>    /// stored array cell. A pending override or row edit owns the current shape.
+<a href=#8 id=8 data-nosnippet>8</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>try_retained_array_shape(
 <a href=#9 id=9 data-nosnippet>9</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#10 id=10 data-nosnippet>10</a>        row: usize,
 <a href=#11 id=11 data-nosnippet>11</a>        column: <span class="kw-2">&amp;</span>str,
@@ -76,15 +76,21 @@
 <a href=#76 id=76 data-nosnippet>76</a>                <span class="string">"metadata-only shapes do not support changed row registration"</span>.to_string(),
 <a href=#77 id=77 data-nosnippet>77</a>            ));
 <a href=#78 id=78 data-nosnippet>78</a>        }
-<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">let </span>metadata = source.read_metadata()<span class="question-mark">?</span>;
-<a href=#80 id=80 data-nosnippet>80</a>        CompositeStorage
-<a href=#81 id=81 data-nosnippet>81</a>            .plain_array_cell_shapes_uncached(<span class="kw-2">&amp;</span>source.path, metadata, column, rows)
-<a href=#82 id=82 data-nosnippet>82</a>            .map_err(|error| {
-<a href=#83 id=83 data-nosnippet>83</a>                TableError::Storage(<span class="macro">format!</span>(
-<a href=#84 id=84 data-nosnippet>84</a>                    <span class="string">"failed to inspect {column} shapes in table {}: {error}"</span>,
-<a href=#85 id=85 data-nosnippet>85</a>                    source.path.display()
-<a href=#86 id=86 data-nosnippet>86</a>                ))
-<a href=#87 id=87 data-nosnippet>87</a>            })
-<a href=#88 id=88 data-nosnippet>88</a>    }
-<a href=#89 id=89 data-nosnippet>89</a>}
+<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">if </span>source.read_metadata.get().is_none()
+<a href=#80 id=80 data-nosnippet>80</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(shapes) =
+<a href=#81 id=81 data-nosnippet>81</a>                CompositeStorage.load_array_shapes_for_concat(<span class="kw-2">&amp;</span>source.path, column, rows)<span class="question-mark">?
+<a href=#82 id=82 data-nosnippet>82</a>        </span>{
+<a href=#83 id=83 data-nosnippet>83</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(shapes);
+<a href=#84 id=84 data-nosnippet>84</a>        }
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">let </span>metadata = source.read_metadata()<span class="question-mark">?</span>;
+<a href=#86 id=86 data-nosnippet>86</a>        CompositeStorage
+<a href=#87 id=87 data-nosnippet>87</a>            .plain_array_cell_shapes_uncached(<span class="kw-2">&amp;</span>source.path, metadata, column, rows)
+<a href=#88 id=88 data-nosnippet>88</a>            .map_err(|error| {
+<a href=#89 id=89 data-nosnippet>89</a>                TableError::Storage(<span class="macro">format!</span>(
+<a href=#90 id=90 data-nosnippet>90</a>                    <span class="string">"failed to inspect {column} shapes in table {}: {error}"</span>,
+<a href=#91 id=91 data-nosnippet>91</a>                    source.path.display()
+<a href=#92 id=92 data-nosnippet>92</a>                ))
+<a href=#93 id=93 data-nosnippet>93</a>            })
+<a href=#94 id=94 data-nosnippet>94</a>    }
+<a href=#95 id=95 data-nosnippet>95</a>}
 </code></pre></div></section></main></body></html>

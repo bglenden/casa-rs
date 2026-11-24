@@ -787,10 +787,10 @@
 <a href=#787 id=787 data-nosnippet>787</a>        };
 <a href=#788 id=788 data-nosnippet>788</a>        <span class="comment">// A residual sample uses both keys. Keep the prediction PA in the
 <a href=#789 id=789 data-nosnippet>789</a>        // high part of cube so the placement still needs only one key.
-<a href=#790 id=790 data-nosnippet>790</a>        </span>CfKey {
-<a href=#791 id=791 data-nosnippet>791</a>            group: (pa * <span class="self">self</span>.w_planes.len() + w_index) <span class="kw">as </span>u16,
-<a href=#792 id=792 data-nosnippet>792</a>            cube: (prediction_pa * <span class="self">self</span>.frequencies_hz.len() + frequency) <span class="kw">as </span>u16,
-<a href=#793 id=793 data-nosnippet>793</a>        }
+<a href=#790 id=790 data-nosnippet>790</a>        </span>CfKey::new(
+<a href=#791 id=791 data-nosnippet>791</a>            (pa * <span class="self">self</span>.w_planes.len() + w_index) <span class="kw">as </span>u16,
+<a href=#792 id=792 data-nosnippet>792</a>            (prediction_pa * <span class="self">self</span>.frequencies_hz.len() + frequency) <span class="kw">as </span>u16,
+<a href=#793 id=793 data-nosnippet>793</a>        )
 <a href=#794 id=794 data-nosnippet>794</a>    }
 <a href=#795 id=795 data-nosnippet>795</a>
 <a href=#796 id=796 data-nosnippet>796</a>    <span class="kw">fn </span>taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, _hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {

@@ -5,8 +5,8 @@
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_types::Complex32;
 <a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span><span class="kw">super</span>::BandpassSolutionRow;
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::solve::phase_only;
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use super</span>::{BandpassSolutionRow, BandpassSolveControls, BandpassSolveRequest};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::solve::{GainNormalization, GainSolveMode, grouping::median_with_even_mean, phase_only};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span><span class="kw">crate</span>::solve_stats::SolveStatsBuilder;
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="doccomment">/// Apply CASA's flex reference phase to the [receptor, channel] grid. A
@@ -107,78 +107,114 @@
 <a href=#107 id=107 data-nosnippet>107</a>    }
 <a href=#108 id=108 data-nosnippet>108</a>}
 <a href=#109 id=109 data-nosnippet>109</a>
-<a href=#110 id=110 data-nosnippet>110</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>normalize_bandpass_rows(rows: <span class="kw-2">&amp;mut </span>[BandpassSolutionRow], channel_count: usize) {
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">for </span>row <span class="kw">in </span>rows {
-<a href=#112 id=112 data-nosnippet>112</a>        normalize_bandpass_row(row, channel_count);
-<a href=#113 id=113 data-nosnippet>113</a>    }
-<a href=#114 id=114 data-nosnippet>114</a>}
-<a href=#115 id=115 data-nosnippet>115</a>
-<a href=#116 id=116 data-nosnippet>116</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>normalize_bandpass_row(row: <span class="kw-2">&amp;mut </span>BandpassSolutionRow, channel_count: usize) {
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="kw">if </span>channel_count == <span class="number">0 </span>{
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">return</span>;
-<a href=#119 id=119 data-nosnippet>119</a>    }
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">for </span>receptor <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">let </span><span class="kw-2">mut </span>coherent_sum = Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>);
-<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">let </span><span class="kw-2">mut </span>power_sum = <span class="number">0.0_f32</span>;
-<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">let </span><span class="kw-2">mut </span>good_count = <span class="number">0usize</span>;
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..channel_count {
-<a href=#125 id=125 data-nosnippet>125</a>            <span class="kw">let </span>index = receptor + <span class="number">2 </span>* channel;
-<a href=#126 id=126 data-nosnippet>126</a>            <span class="kw">if </span>row.flags.get(index).copied().unwrap_or(<span class="bool-val">false</span>) {
-<a href=#127 id=127 data-nosnippet>127</a>                <span class="kw">continue</span>;
-<a href=#128 id=128 data-nosnippet>128</a>            }
-<a href=#129 id=129 data-nosnippet>129</a>            <span class="kw">let </span>gain = row.gains[index];
-<a href=#130 id=130 data-nosnippet>130</a>            <span class="kw">let </span>amplitude = gain.norm();
-<a href=#131 id=131 data-nosnippet>131</a>            <span class="kw">if </span>amplitude &lt;= f32::EPSILON {
-<a href=#132 id=132 data-nosnippet>132</a>                <span class="kw">continue</span>;
-<a href=#133 id=133 data-nosnippet>133</a>            }
-<a href=#134 id=134 data-nosnippet>134</a>            coherent_sum += gain / Complex32::new(amplitude, <span class="number">0.0</span>);
-<a href=#135 id=135 data-nosnippet>135</a>            power_sum += amplitude * amplitude;
-<a href=#136 id=136 data-nosnippet>136</a>            good_count += <span class="number">1</span>;
-<a href=#137 id=137 data-nosnippet>137</a>        }
-<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">if </span>good_count &lt;= <span class="number">1 </span>{
-<a href=#139 id=139 data-nosnippet>139</a>            <span class="kw">continue</span>;
-<a href=#140 id=140 data-nosnippet>140</a>        }
-<a href=#141 id=141 data-nosnippet>141</a>        <span class="kw">let </span>amplitude_factor = (power_sum / good_count <span class="kw">as </span>f32).sqrt();
-<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">if </span>amplitude_factor &lt;= f32::EPSILON {
-<a href=#143 id=143 data-nosnippet>143</a>            <span class="kw">continue</span>;
-<a href=#144 id=144 data-nosnippet>144</a>        }
-<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span>phase_factor = <span class="kw">if </span>coherent_sum.norm() &gt; f32::EPSILON {
-<a href=#146 id=146 data-nosnippet>146</a>            coherent_sum / Complex32::new(coherent_sum.norm(), <span class="number">0.0</span>)
-<a href=#147 id=147 data-nosnippet>147</a>        } <span class="kw">else </span>{
-<a href=#148 id=148 data-nosnippet>148</a>            Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
-<a href=#149 id=149 data-nosnippet>149</a>        };
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">let </span>normalization = phase_factor * Complex32::new(amplitude_factor, <span class="number">0.0</span>);
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..channel_count {
-<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">let </span>index = receptor + <span class="number">2 </span>* channel;
-<a href=#153 id=153 data-nosnippet>153</a>            row.gains[index] /= normalization;
-<a href=#154 id=154 data-nosnippet>154</a>        }
-<a href=#155 id=155 data-nosnippet>155</a>    }
-<a href=#156 id=156 data-nosnippet>156</a>}
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>fill_bandpass_gaps(row: <span class="kw-2">&amp;mut </span>BandpassSolutionRow, maximum: usize) {
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">for </span>receptor <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
-<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span><span class="kw-2">mut </span>last_good = <span class="prelude-val">None</span>;
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..row.channel_count {
-<a href=#162 id=162 data-nosnippet>162</a>            <span class="kw">let </span>right = receptor + <span class="number">2 </span>* channel;
-<a href=#163 id=163 data-nosnippet>163</a>            <span class="kw">if </span>row.flags[right] {
-<a href=#164 id=164 data-nosnippet>164</a>                <span class="kw">continue</span>;
-<a href=#165 id=165 data-nosnippet>165</a>            }
-<a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(left) = last_good {
-<a href=#167 id=167 data-nosnippet>167</a>                <span class="kw">let </span>span = channel - left;
-<a href=#168 id=168 data-nosnippet>168</a>                <span class="kw">if </span>span &gt; <span class="number">1 </span>&amp;&amp; span - <span class="number">1 </span>&lt;= maximum {
-<a href=#169 id=169 data-nosnippet>169</a>                    <span class="kw">let </span>lower = row.gains[receptor + <span class="number">2 </span>* left];
-<a href=#170 id=170 data-nosnippet>170</a>                    <span class="kw">let </span>upper = row.gains[right];
-<a href=#171 id=171 data-nosnippet>171</a>                    <span class="kw">for </span>gap <span class="kw">in </span>left + <span class="number">1</span>..channel {
-<a href=#172 id=172 data-nosnippet>172</a>                        <span class="kw">let </span>fraction = (gap - left) <span class="kw">as </span>f32 / span <span class="kw">as </span>f32;
-<a href=#173 id=173 data-nosnippet>173</a>                        <span class="kw">let </span>index = receptor + <span class="number">2 </span>* gap;
-<a href=#174 id=174 data-nosnippet>174</a>                        row.gains[index] =
-<a href=#175 id=175 data-nosnippet>175</a>                            <span class="kw">crate</span>::lookup::interpolate_gain_amplitude_phase(lower, upper, fraction);
-<a href=#176 id=176 data-nosnippet>176</a>                        row.flags[index] = <span class="bool-val">false</span>;
-<a href=#177 id=177 data-nosnippet>177</a>                    }
-<a href=#178 id=178 data-nosnippet>178</a>                }
-<a href=#179 id=179 data-nosnippet>179</a>            }
-<a href=#180 id=180 data-nosnippet>180</a>            last_good = <span class="prelude-val">Some</span>(channel);
-<a href=#181 id=181 data-nosnippet>181</a>        }
-<a href=#182 id=182 data-nosnippet>182</a>    }
-<a href=#183 id=183 data-nosnippet>183</a>}
+<a href=#110 id=110 data-nosnippet>110</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>finish_bandpass_rows(
+<a href=#111 id=111 data-nosnippet>111</a>    rows: <span class="kw-2">&amp;mut </span>[BandpassSolutionRow],
+<a href=#112 id=112 data-nosnippet>112</a>    request: <span class="kw-2">&amp;</span>BandpassSolveRequest,
+<a href=#113 id=113 data-nosnippet>113</a>    controls: BandpassSolveControls,
+<a href=#114 id=114 data-nosnippet>114</a>) {
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">for </span>row <span class="kw">in </span>rows {
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">if </span>controls.solve_mode != GainSolveMode::AmplitudePhase {
+<a href=#117 id=117 data-nosnippet>117</a>            <span class="kw">for </span>(gain, flagged) <span class="kw">in </span>row.gains.iter_mut().zip(<span class="kw-2">&amp;</span>row.flags) {
+<a href=#118 id=118 data-nosnippet>118</a>                <span class="kw">if </span><span class="kw-2">*</span>flagged {
+<a href=#119 id=119 data-nosnippet>119</a>                    <span class="kw-2">*</span>gain = Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>);
+<a href=#120 id=120 data-nosnippet>120</a>                } <span class="kw">else if </span>controls.solve_mode == GainSolveMode::Amplitude {
+<a href=#121 id=121 data-nosnippet>121</a>                    <span class="kw-2">*</span>gain = Complex32::new(gain.norm(), <span class="number">0.0</span>);
+<a href=#122 id=122 data-nosnippet>122</a>                }
+<a href=#123 id=123 data-nosnippet>123</a>            }
+<a href=#124 id=124 data-nosnippet>124</a>        }
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="kw">if </span>request.normalize_average_amplitude {
+<a href=#126 id=126 data-nosnippet>126</a>            normalize_bandpass_row(row, row.channel_count, controls.normalization);
+<a href=#127 id=127 data-nosnippet>127</a>        }
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(cuts) = request.cuts.filter(|cuts| cuts.fill_gaps &gt; <span class="number">0</span>) {
+<a href=#129 id=129 data-nosnippet>129</a>            fill_bandpass_gaps(row, cuts.fill_gaps);
+<a href=#130 id=130 data-nosnippet>130</a>        }
+<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#132 id=132 data-nosnippet>132</a>}
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>normalize_bandpass_rows(rows: <span class="kw-2">&amp;mut </span>[BandpassSolutionRow], channel_count: usize) {
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">for </span>row <span class="kw">in </span>rows {
+<a href=#136 id=136 data-nosnippet>136</a>        normalize_bandpass_row(row, channel_count, GainNormalization::Mean);
+<a href=#137 id=137 data-nosnippet>137</a>    }
+<a href=#138 id=138 data-nosnippet>138</a>}
+<a href=#139 id=139 data-nosnippet>139</a>
+<a href=#140 id=140 data-nosnippet>140</a><span class="kw">fn </span>normalize_bandpass_row(
+<a href=#141 id=141 data-nosnippet>141</a>    row: <span class="kw-2">&amp;mut </span>BandpassSolutionRow,
+<a href=#142 id=142 data-nosnippet>142</a>    channel_count: usize,
+<a href=#143 id=143 data-nosnippet>143</a>    normalization: GainNormalization,
+<a href=#144 id=144 data-nosnippet>144</a>) {
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">if </span>channel_count == <span class="number">0 </span>{
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">return</span>;
+<a href=#147 id=147 data-nosnippet>147</a>    }
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">for </span>receptor <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#149 id=149 data-nosnippet>149</a>        <span class="kw">let </span><span class="kw-2">mut </span>coherent_sum = Complex32::new(<span class="number">0.0</span>, <span class="number">0.0</span>);
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">let </span><span class="kw-2">mut </span>power_sum = <span class="number">0.0_f32</span>;
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span><span class="kw-2">mut </span>powers = Vec::new();
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">let </span><span class="kw-2">mut </span>good_count = <span class="number">0usize</span>;
+<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..channel_count {
+<a href=#154 id=154 data-nosnippet>154</a>            <span class="kw">let </span>index = receptor + <span class="number">2 </span>* channel;
+<a href=#155 id=155 data-nosnippet>155</a>            <span class="kw">if </span>row.flags.get(index).copied().unwrap_or(<span class="bool-val">false</span>) {
+<a href=#156 id=156 data-nosnippet>156</a>                <span class="kw">continue</span>;
+<a href=#157 id=157 data-nosnippet>157</a>            }
+<a href=#158 id=158 data-nosnippet>158</a>            <span class="kw">let </span>gain = row.gains[index];
+<a href=#159 id=159 data-nosnippet>159</a>            <span class="kw">let </span>amplitude = gain.norm();
+<a href=#160 id=160 data-nosnippet>160</a>            <span class="kw">if </span>amplitude &lt;= f32::EPSILON {
+<a href=#161 id=161 data-nosnippet>161</a>                <span class="kw">continue</span>;
+<a href=#162 id=162 data-nosnippet>162</a>            }
+<a href=#163 id=163 data-nosnippet>163</a>            coherent_sum += gain / Complex32::new(amplitude, <span class="number">0.0</span>);
+<a href=#164 id=164 data-nosnippet>164</a>            <span class="kw">let </span>power = amplitude * amplitude;
+<a href=#165 id=165 data-nosnippet>165</a>            <span class="kw">match </span>normalization {
+<a href=#166 id=166 data-nosnippet>166</a>                GainNormalization::Mean =&gt; power_sum += power,
+<a href=#167 id=167 data-nosnippet>167</a>                GainNormalization::Median =&gt; powers.push(power),
+<a href=#168 id=168 data-nosnippet>168</a>            }
+<a href=#169 id=169 data-nosnippet>169</a>            good_count += <span class="number">1</span>;
+<a href=#170 id=170 data-nosnippet>170</a>        }
+<a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">if </span>good_count &lt;= <span class="number">1 </span>{
+<a href=#172 id=172 data-nosnippet>172</a>            <span class="kw">continue</span>;
+<a href=#173 id=173 data-nosnippet>173</a>        }
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="kw">let </span>amplitude_factor = <span class="kw">match </span>normalization {
+<a href=#175 id=175 data-nosnippet>175</a>            GainNormalization::Mean =&gt; (power_sum / good_count <span class="kw">as </span>f32).sqrt(),
+<a href=#176 id=176 data-nosnippet>176</a>            GainNormalization::Median =&gt; median_with_even_mean(<span class="kw-2">&amp;mut </span>powers).sqrt(),
+<a href=#177 id=177 data-nosnippet>177</a>        };
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">if </span>amplitude_factor &lt;= f32::EPSILON {
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="kw">continue</span>;
+<a href=#180 id=180 data-nosnippet>180</a>        }
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">let </span>phase_factor = <span class="kw">if </span>coherent_sum.norm() &gt; f32::EPSILON {
+<a href=#182 id=182 data-nosnippet>182</a>            coherent_sum / Complex32::new(coherent_sum.norm(), <span class="number">0.0</span>)
+<a href=#183 id=183 data-nosnippet>183</a>        } <span class="kw">else </span>{
+<a href=#184 id=184 data-nosnippet>184</a>            Complex32::new(<span class="number">1.0</span>, <span class="number">0.0</span>)
+<a href=#185 id=185 data-nosnippet>185</a>        };
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="kw">let </span>normalization = phase_factor * Complex32::new(amplitude_factor, <span class="number">0.0</span>);
+<a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..channel_count {
+<a href=#188 id=188 data-nosnippet>188</a>            <span class="kw">let </span>index = receptor + <span class="number">2 </span>* channel;
+<a href=#189 id=189 data-nosnippet>189</a>            row.gains[index] /= normalization;
+<a href=#190 id=190 data-nosnippet>190</a>        }
+<a href=#191 id=191 data-nosnippet>191</a>    }
+<a href=#192 id=192 data-nosnippet>192</a>}
+<a href=#193 id=193 data-nosnippet>193</a>
+<a href=#194 id=194 data-nosnippet>194</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>fill_bandpass_gaps(row: <span class="kw-2">&amp;mut </span>BandpassSolutionRow, maximum: usize) {
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">for </span>receptor <span class="kw">in </span><span class="number">0</span>..<span class="number">2 </span>{
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">let </span><span class="kw-2">mut </span>last_good = <span class="prelude-val">None</span>;
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">for </span>channel <span class="kw">in </span><span class="number">0</span>..row.channel_count {
+<a href=#198 id=198 data-nosnippet>198</a>            <span class="kw">let </span>right = receptor + <span class="number">2 </span>* channel;
+<a href=#199 id=199 data-nosnippet>199</a>            <span class="kw">if </span>row.flags[right] {
+<a href=#200 id=200 data-nosnippet>200</a>                <span class="kw">continue</span>;
+<a href=#201 id=201 data-nosnippet>201</a>            }
+<a href=#202 id=202 data-nosnippet>202</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(left) = last_good {
+<a href=#203 id=203 data-nosnippet>203</a>                <span class="kw">let </span>span = channel - left;
+<a href=#204 id=204 data-nosnippet>204</a>                <span class="kw">if </span>span &gt; <span class="number">1 </span>&amp;&amp; span - <span class="number">1 </span>&lt;= maximum {
+<a href=#205 id=205 data-nosnippet>205</a>                    <span class="kw">let </span>lower = row.gains[receptor + <span class="number">2 </span>* left];
+<a href=#206 id=206 data-nosnippet>206</a>                    <span class="kw">let </span>upper = row.gains[right];
+<a href=#207 id=207 data-nosnippet>207</a>                    <span class="kw">for </span>gap <span class="kw">in </span>left + <span class="number">1</span>..channel {
+<a href=#208 id=208 data-nosnippet>208</a>                        <span class="kw">let </span>fraction = (gap - left) <span class="kw">as </span>f32 / span <span class="kw">as </span>f32;
+<a href=#209 id=209 data-nosnippet>209</a>                        <span class="kw">let </span>index = receptor + <span class="number">2 </span>* gap;
+<a href=#210 id=210 data-nosnippet>210</a>                        row.gains[index] =
+<a href=#211 id=211 data-nosnippet>211</a>                            <span class="kw">crate</span>::lookup::interpolate_gain_amplitude_phase(lower, upper, fraction);
+<a href=#212 id=212 data-nosnippet>212</a>                        row.flags[index] = <span class="bool-val">false</span>;
+<a href=#213 id=213 data-nosnippet>213</a>                    }
+<a href=#214 id=214 data-nosnippet>214</a>                }
+<a href=#215 id=215 data-nosnippet>215</a>            }
+<a href=#216 id=216 data-nosnippet>216</a>            last_good = <span class="prelude-val">Some</span>(channel);
+<a href=#217 id=217 data-nosnippet>217</a>        }
+<a href=#218 id=218 data-nosnippet>218</a>    }
+<a href=#219 id=219 data-nosnippet>219</a>}
 </code></pre></div></section></main></body></html>

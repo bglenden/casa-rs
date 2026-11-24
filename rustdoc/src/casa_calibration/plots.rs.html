@@ -521,187 +521,189 @@
 <a href=#521 id=521 data-nosnippet>521</a>                label: label.clone(),
 <a href=#522 id=522 data-nosnippet>522</a>                color_group: label,
 <a href=#523 id=523 data-nosnippet>523</a>                y_axis,
-<a href=#524 id=524 data-nosnippet>524</a>                points: scatter_points,
-<a href=#525 id=525 data-nosnippet>525</a>                plotms_metadata: Vec::new(),
-<a href=#526 id=526 data-nosnippet>526</a>                provenance,
-<a href=#527 id=527 data-nosnippet>527</a>            }
-<a href=#528 id=528 data-nosnippet>528</a>        })
-<a href=#529 id=529 data-nosnippet>529</a>        .collect()
-<a href=#530 id=530 data-nosnippet>530</a>}
-<a href=#531 id=531 data-nosnippet>531</a>
-<a href=#532 id=532 data-nosnippet>532</a><span class="kw">fn </span>transform_complex(value: Complex32, preset: CalibrationPlotPreset) -&gt; f64 {
-<a href=#533 id=533 data-nosnippet>533</a>    <span class="kw">match </span>preset {
-<a href=#534 id=534 data-nosnippet>534</a>        CalibrationPlotPreset::GainAmplitudeVsTime
-<a href=#535 id=535 data-nosnippet>535</a>        | CalibrationPlotPreset::BandpassAmplitudeVsFrequency =&gt; {
-<a href=#536 id=536 data-nosnippet>536</a>            <span class="kw">let </span>re = f64::from(value.re);
-<a href=#537 id=537 data-nosnippet>537</a>            <span class="kw">let </span>im = f64::from(value.im);
-<a href=#538 id=538 data-nosnippet>538</a>            (re * re + im * im).sqrt()
-<a href=#539 id=539 data-nosnippet>539</a>        }
-<a href=#540 id=540 data-nosnippet>540</a>        CalibrationPlotPreset::GainPhaseVsTime
-<a href=#541 id=541 data-nosnippet>541</a>        | CalibrationPlotPreset::BandpassPhaseVsFrequency =&gt; {
-<a href=#542 id=542 data-nosnippet>542</a>            f64::from(value.im).atan2(f64::from(value.re)).to_degrees()
-<a href=#543 id=543 data-nosnippet>543</a>        }
-<a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"caller gated calibration-table presets"</span>),
-<a href=#545 id=545 data-nosnippet>545</a>    }
-<a href=#546 id=546 data-nosnippet>546</a>}
-<a href=#547 id=547 data-nosnippet>547</a>
-<a href=#548 id=548 data-nosnippet>548</a><span class="kw">fn </span>get_i32_scalar(
-<a href=#549 id=549 data-nosnippet>549</a>    table: <span class="kw-2">&amp;</span>Table,
-<a href=#550 id=550 data-nosnippet>550</a>    row: usize,
-<a href=#551 id=551 data-nosnippet>551</a>    column: <span class="kw-2">&amp;</span>str,
-<a href=#552 id=552 data-nosnippet>552</a>    path: <span class="kw-2">&amp;</span>str,
-<a href=#553 id=553 data-nosnippet>553</a>) -&gt; <span class="prelude-ty">Result</span>&lt;i32, CalibrationPlotError&gt; {
-<a href=#554 id=554 data-nosnippet>554</a>    <span class="kw">match </span>table
-<a href=#555 id=555 data-nosnippet>555</a>        .cell_accessor(row, column)
-<a href=#556 id=556 data-nosnippet>556</a>        .and_then(|cell| cell.scalar())
-<a href=#557 id=557 data-nosnippet>557</a>        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
-<a href=#558 id=558 data-nosnippet>558</a>            path: path.to_string(),
-<a href=#559 id=559 data-nosnippet>559</a>            source,
-<a href=#560 id=560 data-nosnippet>560</a>        })<span class="question-mark">? </span>{
-<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw-2">&amp;</span>ScalarValue::Int32(value) =&gt; <span class="prelude-val">Ok</span>(value),
-<a href=#562 id=562 data-nosnippet>562</a>        other =&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
-<a href=#563 id=563 data-nosnippet>563</a>            path: path.to_string(),
-<a href=#564 id=564 data-nosnippet>564</a>            reason: <span class="macro">format!</span>(<span class="string">"expected Int32 in {column} row {row}, found {other:?}"</span>),
-<a href=#565 id=565 data-nosnippet>565</a>        }),
-<a href=#566 id=566 data-nosnippet>566</a>    }
-<a href=#567 id=567 data-nosnippet>567</a>}
-<a href=#568 id=568 data-nosnippet>568</a>
-<a href=#569 id=569 data-nosnippet>569</a><span class="kw">fn </span>get_f64_scalar(
-<a href=#570 id=570 data-nosnippet>570</a>    table: <span class="kw-2">&amp;</span>Table,
-<a href=#571 id=571 data-nosnippet>571</a>    row: usize,
-<a href=#572 id=572 data-nosnippet>572</a>    column: <span class="kw-2">&amp;</span>str,
-<a href=#573 id=573 data-nosnippet>573</a>    path: <span class="kw-2">&amp;</span>str,
-<a href=#574 id=574 data-nosnippet>574</a>) -&gt; <span class="prelude-ty">Result</span>&lt;f64, CalibrationPlotError&gt; {
-<a href=#575 id=575 data-nosnippet>575</a>    <span class="kw">match </span>table
-<a href=#576 id=576 data-nosnippet>576</a>        .cell_accessor(row, column)
-<a href=#577 id=577 data-nosnippet>577</a>        .and_then(|cell| cell.scalar())
-<a href=#578 id=578 data-nosnippet>578</a>        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
-<a href=#579 id=579 data-nosnippet>579</a>            path: path.to_string(),
-<a href=#580 id=580 data-nosnippet>580</a>            source,
-<a href=#581 id=581 data-nosnippet>581</a>        })<span class="question-mark">? </span>{
-<a href=#582 id=582 data-nosnippet>582</a>        <span class="kw-2">&amp;</span>ScalarValue::Float64(value) =&gt; <span class="prelude-val">Ok</span>(value),
-<a href=#583 id=583 data-nosnippet>583</a>        other =&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
-<a href=#584 id=584 data-nosnippet>584</a>            path: path.to_string(),
-<a href=#585 id=585 data-nosnippet>585</a>            reason: <span class="macro">format!</span>(<span class="string">"expected Float64 in {column} row {row}, found {other:?}"</span>),
-<a href=#586 id=586 data-nosnippet>586</a>        }),
-<a href=#587 id=587 data-nosnippet>587</a>    }
-<a href=#588 id=588 data-nosnippet>588</a>}
-<a href=#589 id=589 data-nosnippet>589</a>
-<a href=#590 id=590 data-nosnippet>590</a><span class="kw">fn </span>get_complex_array(
-<a href=#591 id=591 data-nosnippet>591</a>    table: <span class="kw-2">&amp;</span>Table,
-<a href=#592 id=592 data-nosnippet>592</a>    row: usize,
-<a href=#593 id=593 data-nosnippet>593</a>    column: <span class="kw-2">&amp;</span>str,
-<a href=#594 id=594 data-nosnippet>594</a>    path: <span class="kw-2">&amp;</span>str,
-<a href=#595 id=595 data-nosnippet>595</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ndarray::ArrayD&lt;Complex32&gt;, CalibrationPlotError&gt; {
-<a href=#596 id=596 data-nosnippet>596</a>    <span class="kw">match </span>table
-<a href=#597 id=597 data-nosnippet>597</a>        .cell_accessor(row, column)
-<a href=#598 id=598 data-nosnippet>598</a>        .and_then(|cell| cell.array())
-<a href=#599 id=599 data-nosnippet>599</a>        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
-<a href=#600 id=600 data-nosnippet>600</a>            path: path.to_string(),
-<a href=#601 id=601 data-nosnippet>601</a>            source,
-<a href=#602 id=602 data-nosnippet>602</a>        })<span class="question-mark">? </span>{
-<a href=#603 id=603 data-nosnippet>603</a>        ArrayValue::Complex32(values) =&gt; <span class="prelude-val">Ok</span>(values.clone()),
-<a href=#604 id=604 data-nosnippet>604</a>        other =&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
-<a href=#605 id=605 data-nosnippet>605</a>            path: path.to_string(),
-<a href=#606 id=606 data-nosnippet>606</a>            reason: <span class="macro">format!</span>(<span class="string">"expected complex array in {column} row {row}, found {other:?}"</span>),
-<a href=#607 id=607 data-nosnippet>607</a>        }),
-<a href=#608 id=608 data-nosnippet>608</a>    }
-<a href=#609 id=609 data-nosnippet>609</a>}
-<a href=#610 id=610 data-nosnippet>610</a>
-<a href=#611 id=611 data-nosnippet>611</a><span class="kw">fn </span>get_flag_mask(table: <span class="kw-2">&amp;</span>Table, row: usize, expected_len: usize) -&gt; Vec&lt;bool&gt; {
-<a href=#612 id=612 data-nosnippet>612</a>    <span class="kw">match </span>table
-<a href=#613 id=613 data-nosnippet>613</a>        .cell_accessor(row, COL_FLAG)
-<a href=#614 id=614 data-nosnippet>614</a>        .and_then(|cell| cell.array())
-<a href=#615 id=615 data-nosnippet>615</a>    {
-<a href=#616 id=616 data-nosnippet>616</a>        <span class="prelude-val">Ok</span>(ArrayValue::Bool(values)) =&gt; values.iter().copied().collect(),
-<a href=#617 id=617 data-nosnippet>617</a>        <span class="kw">_ </span>=&gt; <span class="macro">vec!</span>[<span class="bool-val">false</span>; expected_len],
-<a href=#618 id=618 data-nosnippet>618</a>    }
-<a href=#619 id=619 data-nosnippet>619</a>}
-<a href=#620 id=620 data-nosnippet>620</a>
-<a href=#621 id=621 data-nosnippet>621</a><span class="kw">fn </span>complex_shape(
-<a href=#622 id=622 data-nosnippet>622</a>    gains: <span class="kw-2">&amp;</span>ndarray::ArrayD&lt;Complex32&gt;,
-<a href=#623 id=623 data-nosnippet>623</a>    path: <span class="kw-2">&amp;</span>str,
-<a href=#624 id=624 data-nosnippet>624</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(usize, usize), CalibrationPlotError&gt; {
-<a href=#625 id=625 data-nosnippet>625</a>    <span class="kw">match </span>gains.ndim() {
-<a href=#626 id=626 data-nosnippet>626</a>        <span class="number">1 </span>=&gt; <span class="prelude-val">Ok</span>((gains.len(), <span class="number">1</span>)),
-<a href=#627 id=627 data-nosnippet>627</a>        <span class="number">2 </span>=&gt; <span class="prelude-val">Ok</span>((gains.shape()[<span class="number">0</span>], gains.shape()[<span class="number">1</span>])),
-<a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
-<a href=#629 id=629 data-nosnippet>629</a>            path: path.to_string(),
-<a href=#630 id=630 data-nosnippet>630</a>            reason: <span class="macro">format!</span>(<span class="string">"unsupported CPARAM shape {:?}"</span>, gains.shape()),
-<a href=#631 id=631 data-nosnippet>631</a>        }),
-<a href=#632 id=632 data-nosnippet>632</a>    }
-<a href=#633 id=633 data-nosnippet>633</a>}
-<a href=#634 id=634 data-nosnippet>634</a>
-<a href=#635 id=635 data-nosnippet>635</a><span class="kw">fn </span>complex_at(
-<a href=#636 id=636 data-nosnippet>636</a>    gains: <span class="kw-2">&amp;</span>ndarray::ArrayD&lt;Complex32&gt;,
-<a href=#637 id=637 data-nosnippet>637</a>    receptor: usize,
-<a href=#638 id=638 data-nosnippet>638</a>    channel: usize,
-<a href=#639 id=639 data-nosnippet>639</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Complex32, CalibrationPlotError&gt; {
-<a href=#640 id=640 data-nosnippet>640</a>    <span class="kw">match </span>gains.ndim() {
-<a href=#641 id=641 data-nosnippet>641</a>        <span class="number">1 </span>=&gt; <span class="prelude-val">Ok</span>(gains[[receptor]]),
-<a href=#642 id=642 data-nosnippet>642</a>        <span class="number">2 </span>=&gt; <span class="prelude-val">Ok</span>(gains[[receptor, channel]]),
-<a href=#643 id=643 data-nosnippet>643</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"shape validated before indexing"</span>),
-<a href=#644 id=644 data-nosnippet>644</a>    }
-<a href=#645 id=645 data-nosnippet>645</a>}
-<a href=#646 id=646 data-nosnippet>646</a>
-<a href=#647 id=647 data-nosnippet>647</a><span class="kw">fn </span>spectral_window_frequencies(
-<a href=#648 id=648 data-nosnippet>648</a>    spw_table: <span class="kw-2">&amp;</span>Table,
-<a href=#649 id=649 data-nosnippet>649</a>    spw_id: i32,
-<a href=#650 id=650 data-nosnippet>650</a>    path: <span class="kw-2">&amp;</span>str,
-<a href=#651 id=651 data-nosnippet>651</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, CalibrationPlotError&gt; {
-<a href=#652 id=652 data-nosnippet>652</a>    <span class="kw">let </span>row =
-<a href=#653 id=653 data-nosnippet>653</a>        usize::try_from(spw_id).map_err(|<span class="kw">_</span>| CalibrationPlotError::InvalidCalibrationTable {
-<a href=#654 id=654 data-nosnippet>654</a>            path: path.to_string(),
-<a href=#655 id=655 data-nosnippet>655</a>            reason: <span class="macro">format!</span>(<span class="string">"invalid spectral-window id {spw_id}"</span>),
-<a href=#656 id=656 data-nosnippet>656</a>        })<span class="question-mark">?</span>;
-<a href=#657 id=657 data-nosnippet>657</a>    <span class="kw">if </span>row &gt;= spw_table.row_count() {
-<a href=#658 id=658 data-nosnippet>658</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
-<a href=#659 id=659 data-nosnippet>659</a>            path: path.to_string(),
-<a href=#660 id=660 data-nosnippet>660</a>            reason: <span class="macro">format!</span>(<span class="string">"missing SPECTRAL_WINDOW row for id {spw_id}"</span>),
-<a href=#661 id=661 data-nosnippet>661</a>        });
-<a href=#662 id=662 data-nosnippet>662</a>    }
-<a href=#663 id=663 data-nosnippet>663</a>    <span class="kw">match </span>spw_table
-<a href=#664 id=664 data-nosnippet>664</a>        .cell_accessor(row, <span class="string">"CHAN_FREQ"</span>)
-<a href=#665 id=665 data-nosnippet>665</a>        .and_then(|cell| cell.array())
-<a href=#666 id=666 data-nosnippet>666</a>        .map_err(|source| CalibrationPlotError::OpenCalibrationSubtable {
-<a href=#667 id=667 data-nosnippet>667</a>            path: path.to_string(),
-<a href=#668 id=668 data-nosnippet>668</a>            subtable: <span class="string">"SPECTRAL_WINDOW"</span>,
-<a href=#669 id=669 data-nosnippet>669</a>            source,
-<a href=#670 id=670 data-nosnippet>670</a>        })<span class="question-mark">? </span>{
-<a href=#671 id=671 data-nosnippet>671</a>        ArrayValue::Float64(values) =&gt; <span class="prelude-val">Ok</span>(values.iter().copied().collect()),
-<a href=#672 id=672 data-nosnippet>672</a>        other =&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
-<a href=#673 id=673 data-nosnippet>673</a>            path: path.to_string(),
-<a href=#674 id=674 data-nosnippet>674</a>            reason: <span class="macro">format!</span>(
-<a href=#675 id=675 data-nosnippet>675</a>                <span class="string">"expected Float64 CHAN_FREQ array for SPECTRAL_WINDOW row {row}, found {other:?}"
-<a href=#676 id=676 data-nosnippet>676</a>            </span>),
-<a href=#677 id=677 data-nosnippet>677</a>        }),
-<a href=#678 id=678 data-nosnippet>678</a>    }
-<a href=#679 id=679 data-nosnippet>679</a>}
-<a href=#680 id=680 data-nosnippet>680</a>
-<a href=#681 id=681 data-nosnippet>681</a><span class="kw">fn </span>open_summary_subtable(
-<a href=#682 id=682 data-nosnippet>682</a>    summary: <span class="kw-2">&amp;</span>CalibrationTableSummary,
-<a href=#683 id=683 data-nosnippet>683</a>    name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-<a href=#684 id=684 data-nosnippet>684</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Table, CalibrationPlotError&gt; {
-<a href=#685 id=685 data-nosnippet>685</a>    <span class="kw">let </span>subtable = summary
-<a href=#686 id=686 data-nosnippet>686</a>        .subtables
-<a href=#687 id=687 data-nosnippet>687</a>        .iter()
-<a href=#688 id=688 data-nosnippet>688</a>        .find(|subtable| subtable.name == name)
-<a href=#689 id=689 data-nosnippet>689</a>        .ok_or_else(|| CalibrationPlotError::InvalidCalibrationTable {
-<a href=#690 id=690 data-nosnippet>690</a>            path: summary.path.display().to_string(),
-<a href=#691 id=691 data-nosnippet>691</a>            reason: <span class="macro">format!</span>(<span class="string">"summary did not record the {name} subtable"</span>),
-<a href=#692 id=692 data-nosnippet>692</a>        })<span class="question-mark">?</span>;
-<a href=#693 id=693 data-nosnippet>693</a>    <span class="kw">let </span>path = subtable.resolved_path.as_ref().ok_or_else(|| {
-<a href=#694 id=694 data-nosnippet>694</a>        CalibrationPlotError::InvalidCalibrationTable {
-<a href=#695 id=695 data-nosnippet>695</a>            path: summary.path.display().to_string(),
-<a href=#696 id=696 data-nosnippet>696</a>            reason: <span class="macro">format!</span>(<span class="string">"{name} subtable link is missing"</span>),
-<a href=#697 id=697 data-nosnippet>697</a>        }
-<a href=#698 id=698 data-nosnippet>698</a>    })<span class="question-mark">?</span>;
-<a href=#699 id=699 data-nosnippet>699</a>    Table::open(TableOptions::new(path)).map_err(|source| {
-<a href=#700 id=700 data-nosnippet>700</a>        CalibrationPlotError::OpenCalibrationSubtable {
-<a href=#701 id=701 data-nosnippet>701</a>            path: summary.path.display().to_string(),
-<a href=#702 id=702 data-nosnippet>702</a>            subtable: name,
-<a href=#703 id=703 data-nosnippet>703</a>            source,
-<a href=#704 id=704 data-nosnippet>704</a>        }
-<a href=#705 id=705 data-nosnippet>705</a>    })
-<a href=#706 id=706 data-nosnippet>706</a>}
+<a href=#524 id=524 data-nosnippet>524</a>                y_index: <span class="number">0</span>,
+<a href=#525 id=525 data-nosnippet>525</a>                points: scatter_points,
+<a href=#526 id=526 data-nosnippet>526</a>                plotms_metadata: Vec::new(),
+<a href=#527 id=527 data-nosnippet>527</a>                plotms_averaged_ids: <span class="prelude-val">None</span>,
+<a href=#528 id=528 data-nosnippet>528</a>                provenance,
+<a href=#529 id=529 data-nosnippet>529</a>            }
+<a href=#530 id=530 data-nosnippet>530</a>        })
+<a href=#531 id=531 data-nosnippet>531</a>        .collect()
+<a href=#532 id=532 data-nosnippet>532</a>}
+<a href=#533 id=533 data-nosnippet>533</a>
+<a href=#534 id=534 data-nosnippet>534</a><span class="kw">fn </span>transform_complex(value: Complex32, preset: CalibrationPlotPreset) -&gt; f64 {
+<a href=#535 id=535 data-nosnippet>535</a>    <span class="kw">match </span>preset {
+<a href=#536 id=536 data-nosnippet>536</a>        CalibrationPlotPreset::GainAmplitudeVsTime
+<a href=#537 id=537 data-nosnippet>537</a>        | CalibrationPlotPreset::BandpassAmplitudeVsFrequency =&gt; {
+<a href=#538 id=538 data-nosnippet>538</a>            <span class="kw">let </span>re = f64::from(value.re);
+<a href=#539 id=539 data-nosnippet>539</a>            <span class="kw">let </span>im = f64::from(value.im);
+<a href=#540 id=540 data-nosnippet>540</a>            (re * re + im * im).sqrt()
+<a href=#541 id=541 data-nosnippet>541</a>        }
+<a href=#542 id=542 data-nosnippet>542</a>        CalibrationPlotPreset::GainPhaseVsTime
+<a href=#543 id=543 data-nosnippet>543</a>        | CalibrationPlotPreset::BandpassPhaseVsFrequency =&gt; {
+<a href=#544 id=544 data-nosnippet>544</a>            f64::from(value.im).atan2(f64::from(value.re)).to_degrees()
+<a href=#545 id=545 data-nosnippet>545</a>        }
+<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"caller gated calibration-table presets"</span>),
+<a href=#547 id=547 data-nosnippet>547</a>    }
+<a href=#548 id=548 data-nosnippet>548</a>}
+<a href=#549 id=549 data-nosnippet>549</a>
+<a href=#550 id=550 data-nosnippet>550</a><span class="kw">fn </span>get_i32_scalar(
+<a href=#551 id=551 data-nosnippet>551</a>    table: <span class="kw-2">&amp;</span>Table,
+<a href=#552 id=552 data-nosnippet>552</a>    row: usize,
+<a href=#553 id=553 data-nosnippet>553</a>    column: <span class="kw-2">&amp;</span>str,
+<a href=#554 id=554 data-nosnippet>554</a>    path: <span class="kw-2">&amp;</span>str,
+<a href=#555 id=555 data-nosnippet>555</a>) -&gt; <span class="prelude-ty">Result</span>&lt;i32, CalibrationPlotError&gt; {
+<a href=#556 id=556 data-nosnippet>556</a>    <span class="kw">match </span>table
+<a href=#557 id=557 data-nosnippet>557</a>        .cell_accessor(row, column)
+<a href=#558 id=558 data-nosnippet>558</a>        .and_then(|cell| cell.scalar())
+<a href=#559 id=559 data-nosnippet>559</a>        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
+<a href=#560 id=560 data-nosnippet>560</a>            path: path.to_string(),
+<a href=#561 id=561 data-nosnippet>561</a>            source,
+<a href=#562 id=562 data-nosnippet>562</a>        })<span class="question-mark">? </span>{
+<a href=#563 id=563 data-nosnippet>563</a>        <span class="kw-2">&amp;</span>ScalarValue::Int32(value) =&gt; <span class="prelude-val">Ok</span>(value),
+<a href=#564 id=564 data-nosnippet>564</a>        other =&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
+<a href=#565 id=565 data-nosnippet>565</a>            path: path.to_string(),
+<a href=#566 id=566 data-nosnippet>566</a>            reason: <span class="macro">format!</span>(<span class="string">"expected Int32 in {column} row {row}, found {other:?}"</span>),
+<a href=#567 id=567 data-nosnippet>567</a>        }),
+<a href=#568 id=568 data-nosnippet>568</a>    }
+<a href=#569 id=569 data-nosnippet>569</a>}
+<a href=#570 id=570 data-nosnippet>570</a>
+<a href=#571 id=571 data-nosnippet>571</a><span class="kw">fn </span>get_f64_scalar(
+<a href=#572 id=572 data-nosnippet>572</a>    table: <span class="kw-2">&amp;</span>Table,
+<a href=#573 id=573 data-nosnippet>573</a>    row: usize,
+<a href=#574 id=574 data-nosnippet>574</a>    column: <span class="kw-2">&amp;</span>str,
+<a href=#575 id=575 data-nosnippet>575</a>    path: <span class="kw-2">&amp;</span>str,
+<a href=#576 id=576 data-nosnippet>576</a>) -&gt; <span class="prelude-ty">Result</span>&lt;f64, CalibrationPlotError&gt; {
+<a href=#577 id=577 data-nosnippet>577</a>    <span class="kw">match </span>table
+<a href=#578 id=578 data-nosnippet>578</a>        .cell_accessor(row, column)
+<a href=#579 id=579 data-nosnippet>579</a>        .and_then(|cell| cell.scalar())
+<a href=#580 id=580 data-nosnippet>580</a>        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
+<a href=#581 id=581 data-nosnippet>581</a>            path: path.to_string(),
+<a href=#582 id=582 data-nosnippet>582</a>            source,
+<a href=#583 id=583 data-nosnippet>583</a>        })<span class="question-mark">? </span>{
+<a href=#584 id=584 data-nosnippet>584</a>        <span class="kw-2">&amp;</span>ScalarValue::Float64(value) =&gt; <span class="prelude-val">Ok</span>(value),
+<a href=#585 id=585 data-nosnippet>585</a>        other =&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
+<a href=#586 id=586 data-nosnippet>586</a>            path: path.to_string(),
+<a href=#587 id=587 data-nosnippet>587</a>            reason: <span class="macro">format!</span>(<span class="string">"expected Float64 in {column} row {row}, found {other:?}"</span>),
+<a href=#588 id=588 data-nosnippet>588</a>        }),
+<a href=#589 id=589 data-nosnippet>589</a>    }
+<a href=#590 id=590 data-nosnippet>590</a>}
+<a href=#591 id=591 data-nosnippet>591</a>
+<a href=#592 id=592 data-nosnippet>592</a><span class="kw">fn </span>get_complex_array(
+<a href=#593 id=593 data-nosnippet>593</a>    table: <span class="kw-2">&amp;</span>Table,
+<a href=#594 id=594 data-nosnippet>594</a>    row: usize,
+<a href=#595 id=595 data-nosnippet>595</a>    column: <span class="kw-2">&amp;</span>str,
+<a href=#596 id=596 data-nosnippet>596</a>    path: <span class="kw-2">&amp;</span>str,
+<a href=#597 id=597 data-nosnippet>597</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ndarray::ArrayD&lt;Complex32&gt;, CalibrationPlotError&gt; {
+<a href=#598 id=598 data-nosnippet>598</a>    <span class="kw">match </span>table
+<a href=#599 id=599 data-nosnippet>599</a>        .cell_accessor(row, column)
+<a href=#600 id=600 data-nosnippet>600</a>        .and_then(|cell| cell.array())
+<a href=#601 id=601 data-nosnippet>601</a>        .map_err(|source| CalibrationPlotError::OpenCalibrationTable {
+<a href=#602 id=602 data-nosnippet>602</a>            path: path.to_string(),
+<a href=#603 id=603 data-nosnippet>603</a>            source,
+<a href=#604 id=604 data-nosnippet>604</a>        })<span class="question-mark">? </span>{
+<a href=#605 id=605 data-nosnippet>605</a>        ArrayValue::Complex32(values) =&gt; <span class="prelude-val">Ok</span>(values.clone()),
+<a href=#606 id=606 data-nosnippet>606</a>        other =&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
+<a href=#607 id=607 data-nosnippet>607</a>            path: path.to_string(),
+<a href=#608 id=608 data-nosnippet>608</a>            reason: <span class="macro">format!</span>(<span class="string">"expected complex array in {column} row {row}, found {other:?}"</span>),
+<a href=#609 id=609 data-nosnippet>609</a>        }),
+<a href=#610 id=610 data-nosnippet>610</a>    }
+<a href=#611 id=611 data-nosnippet>611</a>}
+<a href=#612 id=612 data-nosnippet>612</a>
+<a href=#613 id=613 data-nosnippet>613</a><span class="kw">fn </span>get_flag_mask(table: <span class="kw-2">&amp;</span>Table, row: usize, expected_len: usize) -&gt; Vec&lt;bool&gt; {
+<a href=#614 id=614 data-nosnippet>614</a>    <span class="kw">match </span>table
+<a href=#615 id=615 data-nosnippet>615</a>        .cell_accessor(row, COL_FLAG)
+<a href=#616 id=616 data-nosnippet>616</a>        .and_then(|cell| cell.array())
+<a href=#617 id=617 data-nosnippet>617</a>    {
+<a href=#618 id=618 data-nosnippet>618</a>        <span class="prelude-val">Ok</span>(ArrayValue::Bool(values)) =&gt; values.iter().copied().collect(),
+<a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">_ </span>=&gt; <span class="macro">vec!</span>[<span class="bool-val">false</span>; expected_len],
+<a href=#620 id=620 data-nosnippet>620</a>    }
+<a href=#621 id=621 data-nosnippet>621</a>}
+<a href=#622 id=622 data-nosnippet>622</a>
+<a href=#623 id=623 data-nosnippet>623</a><span class="kw">fn </span>complex_shape(
+<a href=#624 id=624 data-nosnippet>624</a>    gains: <span class="kw-2">&amp;</span>ndarray::ArrayD&lt;Complex32&gt;,
+<a href=#625 id=625 data-nosnippet>625</a>    path: <span class="kw-2">&amp;</span>str,
+<a href=#626 id=626 data-nosnippet>626</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(usize, usize), CalibrationPlotError&gt; {
+<a href=#627 id=627 data-nosnippet>627</a>    <span class="kw">match </span>gains.ndim() {
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="number">1 </span>=&gt; <span class="prelude-val">Ok</span>((gains.len(), <span class="number">1</span>)),
+<a href=#629 id=629 data-nosnippet>629</a>        <span class="number">2 </span>=&gt; <span class="prelude-val">Ok</span>((gains.shape()[<span class="number">0</span>], gains.shape()[<span class="number">1</span>])),
+<a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
+<a href=#631 id=631 data-nosnippet>631</a>            path: path.to_string(),
+<a href=#632 id=632 data-nosnippet>632</a>            reason: <span class="macro">format!</span>(<span class="string">"unsupported CPARAM shape {:?}"</span>, gains.shape()),
+<a href=#633 id=633 data-nosnippet>633</a>        }),
+<a href=#634 id=634 data-nosnippet>634</a>    }
+<a href=#635 id=635 data-nosnippet>635</a>}
+<a href=#636 id=636 data-nosnippet>636</a>
+<a href=#637 id=637 data-nosnippet>637</a><span class="kw">fn </span>complex_at(
+<a href=#638 id=638 data-nosnippet>638</a>    gains: <span class="kw-2">&amp;</span>ndarray::ArrayD&lt;Complex32&gt;,
+<a href=#639 id=639 data-nosnippet>639</a>    receptor: usize,
+<a href=#640 id=640 data-nosnippet>640</a>    channel: usize,
+<a href=#641 id=641 data-nosnippet>641</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Complex32, CalibrationPlotError&gt; {
+<a href=#642 id=642 data-nosnippet>642</a>    <span class="kw">match </span>gains.ndim() {
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="number">1 </span>=&gt; <span class="prelude-val">Ok</span>(gains[[receptor]]),
+<a href=#644 id=644 data-nosnippet>644</a>        <span class="number">2 </span>=&gt; <span class="prelude-val">Ok</span>(gains[[receptor, channel]]),
+<a href=#645 id=645 data-nosnippet>645</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"shape validated before indexing"</span>),
+<a href=#646 id=646 data-nosnippet>646</a>    }
+<a href=#647 id=647 data-nosnippet>647</a>}
+<a href=#648 id=648 data-nosnippet>648</a>
+<a href=#649 id=649 data-nosnippet>649</a><span class="kw">fn </span>spectral_window_frequencies(
+<a href=#650 id=650 data-nosnippet>650</a>    spw_table: <span class="kw-2">&amp;</span>Table,
+<a href=#651 id=651 data-nosnippet>651</a>    spw_id: i32,
+<a href=#652 id=652 data-nosnippet>652</a>    path: <span class="kw-2">&amp;</span>str,
+<a href=#653 id=653 data-nosnippet>653</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;f64&gt;, CalibrationPlotError&gt; {
+<a href=#654 id=654 data-nosnippet>654</a>    <span class="kw">let </span>row =
+<a href=#655 id=655 data-nosnippet>655</a>        usize::try_from(spw_id).map_err(|<span class="kw">_</span>| CalibrationPlotError::InvalidCalibrationTable {
+<a href=#656 id=656 data-nosnippet>656</a>            path: path.to_string(),
+<a href=#657 id=657 data-nosnippet>657</a>            reason: <span class="macro">format!</span>(<span class="string">"invalid spectral-window id {spw_id}"</span>),
+<a href=#658 id=658 data-nosnippet>658</a>        })<span class="question-mark">?</span>;
+<a href=#659 id=659 data-nosnippet>659</a>    <span class="kw">if </span>row &gt;= spw_table.row_count() {
+<a href=#660 id=660 data-nosnippet>660</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
+<a href=#661 id=661 data-nosnippet>661</a>            path: path.to_string(),
+<a href=#662 id=662 data-nosnippet>662</a>            reason: <span class="macro">format!</span>(<span class="string">"missing SPECTRAL_WINDOW row for id {spw_id}"</span>),
+<a href=#663 id=663 data-nosnippet>663</a>        });
+<a href=#664 id=664 data-nosnippet>664</a>    }
+<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">match </span>spw_table
+<a href=#666 id=666 data-nosnippet>666</a>        .cell_accessor(row, <span class="string">"CHAN_FREQ"</span>)
+<a href=#667 id=667 data-nosnippet>667</a>        .and_then(|cell| cell.array())
+<a href=#668 id=668 data-nosnippet>668</a>        .map_err(|source| CalibrationPlotError::OpenCalibrationSubtable {
+<a href=#669 id=669 data-nosnippet>669</a>            path: path.to_string(),
+<a href=#670 id=670 data-nosnippet>670</a>            subtable: <span class="string">"SPECTRAL_WINDOW"</span>,
+<a href=#671 id=671 data-nosnippet>671</a>            source,
+<a href=#672 id=672 data-nosnippet>672</a>        })<span class="question-mark">? </span>{
+<a href=#673 id=673 data-nosnippet>673</a>        ArrayValue::Float64(values) =&gt; <span class="prelude-val">Ok</span>(values.iter().copied().collect()),
+<a href=#674 id=674 data-nosnippet>674</a>        other =&gt; <span class="prelude-val">Err</span>(CalibrationPlotError::InvalidCalibrationTable {
+<a href=#675 id=675 data-nosnippet>675</a>            path: path.to_string(),
+<a href=#676 id=676 data-nosnippet>676</a>            reason: <span class="macro">format!</span>(
+<a href=#677 id=677 data-nosnippet>677</a>                <span class="string">"expected Float64 CHAN_FREQ array for SPECTRAL_WINDOW row {row}, found {other:?}"
+<a href=#678 id=678 data-nosnippet>678</a>            </span>),
+<a href=#679 id=679 data-nosnippet>679</a>        }),
+<a href=#680 id=680 data-nosnippet>680</a>    }
+<a href=#681 id=681 data-nosnippet>681</a>}
+<a href=#682 id=682 data-nosnippet>682</a>
+<a href=#683 id=683 data-nosnippet>683</a><span class="kw">fn </span>open_summary_subtable(
+<a href=#684 id=684 data-nosnippet>684</a>    summary: <span class="kw-2">&amp;</span>CalibrationTableSummary,
+<a href=#685 id=685 data-nosnippet>685</a>    name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#686 id=686 data-nosnippet>686</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Table, CalibrationPlotError&gt; {
+<a href=#687 id=687 data-nosnippet>687</a>    <span class="kw">let </span>subtable = summary
+<a href=#688 id=688 data-nosnippet>688</a>        .subtables
+<a href=#689 id=689 data-nosnippet>689</a>        .iter()
+<a href=#690 id=690 data-nosnippet>690</a>        .find(|subtable| subtable.name == name)
+<a href=#691 id=691 data-nosnippet>691</a>        .ok_or_else(|| CalibrationPlotError::InvalidCalibrationTable {
+<a href=#692 id=692 data-nosnippet>692</a>            path: summary.path.display().to_string(),
+<a href=#693 id=693 data-nosnippet>693</a>            reason: <span class="macro">format!</span>(<span class="string">"summary did not record the {name} subtable"</span>),
+<a href=#694 id=694 data-nosnippet>694</a>        })<span class="question-mark">?</span>;
+<a href=#695 id=695 data-nosnippet>695</a>    <span class="kw">let </span>path = subtable.resolved_path.as_ref().ok_or_else(|| {
+<a href=#696 id=696 data-nosnippet>696</a>        CalibrationPlotError::InvalidCalibrationTable {
+<a href=#697 id=697 data-nosnippet>697</a>            path: summary.path.display().to_string(),
+<a href=#698 id=698 data-nosnippet>698</a>            reason: <span class="macro">format!</span>(<span class="string">"{name} subtable link is missing"</span>),
+<a href=#699 id=699 data-nosnippet>699</a>        }
+<a href=#700 id=700 data-nosnippet>700</a>    })<span class="question-mark">?</span>;
+<a href=#701 id=701 data-nosnippet>701</a>    Table::open(TableOptions::new(path)).map_err(|source| {
+<a href=#702 id=702 data-nosnippet>702</a>        CalibrationPlotError::OpenCalibrationSubtable {
+<a href=#703 id=703 data-nosnippet>703</a>            path: summary.path.display().to_string(),
+<a href=#704 id=704 data-nosnippet>704</a>            subtable: name,
+<a href=#705 id=705 data-nosnippet>705</a>            source,
+<a href=#706 id=706 data-nosnippet>706</a>        }
+<a href=#707 id=707 data-nosnippet>707</a>    })
+<a href=#708 id=708 data-nosnippet>708</a>}
 </code></pre></div></section></main></body></html>

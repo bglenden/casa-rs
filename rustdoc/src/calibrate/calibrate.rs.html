@@ -11,24 +11,25 @@
 <a href=#11 id=11 data-nosnippet>11</a>    <span class="kw">let </span><span class="kw-2">mut </span>args = std::env::args_os().skip(<span class="number">1</span>).peekable();
 <a href=#12 id=12 data-nosnippet>12</a>    <span class="kw">if </span>args.peek().is_some_and(|arg| arg == <span class="string">"plotms"</span>) {
 <a href=#13 id=13 data-nosnippet>13</a>        <span class="kw">let </span>payload = std::env::var_os(<span class="string">"CASARS_PLOT_PAYLOAD"</span>).map(PathBuf::from);
-<a href=#14 id=14 data-nosnippet>14</a>        <span class="kw">return </span>casa_ms::msexplore::cli::task_front_end_with_calibration(
+<a href=#14 id=14 data-nosnippet>14</a>        <span class="kw">return </span>casa_ms::msexplore::cli::task_front_end_with_plot_sources(
 <a href=#15 id=15 data-nosnippet>15</a>            payload,
 <a href=#16 id=16 data-nosnippet>16</a>            <span class="prelude-val">Some</span>(casa_calibration::plotms::load_calibration),
-<a href=#17 id=17 data-nosnippet>17</a>        )
-<a href=#18 id=18 data-nosnippet>18</a>        .main(
-<a href=#19 id=19 data-nosnippet>19</a>            args,
-<a href=#20 id=20 data-nosnippet>20</a>            casa_task_runtime::CasaLoggingConfig::from_env(),
-<a href=#21 id=21 data-nosnippet>21</a>            std::env::set_current_dir,
-<a href=#22 id=22 data-nosnippet>22</a>            <span class="kw-2">&amp;mut </span>std::io::stdout(),
-<a href=#23 id=23 data-nosnippet>23</a>            std::io::stderr(),
-<a href=#24 id=24 data-nosnippet>24</a>        );
-<a href=#25 id=25 data-nosnippet>25</a>    }
-<a href=#26 id=26 data-nosnippet>26</a>    casa_calibration::task_front_end().main(
-<a href=#27 id=27 data-nosnippet>27</a>        args,
-<a href=#28 id=28 data-nosnippet>28</a>        casa_task_runtime::CasaLoggingConfig::from_env(),
-<a href=#29 id=29 data-nosnippet>29</a>        std::env::set_current_dir,
-<a href=#30 id=30 data-nosnippet>30</a>        <span class="kw-2">&amp;mut </span>std::io::stdout(),
-<a href=#31 id=31 data-nosnippet>31</a>        std::io::stderr(),
-<a href=#32 id=32 data-nosnippet>32</a>    )
-<a href=#33 id=33 data-nosnippet>33</a>}
+<a href=#17 id=17 data-nosnippet>17</a>            <span class="prelude-val">Some</span>(casa_calibration::plotms::load_models),
+<a href=#18 id=18 data-nosnippet>18</a>        )
+<a href=#19 id=19 data-nosnippet>19</a>        .main(
+<a href=#20 id=20 data-nosnippet>20</a>            args,
+<a href=#21 id=21 data-nosnippet>21</a>            casa_task_runtime::CasaLoggingConfig::from_env(),
+<a href=#22 id=22 data-nosnippet>22</a>            std::env::set_current_dir,
+<a href=#23 id=23 data-nosnippet>23</a>            <span class="kw-2">&amp;mut </span>std::io::stdout(),
+<a href=#24 id=24 data-nosnippet>24</a>            std::io::stderr(),
+<a href=#25 id=25 data-nosnippet>25</a>        );
+<a href=#26 id=26 data-nosnippet>26</a>    }
+<a href=#27 id=27 data-nosnippet>27</a>    casa_calibration::task_front_end().main(
+<a href=#28 id=28 data-nosnippet>28</a>        args,
+<a href=#29 id=29 data-nosnippet>29</a>        casa_task_runtime::CasaLoggingConfig::from_env(),
+<a href=#30 id=30 data-nosnippet>30</a>        std::env::set_current_dir,
+<a href=#31 id=31 data-nosnippet>31</a>        <span class="kw-2">&amp;mut </span>std::io::stdout(),
+<a href=#32 id=32 data-nosnippet>32</a>        std::io::stderr(),
+<a href=#33 id=33 data-nosnippet>33</a>    )
+<a href=#34 id=34 data-nosnippet>34</a>}
 </code></pre></div></section></main></body></html>

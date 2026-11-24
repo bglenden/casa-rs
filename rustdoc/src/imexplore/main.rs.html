@@ -497,50 +497,38 @@
 <a href=#497 id=497 data-nosnippet>497</a>            <span class="string">"  -- top-right corner (world) [trcf]:   {}"</span>,
 <a href=#498 id=498 data-nosnippet>498</a>            summary.trcf
 <a href=#499 id=499 data-nosnippet>499</a>        );
-<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let _ </span>= <span class="macro">writeln!</span>(
-<a href=#501 id=501 data-nosnippet>501</a>            out,
-<a href=#502 id=502 data-nosnippet>502</a>            <span class="string">"planes: {} (display shape {:?})"</span>,
-<a href=#503 id=503 data-nosnippet>503</a>            summary.npts.len(),
-<a href=#504 id=504 data-nosnippet>504</a>            summary.display_shape
-<a href=#505 id=505 data-nosnippet>505</a>        );
-<a href=#506 id=506 data-nosnippet>506</a>        <span class="kw">for </span>(plane, npts) <span class="kw">in </span>summary.npts.iter().enumerate() {
-<a href=#507 id=507 data-nosnippet>507</a>            <span class="kw">let _ </span>= <span class="macro">writeln!</span>(
-<a href=#508 id=508 data-nosnippet>508</a>                out,
-<a href=#509 id=509 data-nosnippet>509</a>                <span class="string">"plane {plane}: npts {npts} mean {} sigma {}"</span>,
-<a href=#510 id=510 data-nosnippet>510</a>                summary.mean[plane], summary.sigma[plane]
-<a href=#511 id=511 data-nosnippet>511</a>            );
-<a href=#512 id=512 data-nosnippet>512</a>        }
+<a href=#500 id=500 data-nosnippet>500</a>        out.push_str(<span class="kw-2">&amp;</span>summary.plane_log);
+<a href=#501 id=501 data-nosnippet>501</a>    }
+<a href=#502 id=502 data-nosnippet>502</a>    out
+<a href=#503 id=503 data-nosnippet>503</a>}
+<a href=#504 id=504 data-nosnippet>504</a>
+<a href=#505 id=505 data-nosnippet>505</a><span class="doccomment">/// CASA's own spelling of an algorithm, for the logger.
+<a href=#506 id=506 data-nosnippet>506</a></span><span class="kw">fn </span>kind_name(kind: StatisticsAlgorithmKind) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
+<a href=#507 id=507 data-nosnippet>507</a>    <span class="kw">match </span>kind {
+<a href=#508 id=508 data-nosnippet>508</a>        StatisticsAlgorithmKind::Classic =&gt; <span class="string">"Classic"</span>,
+<a href=#509 id=509 data-nosnippet>509</a>        StatisticsAlgorithmKind::HingesFences =&gt; <span class="string">"Hinges-Fences"</span>,
+<a href=#510 id=510 data-nosnippet>510</a>        StatisticsAlgorithmKind::Chauvenet =&gt; <span class="string">"Chauvenet"</span>,
+<a href=#511 id=511 data-nosnippet>511</a>        StatisticsAlgorithmKind::FitToHalf =&gt; <span class="string">"Fit-Half"</span>,
+<a href=#512 id=512 data-nosnippet>512</a>        StatisticsAlgorithmKind::Biweight =&gt; <span class="string">"Biweight"</span>,
 <a href=#513 id=513 data-nosnippet>513</a>    }
-<a href=#514 id=514 data-nosnippet>514</a>    out
-<a href=#515 id=515 data-nosnippet>515</a>}
-<a href=#516 id=516 data-nosnippet>516</a>
-<a href=#517 id=517 data-nosnippet>517</a><span class="doccomment">/// CASA's own spelling of an algorithm, for the logger.
-<a href=#518 id=518 data-nosnippet>518</a></span><span class="kw">fn </span>kind_name(kind: StatisticsAlgorithmKind) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
-<a href=#519 id=519 data-nosnippet>519</a>    <span class="kw">match </span>kind {
-<a href=#520 id=520 data-nosnippet>520</a>        StatisticsAlgorithmKind::Classic =&gt; <span class="string">"Classic"</span>,
-<a href=#521 id=521 data-nosnippet>521</a>        StatisticsAlgorithmKind::HingesFences =&gt; <span class="string">"Hinges-Fences"</span>,
-<a href=#522 id=522 data-nosnippet>522</a>        StatisticsAlgorithmKind::Chauvenet =&gt; <span class="string">"Chauvenet"</span>,
-<a href=#523 id=523 data-nosnippet>523</a>        StatisticsAlgorithmKind::FitToHalf =&gt; <span class="string">"Fit-Half"</span>,
-<a href=#524 id=524 data-nosnippet>524</a>        StatisticsAlgorithmKind::Biweight =&gt; <span class="string">"Biweight"</span>,
-<a href=#525 id=525 data-nosnippet>525</a>    }
-<a href=#526 id=526 data-nosnippet>526</a>}
-<a href=#527 id=527 data-nosnippet>527</a>
-<a href=#528 id=528 data-nosnippet>528</a><span class="doccomment">/// Write the statistics block to CASA's `logfile`, appending or
-<a href=#529 id=529 data-nosnippet>529</a>/// overwriting as `append` selects. CASA writes the block to the file
-<a href=#530 id=530 data-nosnippet>530</a>/// whatever `listit` holds.
-<a href=#531 id=531 data-nosnippet>531</a></span><span class="kw">fn </span>write_logfile(path: <span class="kw-2">&amp;</span>str, block: <span class="kw-2">&amp;</span>str, append: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
-<a href=#532 id=532 data-nosnippet>532</a>    <span class="kw">use </span>std::io::Write <span class="kw">as _</span>;
-<a href=#533 id=533 data-nosnippet>533</a>    <span class="kw">let </span>result = <span class="kw">if </span>append {
-<a href=#534 id=534 data-nosnippet>534</a>        std::fs::OpenOptions::new()
-<a href=#535 id=535 data-nosnippet>535</a>            .create(<span class="bool-val">true</span>)
-<a href=#536 id=536 data-nosnippet>536</a>            .append(<span class="bool-val">true</span>)
-<a href=#537 id=537 data-nosnippet>537</a>            .open(path)
-<a href=#538 id=538 data-nosnippet>538</a>            .and_then(|<span class="kw-2">mut </span>file| file.write_all(block.as_bytes()))
-<a href=#539 id=539 data-nosnippet>539</a>    } <span class="kw">else </span>{
-<a href=#540 id=540 data-nosnippet>540</a>        std::fs::File::create(path).and_then(|<span class="kw-2">mut </span>file| file.write_all(block.as_bytes()))
-<a href=#541 id=541 data-nosnippet>541</a>    };
-<a href=#542 id=542 data-nosnippet>542</a>    result.map_err(|error| {
-<a href=#543 id=543 data-nosnippet>543</a>        TaskFailure::execution(<span class="macro">format!</span>(<span class="string">"imstat: cannot write logfile '{path}': {error}"</span>))
-<a href=#544 id=544 data-nosnippet>544</a>    })
-<a href=#545 id=545 data-nosnippet>545</a>}
+<a href=#514 id=514 data-nosnippet>514</a>}
+<a href=#515 id=515 data-nosnippet>515</a>
+<a href=#516 id=516 data-nosnippet>516</a><span class="doccomment">/// Write the statistics block to CASA's `logfile`, appending or
+<a href=#517 id=517 data-nosnippet>517</a>/// overwriting as `append` selects. CASA writes the block to the file
+<a href=#518 id=518 data-nosnippet>518</a>/// whatever `listit` holds.
+<a href=#519 id=519 data-nosnippet>519</a></span><span class="kw">fn </span>write_logfile(path: <span class="kw-2">&amp;</span>str, block: <span class="kw-2">&amp;</span>str, append: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(), TaskFailure&gt; {
+<a href=#520 id=520 data-nosnippet>520</a>    <span class="kw">use </span>std::io::Write <span class="kw">as _</span>;
+<a href=#521 id=521 data-nosnippet>521</a>    <span class="kw">let </span>result = <span class="kw">if </span>append {
+<a href=#522 id=522 data-nosnippet>522</a>        std::fs::OpenOptions::new()
+<a href=#523 id=523 data-nosnippet>523</a>            .create(<span class="bool-val">true</span>)
+<a href=#524 id=524 data-nosnippet>524</a>            .append(<span class="bool-val">true</span>)
+<a href=#525 id=525 data-nosnippet>525</a>            .open(path)
+<a href=#526 id=526 data-nosnippet>526</a>            .and_then(|<span class="kw-2">mut </span>file| file.write_all(block.as_bytes()))
+<a href=#527 id=527 data-nosnippet>527</a>    } <span class="kw">else </span>{
+<a href=#528 id=528 data-nosnippet>528</a>        std::fs::File::create(path).and_then(|<span class="kw-2">mut </span>file| file.write_all(block.as_bytes()))
+<a href=#529 id=529 data-nosnippet>529</a>    };
+<a href=#530 id=530 data-nosnippet>530</a>    result.map_err(|error| {
+<a href=#531 id=531 data-nosnippet>531</a>        TaskFailure::execution(<span class="macro">format!</span>(<span class="string">"imstat: cannot write logfile '{path}': {error}"</span>))
+<a href=#532 id=532 data-nosnippet>532</a>    })
+<a href=#533 id=533 data-nosnippet>533</a>}
 </code></pre></div></section></main></body></html>

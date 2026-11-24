@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Statistic"],"struct":["LatticeStatistics"],"trait":["StatsElement"]};
+window.SIDEBAR_ITEMS = {"enum":["Statistic"],"struct":["LatticeStatistics","RunningStats"],"trait":["StatsElement"]};

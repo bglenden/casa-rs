@@ -17,9 +17,9 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="attr">#[cfg(unix)]
 <a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>lock_file::read_sync_data_from_table_dir;
 <a href=#19 id=19 data-nosnippet>19</a><span class="attr">#[cfg(unix)]
-<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub use </span>lock_file::table_holder;
+<a href=#20 id=20 data-nosnippet>20</a></span><span class="kw">pub use </span>lock_file::{DelegatedTableWrite, table_holder};
 <a href=#21 id=21 data-nosnippet>21</a><span class="attr">#[cfg(unix)]
-<a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>lock_file::{LockFile, LockOutcome};
+<a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>lock_file::{LOCK_FILE_NAME, LockFile, LockOutcome};
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>sync_data::SyncData;
 <a href=#24 id=24 data-nosnippet>24</a><span class="kw">pub use </span>write_lock::{TableUseLock, TableWriteLock};
 <a href=#25 id=25 data-nosnippet>25</a><span class="attr">#[cfg(unix)]

@@ -317,250 +317,266 @@
 <a href=#317 id=317 data-nosnippet>317</a>        <span class="self">self</span>.terms.iter().map(|term| term.time_list_entry)
 <a href=#318 id=318 data-nosnippet>318</a>    }
 <a href=#319 id=319 data-nosnippet>319</a>
-<a href=#320 id=320 data-nosnippet>320</a>    <span class="doccomment">/// Heap bytes the selection holds: exactly one [`TimeTerm`] per term, and
-<a href=#321 id=321 data-nosnippet>321</a>    /// nothing for an empty expression.
-<a href=#322 id=322 data-nosnippet>322</a>    </span><span class="attr">#[must_use]
-<a href=#323 id=323 data-nosnippet>323</a>    </span><span class="kw">pub fn </span>allocated_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#324 id=324 data-nosnippet>324</a>        std::mem::size_of_val::&lt;[TimeTerm]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.terms)
+<a href=#320 id=320 data-nosnippet>320</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>holds_agent_time(<span class="kw-2">&amp;</span><span class="self">self</span>, time_s: f64) -&gt; bool {
+<a href=#321 id=321 data-nosnippet>321</a>        <span class="self">self</span>.selects_all()
+<a href=#322 id=322 data-nosnippet>322</a>            || <span class="self">self
+<a href=#323 id=323 data-nosnippet>323</a>                </span>.time_list()
+<a href=#324 id=324 data-nosnippet>324</a>                .any(|entry| time_s &gt;= entry.start_s &amp;&amp; time_s &lt;= entry.end_s)
 <a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>}
-<a href=#327 id=327 data-nosnippet>327</a>
-<a href=#328 id=328 data-nosnippet>328</a><span class="doccomment">/// A parsed `timerange` expression whose defaults are not yet applied.
-<a href=#329 id=329 data-nosnippet>329</a>///
-<a href=#330 id=330 data-nosnippet>330</a>/// Parsing needs no MeasurementSet, so a caller can refuse a malformed
-<a href=#331 id=331 data-nosnippet>331</a>/// expression, and skip finding the default rows for an empty one, before it
-<a href=#332 id=332 data-nosnippet>332</a>/// reads any rows. Errors CASA finds in a term's actions (a bad date, a
-<a href=#333 id=333 data-nosnippet>333</a>/// reversed range) appear at [`resolve`](Self::resolve); where an expression
-<a href=#334 id=334 data-nosnippet>334</a>/// has both, CASA may report whichever its parser reaches first.
-<a href=#335 id=335 data-nosnippet>335</a></span><span class="attr">#[derive(Debug, Clone, Default, PartialEq)]
-<a href=#336 id=336 data-nosnippet>336</a></span><span class="kw">pub struct </span>TimeSelector {
-<a href=#337 id=337 data-nosnippet>337</a>    terms: Box&lt;[TermSyntax]&gt;,
-<a href=#338 id=338 data-nosnippet>338</a>}
-<a href=#339 id=339 data-nosnippet>339</a>
-<a href=#340 id=340 data-nosnippet>340</a><span class="kw">impl </span>TimeSelector {
-<a href=#341 id=341 data-nosnippet>341</a>    <span class="doccomment">/// Parse `text`. The empty string selects every row; any other text,
-<a href=#342 id=342 data-nosnippet>342</a>    /// blank text included, must be a valid expression.
-<a href=#343 id=343 data-nosnippet>343</a>    ///
-<a href=#344 id=344 data-nosnippet>344</a>    /// # Errors
-<a href=#345 id=345 data-nosnippet>345</a>    ///
-<a href=#346 id=346 data-nosnippet>346</a>    /// A parse error, with CASA's message naming the token and position.
-<a href=#347 id=347 data-nosnippet>347</a>    </span><span class="kw">pub fn </span>parse(text: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;<span class="self">Self</span>&gt; {
-<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">if </span>text.is_empty() {
-<a href=#349 id=349 data-nosnippet>349</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>::default());
-<a href=#350 id=350 data-nosnippet>350</a>        }
-<a href=#351 id=351 data-nosnippet>351</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#352 id=352 data-nosnippet>352</a>            terms: grammar::parse(text)<span class="question-mark">?</span>.into_boxed_slice(),
-<a href=#353 id=353 data-nosnippet>353</a>        })
-<a href=#354 id=354 data-nosnippet>354</a>    }
+<a href=#326 id=326 data-nosnippet>326</a>
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>use_agent_intervals(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">for </span>term <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.terms {
+<a href=#329 id=329 data-nosnippet>329</a>            term.condition = TimeCondition::Within {
+<a href=#330 id=330 data-nosnippet>330</a>                lower_s: term.time_list_entry.start_s,
+<a href=#331 id=331 data-nosnippet>331</a>                upper_s: term.time_list_entry.end_s,
+<a href=#332 id=332 data-nosnippet>332</a>            };
+<a href=#333 id=333 data-nosnippet>333</a>        }
+<a href=#334 id=334 data-nosnippet>334</a>    }
+<a href=#335 id=335 data-nosnippet>335</a>
+<a href=#336 id=336 data-nosnippet>336</a>    <span class="doccomment">/// Heap bytes the selection holds: exactly one [`TimeTerm`] per term, and
+<a href=#337 id=337 data-nosnippet>337</a>    /// nothing for an empty expression.
+<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="attr">#[must_use]
+<a href=#339 id=339 data-nosnippet>339</a>    </span><span class="kw">pub fn </span>allocated_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#340 id=340 data-nosnippet>340</a>        std::mem::size_of_val::&lt;[TimeTerm]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.terms)
+<a href=#341 id=341 data-nosnippet>341</a>    }
+<a href=#342 id=342 data-nosnippet>342</a>}
+<a href=#343 id=343 data-nosnippet>343</a>
+<a href=#344 id=344 data-nosnippet>344</a><span class="doccomment">/// A parsed `timerange` expression whose defaults are not yet applied.
+<a href=#345 id=345 data-nosnippet>345</a>///
+<a href=#346 id=346 data-nosnippet>346</a>/// Parsing needs no MeasurementSet, so a caller can refuse a malformed
+<a href=#347 id=347 data-nosnippet>347</a>/// expression, and skip finding the default rows for an empty one, before it
+<a href=#348 id=348 data-nosnippet>348</a>/// reads any rows. Errors CASA finds in a term's actions (a bad date, a
+<a href=#349 id=349 data-nosnippet>349</a>/// reversed range) appear at [`resolve`](Self::resolve); where an expression
+<a href=#350 id=350 data-nosnippet>350</a>/// has both, CASA may report whichever its parser reaches first.
+<a href=#351 id=351 data-nosnippet>351</a></span><span class="attr">#[derive(Debug, Clone, Default, PartialEq)]
+<a href=#352 id=352 data-nosnippet>352</a></span><span class="kw">pub struct </span>TimeSelector {
+<a href=#353 id=353 data-nosnippet>353</a>    terms: Box&lt;[TermSyntax]&gt;,
+<a href=#354 id=354 data-nosnippet>354</a>}
 <a href=#355 id=355 data-nosnippet>355</a>
-<a href=#356 id=356 data-nosnippet>356</a>    <span class="doccomment">/// Whether the expression was empty, which selects every row and reads
-<a href=#357 id=357 data-nosnippet>357</a>    /// no defaults.
-<a href=#358 id=358 data-nosnippet>358</a>    </span><span class="attr">#[must_use]
-<a href=#359 id=359 data-nosnippet>359</a>    </span><span class="kw">pub fn </span>selects_all(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#360 id=360 data-nosnippet>360</a>        <span class="self">self</span>.terms.is_empty()
-<a href=#361 id=361 data-nosnippet>361</a>    }
-<a href=#362 id=362 data-nosnippet>362</a>
-<a href=#363 id=363 data-nosnippet>363</a>    <span class="doccomment">/// The number of comma-separated terms.
-<a href=#364 id=364 data-nosnippet>364</a>    </span><span class="attr">#[must_use]
-<a href=#365 id=365 data-nosnippet>365</a>    </span><span class="kw">pub fn </span>term_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#366 id=366 data-nosnippet>366</a>        <span class="self">self</span>.terms.len()
-<a href=#367 id=367 data-nosnippet>367</a>    }
-<a href=#368 id=368 data-nosnippet>368</a>
-<a href=#369 id=369 data-nosnippet>369</a>    <span class="doccomment">/// Apply the defaults and resolve each term's condition.
-<a href=#370 id=370 data-nosnippet>370</a>    ///
-<a href=#371 id=371 data-nosnippet>371</a>    /// # Errors
-<a href=#372 id=372 data-nosnippet>372</a>    ///
-<a href=#373 id=373 data-nosnippet>373</a>    /// A year before 1858, a month outside 1 to 12 or a day outside 1 to 31
-<a href=#374 id=374 data-nosnippet>374</a>    /// (CASA's `MSTime Selection error`), a range whose lower bound exceeds
-<a href=#375 id=375 data-nosnippet>375</a>    /// its upper bound, or a default row or field beyond the arithmetic CASA
-<a href=#376 id=376 data-nosnippet>376</a>    /// defines.
-<a href=#377 id=377 data-nosnippet>377</a>    </span><span class="kw">pub fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, defaults: <span class="kw">impl </span>Into&lt;TimeSelectorDefaults&gt;) -&gt; MsResult&lt;TimeSelection&gt; {
-<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">let </span>defaults = defaults.into();
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>terms = <span class="self">self
-<a href=#380 id=380 data-nosnippet>380</a>            </span>.terms
-<a href=#381 id=381 data-nosnippet>381</a>            .iter()
-<a href=#382 id=382 data-nosnippet>382</a>            .enumerate()
-<a href=#383 id=383 data-nosnippet>383</a>            .map(|(index, syntax)| {
-<a href=#384 id=384 data-nosnippet>384</a>                <span class="kw">let </span>row = <span class="kw">if </span>index == <span class="number">0 </span>{
-<a href=#385 id=385 data-nosnippet>385</a>                    defaults.first_term
-<a href=#386 id=386 data-nosnippet>386</a>                } <span class="kw">else </span>{
-<a href=#387 id=387 data-nosnippet>387</a>                    defaults.later_terms
-<a href=#388 id=388 data-nosnippet>388</a>                };
-<a href=#389 id=389 data-nosnippet>389</a>                <span class="kw">let </span>row = clock::row_defaults(row.time_mjd_s, row.exposure_s).ok_or_else(|| {
-<a href=#390 id=390 data-nosnippet>390</a>                    MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#391 id=391 data-nosnippet>391</a>                        <span class="string">"MSTimeParse: default row TIME {} s is outside the days casacore's \
-<a href=#392 id=392 data-nosnippet>392</a>                         Time converts"</span>,
-<a href=#393 id=393 data-nosnippet>393</a>                        row.time_mjd_s
-<a href=#394 id=394 data-nosnippet>394</a>                    ))
-<a href=#395 id=395 data-nosnippet>395</a>                })<span class="question-mark">?</span>;
-<a href=#396 id=396 data-nosnippet>396</a>                resolve_term(<span class="kw-2">*</span>syntax, <span class="kw-2">&amp;</span>row, index + <span class="number">1</span>)
-<a href=#397 id=397 data-nosnippet>397</a>            })
-<a href=#398 id=398 data-nosnippet>398</a>            .collect::&lt;MsResult&lt;Box&lt;[TimeTerm]&gt;&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#399 id=399 data-nosnippet>399</a>        <span class="prelude-val">Ok</span>(TimeSelection { terms })
-<a href=#400 id=400 data-nosnippet>400</a>    }
-<a href=#401 id=401 data-nosnippet>401</a>}
-<a href=#402 id=402 data-nosnippet>402</a>
-<a href=#403 id=403 data-nosnippet>403</a><span class="doccomment">/// Parse and resolve a `timerange` expression; see the [module
-<a href=#404 id=404 data-nosnippet>404</a>/// documentation](self) for the forms and defaults.
-<a href=#405 id=405 data-nosnippet>405</a>///
-<a href=#406 id=406 data-nosnippet>406</a>/// Pass a [`TimeDefaults`] when the first logical row is row 0, and a
-<a href=#407 id=407 data-nosnippet>407</a>/// [`TimeSelectorDefaults`] otherwise.
-<a href=#408 id=408 data-nosnippet>408</a>///
-<a href=#409 id=409 data-nosnippet>409</a>/// # Errors
-<a href=#410 id=410 data-nosnippet>410</a>///
-<a href=#411 id=411 data-nosnippet>411</a>/// As [`TimeSelector::parse`] and [`TimeSelector::resolve`].
-<a href=#412 id=412 data-nosnippet>412</a></span><span class="kw">pub fn </span>resolve_time_selector(
-<a href=#413 id=413 data-nosnippet>413</a>    text: <span class="kw-2">&amp;</span>str,
-<a href=#414 id=414 data-nosnippet>414</a>    defaults: <span class="kw">impl </span>Into&lt;TimeSelectorDefaults&gt;,
-<a href=#415 id=415 data-nosnippet>415</a>) -&gt; MsResult&lt;TimeSelection&gt; {
-<a href=#416 id=416 data-nosnippet>416</a>    TimeSelector::parse(text)<span class="question-mark">?</span>.resolve(defaults)
+<a href=#356 id=356 data-nosnippet>356</a><span class="kw">impl </span>TimeSelector {
+<a href=#357 id=357 data-nosnippet>357</a>    <span class="doccomment">/// Parse `text`. The empty string selects every row; any other text,
+<a href=#358 id=358 data-nosnippet>358</a>    /// blank text included, must be a valid expression.
+<a href=#359 id=359 data-nosnippet>359</a>    ///
+<a href=#360 id=360 data-nosnippet>360</a>    /// # Errors
+<a href=#361 id=361 data-nosnippet>361</a>    ///
+<a href=#362 id=362 data-nosnippet>362</a>    /// A parse error, with CASA's message naming the token and position.
+<a href=#363 id=363 data-nosnippet>363</a>    </span><span class="kw">pub fn </span>parse(text: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;<span class="self">Self</span>&gt; {
+<a href=#364 id=364 data-nosnippet>364</a>        <span class="kw">if </span>text.is_empty() {
+<a href=#365 id=365 data-nosnippet>365</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>::default());
+<a href=#366 id=366 data-nosnippet>366</a>        }
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#368 id=368 data-nosnippet>368</a>            terms: grammar::parse(text)<span class="question-mark">?</span>.into_boxed_slice(),
+<a href=#369 id=369 data-nosnippet>369</a>        })
+<a href=#370 id=370 data-nosnippet>370</a>    }
+<a href=#371 id=371 data-nosnippet>371</a>
+<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// Whether the expression was empty, which selects every row and reads
+<a href=#373 id=373 data-nosnippet>373</a>    /// no defaults.
+<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="attr">#[must_use]
+<a href=#375 id=375 data-nosnippet>375</a>    </span><span class="kw">pub fn </span>selects_all(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="self">self</span>.terms.is_empty()
+<a href=#377 id=377 data-nosnippet>377</a>    }
+<a href=#378 id=378 data-nosnippet>378</a>
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="doccomment">/// The number of comma-separated terms.
+<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="attr">#[must_use]
+<a href=#381 id=381 data-nosnippet>381</a>    </span><span class="kw">pub fn </span>term_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#382 id=382 data-nosnippet>382</a>        <span class="self">self</span>.terms.len()
+<a href=#383 id=383 data-nosnippet>383</a>    }
+<a href=#384 id=384 data-nosnippet>384</a>
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="doccomment">/// Apply the defaults and resolve each term's condition.
+<a href=#386 id=386 data-nosnippet>386</a>    ///
+<a href=#387 id=387 data-nosnippet>387</a>    /// # Errors
+<a href=#388 id=388 data-nosnippet>388</a>    ///
+<a href=#389 id=389 data-nosnippet>389</a>    /// A year before 1858, a month outside 1 to 12 or a day outside 1 to 31
+<a href=#390 id=390 data-nosnippet>390</a>    /// (CASA's `MSTime Selection error`), a range whose lower bound exceeds
+<a href=#391 id=391 data-nosnippet>391</a>    /// its upper bound, or a default row or field beyond the arithmetic CASA
+<a href=#392 id=392 data-nosnippet>392</a>    /// defines.
+<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">pub fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, defaults: <span class="kw">impl </span>Into&lt;TimeSelectorDefaults&gt;) -&gt; MsResult&lt;TimeSelection&gt; {
+<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">let </span>defaults = defaults.into();
+<a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">let </span>terms = <span class="self">self
+<a href=#396 id=396 data-nosnippet>396</a>            </span>.terms
+<a href=#397 id=397 data-nosnippet>397</a>            .iter()
+<a href=#398 id=398 data-nosnippet>398</a>            .enumerate()
+<a href=#399 id=399 data-nosnippet>399</a>            .map(|(index, syntax)| {
+<a href=#400 id=400 data-nosnippet>400</a>                <span class="kw">let </span>row = <span class="kw">if </span>index == <span class="number">0 </span>{
+<a href=#401 id=401 data-nosnippet>401</a>                    defaults.first_term
+<a href=#402 id=402 data-nosnippet>402</a>                } <span class="kw">else </span>{
+<a href=#403 id=403 data-nosnippet>403</a>                    defaults.later_terms
+<a href=#404 id=404 data-nosnippet>404</a>                };
+<a href=#405 id=405 data-nosnippet>405</a>                <span class="kw">let </span>row = clock::row_defaults(row.time_mjd_s, row.exposure_s).ok_or_else(|| {
+<a href=#406 id=406 data-nosnippet>406</a>                    MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#407 id=407 data-nosnippet>407</a>                        <span class="string">"MSTimeParse: default row TIME {} s is outside the days casacore's \
+<a href=#408 id=408 data-nosnippet>408</a>                         Time converts"</span>,
+<a href=#409 id=409 data-nosnippet>409</a>                        row.time_mjd_s
+<a href=#410 id=410 data-nosnippet>410</a>                    ))
+<a href=#411 id=411 data-nosnippet>411</a>                })<span class="question-mark">?</span>;
+<a href=#412 id=412 data-nosnippet>412</a>                resolve_term(<span class="kw-2">*</span>syntax, <span class="kw-2">&amp;</span>row, index + <span class="number">1</span>)
+<a href=#413 id=413 data-nosnippet>413</a>            })
+<a href=#414 id=414 data-nosnippet>414</a>            .collect::&lt;MsResult&lt;Box&lt;[TimeTerm]&gt;&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="prelude-val">Ok</span>(TimeSelection { terms })
+<a href=#416 id=416 data-nosnippet>416</a>    }
 <a href=#417 id=417 data-nosnippet>417</a>}
 <a href=#418 id=418 data-nosnippet>418</a>
-<a href=#419 id=419 data-nosnippet>419</a><span class="doccomment">/// The grammar action of one term with its default row (MSTimeGram.yy:137-205).
-<a href=#420 id=420 data-nosnippet>420</a></span><span class="kw">fn </span>resolve_term(syntax: TermSyntax, row: <span class="kw-2">&amp;</span>RowDefaults, number: usize) -&gt; MsResult&lt;TimeTerm&gt; {
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="kw">let </span>exposure_s = row.exposure_s;
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="kw">let </span>(condition, time_list_entry) = <span class="kw">match </span>syntax {
-<a href=#423 id=423 data-nosnippet>423</a>        TermSyntax::Single(fields) =&gt; {
-<a href=#424 id=424 data-nosnippet>424</a>            <span class="kw">let </span>time_s = time_seconds(clock::fill_from_row(fields, row))<span class="question-mark">?</span>;
-<a href=#425 id=425 data-nosnippet>425</a>            <span class="kw">let </span>tolerance_s = exposure_s / <span class="number">2.0</span>;
-<a href=#426 id=426 data-nosnippet>426</a>            (
-<a href=#427 id=427 data-nosnippet>427</a>                TimeCondition::Near {
-<a href=#428 id=428 data-nosnippet>428</a>                    time_s,
-<a href=#429 id=429 data-nosnippet>429</a>                    tolerance_s,
-<a href=#430 id=430 data-nosnippet>430</a>                },
-<a href=#431 id=431 data-nosnippet>431</a>                listed(time_s, time_s, tolerance_s, exposure_s),
-<a href=#432 id=432 data-nosnippet>432</a>            )
-<a href=#433 id=433 data-nosnippet>433</a>        }
-<a href=#434 id=434 data-nosnippet>434</a>        TermSyntax::AtOrAfter(fields) =&gt; {
-<a href=#435 id=435 data-nosnippet>435</a>            <span class="kw">let </span>time_s = time_seconds(clock::fill_from_row(fields, row))<span class="question-mark">?</span>;
-<a href=#436 id=436 data-nosnippet>436</a>            (
-<a href=#437 id=437 data-nosnippet>437</a>                TimeCondition::AtOrAfter { time_s },
-<a href=#438 id=438 data-nosnippet>438</a>                listed(time_s, f64::MAX, -<span class="number">1.0</span>, exposure_s),
-<a href=#439 id=439 data-nosnippet>439</a>            )
-<a href=#440 id=440 data-nosnippet>440</a>        }
-<a href=#441 id=441 data-nosnippet>441</a>        TermSyntax::AtOrBefore(fields) =&gt; {
-<a href=#442 id=442 data-nosnippet>442</a>            <span class="kw">let </span>time_s = time_seconds(clock::fill_from_row(fields, row))<span class="question-mark">?</span>;
-<a href=#443 id=443 data-nosnippet>443</a>            (
-<a href=#444 id=444 data-nosnippet>444</a>                TimeCondition::AtOrBefore { time_s },
-<a href=#445 id=445 data-nosnippet>445</a>                listed(<span class="number">0.0</span>, time_s, -<span class="number">1.0</span>, exposure_s),
-<a href=#446 id=446 data-nosnippet>446</a>            )
-<a href=#447 id=447 data-nosnippet>447</a>        }
-<a href=#448 id=448 data-nosnippet>448</a>        TermSyntax::Range {
-<a href=#449 id=449 data-nosnippet>449</a>            lower,
-<a href=#450 id=450 data-nosnippet>450</a>            join,
-<a href=#451 id=451 data-nosnippet>451</a>            upper,
-<a href=#452 id=452 data-nosnippet>452</a>            edge,
-<a href=#453 id=453 data-nosnippet>453</a>        } =&gt; resolve_range(lower, join, upper, edge, row, number)<span class="question-mark">?</span>,
-<a href=#454 id=454 data-nosnippet>454</a>    };
-<a href=#455 id=455 data-nosnippet>455</a>    <span class="prelude-val">Ok</span>(TimeTerm {
-<a href=#456 id=456 data-nosnippet>456</a>        condition,
-<a href=#457 id=457 data-nosnippet>457</a>        time_list_entry,
-<a href=#458 id=458 data-nosnippet>458</a>    })
-<a href=#459 id=459 data-nosnippet>459</a>}
-<a href=#460 id=460 data-nosnippet>460</a>
-<a href=#461 id=461 data-nosnippet>461</a><span class="doccomment">/// `rangetimeexpr` and `MSTimeParse::selectTimeRange` (MSTimeGram.yy:153-185,
-<a href=#462 id=462 data-nosnippet>462</a>/// MSTimeParse.cc:248-274).
-<a href=#463 id=463 data-nosnippet>463</a></span><span class="kw">fn </span>resolve_range(
-<a href=#464 id=464 data-nosnippet>464</a>    lower: TimeFields,
-<a href=#465 id=465 data-nosnippet>465</a>    join: RangeJoin,
-<a href=#466 id=466 data-nosnippet>466</a>    upper: TimeFields,
-<a href=#467 id=467 data-nosnippet>467</a>    edge: Edge,
-<a href=#468 id=468 data-nosnippet>468</a>    row: <span class="kw-2">&amp;</span>RowDefaults,
-<a href=#469 id=469 data-nosnippet>469</a>    number: usize,
-<a href=#470 id=470 data-nosnippet>470</a>) -&gt; MsResult&lt;(TimeCondition, TimeListEntry)&gt; {
-<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">let </span>lower = clock::fill_from_row(lower, row);
-<a href=#472 id=472 data-nosnippet>472</a>    <span class="kw">let </span>(lower_s, upper_s) = <span class="kw">match </span>join {
-<a href=#473 id=473 data-nosnippet>473</a>        RangeJoin::Span =&gt; {
-<a href=#474 id=474 data-nosnippet>474</a>            <span class="kw">let </span>upper = fill(upper, lower);
-<a href=#475 id=475 data-nosnippet>475</a>            (time_seconds(lower)<span class="question-mark">?</span>, time_seconds(upper)<span class="question-mark">?</span>)
-<a href=#476 id=476 data-nosnippet>476</a>        }
-<a href=#477 id=477 data-nosnippet>477</a>        RangeJoin::Duration =&gt; {
-<a href=#478 id=478 data-nosnippet>478</a>            <span class="kw">let </span>duration = clock::fill_from_mjd_reference(upper);
-<a href=#479 id=479 data-nosnippet>479</a>            validate(lower)<span class="question-mark">?</span>;
-<a href=#480 id=480 data-nosnippet>480</a>            validate(duration)<span class="question-mark">?</span>;
-<a href=#481 id=481 data-nosnippet>481</a>            <span class="kw">let </span>start_days = date_time(lower)<span class="question-mark">?</span>.modified_julian_day();
-<a href=#482 id=482 data-nosnippet>482</a>            <span class="kw">let </span>duration_days = date_time(duration)<span class="question-mark">?</span>.modified_julian_day();
-<a href=#483 id=483 data-nosnippet>483</a>            (
-<a href=#484 id=484 data-nosnippet>484</a>                epoch_seconds(epoch_days(start_days, <span class="number">0.0</span>)),
-<a href=#485 id=485 data-nosnippet>485</a>                epoch_seconds(epoch_days(start_days, duration_days)),
-<a href=#486 id=486 data-nosnippet>486</a>            )
-<a href=#487 id=487 data-nosnippet>487</a>        }
-<a href=#488 id=488 data-nosnippet>488</a>    };
-<a href=#489 id=489 data-nosnippet>489</a>    <span class="kw">if </span>lower_s &gt; upper_s {
-<a href=#490 id=490 data-nosnippet>490</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#491 id=491 data-nosnippet>491</a>            <span class="string">"MSSelection time error: lower bound &gt; upper bound in time selection term {number}"
-<a href=#492 id=492 data-nosnippet>492</a>        </span>)));
-<a href=#493 id=493 data-nosnippet>493</a>    }
-<a href=#494 id=494 data-nosnippet>494</a>    <span class="comment">// `Float edgeWidth_l = (edgeWidth &lt; 0.0) ? (edgeInclusive ?
-<a href=#495 id=495 data-nosnippet>495</a>    // defaultExposure/2.0 : 0.0) : edgeWidth`.
-<a href=#496 id=496 data-nosnippet>496</a>    </span><span class="attr">#[expect(clippy::cast_possible_truncation, reason = <span class="string">"edgeWidth_l is a C Float"</span>)]
-<a href=#497 id=497 data-nosnippet>497</a>    </span><span class="kw">let </span>(condition, width) = <span class="kw">match </span>edge {
-<a href=#498 id=498 data-nosnippet>498</a>        Edge::Closed =&gt; (TimeCondition::Within { lower_s, upper_s }, <span class="number">0.0_f32</span>),
-<a href=#499 id=499 data-nosnippet>499</a>        Edge::Exposure | Edge::Width(<span class="kw">_</span>) =&gt; {
-<a href=#500 id=500 data-nosnippet>500</a>            <span class="kw">let </span>edge_s = <span class="kw">match </span>edge {
-<a href=#501 id=501 data-nosnippet>501</a>                Edge::Width(width) =&gt; width,
-<a href=#502 id=502 data-nosnippet>502</a>                <span class="kw">_ </span>=&gt; (row.exposure_s / <span class="number">2.0</span>) <span class="kw">as </span>f32,
-<a href=#503 id=503 data-nosnippet>503</a>            };
-<a href=#504 id=504 data-nosnippet>504</a>            (
-<a href=#505 id=505 data-nosnippet>505</a>                TimeCondition::EdgeInclusive {
-<a href=#506 id=506 data-nosnippet>506</a>                    lower_s,
-<a href=#507 id=507 data-nosnippet>507</a>                    upper_s,
-<a href=#508 id=508 data-nosnippet>508</a>                    edge_s,
-<a href=#509 id=509 data-nosnippet>509</a>                },
-<a href=#510 id=510 data-nosnippet>510</a>                edge_s,
-<a href=#511 id=511 data-nosnippet>511</a>            )
-<a href=#512 id=512 data-nosnippet>512</a>        }
-<a href=#513 id=513 data-nosnippet>513</a>    };
-<a href=#514 id=514 data-nosnippet>514</a>    <span class="prelude-val">Ok</span>((
-<a href=#515 id=515 data-nosnippet>515</a>        condition,
-<a href=#516 id=516 data-nosnippet>516</a>        listed(lower_s, upper_s, f64::from(width), row.exposure_s),
-<a href=#517 id=517 data-nosnippet>517</a>    ))
-<a href=#518 id=518 data-nosnippet>518</a>}
-<a href=#519 id=519 data-nosnippet>519</a>
-<a href=#520 id=520 data-nosnippet>520</a><span class="doccomment">/// `accumulateTimeList`: a negative width records the default exposure.
-<a href=#521 id=521 data-nosnippet>521</a></span><span class="kw">fn </span>listed(start_s: f64, end_s: f64, width_s: f64, exposure_s: f64) -&gt; TimeListEntry {
-<a href=#522 id=522 data-nosnippet>522</a>    TimeListEntry {
-<a href=#523 id=523 data-nosnippet>523</a>        start_s,
-<a href=#524 id=524 data-nosnippet>524</a>        end_s,
-<a href=#525 id=525 data-nosnippet>525</a>        width_s: <span class="kw">if </span>width_s &gt;= <span class="number">0.0 </span>{ width_s } <span class="kw">else </span>{ exposure_s },
-<a href=#526 id=526 data-nosnippet>526</a>    }
-<a href=#527 id=527 data-nosnippet>527</a>}
-<a href=#528 id=528 data-nosnippet>528</a>
-<a href=#529 id=529 data-nosnippet>529</a><span class="doccomment">/// `MSTimeParse::yearTimeConvert` then `toTAIInSec` (MSTimeParse.cc:317-344).
-<a href=#530 id=530 data-nosnippet>530</a></span><span class="kw">fn </span>time_seconds(fields: TimeFields) -&gt; MsResult&lt;f64&gt; {
-<a href=#531 id=531 data-nosnippet>531</a>    validate(fields)<span class="question-mark">?</span>;
-<a href=#532 id=532 data-nosnippet>532</a>    <span class="kw">let </span>days = date_time(fields)<span class="question-mark">?</span>.modified_julian_day();
-<a href=#533 id=533 data-nosnippet>533</a>    <span class="prelude-val">Ok</span>(epoch_seconds(epoch_days(days, <span class="number">0.0</span>)))
+<a href=#419 id=419 data-nosnippet>419</a><span class="doccomment">/// Parse and resolve a `timerange` expression; see the [module
+<a href=#420 id=420 data-nosnippet>420</a>/// documentation](self) for the forms and defaults.
+<a href=#421 id=421 data-nosnippet>421</a>///
+<a href=#422 id=422 data-nosnippet>422</a>/// Pass a [`TimeDefaults`] when the first logical row is row 0, and a
+<a href=#423 id=423 data-nosnippet>423</a>/// [`TimeSelectorDefaults`] otherwise.
+<a href=#424 id=424 data-nosnippet>424</a>///
+<a href=#425 id=425 data-nosnippet>425</a>/// # Errors
+<a href=#426 id=426 data-nosnippet>426</a>///
+<a href=#427 id=427 data-nosnippet>427</a>/// As [`TimeSelector::parse`] and [`TimeSelector::resolve`].
+<a href=#428 id=428 data-nosnippet>428</a></span><span class="kw">pub fn </span>resolve_time_selector(
+<a href=#429 id=429 data-nosnippet>429</a>    text: <span class="kw-2">&amp;</span>str,
+<a href=#430 id=430 data-nosnippet>430</a>    defaults: <span class="kw">impl </span>Into&lt;TimeSelectorDefaults&gt;,
+<a href=#431 id=431 data-nosnippet>431</a>) -&gt; MsResult&lt;TimeSelection&gt; {
+<a href=#432 id=432 data-nosnippet>432</a>    TimeSelector::parse(text)<span class="question-mark">?</span>.resolve(defaults)
+<a href=#433 id=433 data-nosnippet>433</a>}
+<a href=#434 id=434 data-nosnippet>434</a>
+<a href=#435 id=435 data-nosnippet>435</a><span class="doccomment">/// The grammar action of one term with its default row (MSTimeGram.yy:137-205).
+<a href=#436 id=436 data-nosnippet>436</a></span><span class="kw">fn </span>resolve_term(syntax: TermSyntax, row: <span class="kw-2">&amp;</span>RowDefaults, number: usize) -&gt; MsResult&lt;TimeTerm&gt; {
+<a href=#437 id=437 data-nosnippet>437</a>    <span class="kw">let </span>exposure_s = row.exposure_s;
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="kw">let </span>(condition, time_list_entry) = <span class="kw">match </span>syntax {
+<a href=#439 id=439 data-nosnippet>439</a>        TermSyntax::Single(fields) =&gt; {
+<a href=#440 id=440 data-nosnippet>440</a>            <span class="kw">let </span>time_s = time_seconds(clock::fill_from_row(fields, row))<span class="question-mark">?</span>;
+<a href=#441 id=441 data-nosnippet>441</a>            <span class="kw">let </span>tolerance_s = exposure_s / <span class="number">2.0</span>;
+<a href=#442 id=442 data-nosnippet>442</a>            (
+<a href=#443 id=443 data-nosnippet>443</a>                TimeCondition::Near {
+<a href=#444 id=444 data-nosnippet>444</a>                    time_s,
+<a href=#445 id=445 data-nosnippet>445</a>                    tolerance_s,
+<a href=#446 id=446 data-nosnippet>446</a>                },
+<a href=#447 id=447 data-nosnippet>447</a>                listed(time_s, time_s, tolerance_s, exposure_s),
+<a href=#448 id=448 data-nosnippet>448</a>            )
+<a href=#449 id=449 data-nosnippet>449</a>        }
+<a href=#450 id=450 data-nosnippet>450</a>        TermSyntax::AtOrAfter(fields) =&gt; {
+<a href=#451 id=451 data-nosnippet>451</a>            <span class="kw">let </span>time_s = time_seconds(clock::fill_from_row(fields, row))<span class="question-mark">?</span>;
+<a href=#452 id=452 data-nosnippet>452</a>            (
+<a href=#453 id=453 data-nosnippet>453</a>                TimeCondition::AtOrAfter { time_s },
+<a href=#454 id=454 data-nosnippet>454</a>                listed(time_s, f64::MAX, -<span class="number">1.0</span>, exposure_s),
+<a href=#455 id=455 data-nosnippet>455</a>            )
+<a href=#456 id=456 data-nosnippet>456</a>        }
+<a href=#457 id=457 data-nosnippet>457</a>        TermSyntax::AtOrBefore(fields) =&gt; {
+<a href=#458 id=458 data-nosnippet>458</a>            <span class="kw">let </span>time_s = time_seconds(clock::fill_from_row(fields, row))<span class="question-mark">?</span>;
+<a href=#459 id=459 data-nosnippet>459</a>            (
+<a href=#460 id=460 data-nosnippet>460</a>                TimeCondition::AtOrBefore { time_s },
+<a href=#461 id=461 data-nosnippet>461</a>                listed(<span class="number">0.0</span>, time_s, -<span class="number">1.0</span>, exposure_s),
+<a href=#462 id=462 data-nosnippet>462</a>            )
+<a href=#463 id=463 data-nosnippet>463</a>        }
+<a href=#464 id=464 data-nosnippet>464</a>        TermSyntax::Range {
+<a href=#465 id=465 data-nosnippet>465</a>            lower,
+<a href=#466 id=466 data-nosnippet>466</a>            join,
+<a href=#467 id=467 data-nosnippet>467</a>            upper,
+<a href=#468 id=468 data-nosnippet>468</a>            edge,
+<a href=#469 id=469 data-nosnippet>469</a>        } =&gt; resolve_range(lower, join, upper, edge, row, number)<span class="question-mark">?</span>,
+<a href=#470 id=470 data-nosnippet>470</a>    };
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="prelude-val">Ok</span>(TimeTerm {
+<a href=#472 id=472 data-nosnippet>472</a>        condition,
+<a href=#473 id=473 data-nosnippet>473</a>        time_list_entry,
+<a href=#474 id=474 data-nosnippet>474</a>    })
+<a href=#475 id=475 data-nosnippet>475</a>}
+<a href=#476 id=476 data-nosnippet>476</a>
+<a href=#477 id=477 data-nosnippet>477</a><span class="doccomment">/// `rangetimeexpr` and `MSTimeParse::selectTimeRange` (MSTimeGram.yy:153-185,
+<a href=#478 id=478 data-nosnippet>478</a>/// MSTimeParse.cc:248-274).
+<a href=#479 id=479 data-nosnippet>479</a></span><span class="kw">fn </span>resolve_range(
+<a href=#480 id=480 data-nosnippet>480</a>    lower: TimeFields,
+<a href=#481 id=481 data-nosnippet>481</a>    join: RangeJoin,
+<a href=#482 id=482 data-nosnippet>482</a>    upper: TimeFields,
+<a href=#483 id=483 data-nosnippet>483</a>    edge: Edge,
+<a href=#484 id=484 data-nosnippet>484</a>    row: <span class="kw-2">&amp;</span>RowDefaults,
+<a href=#485 id=485 data-nosnippet>485</a>    number: usize,
+<a href=#486 id=486 data-nosnippet>486</a>) -&gt; MsResult&lt;(TimeCondition, TimeListEntry)&gt; {
+<a href=#487 id=487 data-nosnippet>487</a>    <span class="kw">let </span>lower = clock::fill_from_row(lower, row);
+<a href=#488 id=488 data-nosnippet>488</a>    <span class="kw">let </span>(lower_s, upper_s) = <span class="kw">match </span>join {
+<a href=#489 id=489 data-nosnippet>489</a>        RangeJoin::Span =&gt; {
+<a href=#490 id=490 data-nosnippet>490</a>            <span class="kw">let </span>upper = fill(upper, lower);
+<a href=#491 id=491 data-nosnippet>491</a>            (time_seconds(lower)<span class="question-mark">?</span>, time_seconds(upper)<span class="question-mark">?</span>)
+<a href=#492 id=492 data-nosnippet>492</a>        }
+<a href=#493 id=493 data-nosnippet>493</a>        RangeJoin::Duration =&gt; {
+<a href=#494 id=494 data-nosnippet>494</a>            <span class="kw">let </span>duration = clock::fill_from_mjd_reference(upper);
+<a href=#495 id=495 data-nosnippet>495</a>            validate(lower)<span class="question-mark">?</span>;
+<a href=#496 id=496 data-nosnippet>496</a>            validate(duration)<span class="question-mark">?</span>;
+<a href=#497 id=497 data-nosnippet>497</a>            <span class="kw">let </span>start_days = date_time(lower)<span class="question-mark">?</span>.modified_julian_day();
+<a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">let </span>duration_days = date_time(duration)<span class="question-mark">?</span>.modified_julian_day();
+<a href=#499 id=499 data-nosnippet>499</a>            (
+<a href=#500 id=500 data-nosnippet>500</a>                epoch_seconds(epoch_days(start_days, <span class="number">0.0</span>)),
+<a href=#501 id=501 data-nosnippet>501</a>                epoch_seconds(epoch_days(start_days, duration_days)),
+<a href=#502 id=502 data-nosnippet>502</a>            )
+<a href=#503 id=503 data-nosnippet>503</a>        }
+<a href=#504 id=504 data-nosnippet>504</a>    };
+<a href=#505 id=505 data-nosnippet>505</a>    <span class="kw">if </span>lower_s &gt; upper_s {
+<a href=#506 id=506 data-nosnippet>506</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#507 id=507 data-nosnippet>507</a>            <span class="string">"MSSelection time error: lower bound &gt; upper bound in time selection term {number}"
+<a href=#508 id=508 data-nosnippet>508</a>        </span>)));
+<a href=#509 id=509 data-nosnippet>509</a>    }
+<a href=#510 id=510 data-nosnippet>510</a>    <span class="comment">// `Float edgeWidth_l = (edgeWidth &lt; 0.0) ? (edgeInclusive ?
+<a href=#511 id=511 data-nosnippet>511</a>    // defaultExposure/2.0 : 0.0) : edgeWidth`.
+<a href=#512 id=512 data-nosnippet>512</a>    </span><span class="attr">#[expect(clippy::cast_possible_truncation, reason = <span class="string">"edgeWidth_l is a C Float"</span>)]
+<a href=#513 id=513 data-nosnippet>513</a>    </span><span class="kw">let </span>(condition, width) = <span class="kw">match </span>edge {
+<a href=#514 id=514 data-nosnippet>514</a>        Edge::Closed =&gt; (TimeCondition::Within { lower_s, upper_s }, <span class="number">0.0_f32</span>),
+<a href=#515 id=515 data-nosnippet>515</a>        Edge::Exposure | Edge::Width(<span class="kw">_</span>) =&gt; {
+<a href=#516 id=516 data-nosnippet>516</a>            <span class="kw">let </span>edge_s = <span class="kw">match </span>edge {
+<a href=#517 id=517 data-nosnippet>517</a>                Edge::Width(width) =&gt; width,
+<a href=#518 id=518 data-nosnippet>518</a>                <span class="kw">_ </span>=&gt; (row.exposure_s / <span class="number">2.0</span>) <span class="kw">as </span>f32,
+<a href=#519 id=519 data-nosnippet>519</a>            };
+<a href=#520 id=520 data-nosnippet>520</a>            (
+<a href=#521 id=521 data-nosnippet>521</a>                TimeCondition::EdgeInclusive {
+<a href=#522 id=522 data-nosnippet>522</a>                    lower_s,
+<a href=#523 id=523 data-nosnippet>523</a>                    upper_s,
+<a href=#524 id=524 data-nosnippet>524</a>                    edge_s,
+<a href=#525 id=525 data-nosnippet>525</a>                },
+<a href=#526 id=526 data-nosnippet>526</a>                edge_s,
+<a href=#527 id=527 data-nosnippet>527</a>            )
+<a href=#528 id=528 data-nosnippet>528</a>        }
+<a href=#529 id=529 data-nosnippet>529</a>    };
+<a href=#530 id=530 data-nosnippet>530</a>    <span class="prelude-val">Ok</span>((
+<a href=#531 id=531 data-nosnippet>531</a>        condition,
+<a href=#532 id=532 data-nosnippet>532</a>        listed(lower_s, upper_s, f64::from(width), row.exposure_s),
+<a href=#533 id=533 data-nosnippet>533</a>    ))
 <a href=#534 id=534 data-nosnippet>534</a>}
 <a href=#535 id=535 data-nosnippet>535</a>
-<a href=#536 id=536 data-nosnippet>536</a><span class="kw">fn </span>date_time(fields: TimeFields) -&gt; MsResult&lt;clock::CasacoreTime&gt; {
-<a href=#537 id=537 data-nosnippet>537</a>    time_of(fields).ok_or_else(|| {
-<a href=#538 id=538 data-nosnippet>538</a>        MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#539 id=539 data-nosnippet>539</a>            <span class="string">"MSTime Selection error: Year = {} is beyond the C int day arithmetic \
-<a href=#540 id=540 data-nosnippet>540</a>             of casacore's Time"</span>,
-<a href=#541 id=541 data-nosnippet>541</a>            fields.year
-<a href=#542 id=542 data-nosnippet>542</a>        ))
-<a href=#543 id=543 data-nosnippet>543</a>    })
-<a href=#544 id=544 data-nosnippet>544</a>}
-<a href=#545 id=545 data-nosnippet>545</a>
-<a href=#546 id=546 data-nosnippet>546</a><span class="doccomment">/// `MSTimeParse::validate` (MSTimeParse.cc:388-411).
-<a href=#547 id=547 data-nosnippet>547</a></span><span class="kw">fn </span>validate(fields: TimeFields) -&gt; MsResult&lt;()&gt; {
-<a href=#548 id=548 data-nosnippet>548</a>    <span class="kw">let </span>refusal = <span class="kw">if </span>fields.year &lt; <span class="number">1858 </span>{
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="macro">format!</span>(<span class="string">"Year = {}"</span>, fields.year)
-<a href=#550 id=550 data-nosnippet>550</a>    } <span class="kw">else if </span>fields.month &lt;= <span class="number">0 </span>|| fields.month &gt; <span class="number">12 </span>{
-<a href=#551 id=551 data-nosnippet>551</a>        <span class="macro">format!</span>(<span class="string">"Month = {}"</span>, fields.month)
-<a href=#552 id=552 data-nosnippet>552</a>    } <span class="kw">else if </span>fields.day &lt;= <span class="number">0 </span>|| fields.day &gt; <span class="number">31 </span>{
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="macro">format!</span>(<span class="string">"Day = {}"</span>, fields.day)
-<a href=#554 id=554 data-nosnippet>554</a>    } <span class="kw">else </span>{
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#556 id=556 data-nosnippet>556</a>    };
-<a href=#557 id=557 data-nosnippet>557</a>    <span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="string">"MSTime Selection error: {refusal} out of range"
-<a href=#559 id=559 data-nosnippet>559</a>    </span>)))
+<a href=#536 id=536 data-nosnippet>536</a><span class="doccomment">/// `accumulateTimeList`: a negative width records the default exposure.
+<a href=#537 id=537 data-nosnippet>537</a></span><span class="kw">fn </span>listed(start_s: f64, end_s: f64, width_s: f64, exposure_s: f64) -&gt; TimeListEntry {
+<a href=#538 id=538 data-nosnippet>538</a>    TimeListEntry {
+<a href=#539 id=539 data-nosnippet>539</a>        start_s,
+<a href=#540 id=540 data-nosnippet>540</a>        end_s,
+<a href=#541 id=541 data-nosnippet>541</a>        width_s: <span class="kw">if </span>width_s &gt;= <span class="number">0.0 </span>{ width_s } <span class="kw">else </span>{ exposure_s },
+<a href=#542 id=542 data-nosnippet>542</a>    }
+<a href=#543 id=543 data-nosnippet>543</a>}
+<a href=#544 id=544 data-nosnippet>544</a>
+<a href=#545 id=545 data-nosnippet>545</a><span class="doccomment">/// `MSTimeParse::yearTimeConvert` then `toTAIInSec` (MSTimeParse.cc:317-344).
+<a href=#546 id=546 data-nosnippet>546</a></span><span class="kw">fn </span>time_seconds(fields: TimeFields) -&gt; MsResult&lt;f64&gt; {
+<a href=#547 id=547 data-nosnippet>547</a>    validate(fields)<span class="question-mark">?</span>;
+<a href=#548 id=548 data-nosnippet>548</a>    <span class="kw">let </span>days = date_time(fields)<span class="question-mark">?</span>.modified_julian_day();
+<a href=#549 id=549 data-nosnippet>549</a>    <span class="prelude-val">Ok</span>(epoch_seconds(epoch_days(days, <span class="number">0.0</span>)))
+<a href=#550 id=550 data-nosnippet>550</a>}
+<a href=#551 id=551 data-nosnippet>551</a>
+<a href=#552 id=552 data-nosnippet>552</a><span class="kw">fn </span>date_time(fields: TimeFields) -&gt; MsResult&lt;clock::CasacoreTime&gt; {
+<a href=#553 id=553 data-nosnippet>553</a>    time_of(fields).ok_or_else(|| {
+<a href=#554 id=554 data-nosnippet>554</a>        MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#555 id=555 data-nosnippet>555</a>            <span class="string">"MSTime Selection error: Year = {} is beyond the C int day arithmetic \
+<a href=#556 id=556 data-nosnippet>556</a>             of casacore's Time"</span>,
+<a href=#557 id=557 data-nosnippet>557</a>            fields.year
+<a href=#558 id=558 data-nosnippet>558</a>        ))
+<a href=#559 id=559 data-nosnippet>559</a>    })
 <a href=#560 id=560 data-nosnippet>560</a>}
 <a href=#561 id=561 data-nosnippet>561</a>
-<a href=#562 id=562 data-nosnippet>562</a><span class="attr">#[cfg(test)]
-<a href=#563 id=563 data-nosnippet>563</a></span><span class="kw">mod </span>casa_oracle;
-<a href=#564 id=564 data-nosnippet>564</a><span class="attr">#[cfg(test)]
-<a href=#565 id=565 data-nosnippet>565</a></span><span class="kw">mod </span>tests;
+<a href=#562 id=562 data-nosnippet>562</a><span class="doccomment">/// `MSTimeParse::validate` (MSTimeParse.cc:388-411).
+<a href=#563 id=563 data-nosnippet>563</a></span><span class="kw">fn </span>validate(fields: TimeFields) -&gt; MsResult&lt;()&gt; {
+<a href=#564 id=564 data-nosnippet>564</a>    <span class="kw">let </span>refusal = <span class="kw">if </span>fields.year &lt; <span class="number">1858 </span>{
+<a href=#565 id=565 data-nosnippet>565</a>        <span class="macro">format!</span>(<span class="string">"Year = {}"</span>, fields.year)
+<a href=#566 id=566 data-nosnippet>566</a>    } <span class="kw">else if </span>fields.month &lt;= <span class="number">0 </span>|| fields.month &gt; <span class="number">12 </span>{
+<a href=#567 id=567 data-nosnippet>567</a>        <span class="macro">format!</span>(<span class="string">"Month = {}"</span>, fields.month)
+<a href=#568 id=568 data-nosnippet>568</a>    } <span class="kw">else if </span>fields.day &lt;= <span class="number">0 </span>|| fields.day &gt; <span class="number">31 </span>{
+<a href=#569 id=569 data-nosnippet>569</a>        <span class="macro">format!</span>(<span class="string">"Day = {}"</span>, fields.day)
+<a href=#570 id=570 data-nosnippet>570</a>    } <span class="kw">else </span>{
+<a href=#571 id=571 data-nosnippet>571</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#572 id=572 data-nosnippet>572</a>    };
+<a href=#573 id=573 data-nosnippet>573</a>    <span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#574 id=574 data-nosnippet>574</a>        <span class="string">"MSTime Selection error: {refusal} out of range"
+<a href=#575 id=575 data-nosnippet>575</a>    </span>)))
+<a href=#576 id=576 data-nosnippet>576</a>}
+<a href=#577 id=577 data-nosnippet>577</a>
+<a href=#578 id=578 data-nosnippet>578</a><span class="attr">#[cfg(test)]
+<a href=#579 id=579 data-nosnippet>579</a></span><span class="kw">mod </span>casa_oracle;
+<a href=#580 id=580 data-nosnippet>580</a><span class="attr">#[cfg(test)]
+<a href=#581 id=581 data-nosnippet>581</a></span><span class="kw">mod </span>tests;
 </code></pre></div></section></main></body></html>

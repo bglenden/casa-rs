@@ -332,623 +332,627 @@
 <a href=#332 id=332 data-nosnippet>332</a>    metadata: <span class="kw-2">&amp;</span>PayloadMetadata,
 <a href=#333 id=333 data-nosnippet>333</a>    preset: MsPlotPreset,
 <a href=#334 id=334 data-nosnippet>334</a>) -&gt; PlotDocument {
-<a href=#335 id=335 data-nosnippet>335</a>    <span class="kw">let </span><span class="kw-2">mut </span>axes = axes_for_ranges(
-<a href=#336 id=336 data-nosnippet>336</a>        <span class="string">"x"</span>,
-<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw-2">&amp;</span>payload.x_label,
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="string">"y"</span>,
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="kw-2">&amp;</span>payload.y_label,
-<a href=#340 id=340 data-nosnippet>340</a>        payload.fixed_x_bounds,
-<a href=#341 id=341 data-nosnippet>341</a>        payload.fixed_y_bounds,
-<a href=#342 id=342 data-nosnippet>342</a>        payload
-<a href=#343 id=343 data-nosnippet>343</a>            .series
-<a href=#344 id=344 data-nosnippet>344</a>            .iter()
-<a href=#345 id=345 data-nosnippet>345</a>            .flat_map(|series| series.points.iter().copied()),
-<a href=#346 id=346 data-nosnippet>346</a>    );
-<a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">let </span><span class="kw-2">mut </span>layers = scatter_layers(<span class="kw-2">&amp;</span>payload.series, <span class="string">"x"</span>, <span class="string">"y"</span>, payload.symbol_size_px);
-<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(secondary_label) = <span class="kw-2">&amp;</span>payload.secondary_y_label {
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">let </span>(lower, upper) = payload.secondary_fixed_y_bounds.unwrap_or_else(|| {
-<a href=#350 id=350 data-nosnippet>350</a>            series_y_bounds(
-<a href=#351 id=351 data-nosnippet>351</a>                payload
-<a href=#352 id=352 data-nosnippet>352</a>                    .series
-<a href=#353 id=353 data-nosnippet>353</a>                    .iter()
-<a href=#354 id=354 data-nosnippet>354</a>                    .filter(|series| <span class="prelude-val">Some</span>(series.y_axis) == payload.secondary_y_axis)
-<a href=#355 id=355 data-nosnippet>355</a>                    .flat_map(|series| series.points.iter().map(|(<span class="kw">_</span>, y)| <span class="kw-2">*</span>y)),
-<a href=#356 id=356 data-nosnippet>356</a>            )
-<a href=#357 id=357 data-nosnippet>357</a>        });
-<a href=#358 id=358 data-nosnippet>358</a>        axes.push(PlotDocumentAxis {
-<a href=#359 id=359 data-nosnippet>359</a>            draws_on_trailing_edge: <span class="bool-val">true</span>,
-<a href=#360 id=360 data-nosnippet>360</a>            ..document_axis(
-<a href=#361 id=361 data-nosnippet>361</a>                <span class="string">"y-secondary"</span>,
-<a href=#362 id=362 data-nosnippet>362</a>                secondary_label,
-<a href=#363 id=363 data-nosnippet>363</a>                <span class="kw-2">&amp;</span>label_unit(secondary_label),
-<a href=#364 id=364 data-nosnippet>364</a>                lower,
-<a href=#365 id=365 data-nosnippet>365</a>                upper,
-<a href=#366 id=366 data-nosnippet>366</a>                PlotAxisScale::Linear,
-<a href=#367 id=367 data-nosnippet>367</a>            )
-<a href=#368 id=368 data-nosnippet>368</a>        });
-<a href=#369 id=369 data-nosnippet>369</a>        <span class="kw">for </span>layer <span class="kw">in </span><span class="kw-2">&amp;mut </span>layers {
-<a href=#370 id=370 data-nosnippet>370</a>            <span class="kw">if </span>payload
-<a href=#371 id=371 data-nosnippet>371</a>                .series
-<a href=#372 id=372 data-nosnippet>372</a>                .iter()
-<a href=#373 id=373 data-nosnippet>373</a>                .find(|series| series.label == layer.title)
-<a href=#374 id=374 data-nosnippet>374</a>                .is_some_and(|series| <span class="prelude-val">Some</span>(series.y_axis) == payload.secondary_y_axis)
-<a href=#375 id=375 data-nosnippet>375</a>            {
-<a href=#376 id=376 data-nosnippet>376</a>                layer.y_axis_id = <span class="string">"y-secondary"</span>.to_string();
-<a href=#377 id=377 data-nosnippet>377</a>            }
-<a href=#378 id=378 data-nosnippet>378</a>        }
-<a href=#379 id=379 data-nosnippet>379</a>    }
-<a href=#380 id=380 data-nosnippet>380</a>    base_document(
-<a href=#381 id=381 data-nosnippet>381</a>        preset,
-<a href=#382 id=382 data-nosnippet>382</a>        metadata,
-<a href=#383 id=383 data-nosnippet>383</a>        payload.header_lines.clone(),
-<a href=#384 id=384 data-nosnippet>384</a>        axes,
-<a href=#385 id=385 data-nosnippet>385</a>        layers,
-<a href=#386 id=386 data-nosnippet>386</a>        Vec::new(),
-<a href=#387 id=387 data-nosnippet>387</a>        Vec::new(),
-<a href=#388 id=388 data-nosnippet>388</a>    )
-<a href=#389 id=389 data-nosnippet>389</a>}
-<a href=#390 id=390 data-nosnippet>390</a>
-<a href=#391 id=391 data-nosnippet>391</a><span class="kw">fn </span>shared_scatter_plot_document(
-<a href=#392 id=392 data-nosnippet>392</a>    payload: <span class="kw-2">&amp;</span>MsPlotPayload,
-<a href=#393 id=393 data-nosnippet>393</a>    metadata: <span class="kw-2">&amp;</span>PayloadMetadata,
-<a href=#394 id=394 data-nosnippet>394</a>    preset: MsPlotPreset,
-<a href=#395 id=395 data-nosnippet>395</a>) -&gt; PlotDocument {
-<a href=#396 id=396 data-nosnippet>396</a>    <span class="kw">let </span>shared = MsPlotData::from_payload(payload)
-<a href=#397 id=397 data-nosnippet>397</a>        .expect(<span class="string">"scatter payloads always project into the shared plot-data contract"</span>);
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="kw">let </span><span class="kw-2">mut </span>panels = shared
-<a href=#399 id=399 data-nosnippet>399</a>        .panels
-<a href=#400 id=400 data-nosnippet>400</a>        .iter()
-<a href=#401 id=401 data-nosnippet>401</a>        .map(shared_plot_panel)
-<a href=#402 id=402 data-nosnippet>402</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">if </span><span class="macro">matches!</span>(payload, MsPlotPayload::Scatter(<span class="kw">_</span>)) {
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>panel = panels.remove(<span class="number">0</span>);
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">return </span>base_document(
-<a href=#406 id=406 data-nosnippet>406</a>            preset,
-<a href=#407 id=407 data-nosnippet>407</a>            metadata,
-<a href=#408 id=408 data-nosnippet>408</a>            shared.header_lines,
-<a href=#409 id=409 data-nosnippet>409</a>            panel.axes,
-<a href=#410 id=410 data-nosnippet>410</a>            panel.layers,
-<a href=#411 id=411 data-nosnippet>411</a>            panel.annotations,
-<a href=#412 id=412 data-nosnippet>412</a>            Vec::new(),
-<a href=#413 id=413 data-nosnippet>413</a>        );
-<a href=#414 id=414 data-nosnippet>414</a>    }
-<a href=#415 id=415 data-nosnippet>415</a>    base_document(
-<a href=#416 id=416 data-nosnippet>416</a>        preset,
-<a href=#417 id=417 data-nosnippet>417</a>        metadata,
-<a href=#418 id=418 data-nosnippet>418</a>        shared.header_lines,
-<a href=#419 id=419 data-nosnippet>419</a>        Vec::new(),
-<a href=#420 id=420 data-nosnippet>420</a>        Vec::new(),
-<a href=#421 id=421 data-nosnippet>421</a>        Vec::new(),
-<a href=#422 id=422 data-nosnippet>422</a>        panels,
-<a href=#423 id=423 data-nosnippet>423</a>    )
-<a href=#424 id=424 data-nosnippet>424</a>}
-<a href=#425 id=425 data-nosnippet>425</a>
-<a href=#426 id=426 data-nosnippet>426</a><span class="kw">fn </span>shared_plot_panel(panel: <span class="kw-2">&amp;</span>MsPlotDataPanel) -&gt; PlotDocumentPanel {
-<a href=#427 id=427 data-nosnippet>427</a>    PlotDocumentPanel {
-<a href=#428 id=428 data-nosnippet>428</a>        id: panel.id.clone(),
-<a href=#429 id=429 data-nosnippet>429</a>        title: panel.title.clone(),
-<a href=#430 id=430 data-nosnippet>430</a>        title_font_size: <span class="prelude-val">None</span>,
-<a href=#431 id=431 data-nosnippet>431</a>        axes: panel
-<a href=#432 id=432 data-nosnippet>432</a>            .axes
-<a href=#433 id=433 data-nosnippet>433</a>            .iter()
-<a href=#434 id=434 data-nosnippet>434</a>            .map(|axis| {
-<a href=#435 id=435 data-nosnippet>435</a>                document_axis(
-<a href=#436 id=436 data-nosnippet>436</a>                    <span class="kw-2">&amp;</span>axis.id,
-<a href=#437 id=437 data-nosnippet>437</a>                    <span class="kw-2">&amp;</span>axis.label,
-<a href=#438 id=438 data-nosnippet>438</a>                    <span class="kw-2">&amp;</span>axis.unit,
-<a href=#439 id=439 data-nosnippet>439</a>                    axis.lower,
-<a href=#440 id=440 data-nosnippet>440</a>                    axis.upper,
-<a href=#441 id=441 data-nosnippet>441</a>                    PlotAxisScale::Linear,
-<a href=#442 id=442 data-nosnippet>442</a>                )
-<a href=#443 id=443 data-nosnippet>443</a>            })
-<a href=#444 id=444 data-nosnippet>444</a>            .collect(),
-<a href=#445 id=445 data-nosnippet>445</a>        layers: panel
-<a href=#446 id=446 data-nosnippet>446</a>            .series
-<a href=#447 id=447 data-nosnippet>447</a>            .iter()
-<a href=#448 id=448 data-nosnippet>448</a>            .enumerate()
-<a href=#449 id=449 data-nosnippet>449</a>            .map(|(index, series)| {
-<a href=#450 id=450 data-nosnippet>450</a>                point_layer(PointLayerSpec {
-<a href=#451 id=451 data-nosnippet>451</a>                    id: <span class="macro">format!</span>(<span class="string">"series-{index}"</span>),
-<a href=#452 id=452 data-nosnippet>452</a>                    title: series.label.clone(),
-<a href=#453 id=453 data-nosnippet>453</a>                    x_axis_id: <span class="string">"x"</span>,
-<a href=#454 id=454 data-nosnippet>454</a>                    y_axis_id: <span class="kw-2">&amp;</span>series.y_axis_id,
-<a href=#455 id=455 data-nosnippet>455</a>                    x_values: series.x.clone(),
-<a href=#456 id=456 data-nosnippet>456</a>                    y_values: series.y.clone(),
-<a href=#457 id=457 data-nosnippet>457</a>                    point_labels: Vec::new(),
-<a href=#458 id=458 data-nosnippet>458</a>                    point_symbol_sizes: Vec::new(),
-<a href=#459 id=459 data-nosnippet>459</a>                    provenance: <span class="kw">if </span>series.x.len() &lt;= POINT_PROVENANCE_LIMIT {
-<a href=#460 id=460 data-nosnippet>460</a>                        series
-<a href=#461 id=461 data-nosnippet>461</a>                            .provenance
-<a href=#462 id=462 data-nosnippet>462</a>                            .iter()
-<a href=#463 id=463 data-nosnippet>463</a>                            .map(|point| PlotPointProvenance {
-<a href=#464 id=464 data-nosnippet>464</a>                                row: point.row <span class="kw">as </span>u64,
-<a href=#465 id=465 data-nosnippet>465</a>                                corr: point.corr <span class="kw">as </span>u64,
-<a href=#466 id=466 data-nosnippet>466</a>                                chan_start: point.chan_start <span class="kw">as </span>u64,
-<a href=#467 id=467 data-nosnippet>467</a>                                chan_end: point.chan_end <span class="kw">as </span>u64,
-<a href=#468 id=468 data-nosnippet>468</a>                            })
-<a href=#469 id=469 data-nosnippet>469</a>                            .collect()
-<a href=#470 id=470 data-nosnippet>470</a>                    } <span class="kw">else </span>{
-<a href=#471 id=471 data-nosnippet>471</a>                        Vec::new()
-<a href=#472 id=472 data-nosnippet>472</a>                    },
-<a href=#473 id=473 data-nosnippet>473</a>                    color_group: series.color_group.clone(),
-<a href=#474 id=474 data-nosnippet>474</a>                    symbol_size: panel.symbol_size,
-<a href=#475 id=475 data-nosnippet>475</a>                    line_width: <span class="number">1.0</span>,
-<a href=#476 id=476 data-nosnippet>476</a>                    provenance_summary: <span class="string">"Visibility samples from shared casa-ms plot data"
-<a href=#477 id=477 data-nosnippet>477</a>                        </span>.to_owned(),
-<a href=#478 id=478 data-nosnippet>478</a>                })
-<a href=#479 id=479 data-nosnippet>479</a>            })
-<a href=#480 id=480 data-nosnippet>480</a>            .collect(),
-<a href=#481 id=481 data-nosnippet>481</a>        annotations: Vec::new(),
-<a href=#482 id=482 data-nosnippet>482</a>        aspect: <span class="prelude-val">None</span>,
-<a href=#483 id=483 data-nosnippet>483</a>        frame_visible: <span class="prelude-val">None</span>,
-<a href=#484 id=484 data-nosnippet>484</a>    }
-<a href=#485 id=485 data-nosnippet>485</a>}
-<a href=#486 id=486 data-nosnippet>486</a>
-<a href=#487 id=487 data-nosnippet>487</a><span class="kw">fn </span>base_document(
-<a href=#488 id=488 data-nosnippet>488</a>    preset: MsPlotPreset,
-<a href=#489 id=489 data-nosnippet>489</a>    metadata: <span class="kw-2">&amp;</span>PayloadMetadata,
-<a href=#490 id=490 data-nosnippet>490</a>    header_lines: Vec&lt;String&gt;,
-<a href=#491 id=491 data-nosnippet>491</a>    axes: Vec&lt;PlotDocumentAxis&gt;,
-<a href=#492 id=492 data-nosnippet>492</a>    layers: Vec&lt;PlotDocumentLayer&gt;,
-<a href=#493 id=493 data-nosnippet>493</a>    annotations: Vec&lt;PlotDocumentAnnotation&gt;,
-<a href=#494 id=494 data-nosnippet>494</a>    panels: Vec&lt;PlotDocumentPanel&gt;,
-<a href=#495 id=495 data-nosnippet>495</a>) -&gt; PlotDocument {
-<a href=#496 id=496 data-nosnippet>496</a>    PlotDocument {
-<a href=#497 id=497 data-nosnippet>497</a>        id: <span class="macro">format!</span>(<span class="string">"msexplore-{}"</span>, preset.as_str()),
-<a href=#498 id=498 data-nosnippet>498</a>        title: metadata.title.clone(),
-<a href=#499 id=499 data-nosnippet>499</a>        subtitle: metadata.summary.clone(),
-<a href=#500 id=500 data-nosnippet>500</a>        header_lines,
-<a href=#501 id=501 data-nosnippet>501</a>        axes,
-<a href=#502 id=502 data-nosnippet>502</a>        layers,
-<a href=#503 id=503 data-nosnippet>503</a>        annotations,
-<a href=#504 id=504 data-nosnippet>504</a>        panels,
-<a href=#505 id=505 data-nosnippet>505</a>        show_legend: <span class="bool-val">true</span>,
-<a href=#506 id=506 data-nosnippet>506</a>        layout: <span class="prelude-val">None</span>,
-<a href=#507 id=507 data-nosnippet>507</a>    }
-<a href=#508 id=508 data-nosnippet>508</a>}
-<a href=#509 id=509 data-nosnippet>509</a>
-<a href=#510 id=510 data-nosnippet>510</a><span class="kw">fn </span>axes_for_ranges(
-<a href=#511 id=511 data-nosnippet>511</a>    x_id: <span class="kw-2">&amp;</span>str,
-<a href=#512 id=512 data-nosnippet>512</a>    x_label: <span class="kw-2">&amp;</span>str,
-<a href=#513 id=513 data-nosnippet>513</a>    y_id: <span class="kw-2">&amp;</span>str,
-<a href=#514 id=514 data-nosnippet>514</a>    y_label: <span class="kw-2">&amp;</span>str,
-<a href=#515 id=515 data-nosnippet>515</a>    fixed_x_bounds: <span class="prelude-ty">Option</span>&lt;(f64, f64)&gt;,
-<a href=#516 id=516 data-nosnippet>516</a>    fixed_y_bounds: <span class="prelude-ty">Option</span>&lt;(f64, f64)&gt;,
-<a href=#517 id=517 data-nosnippet>517</a>    points: <span class="kw">impl </span>Iterator&lt;Item = (f64, f64)&gt;,
-<a href=#518 id=518 data-nosnippet>518</a>) -&gt; Vec&lt;PlotDocumentAxis&gt; {
-<a href=#519 id=519 data-nosnippet>519</a>    <span class="kw">let </span>(x_bounds, y_bounds) = points.fold((<span class="prelude-val">None</span>, <span class="prelude-val">None</span>), |(x_bounds, y_bounds), (x, y)| {
-<a href=#520 id=520 data-nosnippet>520</a>        (
-<a href=#521 id=521 data-nosnippet>521</a>            bounds_accumulator(x_bounds, x),
-<a href=#522 id=522 data-nosnippet>522</a>            bounds_accumulator(y_bounds, y),
-<a href=#523 id=523 data-nosnippet>523</a>        )
-<a href=#524 id=524 data-nosnippet>524</a>    });
-<a href=#525 id=525 data-nosnippet>525</a>    <span class="kw">let </span>x_bounds = expanded_bounds(fixed_x_bounds.or(x_bounds).unwrap_or((<span class="number">0.0</span>, <span class="number">1.0</span>)));
-<a href=#526 id=526 data-nosnippet>526</a>    <span class="kw">let </span>y_bounds = expanded_bounds(fixed_y_bounds.or(y_bounds).unwrap_or((<span class="number">0.0</span>, <span class="number">1.0</span>)));
-<a href=#527 id=527 data-nosnippet>527</a>    <span class="macro">vec!</span>[
-<a href=#528 id=528 data-nosnippet>528</a>        document_axis(
-<a href=#529 id=529 data-nosnippet>529</a>            x_id,
-<a href=#530 id=530 data-nosnippet>530</a>            x_label,
-<a href=#531 id=531 data-nosnippet>531</a>            <span class="kw-2">&amp;</span>label_unit(x_label),
-<a href=#532 id=532 data-nosnippet>532</a>            x_bounds.<span class="number">0</span>,
-<a href=#533 id=533 data-nosnippet>533</a>            x_bounds.<span class="number">1</span>,
-<a href=#534 id=534 data-nosnippet>534</a>            PlotAxisScale::Linear,
-<a href=#535 id=535 data-nosnippet>535</a>        ),
-<a href=#536 id=536 data-nosnippet>536</a>        document_axis(
-<a href=#537 id=537 data-nosnippet>537</a>            y_id,
-<a href=#538 id=538 data-nosnippet>538</a>            y_label,
-<a href=#539 id=539 data-nosnippet>539</a>            <span class="kw-2">&amp;</span>label_unit(y_label),
-<a href=#540 id=540 data-nosnippet>540</a>            y_bounds.<span class="number">0</span>,
-<a href=#541 id=541 data-nosnippet>541</a>            y_bounds.<span class="number">1</span>,
-<a href=#542 id=542 data-nosnippet>542</a>            PlotAxisScale::Linear,
-<a href=#543 id=543 data-nosnippet>543</a>        ),
-<a href=#544 id=544 data-nosnippet>544</a>    ]
-<a href=#545 id=545 data-nosnippet>545</a>}
-<a href=#546 id=546 data-nosnippet>546</a>
-<a href=#547 id=547 data-nosnippet>547</a><span class="kw">fn </span>scatter_layers(
-<a href=#548 id=548 data-nosnippet>548</a>    series: <span class="kw-2">&amp;</span>[MsScatterSeries],
-<a href=#549 id=549 data-nosnippet>549</a>    x_axis_id: <span class="kw-2">&amp;</span>str,
-<a href=#550 id=550 data-nosnippet>550</a>    y_axis_id: <span class="kw-2">&amp;</span>str,
-<a href=#551 id=551 data-nosnippet>551</a>    symbol_size_px: <span class="prelude-ty">Option</span>&lt;u32&gt;,
-<a href=#552 id=552 data-nosnippet>552</a>) -&gt; Vec&lt;PlotDocumentLayer&gt; {
-<a href=#553 id=553 data-nosnippet>553</a>    series
-<a href=#554 id=554 data-nosnippet>554</a>        .iter()
-<a href=#555 id=555 data-nosnippet>555</a>        .enumerate()
-<a href=#556 id=556 data-nosnippet>556</a>        .map(|(index, series)| {
-<a href=#557 id=557 data-nosnippet>557</a>            <span class="kw">let </span>(x_values, y_values): (Vec&lt;<span class="kw">_</span>&gt;, Vec&lt;<span class="kw">_</span>&gt;) = series.points.iter().copied().unzip();
-<a href=#558 id=558 data-nosnippet>558</a>            <span class="kw">let </span>provenance = <span class="kw">if </span>series.points.len() &lt;= POINT_PROVENANCE_LIMIT {
-<a href=#559 id=559 data-nosnippet>559</a>                series
-<a href=#560 id=560 data-nosnippet>560</a>                    .provenance
-<a href=#561 id=561 data-nosnippet>561</a>                    .iter()
-<a href=#562 id=562 data-nosnippet>562</a>                    .map(|point| PlotPointProvenance {
-<a href=#563 id=563 data-nosnippet>563</a>                        row: point.row <span class="kw">as </span>u64,
-<a href=#564 id=564 data-nosnippet>564</a>                        corr: point.corr <span class="kw">as </span>u64,
-<a href=#565 id=565 data-nosnippet>565</a>                        chan_start: point.chan_start <span class="kw">as </span>u64,
-<a href=#566 id=566 data-nosnippet>566</a>                        chan_end: point.chan_end <span class="kw">as </span>u64,
-<a href=#567 id=567 data-nosnippet>567</a>                    })
-<a href=#568 id=568 data-nosnippet>568</a>                    .collect()
-<a href=#569 id=569 data-nosnippet>569</a>            } <span class="kw">else </span>{
-<a href=#570 id=570 data-nosnippet>570</a>                Vec::new()
-<a href=#571 id=571 data-nosnippet>571</a>            };
-<a href=#572 id=572 data-nosnippet>572</a>            point_layer(PointLayerSpec {
-<a href=#573 id=573 data-nosnippet>573</a>                id: <span class="macro">format!</span>(<span class="string">"series-{index}"</span>),
-<a href=#574 id=574 data-nosnippet>574</a>                title: series.label.clone(),
-<a href=#575 id=575 data-nosnippet>575</a>                x_axis_id,
-<a href=#576 id=576 data-nosnippet>576</a>                y_axis_id,
-<a href=#577 id=577 data-nosnippet>577</a>                x_values,
-<a href=#578 id=578 data-nosnippet>578</a>                y_values,
-<a href=#579 id=579 data-nosnippet>579</a>                point_labels: Vec::new(),
-<a href=#580 id=580 data-nosnippet>580</a>                point_symbol_sizes: Vec::new(),
-<a href=#581 id=581 data-nosnippet>581</a>                provenance,
-<a href=#582 id=582 data-nosnippet>582</a>                color_group: series.color_group.clone(),
-<a href=#583 id=583 data-nosnippet>583</a>                symbol_size: f64::from(symbol_size_px.unwrap_or(<span class="number">3</span>)),
-<a href=#584 id=584 data-nosnippet>584</a>                line_width: <span class="number">1.0</span>,
-<a href=#585 id=585 data-nosnippet>585</a>                provenance_summary: <span class="string">"Visibility samples from Rust msexplore payload"</span>.to_string(),
-<a href=#586 id=586 data-nosnippet>586</a>            })
-<a href=#587 id=587 data-nosnippet>587</a>        })
-<a href=#588 id=588 data-nosnippet>588</a>        .collect()
-<a href=#589 id=589 data-nosnippet>589</a>}
-<a href=#590 id=590 data-nosnippet>590</a>
-<a href=#591 id=591 data-nosnippet>591</a><span class="kw">struct </span>PointLayerSpec&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#592 id=592 data-nosnippet>592</a>    id: String,
-<a href=#593 id=593 data-nosnippet>593</a>    title: String,
-<a href=#594 id=594 data-nosnippet>594</a>    x_axis_id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#595 id=595 data-nosnippet>595</a>    y_axis_id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#596 id=596 data-nosnippet>596</a>    x_values: Vec&lt;f64&gt;,
-<a href=#597 id=597 data-nosnippet>597</a>    y_values: Vec&lt;f64&gt;,
-<a href=#598 id=598 data-nosnippet>598</a>    point_labels: Vec&lt;String&gt;,
-<a href=#599 id=599 data-nosnippet>599</a>    point_symbol_sizes: Vec&lt;f64&gt;,
-<a href=#600 id=600 data-nosnippet>600</a>    provenance: Vec&lt;PlotPointProvenance&gt;,
-<a href=#601 id=601 data-nosnippet>601</a>    color_group: String,
-<a href=#602 id=602 data-nosnippet>602</a>    symbol_size: f64,
-<a href=#603 id=603 data-nosnippet>603</a>    line_width: f64,
-<a href=#604 id=604 data-nosnippet>604</a>    provenance_summary: String,
-<a href=#605 id=605 data-nosnippet>605</a>}
-<a href=#606 id=606 data-nosnippet>606</a>
-<a href=#607 id=607 data-nosnippet>607</a><span class="kw">fn </span>point_layer(spec: PointLayerSpec&lt;<span class="lifetime">'_</span>&gt;) -&gt; PlotDocumentLayer {
-<a href=#608 id=608 data-nosnippet>608</a>    <span class="kw">let </span>source_sample_count = spec.x_values.len() <span class="kw">as </span>u64;
-<a href=#609 id=609 data-nosnippet>609</a>    PlotDocumentLayer {
-<a href=#610 id=610 data-nosnippet>610</a>        id: spec.id,
-<a href=#611 id=611 data-nosnippet>611</a>        title: spec.title,
-<a href=#612 id=612 data-nosnippet>612</a>        kind: PlotLayerKind::Scatter,
-<a href=#613 id=613 data-nosnippet>613</a>        x_axis_id: spec.x_axis_id.to_string(),
-<a href=#614 id=614 data-nosnippet>614</a>        y_axis_id: spec.y_axis_id.to_string(),
-<a href=#615 id=615 data-nosnippet>615</a>        x_values: spec.x_values,
-<a href=#616 id=616 data-nosnippet>616</a>        y_values: spec.y_values,
-<a href=#617 id=617 data-nosnippet>617</a>        point_labels: spec.point_labels,
-<a href=#618 id=618 data-nosnippet>618</a>        point_symbol_sizes: spec.point_symbol_sizes,
-<a href=#619 id=619 data-nosnippet>619</a>        interval_x_start: Vec::new(),
-<a href=#620 id=620 data-nosnippet>620</a>        interval_x_end: Vec::new(),
-<a href=#621 id=621 data-nosnippet>621</a>        interval_y: Vec::new(),
-<a href=#622 id=622 data-nosnippet>622</a>        interval_height: Vec::new(),
-<a href=#623 id=623 data-nosnippet>623</a>        interval_labels: Vec::new(),
-<a href=#624 id=624 data-nosnippet>624</a>        provenance: spec.provenance,
-<a href=#625 id=625 data-nosnippet>625</a>        color_group: spec.color_group,
-<a href=#626 id=626 data-nosnippet>626</a>        symbol_size: spec.symbol_size,
-<a href=#627 id=627 data-nosnippet>627</a>        line_width: spec.line_width,
-<a href=#628 id=628 data-nosnippet>628</a>        opacity: <span class="number">0.82</span>,
-<a href=#629 id=629 data-nosnippet>629</a>        source_sample_count,
-<a href=#630 id=630 data-nosnippet>630</a>        payload_strategy: PlotPayloadStrategy::PointCloud,
-<a href=#631 id=631 data-nosnippet>631</a>        provenance_summary: spec.provenance_summary,
-<a href=#632 id=632 data-nosnippet>632</a>        data: <span class="prelude-val">None</span>,
-<a href=#633 id=633 data-nosnippet>633</a>        style: <span class="prelude-val">None</span>,
-<a href=#634 id=634 data-nosnippet>634</a>    }
-<a href=#635 id=635 data-nosnippet>635</a>}
-<a href=#636 id=636 data-nosnippet>636</a>
-<a href=#637 id=637 data-nosnippet>637</a><span class="kw">struct </span>IntervalLayerSpec&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#638 id=638 data-nosnippet>638</a>    id: String,
-<a href=#639 id=639 data-nosnippet>639</a>    title: String,
-<a href=#640 id=640 data-nosnippet>640</a>    x_axis_id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#641 id=641 data-nosnippet>641</a>    y_axis_id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
-<a href=#642 id=642 data-nosnippet>642</a>    interval_x_start: Vec&lt;f64&gt;,
-<a href=#643 id=643 data-nosnippet>643</a>    interval_x_end: Vec&lt;f64&gt;,
-<a href=#644 id=644 data-nosnippet>644</a>    interval_y: Vec&lt;f64&gt;,
-<a href=#645 id=645 data-nosnippet>645</a>    interval_height: Vec&lt;f64&gt;,
-<a href=#646 id=646 data-nosnippet>646</a>    interval_labels: Vec&lt;String&gt;,
-<a href=#647 id=647 data-nosnippet>647</a>    color_group: String,
-<a href=#648 id=648 data-nosnippet>648</a>    provenance_summary: String,
-<a href=#649 id=649 data-nosnippet>649</a>}
-<a href=#650 id=650 data-nosnippet>650</a>
-<a href=#651 id=651 data-nosnippet>651</a><span class="kw">fn </span>interval_layer(spec: IntervalLayerSpec&lt;<span class="lifetime">'_</span>&gt;) -&gt; PlotDocumentLayer {
-<a href=#652 id=652 data-nosnippet>652</a>    <span class="kw">let </span>source_sample_count = spec.interval_x_start.len() <span class="kw">as </span>u64;
-<a href=#653 id=653 data-nosnippet>653</a>    PlotDocumentLayer {
-<a href=#654 id=654 data-nosnippet>654</a>        id: spec.id,
-<a href=#655 id=655 data-nosnippet>655</a>        title: spec.title,
-<a href=#656 id=656 data-nosnippet>656</a>        kind: PlotLayerKind::Interval,
-<a href=#657 id=657 data-nosnippet>657</a>        x_axis_id: spec.x_axis_id.to_string(),
-<a href=#658 id=658 data-nosnippet>658</a>        y_axis_id: spec.y_axis_id.to_string(),
-<a href=#659 id=659 data-nosnippet>659</a>        x_values: Vec::new(),
-<a href=#660 id=660 data-nosnippet>660</a>        y_values: Vec::new(),
-<a href=#661 id=661 data-nosnippet>661</a>        point_labels: Vec::new(),
-<a href=#662 id=662 data-nosnippet>662</a>        point_symbol_sizes: Vec::new(),
-<a href=#663 id=663 data-nosnippet>663</a>        interval_x_start: spec.interval_x_start,
-<a href=#664 id=664 data-nosnippet>664</a>        interval_x_end: spec.interval_x_end,
-<a href=#665 id=665 data-nosnippet>665</a>        interval_y: spec.interval_y,
-<a href=#666 id=666 data-nosnippet>666</a>        interval_height: spec.interval_height,
-<a href=#667 id=667 data-nosnippet>667</a>        interval_labels: spec.interval_labels,
-<a href=#668 id=668 data-nosnippet>668</a>        provenance: Vec::new(),
-<a href=#669 id=669 data-nosnippet>669</a>        color_group: spec.color_group,
-<a href=#670 id=670 data-nosnippet>670</a>        symbol_size: <span class="number">1.0</span>,
-<a href=#671 id=671 data-nosnippet>671</a>        line_width: <span class="number">1.0</span>,
-<a href=#672 id=672 data-nosnippet>672</a>        opacity: <span class="number">0.78</span>,
-<a href=#673 id=673 data-nosnippet>673</a>        source_sample_count,
-<a href=#674 id=674 data-nosnippet>674</a>        payload_strategy: PlotPayloadStrategy::Intervals,
-<a href=#675 id=675 data-nosnippet>675</a>        provenance_summary: spec.provenance_summary,
-<a href=#676 id=676 data-nosnippet>676</a>        data: <span class="prelude-val">None</span>,
-<a href=#677 id=677 data-nosnippet>677</a>        style: <span class="prelude-val">None</span>,
-<a href=#678 id=678 data-nosnippet>678</a>    }
-<a href=#679 id=679 data-nosnippet>679</a>}
-<a href=#680 id=680 data-nosnippet>680</a>
-<a href=#681 id=681 data-nosnippet>681</a><span class="kw">fn </span>document_axis(
-<a href=#682 id=682 data-nosnippet>682</a>    id: <span class="kw-2">&amp;</span>str,
-<a href=#683 id=683 data-nosnippet>683</a>    label: <span class="kw-2">&amp;</span>str,
-<a href=#684 id=684 data-nosnippet>684</a>    unit: <span class="kw-2">&amp;</span>str,
-<a href=#685 id=685 data-nosnippet>685</a>    lower: f64,
-<a href=#686 id=686 data-nosnippet>686</a>    upper: f64,
-<a href=#687 id=687 data-nosnippet>687</a>    scale: PlotAxisScale,
-<a href=#688 id=688 data-nosnippet>688</a>) -&gt; PlotDocumentAxis {
-<a href=#689 id=689 data-nosnippet>689</a>    PlotDocumentAxis {
-<a href=#690 id=690 data-nosnippet>690</a>        id: id.to_string(),
-<a href=#691 id=691 data-nosnippet>691</a>        label: label.to_string(),
-<a href=#692 id=692 data-nosnippet>692</a>        unit: unit.to_string(),
-<a href=#693 id=693 data-nosnippet>693</a>        lower,
-<a href=#694 id=694 data-nosnippet>694</a>        upper,
-<a href=#695 id=695 data-nosnippet>695</a>        scale,
-<a href=#696 id=696 data-nosnippet>696</a>        lane_labels: Vec::new(),
-<a href=#697 id=697 data-nosnippet>697</a>        draws_on_trailing_edge: <span class="bool-val">false</span>,
-<a href=#698 id=698 data-nosnippet>698</a>    }
-<a href=#699 id=699 data-nosnippet>699</a>}
-<a href=#700 id=700 data-nosnippet>700</a>
-<a href=#701 id=701 data-nosnippet>701</a><span class="kw">fn </span>document_lane_axis(id: <span class="kw-2">&amp;</span>str, label: <span class="kw-2">&amp;</span>str, lane_labels: Vec&lt;String&gt;) -&gt; PlotDocumentAxis {
-<a href=#702 id=702 data-nosnippet>702</a>    PlotDocumentAxis {
-<a href=#703 id=703 data-nosnippet>703</a>        id: id.to_string(),
-<a href=#704 id=704 data-nosnippet>704</a>        label: label.to_string(),
-<a href=#705 id=705 data-nosnippet>705</a>        unit: String::new(),
-<a href=#706 id=706 data-nosnippet>706</a>        lower: -<span class="number">0.5</span>,
-<a href=#707 id=707 data-nosnippet>707</a>        upper: lane_labels.len().saturating_sub(<span class="number">1</span>) <span class="kw">as </span>f64 + <span class="number">0.5</span>,
-<a href=#708 id=708 data-nosnippet>708</a>        scale: PlotAxisScale::Linear,
-<a href=#709 id=709 data-nosnippet>709</a>        lane_labels,
-<a href=#710 id=710 data-nosnippet>710</a>        draws_on_trailing_edge: <span class="bool-val">false</span>,
-<a href=#711 id=711 data-nosnippet>711</a>    }
-<a href=#712 id=712 data-nosnippet>712</a>}
-<a href=#713 id=713 data-nosnippet>713</a>
-<a href=#714 id=714 data-nosnippet>714</a><span class="kw">fn </span>series_y_bounds(values: <span class="kw">impl </span>Iterator&lt;Item = f64&gt;) -&gt; (f64, f64) {
-<a href=#715 id=715 data-nosnippet>715</a>    expanded_bounds(values.fold(<span class="prelude-val">None</span>, bounds_accumulator).unwrap_or((<span class="number">0.0</span>, <span class="number">1.0</span>)))
+<a href=#335 id=335 data-nosnippet>335</a>    <span class="kw">let </span>primary_bounds = payload.fixed_y_bounds.unwrap_or_else(|| {
+<a href=#336 id=336 data-nosnippet>336</a>        payload
+<a href=#337 id=337 data-nosnippet>337</a>            .series
+<a href=#338 id=338 data-nosnippet>338</a>            .iter()
+<a href=#339 id=339 data-nosnippet>339</a>            .filter(|series| series.y_index == <span class="number">0</span>)
+<a href=#340 id=340 data-nosnippet>340</a>            .flat_map(|series| series.points.iter().map(|(<span class="kw">_</span>, y)| <span class="kw-2">*</span>y))
+<a href=#341 id=341 data-nosnippet>341</a>            .fold(<span class="prelude-val">None</span>, bounds_accumulator)
+<a href=#342 id=342 data-nosnippet>342</a>            .unwrap_or((<span class="number">0.0</span>, <span class="number">1.0</span>))
+<a href=#343 id=343 data-nosnippet>343</a>    });
+<a href=#344 id=344 data-nosnippet>344</a>    <span class="kw">let </span><span class="kw-2">mut </span>axes = axes_for_ranges(
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="string">"x"</span>,
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw-2">&amp;</span>payload.x_label,
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="string">"y"</span>,
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw-2">&amp;</span>payload.y_label,
+<a href=#349 id=349 data-nosnippet>349</a>        payload.fixed_x_bounds,
+<a href=#350 id=350 data-nosnippet>350</a>        <span class="prelude-val">Some</span>(primary_bounds),
+<a href=#351 id=351 data-nosnippet>351</a>        payload
+<a href=#352 id=352 data-nosnippet>352</a>            .series
+<a href=#353 id=353 data-nosnippet>353</a>            .iter()
+<a href=#354 id=354 data-nosnippet>354</a>            .flat_map(|series| series.points.iter().copied()),
+<a href=#355 id=355 data-nosnippet>355</a>    );
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">let </span><span class="kw-2">mut </span>layers = scatter_layers(<span class="kw-2">&amp;</span>payload.series, <span class="string">"x"</span>, <span class="string">"y"</span>, payload.symbol_size_px);
+<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(secondary_label) = <span class="kw-2">&amp;</span>payload.secondary_y_label {
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="kw">let </span>(lower, upper) = payload.secondary_fixed_y_bounds.unwrap_or_else(|| {
+<a href=#359 id=359 data-nosnippet>359</a>            series_y_bounds(
+<a href=#360 id=360 data-nosnippet>360</a>                payload
+<a href=#361 id=361 data-nosnippet>361</a>                    .series
+<a href=#362 id=362 data-nosnippet>362</a>                    .iter()
+<a href=#363 id=363 data-nosnippet>363</a>                    .filter(|series| series.y_index == <span class="number">1</span>)
+<a href=#364 id=364 data-nosnippet>364</a>                    .flat_map(|series| series.points.iter().map(|(<span class="kw">_</span>, y)| <span class="kw-2">*</span>y)),
+<a href=#365 id=365 data-nosnippet>365</a>            )
+<a href=#366 id=366 data-nosnippet>366</a>        });
+<a href=#367 id=367 data-nosnippet>367</a>        axes.push(PlotDocumentAxis {
+<a href=#368 id=368 data-nosnippet>368</a>            draws_on_trailing_edge: <span class="bool-val">true</span>,
+<a href=#369 id=369 data-nosnippet>369</a>            ..document_axis(
+<a href=#370 id=370 data-nosnippet>370</a>                <span class="string">"y-secondary"</span>,
+<a href=#371 id=371 data-nosnippet>371</a>                secondary_label,
+<a href=#372 id=372 data-nosnippet>372</a>                <span class="kw-2">&amp;</span>label_unit(secondary_label),
+<a href=#373 id=373 data-nosnippet>373</a>                lower,
+<a href=#374 id=374 data-nosnippet>374</a>                upper,
+<a href=#375 id=375 data-nosnippet>375</a>                PlotAxisScale::Linear,
+<a href=#376 id=376 data-nosnippet>376</a>            )
+<a href=#377 id=377 data-nosnippet>377</a>        });
+<a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">for </span>(series, layer) <span class="kw">in </span>payload.series.iter().zip(<span class="kw-2">&amp;mut </span>layers) {
+<a href=#379 id=379 data-nosnippet>379</a>            <span class="kw">if </span>series.y_index == <span class="number">1 </span>{
+<a href=#380 id=380 data-nosnippet>380</a>                layer.y_axis_id = <span class="string">"y-secondary"</span>.to_string();
+<a href=#381 id=381 data-nosnippet>381</a>            }
+<a href=#382 id=382 data-nosnippet>382</a>        }
+<a href=#383 id=383 data-nosnippet>383</a>    }
+<a href=#384 id=384 data-nosnippet>384</a>    base_document(
+<a href=#385 id=385 data-nosnippet>385</a>        preset,
+<a href=#386 id=386 data-nosnippet>386</a>        metadata,
+<a href=#387 id=387 data-nosnippet>387</a>        payload.header_lines.clone(),
+<a href=#388 id=388 data-nosnippet>388</a>        axes,
+<a href=#389 id=389 data-nosnippet>389</a>        layers,
+<a href=#390 id=390 data-nosnippet>390</a>        Vec::new(),
+<a href=#391 id=391 data-nosnippet>391</a>        Vec::new(),
+<a href=#392 id=392 data-nosnippet>392</a>    )
+<a href=#393 id=393 data-nosnippet>393</a>}
+<a href=#394 id=394 data-nosnippet>394</a>
+<a href=#395 id=395 data-nosnippet>395</a><span class="kw">fn </span>shared_scatter_plot_document(
+<a href=#396 id=396 data-nosnippet>396</a>    payload: <span class="kw-2">&amp;</span>MsPlotPayload,
+<a href=#397 id=397 data-nosnippet>397</a>    metadata: <span class="kw-2">&amp;</span>PayloadMetadata,
+<a href=#398 id=398 data-nosnippet>398</a>    preset: MsPlotPreset,
+<a href=#399 id=399 data-nosnippet>399</a>) -&gt; PlotDocument {
+<a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">let </span>shared = MsPlotData::from_payload(payload)
+<a href=#401 id=401 data-nosnippet>401</a>        .expect(<span class="string">"scatter payloads always project into the shared plot-data contract"</span>);
+<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">let </span><span class="kw-2">mut </span>panels = shared
+<a href=#403 id=403 data-nosnippet>403</a>        .panels
+<a href=#404 id=404 data-nosnippet>404</a>        .iter()
+<a href=#405 id=405 data-nosnippet>405</a>        .map(shared_plot_panel)
+<a href=#406 id=406 data-nosnippet>406</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#407 id=407 data-nosnippet>407</a>    <span class="kw">if </span><span class="macro">matches!</span>(payload, MsPlotPayload::Scatter(<span class="kw">_</span>)) {
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>panel = panels.remove(<span class="number">0</span>);
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">return </span>base_document(
+<a href=#410 id=410 data-nosnippet>410</a>            preset,
+<a href=#411 id=411 data-nosnippet>411</a>            metadata,
+<a href=#412 id=412 data-nosnippet>412</a>            shared.header_lines,
+<a href=#413 id=413 data-nosnippet>413</a>            panel.axes,
+<a href=#414 id=414 data-nosnippet>414</a>            panel.layers,
+<a href=#415 id=415 data-nosnippet>415</a>            panel.annotations,
+<a href=#416 id=416 data-nosnippet>416</a>            Vec::new(),
+<a href=#417 id=417 data-nosnippet>417</a>        );
+<a href=#418 id=418 data-nosnippet>418</a>    }
+<a href=#419 id=419 data-nosnippet>419</a>    base_document(
+<a href=#420 id=420 data-nosnippet>420</a>        preset,
+<a href=#421 id=421 data-nosnippet>421</a>        metadata,
+<a href=#422 id=422 data-nosnippet>422</a>        shared.header_lines,
+<a href=#423 id=423 data-nosnippet>423</a>        Vec::new(),
+<a href=#424 id=424 data-nosnippet>424</a>        Vec::new(),
+<a href=#425 id=425 data-nosnippet>425</a>        Vec::new(),
+<a href=#426 id=426 data-nosnippet>426</a>        panels,
+<a href=#427 id=427 data-nosnippet>427</a>    )
+<a href=#428 id=428 data-nosnippet>428</a>}
+<a href=#429 id=429 data-nosnippet>429</a>
+<a href=#430 id=430 data-nosnippet>430</a><span class="kw">fn </span>shared_plot_panel(panel: <span class="kw-2">&amp;</span>MsPlotDataPanel) -&gt; PlotDocumentPanel {
+<a href=#431 id=431 data-nosnippet>431</a>    PlotDocumentPanel {
+<a href=#432 id=432 data-nosnippet>432</a>        id: panel.id.clone(),
+<a href=#433 id=433 data-nosnippet>433</a>        title: panel.title.clone(),
+<a href=#434 id=434 data-nosnippet>434</a>        title_font_size: <span class="prelude-val">None</span>,
+<a href=#435 id=435 data-nosnippet>435</a>        axes: panel
+<a href=#436 id=436 data-nosnippet>436</a>            .axes
+<a href=#437 id=437 data-nosnippet>437</a>            .iter()
+<a href=#438 id=438 data-nosnippet>438</a>            .map(|axis| {
+<a href=#439 id=439 data-nosnippet>439</a>                document_axis(
+<a href=#440 id=440 data-nosnippet>440</a>                    <span class="kw-2">&amp;</span>axis.id,
+<a href=#441 id=441 data-nosnippet>441</a>                    <span class="kw-2">&amp;</span>axis.label,
+<a href=#442 id=442 data-nosnippet>442</a>                    <span class="kw-2">&amp;</span>axis.unit,
+<a href=#443 id=443 data-nosnippet>443</a>                    axis.lower,
+<a href=#444 id=444 data-nosnippet>444</a>                    axis.upper,
+<a href=#445 id=445 data-nosnippet>445</a>                    PlotAxisScale::Linear,
+<a href=#446 id=446 data-nosnippet>446</a>                )
+<a href=#447 id=447 data-nosnippet>447</a>            })
+<a href=#448 id=448 data-nosnippet>448</a>            .collect(),
+<a href=#449 id=449 data-nosnippet>449</a>        layers: panel
+<a href=#450 id=450 data-nosnippet>450</a>            .series
+<a href=#451 id=451 data-nosnippet>451</a>            .iter()
+<a href=#452 id=452 data-nosnippet>452</a>            .enumerate()
+<a href=#453 id=453 data-nosnippet>453</a>            .map(|(index, series)| {
+<a href=#454 id=454 data-nosnippet>454</a>                point_layer(PointLayerSpec {
+<a href=#455 id=455 data-nosnippet>455</a>                    id: <span class="macro">format!</span>(<span class="string">"series-{index}"</span>),
+<a href=#456 id=456 data-nosnippet>456</a>                    title: series.label.clone(),
+<a href=#457 id=457 data-nosnippet>457</a>                    x_axis_id: <span class="string">"x"</span>,
+<a href=#458 id=458 data-nosnippet>458</a>                    y_axis_id: <span class="kw-2">&amp;</span>series.y_axis_id,
+<a href=#459 id=459 data-nosnippet>459</a>                    x_values: series.x.clone(),
+<a href=#460 id=460 data-nosnippet>460</a>                    y_values: series.y.clone(),
+<a href=#461 id=461 data-nosnippet>461</a>                    point_labels: Vec::new(),
+<a href=#462 id=462 data-nosnippet>462</a>                    point_symbol_sizes: Vec::new(),
+<a href=#463 id=463 data-nosnippet>463</a>                    provenance: <span class="kw">if </span>series.x.len() &lt;= POINT_PROVENANCE_LIMIT {
+<a href=#464 id=464 data-nosnippet>464</a>                        series
+<a href=#465 id=465 data-nosnippet>465</a>                            .provenance
+<a href=#466 id=466 data-nosnippet>466</a>                            .iter()
+<a href=#467 id=467 data-nosnippet>467</a>                            .map(|point| PlotPointProvenance {
+<a href=#468 id=468 data-nosnippet>468</a>                                row: point.row <span class="kw">as </span>u64,
+<a href=#469 id=469 data-nosnippet>469</a>                                corr: point.corr <span class="kw">as </span>u64,
+<a href=#470 id=470 data-nosnippet>470</a>                                chan_start: point.chan_start <span class="kw">as </span>u64,
+<a href=#471 id=471 data-nosnippet>471</a>                                chan_end: point.chan_end <span class="kw">as </span>u64,
+<a href=#472 id=472 data-nosnippet>472</a>                            })
+<a href=#473 id=473 data-nosnippet>473</a>                            .collect()
+<a href=#474 id=474 data-nosnippet>474</a>                    } <span class="kw">else </span>{
+<a href=#475 id=475 data-nosnippet>475</a>                        Vec::new()
+<a href=#476 id=476 data-nosnippet>476</a>                    },
+<a href=#477 id=477 data-nosnippet>477</a>                    color_group: series.color_group.clone(),
+<a href=#478 id=478 data-nosnippet>478</a>                    symbol_size: panel.symbol_size,
+<a href=#479 id=479 data-nosnippet>479</a>                    line_width: <span class="number">1.0</span>,
+<a href=#480 id=480 data-nosnippet>480</a>                    provenance_summary: <span class="string">"Visibility samples from shared casa-ms plot data"
+<a href=#481 id=481 data-nosnippet>481</a>                        </span>.to_owned(),
+<a href=#482 id=482 data-nosnippet>482</a>                })
+<a href=#483 id=483 data-nosnippet>483</a>            })
+<a href=#484 id=484 data-nosnippet>484</a>            .collect(),
+<a href=#485 id=485 data-nosnippet>485</a>        annotations: Vec::new(),
+<a href=#486 id=486 data-nosnippet>486</a>        aspect: <span class="prelude-val">None</span>,
+<a href=#487 id=487 data-nosnippet>487</a>        frame_visible: <span class="prelude-val">None</span>,
+<a href=#488 id=488 data-nosnippet>488</a>    }
+<a href=#489 id=489 data-nosnippet>489</a>}
+<a href=#490 id=490 data-nosnippet>490</a>
+<a href=#491 id=491 data-nosnippet>491</a><span class="kw">fn </span>base_document(
+<a href=#492 id=492 data-nosnippet>492</a>    preset: MsPlotPreset,
+<a href=#493 id=493 data-nosnippet>493</a>    metadata: <span class="kw-2">&amp;</span>PayloadMetadata,
+<a href=#494 id=494 data-nosnippet>494</a>    header_lines: Vec&lt;String&gt;,
+<a href=#495 id=495 data-nosnippet>495</a>    axes: Vec&lt;PlotDocumentAxis&gt;,
+<a href=#496 id=496 data-nosnippet>496</a>    layers: Vec&lt;PlotDocumentLayer&gt;,
+<a href=#497 id=497 data-nosnippet>497</a>    annotations: Vec&lt;PlotDocumentAnnotation&gt;,
+<a href=#498 id=498 data-nosnippet>498</a>    panels: Vec&lt;PlotDocumentPanel&gt;,
+<a href=#499 id=499 data-nosnippet>499</a>) -&gt; PlotDocument {
+<a href=#500 id=500 data-nosnippet>500</a>    PlotDocument {
+<a href=#501 id=501 data-nosnippet>501</a>        id: <span class="macro">format!</span>(<span class="string">"msexplore-{}"</span>, preset.as_str()),
+<a href=#502 id=502 data-nosnippet>502</a>        title: metadata.title.clone(),
+<a href=#503 id=503 data-nosnippet>503</a>        subtitle: metadata.summary.clone(),
+<a href=#504 id=504 data-nosnippet>504</a>        header_lines,
+<a href=#505 id=505 data-nosnippet>505</a>        axes,
+<a href=#506 id=506 data-nosnippet>506</a>        layers,
+<a href=#507 id=507 data-nosnippet>507</a>        annotations,
+<a href=#508 id=508 data-nosnippet>508</a>        panels,
+<a href=#509 id=509 data-nosnippet>509</a>        show_legend: <span class="bool-val">true</span>,
+<a href=#510 id=510 data-nosnippet>510</a>        layout: <span class="prelude-val">None</span>,
+<a href=#511 id=511 data-nosnippet>511</a>    }
+<a href=#512 id=512 data-nosnippet>512</a>}
+<a href=#513 id=513 data-nosnippet>513</a>
+<a href=#514 id=514 data-nosnippet>514</a><span class="kw">fn </span>axes_for_ranges(
+<a href=#515 id=515 data-nosnippet>515</a>    x_id: <span class="kw-2">&amp;</span>str,
+<a href=#516 id=516 data-nosnippet>516</a>    x_label: <span class="kw-2">&amp;</span>str,
+<a href=#517 id=517 data-nosnippet>517</a>    y_id: <span class="kw-2">&amp;</span>str,
+<a href=#518 id=518 data-nosnippet>518</a>    y_label: <span class="kw-2">&amp;</span>str,
+<a href=#519 id=519 data-nosnippet>519</a>    fixed_x_bounds: <span class="prelude-ty">Option</span>&lt;(f64, f64)&gt;,
+<a href=#520 id=520 data-nosnippet>520</a>    fixed_y_bounds: <span class="prelude-ty">Option</span>&lt;(f64, f64)&gt;,
+<a href=#521 id=521 data-nosnippet>521</a>    points: <span class="kw">impl </span>Iterator&lt;Item = (f64, f64)&gt;,
+<a href=#522 id=522 data-nosnippet>522</a>) -&gt; Vec&lt;PlotDocumentAxis&gt; {
+<a href=#523 id=523 data-nosnippet>523</a>    <span class="kw">let </span>(x_bounds, y_bounds) = points.fold((<span class="prelude-val">None</span>, <span class="prelude-val">None</span>), |(x_bounds, y_bounds), (x, y)| {
+<a href=#524 id=524 data-nosnippet>524</a>        (
+<a href=#525 id=525 data-nosnippet>525</a>            bounds_accumulator(x_bounds, x),
+<a href=#526 id=526 data-nosnippet>526</a>            bounds_accumulator(y_bounds, y),
+<a href=#527 id=527 data-nosnippet>527</a>        )
+<a href=#528 id=528 data-nosnippet>528</a>    });
+<a href=#529 id=529 data-nosnippet>529</a>    <span class="kw">let </span>x_bounds = expanded_bounds(fixed_x_bounds.or(x_bounds).unwrap_or((<span class="number">0.0</span>, <span class="number">1.0</span>)));
+<a href=#530 id=530 data-nosnippet>530</a>    <span class="kw">let </span>y_bounds = expanded_bounds(fixed_y_bounds.or(y_bounds).unwrap_or((<span class="number">0.0</span>, <span class="number">1.0</span>)));
+<a href=#531 id=531 data-nosnippet>531</a>    <span class="macro">vec!</span>[
+<a href=#532 id=532 data-nosnippet>532</a>        document_axis(
+<a href=#533 id=533 data-nosnippet>533</a>            x_id,
+<a href=#534 id=534 data-nosnippet>534</a>            x_label,
+<a href=#535 id=535 data-nosnippet>535</a>            <span class="kw-2">&amp;</span>label_unit(x_label),
+<a href=#536 id=536 data-nosnippet>536</a>            x_bounds.<span class="number">0</span>,
+<a href=#537 id=537 data-nosnippet>537</a>            x_bounds.<span class="number">1</span>,
+<a href=#538 id=538 data-nosnippet>538</a>            PlotAxisScale::Linear,
+<a href=#539 id=539 data-nosnippet>539</a>        ),
+<a href=#540 id=540 data-nosnippet>540</a>        document_axis(
+<a href=#541 id=541 data-nosnippet>541</a>            y_id,
+<a href=#542 id=542 data-nosnippet>542</a>            y_label,
+<a href=#543 id=543 data-nosnippet>543</a>            <span class="kw-2">&amp;</span>label_unit(y_label),
+<a href=#544 id=544 data-nosnippet>544</a>            y_bounds.<span class="number">0</span>,
+<a href=#545 id=545 data-nosnippet>545</a>            y_bounds.<span class="number">1</span>,
+<a href=#546 id=546 data-nosnippet>546</a>            PlotAxisScale::Linear,
+<a href=#547 id=547 data-nosnippet>547</a>        ),
+<a href=#548 id=548 data-nosnippet>548</a>    ]
+<a href=#549 id=549 data-nosnippet>549</a>}
+<a href=#550 id=550 data-nosnippet>550</a>
+<a href=#551 id=551 data-nosnippet>551</a><span class="kw">fn </span>scatter_layers(
+<a href=#552 id=552 data-nosnippet>552</a>    series: <span class="kw-2">&amp;</span>[MsScatterSeries],
+<a href=#553 id=553 data-nosnippet>553</a>    x_axis_id: <span class="kw-2">&amp;</span>str,
+<a href=#554 id=554 data-nosnippet>554</a>    y_axis_id: <span class="kw-2">&amp;</span>str,
+<a href=#555 id=555 data-nosnippet>555</a>    symbol_size_px: <span class="prelude-ty">Option</span>&lt;u32&gt;,
+<a href=#556 id=556 data-nosnippet>556</a>) -&gt; Vec&lt;PlotDocumentLayer&gt; {
+<a href=#557 id=557 data-nosnippet>557</a>    series
+<a href=#558 id=558 data-nosnippet>558</a>        .iter()
+<a href=#559 id=559 data-nosnippet>559</a>        .enumerate()
+<a href=#560 id=560 data-nosnippet>560</a>        .map(|(index, series)| {
+<a href=#561 id=561 data-nosnippet>561</a>            <span class="kw">let </span>(x_values, y_values): (Vec&lt;<span class="kw">_</span>&gt;, Vec&lt;<span class="kw">_</span>&gt;) = series.points.iter().copied().unzip();
+<a href=#562 id=562 data-nosnippet>562</a>            <span class="kw">let </span>provenance = <span class="kw">if </span>series.points.len() &lt;= POINT_PROVENANCE_LIMIT {
+<a href=#563 id=563 data-nosnippet>563</a>                series
+<a href=#564 id=564 data-nosnippet>564</a>                    .provenance
+<a href=#565 id=565 data-nosnippet>565</a>                    .iter()
+<a href=#566 id=566 data-nosnippet>566</a>                    .map(|point| PlotPointProvenance {
+<a href=#567 id=567 data-nosnippet>567</a>                        row: point.row <span class="kw">as </span>u64,
+<a href=#568 id=568 data-nosnippet>568</a>                        corr: point.corr <span class="kw">as </span>u64,
+<a href=#569 id=569 data-nosnippet>569</a>                        chan_start: point.chan_start <span class="kw">as </span>u64,
+<a href=#570 id=570 data-nosnippet>570</a>                        chan_end: point.chan_end <span class="kw">as </span>u64,
+<a href=#571 id=571 data-nosnippet>571</a>                    })
+<a href=#572 id=572 data-nosnippet>572</a>                    .collect()
+<a href=#573 id=573 data-nosnippet>573</a>            } <span class="kw">else </span>{
+<a href=#574 id=574 data-nosnippet>574</a>                Vec::new()
+<a href=#575 id=575 data-nosnippet>575</a>            };
+<a href=#576 id=576 data-nosnippet>576</a>            point_layer(PointLayerSpec {
+<a href=#577 id=577 data-nosnippet>577</a>                id: <span class="macro">format!</span>(<span class="string">"series-{index}"</span>),
+<a href=#578 id=578 data-nosnippet>578</a>                title: series.label.clone(),
+<a href=#579 id=579 data-nosnippet>579</a>                x_axis_id,
+<a href=#580 id=580 data-nosnippet>580</a>                y_axis_id,
+<a href=#581 id=581 data-nosnippet>581</a>                x_values,
+<a href=#582 id=582 data-nosnippet>582</a>                y_values,
+<a href=#583 id=583 data-nosnippet>583</a>                point_labels: Vec::new(),
+<a href=#584 id=584 data-nosnippet>584</a>                point_symbol_sizes: Vec::new(),
+<a href=#585 id=585 data-nosnippet>585</a>                provenance,
+<a href=#586 id=586 data-nosnippet>586</a>                color_group: series.color_group.clone(),
+<a href=#587 id=587 data-nosnippet>587</a>                symbol_size: f64::from(symbol_size_px.unwrap_or(<span class="number">3</span>)),
+<a href=#588 id=588 data-nosnippet>588</a>                line_width: <span class="number">1.0</span>,
+<a href=#589 id=589 data-nosnippet>589</a>                provenance_summary: <span class="string">"Visibility samples from Rust msexplore payload"</span>.to_string(),
+<a href=#590 id=590 data-nosnippet>590</a>            })
+<a href=#591 id=591 data-nosnippet>591</a>        })
+<a href=#592 id=592 data-nosnippet>592</a>        .collect()
+<a href=#593 id=593 data-nosnippet>593</a>}
+<a href=#594 id=594 data-nosnippet>594</a>
+<a href=#595 id=595 data-nosnippet>595</a><span class="kw">struct </span>PointLayerSpec&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#596 id=596 data-nosnippet>596</a>    id: String,
+<a href=#597 id=597 data-nosnippet>597</a>    title: String,
+<a href=#598 id=598 data-nosnippet>598</a>    x_axis_id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#599 id=599 data-nosnippet>599</a>    y_axis_id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#600 id=600 data-nosnippet>600</a>    x_values: Vec&lt;f64&gt;,
+<a href=#601 id=601 data-nosnippet>601</a>    y_values: Vec&lt;f64&gt;,
+<a href=#602 id=602 data-nosnippet>602</a>    point_labels: Vec&lt;String&gt;,
+<a href=#603 id=603 data-nosnippet>603</a>    point_symbol_sizes: Vec&lt;f64&gt;,
+<a href=#604 id=604 data-nosnippet>604</a>    provenance: Vec&lt;PlotPointProvenance&gt;,
+<a href=#605 id=605 data-nosnippet>605</a>    color_group: String,
+<a href=#606 id=606 data-nosnippet>606</a>    symbol_size: f64,
+<a href=#607 id=607 data-nosnippet>607</a>    line_width: f64,
+<a href=#608 id=608 data-nosnippet>608</a>    provenance_summary: String,
+<a href=#609 id=609 data-nosnippet>609</a>}
+<a href=#610 id=610 data-nosnippet>610</a>
+<a href=#611 id=611 data-nosnippet>611</a><span class="kw">fn </span>point_layer(spec: PointLayerSpec&lt;<span class="lifetime">'_</span>&gt;) -&gt; PlotDocumentLayer {
+<a href=#612 id=612 data-nosnippet>612</a>    <span class="kw">let </span>source_sample_count = spec.x_values.len() <span class="kw">as </span>u64;
+<a href=#613 id=613 data-nosnippet>613</a>    PlotDocumentLayer {
+<a href=#614 id=614 data-nosnippet>614</a>        id: spec.id,
+<a href=#615 id=615 data-nosnippet>615</a>        title: spec.title,
+<a href=#616 id=616 data-nosnippet>616</a>        kind: PlotLayerKind::Scatter,
+<a href=#617 id=617 data-nosnippet>617</a>        x_axis_id: spec.x_axis_id.to_string(),
+<a href=#618 id=618 data-nosnippet>618</a>        y_axis_id: spec.y_axis_id.to_string(),
+<a href=#619 id=619 data-nosnippet>619</a>        x_values: spec.x_values,
+<a href=#620 id=620 data-nosnippet>620</a>        y_values: spec.y_values,
+<a href=#621 id=621 data-nosnippet>621</a>        point_labels: spec.point_labels,
+<a href=#622 id=622 data-nosnippet>622</a>        point_symbol_sizes: spec.point_symbol_sizes,
+<a href=#623 id=623 data-nosnippet>623</a>        interval_x_start: Vec::new(),
+<a href=#624 id=624 data-nosnippet>624</a>        interval_x_end: Vec::new(),
+<a href=#625 id=625 data-nosnippet>625</a>        interval_y: Vec::new(),
+<a href=#626 id=626 data-nosnippet>626</a>        interval_height: Vec::new(),
+<a href=#627 id=627 data-nosnippet>627</a>        interval_labels: Vec::new(),
+<a href=#628 id=628 data-nosnippet>628</a>        provenance: spec.provenance,
+<a href=#629 id=629 data-nosnippet>629</a>        color_group: spec.color_group,
+<a href=#630 id=630 data-nosnippet>630</a>        symbol_size: spec.symbol_size,
+<a href=#631 id=631 data-nosnippet>631</a>        line_width: spec.line_width,
+<a href=#632 id=632 data-nosnippet>632</a>        opacity: <span class="number">0.82</span>,
+<a href=#633 id=633 data-nosnippet>633</a>        source_sample_count,
+<a href=#634 id=634 data-nosnippet>634</a>        payload_strategy: PlotPayloadStrategy::PointCloud,
+<a href=#635 id=635 data-nosnippet>635</a>        provenance_summary: spec.provenance_summary,
+<a href=#636 id=636 data-nosnippet>636</a>        data: <span class="prelude-val">None</span>,
+<a href=#637 id=637 data-nosnippet>637</a>        style: <span class="prelude-val">None</span>,
+<a href=#638 id=638 data-nosnippet>638</a>    }
+<a href=#639 id=639 data-nosnippet>639</a>}
+<a href=#640 id=640 data-nosnippet>640</a>
+<a href=#641 id=641 data-nosnippet>641</a><span class="kw">struct </span>IntervalLayerSpec&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#642 id=642 data-nosnippet>642</a>    id: String,
+<a href=#643 id=643 data-nosnippet>643</a>    title: String,
+<a href=#644 id=644 data-nosnippet>644</a>    x_axis_id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#645 id=645 data-nosnippet>645</a>    y_axis_id: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str,
+<a href=#646 id=646 data-nosnippet>646</a>    interval_x_start: Vec&lt;f64&gt;,
+<a href=#647 id=647 data-nosnippet>647</a>    interval_x_end: Vec&lt;f64&gt;,
+<a href=#648 id=648 data-nosnippet>648</a>    interval_y: Vec&lt;f64&gt;,
+<a href=#649 id=649 data-nosnippet>649</a>    interval_height: Vec&lt;f64&gt;,
+<a href=#650 id=650 data-nosnippet>650</a>    interval_labels: Vec&lt;String&gt;,
+<a href=#651 id=651 data-nosnippet>651</a>    color_group: String,
+<a href=#652 id=652 data-nosnippet>652</a>    provenance_summary: String,
+<a href=#653 id=653 data-nosnippet>653</a>}
+<a href=#654 id=654 data-nosnippet>654</a>
+<a href=#655 id=655 data-nosnippet>655</a><span class="kw">fn </span>interval_layer(spec: IntervalLayerSpec&lt;<span class="lifetime">'_</span>&gt;) -&gt; PlotDocumentLayer {
+<a href=#656 id=656 data-nosnippet>656</a>    <span class="kw">let </span>source_sample_count = spec.interval_x_start.len() <span class="kw">as </span>u64;
+<a href=#657 id=657 data-nosnippet>657</a>    PlotDocumentLayer {
+<a href=#658 id=658 data-nosnippet>658</a>        id: spec.id,
+<a href=#659 id=659 data-nosnippet>659</a>        title: spec.title,
+<a href=#660 id=660 data-nosnippet>660</a>        kind: PlotLayerKind::Interval,
+<a href=#661 id=661 data-nosnippet>661</a>        x_axis_id: spec.x_axis_id.to_string(),
+<a href=#662 id=662 data-nosnippet>662</a>        y_axis_id: spec.y_axis_id.to_string(),
+<a href=#663 id=663 data-nosnippet>663</a>        x_values: Vec::new(),
+<a href=#664 id=664 data-nosnippet>664</a>        y_values: Vec::new(),
+<a href=#665 id=665 data-nosnippet>665</a>        point_labels: Vec::new(),
+<a href=#666 id=666 data-nosnippet>666</a>        point_symbol_sizes: Vec::new(),
+<a href=#667 id=667 data-nosnippet>667</a>        interval_x_start: spec.interval_x_start,
+<a href=#668 id=668 data-nosnippet>668</a>        interval_x_end: spec.interval_x_end,
+<a href=#669 id=669 data-nosnippet>669</a>        interval_y: spec.interval_y,
+<a href=#670 id=670 data-nosnippet>670</a>        interval_height: spec.interval_height,
+<a href=#671 id=671 data-nosnippet>671</a>        interval_labels: spec.interval_labels,
+<a href=#672 id=672 data-nosnippet>672</a>        provenance: Vec::new(),
+<a href=#673 id=673 data-nosnippet>673</a>        color_group: spec.color_group,
+<a href=#674 id=674 data-nosnippet>674</a>        symbol_size: <span class="number">1.0</span>,
+<a href=#675 id=675 data-nosnippet>675</a>        line_width: <span class="number">1.0</span>,
+<a href=#676 id=676 data-nosnippet>676</a>        opacity: <span class="number">0.78</span>,
+<a href=#677 id=677 data-nosnippet>677</a>        source_sample_count,
+<a href=#678 id=678 data-nosnippet>678</a>        payload_strategy: PlotPayloadStrategy::Intervals,
+<a href=#679 id=679 data-nosnippet>679</a>        provenance_summary: spec.provenance_summary,
+<a href=#680 id=680 data-nosnippet>680</a>        data: <span class="prelude-val">None</span>,
+<a href=#681 id=681 data-nosnippet>681</a>        style: <span class="prelude-val">None</span>,
+<a href=#682 id=682 data-nosnippet>682</a>    }
+<a href=#683 id=683 data-nosnippet>683</a>}
+<a href=#684 id=684 data-nosnippet>684</a>
+<a href=#685 id=685 data-nosnippet>685</a><span class="kw">fn </span>document_axis(
+<a href=#686 id=686 data-nosnippet>686</a>    id: <span class="kw-2">&amp;</span>str,
+<a href=#687 id=687 data-nosnippet>687</a>    label: <span class="kw-2">&amp;</span>str,
+<a href=#688 id=688 data-nosnippet>688</a>    unit: <span class="kw-2">&amp;</span>str,
+<a href=#689 id=689 data-nosnippet>689</a>    lower: f64,
+<a href=#690 id=690 data-nosnippet>690</a>    upper: f64,
+<a href=#691 id=691 data-nosnippet>691</a>    scale: PlotAxisScale,
+<a href=#692 id=692 data-nosnippet>692</a>) -&gt; PlotDocumentAxis {
+<a href=#693 id=693 data-nosnippet>693</a>    PlotDocumentAxis {
+<a href=#694 id=694 data-nosnippet>694</a>        id: id.to_string(),
+<a href=#695 id=695 data-nosnippet>695</a>        label: label.to_string(),
+<a href=#696 id=696 data-nosnippet>696</a>        unit: unit.to_string(),
+<a href=#697 id=697 data-nosnippet>697</a>        lower,
+<a href=#698 id=698 data-nosnippet>698</a>        upper,
+<a href=#699 id=699 data-nosnippet>699</a>        scale,
+<a href=#700 id=700 data-nosnippet>700</a>        lane_labels: Vec::new(),
+<a href=#701 id=701 data-nosnippet>701</a>        draws_on_trailing_edge: <span class="bool-val">false</span>,
+<a href=#702 id=702 data-nosnippet>702</a>    }
+<a href=#703 id=703 data-nosnippet>703</a>}
+<a href=#704 id=704 data-nosnippet>704</a>
+<a href=#705 id=705 data-nosnippet>705</a><span class="kw">fn </span>document_lane_axis(id: <span class="kw-2">&amp;</span>str, label: <span class="kw-2">&amp;</span>str, lane_labels: Vec&lt;String&gt;) -&gt; PlotDocumentAxis {
+<a href=#706 id=706 data-nosnippet>706</a>    PlotDocumentAxis {
+<a href=#707 id=707 data-nosnippet>707</a>        id: id.to_string(),
+<a href=#708 id=708 data-nosnippet>708</a>        label: label.to_string(),
+<a href=#709 id=709 data-nosnippet>709</a>        unit: String::new(),
+<a href=#710 id=710 data-nosnippet>710</a>        lower: -<span class="number">0.5</span>,
+<a href=#711 id=711 data-nosnippet>711</a>        upper: lane_labels.len().saturating_sub(<span class="number">1</span>) <span class="kw">as </span>f64 + <span class="number">0.5</span>,
+<a href=#712 id=712 data-nosnippet>712</a>        scale: PlotAxisScale::Linear,
+<a href=#713 id=713 data-nosnippet>713</a>        lane_labels,
+<a href=#714 id=714 data-nosnippet>714</a>        draws_on_trailing_edge: <span class="bool-val">false</span>,
+<a href=#715 id=715 data-nosnippet>715</a>    }
 <a href=#716 id=716 data-nosnippet>716</a>}
 <a href=#717 id=717 data-nosnippet>717</a>
-<a href=#718 id=718 data-nosnippet>718</a><span class="kw">fn </span>bounds_accumulator(bounds: <span class="prelude-ty">Option</span>&lt;(f64, f64)&gt;, value: f64) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64)&gt; {
-<a href=#719 id=719 data-nosnippet>719</a>    <span class="kw">if </span>!value.is_finite() {
-<a href=#720 id=720 data-nosnippet>720</a>        <span class="kw">return </span>bounds;
-<a href=#721 id=721 data-nosnippet>721</a>    }
-<a href=#722 id=722 data-nosnippet>722</a>    <span class="prelude-val">Some</span>(<span class="kw">match </span>bounds {
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="prelude-val">Some</span>((lower, upper)) =&gt; (lower.min(value), upper.max(value)),
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="prelude-val">None </span>=&gt; (value, value),
-<a href=#725 id=725 data-nosnippet>725</a>    })
-<a href=#726 id=726 data-nosnippet>726</a>}
-<a href=#727 id=727 data-nosnippet>727</a>
-<a href=#728 id=728 data-nosnippet>728</a><span class="kw">fn </span>expanded_bounds((lower, upper): (f64, f64)) -&gt; (f64, f64) {
-<a href=#729 id=729 data-nosnippet>729</a>    <span class="kw">if </span>!lower.is_finite() || !upper.is_finite() {
-<a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">return </span>(<span class="number">0.0</span>, <span class="number">1.0</span>);
-<a href=#731 id=731 data-nosnippet>731</a>    }
-<a href=#732 id=732 data-nosnippet>732</a>    <span class="kw">if </span>(upper - lower).abs() &lt; f64::EPSILON {
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>pad = lower.abs().max(<span class="number">1.0</span>) * <span class="number">0.05</span>;
-<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">return </span>(lower - pad, upper + pad);
+<a href=#718 id=718 data-nosnippet>718</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>series_y_bounds(values: <span class="kw">impl </span>Iterator&lt;Item = f64&gt;) -&gt; (f64, f64) {
+<a href=#719 id=719 data-nosnippet>719</a>    expanded_bounds(values.fold(<span class="prelude-val">None</span>, bounds_accumulator).unwrap_or((<span class="number">0.0</span>, <span class="number">1.0</span>)))
+<a href=#720 id=720 data-nosnippet>720</a>}
+<a href=#721 id=721 data-nosnippet>721</a>
+<a href=#722 id=722 data-nosnippet>722</a><span class="kw">fn </span>bounds_accumulator(bounds: <span class="prelude-ty">Option</span>&lt;(f64, f64)&gt;, value: f64) -&gt; <span class="prelude-ty">Option</span>&lt;(f64, f64)&gt; {
+<a href=#723 id=723 data-nosnippet>723</a>    <span class="kw">if </span>!value.is_finite() {
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">return </span>bounds;
+<a href=#725 id=725 data-nosnippet>725</a>    }
+<a href=#726 id=726 data-nosnippet>726</a>    <span class="prelude-val">Some</span>(<span class="kw">match </span>bounds {
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="prelude-val">Some</span>((lower, upper)) =&gt; (lower.min(value), upper.max(value)),
+<a href=#728 id=728 data-nosnippet>728</a>        <span class="prelude-val">None </span>=&gt; (value, value),
+<a href=#729 id=729 data-nosnippet>729</a>    })
+<a href=#730 id=730 data-nosnippet>730</a>}
+<a href=#731 id=731 data-nosnippet>731</a>
+<a href=#732 id=732 data-nosnippet>732</a><span class="kw">fn </span>expanded_bounds((lower, upper): (f64, f64)) -&gt; (f64, f64) {
+<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">if </span>!lower.is_finite() || !upper.is_finite() {
+<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">return </span>(<span class="number">0.0</span>, <span class="number">1.0</span>);
 <a href=#735 id=735 data-nosnippet>735</a>    }
-<a href=#736 id=736 data-nosnippet>736</a>    <span class="kw">let </span>pad = (upper - lower).abs() * <span class="number">0.04</span>;
-<a href=#737 id=737 data-nosnippet>737</a>    (lower - pad, upper + pad)
-<a href=#738 id=738 data-nosnippet>738</a>}
-<a href=#739 id=739 data-nosnippet>739</a>
-<a href=#740 id=740 data-nosnippet>740</a><span class="kw">fn </span>listobs_metadata(
-<a href=#741 id=741 data-nosnippet>741</a>    payload: <span class="kw-2">&amp;</span>MeasurementSetPlotPayload,
-<a href=#742 id=742 data-nosnippet>742</a>    preset: MsPlotPreset,
-<a href=#743 id=743 data-nosnippet>743</a>    requested_max_points: u64,
-<a href=#744 id=744 data-nosnippet>744</a>) -&gt; PayloadMetadata {
-<a href=#745 id=745 data-nosnippet>745</a>    <span class="kw">match </span>payload {
-<a href=#746 id=746 data-nosnippet>746</a>        MeasurementSetPlotPayload::UvCoverage(payload) =&gt; {
-<a href=#747 id=747 data-nosnippet>747</a>            <span class="kw">let </span>rendered_point_count = payload
-<a href=#748 id=748 data-nosnippet>748</a>                .tracks
-<a href=#749 id=749 data-nosnippet>749</a>                .iter()
-<a href=#750 id=750 data-nosnippet>750</a>                .map(|track| track.points.len() <span class="kw">as </span>u64)
-<a href=#751 id=751 data-nosnippet>751</a>                .sum();
-<a href=#752 id=752 data-nosnippet>752</a>            <span class="kw">let </span>series = uv_coverage_series_metadata(<span class="kw-2">&amp;</span>payload.tracks);
-<a href=#753 id=753 data-nosnippet>753</a>            <span class="kw">let </span>series_count = series.len() <span class="kw">as </span>u64;
-<a href=#754 id=754 data-nosnippet>754</a>            PayloadMetadata {
-<a href=#755 id=755 data-nosnippet>755</a>                title: <span class="string">"UV Coverage"</span>.to_string(),
-<a href=#756 id=756 data-nosnippet>756</a>                summary: payload.summary.clone(),
-<a href=#757 id=757 data-nosnippet>757</a>                x_axis: axis_metadata(<span class="string">"u"</span>, <span class="string">"u (kλ)"</span>),
-<a href=#758 id=758 data-nosnippet>758</a>                y_axis: axis_metadata(<span class="string">"v"</span>, <span class="string">"v (kλ)"</span>),
-<a href=#759 id=759 data-nosnippet>759</a>                series,
-<a href=#760 id=760 data-nosnippet>760</a>                sampling: PlotSamplingDiagnostics {
-<a href=#761 id=761 data-nosnippet>761</a>                    requested_max_points,
-<a href=#762 id=762 data-nosnippet>762</a>                    rendered_point_count,
-<a href=#763 id=763 data-nosnippet>763</a>                    series_count,
-<a href=#764 id=764 data-nosnippet>764</a>                    diagnostics: sampling_diagnostics(<span class="kw-2">&amp;</span>payload.summary, rendered_point_count),
-<a href=#765 id=765 data-nosnippet>765</a>                },
-<a href=#766 id=766 data-nosnippet>766</a>            }
-<a href=#767 id=767 data-nosnippet>767</a>        }
-<a href=#768 id=768 data-nosnippet>768</a>        <span class="kw">_ </span>=&gt; PayloadMetadata {
-<a href=#769 id=769 data-nosnippet>769</a>            title: preset.display_name().to_string(),
-<a href=#770 id=770 data-nosnippet>770</a>            summary: <span class="string">"Metadata-oriented MeasurementSet plot."</span>.to_string(),
-<a href=#771 id=771 data-nosnippet>771</a>            x_axis: axis_metadata(preset.as_str(), preset.display_name()),
-<a href=#772 id=772 data-nosnippet>772</a>            y_axis: axis_metadata(<span class="string">"metadata"</span>, <span class="string">"Metadata"</span>),
-<a href=#773 id=773 data-nosnippet>773</a>            series: <span class="macro">vec!</span>[],
-<a href=#774 id=774 data-nosnippet>774</a>            sampling: PlotSamplingDiagnostics {
-<a href=#775 id=775 data-nosnippet>775</a>                requested_max_points,
-<a href=#776 id=776 data-nosnippet>776</a>                rendered_point_count: <span class="number">0</span>,
-<a href=#777 id=777 data-nosnippet>777</a>                series_count: <span class="number">0</span>,
-<a href=#778 id=778 data-nosnippet>778</a>                diagnostics: <span class="macro">vec!</span>[<span class="string">"metadata-oriented plot has no visibility series"</span>.to_string()],
-<a href=#779 id=779 data-nosnippet>779</a>            },
-<a href=#780 id=780 data-nosnippet>780</a>        },
-<a href=#781 id=781 data-nosnippet>781</a>    }
-<a href=#782 id=782 data-nosnippet>782</a>}
-<a href=#783 id=783 data-nosnippet>783</a>
-<a href=#784 id=784 data-nosnippet>784</a><span class="kw">fn </span>scatter_grid_metadata(
-<a href=#785 id=785 data-nosnippet>785</a>    payload: <span class="kw-2">&amp;</span>MsScatterGridPayload,
-<a href=#786 id=786 data-nosnippet>786</a>    requested_max_points: u64,
-<a href=#787 id=787 data-nosnippet>787</a>) -&gt; PayloadMetadata {
-<a href=#788 id=788 data-nosnippet>788</a>    <span class="kw">let </span>series = payload
-<a href=#789 id=789 data-nosnippet>789</a>        .panels
-<a href=#790 id=790 data-nosnippet>790</a>        .iter()
-<a href=#791 id=791 data-nosnippet>791</a>        .flat_map(|panel| panel.series.iter())
-<a href=#792 id=792 data-nosnippet>792</a>        .map(series_metadata)
-<a href=#793 id=793 data-nosnippet>793</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#794 id=794 data-nosnippet>794</a>    <span class="kw">let </span>rendered_point_count = series.iter().map(|series| series.point_count).sum();
-<a href=#795 id=795 data-nosnippet>795</a>    PayloadMetadata {
-<a href=#796 id=796 data-nosnippet>796</a>        title: payload.title.clone(),
-<a href=#797 id=797 data-nosnippet>797</a>        summary: payload.summary.clone(),
-<a href=#798 id=798 data-nosnippet>798</a>        x_axis: axis_metadata(payload.x_axis.as_str(), <span class="kw-2">&amp;</span>payload.x_label),
-<a href=#799 id=799 data-nosnippet>799</a>        y_axis: axis_metadata(payload.y_axis.as_str(), <span class="kw-2">&amp;</span>payload.y_label),
-<a href=#800 id=800 data-nosnippet>800</a>        series,
-<a href=#801 id=801 data-nosnippet>801</a>        sampling: PlotSamplingDiagnostics {
-<a href=#802 id=802 data-nosnippet>802</a>            requested_max_points,
-<a href=#803 id=803 data-nosnippet>803</a>            rendered_point_count,
-<a href=#804 id=804 data-nosnippet>804</a>            series_count: payload
-<a href=#805 id=805 data-nosnippet>805</a>                .panels
-<a href=#806 id=806 data-nosnippet>806</a>                .iter()
-<a href=#807 id=807 data-nosnippet>807</a>                .map(|panel| panel.series.len() <span class="kw">as </span>u64)
-<a href=#808 id=808 data-nosnippet>808</a>                .sum(),
-<a href=#809 id=809 data-nosnippet>809</a>            diagnostics: sampling_diagnostics(<span class="kw-2">&amp;</span>payload.summary, rendered_point_count),
-<a href=#810 id=810 data-nosnippet>810</a>        },
-<a href=#811 id=811 data-nosnippet>811</a>    }
-<a href=#812 id=812 data-nosnippet>812</a>}
-<a href=#813 id=813 data-nosnippet>813</a>
-<a href=#814 id=814 data-nosnippet>814</a><span class="kw">fn </span>scatter_page_metadata(
-<a href=#815 id=815 data-nosnippet>815</a>    payload: <span class="kw-2">&amp;</span>MsScatterPagePayload,
-<a href=#816 id=816 data-nosnippet>816</a>    requested_max_points: u64,
-<a href=#817 id=817 data-nosnippet>817</a>) -&gt; PayloadMetadata {
-<a href=#818 id=818 data-nosnippet>818</a>    <span class="kw">let </span>first_plot = payload.items.first().map(|item| <span class="kw-2">&amp;</span>item.plot);
-<a href=#819 id=819 data-nosnippet>819</a>    <span class="kw">let </span>series = payload
-<a href=#820 id=820 data-nosnippet>820</a>        .items
-<a href=#821 id=821 data-nosnippet>821</a>        .iter()
-<a href=#822 id=822 data-nosnippet>822</a>        .flat_map(|item| item.plot.series.iter())
-<a href=#823 id=823 data-nosnippet>823</a>        .map(series_metadata)
-<a href=#824 id=824 data-nosnippet>824</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#825 id=825 data-nosnippet>825</a>    <span class="kw">let </span>rendered_point_count = series.iter().map(|series| series.point_count).sum();
-<a href=#826 id=826 data-nosnippet>826</a>    PayloadMetadata {
-<a href=#827 id=827 data-nosnippet>827</a>        title: payload.title.clone(),
-<a href=#828 id=828 data-nosnippet>828</a>        summary: payload.summary.clone(),
-<a href=#829 id=829 data-nosnippet>829</a>        x_axis: first_plot
-<a href=#830 id=830 data-nosnippet>830</a>            .map(|plot| axis_metadata(plot.x_axis.as_str(), <span class="kw-2">&amp;</span>plot.x_label))
-<a href=#831 id=831 data-nosnippet>831</a>            .unwrap_or_else(|| axis_metadata(<span class="string">"unknown"</span>, <span class="string">"Unknown"</span>)),
-<a href=#832 id=832 data-nosnippet>832</a>        y_axis: first_plot
-<a href=#833 id=833 data-nosnippet>833</a>            .map(|plot| axis_metadata(plot.y_axis.as_str(), <span class="kw-2">&amp;</span>plot.y_label))
-<a href=#834 id=834 data-nosnippet>834</a>            .unwrap_or_else(|| axis_metadata(<span class="string">"unknown"</span>, <span class="string">"Unknown"</span>)),
-<a href=#835 id=835 data-nosnippet>835</a>        series,
-<a href=#836 id=836 data-nosnippet>836</a>        sampling: PlotSamplingDiagnostics {
-<a href=#837 id=837 data-nosnippet>837</a>            requested_max_points,
-<a href=#838 id=838 data-nosnippet>838</a>            rendered_point_count,
-<a href=#839 id=839 data-nosnippet>839</a>            series_count: payload
-<a href=#840 id=840 data-nosnippet>840</a>                .items
-<a href=#841 id=841 data-nosnippet>841</a>                .iter()
-<a href=#842 id=842 data-nosnippet>842</a>                .map(|item| item.plot.series.len() <span class="kw">as </span>u64)
-<a href=#843 id=843 data-nosnippet>843</a>                .sum(),
-<a href=#844 id=844 data-nosnippet>844</a>            diagnostics: sampling_diagnostics(<span class="kw-2">&amp;</span>payload.summary, rendered_point_count),
-<a href=#845 id=845 data-nosnippet>845</a>        },
-<a href=#846 id=846 data-nosnippet>846</a>    }
-<a href=#847 id=847 data-nosnippet>847</a>}
-<a href=#848 id=848 data-nosnippet>848</a>
-<a href=#849 id=849 data-nosnippet>849</a><span class="kw">fn </span>scatter_metadata(payload: <span class="kw-2">&amp;</span>MsScatterPlotPayload, requested_max_points: u64) -&gt; PayloadMetadata {
-<a href=#850 id=850 data-nosnippet>850</a>    <span class="kw">let </span>series = payload
-<a href=#851 id=851 data-nosnippet>851</a>        .series
-<a href=#852 id=852 data-nosnippet>852</a>        .iter()
-<a href=#853 id=853 data-nosnippet>853</a>        .map(series_metadata)
-<a href=#854 id=854 data-nosnippet>854</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#855 id=855 data-nosnippet>855</a>    <span class="kw">let </span>series_count = series.len() <span class="kw">as </span>u64;
-<a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">let </span>rendered_point_count = series.iter().map(|series| series.point_count).sum();
-<a href=#857 id=857 data-nosnippet>857</a>    PayloadMetadata {
-<a href=#858 id=858 data-nosnippet>858</a>        title: payload.title.clone(),
-<a href=#859 id=859 data-nosnippet>859</a>        summary: payload.summary.clone(),
-<a href=#860 id=860 data-nosnippet>860</a>        x_axis: axis_metadata(payload.x_axis.as_str(), <span class="kw-2">&amp;</span>payload.x_label),
-<a href=#861 id=861 data-nosnippet>861</a>        y_axis: axis_metadata(payload.y_axis.as_str(), <span class="kw-2">&amp;</span>payload.y_label),
-<a href=#862 id=862 data-nosnippet>862</a>        series,
-<a href=#863 id=863 data-nosnippet>863</a>        sampling: PlotSamplingDiagnostics {
-<a href=#864 id=864 data-nosnippet>864</a>            requested_max_points,
-<a href=#865 id=865 data-nosnippet>865</a>            rendered_point_count,
-<a href=#866 id=866 data-nosnippet>866</a>            series_count,
-<a href=#867 id=867 data-nosnippet>867</a>            diagnostics: sampling_diagnostics(<span class="kw-2">&amp;</span>payload.summary, rendered_point_count),
-<a href=#868 id=868 data-nosnippet>868</a>        },
-<a href=#869 id=869 data-nosnippet>869</a>    }
-<a href=#870 id=870 data-nosnippet>870</a>}
-<a href=#871 id=871 data-nosnippet>871</a>
-<a href=#872 id=872 data-nosnippet>872</a><span class="kw">fn </span>uv_coverage_series_metadata(tracks: <span class="kw-2">&amp;</span>[UvCoverageSeries]) -&gt; Vec&lt;PlotSeriesMetadata&gt; {
-<a href=#873 id=873 data-nosnippet>873</a>    <span class="kw">let </span><span class="kw-2">mut </span>grouped = BTreeMap::&lt;String, u64&gt;::new();
-<a href=#874 id=874 data-nosnippet>874</a>    <span class="kw">for </span>track <span class="kw">in </span>tracks {
-<a href=#875 id=875 data-nosnippet>875</a>        <span class="kw-2">*</span>grouped
-<a href=#876 id=876 data-nosnippet>876</a>            .entry(uv_coverage_group_label(<span class="kw-2">&amp;</span>track.label))
-<a href=#877 id=877 data-nosnippet>877</a>            .or_default() += track.points.len() <span class="kw">as </span>u64;
-<a href=#878 id=878 data-nosnippet>878</a>    }
-<a href=#879 id=879 data-nosnippet>879</a>    grouped
-<a href=#880 id=880 data-nosnippet>880</a>        .into_iter()
-<a href=#881 id=881 data-nosnippet>881</a>        .map(|(group, point_count)| PlotSeriesMetadata {
-<a href=#882 id=882 data-nosnippet>882</a>            label: group.clone(),
-<a href=#883 id=883 data-nosnippet>883</a>            color_group: group,
-<a href=#884 id=884 data-nosnippet>884</a>            point_count,
-<a href=#885 id=885 data-nosnippet>885</a>            first_row: <span class="prelude-val">None</span>,
-<a href=#886 id=886 data-nosnippet>886</a>            last_row: <span class="prelude-val">None</span>,
-<a href=#887 id=887 data-nosnippet>887</a>        })
-<a href=#888 id=888 data-nosnippet>888</a>        .collect()
-<a href=#889 id=889 data-nosnippet>889</a>}
-<a href=#890 id=890 data-nosnippet>890</a>
-<a href=#891 id=891 data-nosnippet>891</a><span class="kw">fn </span>uv_coverage_group_label(track_label: <span class="kw-2">&amp;</span>str) -&gt; String {
-<a href=#892 id=892 data-nosnippet>892</a>    <span class="kw">let </span>parts = track_label.split_whitespace().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#893 id=893 data-nosnippet>893</a>    <span class="kw">let </span>field = parts
-<a href=#894 id=894 data-nosnippet>894</a>        .windows(<span class="number">2</span>)
-<a href=#895 id=895 data-nosnippet>895</a>        .find_map(|window| (window[<span class="number">0</span>] == <span class="string">"field"</span>).then_some(window[<span class="number">1</span>]));
-<a href=#896 id=896 data-nosnippet>896</a>    <span class="kw">let </span>spw = parts
-<a href=#897 id=897 data-nosnippet>897</a>        .windows(<span class="number">2</span>)
-<a href=#898 id=898 data-nosnippet>898</a>        .find_map(|window| (window[<span class="number">0</span>] == <span class="string">"spw"</span>).then_some(window[<span class="number">1</span>]));
-<a href=#899 id=899 data-nosnippet>899</a>    <span class="kw">match </span>(field, spw) {
-<a href=#900 id=900 data-nosnippet>900</a>        (<span class="prelude-val">Some</span>(field), <span class="prelude-val">Some</span>(spw)) =&gt; <span class="macro">format!</span>(<span class="string">"field {field} spw {spw}"</span>),
-<a href=#901 id=901 data-nosnippet>901</a>        (<span class="prelude-val">Some</span>(field), <span class="prelude-val">None</span>) =&gt; <span class="macro">format!</span>(<span class="string">"field {field}"</span>),
-<a href=#902 id=902 data-nosnippet>902</a>        (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(spw)) =&gt; <span class="macro">format!</span>(<span class="string">"spw {spw}"</span>),
-<a href=#903 id=903 data-nosnippet>903</a>        (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; <span class="string">"UV samples"</span>.to_string(),
-<a href=#904 id=904 data-nosnippet>904</a>    }
-<a href=#905 id=905 data-nosnippet>905</a>}
-<a href=#906 id=906 data-nosnippet>906</a>
-<a href=#907 id=907 data-nosnippet>907</a><span class="kw">fn </span>series_metadata(series: <span class="kw-2">&amp;</span>MsScatterSeries) -&gt; PlotSeriesMetadata {
-<a href=#908 id=908 data-nosnippet>908</a>    <span class="kw">let </span>first_row = series.provenance.first().map(|point| point.row <span class="kw">as </span>u64);
-<a href=#909 id=909 data-nosnippet>909</a>    <span class="kw">let </span>last_row = series.provenance.last().map(|point| point.row <span class="kw">as </span>u64);
-<a href=#910 id=910 data-nosnippet>910</a>    PlotSeriesMetadata {
-<a href=#911 id=911 data-nosnippet>911</a>        label: series.label.clone(),
-<a href=#912 id=912 data-nosnippet>912</a>        color_group: series.color_group.clone(),
-<a href=#913 id=913 data-nosnippet>913</a>        point_count: series.points.len() <span class="kw">as </span>u64,
-<a href=#914 id=914 data-nosnippet>914</a>        first_row,
-<a href=#915 id=915 data-nosnippet>915</a>        last_row,
-<a href=#916 id=916 data-nosnippet>916</a>    }
-<a href=#917 id=917 data-nosnippet>917</a>}
-<a href=#918 id=918 data-nosnippet>918</a>
-<a href=#919 id=919 data-nosnippet>919</a><span class="kw">fn </span>axis_metadata(id: <span class="kw-2">&amp;</span>str, label: <span class="kw-2">&amp;</span>str) -&gt; PlotAxisMetadata {
-<a href=#920 id=920 data-nosnippet>920</a>    PlotAxisMetadata {
-<a href=#921 id=921 data-nosnippet>921</a>        id: id.to_string(),
-<a href=#922 id=922 data-nosnippet>922</a>        label: label.to_string(),
-<a href=#923 id=923 data-nosnippet>923</a>        unit: label_unit(label),
-<a href=#924 id=924 data-nosnippet>924</a>    }
-<a href=#925 id=925 data-nosnippet>925</a>}
-<a href=#926 id=926 data-nosnippet>926</a>
-<a href=#927 id=927 data-nosnippet>927</a><span class="kw">fn </span>label_unit(label: <span class="kw-2">&amp;</span>str) -&gt; String {
-<a href=#928 id=928 data-nosnippet>928</a>    label
-<a href=#929 id=929 data-nosnippet>929</a>        .rsplit_once(<span class="string">'('</span>)
-<a href=#930 id=930 data-nosnippet>930</a>        .and_then(|(<span class="kw">_</span>, suffix)| suffix.strip_suffix(<span class="string">')'</span>))
-<a href=#931 id=931 data-nosnippet>931</a>        .unwrap_or(<span class="string">""</span>)
-<a href=#932 id=932 data-nosnippet>932</a>        .trim()
-<a href=#933 id=933 data-nosnippet>933</a>        .to_string()
-<a href=#934 id=934 data-nosnippet>934</a>}
-<a href=#935 id=935 data-nosnippet>935</a>
-<a href=#936 id=936 data-nosnippet>936</a><span class="kw">fn </span>nonempty_or&lt;<span class="lifetime">'a</span>&gt;(value: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str, fallback: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str {
-<a href=#937 id=937 data-nosnippet>937</a>    <span class="kw">if </span>value.trim().is_empty() {
-<a href=#938 id=938 data-nosnippet>938</a>        fallback
-<a href=#939 id=939 data-nosnippet>939</a>    } <span class="kw">else </span>{
-<a href=#940 id=940 data-nosnippet>940</a>        value
-<a href=#941 id=941 data-nosnippet>941</a>    }
-<a href=#942 id=942 data-nosnippet>942</a>}
-<a href=#943 id=943 data-nosnippet>943</a>
-<a href=#944 id=944 data-nosnippet>944</a><span class="kw">fn </span>sampling_diagnostics(summary: <span class="kw-2">&amp;</span>str, rendered_point_count: u64) -&gt; Vec&lt;String&gt; {
-<a href=#945 id=945 data-nosnippet>945</a>    <span class="kw">let </span><span class="kw-2">mut </span>diagnostics = Vec::new();
-<a href=#946 id=946 data-nosnippet>946</a>    <span class="kw">if </span>rendered_point_count == <span class="number">0 </span>{
-<a href=#947 id=947 data-nosnippet>947</a>        diagnostics.push(<span class="string">"plot produced no drawable visibility points"</span>.to_string());
-<a href=#948 id=948 data-nosnippet>948</a>    }
-<a href=#949 id=949 data-nosnippet>949</a>    <span class="kw">if </span>summary.contains(<span class="string">"Decimated points"</span>) || summary.contains(<span class="string">"Downsampled plot"</span>) {
-<a href=#950 id=950 data-nosnippet>950</a>        diagnostics.push(<span class="string">"point budget decimation was applied"</span>.to_string());
-<a href=#951 id=951 data-nosnippet>951</a>    }
-<a href=#952 id=952 data-nosnippet>952</a>    diagnostics
-<a href=#953 id=953 data-nosnippet>953</a>}
+<a href=#736 id=736 data-nosnippet>736</a>    <span class="kw">if </span>(upper - lower).abs() &lt; f64::EPSILON {
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>pad = lower.abs().max(<span class="number">1.0</span>) * <span class="number">0.05</span>;
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">return </span>(lower - pad, upper + pad);
+<a href=#739 id=739 data-nosnippet>739</a>    }
+<a href=#740 id=740 data-nosnippet>740</a>    <span class="kw">let </span>pad = (upper - lower).abs() * <span class="number">0.04</span>;
+<a href=#741 id=741 data-nosnippet>741</a>    (lower - pad, upper + pad)
+<a href=#742 id=742 data-nosnippet>742</a>}
+<a href=#743 id=743 data-nosnippet>743</a>
+<a href=#744 id=744 data-nosnippet>744</a><span class="kw">fn </span>listobs_metadata(
+<a href=#745 id=745 data-nosnippet>745</a>    payload: <span class="kw-2">&amp;</span>MeasurementSetPlotPayload,
+<a href=#746 id=746 data-nosnippet>746</a>    preset: MsPlotPreset,
+<a href=#747 id=747 data-nosnippet>747</a>    requested_max_points: u64,
+<a href=#748 id=748 data-nosnippet>748</a>) -&gt; PayloadMetadata {
+<a href=#749 id=749 data-nosnippet>749</a>    <span class="kw">match </span>payload {
+<a href=#750 id=750 data-nosnippet>750</a>        MeasurementSetPlotPayload::UvCoverage(payload) =&gt; {
+<a href=#751 id=751 data-nosnippet>751</a>            <span class="kw">let </span>rendered_point_count = payload
+<a href=#752 id=752 data-nosnippet>752</a>                .tracks
+<a href=#753 id=753 data-nosnippet>753</a>                .iter()
+<a href=#754 id=754 data-nosnippet>754</a>                .map(|track| track.points.len() <span class="kw">as </span>u64)
+<a href=#755 id=755 data-nosnippet>755</a>                .sum();
+<a href=#756 id=756 data-nosnippet>756</a>            <span class="kw">let </span>series = uv_coverage_series_metadata(<span class="kw-2">&amp;</span>payload.tracks);
+<a href=#757 id=757 data-nosnippet>757</a>            <span class="kw">let </span>series_count = series.len() <span class="kw">as </span>u64;
+<a href=#758 id=758 data-nosnippet>758</a>            PayloadMetadata {
+<a href=#759 id=759 data-nosnippet>759</a>                title: <span class="string">"UV Coverage"</span>.to_string(),
+<a href=#760 id=760 data-nosnippet>760</a>                summary: payload.summary.clone(),
+<a href=#761 id=761 data-nosnippet>761</a>                x_axis: axis_metadata(<span class="string">"u"</span>, <span class="string">"u (kλ)"</span>),
+<a href=#762 id=762 data-nosnippet>762</a>                y_axis: axis_metadata(<span class="string">"v"</span>, <span class="string">"v (kλ)"</span>),
+<a href=#763 id=763 data-nosnippet>763</a>                series,
+<a href=#764 id=764 data-nosnippet>764</a>                sampling: PlotSamplingDiagnostics {
+<a href=#765 id=765 data-nosnippet>765</a>                    requested_max_points,
+<a href=#766 id=766 data-nosnippet>766</a>                    rendered_point_count,
+<a href=#767 id=767 data-nosnippet>767</a>                    series_count,
+<a href=#768 id=768 data-nosnippet>768</a>                    diagnostics: sampling_diagnostics(<span class="kw-2">&amp;</span>payload.summary, rendered_point_count),
+<a href=#769 id=769 data-nosnippet>769</a>                },
+<a href=#770 id=770 data-nosnippet>770</a>            }
+<a href=#771 id=771 data-nosnippet>771</a>        }
+<a href=#772 id=772 data-nosnippet>772</a>        <span class="kw">_ </span>=&gt; PayloadMetadata {
+<a href=#773 id=773 data-nosnippet>773</a>            title: preset.display_name().to_string(),
+<a href=#774 id=774 data-nosnippet>774</a>            summary: <span class="string">"Metadata-oriented MeasurementSet plot."</span>.to_string(),
+<a href=#775 id=775 data-nosnippet>775</a>            x_axis: axis_metadata(preset.as_str(), preset.display_name()),
+<a href=#776 id=776 data-nosnippet>776</a>            y_axis: axis_metadata(<span class="string">"metadata"</span>, <span class="string">"Metadata"</span>),
+<a href=#777 id=777 data-nosnippet>777</a>            series: <span class="macro">vec!</span>[],
+<a href=#778 id=778 data-nosnippet>778</a>            sampling: PlotSamplingDiagnostics {
+<a href=#779 id=779 data-nosnippet>779</a>                requested_max_points,
+<a href=#780 id=780 data-nosnippet>780</a>                rendered_point_count: <span class="number">0</span>,
+<a href=#781 id=781 data-nosnippet>781</a>                series_count: <span class="number">0</span>,
+<a href=#782 id=782 data-nosnippet>782</a>                diagnostics: <span class="macro">vec!</span>[<span class="string">"metadata-oriented plot has no visibility series"</span>.to_string()],
+<a href=#783 id=783 data-nosnippet>783</a>            },
+<a href=#784 id=784 data-nosnippet>784</a>        },
+<a href=#785 id=785 data-nosnippet>785</a>    }
+<a href=#786 id=786 data-nosnippet>786</a>}
+<a href=#787 id=787 data-nosnippet>787</a>
+<a href=#788 id=788 data-nosnippet>788</a><span class="kw">fn </span>scatter_grid_metadata(
+<a href=#789 id=789 data-nosnippet>789</a>    payload: <span class="kw-2">&amp;</span>MsScatterGridPayload,
+<a href=#790 id=790 data-nosnippet>790</a>    requested_max_points: u64,
+<a href=#791 id=791 data-nosnippet>791</a>) -&gt; PayloadMetadata {
+<a href=#792 id=792 data-nosnippet>792</a>    <span class="kw">let </span>series = payload
+<a href=#793 id=793 data-nosnippet>793</a>        .panels
+<a href=#794 id=794 data-nosnippet>794</a>        .iter()
+<a href=#795 id=795 data-nosnippet>795</a>        .flat_map(|panel| panel.series.iter())
+<a href=#796 id=796 data-nosnippet>796</a>        .map(series_metadata)
+<a href=#797 id=797 data-nosnippet>797</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#798 id=798 data-nosnippet>798</a>    <span class="kw">let </span>rendered_point_count = series.iter().map(|series| series.point_count).sum();
+<a href=#799 id=799 data-nosnippet>799</a>    PayloadMetadata {
+<a href=#800 id=800 data-nosnippet>800</a>        title: payload.title.clone(),
+<a href=#801 id=801 data-nosnippet>801</a>        summary: payload.summary.clone(),
+<a href=#802 id=802 data-nosnippet>802</a>        x_axis: axis_metadata(payload.x_axis.as_str(), <span class="kw-2">&amp;</span>payload.x_label),
+<a href=#803 id=803 data-nosnippet>803</a>        y_axis: axis_metadata(payload.y_axis.as_str(), <span class="kw-2">&amp;</span>payload.y_label),
+<a href=#804 id=804 data-nosnippet>804</a>        series,
+<a href=#805 id=805 data-nosnippet>805</a>        sampling: PlotSamplingDiagnostics {
+<a href=#806 id=806 data-nosnippet>806</a>            requested_max_points,
+<a href=#807 id=807 data-nosnippet>807</a>            rendered_point_count,
+<a href=#808 id=808 data-nosnippet>808</a>            series_count: payload
+<a href=#809 id=809 data-nosnippet>809</a>                .panels
+<a href=#810 id=810 data-nosnippet>810</a>                .iter()
+<a href=#811 id=811 data-nosnippet>811</a>                .map(|panel| panel.series.len() <span class="kw">as </span>u64)
+<a href=#812 id=812 data-nosnippet>812</a>                .sum(),
+<a href=#813 id=813 data-nosnippet>813</a>            diagnostics: sampling_diagnostics(<span class="kw-2">&amp;</span>payload.summary, rendered_point_count),
+<a href=#814 id=814 data-nosnippet>814</a>        },
+<a href=#815 id=815 data-nosnippet>815</a>    }
+<a href=#816 id=816 data-nosnippet>816</a>}
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a><span class="kw">fn </span>scatter_page_metadata(
+<a href=#819 id=819 data-nosnippet>819</a>    payload: <span class="kw-2">&amp;</span>MsScatterPagePayload,
+<a href=#820 id=820 data-nosnippet>820</a>    requested_max_points: u64,
+<a href=#821 id=821 data-nosnippet>821</a>) -&gt; PayloadMetadata {
+<a href=#822 id=822 data-nosnippet>822</a>    <span class="kw">let </span>first_plot = payload.items.first().map(|item| <span class="kw-2">&amp;</span>item.plot);
+<a href=#823 id=823 data-nosnippet>823</a>    <span class="kw">let </span>series = payload
+<a href=#824 id=824 data-nosnippet>824</a>        .items
+<a href=#825 id=825 data-nosnippet>825</a>        .iter()
+<a href=#826 id=826 data-nosnippet>826</a>        .flat_map(|item| item.plot.series.iter())
+<a href=#827 id=827 data-nosnippet>827</a>        .map(series_metadata)
+<a href=#828 id=828 data-nosnippet>828</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#829 id=829 data-nosnippet>829</a>    <span class="kw">let </span>rendered_point_count = series.iter().map(|series| series.point_count).sum();
+<a href=#830 id=830 data-nosnippet>830</a>    PayloadMetadata {
+<a href=#831 id=831 data-nosnippet>831</a>        title: payload.title.clone(),
+<a href=#832 id=832 data-nosnippet>832</a>        summary: payload.summary.clone(),
+<a href=#833 id=833 data-nosnippet>833</a>        x_axis: first_plot
+<a href=#834 id=834 data-nosnippet>834</a>            .map(|plot| axis_metadata(plot.x_axis.as_str(), <span class="kw-2">&amp;</span>plot.x_label))
+<a href=#835 id=835 data-nosnippet>835</a>            .unwrap_or_else(|| axis_metadata(<span class="string">"unknown"</span>, <span class="string">"Unknown"</span>)),
+<a href=#836 id=836 data-nosnippet>836</a>        y_axis: first_plot
+<a href=#837 id=837 data-nosnippet>837</a>            .map(|plot| axis_metadata(plot.y_axis.as_str(), <span class="kw-2">&amp;</span>plot.y_label))
+<a href=#838 id=838 data-nosnippet>838</a>            .unwrap_or_else(|| axis_metadata(<span class="string">"unknown"</span>, <span class="string">"Unknown"</span>)),
+<a href=#839 id=839 data-nosnippet>839</a>        series,
+<a href=#840 id=840 data-nosnippet>840</a>        sampling: PlotSamplingDiagnostics {
+<a href=#841 id=841 data-nosnippet>841</a>            requested_max_points,
+<a href=#842 id=842 data-nosnippet>842</a>            rendered_point_count,
+<a href=#843 id=843 data-nosnippet>843</a>            series_count: payload
+<a href=#844 id=844 data-nosnippet>844</a>                .items
+<a href=#845 id=845 data-nosnippet>845</a>                .iter()
+<a href=#846 id=846 data-nosnippet>846</a>                .map(|item| item.plot.series.len() <span class="kw">as </span>u64)
+<a href=#847 id=847 data-nosnippet>847</a>                .sum(),
+<a href=#848 id=848 data-nosnippet>848</a>            diagnostics: sampling_diagnostics(<span class="kw-2">&amp;</span>payload.summary, rendered_point_count),
+<a href=#849 id=849 data-nosnippet>849</a>        },
+<a href=#850 id=850 data-nosnippet>850</a>    }
+<a href=#851 id=851 data-nosnippet>851</a>}
+<a href=#852 id=852 data-nosnippet>852</a>
+<a href=#853 id=853 data-nosnippet>853</a><span class="kw">fn </span>scatter_metadata(payload: <span class="kw-2">&amp;</span>MsScatterPlotPayload, requested_max_points: u64) -&gt; PayloadMetadata {
+<a href=#854 id=854 data-nosnippet>854</a>    <span class="kw">let </span>series = payload
+<a href=#855 id=855 data-nosnippet>855</a>        .series
+<a href=#856 id=856 data-nosnippet>856</a>        .iter()
+<a href=#857 id=857 data-nosnippet>857</a>        .map(series_metadata)
+<a href=#858 id=858 data-nosnippet>858</a>        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#859 id=859 data-nosnippet>859</a>    <span class="kw">let </span>series_count = series.len() <span class="kw">as </span>u64;
+<a href=#860 id=860 data-nosnippet>860</a>    <span class="kw">let </span>rendered_point_count = series.iter().map(|series| series.point_count).sum();
+<a href=#861 id=861 data-nosnippet>861</a>    PayloadMetadata {
+<a href=#862 id=862 data-nosnippet>862</a>        title: payload.title.clone(),
+<a href=#863 id=863 data-nosnippet>863</a>        summary: payload.summary.clone(),
+<a href=#864 id=864 data-nosnippet>864</a>        x_axis: axis_metadata(payload.x_axis.as_str(), <span class="kw-2">&amp;</span>payload.x_label),
+<a href=#865 id=865 data-nosnippet>865</a>        y_axis: axis_metadata(payload.y_axis.as_str(), <span class="kw-2">&amp;</span>payload.y_label),
+<a href=#866 id=866 data-nosnippet>866</a>        series,
+<a href=#867 id=867 data-nosnippet>867</a>        sampling: PlotSamplingDiagnostics {
+<a href=#868 id=868 data-nosnippet>868</a>            requested_max_points,
+<a href=#869 id=869 data-nosnippet>869</a>            rendered_point_count,
+<a href=#870 id=870 data-nosnippet>870</a>            series_count,
+<a href=#871 id=871 data-nosnippet>871</a>            diagnostics: sampling_diagnostics(<span class="kw-2">&amp;</span>payload.summary, rendered_point_count),
+<a href=#872 id=872 data-nosnippet>872</a>        },
+<a href=#873 id=873 data-nosnippet>873</a>    }
+<a href=#874 id=874 data-nosnippet>874</a>}
+<a href=#875 id=875 data-nosnippet>875</a>
+<a href=#876 id=876 data-nosnippet>876</a><span class="kw">fn </span>uv_coverage_series_metadata(tracks: <span class="kw-2">&amp;</span>[UvCoverageSeries]) -&gt; Vec&lt;PlotSeriesMetadata&gt; {
+<a href=#877 id=877 data-nosnippet>877</a>    <span class="kw">let </span><span class="kw-2">mut </span>grouped = BTreeMap::&lt;String, u64&gt;::new();
+<a href=#878 id=878 data-nosnippet>878</a>    <span class="kw">for </span>track <span class="kw">in </span>tracks {
+<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw-2">*</span>grouped
+<a href=#880 id=880 data-nosnippet>880</a>            .entry(uv_coverage_group_label(<span class="kw-2">&amp;</span>track.label))
+<a href=#881 id=881 data-nosnippet>881</a>            .or_default() += track.points.len() <span class="kw">as </span>u64;
+<a href=#882 id=882 data-nosnippet>882</a>    }
+<a href=#883 id=883 data-nosnippet>883</a>    grouped
+<a href=#884 id=884 data-nosnippet>884</a>        .into_iter()
+<a href=#885 id=885 data-nosnippet>885</a>        .map(|(group, point_count)| PlotSeriesMetadata {
+<a href=#886 id=886 data-nosnippet>886</a>            label: group.clone(),
+<a href=#887 id=887 data-nosnippet>887</a>            color_group: group,
+<a href=#888 id=888 data-nosnippet>888</a>            point_count,
+<a href=#889 id=889 data-nosnippet>889</a>            first_row: <span class="prelude-val">None</span>,
+<a href=#890 id=890 data-nosnippet>890</a>            last_row: <span class="prelude-val">None</span>,
+<a href=#891 id=891 data-nosnippet>891</a>        })
+<a href=#892 id=892 data-nosnippet>892</a>        .collect()
+<a href=#893 id=893 data-nosnippet>893</a>}
+<a href=#894 id=894 data-nosnippet>894</a>
+<a href=#895 id=895 data-nosnippet>895</a><span class="kw">fn </span>uv_coverage_group_label(track_label: <span class="kw-2">&amp;</span>str) -&gt; String {
+<a href=#896 id=896 data-nosnippet>896</a>    <span class="kw">let </span>parts = track_label.split_whitespace().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#897 id=897 data-nosnippet>897</a>    <span class="kw">let </span>field = parts
+<a href=#898 id=898 data-nosnippet>898</a>        .windows(<span class="number">2</span>)
+<a href=#899 id=899 data-nosnippet>899</a>        .find_map(|window| (window[<span class="number">0</span>] == <span class="string">"field"</span>).then_some(window[<span class="number">1</span>]));
+<a href=#900 id=900 data-nosnippet>900</a>    <span class="kw">let </span>spw = parts
+<a href=#901 id=901 data-nosnippet>901</a>        .windows(<span class="number">2</span>)
+<a href=#902 id=902 data-nosnippet>902</a>        .find_map(|window| (window[<span class="number">0</span>] == <span class="string">"spw"</span>).then_some(window[<span class="number">1</span>]));
+<a href=#903 id=903 data-nosnippet>903</a>    <span class="kw">match </span>(field, spw) {
+<a href=#904 id=904 data-nosnippet>904</a>        (<span class="prelude-val">Some</span>(field), <span class="prelude-val">Some</span>(spw)) =&gt; <span class="macro">format!</span>(<span class="string">"field {field} spw {spw}"</span>),
+<a href=#905 id=905 data-nosnippet>905</a>        (<span class="prelude-val">Some</span>(field), <span class="prelude-val">None</span>) =&gt; <span class="macro">format!</span>(<span class="string">"field {field}"</span>),
+<a href=#906 id=906 data-nosnippet>906</a>        (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(spw)) =&gt; <span class="macro">format!</span>(<span class="string">"spw {spw}"</span>),
+<a href=#907 id=907 data-nosnippet>907</a>        (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; <span class="string">"UV samples"</span>.to_string(),
+<a href=#908 id=908 data-nosnippet>908</a>    }
+<a href=#909 id=909 data-nosnippet>909</a>}
+<a href=#910 id=910 data-nosnippet>910</a>
+<a href=#911 id=911 data-nosnippet>911</a><span class="kw">fn </span>series_metadata(series: <span class="kw-2">&amp;</span>MsScatterSeries) -&gt; PlotSeriesMetadata {
+<a href=#912 id=912 data-nosnippet>912</a>    <span class="kw">let </span>first_row = series.provenance.first().map(|point| point.row <span class="kw">as </span>u64);
+<a href=#913 id=913 data-nosnippet>913</a>    <span class="kw">let </span>last_row = series.provenance.last().map(|point| point.row <span class="kw">as </span>u64);
+<a href=#914 id=914 data-nosnippet>914</a>    PlotSeriesMetadata {
+<a href=#915 id=915 data-nosnippet>915</a>        label: series.label.clone(),
+<a href=#916 id=916 data-nosnippet>916</a>        color_group: series.color_group.clone(),
+<a href=#917 id=917 data-nosnippet>917</a>        point_count: series.points.len() <span class="kw">as </span>u64,
+<a href=#918 id=918 data-nosnippet>918</a>        first_row,
+<a href=#919 id=919 data-nosnippet>919</a>        last_row,
+<a href=#920 id=920 data-nosnippet>920</a>    }
+<a href=#921 id=921 data-nosnippet>921</a>}
+<a href=#922 id=922 data-nosnippet>922</a>
+<a href=#923 id=923 data-nosnippet>923</a><span class="kw">fn </span>axis_metadata(id: <span class="kw-2">&amp;</span>str, label: <span class="kw-2">&amp;</span>str) -&gt; PlotAxisMetadata {
+<a href=#924 id=924 data-nosnippet>924</a>    PlotAxisMetadata {
+<a href=#925 id=925 data-nosnippet>925</a>        id: id.to_string(),
+<a href=#926 id=926 data-nosnippet>926</a>        label: label.to_string(),
+<a href=#927 id=927 data-nosnippet>927</a>        unit: label_unit(label),
+<a href=#928 id=928 data-nosnippet>928</a>    }
+<a href=#929 id=929 data-nosnippet>929</a>}
+<a href=#930 id=930 data-nosnippet>930</a>
+<a href=#931 id=931 data-nosnippet>931</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>label_unit(label: <span class="kw-2">&amp;</span>str) -&gt; String {
+<a href=#932 id=932 data-nosnippet>932</a>    label
+<a href=#933 id=933 data-nosnippet>933</a>        .rsplit_once(<span class="string">'('</span>)
+<a href=#934 id=934 data-nosnippet>934</a>        .and_then(|(<span class="kw">_</span>, suffix)| suffix.strip_suffix(<span class="string">')'</span>))
+<a href=#935 id=935 data-nosnippet>935</a>        .unwrap_or(<span class="string">""</span>)
+<a href=#936 id=936 data-nosnippet>936</a>        .trim()
+<a href=#937 id=937 data-nosnippet>937</a>        .to_string()
+<a href=#938 id=938 data-nosnippet>938</a>}
+<a href=#939 id=939 data-nosnippet>939</a>
+<a href=#940 id=940 data-nosnippet>940</a><span class="kw">fn </span>nonempty_or&lt;<span class="lifetime">'a</span>&gt;(value: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str, fallback: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'a </span>str {
+<a href=#941 id=941 data-nosnippet>941</a>    <span class="kw">if </span>value.trim().is_empty() {
+<a href=#942 id=942 data-nosnippet>942</a>        fallback
+<a href=#943 id=943 data-nosnippet>943</a>    } <span class="kw">else </span>{
+<a href=#944 id=944 data-nosnippet>944</a>        value
+<a href=#945 id=945 data-nosnippet>945</a>    }
+<a href=#946 id=946 data-nosnippet>946</a>}
+<a href=#947 id=947 data-nosnippet>947</a>
+<a href=#948 id=948 data-nosnippet>948</a><span class="kw">fn </span>sampling_diagnostics(summary: <span class="kw-2">&amp;</span>str, rendered_point_count: u64) -&gt; Vec&lt;String&gt; {
+<a href=#949 id=949 data-nosnippet>949</a>    <span class="kw">let </span><span class="kw-2">mut </span>diagnostics = Vec::new();
+<a href=#950 id=950 data-nosnippet>950</a>    <span class="kw">if </span>rendered_point_count == <span class="number">0 </span>{
+<a href=#951 id=951 data-nosnippet>951</a>        diagnostics.push(<span class="string">"plot produced no drawable visibility points"</span>.to_string());
+<a href=#952 id=952 data-nosnippet>952</a>    }
+<a href=#953 id=953 data-nosnippet>953</a>    <span class="kw">if </span>summary.contains(<span class="string">"Decimated points"</span>) || summary.contains(<span class="string">"Downsampled plot"</span>) {
+<a href=#954 id=954 data-nosnippet>954</a>        diagnostics.push(<span class="string">"point budget decimation was applied"</span>.to_string());
+<a href=#955 id=955 data-nosnippet>955</a>    }
+<a href=#956 id=956 data-nosnippet>956</a>    diagnostics
+<a href=#957 id=957 data-nosnippet>957</a>}
 </code></pre></div></section></main></body></html>

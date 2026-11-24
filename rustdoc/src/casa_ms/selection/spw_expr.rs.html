@@ -299,178 +299,208 @@
 <a href=#299 id=299 data-nosnippet>299</a>    /// A range of the window starting at `-1`, where CASA's channel slices
 <a href=#300 id=300 data-nosnippet>300</a>    /// are undefined.
 <a href=#301 id=301 data-nosnippet>301</a>    </span><span class="kw">pub fn </span>channels_of(<span class="kw-2">&amp;</span><span class="self">self</span>, spw_id: usize) -&gt; MsResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;usize&gt;&gt;&gt; {
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span><span class="kw-2">mut </span>channels = Vec::new();
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span><span class="kw-2">mut </span>named = <span class="bool-val">false</span>;
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">for </span>range <span class="kw">in </span><span class="self">self</span>.channels.iter().filter(|range| range.spw_id == spw_id) {
-<a href=#305 id=305 data-nosnippet>305</a>            named = <span class="bool-val">true</span>;
-<a href=#306 id=306 data-nosnippet>306</a>            channels.extend(range.channels().ok_or_else(|| {
-<a href=#307 id=307 data-nosnippet>307</a>                MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#308 id=308 data-nosnippet>308</a>                    <span class="string">"spw selection: window {spw_id}'s channel range {}~{} starts before its \
-<a href=#309 id=309 data-nosnippet>309</a>                     first channel"</span>,
-<a href=#310 id=310 data-nosnippet>310</a>                    range.start, range.stop
-<a href=#311 id=311 data-nosnippet>311</a>                ))
-<a href=#312 id=312 data-nosnippet>312</a>            })<span class="question-mark">?</span>);
-<a href=#313 id=313 data-nosnippet>313</a>        }
-<a href=#314 id=314 data-nosnippet>314</a>        channels.sort_unstable();
-<a href=#315 id=315 data-nosnippet>315</a>        channels.dedup();
-<a href=#316 id=316 data-nosnippet>316</a>        <span class="prelude-val">Ok</span>(named.then_some(channels))
-<a href=#317 id=317 data-nosnippet>317</a>    }
-<a href=#318 id=318 data-nosnippet>318</a>
-<a href=#319 id=319 data-nosnippet>319</a>    <span class="doccomment">/// `MSSelection::getChanFreqList()` (unsorted): each channel range's
-<a href=#320 id=320 data-nosnippet>320</a>    /// first and last CHAN_FREQ and its step times the window's mean
-<a href=#321 id=321 data-nosnippet>321</a>    /// CHAN_WIDTH, `step * sum(widths) / n` (`MSSelection.cc:1330-1363`).
-<a href=#322 id=322 data-nosnippet>322</a>    ///
-<a href=#323 id=323 data-nosnippet>323</a>    /// # Errors
-<a href=#324 id=324 data-nosnippet>324</a>    ///
-<a href=#325 id=325 data-nosnippet>325</a>    /// A range outside its window in `windows`, which must be the rows the
-<a href=#326 id=326 data-nosnippet>326</a>    /// selection was resolved against.
-<a href=#327 id=327 data-nosnippet>327</a>    </span><span class="kw">pub fn </span>channel_frequency_list(
-<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#329 id=329 data-nosnippet>329</a>        windows: <span class="kw-2">&amp;</span>[SpectralWindowRow&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#330 id=330 data-nosnippet>330</a>    ) -&gt; MsResult&lt;Vec&lt;ChannelFrequencyRange&gt;&gt; {
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="self">self</span>.channels
-<a href=#332 id=332 data-nosnippet>332</a>            .iter()
-<a href=#333 id=333 data-nosnippet>333</a>            .map(|range| {
-<a href=#334 id=334 data-nosnippet>334</a>                <span class="kw">let </span>window = windows.get(range.spw_id);
-<a href=#335 id=335 data-nosnippet>335</a>                <span class="kw">let </span>frequency = |channel: i32| {
-<a href=#336 id=336 data-nosnippet>336</a>                    usize::try_from(channel)
-<a href=#337 id=337 data-nosnippet>337</a>                        .ok()
-<a href=#338 id=338 data-nosnippet>338</a>                        .and_then(|channel| window<span class="question-mark">?</span>.chan_freq_hz.get(channel).copied())
-<a href=#339 id=339 data-nosnippet>339</a>                };
-<a href=#340 id=340 data-nosnippet>340</a>                <span class="kw">let </span>(<span class="prelude-val">Some</span>(window), <span class="prelude-val">Some</span>(start_hz), <span class="prelude-val">Some</span>(stop_hz)) =
-<a href=#341 id=341 data-nosnippet>341</a>                    (window, frequency(range.start), frequency(range.stop))
-<a href=#342 id=342 data-nosnippet>342</a>                <span class="kw">else </span>{
-<a href=#343 id=343 data-nosnippet>343</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
-<a href=#344 id=344 data-nosnippet>344</a>                        <span class="string">"spw selection: channel range {range:?} is outside its window"
-<a href=#345 id=345 data-nosnippet>345</a>                    </span>)));
-<a href=#346 id=346 data-nosnippet>346</a>                };
-<a href=#347 id=347 data-nosnippet>347</a>                <span class="kw">let </span>sum: f64 = window.chan_width_hz.iter().sum();
-<a href=#348 id=348 data-nosnippet>348</a>                <span class="prelude-val">Ok</span>(ChannelFrequencyRange {
-<a href=#349 id=349 data-nosnippet>349</a>                    spw_id: range.spw_id,
-<a href=#350 id=350 data-nosnippet>350</a>                    start_hz,
-<a href=#351 id=351 data-nosnippet>351</a>                    stop_hz,
-<a href=#352 id=352 data-nosnippet>352</a>                    step_hz: f64::from(range.step) * sum / window.chan_width_hz.len() <span class="kw">as </span>f64,
-<a href=#353 id=353 data-nosnippet>353</a>                })
-<a href=#354 id=354 data-nosnippet>354</a>            })
-<a href=#355 id=355 data-nosnippet>355</a>            .collect()
-<a href=#356 id=356 data-nosnippet>356</a>    }
-<a href=#357 id=357 data-nosnippet>357</a>
-<a href=#358 id=358 data-nosnippet>358</a>    <span class="doccomment">/// What CASA logs at `WARN` while resolving the expression: channels
-<a href=#359 id=359 data-nosnippet>359</a>    /// clamped to their window, frequency ranges that find no channel, and
-<a href=#360 id=360 data-nosnippet>360</a>    /// non-constant channel widths, worded as CASA words them (messages of
-<a href=#361 id=361 data-nosnippet>361</a>    /// one window list accumulate, as CASA's do).
-<a href=#362 id=362 data-nosnippet>362</a>    </span><span class="attr">#[must_use]
-<a href=#363 id=363 data-nosnippet>363</a>    </span><span class="kw">pub fn </span>warnings(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[String] {
-<a href=#364 id=364 data-nosnippet>364</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.warnings
-<a href=#365 id=365 data-nosnippet>365</a>    }
-<a href=#366 id=366 data-nosnippet>366</a>
-<a href=#367 id=367 data-nosnippet>367</a>    <span class="doccomment">/// The heap bytes the selection owns: its lists and warning text.
-<a href=#368 id=368 data-nosnippet>368</a>    </span><span class="attr">#[must_use]
-<a href=#369 id=369 data-nosnippet>369</a>    </span><span class="kw">pub fn </span>allocated_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#370 id=370 data-nosnippet>370</a>        size_of_val::&lt;[usize]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.spw_ids)
-<a href=#371 id=371 data-nosnippet>371</a>            + size_of_val::&lt;[usize]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.data_description_ids)
-<a href=#372 id=372 data-nosnippet>372</a>            + size_of_val::&lt;[ChannelRange]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.channels)
-<a href=#373 id=373 data-nosnippet>373</a>            + <span class="self">self</span>.rows.as_deref().map_or(<span class="number">0</span>, size_of_val::&lt;[usize]&gt;)
-<a href=#374 id=374 data-nosnippet>374</a>            + size_of_val::&lt;[String]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.warnings)
-<a href=#375 id=375 data-nosnippet>375</a>            + <span class="self">self</span>.warnings.iter().map(String::capacity).sum::&lt;usize&gt;()
-<a href=#376 id=376 data-nosnippet>376</a>    }
-<a href=#377 id=377 data-nosnippet>377</a>}
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span><span class="kw-2">mut </span>channels = <span class="self">self</span>.ordered_channels_of(spw_id)<span class="question-mark">?</span>;
+<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(channels) = <span class="kw-2">&amp;mut </span>channels {
+<a href=#304 id=304 data-nosnippet>304</a>            channels.sort_unstable();
+<a href=#305 id=305 data-nosnippet>305</a>            channels.dedup();
+<a href=#306 id=306 data-nosnippet>306</a>        }
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="prelude-val">Ok</span>(channels)
+<a href=#308 id=308 data-nosnippet>308</a>    }
+<a href=#309 id=309 data-nosnippet>309</a>
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="doccomment">/// The channel projection in expression order, retaining overlaps.
+<a href=#311 id=311 data-nosnippet>311</a>    /// Returns `None` when no range names the window.
+<a href=#312 id=312 data-nosnippet>312</a>    ///
+<a href=#313 id=313 data-nosnippet>313</a>    /// # Errors
+<a href=#314 id=314 data-nosnippet>314</a>    /// A range starting at `-1`, where CASA's channel slices are undefined.
+<a href=#315 id=315 data-nosnippet>315</a>    </span><span class="kw">pub fn </span>ordered_channels_of(<span class="kw-2">&amp;</span><span class="self">self</span>, spw_id: usize) -&gt; MsResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;usize&gt;&gt;&gt; {
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span><span class="kw-2">mut </span>channels = Vec::new();
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">let </span><span class="kw-2">mut </span>named = <span class="bool-val">false</span>;
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">for </span>range <span class="kw">in </span><span class="self">self</span>.channels.iter().filter(|range| range.spw_id == spw_id) {
+<a href=#319 id=319 data-nosnippet>319</a>            named = <span class="bool-val">true</span>;
+<a href=#320 id=320 data-nosnippet>320</a>            channels.extend(range.channels().ok_or_else(|| {
+<a href=#321 id=321 data-nosnippet>321</a>                MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#322 id=322 data-nosnippet>322</a>                    <span class="string">"spw selection: window {spw_id}'s channel range {}~{} starts before its \
+<a href=#323 id=323 data-nosnippet>323</a>                     first channel"</span>,
+<a href=#324 id=324 data-nosnippet>324</a>                    range.start, range.stop
+<a href=#325 id=325 data-nosnippet>325</a>                ))
+<a href=#326 id=326 data-nosnippet>326</a>            })<span class="question-mark">?</span>);
+<a href=#327 id=327 data-nosnippet>327</a>        }
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="prelude-val">Ok</span>(named.then_some(channels))
+<a href=#329 id=329 data-nosnippet>329</a>    }
+<a href=#330 id=330 data-nosnippet>330</a>
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="doccomment">/// `MSSelection::getChanFreqList()` (unsorted): each channel range's
+<a href=#332 id=332 data-nosnippet>332</a>    /// first and last CHAN_FREQ and its step times the window's mean
+<a href=#333 id=333 data-nosnippet>333</a>    /// CHAN_WIDTH, `step * sum(widths) / n` (`MSSelection.cc:1330-1363`).
+<a href=#334 id=334 data-nosnippet>334</a>    ///
+<a href=#335 id=335 data-nosnippet>335</a>    /// # Errors
+<a href=#336 id=336 data-nosnippet>336</a>    ///
+<a href=#337 id=337 data-nosnippet>337</a>    /// A range outside its window in `windows`, which must be the rows the
+<a href=#338 id=338 data-nosnippet>338</a>    /// selection was resolved against.
+<a href=#339 id=339 data-nosnippet>339</a>    </span><span class="kw">pub fn </span>channel_frequency_list(
+<a href=#340 id=340 data-nosnippet>340</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#341 id=341 data-nosnippet>341</a>        windows: <span class="kw-2">&amp;</span>[SpectralWindowRow&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#342 id=342 data-nosnippet>342</a>    ) -&gt; MsResult&lt;Vec&lt;ChannelFrequencyRange&gt;&gt; {
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="self">self</span>.channels
+<a href=#344 id=344 data-nosnippet>344</a>            .iter()
+<a href=#345 id=345 data-nosnippet>345</a>            .map(|range| {
+<a href=#346 id=346 data-nosnippet>346</a>                <span class="kw">let </span>window = windows.get(range.spw_id);
+<a href=#347 id=347 data-nosnippet>347</a>                <span class="kw">let </span>frequency = |channel: i32| {
+<a href=#348 id=348 data-nosnippet>348</a>                    usize::try_from(channel)
+<a href=#349 id=349 data-nosnippet>349</a>                        .ok()
+<a href=#350 id=350 data-nosnippet>350</a>                        .and_then(|channel| window<span class="question-mark">?</span>.chan_freq_hz.get(channel).copied())
+<a href=#351 id=351 data-nosnippet>351</a>                };
+<a href=#352 id=352 data-nosnippet>352</a>                <span class="kw">let </span>(<span class="prelude-val">Some</span>(window), <span class="prelude-val">Some</span>(start_hz), <span class="prelude-val">Some</span>(stop_hz)) =
+<a href=#353 id=353 data-nosnippet>353</a>                    (window, frequency(range.start), frequency(range.stop))
+<a href=#354 id=354 data-nosnippet>354</a>                <span class="kw">else </span>{
+<a href=#355 id=355 data-nosnippet>355</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(MsError::InvalidInput(<span class="macro">format!</span>(
+<a href=#356 id=356 data-nosnippet>356</a>                        <span class="string">"spw selection: channel range {range:?} is outside its window"
+<a href=#357 id=357 data-nosnippet>357</a>                    </span>)));
+<a href=#358 id=358 data-nosnippet>358</a>                };
+<a href=#359 id=359 data-nosnippet>359</a>                <span class="kw">let </span>sum: f64 = window.chan_width_hz.iter().sum();
+<a href=#360 id=360 data-nosnippet>360</a>                <span class="prelude-val">Ok</span>(ChannelFrequencyRange {
+<a href=#361 id=361 data-nosnippet>361</a>                    spw_id: range.spw_id,
+<a href=#362 id=362 data-nosnippet>362</a>                    start_hz,
+<a href=#363 id=363 data-nosnippet>363</a>                    stop_hz,
+<a href=#364 id=364 data-nosnippet>364</a>                    step_hz: f64::from(range.step) * sum / window.chan_width_hz.len() <span class="kw">as </span>f64,
+<a href=#365 id=365 data-nosnippet>365</a>                })
+<a href=#366 id=366 data-nosnippet>366</a>            })
+<a href=#367 id=367 data-nosnippet>367</a>            .collect()
+<a href=#368 id=368 data-nosnippet>368</a>    }
+<a href=#369 id=369 data-nosnippet>369</a>
+<a href=#370 id=370 data-nosnippet>370</a>    <span class="doccomment">/// What CASA logs at `WARN` while resolving the expression: channels
+<a href=#371 id=371 data-nosnippet>371</a>    /// clamped to their window, frequency ranges that find no channel, and
+<a href=#372 id=372 data-nosnippet>372</a>    /// non-constant channel widths, worded as CASA words them (messages of
+<a href=#373 id=373 data-nosnippet>373</a>    /// one window list accumulate, as CASA's do).
+<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="attr">#[must_use]
+<a href=#375 id=375 data-nosnippet>375</a>    </span><span class="kw">pub fn </span>warnings(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[String] {
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.warnings
+<a href=#377 id=377 data-nosnippet>377</a>    }
 <a href=#378 id=378 data-nosnippet>378</a>
-<a href=#379 id=379 data-nosnippet>379</a><span class="doccomment">/// Resolve CASA spectral-window selection `text` against `windows`, the
-<a href=#380 id=380 data-nosnippet>380</a>/// SPECTRAL_WINDOW rows, and `descriptions`, the DATA_DESCRIPTION rows, in
-<a href=#381 id=381 data-nosnippet>381</a>/// row order. See the [module documentation](self) for the forms.
-<a href=#382 id=382 data-nosnippet>382</a>///
-<a href=#383 id=383 data-nosnippet>383</a>/// The empty string selects everything ([`SpwSelection::all`]), as
-<a href=#384 id=384 data-nosnippet>384</a>/// `MSSelection` skips an empty expression; text of only blanks is a syntax
-<a href=#385 id=385 data-nosnippet>385</a>/// error.
-<a href=#386 id=386 data-nosnippet>386</a>///
-<a href=#387 id=387 data-nosnippet>387</a>/// # Errors
-<a href=#388 id=388 data-nosnippet>388</a>///
-<a href=#389 id=389 data-nosnippet>389</a>/// [`MsError::InvalidInput`], worded as CASA's `MSSelectionSpwError`, for
-<a href=#390 id=390 data-nosnippet>390</a>/// any expression CASA refuses (see [Refusals](self#refusals)) and for the
-<a href=#391 id=391 data-nosnippet>391</a>/// cases listed under [Not ported](self#not-ported).
-<a href=#392 id=392 data-nosnippet>392</a></span><span class="kw">pub fn </span>resolve_spw_selector(
-<a href=#393 id=393 data-nosnippet>393</a>    windows: <span class="kw-2">&amp;</span>[SpectralWindowRow&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#394 id=394 data-nosnippet>394</a>    descriptions: <span class="kw-2">&amp;</span>[DataDescriptionRow],
-<a href=#395 id=395 data-nosnippet>395</a>    text: <span class="kw-2">&amp;</span>str,
-<a href=#396 id=396 data-nosnippet>396</a>) -&gt; MsResult&lt;SpwSelection&gt; {
-<a href=#397 id=397 data-nosnippet>397</a>    <span class="kw">if </span>text.is_empty() {
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(SpwSelection::all());
-<a href=#399 id=399 data-nosnippet>399</a>    }
-<a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">let </span>refuse =
-<a href=#401 id=401 data-nosnippet>401</a>        |message: String| MsError::InvalidInput(<span class="macro">format!</span>(<span class="string">"spw selection {text:?}: {message}"</span>));
-<a href=#402 id=402 data-nosnippet>402</a>    <span class="kw">let </span>expression = grammar::parse(text).map_err(refuse)<span class="question-mark">?</span>;
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">let </span>resolved = actions::resolve(<span class="kw-2">&amp;</span>expression, windows, descriptions).map_err(refuse)<span class="question-mark">?</span>;
-<a href=#404 id=404 data-nosnippet>404</a>    <span class="prelude-val">Ok</span>(SpwSelection {
-<a href=#405 id=405 data-nosnippet>405</a>        selects_all: <span class="bool-val">false</span>,
-<a href=#406 id=406 data-nosnippet>406</a>        spw_ids: resolved.spw_ids.into_boxed_slice(),
-<a href=#407 id=407 data-nosnippet>407</a>        data_description_ids: resolved.data_description_ids.into_boxed_slice(),
-<a href=#408 id=408 data-nosnippet>408</a>        channels: resolved.channels.into_boxed_slice(),
-<a href=#409 id=409 data-nosnippet>409</a>        rows: resolved.rows.map(Vec::into_boxed_slice),
-<a href=#410 id=410 data-nosnippet>410</a>        warnings: resolved.warnings.into_boxed_slice(),
-<a href=#411 id=411 data-nosnippet>411</a>    })
-<a href=#412 id=412 data-nosnippet>412</a>}
-<a href=#413 id=413 data-nosnippet>413</a>
-<a href=#414 id=414 data-nosnippet>414</a><span class="doccomment">/// The SPECTRAL_WINDOW columns spectral-window selection reads, owned.
-<a href=#415 id=415 data-nosnippet>415</a></span><span class="kw">struct </span>OwnedWindow {
-<a href=#416 id=416 data-nosnippet>416</a>    name: String,
-<a href=#417 id=417 data-nosnippet>417</a>    chan_freq_hz: Vec&lt;f64&gt;,
-<a href=#418 id=418 data-nosnippet>418</a>    chan_width_hz: Vec&lt;f64&gt;,
-<a href=#419 id=419 data-nosnippet>419</a>    ref_frequency_hz: f64,
-<a href=#420 id=420 data-nosnippet>420</a>    total_bandwidth_hz: f64,
-<a href=#421 id=421 data-nosnippet>421</a>    flag_row: bool,
-<a href=#422 id=422 data-nosnippet>422</a>}
-<a href=#423 id=423 data-nosnippet>423</a>
-<a href=#424 id=424 data-nosnippet>424</a><span class="kw">impl </span>MeasurementSet {
-<a href=#425 id=425 data-nosnippet>425</a>    <span class="doccomment">/// Resolve CASA spectral-window selection `text` against this
-<a href=#426 id=426 data-nosnippet>426</a>    /// MeasurementSet's SPECTRAL_WINDOW (NAME, CHAN_FREQ, CHAN_WIDTH,
-<a href=#427 id=427 data-nosnippet>427</a>    /// REF_FREQUENCY, TOTAL_BANDWIDTH, FLAG_ROW) and DATA_DESCRIPTION
-<a href=#428 id=428 data-nosnippet>428</a>    /// (SPECTRAL_WINDOW_ID, FLAG_ROW) tables, as [`resolve_spw_selector`]
-<a href=#429 id=429 data-nosnippet>429</a>    /// does over rows a caller supplies.
-<a href=#430 id=430 data-nosnippet>430</a>    ///
-<a href=#431 id=431 data-nosnippet>431</a>    /// Reads only those two subtables; MAIN is not scanned.
-<a href=#432 id=432 data-nosnippet>432</a>    ///
-<a href=#433 id=433 data-nosnippet>433</a>    /// # Errors
-<a href=#434 id=434 data-nosnippet>434</a>    ///
-<a href=#435 id=435 data-nosnippet>435</a>    /// An unreadable subtable, or any refusal of [`resolve_spw_selector`].
-<a href=#436 id=436 data-nosnippet>436</a>    </span><span class="kw">pub fn </span>resolve_spw_selector(<span class="kw-2">&amp;</span><span class="self">self</span>, text: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;SpwSelection&gt; {
-<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">if </span>text.is_empty() {
-<a href=#438 id=438 data-nosnippet>438</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(SpwSelection::all());
-<a href=#439 id=439 data-nosnippet>439</a>        }
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">let </span>table = <span class="self">self</span>.spectral_window()<span class="question-mark">?</span>;
-<a href=#441 id=441 data-nosnippet>441</a>        <span class="kw">let </span>owned = (<span class="number">0</span>..table.row_count())
-<a href=#442 id=442 data-nosnippet>442</a>            .map(|row| {
-<a href=#443 id=443 data-nosnippet>443</a>                <span class="prelude-val">Ok</span>(OwnedWindow {
-<a href=#444 id=444 data-nosnippet>444</a>                    name: table.name(row)<span class="question-mark">?</span>,
-<a href=#445 id=445 data-nosnippet>445</a>                    chan_freq_hz: table.chan_freq(row)<span class="question-mark">?</span>,
-<a href=#446 id=446 data-nosnippet>446</a>                    chan_width_hz: table.chan_width(row)<span class="question-mark">?</span>,
-<a href=#447 id=447 data-nosnippet>447</a>                    ref_frequency_hz: table.ref_frequency(row)<span class="question-mark">?</span>,
-<a href=#448 id=448 data-nosnippet>448</a>                    total_bandwidth_hz: table.total_bandwidth(row)<span class="question-mark">?</span>,
-<a href=#449 id=449 data-nosnippet>449</a>                    flag_row: table.flag_row(row)<span class="question-mark">?</span>,
-<a href=#450 id=450 data-nosnippet>450</a>                })
-<a href=#451 id=451 data-nosnippet>451</a>            })
-<a href=#452 id=452 data-nosnippet>452</a>            .collect::&lt;MsResult&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#453 id=453 data-nosnippet>453</a>        <span class="kw">let </span>windows = owned
-<a href=#454 id=454 data-nosnippet>454</a>            .iter()
-<a href=#455 id=455 data-nosnippet>455</a>            .map(|window| SpectralWindowRow {
-<a href=#456 id=456 data-nosnippet>456</a>                name: <span class="kw-2">&amp;</span>window.name,
-<a href=#457 id=457 data-nosnippet>457</a>                chan_freq_hz: <span class="kw-2">&amp;</span>window.chan_freq_hz,
-<a href=#458 id=458 data-nosnippet>458</a>                chan_width_hz: <span class="kw-2">&amp;</span>window.chan_width_hz,
-<a href=#459 id=459 data-nosnippet>459</a>                ref_frequency_hz: window.ref_frequency_hz,
-<a href=#460 id=460 data-nosnippet>460</a>                total_bandwidth_hz: window.total_bandwidth_hz,
-<a href=#461 id=461 data-nosnippet>461</a>                flag_row: window.flag_row,
-<a href=#462 id=462 data-nosnippet>462</a>            })
-<a href=#463 id=463 data-nosnippet>463</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#464 id=464 data-nosnippet>464</a>        <span class="kw">let </span>table = <span class="self">self</span>.data_description()<span class="question-mark">?</span>;
-<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span>descriptions = (<span class="number">0</span>..table.row_count())
-<a href=#466 id=466 data-nosnippet>466</a>            .map(|row| {
-<a href=#467 id=467 data-nosnippet>467</a>                <span class="prelude-val">Ok</span>(DataDescriptionRow {
-<a href=#468 id=468 data-nosnippet>468</a>                    spectral_window_id: table.spectral_window_id(row)<span class="question-mark">?</span>,
-<a href=#469 id=469 data-nosnippet>469</a>                    flag_row: table.flag_row(row)<span class="question-mark">?</span>,
-<a href=#470 id=470 data-nosnippet>470</a>                })
-<a href=#471 id=471 data-nosnippet>471</a>            })
-<a href=#472 id=472 data-nosnippet>472</a>            .collect::&lt;MsResult&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#473 id=473 data-nosnippet>473</a>        resolve_spw_selector(<span class="kw-2">&amp;</span>windows, <span class="kw-2">&amp;</span>descriptions, text)
-<a href=#474 id=474 data-nosnippet>474</a>    }
-<a href=#475 id=475 data-nosnippet>475</a>}
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="doccomment">/// The heap bytes the selection owns: its lists and warning text.
+<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="attr">#[must_use]
+<a href=#381 id=381 data-nosnippet>381</a>    </span><span class="kw">pub fn </span>allocated_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#382 id=382 data-nosnippet>382</a>        size_of_val::&lt;[usize]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.spw_ids)
+<a href=#383 id=383 data-nosnippet>383</a>            + size_of_val::&lt;[usize]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.data_description_ids)
+<a href=#384 id=384 data-nosnippet>384</a>            + size_of_val::&lt;[ChannelRange]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.channels)
+<a href=#385 id=385 data-nosnippet>385</a>            + <span class="self">self</span>.rows.as_deref().map_or(<span class="number">0</span>, size_of_val::&lt;[usize]&gt;)
+<a href=#386 id=386 data-nosnippet>386</a>            + size_of_val::&lt;[String]&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>.warnings)
+<a href=#387 id=387 data-nosnippet>387</a>            + <span class="self">self</span>.warnings.iter().map(String::capacity).sum::&lt;usize&gt;()
+<a href=#388 id=388 data-nosnippet>388</a>    }
+<a href=#389 id=389 data-nosnippet>389</a>}
+<a href=#390 id=390 data-nosnippet>390</a>
+<a href=#391 id=391 data-nosnippet>391</a><span class="doccomment">/// Resolve CASA spectral-window selection `text` against `windows`, the
+<a href=#392 id=392 data-nosnippet>392</a>/// SPECTRAL_WINDOW rows, and `descriptions`, the DATA_DESCRIPTION rows, in
+<a href=#393 id=393 data-nosnippet>393</a>/// row order. See the [module documentation](self) for the forms.
+<a href=#394 id=394 data-nosnippet>394</a>///
+<a href=#395 id=395 data-nosnippet>395</a>/// The empty string selects everything ([`SpwSelection::all`]), as
+<a href=#396 id=396 data-nosnippet>396</a>/// `MSSelection` skips an empty expression; text of only blanks is a syntax
+<a href=#397 id=397 data-nosnippet>397</a>/// error.
+<a href=#398 id=398 data-nosnippet>398</a>///
+<a href=#399 id=399 data-nosnippet>399</a>/// # Errors
+<a href=#400 id=400 data-nosnippet>400</a>///
+<a href=#401 id=401 data-nosnippet>401</a>/// [`MsError::InvalidInput`], worded as CASA's `MSSelectionSpwError`, for
+<a href=#402 id=402 data-nosnippet>402</a>/// any expression CASA refuses (see [Refusals](self#refusals)) and for the
+<a href=#403 id=403 data-nosnippet>403</a>/// cases listed under [Not ported](self#not-ported).
+<a href=#404 id=404 data-nosnippet>404</a></span><span class="kw">pub fn </span>resolve_spw_selector(
+<a href=#405 id=405 data-nosnippet>405</a>    windows: <span class="kw-2">&amp;</span>[SpectralWindowRow&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#406 id=406 data-nosnippet>406</a>    descriptions: <span class="kw-2">&amp;</span>[DataDescriptionRow],
+<a href=#407 id=407 data-nosnippet>407</a>    text: <span class="kw-2">&amp;</span>str,
+<a href=#408 id=408 data-nosnippet>408</a>) -&gt; MsResult&lt;SpwSelection&gt; {
+<a href=#409 id=409 data-nosnippet>409</a>    resolve_spw(windows, descriptions, text, <span class="bool-val">false</span>)
+<a href=#410 id=410 data-nosnippet>410</a>}
+<a href=#411 id=411 data-nosnippet>411</a>
+<a href=#412 id=412 data-nosnippet>412</a><span class="kw">fn </span>resolve_spw(
+<a href=#413 id=413 data-nosnippet>413</a>    windows: <span class="kw-2">&amp;</span>[SpectralWindowRow&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#414 id=414 data-nosnippet>414</a>    descriptions: <span class="kw-2">&amp;</span>[DataDescriptionRow],
+<a href=#415 id=415 data-nosnippet>415</a>    text: <span class="kw-2">&amp;</span>str,
+<a href=#416 id=416 data-nosnippet>416</a>    flagdata: bool,
+<a href=#417 id=417 data-nosnippet>417</a>) -&gt; MsResult&lt;SpwSelection&gt; {
+<a href=#418 id=418 data-nosnippet>418</a>    <span class="kw">if </span>text.is_empty() {
+<a href=#419 id=419 data-nosnippet>419</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(SpwSelection::all());
+<a href=#420 id=420 data-nosnippet>420</a>    }
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="kw">let </span>refuse =
+<a href=#422 id=422 data-nosnippet>422</a>        |message: String| MsError::InvalidInput(<span class="macro">format!</span>(<span class="string">"spw selection {text:?}: {message}"</span>));
+<a href=#423 id=423 data-nosnippet>423</a>    <span class="kw">let </span>expression = grammar::parse(text).map_err(refuse)<span class="question-mark">?</span>;
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="kw">let </span>resolved =
+<a href=#425 id=425 data-nosnippet>425</a>        actions::resolve(<span class="kw-2">&amp;</span>expression, windows, descriptions, flagdata).map_err(refuse)<span class="question-mark">?</span>;
+<a href=#426 id=426 data-nosnippet>426</a>    <span class="prelude-val">Ok</span>(SpwSelection {
+<a href=#427 id=427 data-nosnippet>427</a>        selects_all: <span class="bool-val">false</span>,
+<a href=#428 id=428 data-nosnippet>428</a>        spw_ids: resolved.spw_ids.into_boxed_slice(),
+<a href=#429 id=429 data-nosnippet>429</a>        data_description_ids: resolved.data_description_ids.into_boxed_slice(),
+<a href=#430 id=430 data-nosnippet>430</a>        channels: resolved.channels.into_boxed_slice(),
+<a href=#431 id=431 data-nosnippet>431</a>        rows: resolved.rows.map(Vec::into_boxed_slice),
+<a href=#432 id=432 data-nosnippet>432</a>        warnings: resolved.warnings.into_boxed_slice(),
+<a href=#433 id=433 data-nosnippet>433</a>    })
+<a href=#434 id=434 data-nosnippet>434</a>}
+<a href=#435 id=435 data-nosnippet>435</a>
+<a href=#436 id=436 data-nosnippet>436</a><span class="doccomment">/// The SPECTRAL_WINDOW columns spectral-window selection reads, owned.
+<a href=#437 id=437 data-nosnippet>437</a></span><span class="kw">struct </span>OwnedWindow {
+<a href=#438 id=438 data-nosnippet>438</a>    name: String,
+<a href=#439 id=439 data-nosnippet>439</a>    chan_freq_hz: Vec&lt;f64&gt;,
+<a href=#440 id=440 data-nosnippet>440</a>    chan_width_hz: Vec&lt;f64&gt;,
+<a href=#441 id=441 data-nosnippet>441</a>    ref_frequency_hz: f64,
+<a href=#442 id=442 data-nosnippet>442</a>    total_bandwidth_hz: f64,
+<a href=#443 id=443 data-nosnippet>443</a>    flag_row: bool,
+<a href=#444 id=444 data-nosnippet>444</a>}
+<a href=#445 id=445 data-nosnippet>445</a>
+<a href=#446 id=446 data-nosnippet>446</a><span class="kw">impl </span>MeasurementSet {
+<a href=#447 id=447 data-nosnippet>447</a>    <span class="doccomment">/// Resolve CASA spectral-window selection `text` against this
+<a href=#448 id=448 data-nosnippet>448</a>    /// MeasurementSet's SPECTRAL_WINDOW (NAME, CHAN_FREQ, CHAN_WIDTH,
+<a href=#449 id=449 data-nosnippet>449</a>    /// REF_FREQUENCY, TOTAL_BANDWIDTH, FLAG_ROW) and DATA_DESCRIPTION
+<a href=#450 id=450 data-nosnippet>450</a>    /// (SPECTRAL_WINDOW_ID, FLAG_ROW) tables, as [`resolve_spw_selector`]
+<a href=#451 id=451 data-nosnippet>451</a>    /// does over rows a caller supplies.
+<a href=#452 id=452 data-nosnippet>452</a>    ///
+<a href=#453 id=453 data-nosnippet>453</a>    /// Reads only those two subtables; MAIN is not scanned.
+<a href=#454 id=454 data-nosnippet>454</a>    ///
+<a href=#455 id=455 data-nosnippet>455</a>    /// # Errors
+<a href=#456 id=456 data-nosnippet>456</a>    ///
+<a href=#457 id=457 data-nosnippet>457</a>    /// An unreadable subtable, or any refusal of [`resolve_spw_selector`].
+<a href=#458 id=458 data-nosnippet>458</a>    </span><span class="kw">pub fn </span>resolve_spw_selector(<span class="kw-2">&amp;</span><span class="self">self</span>, text: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;SpwSelection&gt; {
+<a href=#459 id=459 data-nosnippet>459</a>        <span class="self">self</span>.resolve_spw(text, <span class="bool-val">false</span>)
+<a href=#460 id=460 data-nosnippet>460</a>    }
+<a href=#461 id=461 data-nosnippet>461</a>
+<a href=#462 id=462 data-nosnippet>462</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>resolve_flagdata_spw_selector(<span class="kw-2">&amp;</span><span class="self">self</span>, text: <span class="kw-2">&amp;</span>str) -&gt; MsResult&lt;SpwSelection&gt; {
+<a href=#463 id=463 data-nosnippet>463</a>        <span class="self">self</span>.resolve_spw(text, <span class="bool-val">true</span>)
+<a href=#464 id=464 data-nosnippet>464</a>    }
+<a href=#465 id=465 data-nosnippet>465</a>
+<a href=#466 id=466 data-nosnippet>466</a>    <span class="kw">fn </span>resolve_spw(<span class="kw-2">&amp;</span><span class="self">self</span>, text: <span class="kw-2">&amp;</span>str, flagdata: bool) -&gt; MsResult&lt;SpwSelection&gt; {
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw">if </span>text.is_empty() {
+<a href=#468 id=468 data-nosnippet>468</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(SpwSelection::all());
+<a href=#469 id=469 data-nosnippet>469</a>        }
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="kw">let </span>table = <span class="self">self</span>.spectral_window()<span class="question-mark">?</span>;
+<a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">let </span>owned = (<span class="number">0</span>..table.row_count())
+<a href=#472 id=472 data-nosnippet>472</a>            .map(|row| {
+<a href=#473 id=473 data-nosnippet>473</a>                <span class="prelude-val">Ok</span>(OwnedWindow {
+<a href=#474 id=474 data-nosnippet>474</a>                    name: table.name(row)<span class="question-mark">?</span>,
+<a href=#475 id=475 data-nosnippet>475</a>                    chan_freq_hz: table.chan_freq(row)<span class="question-mark">?</span>,
+<a href=#476 id=476 data-nosnippet>476</a>                    chan_width_hz: table.chan_width(row)<span class="question-mark">?</span>,
+<a href=#477 id=477 data-nosnippet>477</a>                    ref_frequency_hz: table.ref_frequency(row)<span class="question-mark">?</span>,
+<a href=#478 id=478 data-nosnippet>478</a>                    total_bandwidth_hz: table.total_bandwidth(row)<span class="question-mark">?</span>,
+<a href=#479 id=479 data-nosnippet>479</a>                    flag_row: table.flag_row(row)<span class="question-mark">?</span>,
+<a href=#480 id=480 data-nosnippet>480</a>                })
+<a href=#481 id=481 data-nosnippet>481</a>            })
+<a href=#482 id=482 data-nosnippet>482</a>            .collect::&lt;MsResult&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span>windows = owned
+<a href=#484 id=484 data-nosnippet>484</a>            .iter()
+<a href=#485 id=485 data-nosnippet>485</a>            .map(|window| SpectralWindowRow {
+<a href=#486 id=486 data-nosnippet>486</a>                name: <span class="kw-2">&amp;</span>window.name,
+<a href=#487 id=487 data-nosnippet>487</a>                chan_freq_hz: <span class="kw-2">&amp;</span>window.chan_freq_hz,
+<a href=#488 id=488 data-nosnippet>488</a>                chan_width_hz: <span class="kw-2">&amp;</span>window.chan_width_hz,
+<a href=#489 id=489 data-nosnippet>489</a>                ref_frequency_hz: window.ref_frequency_hz,
+<a href=#490 id=490 data-nosnippet>490</a>                total_bandwidth_hz: window.total_bandwidth_hz,
+<a href=#491 id=491 data-nosnippet>491</a>                flag_row: window.flag_row,
+<a href=#492 id=492 data-nosnippet>492</a>            })
+<a href=#493 id=493 data-nosnippet>493</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#494 id=494 data-nosnippet>494</a>        <span class="kw">let </span>table = <span class="self">self</span>.data_description()<span class="question-mark">?</span>;
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">let </span>descriptions = (<span class="number">0</span>..table.row_count())
+<a href=#496 id=496 data-nosnippet>496</a>            .map(|row| {
+<a href=#497 id=497 data-nosnippet>497</a>                <span class="prelude-val">Ok</span>(DataDescriptionRow {
+<a href=#498 id=498 data-nosnippet>498</a>                    spectral_window_id: table.spectral_window_id(row)<span class="question-mark">?</span>,
+<a href=#499 id=499 data-nosnippet>499</a>                    flag_row: table.flag_row(row)<span class="question-mark">?</span>,
+<a href=#500 id=500 data-nosnippet>500</a>                })
+<a href=#501 id=501 data-nosnippet>501</a>            })
+<a href=#502 id=502 data-nosnippet>502</a>            .collect::&lt;MsResult&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#503 id=503 data-nosnippet>503</a>        resolve_spw(<span class="kw-2">&amp;</span>windows, <span class="kw-2">&amp;</span>descriptions, text, flagdata)
+<a href=#504 id=504 data-nosnippet>504</a>    }
+<a href=#505 id=505 data-nosnippet>505</a>}
 </code></pre></div></section></main></body></html>

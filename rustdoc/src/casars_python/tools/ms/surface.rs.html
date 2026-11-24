@@ -188,7 +188,7 @@
 <a href=#188 id=188 data-nosnippet>188</a>            param(<span class="string">"average"</span>, K::Bool, Bool(<span class="bool-val">false</span>)),
 <a href=#189 id=189 data-nosnippet>189</a>        ],
 <a href=#190 id=190 data-nosnippet>190</a>        R::Any,
-<a href=#191 id=191 data-nosnippet>191</a>        No,
+<a href=#191 id=191 data-nosnippet>191</a>        Status::Partial,
 <a href=#192 id=192 data-nosnippet>192</a>    ),
 <a href=#193 id=193 data-nosnippet>193</a>    method(
 <a href=#194 id=194 data-nosnippet>194</a>        <span class="string">"getdataold"</span>,
@@ -211,20 +211,20 @@
 <a href=#211 id=211 data-nosnippet>211</a>            param(<span class="string">"format"</span>, K::Text, Text(<span class="string">"measure"</span>)),
 <a href=#212 id=212 data-nosnippet>212</a>        ],
 <a href=#213 id=213 data-nosnippet>213</a>        R::Any,
-<a href=#214 id=214 data-nosnippet>214</a>        No,
+<a href=#214 id=214 data-nosnippet>214</a>        Yes,
 <a href=#215 id=215 data-nosnippet>215</a>    ),
-<a href=#216 id=216 data-nosnippet>216</a>    method(<span class="string">"getreferencedtables"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
-<a href=#217 id=217 data-nosnippet>217</a>    method(<span class="string">"getscansummary"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
-<a href=#218 id=218 data-nosnippet>218</a>    method(<span class="string">"getspectralwindowinfo"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
+<a href=#216 id=216 data-nosnippet>216</a>    method(<span class="string">"getreferencedtables"</span>, <span class="kw-2">&amp;</span>[], R::Any, Yes),
+<a href=#217 id=217 data-nosnippet>217</a>    method(<span class="string">"getscansummary"</span>, <span class="kw-2">&amp;</span>[], R::Record, Yes),
+<a href=#218 id=218 data-nosnippet>218</a>    method(<span class="string">"getspectralwindowinfo"</span>, <span class="kw-2">&amp;</span>[], R::Any, Yes),
 <a href=#219 id=219 data-nosnippet>219</a>    method(
 <a href=#220 id=220 data-nosnippet>220</a>        <span class="string">"hanningsmooth"</span>,
 <a href=#221 id=221 data-nosnippet>221</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"datacolumn"</span>, K::Text, Text(<span class="string">"corrected"</span>))],
 <a href=#222 id=222 data-nosnippet>222</a>        R::Any,
 <a href=#223 id=223 data-nosnippet>223</a>        No,
 <a href=#224 id=224 data-nosnippet>224</a>    ),
-<a href=#225 id=225 data-nosnippet>225</a>    method(<span class="string">"ismultims"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
-<a href=#226 id=226 data-nosnippet>226</a>    method(<span class="string">"iswritable"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
-<a href=#227 id=227 data-nosnippet>227</a>    method(<span class="string">"iterend"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
+<a href=#225 id=225 data-nosnippet>225</a>    method(<span class="string">"ismultims"</span>, <span class="kw-2">&amp;</span>[], R::Any, Yes),
+<a href=#226 id=226 data-nosnippet>226</a>    method(<span class="string">"iswritable"</span>, <span class="kw-2">&amp;</span>[], R::Any, Yes),
+<a href=#227 id=227 data-nosnippet>227</a>    method(<span class="string">"iterend"</span>, <span class="kw-2">&amp;</span>[], R::Bool, Yes),
 <a href=#228 id=228 data-nosnippet>228</a>    method(<span class="string">"iterendold"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
 <a href=#229 id=229 data-nosnippet>229</a>    method(
 <a href=#230 id=230 data-nosnippet>230</a>        <span class="string">"iterinit"</span>,
@@ -234,8 +234,8 @@
 <a href=#234 id=234 data-nosnippet>234</a>            param(<span class="string">"maxrows"</span>, K::Int, Int(<span class="number">0</span>)),
 <a href=#235 id=235 data-nosnippet>235</a>            param(<span class="string">"adddefaultsortcolumns"</span>, K::Bool, Bool(<span class="bool-val">true</span>)),
 <a href=#236 id=236 data-nosnippet>236</a>        ],
-<a href=#237 id=237 data-nosnippet>237</a>        R::Any,
-<a href=#238 id=238 data-nosnippet>238</a>        No,
+<a href=#237 id=237 data-nosnippet>237</a>        R::Bool,
+<a href=#238 id=238 data-nosnippet>238</a>        Yes,
 <a href=#239 id=239 data-nosnippet>239</a>    ),
 <a href=#240 id=240 data-nosnippet>240</a>    method(
 <a href=#241 id=241 data-nosnippet>241</a>        <span class="string">"iterinitold"</span>,
@@ -248,9 +248,9 @@
 <a href=#248 id=248 data-nosnippet>248</a>        R::Any,
 <a href=#249 id=249 data-nosnippet>249</a>        No,
 <a href=#250 id=250 data-nosnippet>250</a>    ),
-<a href=#251 id=251 data-nosnippet>251</a>    method(<span class="string">"iternext"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
+<a href=#251 id=251 data-nosnippet>251</a>    method(<span class="string">"iternext"</span>, <span class="kw-2">&amp;</span>[], R::Bool, Yes),
 <a href=#252 id=252 data-nosnippet>252</a>    method(<span class="string">"iternextold"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
-<a href=#253 id=253 data-nosnippet>253</a>    method(<span class="string">"iterorigin"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
+<a href=#253 id=253 data-nosnippet>253</a>    method(<span class="string">"iterorigin"</span>, <span class="kw-2">&amp;</span>[], R::Bool, Yes),
 <a href=#254 id=254 data-nosnippet>254</a>    method(<span class="string">"iteroriginold"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
 <a href=#255 id=255 data-nosnippet>255</a>    method(
 <a href=#256 id=256 data-nosnippet>256</a>        <span class="string">"lister"</span>,
@@ -287,7 +287,7 @@
 <a href=#287 id=287 data-nosnippet>287</a>        <span class="string">"metadata"</span>,
 <a href=#288 id=288 data-nosnippet>288</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"cachesize"</span>, K::Float, Float(<span class="number">50.0</span>))],
 <a href=#289 id=289 data-nosnippet>289</a>        R::Any,
-<a href=#290 id=290 data-nosnippet>290</a>        No,
+<a href=#290 id=290 data-nosnippet>290</a>        Yes,
 <a href=#291 id=291 data-nosnippet>291</a>    ),
 <a href=#292 id=292 data-nosnippet>292</a>    method(
 <a href=#293 id=293 data-nosnippet>293</a>        <span class="string">"msselect"</span>,
@@ -298,7 +298,7 @@
 <a href=#298 id=298 data-nosnippet>298</a>        R::Bool,
 <a href=#299 id=299 data-nosnippet>299</a>        Yes,
 <a href=#300 id=300 data-nosnippet>300</a>    ),
-<a href=#301 id=301 data-nosnippet>301</a>    method(<span class="string">"msselectedindices"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
+<a href=#301 id=301 data-nosnippet>301</a>    method(<span class="string">"msselectedindices"</span>, <span class="kw-2">&amp;</span>[], R::Any, Yes),
 <a href=#302 id=302 data-nosnippet>302</a>    method(
 <a href=#303 id=303 data-nosnippet>303</a>        <span class="string">"msseltoindex"</span>,
 <a href=#304 id=304 data-nosnippet>304</a>        <span class="kw-2">&amp;</span>[
@@ -314,9 +314,9 @@
 <a href=#314 id=314 data-nosnippet>314</a>            param(<span class="string">"taql"</span>, K::Text, Text(<span class="string">""</span>)),
 <a href=#315 id=315 data-nosnippet>315</a>        ],
 <a href=#316 id=316 data-nosnippet>316</a>        R::Any,
-<a href=#317 id=317 data-nosnippet>317</a>        No,
+<a href=#317 id=317 data-nosnippet>317</a>        Yes,
 <a href=#318 id=318 data-nosnippet>318</a>    ),
-<a href=#319 id=319 data-nosnippet>319</a>    method(<span class="string">"name"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
+<a href=#319 id=319 data-nosnippet>319</a>    method(<span class="string">"name"</span>, <span class="kw-2">&amp;</span>[], R::Any, Yes),
 <a href=#320 id=320 data-nosnippet>320</a>    method(
 <a href=#321 id=321 data-nosnippet>321</a>        <span class="string">"ngetdata"</span>,
 <a href=#322 id=322 data-nosnippet>322</a>        <span class="kw-2">&amp;</span>[
@@ -347,7 +347,7 @@
 <a href=#347 id=347 data-nosnippet>347</a>        <span class="string">"nrow"</span>,
 <a href=#348 id=348 data-nosnippet>348</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"selected"</span>, K::Bool, Bool(<span class="bool-val">false</span>))],
 <a href=#349 id=349 data-nosnippet>349</a>        R::Any,
-<a href=#350 id=350 data-nosnippet>350</a>        No,
+<a href=#350 id=350 data-nosnippet>350</a>        Yes,
 <a href=#351 id=351 data-nosnippet>351</a>    ),
 <a href=#352 id=352 data-nosnippet>352</a>    method(
 <a href=#353 id=353 data-nosnippet>353</a>        <span class="string">"nrowold"</span>,
@@ -416,8 +416,8 @@
 <a href=#416 id=416 data-nosnippet>416</a>    method(
 <a href=#417 id=417 data-nosnippet>417</a>        <span class="string">"putdata"</span>,
 <a href=#418 id=418 data-nosnippet>418</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"items"</span>, K::Record, EmptyRecord)],
-<a href=#419 id=419 data-nosnippet>419</a>        R::Any,
-<a href=#420 id=420 data-nosnippet>420</a>        No,
+<a href=#419 id=419 data-nosnippet>419</a>        R::Bool,
+<a href=#420 id=420 data-nosnippet>420</a>        Status::Partial,
 <a href=#421 id=421 data-nosnippet>421</a>    ),
 <a href=#422 id=422 data-nosnippet>422</a>    method(
 <a href=#423 id=423 data-nosnippet>423</a>        <span class="string">"putdataold"</span>,
@@ -432,8 +432,8 @@
 <a href=#432 id=432 data-nosnippet>432</a>            param(<span class="string">"useflags"</span>, K::Bool, Bool(<span class="bool-val">true</span>)),
 <a href=#433 id=433 data-nosnippet>433</a>            param(<span class="string">"blocksize"</span>, K::Int, Int(<span class="number">10</span>)),
 <a href=#434 id=434 data-nosnippet>434</a>        ],
-<a href=#435 id=435 data-nosnippet>435</a>        R::Any,
-<a href=#436 id=436 data-nosnippet>436</a>        No,
+<a href=#435 id=435 data-nosnippet>435</a>        R::Record,
+<a href=#436 id=436 data-nosnippet>436</a>        Yes,
 <a href=#437 id=437 data-nosnippet>437</a>    ),
 <a href=#438 id=438 data-nosnippet>438</a>    method(
 <a href=#439 id=439 data-nosnippet>439</a>        <span class="string">"rangeold"</span>,
@@ -461,12 +461,12 @@
 <a href=#461 id=461 data-nosnippet>461</a>        R::Any,
 <a href=#462 id=462 data-nosnippet>462</a>        No,
 <a href=#463 id=463 data-nosnippet>463</a>    ),
-<a href=#464 id=464 data-nosnippet>464</a>    method(<span class="string">"reset"</span>, <span class="kw-2">&amp;</span>[], R::Any, No),
+<a href=#464 id=464 data-nosnippet>464</a>    method(<span class="string">"reset"</span>, <span class="kw-2">&amp;</span>[], R::Bool, Yes),
 <a href=#465 id=465 data-nosnippet>465</a>    method(
 <a href=#466 id=466 data-nosnippet>466</a>        <span class="string">"select"</span>,
 <a href=#467 id=467 data-nosnippet>467</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"items"</span>, K::Record, EmptyRecord)],
-<a href=#468 id=468 data-nosnippet>468</a>        R::Any,
-<a href=#469 id=469 data-nosnippet>469</a>        No,
+<a href=#468 id=468 data-nosnippet>468</a>        R::Bool,
+<a href=#469 id=469 data-nosnippet>469</a>        Yes,
 <a href=#470 id=470 data-nosnippet>470</a>    ),
 <a href=#471 id=471 data-nosnippet>471</a>    method(
 <a href=#472 id=472 data-nosnippet>472</a>        <span class="string">"selectchannel"</span>,
@@ -476,8 +476,8 @@
 <a href=#476 id=476 data-nosnippet>476</a>            param(<span class="string">"width"</span>, K::Int, Int(<span class="number">1</span>)),
 <a href=#477 id=477 data-nosnippet>477</a>            param(<span class="string">"inc"</span>, K::Int, Int(<span class="number">1</span>)),
 <a href=#478 id=478 data-nosnippet>478</a>        ],
-<a href=#479 id=479 data-nosnippet>479</a>        R::Any,
-<a href=#480 id=480 data-nosnippet>480</a>        No,
+<a href=#479 id=479 data-nosnippet>479</a>        R::Bool,
+<a href=#480 id=480 data-nosnippet>480</a>        Status::Partial,
 <a href=#481 id=481 data-nosnippet>481</a>    ),
 <a href=#482 id=482 data-nosnippet>482</a>    method(
 <a href=#483 id=483 data-nosnippet>483</a>        <span class="string">"selectchannelold"</span>,
@@ -496,8 +496,8 @@
 <a href=#496 id=496 data-nosnippet>496</a>            param(<span class="string">"datadescid"</span>, K::Int, Int(<span class="number">0</span>)),
 <a href=#497 id=497 data-nosnippet>497</a>            param(<span class="string">"reset"</span>, K::Bool, Bool(<span class="bool-val">false</span>)),
 <a href=#498 id=498 data-nosnippet>498</a>        ],
-<a href=#499 id=499 data-nosnippet>499</a>        R::Any,
-<a href=#500 id=500 data-nosnippet>500</a>        No,
+<a href=#499 id=499 data-nosnippet>499</a>        R::Bool,
+<a href=#500 id=500 data-nosnippet>500</a>        Yes,
 <a href=#501 id=501 data-nosnippet>501</a>    ),
 <a href=#502 id=502 data-nosnippet>502</a>    method(
 <a href=#503 id=503 data-nosnippet>503</a>        <span class="string">"selectinitold"</span>,
@@ -517,8 +517,8 @@
 <a href=#517 id=517 data-nosnippet>517</a>    method(
 <a href=#518 id=518 data-nosnippet>518</a>        <span class="string">"selectpolarization"</span>,
 <a href=#519 id=519 data-nosnippet>519</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"wantedpol"</span>, K::Any, Empty)],
-<a href=#520 id=520 data-nosnippet>520</a>        R::Any,
-<a href=#521 id=521 data-nosnippet>521</a>        No,
+<a href=#520 id=520 data-nosnippet>520</a>        R::Bool,
+<a href=#521 id=521 data-nosnippet>521</a>        Status::Partial,
 <a href=#522 id=522 data-nosnippet>522</a>    ),
 <a href=#523 id=523 data-nosnippet>523</a>    method(
 <a href=#524 id=524 data-nosnippet>524</a>        <span class="string">"selectpolarizationold"</span>,
@@ -529,8 +529,8 @@
 <a href=#529 id=529 data-nosnippet>529</a>    method(
 <a href=#530 id=530 data-nosnippet>530</a>        <span class="string">"selecttaql"</span>,
 <a href=#531 id=531 data-nosnippet>531</a>        <span class="kw-2">&amp;</span>[param(<span class="string">"msselect"</span>, K::Text, Text(<span class="string">""</span>))],
-<a href=#532 id=532 data-nosnippet>532</a>        R::Any,
-<a href=#533 id=533 data-nosnippet>533</a>        No,
+<a href=#532 id=532 data-nosnippet>532</a>        R::Bool,
+<a href=#533 id=533 data-nosnippet>533</a>        Yes,
 <a href=#534 id=534 data-nosnippet>534</a>    ),
 <a href=#535 id=535 data-nosnippet>535</a>    method(
 <a href=#536 id=536 data-nosnippet>536</a>        <span class="string">"selecttaqlold"</span>,

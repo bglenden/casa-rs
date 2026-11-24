@@ -51,112 +51,124 @@
 <a href=#51 id=51 data-nosnippet>51</a>        </span>|| coords.find_coordinate(CoordinateType::Direction) != <span class="prelude-val">Some</span>(<span class="number">0</span>)
 <a href=#52 id=52 data-nosnippet>52</a>        || coords.find_coordinate(CoordinateType::Stokes) != <span class="prelude-val">Some</span>(<span class="number">1</span>)
 <a href=#53 id=53 data-nosnippet>53</a>        || coords.find_coordinate(CoordinateType::Spectral) != <span class="prelude-val">Some</span>(<span class="number">2</span>)
-<a href=#54 id=54 data-nosnippet>54</a>    {
-<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#56 id=56 data-nosnippet>56</a>            <span class="string">"Jones images require direction, four correlation and spectral axes"</span>,
-<a href=#57 id=57 data-nosnippet>57</a>        ));
-<a href=#58 id=58 data-nosnippet>58</a>    }
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="kw">let </span>codes = (<span class="number">0</span>..<span class="number">4</span>)
-<a href=#60 id=60 data-nosnippet>60</a>        .map(|p| {
-<a href=#61 id=61 data-nosnippet>61</a>            coords
-<a href=#62 id=62 data-nosnippet>62</a>                .coordinate(<span class="number">1</span>)
-<a href=#63 id=63 data-nosnippet>63</a>                .to_world(<span class="kw-2">&amp;</span>[p <span class="kw">as </span>f64])
-<a href=#64 id=64 data-nosnippet>64</a>                .map(|v| v[<span class="number">0</span>] <span class="kw">as </span>i32)
-<a href=#65 id=65 data-nosnippet>65</a>                .map_err(raised)
-<a href=#66 id=66 data-nosnippet>66</a>        })
-<a href=#67 id=67 data-nosnippet>67</a>        .collect::&lt;SimulatorResult&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">let </span>(basis, first) = <span class="kw">if </span>codes.iter().all(|v| (<span class="number">5</span>..=<span class="number">8</span>).contains(v)) {
-<a href=#69 id=69 data-nosnippet>69</a>        (Polarisation::Circular, <span class="number">5</span>)
-<a href=#70 id=70 data-nosnippet>70</a>    } <span class="kw">else if </span>codes.iter().all(|v| (<span class="number">9</span>..=<span class="number">12</span>).contains(v)) {
-<a href=#71 id=71 data-nosnippet>71</a>        (Polarisation::Linear, <span class="number">9</span>)
-<a href=#72 id=72 data-nosnippet>72</a>    } <span class="kw">else </span>{
-<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#74 id=74 data-nosnippet>74</a>            <span class="string">"Jones image polarization is neither circular nor linear"</span>,
-<a href=#75 id=75 data-nosnippet>75</a>        ));
-<a href=#76 id=76 data-nosnippet>76</a>    };
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">let </span>positions: [usize; <span class="number">4</span>] = std::array::from_fn(|p| {
-<a href=#78 id=78 data-nosnippet>78</a>        codes
-<a href=#79 id=79 data-nosnippet>79</a>            .iter()
-<a href=#80 id=80 data-nosnippet>80</a>            .position(|v| <span class="kw-2">*</span>v == first + p <span class="kw">as </span>i32)
-<a href=#81 id=81 data-nosnippet>81</a>            .unwrap_or(<span class="number">4</span>)
-<a href=#82 id=82 data-nosnippet>82</a>    });
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">if </span>positions.contains(<span class="kw-2">&amp;</span><span class="number">4</span>) {
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Jones image must contain all four correlations"</span>));
-<a href=#85 id=85 data-nosnippet>85</a>    }
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span>CoordinateModel::Direction(direction) = coords.coordinate(<span class="number">0</span>) <span class="kw">else </span>{
-<a href=#87 id=87 data-nosnippet>87</a>        <span class="macro">unreachable!</span>()
+<a href=#54 id=54 data-nosnippet>54</a>        || coords
+<a href=#55 id=55 data-nosnippet>55</a>            .coordinate_pixel_axes(<span class="number">0</span>)
+<a href=#56 id=56 data-nosnippet>56</a>            .expect(<span class="string">"existing coordinate"</span>)
+<a href=#57 id=57 data-nosnippet>57</a>            != [<span class="prelude-val">Some</span>(<span class="number">0</span>), <span class="prelude-val">Some</span>(<span class="number">1</span>)]
+<a href=#58 id=58 data-nosnippet>58</a>        || coords
+<a href=#59 id=59 data-nosnippet>59</a>            .coordinate_pixel_axes(<span class="number">1</span>)
+<a href=#60 id=60 data-nosnippet>60</a>            .expect(<span class="string">"existing coordinate"</span>)
+<a href=#61 id=61 data-nosnippet>61</a>            != [<span class="prelude-val">Some</span>(<span class="number">2</span>)]
+<a href=#62 id=62 data-nosnippet>62</a>        || coords
+<a href=#63 id=63 data-nosnippet>63</a>            .coordinate_pixel_axes(<span class="number">2</span>)
+<a href=#64 id=64 data-nosnippet>64</a>            .expect(<span class="string">"existing coordinate"</span>)
+<a href=#65 id=65 data-nosnippet>65</a>            != [<span class="prelude-val">Some</span>(<span class="number">3</span>)]
+<a href=#66 id=66 data-nosnippet>66</a>    {
+<a href=#67 id=67 data-nosnippet>67</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#68 id=68 data-nosnippet>68</a>            <span class="string">"Jones images require direction, four correlation and spectral axes"</span>,
+<a href=#69 id=69 data-nosnippet>69</a>        ));
+<a href=#70 id=70 data-nosnippet>70</a>    }
+<a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">let </span>codes = (<span class="number">0</span>..<span class="number">4</span>)
+<a href=#72 id=72 data-nosnippet>72</a>        .map(|p| {
+<a href=#73 id=73 data-nosnippet>73</a>            coords
+<a href=#74 id=74 data-nosnippet>74</a>                .coordinate(<span class="number">1</span>)
+<a href=#75 id=75 data-nosnippet>75</a>                .to_world(<span class="kw-2">&amp;</span>[p <span class="kw">as </span>f64])
+<a href=#76 id=76 data-nosnippet>76</a>                .map(|v| v[<span class="number">0</span>] <span class="kw">as </span>i32)
+<a href=#77 id=77 data-nosnippet>77</a>                .map_err(raised)
+<a href=#78 id=78 data-nosnippet>78</a>        })
+<a href=#79 id=79 data-nosnippet>79</a>        .collect::&lt;SimulatorResult&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="kw">let </span>(basis, first) = <span class="kw">if </span>codes.iter().all(|v| (<span class="number">5</span>..=<span class="number">8</span>).contains(v)) {
+<a href=#81 id=81 data-nosnippet>81</a>        (Polarisation::Circular, <span class="number">5</span>)
+<a href=#82 id=82 data-nosnippet>82</a>    } <span class="kw">else if </span>codes.iter().all(|v| (<span class="number">9</span>..=<span class="number">12</span>).contains(v)) {
+<a href=#83 id=83 data-nosnippet>83</a>        (Polarisation::Linear, <span class="number">9</span>)
+<a href=#84 id=84 data-nosnippet>84</a>    } <span class="kw">else </span>{
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#86 id=86 data-nosnippet>86</a>            <span class="string">"Jones image polarization is neither circular nor linear"</span>,
+<a href=#87 id=87 data-nosnippet>87</a>        ));
 <a href=#88 id=88 data-nosnippet>88</a>    };
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">let </span>spectral = coords.coordinate(<span class="number">2</span>);
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>frequency_hz =
-<a href=#91 id=91 data-nosnippet>91</a>        casa_types::quanta::Quantity::new(spectral.reference_value()[<span class="number">0</span>], <span class="kw-2">&amp;</span>spectral.axis_units()[<span class="number">0</span>])
-<a href=#92 id=92 data-nosnippet>92</a>            .and_then(|value| value.get_value_in(<span class="kw-2">&amp;</span>casa_types::quanta::Unit::new(<span class="string">"Hz"</span>)<span class="question-mark">?</span>))
-<a href=#93 id=93 data-nosnippet>93</a>            .map_err(raised)<span class="question-mark">?</span>;
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="kw">if </span>!frequency_hz.is_finite() || frequency_hz &lt;= <span class="number">0. </span>{
-<a href=#95 id=95 data-nosnippet>95</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"invalid Jones image frequency"</span>));
-<a href=#96 id=96 data-nosnippet>96</a>    }
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="kw">let </span>count = shape[<span class="number">0</span>]
-<a href=#98 id=98 data-nosnippet>98</a>        .checked_mul(shape[<span class="number">1</span>])
-<a href=#99 id=99 data-nosnippet>99</a>        .ok_or_else(|| raised(<span class="string">"Jones image size overflow"</span>))<span class="question-mark">?</span>;
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>bytes = (count <span class="kw">as </span>u64)
-<a href=#101 id=101 data-nosnippet>101</a>        .checked_mul(size_of::&lt;[Complex32; <span class="number">4</span>]&gt;() <span class="kw">as </span>u64)
-<a href=#102 id=102 data-nosnippet>102</a>        .ok_or_else(|| raised(<span class="string">"Jones image size overflow"</span>))<span class="question-mark">?</span>;
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">let </span><span class="kw-2">mut </span>reservation = reserve(session, <span class="number">2 </span>* bytes + (<span class="number">16 </span>&lt;&lt; <span class="number">10</span>))<span class="question-mark">?</span>;
-<a href=#104 id=104 data-nosnippet>104</a>    <span class="kw">let </span>values = image
-<a href=#105 id=105 data-nosnippet>105</a>        .get_slice(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>], <span class="kw-2">&amp;</span>[shape[<span class="number">0</span>], shape[<span class="number">1</span>], <span class="number">4</span>, <span class="number">1</span>])
-<a href=#106 id=106 data-nosnippet>106</a>        .map_err(raised)<span class="question-mark">?</span>;
-<a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span>pixels: Vec&lt;[Complex32; <span class="number">4</span>]&gt; = (<span class="number">0</span>..count)
-<a href=#108 id=108 data-nosnippet>108</a>        .map(|i| {
-<a href=#109 id=109 data-nosnippet>109</a>            std::array::from_fn(|p| {
-<a href=#110 id=110 data-nosnippet>110</a>                convert(values[IxDyn(<span class="kw-2">&amp;</span>[i % shape[<span class="number">0</span>], i / shape[<span class="number">0</span>], positions[p], <span class="number">0</span>])])
-<a href=#111 id=111 data-nosnippet>111</a>            })
-<a href=#112 id=112 data-nosnippet>112</a>        })
-<a href=#113 id=113 data-nosnippet>113</a>        .collect();
-<a href=#114 id=114 data-nosnippet>114</a>    <span class="kw">if </span>pixels
-<a href=#115 id=115 data-nosnippet>115</a>        .iter()
-<a href=#116 id=116 data-nosnippet>116</a>        .flatten()
-<a href=#117 id=117 data-nosnippet>117</a>        .any(|v| !v.re.is_finite() || !v.im.is_finite())
-<a href=#118 id=118 data-nosnippet>118</a>    {
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Jones image contains a non-finite voltage sample"</span>));
-<a href=#120 id=120 data-nosnippet>120</a>    }
-<a href=#121 id=121 data-nosnippet>121</a>    reservation.retain(bytes + (<span class="number">16 </span>&lt;&lt; <span class="number">10</span>));
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="prelude-val">Ok</span>(Admitted {
-<a href=#123 id=123 data-nosnippet>123</a>        value: ImagePlane {
-<a href=#124 id=124 data-nosnippet>124</a>            shape: [shape[<span class="number">0</span>], shape[<span class="number">1</span>]],
-<a href=#125 id=125 data-nosnippet>125</a>            pixels,
-<a href=#126 id=126 data-nosnippet>126</a>            direction: direction.clone(),
-<a href=#127 id=127 data-nosnippet>127</a>            frequency_hz,
-<a href=#128 id=128 data-nosnippet>128</a>            basis,
-<a href=#129 id=129 data-nosnippet>129</a>        },
-<a href=#130 id=130 data-nosnippet>130</a>        reservation,
-<a href=#131 id=131 data-nosnippet>131</a>    })
-<a href=#132 id=132 data-nosnippet>132</a>}
-<a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load(session: <span class="kw-2">&amp;</span>Simulator, record: <span class="kw-2">&amp;</span>RecordValue) -&gt; SimulatorResult&lt;Arc&lt;JonesImage&gt;&gt; {
-<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span>(real, imaginary) = <span class="kw">if </span>record.get(<span class="string">"compleximage"</span>).is_some() {
-<a href=#136 id=136 data-nosnippet>136</a>        (
-<a href=#137 id=137 data-nosnippet>137</a>            read::&lt;Complex32&gt;(session, Path::new(text(record, <span class="string">"compleximage"</span>)<span class="question-mark">?</span>), |v| v)<span class="question-mark">?</span>,
-<a href=#138 id=138 data-nosnippet>138</a>            <span class="prelude-val">None</span>,
-<a href=#139 id=139 data-nosnippet>139</a>        )
-<a href=#140 id=140 data-nosnippet>140</a>    } <span class="kw">else </span>{
-<a href=#141 id=141 data-nosnippet>141</a>        <span class="kw">let </span>real = read::&lt;f32&gt;(session, Path::new(text(record, <span class="string">"realimage"</span>)<span class="question-mark">?</span>), |v| {
-<a href=#142 id=142 data-nosnippet>142</a>            Complex32::new(v, <span class="number">0.</span>)
-<a href=#143 id=143 data-nosnippet>143</a>        })<span class="question-mark">?</span>;
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">let </span>path = Path::new(text(record, <span class="string">"imagimage"</span>)<span class="question-mark">?</span>);
-<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span>imaginary = <span class="kw">if </span>path.as_os_str().is_empty() || !path.exists() {
-<a href=#146 id=146 data-nosnippet>146</a>            <span class="prelude-val">None
-<a href=#147 id=147 data-nosnippet>147</a>        </span>} <span class="kw">else </span>{
-<a href=#148 id=148 data-nosnippet>148</a>            <span class="prelude-val">Some</span>(read::&lt;f32&gt;(session, path, |v| Complex32::new(v, <span class="number">0.</span>))<span class="question-mark">?</span>)
-<a href=#149 id=149 data-nosnippet>149</a>        };
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">if </span>imaginary
-<a href=#151 id=151 data-nosnippet>151</a>            .as_ref()
-<a href=#152 id=152 data-nosnippet>152</a>            .is_some_and(|v| v.value.shape != real.value.shape)
-<a href=#153 id=153 data-nosnippet>153</a>        {
-<a href=#154 id=154 data-nosnippet>154</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#155 id=155 data-nosnippet>155</a>                <span class="string">"real and imaginary primary beam images have different shapes"</span>,
-<a href=#156 id=156 data-nosnippet>156</a>            ));
-<a href=#157 id=157 data-nosnippet>157</a>        }
-<a href=#158 id=158 data-nosnippet>158</a>        (real, imaginary)
-<a href=#159 id=159 data-nosnippet>159</a>    };
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="prelude-val">Ok</span>(Arc::new(JonesImage { real, imaginary }))
-<a href=#161 id=161 data-nosnippet>161</a>}
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">let </span>positions: [usize; <span class="number">4</span>] = std::array::from_fn(|p| {
+<a href=#90 id=90 data-nosnippet>90</a>        codes
+<a href=#91 id=91 data-nosnippet>91</a>            .iter()
+<a href=#92 id=92 data-nosnippet>92</a>            .position(|v| <span class="kw-2">*</span>v == first + p <span class="kw">as </span>i32)
+<a href=#93 id=93 data-nosnippet>93</a>            .unwrap_or(<span class="number">4</span>)
+<a href=#94 id=94 data-nosnippet>94</a>    });
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">if </span>positions.contains(<span class="kw-2">&amp;</span><span class="number">4</span>) {
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Jones image must contain all four correlations"</span>));
+<a href=#97 id=97 data-nosnippet>97</a>    }
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>CoordinateModel::Direction(direction) = coords.coordinate(<span class="number">0</span>) <span class="kw">else </span>{
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="macro">unreachable!</span>()
+<a href=#100 id=100 data-nosnippet>100</a>    };
+<a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">let </span>spectral = coords.coordinate(<span class="number">2</span>);
+<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">let </span>frequency_hz =
+<a href=#103 id=103 data-nosnippet>103</a>        casa_types::quanta::Quantity::new(spectral.reference_value()[<span class="number">0</span>], <span class="kw-2">&amp;</span>spectral.axis_units()[<span class="number">0</span>])
+<a href=#104 id=104 data-nosnippet>104</a>            .and_then(|value| value.get_value_in(<span class="kw-2">&amp;</span>casa_types::quanta::Unit::new(<span class="string">"Hz"</span>)<span class="question-mark">?</span>))
+<a href=#105 id=105 data-nosnippet>105</a>            .map_err(raised)<span class="question-mark">?</span>;
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">if </span>!frequency_hz.is_finite() || frequency_hz &lt;= <span class="number">0. </span>{
+<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"invalid Jones image frequency"</span>));
+<a href=#108 id=108 data-nosnippet>108</a>    }
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">let </span>count = shape[<span class="number">0</span>]
+<a href=#110 id=110 data-nosnippet>110</a>        .checked_mul(shape[<span class="number">1</span>])
+<a href=#111 id=111 data-nosnippet>111</a>        .ok_or_else(|| raised(<span class="string">"Jones image size overflow"</span>))<span class="question-mark">?</span>;
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">let </span>bytes = (count <span class="kw">as </span>u64)
+<a href=#113 id=113 data-nosnippet>113</a>        .checked_mul(size_of::&lt;[Complex32; <span class="number">4</span>]&gt;() <span class="kw">as </span>u64)
+<a href=#114 id=114 data-nosnippet>114</a>        .ok_or_else(|| raised(<span class="string">"Jones image size overflow"</span>))<span class="question-mark">?</span>;
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span><span class="kw-2">mut </span>reservation = reserve(session, <span class="number">2 </span>* bytes + (<span class="number">16 </span>&lt;&lt; <span class="number">10</span>))<span class="question-mark">?</span>;
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">let </span>values = image
+<a href=#117 id=117 data-nosnippet>117</a>        .get_slice(<span class="kw-2">&amp;</span>[<span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>], <span class="kw-2">&amp;</span>[shape[<span class="number">0</span>], shape[<span class="number">1</span>], <span class="number">4</span>, <span class="number">1</span>])
+<a href=#118 id=118 data-nosnippet>118</a>        .map_err(raised)<span class="question-mark">?</span>;
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="kw">let </span>pixels: Vec&lt;[Complex32; <span class="number">4</span>]&gt; = (<span class="number">0</span>..count)
+<a href=#120 id=120 data-nosnippet>120</a>        .map(|i| {
+<a href=#121 id=121 data-nosnippet>121</a>            std::array::from_fn(|p| {
+<a href=#122 id=122 data-nosnippet>122</a>                convert(values[IxDyn(<span class="kw-2">&amp;</span>[i % shape[<span class="number">0</span>], i / shape[<span class="number">0</span>], positions[p], <span class="number">0</span>])])
+<a href=#123 id=123 data-nosnippet>123</a>            })
+<a href=#124 id=124 data-nosnippet>124</a>        })
+<a href=#125 id=125 data-nosnippet>125</a>        .collect();
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">if </span>pixels
+<a href=#127 id=127 data-nosnippet>127</a>        .iter()
+<a href=#128 id=128 data-nosnippet>128</a>        .flatten()
+<a href=#129 id=129 data-nosnippet>129</a>        .any(|v| !v.re.is_finite() || !v.im.is_finite())
+<a href=#130 id=130 data-nosnippet>130</a>    {
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Jones image contains a non-finite voltage sample"</span>));
+<a href=#132 id=132 data-nosnippet>132</a>    }
+<a href=#133 id=133 data-nosnippet>133</a>    reservation.retain(bytes + (<span class="number">16 </span>&lt;&lt; <span class="number">10</span>));
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="prelude-val">Ok</span>(Admitted {
+<a href=#135 id=135 data-nosnippet>135</a>        value: ImagePlane {
+<a href=#136 id=136 data-nosnippet>136</a>            shape: [shape[<span class="number">0</span>], shape[<span class="number">1</span>]],
+<a href=#137 id=137 data-nosnippet>137</a>            pixels,
+<a href=#138 id=138 data-nosnippet>138</a>            direction: direction.clone(),
+<a href=#139 id=139 data-nosnippet>139</a>            frequency_hz,
+<a href=#140 id=140 data-nosnippet>140</a>            basis,
+<a href=#141 id=141 data-nosnippet>141</a>        },
+<a href=#142 id=142 data-nosnippet>142</a>        reservation,
+<a href=#143 id=143 data-nosnippet>143</a>    })
+<a href=#144 id=144 data-nosnippet>144</a>}
+<a href=#145 id=145 data-nosnippet>145</a>
+<a href=#146 id=146 data-nosnippet>146</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load(session: <span class="kw-2">&amp;</span>Simulator, record: <span class="kw-2">&amp;</span>RecordValue) -&gt; SimulatorResult&lt;Arc&lt;JonesImage&gt;&gt; {
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">let </span>(real, imaginary) = <span class="kw">if </span>record.get(<span class="string">"compleximage"</span>).is_some() {
+<a href=#148 id=148 data-nosnippet>148</a>        (
+<a href=#149 id=149 data-nosnippet>149</a>            read::&lt;Complex32&gt;(session, Path::new(text(record, <span class="string">"compleximage"</span>)<span class="question-mark">?</span>), |v| v)<span class="question-mark">?</span>,
+<a href=#150 id=150 data-nosnippet>150</a>            <span class="prelude-val">None</span>,
+<a href=#151 id=151 data-nosnippet>151</a>        )
+<a href=#152 id=152 data-nosnippet>152</a>    } <span class="kw">else </span>{
+<a href=#153 id=153 data-nosnippet>153</a>        <span class="kw">let </span>real = read::&lt;f32&gt;(session, Path::new(text(record, <span class="string">"realimage"</span>)<span class="question-mark">?</span>), |v| {
+<a href=#154 id=154 data-nosnippet>154</a>            Complex32::new(v, <span class="number">0.</span>)
+<a href=#155 id=155 data-nosnippet>155</a>        })<span class="question-mark">?</span>;
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">let </span>path = Path::new(text(record, <span class="string">"imagimage"</span>)<span class="question-mark">?</span>);
+<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw">let </span>imaginary = <span class="kw">if </span>path.as_os_str().is_empty() || !path.exists() {
+<a href=#158 id=158 data-nosnippet>158</a>            <span class="prelude-val">None
+<a href=#159 id=159 data-nosnippet>159</a>        </span>} <span class="kw">else </span>{
+<a href=#160 id=160 data-nosnippet>160</a>            <span class="prelude-val">Some</span>(read::&lt;f32&gt;(session, path, |v| Complex32::new(v, <span class="number">0.</span>))<span class="question-mark">?</span>)
+<a href=#161 id=161 data-nosnippet>161</a>        };
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">if </span>imaginary
+<a href=#163 id=163 data-nosnippet>163</a>            .as_ref()
+<a href=#164 id=164 data-nosnippet>164</a>            .is_some_and(|v| v.value.shape != real.value.shape)
+<a href=#165 id=165 data-nosnippet>165</a>        {
+<a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#167 id=167 data-nosnippet>167</a>                <span class="string">"real and imaginary primary beam images have different shapes"</span>,
+<a href=#168 id=168 data-nosnippet>168</a>            ));
+<a href=#169 id=169 data-nosnippet>169</a>        }
+<a href=#170 id=170 data-nosnippet>170</a>        (real, imaginary)
+<a href=#171 id=171 data-nosnippet>171</a>    };
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="prelude-val">Ok</span>(Arc::new(JonesImage { real, imaginary }))
+<a href=#173 id=173 data-nosnippet>173</a>}
 </code></pre></div></section></main></body></html>

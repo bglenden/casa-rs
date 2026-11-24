@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["is_image_expr","open","read_info","save"],"struct":["ExprFileInfo"]};
+window.SIDEBAR_ITEMS = {"fn":["encode_tool_manifest","is_image_expr","open","read_info","read_tool_manifest","read_tool_manifest_from_reader","save"],"struct":["ExprFileInfo","ToolExpressionManifest"]};

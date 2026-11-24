@@ -86,18 +86,22 @@
 <a href=#86 id=86 data-nosnippet>86</a>    </span><span class="attr">#[error(<span class="string">"invalid input: {0}"</span>)]
 <a href=#87 id=87 data-nosnippet>87</a>    </span>InvalidInput(String),
 <a href=#88 id=88 data-nosnippet>88</a>
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// A read that would hold more bytes than its caller's budget allows.
-<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="attr">#[error(<span class="string">"{what} requires {required} bytes but the planner supplied {available} bytes"</span>)]
-<a href=#91 id=91 data-nosnippet>91</a>    </span>OverBudget {
-<a href=#92 id=92 data-nosnippet>92</a>        <span class="doccomment">/// What the bytes are for.
-<a href=#93 id=93 data-nosnippet>93</a>        </span>what: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-<a href=#94 id=94 data-nosnippet>94</a>        <span class="doccomment">/// The bytes the read needs.
-<a href=#95 id=95 data-nosnippet>95</a>        </span>required: usize,
-<a href=#96 id=96 data-nosnippet>96</a>        <span class="doccomment">/// The bytes the budget allows.
-<a href=#97 id=97 data-nosnippet>97</a>        </span>available: usize,
-<a href=#98 id=98 data-nosnippet>98</a>    },
-<a href=#99 id=99 data-nosnippet>99</a>}
-<a href=#100 id=100 data-nosnippet>100</a>
-<a href=#101 id=101 data-nosnippet>101</a><span class="doccomment">/// Convenience type alias for MS operations.
-<a href=#102 id=102 data-nosnippet>102</a></span><span class="kw">pub type </span>MsResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, MsError&gt;;
+<a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// The polarization expression found no matching recorded correlations.
+<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="attr">#[error(<span class="string">"Poln. expression error: No match for polarization ID(s) (named {0})"</span>)]
+<a href=#91 id=91 data-nosnippet>91</a>    </span>NoPolarizationMatch(String),
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// A read that would hold more bytes than its caller's budget allows.
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="attr">#[error(<span class="string">"{what} requires {required} bytes but the planner supplied {available} bytes"</span>)]
+<a href=#95 id=95 data-nosnippet>95</a>    </span>OverBudget {
+<a href=#96 id=96 data-nosnippet>96</a>        <span class="doccomment">/// What the bytes are for.
+<a href=#97 id=97 data-nosnippet>97</a>        </span>what: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#98 id=98 data-nosnippet>98</a>        <span class="doccomment">/// The bytes the read needs.
+<a href=#99 id=99 data-nosnippet>99</a>        </span>required: usize,
+<a href=#100 id=100 data-nosnippet>100</a>        <span class="doccomment">/// The bytes the budget allows.
+<a href=#101 id=101 data-nosnippet>101</a>        </span>available: usize,
+<a href=#102 id=102 data-nosnippet>102</a>    },
+<a href=#103 id=103 data-nosnippet>103</a>}
+<a href=#104 id=104 data-nosnippet>104</a>
+<a href=#105 id=105 data-nosnippet>105</a><span class="doccomment">/// Convenience type alias for MS operations.
+<a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">pub type </span>MsResult&lt;T&gt; = <span class="prelude-ty">Result</span>&lt;T, MsError&gt;;
 </code></pre></div></section></main></body></html>

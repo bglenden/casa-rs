@@ -529,10 +529,10 @@
 <a href=#529 id=529 data-nosnippet>529</a>
 <a href=#530 id=530 data-nosnippet>530</a><span class="kw">impl </span>ConvolutionFunctionSet <span class="kw">for </span>WPlanes {
 <a href=#531 id=531 data-nosnippet>531</a>    <span class="kw">fn </span>key(<span class="kw-2">&amp;</span><span class="self">self</span>, _row: <span class="kw-2">&amp;</span>RowContext, _freq_hz: f64, w_lambda: f64) -&gt; CfKey {
-<a href=#532 id=532 data-nosnippet>532</a>        CfKey {
-<a href=#533 id=533 data-nosnippet>533</a>            group: u16::try_from(<span class="self">self</span>.plane_of(w_lambda)).expect(<span class="string">"plane index fits u16"</span>),
-<a href=#534 id=534 data-nosnippet>534</a>            cube: <span class="number">0</span>,
-<a href=#535 id=535 data-nosnippet>535</a>        }
+<a href=#532 id=532 data-nosnippet>532</a>        CfKey::new(
+<a href=#533 id=533 data-nosnippet>533</a>            u16::try_from(<span class="self">self</span>.plane_of(w_lambda)).expect(<span class="string">"plane index fits u16"</span>),
+<a href=#534 id=534 data-nosnippet>534</a>            <span class="number">0</span>,
+<a href=#535 id=535 data-nosnippet>535</a>        )
 <a href=#536 id=536 data-nosnippet>536</a>    }
 <a href=#537 id=537 data-nosnippet>537</a>
 <a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">fn </span>taps&lt;<span class="lifetime">'s</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="self">self</span>, key: CfKey, _hold: <span class="kw-2">&amp;</span><span class="lifetime">'s </span><span class="kw-2">mut </span>CellHold) -&gt; TapLayout&lt;<span class="lifetime">'s</span>&gt; {

@@ -47,103 +47,133 @@
 <a href=#47 id=47 data-nosnippet>47</a>        <span class="kw">return </span><span class="prelude-val">Some</span>((last.<span class="number">1</span>, last.<span class="number">2</span>));
 <a href=#48 id=48 data-nosnippet>48</a>    }
 <a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">let </span>upper = points.partition_point(|point| point.<span class="number">0 </span>&lt; coordinate);
-<a href=#50 id=50 data-nosnippet>50</a>    <span class="kw">let </span>(low, high) = (points[upper - <span class="number">1</span>], points[upper]);
-<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">let </span>(amplitude, phase) = <span class="kw">if </span>mode == Curve::Nearest {
-<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>nearest = <span class="kw">if </span>high.<span class="number">0 </span>- coordinate &lt; coordinate - low.<span class="number">0
-<a href=#53 id=53 data-nosnippet>53</a>            </span>|| (descending &amp;&amp; high.<span class="number">0 </span>- coordinate == coordinate - low.<span class="number">0</span>)
-<a href=#54 id=54 data-nosnippet>54</a>        {
-<a href=#55 id=55 data-nosnippet>55</a>            high
-<a href=#56 id=56 data-nosnippet>56</a>        } <span class="kw">else </span>{
-<a href=#57 id=57 data-nosnippet>57</a>            low
-<a href=#58 id=58 data-nosnippet>58</a>        };
-<a href=#59 id=59 data-nosnippet>59</a>        (nearest.<span class="number">1</span>, nearest.<span class="number">2</span>)
-<a href=#60 id=60 data-nosnippet>60</a>    } <span class="kw">else if </span>mode == Curve::Cubic {
-<a href=#61 id=61 data-nosnippet>61</a>        <span class="kw">let </span>first = upper.saturating_sub(<span class="number">2</span>).min(points.len().saturating_sub(<span class="number">4</span>));
-<a href=#62 id=62 data-nosnippet>62</a>        <span class="kw">let </span>stencil = <span class="kw-2">&amp;</span>points[first..(first + <span class="number">4</span>).min(points.len())];
-<a href=#63 id=63 data-nosnippet>63</a>        <span class="kw">let </span>polynomial = |axis: usize| {
-<a href=#64 id=64 data-nosnippet>64</a>            <span class="kw">let </span><span class="kw-2">mut </span>c = [<span class="number">0.0f32</span>; <span class="number">4</span>];
-<a href=#65 id=65 data-nosnippet>65</a>            <span class="kw">let </span><span class="kw-2">mut </span>d = [<span class="number">0.0f32</span>; <span class="number">4</span>];
-<a href=#66 id=66 data-nosnippet>66</a>            <span class="kw">for </span>(index, point) <span class="kw">in </span>stencil.iter().enumerate() {
-<a href=#67 id=67 data-nosnippet>67</a>                c[index] = <span class="kw">if </span>axis == <span class="number">0 </span>{ point.<span class="number">1 </span>} <span class="kw">else </span>{ point.<span class="number">2 </span>};
-<a href=#68 id=68 data-nosnippet>68</a>                d[index] = c[index];
-<a href=#69 id=69 data-nosnippet>69</a>            }
-<a href=#70 id=70 data-nosnippet>70</a>            <span class="kw">let </span><span class="kw-2">mut </span>value = c[<span class="number">0</span>];
-<a href=#71 id=71 data-nosnippet>71</a>            <span class="kw">for </span>order <span class="kw">in </span><span class="number">1</span>..stencil.len() {
-<a href=#72 id=72 data-nosnippet>72</a>                <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..stencil.len() - order {
-<a href=#73 id=73 data-nosnippet>73</a>                    <span class="kw">let </span>w = f64::from(c[index + <span class="number">1</span>] - d[index])
-<a href=#74 id=74 data-nosnippet>74</a>                        / (stencil[index].<span class="number">0 </span>- stencil[index + order].<span class="number">0</span>);
-<a href=#75 id=75 data-nosnippet>75</a>                    c[index] = ((stencil[index].<span class="number">0 </span>- coordinate) * w) <span class="kw">as </span>f32;
-<a href=#76 id=76 data-nosnippet>76</a>                    d[index] = ((stencil[index + order].<span class="number">0 </span>- coordinate) * w) <span class="kw">as </span>f32;
-<a href=#77 id=77 data-nosnippet>77</a>                }
-<a href=#78 id=78 data-nosnippet>78</a>                value += c[<span class="number">0</span>];
-<a href=#79 id=79 data-nosnippet>79</a>            }
-<a href=#80 id=80 data-nosnippet>80</a>            value
-<a href=#81 id=81 data-nosnippet>81</a>        };
-<a href=#82 id=82 data-nosnippet>82</a>        (polynomial(<span class="number">0</span>), polynomial(<span class="number">1</span>))
-<a href=#83 id=83 data-nosnippet>83</a>    } <span class="kw">else if </span>mode == Curve::Spline {
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">let </span>width = high.<span class="number">0 </span>- low.<span class="number">0</span>;
-<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">let </span>a = (high.<span class="number">0 </span>- coordinate) / width;
-<a href=#86 id=86 data-nosnippet>86</a>        <span class="kw">let </span>b = <span class="number">1.0 </span>- a;
-<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>evaluate = |left: f32, right: f32, axis: usize| {
-<a href=#88 id=88 data-nosnippet>88</a>            (a * f64::from(left)
-<a href=#89 id=89 data-nosnippet>89</a>                + b * f64::from(right)
-<a href=#90 id=90 data-nosnippet>90</a>                + width * width / <span class="number">6.0
-<a href=#91 id=91 data-nosnippet>91</a>                    </span>* ((a * a * a - a) * derivatives[upper - <span class="number">1</span>][axis]
-<a href=#92 id=92 data-nosnippet>92</a>                        + (b * b * b - b) * derivatives[upper][axis])) <span class="kw">as </span>f32
-<a href=#93 id=93 data-nosnippet>93</a>        };
-<a href=#94 id=94 data-nosnippet>94</a>        (evaluate(low.<span class="number">1</span>, high.<span class="number">1</span>, <span class="number">0</span>), evaluate(low.<span class="number">2</span>, high.<span class="number">2</span>, <span class="number">1</span>))
-<a href=#95 id=95 data-nosnippet>95</a>    } <span class="kw">else </span>{
-<a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>fraction = (coordinate - low.<span class="number">0</span>) / (high.<span class="number">0 </span>- low.<span class="number">0</span>);
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span>interpolate = |a: f32, b: f32| (f64::from(a) + f64::from(b - a) * fraction) <span class="kw">as </span>f32;
-<a href=#98 id=98 data-nosnippet>98</a>        (interpolate(low.<span class="number">1</span>, high.<span class="number">1</span>), interpolate(low.<span class="number">2</span>, high.<span class="number">2</span>))
-<a href=#99 id=99 data-nosnippet>99</a>    };
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="prelude-val">Some</span>((amplitude, phase))
-<a href=#101 id=101 data-nosnippet>101</a>}
-<a href=#102 id=102 data-nosnippet>102</a>
-<a href=#103 id=103 data-nosnippet>103</a><span class="doccomment">/// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
-<a href=#104 id=104 data-nosnippet>104</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spline_derivatives(points: <span class="kw-2">&amp;</span>[(f64, f32, f32)]) -&gt; Vec&lt;[f64; <span class="number">2</span>]&gt; {
-<a href=#105 id=105 data-nosnippet>105</a>    spline_derivatives_from(points, <span class="number">1</span>)
-<a href=#106 id=106 data-nosnippet>106</a>}
-<a href=#107 id=107 data-nosnippet>107</a>
-<a href=#108 id=108 data-nosnippet>108</a><span class="doccomment">/// Tsys weight initialization uses casacore's InterpolateArray1D. It
-<a href=#109 id=109 data-nosnippet>109</a>/// leaves the first interior derivative at its forward-elimination value.
-<a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>tsys_weight_spline_derivatives(points: <span class="kw-2">&amp;</span>[(f64, f32, f32)]) -&gt; Vec&lt;[f64; <span class="number">2</span>]&gt; {
-<a href=#111 id=111 data-nosnippet>111</a>    spline_derivatives_from(points, <span class="number">2</span>)
-<a href=#112 id=112 data-nosnippet>112</a>}
-<a href=#113 id=113 data-nosnippet>113</a>
-<a href=#114 id=114 data-nosnippet>114</a><span class="kw">fn </span>spline_derivatives_from(
-<a href=#115 id=115 data-nosnippet>115</a>    points: <span class="kw-2">&amp;</span>[(f64, f32, f32)],
-<a href=#116 id=116 data-nosnippet>116</a>    first_back_substitution: usize,
-<a href=#117 id=117 data-nosnippet>117</a>) -&gt; Vec&lt;[f64; <span class="number">2</span>]&gt; {
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="kw">let </span><span class="kw-2">mut </span>second = <span class="macro">vec!</span>[[<span class="number">0.0</span>; <span class="number">2</span>]; points.len()];
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="kw">if </span>points.len() &lt; <span class="number">3 </span>{
-<a href=#120 id=120 data-nosnippet>120</a>        <span class="kw">return </span>second;
-<a href=#121 id=121 data-nosnippet>121</a>    }
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">let </span><span class="kw-2">mut </span>upper = <span class="macro">vec!</span>[<span class="number">0.0</span>; points.len()];
-<a href=#123 id=123 data-nosnippet>123</a>    <span class="kw">for </span>index <span class="kw">in </span><span class="number">1</span>..points.len() - <span class="number">1 </span>{
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">let </span>left = points[index].<span class="number">0 </span>- points[index - <span class="number">1</span>].<span class="number">0</span>;
-<a href=#125 id=125 data-nosnippet>125</a>        <span class="kw">let </span>right = points[index + <span class="number">1</span>].<span class="number">0 </span>- points[index].<span class="number">0</span>;
-<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">let </span>diagonal = <span class="number">2.0 </span>* (left + right) - left * upper[index - <span class="number">1</span>];
-<a href=#127 id=127 data-nosnippet>127</a>        upper[index] = right / diagonal;
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span>previous = second[index - <span class="number">1</span>];
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">for </span>(axis, value) <span class="kw">in </span>second[index].iter_mut().enumerate() {
-<a href=#130 id=130 data-nosnippet>130</a>            <span class="kw">let </span>y = |index: usize| {
-<a href=#131 id=131 data-nosnippet>131</a>                f64::from(<span class="kw">if </span>axis == <span class="number">0 </span>{
-<a href=#132 id=132 data-nosnippet>132</a>                    points[index].<span class="number">1
-<a href=#133 id=133 data-nosnippet>133</a>                </span>} <span class="kw">else </span>{
-<a href=#134 id=134 data-nosnippet>134</a>                    points[index].<span class="number">2
-<a href=#135 id=135 data-nosnippet>135</a>                </span>})
-<a href=#136 id=136 data-nosnippet>136</a>            };
-<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>slope = (y(index + <span class="number">1</span>) - y(index)) / right - (y(index) - y(index - <span class="number">1</span>)) / left;
-<a href=#138 id=138 data-nosnippet>138</a>            <span class="kw-2">*</span>value = (<span class="number">6.0 </span>* slope - left * previous[axis]) / diagonal;
-<a href=#139 id=139 data-nosnippet>139</a>        }
-<a href=#140 id=140 data-nosnippet>140</a>    }
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">for </span>index <span class="kw">in </span>(first_back_substitution..points.len() - <span class="number">1</span>).rev() {
-<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">let </span>next = second[index + <span class="number">1</span>];
-<a href=#143 id=143 data-nosnippet>143</a>        <span class="kw">for </span>(value, next) <span class="kw">in </span>second[index].iter_mut().zip(next) {
-<a href=#144 id=144 data-nosnippet>144</a>            <span class="kw-2">*</span>value -= upper[index] * next;
-<a href=#145 id=145 data-nosnippet>145</a>        }
-<a href=#146 id=146 data-nosnippet>146</a>    }
-<a href=#147 id=147 data-nosnippet>147</a>    second
-<a href=#148 id=148 data-nosnippet>148</a>}
+<a href=#50 id=50 data-nosnippet>50</a>    <span class="prelude-val">Some</span>(sample_segment(
+<a href=#51 id=51 data-nosnippet>51</a>        points,
+<a href=#52 id=52 data-nosnippet>52</a>        coordinate,
+<a href=#53 id=53 data-nosnippet>53</a>        mode,
+<a href=#54 id=54 data-nosnippet>54</a>        descending,
+<a href=#55 id=55 data-nosnippet>55</a>        derivatives,
+<a href=#56 id=56 data-nosnippet>56</a>        upper,
+<a href=#57 id=57 data-nosnippet>57</a>    ))
+<a href=#58 id=58 data-nosnippet>58</a>}
+<a href=#59 id=59 data-nosnippet>59</a>
+<a href=#60 id=60 data-nosnippet>60</a><span class="doccomment">/// Sample the end segment when a calibration standard extrapolates in time.
+<a href=#61 id=61 data-nosnippet>61</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>sample_extrapolating(
+<a href=#62 id=62 data-nosnippet>62</a>    points: <span class="kw-2">&amp;</span>[(f64, f32, f32)],
+<a href=#63 id=63 data-nosnippet>63</a>    coordinate: f64,
+<a href=#64 id=64 data-nosnippet>64</a>    mode: Curve,
+<a href=#65 id=65 data-nosnippet>65</a>    derivatives: <span class="kw-2">&amp;</span>[[f64; <span class="number">2</span>]],
+<a href=#66 id=66 data-nosnippet>66</a>) -&gt; (f32, f32) {
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">let </span>upper = points
+<a href=#68 id=68 data-nosnippet>68</a>        .partition_point(|point| point.<span class="number">0 </span>&lt; coordinate)
+<a href=#69 id=69 data-nosnippet>69</a>        .clamp(<span class="number">1</span>, points.len() - <span class="number">1</span>);
+<a href=#70 id=70 data-nosnippet>70</a>    sample_segment(points, coordinate, mode, <span class="bool-val">false</span>, derivatives, upper)
+<a href=#71 id=71 data-nosnippet>71</a>}
+<a href=#72 id=72 data-nosnippet>72</a>
+<a href=#73 id=73 data-nosnippet>73</a><span class="kw">fn </span>sample_segment(
+<a href=#74 id=74 data-nosnippet>74</a>    points: <span class="kw-2">&amp;</span>[(f64, f32, f32)],
+<a href=#75 id=75 data-nosnippet>75</a>    coordinate: f64,
+<a href=#76 id=76 data-nosnippet>76</a>    mode: Curve,
+<a href=#77 id=77 data-nosnippet>77</a>    descending: bool,
+<a href=#78 id=78 data-nosnippet>78</a>    derivatives: <span class="kw-2">&amp;</span>[[f64; <span class="number">2</span>]],
+<a href=#79 id=79 data-nosnippet>79</a>    upper: usize,
+<a href=#80 id=80 data-nosnippet>80</a>) -&gt; (f32, f32) {
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">let </span>(low, high) = (points[upper - <span class="number">1</span>], points[upper]);
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="kw">if </span>mode == Curve::Nearest {
+<a href=#83 id=83 data-nosnippet>83</a>        <span class="kw">let </span>nearest = <span class="kw">if </span>high.<span class="number">0 </span>- coordinate &lt; coordinate - low.<span class="number">0
+<a href=#84 id=84 data-nosnippet>84</a>            </span>|| (descending &amp;&amp; high.<span class="number">0 </span>- coordinate == coordinate - low.<span class="number">0</span>)
+<a href=#85 id=85 data-nosnippet>85</a>        {
+<a href=#86 id=86 data-nosnippet>86</a>            high
+<a href=#87 id=87 data-nosnippet>87</a>        } <span class="kw">else </span>{
+<a href=#88 id=88 data-nosnippet>88</a>            low
+<a href=#89 id=89 data-nosnippet>89</a>        };
+<a href=#90 id=90 data-nosnippet>90</a>        (nearest.<span class="number">1</span>, nearest.<span class="number">2</span>)
+<a href=#91 id=91 data-nosnippet>91</a>    } <span class="kw">else if </span>mode == Curve::Cubic {
+<a href=#92 id=92 data-nosnippet>92</a>        <span class="kw">let </span>first = upper.saturating_sub(<span class="number">2</span>).min(points.len().saturating_sub(<span class="number">4</span>));
+<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">let </span>stencil = <span class="kw-2">&amp;</span>points[first..(first + <span class="number">4</span>).min(points.len())];
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">let </span>polynomial = |axis: usize| {
+<a href=#95 id=95 data-nosnippet>95</a>            <span class="kw">let </span><span class="kw-2">mut </span>c = [<span class="number">0.0f32</span>; <span class="number">4</span>];
+<a href=#96 id=96 data-nosnippet>96</a>            <span class="kw">let </span><span class="kw-2">mut </span>d = [<span class="number">0.0f32</span>; <span class="number">4</span>];
+<a href=#97 id=97 data-nosnippet>97</a>            <span class="kw">for </span>(index, point) <span class="kw">in </span>stencil.iter().enumerate() {
+<a href=#98 id=98 data-nosnippet>98</a>                c[index] = <span class="kw">if </span>axis == <span class="number">0 </span>{ point.<span class="number">1 </span>} <span class="kw">else </span>{ point.<span class="number">2 </span>};
+<a href=#99 id=99 data-nosnippet>99</a>                d[index] = c[index];
+<a href=#100 id=100 data-nosnippet>100</a>            }
+<a href=#101 id=101 data-nosnippet>101</a>            <span class="kw">let </span><span class="kw-2">mut </span>value = c[<span class="number">0</span>];
+<a href=#102 id=102 data-nosnippet>102</a>            <span class="kw">for </span>order <span class="kw">in </span><span class="number">1</span>..stencil.len() {
+<a href=#103 id=103 data-nosnippet>103</a>                <span class="kw">for </span>index <span class="kw">in </span><span class="number">0</span>..stencil.len() - order {
+<a href=#104 id=104 data-nosnippet>104</a>                    <span class="kw">let </span>w = f64::from(c[index + <span class="number">1</span>] - d[index])
+<a href=#105 id=105 data-nosnippet>105</a>                        / (stencil[index].<span class="number">0 </span>- stencil[index + order].<span class="number">0</span>);
+<a href=#106 id=106 data-nosnippet>106</a>                    c[index] = ((stencil[index].<span class="number">0 </span>- coordinate) * w) <span class="kw">as </span>f32;
+<a href=#107 id=107 data-nosnippet>107</a>                    d[index] = ((stencil[index + order].<span class="number">0 </span>- coordinate) * w) <span class="kw">as </span>f32;
+<a href=#108 id=108 data-nosnippet>108</a>                }
+<a href=#109 id=109 data-nosnippet>109</a>                value += c[<span class="number">0</span>];
+<a href=#110 id=110 data-nosnippet>110</a>            }
+<a href=#111 id=111 data-nosnippet>111</a>            value
+<a href=#112 id=112 data-nosnippet>112</a>        };
+<a href=#113 id=113 data-nosnippet>113</a>        (polynomial(<span class="number">0</span>), polynomial(<span class="number">1</span>))
+<a href=#114 id=114 data-nosnippet>114</a>    } <span class="kw">else if </span>mode == Curve::Spline {
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">let </span>width = high.<span class="number">0 </span>- low.<span class="number">0</span>;
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">let </span>a = (high.<span class="number">0 </span>- coordinate) / width;
+<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span>b = <span class="number">1.0 </span>- a;
+<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">let </span>evaluate = |left: f32, right: f32, axis: usize| {
+<a href=#119 id=119 data-nosnippet>119</a>            (a * f64::from(left)
+<a href=#120 id=120 data-nosnippet>120</a>                + b * f64::from(right)
+<a href=#121 id=121 data-nosnippet>121</a>                + width * width / <span class="number">6.0
+<a href=#122 id=122 data-nosnippet>122</a>                    </span>* ((a * a * a - a) * derivatives[upper - <span class="number">1</span>][axis]
+<a href=#123 id=123 data-nosnippet>123</a>                        + (b * b * b - b) * derivatives[upper][axis])) <span class="kw">as </span>f32
+<a href=#124 id=124 data-nosnippet>124</a>        };
+<a href=#125 id=125 data-nosnippet>125</a>        (evaluate(low.<span class="number">1</span>, high.<span class="number">1</span>, <span class="number">0</span>), evaluate(low.<span class="number">2</span>, high.<span class="number">2</span>, <span class="number">1</span>))
+<a href=#126 id=126 data-nosnippet>126</a>    } <span class="kw">else </span>{
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">let </span>fraction = (coordinate - low.<span class="number">0</span>) / (high.<span class="number">0 </span>- low.<span class="number">0</span>);
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span>interpolate = |a: f32, b: f32| (f64::from(a) + f64::from(b - a) * fraction) <span class="kw">as </span>f32;
+<a href=#129 id=129 data-nosnippet>129</a>        (interpolate(low.<span class="number">1</span>, high.<span class="number">1</span>), interpolate(low.<span class="number">2</span>, high.<span class="number">2</span>))
+<a href=#130 id=130 data-nosnippet>130</a>    }
+<a href=#131 id=131 data-nosnippet>131</a>}
+<a href=#132 id=132 data-nosnippet>132</a>
+<a href=#133 id=133 data-nosnippet>133</a><span class="doccomment">/// Tridiagonal solution for natural (zero endpoint curvature) cubic splines.
+<a href=#134 id=134 data-nosnippet>134</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>spline_derivatives(points: <span class="kw-2">&amp;</span>[(f64, f32, f32)]) -&gt; Vec&lt;[f64; <span class="number">2</span>]&gt; {
+<a href=#135 id=135 data-nosnippet>135</a>    spline_derivatives_from(points, <span class="number">1</span>)
+<a href=#136 id=136 data-nosnippet>136</a>}
+<a href=#137 id=137 data-nosnippet>137</a>
+<a href=#138 id=138 data-nosnippet>138</a><span class="doccomment">/// Casacore's InterpolateArray1D leaves the first interior derivative
+<a href=#139 id=139 data-nosnippet>139</a>/// at its forward-elimination value.
+<a href=#140 id=140 data-nosnippet>140</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>array_spline_derivatives(points: <span class="kw-2">&amp;</span>[(f64, f32, f32)]) -&gt; Vec&lt;[f64; <span class="number">2</span>]&gt; {
+<a href=#141 id=141 data-nosnippet>141</a>    spline_derivatives_from(points, <span class="number">2</span>)
+<a href=#142 id=142 data-nosnippet>142</a>}
+<a href=#143 id=143 data-nosnippet>143</a>
+<a href=#144 id=144 data-nosnippet>144</a><span class="kw">fn </span>spline_derivatives_from(
+<a href=#145 id=145 data-nosnippet>145</a>    points: <span class="kw-2">&amp;</span>[(f64, f32, f32)],
+<a href=#146 id=146 data-nosnippet>146</a>    first_back_substitution: usize,
+<a href=#147 id=147 data-nosnippet>147</a>) -&gt; Vec&lt;[f64; <span class="number">2</span>]&gt; {
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">let </span><span class="kw-2">mut </span>second = <span class="macro">vec!</span>[[<span class="number">0.0</span>; <span class="number">2</span>]; points.len()];
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">if </span>points.len() &lt; <span class="number">3 </span>{
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">return </span>second;
+<a href=#151 id=151 data-nosnippet>151</a>    }
+<a href=#152 id=152 data-nosnippet>152</a>    <span class="kw">let </span><span class="kw-2">mut </span>upper = <span class="macro">vec!</span>[<span class="number">0.0</span>; points.len()];
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">for </span>index <span class="kw">in </span><span class="number">1</span>..points.len() - <span class="number">1 </span>{
+<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>left = points[index].<span class="number">0 </span>- points[index - <span class="number">1</span>].<span class="number">0</span>;
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>right = points[index + <span class="number">1</span>].<span class="number">0 </span>- points[index].<span class="number">0</span>;
+<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">let </span>diagonal = <span class="number">2.0 </span>* (left + right) - left * upper[index - <span class="number">1</span>];
+<a href=#157 id=157 data-nosnippet>157</a>        upper[index] = right / diagonal;
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>previous = second[index - <span class="number">1</span>];
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">for </span>(axis, value) <span class="kw">in </span>second[index].iter_mut().enumerate() {
+<a href=#160 id=160 data-nosnippet>160</a>            <span class="kw">let </span>y = |index: usize| {
+<a href=#161 id=161 data-nosnippet>161</a>                f64::from(<span class="kw">if </span>axis == <span class="number">0 </span>{
+<a href=#162 id=162 data-nosnippet>162</a>                    points[index].<span class="number">1
+<a href=#163 id=163 data-nosnippet>163</a>                </span>} <span class="kw">else </span>{
+<a href=#164 id=164 data-nosnippet>164</a>                    points[index].<span class="number">2
+<a href=#165 id=165 data-nosnippet>165</a>                </span>})
+<a href=#166 id=166 data-nosnippet>166</a>            };
+<a href=#167 id=167 data-nosnippet>167</a>            <span class="kw">let </span>slope = (y(index + <span class="number">1</span>) - y(index)) / right - (y(index) - y(index - <span class="number">1</span>)) / left;
+<a href=#168 id=168 data-nosnippet>168</a>            <span class="kw-2">*</span>value = (<span class="number">6.0 </span>* slope - left * previous[axis]) / diagonal;
+<a href=#169 id=169 data-nosnippet>169</a>        }
+<a href=#170 id=170 data-nosnippet>170</a>    }
+<a href=#171 id=171 data-nosnippet>171</a>    <span class="kw">for </span>index <span class="kw">in </span>(first_back_substitution..points.len() - <span class="number">1</span>).rev() {
+<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">let </span>next = second[index + <span class="number">1</span>];
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">for </span>(value, next) <span class="kw">in </span>second[index].iter_mut().zip(next) {
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="kw-2">*</span>value -= upper[index] * next;
+<a href=#175 id=175 data-nosnippet>175</a>        }
+<a href=#176 id=176 data-nosnippet>176</a>    }
+<a href=#177 id=177 data-nosnippet>177</a>    second
+<a href=#178 id=178 data-nosnippet>178</a>}
 </code></pre></div></section></main></body></html>

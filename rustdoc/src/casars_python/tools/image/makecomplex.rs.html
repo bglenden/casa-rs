@@ -114,63 +114,64 @@
 <a href=#114 id=114 data-nosnippet>114</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
 <a href=#115 id=115 data-nosnippet>115</a>            };
 <a href=#116 id=116 data-nosnippet>116</a>            <span class="kw">let </span>product = publish_image(outfile, overwrite, |path| {
-<a href=#117 id=117 data-nosnippet>117</a>                <span class="kw">let </span>real = attachment.lock();
+<a href=#117 id=117 data-nosnippet>117</a>                <span class="kw">let </span><span class="kw-2">mut </span>real = attachment.lock();
 <a href=#118 id=118 data-nosnippet>118</a>                <span class="kw">if </span>!<span class="macro">matches!</span>(<span class="kw-2">*</span>real, ImageHandle::Float(<span class="kw">_</span>) | ImageHandle::Double(<span class="kw">_</span>)) {
 <a href=#119 id=119 data-nosnippet>119</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"The attached image must be float valued"</span>));
 <a href=#120 id=120 data-nosnippet>120</a>                }
-<a href=#121 id=121 data-nosnippet>121</a>                <span class="kw">let </span>imaginary = ImageHandle::open(Path::new(imag)).map_err(raised)<span class="question-mark">?</span>;
-<a href=#122 id=122 data-nosnippet>122</a>                <span class="kw">if </span>!<span class="macro">matches!</span>(imaginary, ImageHandle::Float(<span class="kw">_</span>) | ImageHandle::Double(<span class="kw">_</span>)) {
-<a href=#123 id=123 data-nosnippet>123</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(<span class="string">"{imag} does not have supported real valued pixels"</span>)));
-<a href=#124 id=124 data-nosnippet>124</a>                }
-<a href=#125 id=125 data-nosnippet>125</a>                <span class="kw">if </span>real.kind() != imaginary.kind() {
-<a href=#126 id=126 data-nosnippet>126</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Real and imaginary images do not have the same precision"</span>));
-<a href=#127 id=127 data-nosnippet>127</a>                }
-<a href=#128 id=128 data-nosnippet>128</a>                <span class="kw">if </span>!outfile.is_empty() {
-<a href=#129 id=129 data-nosnippet>129</a>                    <span class="kw">for </span>source <span class="kw">in </span>[real.path(), imaginary.path()].into_iter().flatten() {
-<a href=#130 id=130 data-nosnippet>130</a>                        ensure_outfile_does_not_alias_input(Path::new(outfile), source)
-<a href=#131 id=131 data-nosnippet>131</a>                            .map_err(raised)<span class="question-mark">?</span>;
-<a href=#132 id=132 data-nosnippet>132</a>                    }
-<a href=#133 id=133 data-nosnippet>133</a>                }
-<a href=#134 id=134 data-nosnippet>134</a>                <span class="kw">if </span>real.shape() != imaginary.shape() {
-<a href=#135 id=135 data-nosnippet>135</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Image shapes are not identical"</span>));
-<a href=#136 id=136 data-nosnippet>136</a>                }
-<a href=#137 id=137 data-nosnippet>137</a>                <span class="kw">let </span>real_record = real.coordinate_record();
-<a href=#138 id=138 data-nosnippet>138</a>                <span class="kw">if </span>!coordinates_conform(<span class="kw-2">&amp;</span>real_record, <span class="kw-2">&amp;</span>imaginary.coordinate_record(), <span class="bool-val">false</span>)<span class="question-mark">? </span>{
-<a href=#139 id=139 data-nosnippet>139</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Image Coordinate systems are not conformant"</span>));
-<a href=#140 id=140 data-nosnippet>140</a>                }
-<a href=#141 id=141 data-nosnippet>141</a>                <span class="kw">let </span>(<span class="kw-2">mut </span>output, origin) = <span class="kw">match </span>(<span class="kw-2">&amp;*</span>real, <span class="kw-2">&amp;</span>imaginary) {
-<a href=#142 id=142 data-nosnippet>142</a>                    (ImageHandle::Float(left), ImageHandle::Float(right)) =&gt; {
-<a href=#143 id=143 data-nosnippet>143</a>                        left.with_float_view(|left| right.with_float_view(|right| {
-<a href=#144 id=144 data-nosnippet>144</a>                            combine(left, right, <span class="kw-2">&amp;</span>real_record, region.as_ref(), path, ImageHandle::Complex)
-<a href=#145 id=145 data-nosnippet>145</a>                        }))<span class="question-mark">?
-<a href=#146 id=146 data-nosnippet>146</a>                    </span>}
-<a href=#147 id=147 data-nosnippet>147</a>                    (ImageHandle::Double(left), ImageHandle::Double(right)) =&gt; {
-<a href=#148 id=148 data-nosnippet>148</a>                        <span class="macro">with_storage!</span>(left, left =&gt; <span class="macro">with_storage!</span>(right, right =&gt; {
-<a href=#149 id=149 data-nosnippet>149</a>                            combine(left.as_ref(), right.as_ref(), <span class="kw-2">&amp;</span>real_record, region.as_ref(), path, ImageHandle::DComplex)
-<a href=#150 id=150 data-nosnippet>150</a>                        }))<span class="question-mark">?
-<a href=#151 id=151 data-nosnippet>151</a>                    </span>}
-<a href=#152 id=152 data-nosnippet>152</a>                    <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"real images with matching precision"</span>),
-<a href=#153 id=153 data-nosnippet>153</a>                };
-<a href=#154 id=154 data-nosnippet>154</a>                preserve_beam_records(<span class="kw-2">&amp;</span>real, <span class="kw-2">&amp;mut </span>output, <span class="kw-2">&amp;</span>real_record, <span class="kw-2">&amp;</span>origin)<span class="question-mark">?</span>;
-<a href=#155 id=155 data-nosnippet>155</a>                <span class="kw">let </span>rows = <span class="macro">with_pixels!</span>(<span class="kw-2">&amp;*</span>real, storage =&gt; <span class="kw">match </span>storage {
-<a href=#156 id=156 data-nosnippet>156</a>                    Storage::Paged(image) =&gt; image_history_rows(image.name().expect(<span class="string">"persistent image"</span>)),
-<a href=#157 id=157 data-nosnippet>157</a>                    Storage::Temp { image, .. } =&gt; <span class="prelude-val">Ok</span>(image.history_rows().to_vec()),
-<a href=#158 id=158 data-nosnippet>158</a>                })
-<a href=#159 id=159 data-nosnippet>159</a>                .map_err(raised)<span class="question-mark">?</span>;
-<a href=#160 id=160 data-nosnippet>160</a>                <span class="macro">with_pixels!</span>(<span class="kw-2">&amp;mut </span>output, storage =&gt; <span class="macro">with_storage!</span>(storage, image =&gt; image.append_history_entries(<span class="kw-2">&amp;</span>rows)))
-<a href=#161 id=161 data-nosnippet>161</a>                    .map_err(raised)<span class="question-mark">?</span>;
-<a href=#162 id=162 data-nosnippet>162</a>                <span class="kw">if </span>state.history {
-<a href=#163 id=163 data-nosnippet>163</a>                    <span class="kw">let </span>region = region.as_ref().map_or_else(|| <span class="string">"{}"</span>.into(), Region::history);
-<a href=#164 id=164 data-nosnippet>164</a>                    output.record_history(<span class="string">"makecomplex"</span>, <span class="macro">format!</span>(
-<a href=#165 id=165 data-nosnippet>165</a>                        <span class="string">"ia.makecomplex(outfile={outfile:?}, imag={imag:?}, region={region}, overwrite={overwrite})"
-<a href=#166 id=166 data-nosnippet>166</a>                    </span>))<span class="question-mark">?</span>;
-<a href=#167 id=167 data-nosnippet>167</a>                }
-<a href=#168 id=168 data-nosnippet>168</a>                output.save().map_err(raised)<span class="question-mark">?</span>;
-<a href=#169 id=169 data-nosnippet>169</a>                <span class="prelude-val">Ok</span>(output)
-<a href=#170 id=170 data-nosnippet>170</a>            })<span class="question-mark">?</span>;
-<a href=#171 id=171 data-nosnippet>171</a>            drop(product);
-<a href=#172 id=172 data-nosnippet>172</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
-<a href=#173 id=173 data-nosnippet>173</a>        })
-<a href=#174 id=174 data-nosnippet>174</a>    }
-<a href=#175 id=175 data-nosnippet>175</a>}
+<a href=#121 id=121 data-nosnippet>121</a>                attachment.require_pixel_read_lock(<span class="kw-2">&amp;mut </span>real)<span class="question-mark">?</span>;
+<a href=#122 id=122 data-nosnippet>122</a>                <span class="kw">let </span>imaginary = ImageHandle::open_read(Path::new(imag)).map_err(raised)<span class="question-mark">?</span>;
+<a href=#123 id=123 data-nosnippet>123</a>                <span class="kw">if </span>!<span class="macro">matches!</span>(imaginary, ImageHandle::Float(<span class="kw">_</span>) | ImageHandle::Double(<span class="kw">_</span>)) {
+<a href=#124 id=124 data-nosnippet>124</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(<span class="string">"{imag} does not have supported real valued pixels"</span>)));
+<a href=#125 id=125 data-nosnippet>125</a>                }
+<a href=#126 id=126 data-nosnippet>126</a>                <span class="kw">if </span>real.kind() != imaginary.kind() {
+<a href=#127 id=127 data-nosnippet>127</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Real and imaginary images do not have the same precision"</span>));
+<a href=#128 id=128 data-nosnippet>128</a>                }
+<a href=#129 id=129 data-nosnippet>129</a>                <span class="kw">if </span>!outfile.is_empty() {
+<a href=#130 id=130 data-nosnippet>130</a>                    <span class="kw">for </span>source <span class="kw">in </span>[real.path(), imaginary.path()].into_iter().flatten() {
+<a href=#131 id=131 data-nosnippet>131</a>                        ensure_outfile_does_not_alias_input(Path::new(outfile), source)
+<a href=#132 id=132 data-nosnippet>132</a>                            .map_err(raised)<span class="question-mark">?</span>;
+<a href=#133 id=133 data-nosnippet>133</a>                    }
+<a href=#134 id=134 data-nosnippet>134</a>                }
+<a href=#135 id=135 data-nosnippet>135</a>                <span class="kw">if </span>real.shape() != imaginary.shape() {
+<a href=#136 id=136 data-nosnippet>136</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Image shapes are not identical"</span>));
+<a href=#137 id=137 data-nosnippet>137</a>                }
+<a href=#138 id=138 data-nosnippet>138</a>                <span class="kw">let </span>real_record = real.coordinate_record();
+<a href=#139 id=139 data-nosnippet>139</a>                <span class="kw">if </span>!coordinates_conform(<span class="kw-2">&amp;</span>real_record, <span class="kw-2">&amp;</span>imaginary.coordinate_record(), <span class="bool-val">false</span>)<span class="question-mark">? </span>{
+<a href=#140 id=140 data-nosnippet>140</a>                    <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Image Coordinate systems are not conformant"</span>));
+<a href=#141 id=141 data-nosnippet>141</a>                }
+<a href=#142 id=142 data-nosnippet>142</a>                <span class="kw">let </span>(<span class="kw-2">mut </span>output, origin) = <span class="kw">match </span>(<span class="kw-2">&amp;*</span>real, <span class="kw-2">&amp;</span>imaginary) {
+<a href=#143 id=143 data-nosnippet>143</a>                    (ImageHandle::Float(left), ImageHandle::Float(right)) =&gt; {
+<a href=#144 id=144 data-nosnippet>144</a>                        left.with_float_view(|left| right.with_float_view(|right| {
+<a href=#145 id=145 data-nosnippet>145</a>                            combine(left, right, <span class="kw-2">&amp;</span>real_record, region.as_ref(), path, ImageHandle::Complex)
+<a href=#146 id=146 data-nosnippet>146</a>                        }))<span class="question-mark">?
+<a href=#147 id=147 data-nosnippet>147</a>                    </span>}
+<a href=#148 id=148 data-nosnippet>148</a>                    (ImageHandle::Double(left), ImageHandle::Double(right)) =&gt; {
+<a href=#149 id=149 data-nosnippet>149</a>                        <span class="macro">with_storage!</span>(left, left =&gt; <span class="macro">with_storage!</span>(right, right =&gt; {
+<a href=#150 id=150 data-nosnippet>150</a>                            combine(left.as_ref(), right.as_ref(), <span class="kw-2">&amp;</span>real_record, region.as_ref(), path, ImageHandle::DComplex)
+<a href=#151 id=151 data-nosnippet>151</a>                        }))<span class="question-mark">?
+<a href=#152 id=152 data-nosnippet>152</a>                    </span>}
+<a href=#153 id=153 data-nosnippet>153</a>                    <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(<span class="string">"real images with matching precision"</span>),
+<a href=#154 id=154 data-nosnippet>154</a>                };
+<a href=#155 id=155 data-nosnippet>155</a>                preserve_beam_records(<span class="kw-2">&amp;</span>real, <span class="kw-2">&amp;mut </span>output, <span class="kw-2">&amp;</span>real_record, <span class="kw-2">&amp;</span>origin)<span class="question-mark">?</span>;
+<a href=#156 id=156 data-nosnippet>156</a>                <span class="kw">let </span>rows = <span class="macro">with_pixels!</span>(<span class="kw-2">&amp;*</span>real, storage =&gt; <span class="kw">match </span>storage {
+<a href=#157 id=157 data-nosnippet>157</a>                    Storage::Paged(image) =&gt; image_history_rows(image.name().expect(<span class="string">"persistent image"</span>)),
+<a href=#158 id=158 data-nosnippet>158</a>                    Storage::Temp { image, .. } =&gt; <span class="prelude-val">Ok</span>(image.history_rows().map_err(raised)<span class="question-mark">?</span>.into_owned()),
+<a href=#159 id=159 data-nosnippet>159</a>                })
+<a href=#160 id=160 data-nosnippet>160</a>                .map_err(raised)<span class="question-mark">?</span>;
+<a href=#161 id=161 data-nosnippet>161</a>                <span class="macro">with_pixels!</span>(<span class="kw-2">&amp;mut </span>output, storage =&gt; <span class="macro">with_storage!</span>(storage, image =&gt; image.append_history_entries(<span class="kw-2">&amp;</span>rows)))
+<a href=#162 id=162 data-nosnippet>162</a>                    .map_err(raised)<span class="question-mark">?</span>;
+<a href=#163 id=163 data-nosnippet>163</a>                <span class="kw">if </span>state.history {
+<a href=#164 id=164 data-nosnippet>164</a>                    <span class="kw">let </span>region = region.as_ref().map_or_else(|| <span class="string">"{}"</span>.into(), Region::history);
+<a href=#165 id=165 data-nosnippet>165</a>                    output.record_history(<span class="string">"makecomplex"</span>, <span class="macro">format!</span>(
+<a href=#166 id=166 data-nosnippet>166</a>                        <span class="string">"ia.makecomplex(outfile={outfile:?}, imag={imag:?}, region={region}, overwrite={overwrite})"
+<a href=#167 id=167 data-nosnippet>167</a>                    </span>))<span class="question-mark">?</span>;
+<a href=#168 id=168 data-nosnippet>168</a>                }
+<a href=#169 id=169 data-nosnippet>169</a>                output.save().map_err(raised)<span class="question-mark">?</span>;
+<a href=#170 id=170 data-nosnippet>170</a>                <span class="prelude-val">Ok</span>(output)
+<a href=#171 id=171 data-nosnippet>171</a>            })<span class="question-mark">?</span>;
+<a href=#172 id=172 data-nosnippet>172</a>            drop(product);
+<a href=#173 id=173 data-nosnippet>173</a>            <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
+<a href=#174 id=174 data-nosnippet>174</a>        })
+<a href=#175 id=175 data-nosnippet>175</a>    }
+<a href=#176 id=176 data-nosnippet>176</a>}
 </code></pre></div></section></main></body></html>

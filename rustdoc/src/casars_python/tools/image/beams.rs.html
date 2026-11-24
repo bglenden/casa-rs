@@ -1,349 +1,479 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casars-python/src/tools/image/beams.rs`."><title>beams.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../../static.files/rustdoc-203241e4.css"><meta name="rustdoc-vars" data-root-path="../../../../" data-static-root-path="../../../../static.files/" data-current-crate="casars_python" data-themes="" data-resource-suffix="" data-rustdoc-version="1.100.0 (0ef1bc386 2026-11-09)" data-channel="1.100.0" data-search-js="search-b167f383.js" data-stringdex-js="stringdex-b5109af9.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../../static.files/src-script-813739b1.js"></script><script defer src="../../../../src-files.js"></script><script defer src="../../../../static.files/main-1814ead3.js"></script><noscript><link rel="stylesheet" href="../../../../static.files/noscript-9f56287d.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casars_python/tools/image/</div>beams.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a>
-<a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>casa_coordinates::{CoordinateSystem, CoordinateType};
-<a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>casa_images::{GaussianBeam, ImageBeamSet, ImageError, ImageInfo, StoredGaussianBeam};
-<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>casa_types::quanta::{Unit, casacore};
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_types::{RecordValue, Value};
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>pyo3::prelude::<span class="kw-2">*</span>;
-<a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span><span class="kw">crate</span>::convert::value::CasaValue;
-<a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span><span class="kw">super</span>::PyImageTool;
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span><span class="kw">super</span>::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
-<a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>subrecord&lt;<span class="lifetime">'a</span>&gt;(record: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>RecordValue, field: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>RecordValue&gt; {
-<a href=#15 id=15 data-nosnippet>15</a>    <span class="kw">match </span>record.get(field) {
-<a href=#16 id=16 data-nosnippet>16</a>        <span class="prelude-val">Some</span>(Value::Record(value)) =&gt; <span class="prelude-val">Some</span>(value),
-<a href=#17 id=17 data-nosnippet>17</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#18 id=18 data-nosnippet>18</a>    }
-<a href=#19 id=19 data-nosnippet>19</a>}
-<a href=#20 id=20 data-nosnippet>20</a>
-<a href=#21 id=21 data-nosnippet>21</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>image_info(image: <span class="kw-2">&amp;</span>ImageHandle) -&gt; <span class="prelude-ty">Result</span>&lt;ImageInfo, ImageError&gt; {
-<a href=#22 id=22 data-nosnippet>22</a>    <span class="macro">with_pixels!</span>(image, storage =&gt; <span class="macro">with_storage!</span>(storage, image =&gt; image.image_info()))
+<a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>std::collections::HashMap;
+<a href=#4 id=4 data-nosnippet>4</a>
+<a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>casa_coordinates::{CoordinateSystem, CoordinateType};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>casa_images::{
+<a href=#7 id=7 data-nosnippet>7</a>    BeamComponent, GaussianBeam, ImageBeamSet, ImageError, ImageInfo, StoredGaussianBeam,
+<a href=#8 id=8 data-nosnippet>8</a>};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>casa_types::quanta::{Unit, casacore};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>casa_types::{RecordValue, Value};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>pyo3::prelude::<span class="kw-2">*</span>;
+<a href=#12 id=12 data-nosnippet>12</a>
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span><span class="kw">crate</span>::convert::value::CasaValue;
+<a href=#14 id=14 data-nosnippet>14</a>
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span><span class="kw">super</span>::PyImageTool;
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span><span class="kw">super</span>::handle::{ImageHandle, Storage, raised, with_pixels, with_storage};
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>subrecord&lt;<span class="lifetime">'a</span>&gt;(record: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>RecordValue, field: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>RecordValue&gt; {
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">match </span>record.get(field) {
+<a href=#20 id=20 data-nosnippet>20</a>        <span class="prelude-val">Some</span>(Value::Record(value)) =&gt; <span class="prelude-val">Some</span>(value),
+<a href=#21 id=21 data-nosnippet>21</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#22 id=22 data-nosnippet>22</a>    }
 <a href=#23 id=23 data-nosnippet>23</a>}
 <a href=#24 id=24 data-nosnippet>24</a>
-<a href=#25 id=25 data-nosnippet>25</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>image_info_record(image: <span class="kw-2">&amp;</span>ImageHandle) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RecordValue&gt; {
-<a href=#26 id=26 data-nosnippet>26</a>    <span class="macro">with_pixels!</span>(image, storage =&gt; <span class="kw">match </span>storage {
-<a href=#27 id=27 data-nosnippet>27</a>        Storage::Paged(image) =&gt; subrecord(image.table().keywords(), <span class="string">"imageinfo"</span>),
-<a href=#28 id=28 data-nosnippet>28</a>        Storage::Temp { image, .. } =&gt; image.image_info_record(),
-<a href=#29 id=29 data-nosnippet>29</a>    })
-<a href=#30 id=30 data-nosnippet>30</a>}
-<a href=#31 id=31 data-nosnippet>31</a>
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>stored_beam_record(
-<a href=#33 id=33 data-nosnippet>33</a>    info: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RecordValue&gt;,
-<a href=#34 id=34 data-nosnippet>34</a>    beams: <span class="kw-2">&amp;</span>ImageBeamSet,
-<a href=#35 id=35 data-nosnippet>35</a>    channel: usize,
-<a href=#36 id=36 data-nosnippet>36</a>    polarization: usize,
-<a href=#37 id=37 data-nosnippet>37</a>) -&gt; RecordValue {
-<a href=#38 id=38 data-nosnippet>38</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(info) = info {
-<a href=#39 id=39 data-nosnippet>39</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(grid) = subrecord(info, <span class="string">"perplanebeams"</span>) {
-<a href=#40 id=40 data-nosnippet>40</a>            <span class="kw">let </span>index = polarization * beams.n_channels() + channel;
-<a href=#41 id=41 data-nosnippet>41</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = subrecord(grid, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"*{index}"</span>)) {
-<a href=#42 id=42 data-nosnippet>42</a>                <span class="kw">return </span>beam.clone();
-<a href=#43 id=43 data-nosnippet>43</a>            }
-<a href=#44 id=44 data-nosnippet>44</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(beam) = subrecord(info, <span class="string">"restoringbeam"</span>) {
-<a href=#45 id=45 data-nosnippet>45</a>            <span class="kw">return </span>beam.clone();
-<a href=#46 id=46 data-nosnippet>46</a>        }
-<a href=#47 id=47 data-nosnippet>47</a>    }
-<a href=#48 id=48 data-nosnippet>48</a>    beams.beam(channel, polarization).to_record()
-<a href=#49 id=49 data-nosnippet>49</a>}
-<a href=#50 id=50 data-nosnippet>50</a>
-<a href=#51 id=51 data-nosnippet>51</a><span class="kw">fn </span>beam_matrix(
-<a href=#52 id=52 data-nosnippet>52</a>    beams: <span class="kw-2">&amp;</span>ImageBeamSet,
-<a href=#53 id=53 data-nosnippet>53</a>    stokes_first: bool,
-<a href=#54 id=54 data-nosnippet>54</a>    value: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>GaussianBeam) -&gt; <span class="prelude-ty">Result</span>&lt;f64, ImageError&gt;,
-<a href=#55 id=55 data-nosnippet>55</a>) -&gt; PyResult&lt;CasaValue&gt; {
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">let </span>channels = beams.n_channels();
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">let </span>stokes = beams.n_stokes();
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="kw">let </span>(rows, columns) = <span class="kw">if </span>stokes_first {
-<a href=#59 id=59 data-nosnippet>59</a>        (stokes, channels)
-<a href=#60 id=60 data-nosnippet>60</a>    } <span class="kw">else </span>{
-<a href=#61 id=61 data-nosnippet>61</a>        (channels, stokes)
-<a href=#62 id=62 data-nosnippet>62</a>    };
-<a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::with_capacity(rows * columns);
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">for </span>column <span class="kw">in </span><span class="number">0</span>..columns {
-<a href=#65 id=65 data-nosnippet>65</a>        <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..rows {
-<a href=#66 id=66 data-nosnippet>66</a>            <span class="kw">let </span>(channel, polarization) = <span class="kw">if </span>stokes_first {
-<a href=#67 id=67 data-nosnippet>67</a>                (column, row)
-<a href=#68 id=68 data-nosnippet>68</a>            } <span class="kw">else </span>{
-<a href=#69 id=69 data-nosnippet>69</a>                (row, column)
-<a href=#70 id=70 data-nosnippet>70</a>            };
-<a href=#71 id=71 data-nosnippet>71</a>            values.push(value(beams.beam(channel, polarization)).map_err(raised)<span class="question-mark">?</span>);
-<a href=#72 id=72 data-nosnippet>72</a>        }
-<a href=#73 id=73 data-nosnippet>73</a>    }
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="prelude-val">Ok</span>(CasaValue::Floats {
-<a href=#75 id=75 data-nosnippet>75</a>        shape: <span class="macro">vec!</span>[rows, columns],
-<a href=#76 id=76 data-nosnippet>76</a>        values,
-<a href=#77 id=77 data-nosnippet>77</a>    })
-<a href=#78 id=78 data-nosnippet>78</a>}
-<a href=#79 id=79 data-nosnippet>79</a>
-<a href=#80 id=80 data-nosnippet>80</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>restoring_beam(
-<a href=#81 id=81 data-nosnippet>81</a>    image: <span class="kw-2">&amp;</span>ImageHandle,
-<a href=#82 id=82 data-nosnippet>82</a>    channel: i64,
-<a href=#83 id=83 data-nosnippet>83</a>    polarization: i64,
-<a href=#84 id=84 data-nosnippet>84</a>    mode: <span class="kw-2">&amp;</span>str,
-<a href=#85 id=85 data-nosnippet>85</a>) -&gt; PyResult&lt;CasaValue&gt; {
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span>beams = image_info(image).map_err(raised)<span class="question-mark">?</span>.beam_set;
-<a href=#87 id=87 data-nosnippet>87</a>    <span class="kw">let </span>first = mode.as_bytes().first().map(u8::to_ascii_lowercase);
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="kw">let </span>matrix = first == <span class="prelude-val">Some</span>(<span class="string">b'm'</span>);
-<a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">if </span>!matrix &amp;&amp; first != <span class="prelude-val">Some</span>(<span class="string">b'l'</span>) {
-<a href=#90 id=90 data-nosnippet>90</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(<span class="string">"Unsupported mbret value {mode}"</span>)));
-<a href=#91 id=91 data-nosnippet>91</a>    }
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>indexed = channel &gt;= <span class="number">0 </span>|| polarization &gt;= <span class="number">0</span>;
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">if </span>matrix {
-<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">if </span>!beams.is_multi() {
-<a href=#95 id=95 data-nosnippet>95</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#96 id=96 data-nosnippet>96</a>                <span class="string">"Exception: mbret='matrix' only makes sense if the image has per-plane beams. This image does not."</span>,
-<a href=#97 id=97 data-nosnippet>97</a>            ));
-<a href=#98 id=98 data-nosnippet>98</a>        }
-<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">if </span>indexed {
-<a href=#100 id=100 data-nosnippet>100</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#101 id=101 data-nosnippet>101</a>                <span class="string">"Exception: mbret='matrix' only makes sense if both channel and polarization are negative."</span>,
-<a href=#102 id=102 data-nosnippet>102</a>            ));
-<a href=#103 id=103 data-nosnippet>103</a>        }
-<a href=#104 id=104 data-nosnippet>104</a>    }
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">if </span>beams.is_empty() {
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(CasaValue::empty_record());
-<a href=#107 id=107 data-nosnippet>107</a>    }
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">let </span>info = image_info_record(image);
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="kw">let </span>beam = |channel, polarization| {
-<a href=#110 id=110 data-nosnippet>110</a>        CasaValue::from_record(<span class="kw-2">&amp;</span>stored_beam_record(info, <span class="kw-2">&amp;</span>beams, channel, polarization))
-<a href=#111 id=111 data-nosnippet>111</a>    };
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">if </span>beams.is_single() {
-<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(beam(<span class="number">0</span>, <span class="number">0</span>));
-<a href=#114 id=114 data-nosnippet>114</a>    }
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span>channels = beams.n_channels() <span class="kw">as </span>i64;
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">let </span>stokes = beams.n_stokes() <span class="kw">as </span>i64;
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="kw">if </span>indexed {
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">if </span>channels &gt; <span class="number">1 </span>&amp;&amp; stokes &gt; <span class="number">1 </span>&amp;&amp; (channel &lt; <span class="number">0 </span>|| polarization &lt; <span class="number">0</span>) {
-<a href=#119 id=119 data-nosnippet>119</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#120 id=120 data-nosnippet>120</a>                <span class="string">"Exception: In the case of an image with both a nondegenerate spectral axis and a nondegenerate polarization axis either both channel and polarization must be positive, or both must be negative."</span>,
-<a href=#121 id=121 data-nosnippet>121</a>            ));
-<a href=#122 id=122 data-nosnippet>122</a>        }
-<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">if </span>channels &gt; <span class="number">1 </span>&amp;&amp; channel &gt;= channels {
-<a href=#124 id=124 data-nosnippet>124</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#125 id=125 data-nosnippet>125</a>                <span class="string">"Exception: channel value specified as {channel} must be less than the number of channels in the image, which is {channels}."
-<a href=#126 id=126 data-nosnippet>126</a>            </span>)));
-<a href=#127 id=127 data-nosnippet>127</a>        }
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">if </span>stokes &gt; <span class="number">1 </span>&amp;&amp; polarization &gt;= stokes {
-<a href=#129 id=129 data-nosnippet>129</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#130 id=130 data-nosnippet>130</a>                <span class="string">"Exception: polarization value must be less than the number of polarization planes in the image, which is {stokes}."
-<a href=#131 id=131 data-nosnippet>131</a>            </span>)));
-<a href=#132 id=132 data-nosnippet>132</a>        }
-<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">if </span>(channels &gt; <span class="number">1 </span>&amp;&amp; channel &lt; <span class="number">0</span>) || (stokes &gt; <span class="number">1 </span>&amp;&amp; polarization &lt; <span class="number">0</span>) {
-<a href=#134 id=134 data-nosnippet>134</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#135 id=135 data-nosnippet>135</a>                <span class="string">"Failed AlwaysAssert chan &gt;=0 &amp;&amp; chan &lt; Int(nchan()) &amp;&amp; stokes &gt;= 0 &amp;&amp; stokes &lt; Int(nstokes())"</span>,
-<a href=#136 id=136 data-nosnippet>136</a>            ));
-<a href=#137 id=137 data-nosnippet>137</a>        }
-<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">let </span>channel = <span class="kw">if </span>channels == <span class="number">1 </span>{ <span class="number">0 </span>} <span class="kw">else </span>{ channel <span class="kw">as </span>usize };
-<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span>polarization = <span class="kw">if </span>stokes == <span class="number">1 </span>{
-<a href=#140 id=140 data-nosnippet>140</a>            <span class="number">0
-<a href=#141 id=141 data-nosnippet>141</a>        </span>} <span class="kw">else </span>{
-<a href=#142 id=142 data-nosnippet>142</a>            polarization <span class="kw">as </span>usize
-<a href=#143 id=143 data-nosnippet>143</a>        };
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(beam(channel, polarization));
-<a href=#145 id=145 data-nosnippet>145</a>    }
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = <span class="macro">vec!</span>[
-<a href=#147 id=147 data-nosnippet>147</a>        (<span class="string">"nChannels"</span>, CasaValue::Int(channels)),
-<a href=#148 id=148 data-nosnippet>148</a>        (<span class="string">"nStokes"</span>, CasaValue::Int(stokes)),
-<a href=#149 id=149 data-nosnippet>149</a>    ];
-<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">if </span>matrix {
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">for </span>(field, unit, value) <span class="kw">in </span>[
-<a href=#152 id=152 data-nosnippet>152</a>            (
-<a href=#153 id=153 data-nosnippet>153</a>                <span class="string">"major"</span>,
-<a href=#154 id=154 data-nosnippet>154</a>                <span class="string">"arcsec"</span>,
-<a href=#155 id=155 data-nosnippet>155</a>                GaussianBeam::major_in <span class="kw">as fn</span>(<span class="kw-2">&amp;</span>GaussianBeam, <span class="kw-2">&amp;</span>str) -&gt; <span class="kw">_</span>,
-<a href=#156 id=156 data-nosnippet>156</a>            ),
-<a href=#157 id=157 data-nosnippet>157</a>            (<span class="string">"minor"</span>, <span class="string">"arcsec"</span>, GaussianBeam::minor_in),
-<a href=#158 id=158 data-nosnippet>158</a>            (<span class="string">"pa"</span>, <span class="string">"deg"</span>, GaussianBeam::position_angle_in),
-<a href=#159 id=159 data-nosnippet>159</a>        ] {
-<a href=#160 id=160 data-nosnippet>160</a>            result.push((
-<a href=#161 id=161 data-nosnippet>161</a>                field,
-<a href=#162 id=162 data-nosnippet>162</a>                CasaValue::record([
-<a href=#163 id=163 data-nosnippet>163</a>                    (<span class="string">"unit"</span>, CasaValue::Text(unit.into())),
-<a href=#164 id=164 data-nosnippet>164</a>                    (
-<a href=#165 id=165 data-nosnippet>165</a>                        <span class="string">"value"</span>,
-<a href=#166 id=166 data-nosnippet>166</a>                        beam_matrix(<span class="kw-2">&amp;</span>beams, <span class="bool-val">true</span>, |beam| value(beam, unit))<span class="question-mark">?</span>,
-<a href=#167 id=167 data-nosnippet>167</a>                    ),
-<a href=#168 id=168 data-nosnippet>168</a>                ]),
-<a href=#169 id=169 data-nosnippet>169</a>            ));
-<a href=#170 id=170 data-nosnippet>170</a>        }
-<a href=#171 id=171 data-nosnippet>171</a>    } <span class="kw">else </span>{
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">let </span>by_channel = (<span class="number">0</span>..beams.n_channels()).map(|channel| {
-<a href=#173 id=173 data-nosnippet>173</a>            <span class="kw">let </span>by_stokes = (<span class="number">0</span>..beams.n_stokes())
-<a href=#174 id=174 data-nosnippet>174</a>                .map(|polarization| (<span class="macro">format!</span>(<span class="string">"*{polarization}"</span>), beam(channel, polarization)));
-<a href=#175 id=175 data-nosnippet>175</a>            (<span class="macro">format!</span>(<span class="string">"*{channel}"</span>), CasaValue::record(by_stokes))
-<a href=#176 id=176 data-nosnippet>176</a>        });
-<a href=#177 id=177 data-nosnippet>177</a>        result.push((<span class="string">"beams"</span>, CasaValue::record(by_channel)));
-<a href=#178 id=178 data-nosnippet>178</a>    }
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="prelude-val">Ok</span>(CasaValue::record(result))
+<a href=#25 id=25 data-nosnippet>25</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>image_info(image: <span class="kw-2">&amp;</span>ImageHandle) -&gt; <span class="prelude-ty">Result</span>&lt;ImageInfo, ImageError&gt; {
+<a href=#26 id=26 data-nosnippet>26</a>    <span class="macro">with_pixels!</span>(image, storage =&gt; <span class="macro">with_storage!</span>(storage, image =&gt; image.image_info()))
+<a href=#27 id=27 data-nosnippet>27</a>}
+<a href=#28 id=28 data-nosnippet>28</a>
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>image_info_record(image: <span class="kw-2">&amp;</span>ImageHandle) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RecordValue&gt; {
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="macro">with_pixels!</span>(image, storage =&gt; <span class="kw">match </span>storage {
+<a href=#31 id=31 data-nosnippet>31</a>        Storage::Paged(image) =&gt; subrecord(image.table().keywords(), <span class="string">"imageinfo"</span>),
+<a href=#32 id=32 data-nosnippet>32</a>        Storage::Temp { image, .. } =&gt; image.image_info_record(),
+<a href=#33 id=33 data-nosnippet>33</a>    })
+<a href=#34 id=34 data-nosnippet>34</a>}
+<a href=#35 id=35 data-nosnippet>35</a>
+<a href=#36 id=36 data-nosnippet>36</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>stored_beam_record(
+<a href=#37 id=37 data-nosnippet>37</a>    info: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RecordValue&gt;,
+<a href=#38 id=38 data-nosnippet>38</a>    beams: <span class="kw-2">&amp;</span>ImageBeamSet,
+<a href=#39 id=39 data-nosnippet>39</a>    channel: usize,
+<a href=#40 id=40 data-nosnippet>40</a>    polarization: usize,
+<a href=#41 id=41 data-nosnippet>41</a>) -&gt; RecordValue {
+<a href=#42 id=42 data-nosnippet>42</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(info) = info {
+<a href=#43 id=43 data-nosnippet>43</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(grid) = subrecord(info, <span class="string">"perplanebeams"</span>) {
+<a href=#44 id=44 data-nosnippet>44</a>            <span class="kw">let </span>index = polarization * beams.n_channels() + channel;
+<a href=#45 id=45 data-nosnippet>45</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = subrecord(grid, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"*{index}"</span>))
+<a href=#46 id=46 data-nosnippet>46</a>                .or_else(|| subrecord(grid, <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"*{channel}_{polarization}"</span>)))
+<a href=#47 id=47 data-nosnippet>47</a>            {
+<a href=#48 id=48 data-nosnippet>48</a>                <span class="kw">return </span>beam.clone();
+<a href=#49 id=49 data-nosnippet>49</a>            }
+<a href=#50 id=50 data-nosnippet>50</a>        } <span class="kw">else if let </span><span class="prelude-val">Some</span>(beam) = subrecord(info, <span class="string">"restoringbeam"</span>) {
+<a href=#51 id=51 data-nosnippet>51</a>            <span class="kw">return </span>beam.clone();
+<a href=#52 id=52 data-nosnippet>52</a>        }
+<a href=#53 id=53 data-nosnippet>53</a>    }
+<a href=#54 id=54 data-nosnippet>54</a>    beams.beam(channel, polarization).to_record()
+<a href=#55 id=55 data-nosnippet>55</a>}
+<a href=#56 id=56 data-nosnippet>56</a>
+<a href=#57 id=57 data-nosnippet>57</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>subset_beam_record(
+<a href=#58 id=58 data-nosnippet>58</a>    output: <span class="kw-2">&amp;mut </span>RecordValue,
+<a href=#59 id=59 data-nosnippet>59</a>    stored: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RecordValue&gt;,
+<a href=#60 id=60 data-nosnippet>60</a>    beams: <span class="kw-2">&amp;</span>ImageBeamSet,
+<a href=#61 id=61 data-nosnippet>61</a>    channels: <span class="kw-2">&amp;</span>[usize],
+<a href=#62 id=62 data-nosnippet>62</a>    polarizations: <span class="kw-2">&amp;</span>[usize],
+<a href=#63 id=63 data-nosnippet>63</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ImageError&gt; {
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="kw">let </span>subset = beams.subset(channels, polarizations)<span class="question-mark">?</span>;
+<a href=#65 id=65 data-nosnippet>65</a>    <span class="kw">let </span>beam = |channel, polarization| {
+<a href=#66 id=66 data-nosnippet>66</a>        Value::Record(stored_beam_record(stored, beams, channel, polarization))
+<a href=#67 id=67 data-nosnippet>67</a>    };
+<a href=#68 id=68 data-nosnippet>68</a>    output.remove(<span class="string">"perplanebeams"</span>);
+<a href=#69 id=69 data-nosnippet>69</a>    output.remove(<span class="string">"restoringbeam"</span>);
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">if </span>subset.is_single() {
+<a href=#71 id=71 data-nosnippet>71</a>        output.upsert(<span class="string">"restoringbeam"</span>, beam(channels[<span class="number">0</span>], polarizations[<span class="number">0</span>]));
+<a href=#72 id=72 data-nosnippet>72</a>    } <span class="kw">else </span>{
+<a href=#73 id=73 data-nosnippet>73</a>        <span class="kw">let </span><span class="kw-2">mut </span>grid = subset.to_record();
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="kw">for </span>(plane, <span class="kw-2">&amp;</span>polarization) <span class="kw">in </span>polarizations.iter().enumerate() {
+<a href=#75 id=75 data-nosnippet>75</a>            <span class="kw">for </span>(slot, <span class="kw-2">&amp;</span>channel) <span class="kw">in </span>channels.iter().enumerate() {
+<a href=#76 id=76 data-nosnippet>76</a>                grid.upsert(
+<a href=#77 id=77 data-nosnippet>77</a>                    <span class="macro">format!</span>(<span class="string">"*{}"</span>, plane * channels.len() + slot),
+<a href=#78 id=78 data-nosnippet>78</a>                    beam(channel, polarization),
+<a href=#79 id=79 data-nosnippet>79</a>                );
+<a href=#80 id=80 data-nosnippet>80</a>            }
+<a href=#81 id=81 data-nosnippet>81</a>        }
+<a href=#82 id=82 data-nosnippet>82</a>        output.upsert(<span class="string">"perplanebeams"</span>, Value::Record(grid));
+<a href=#83 id=83 data-nosnippet>83</a>    }
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="prelude-val">Ok</span>(())
+<a href=#85 id=85 data-nosnippet>85</a>}
+<a href=#86 id=86 data-nosnippet>86</a>
+<a href=#87 id=87 data-nosnippet>87</a><span class="kw">fn </span>beam_matrix_planes(
+<a href=#88 id=88 data-nosnippet>88</a>    beams: <span class="kw-2">&amp;</span>ImageBeamSet,
+<a href=#89 id=89 data-nosnippet>89</a>    stokes_first: bool,
+<a href=#90 id=90 data-nosnippet>90</a>) -&gt; ([usize; <span class="number">2</span>], <span class="kw">impl </span>Iterator&lt;Item = (usize, usize)&gt;) {
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span>channels = beams.n_channels();
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>stokes = beams.n_stokes();
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">let </span>(rows, columns) = <span class="kw">if </span>stokes_first {
+<a href=#94 id=94 data-nosnippet>94</a>        (stokes, channels)
+<a href=#95 id=95 data-nosnippet>95</a>    } <span class="kw">else </span>{
+<a href=#96 id=96 data-nosnippet>96</a>        (channels, stokes)
+<a href=#97 id=97 data-nosnippet>97</a>    };
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">let </span>planes = (<span class="number">0</span>..columns).flat_map(<span class="kw">move </span>|column| {
+<a href=#99 id=99 data-nosnippet>99</a>        (<span class="number">0</span>..rows).map(<span class="kw">move </span>|row| {
+<a href=#100 id=100 data-nosnippet>100</a>            <span class="kw">if </span>stokes_first {
+<a href=#101 id=101 data-nosnippet>101</a>                (column, row)
+<a href=#102 id=102 data-nosnippet>102</a>            } <span class="kw">else </span>{
+<a href=#103 id=103 data-nosnippet>103</a>                (row, column)
+<a href=#104 id=104 data-nosnippet>104</a>            }
+<a href=#105 id=105 data-nosnippet>105</a>        })
+<a href=#106 id=106 data-nosnippet>106</a>    });
+<a href=#107 id=107 data-nosnippet>107</a>    ([rows, columns], planes)
+<a href=#108 id=108 data-nosnippet>108</a>}
+<a href=#109 id=109 data-nosnippet>109</a>
+<a href=#110 id=110 data-nosnippet>110</a><span class="kw">fn </span>beam_matrix(
+<a href=#111 id=111 data-nosnippet>111</a>    beams: <span class="kw-2">&amp;</span>ImageBeamSet,
+<a href=#112 id=112 data-nosnippet>112</a>    stokes_first: bool,
+<a href=#113 id=113 data-nosnippet>113</a>    value: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>GaussianBeam) -&gt; <span class="prelude-ty">Result</span>&lt;f64, ImageError&gt;,
+<a href=#114 id=114 data-nosnippet>114</a>) -&gt; PyResult&lt;CasaValue&gt; {
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span>(shape, planes) = beam_matrix_planes(beams, stokes_first);
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::with_capacity(beams.nelements());
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="kw">for </span>(channel, polarization) <span class="kw">in </span>planes {
+<a href=#118 id=118 data-nosnippet>118</a>        values.push(value(beams.beam(channel, polarization)).map_err(raised)<span class="question-mark">?</span>);
+<a href=#119 id=119 data-nosnippet>119</a>    }
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="prelude-val">Ok</span>(CasaValue::Floats {
+<a href=#121 id=121 data-nosnippet>121</a>        shape: shape.to_vec(),
+<a href=#122 id=122 data-nosnippet>122</a>        values,
+<a href=#123 id=123 data-nosnippet>123</a>    })
+<a href=#124 id=124 data-nosnippet>124</a>}
+<a href=#125 id=125 data-nosnippet>125</a>
+<a href=#126 id=126 data-nosnippet>126</a><span class="kw">fn </span>beam_parameter_matrices(
+<a href=#127 id=127 data-nosnippet>127</a>    info: <span class="kw-2">&amp;</span>RecordValue,
+<a href=#128 id=128 data-nosnippet>128</a>    beams: <span class="kw-2">&amp;</span>ImageBeamSet,
+<a href=#129 id=129 data-nosnippet>129</a>    stokes_first: bool,
+<a href=#130 id=130 data-nosnippet>130</a>) -&gt; PyResult&lt;Vec&lt;(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, CasaValue)&gt;&gt; {
+<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">let </span>(shape, planes) = beam_matrix_planes(beams, stokes_first);
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">let </span>grid = subrecord(info, <span class="string">"perplanebeams"</span>).ok_or_else(|| raised(<span class="string">"Missing per-plane beams"</span>))<span class="question-mark">?</span>;
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">let </span><span class="kw-2">mut </span>stored_grid = HashMap::with_capacity(beams.nelements());
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">for </span>field <span class="kw">in </span>grid.fields() {
+<a href=#135 id=135 data-nosnippet>135</a>        stored_grid
+<a href=#136 id=136 data-nosnippet>136</a>            .entry(field.name.as_str())
+<a href=#137 id=137 data-nosnippet>137</a>            .or_insert(<span class="kw-2">&amp;</span>field.value);
+<a href=#138 id=138 data-nosnippet>138</a>    }
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="kw">let </span>parameters = [
+<a href=#140 id=140 data-nosnippet>140</a>        (<span class="string">"major"</span>, BeamComponent::Major, <span class="string">"arcsec"</span>),
+<a href=#141 id=141 data-nosnippet>141</a>        (<span class="string">"minor"</span>, BeamComponent::Minor, <span class="string">"arcsec"</span>),
+<a href=#142 id=142 data-nosnippet>142</a>        (<span class="string">"pa"</span>, BeamComponent::PositionAngle, <span class="string">"deg"</span>),
+<a href=#143 id=143 data-nosnippet>143</a>    ];
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">let </span>units = parameters.map(|(<span class="kw">_</span>, <span class="kw">_</span>, unit)| Unit::new(unit).expect(<span class="string">"built-in angular unit"</span>));
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span><span class="kw-2">mut </span>arrays: [Vec&lt;f64&gt;; <span class="number">3</span>] = std::array::from_fn(|<span class="kw">_</span>| Vec::with_capacity(beams.nelements()));
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">for </span>(channel, polarization) <span class="kw">in </span>planes {
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">if </span>beams.beam(channel, polarization).is_null() {
+<a href=#148 id=148 data-nosnippet>148</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Invalid per plane beam found"</span>));
+<a href=#149 id=149 data-nosnippet>149</a>        }
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">let </span>linear_index = polarization * beams.n_channels() + channel;
+<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span>lookup = |name: <span class="kw-2">&amp;</span>str| <span class="kw">match </span>stored_grid.get(name) {
+<a href=#152 id=152 data-nosnippet>152</a>            <span class="prelude-val">Some</span>(Value::Record(record)) =&gt; <span class="prelude-val">Some</span>(record),
+<a href=#153 id=153 data-nosnippet>153</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#154 id=154 data-nosnippet>154</a>        };
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>stored = lookup(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"*{linear_index}"</span>))
+<a href=#156 id=156 data-nosnippet>156</a>            .or_else(|| lookup(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"*{channel}_{polarization}"</span>)))
+<a href=#157 id=157 data-nosnippet>157</a>            .ok_or_else(|| raised(<span class="string">"Missing per-plane beam"</span>))<span class="question-mark">?</span>;
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>beam = StoredGaussianBeam::from_record(stored).map_err(raised)<span class="question-mark">?</span>;
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">for </span>(index, (<span class="kw">_</span>, component, <span class="kw">_</span>)) <span class="kw">in </span>parameters.iter().enumerate() {
+<a href=#160 id=160 data-nosnippet>160</a>            arrays[index].push(
+<a href=#161 id=161 data-nosnippet>161</a>                casacore::get_conformant_value(beam.component(<span class="kw-2">*</span>component), <span class="kw-2">&amp;</span>units[index])
+<a href=#162 id=162 data-nosnippet>162</a>                    .map_err(raised)<span class="question-mark">?</span>,
+<a href=#163 id=163 data-nosnippet>163</a>            );
+<a href=#164 id=164 data-nosnippet>164</a>        }
+<a href=#165 id=165 data-nosnippet>165</a>    }
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="prelude-val">Ok</span>(parameters
+<a href=#167 id=167 data-nosnippet>167</a>        .into_iter()
+<a href=#168 id=168 data-nosnippet>168</a>        .zip(arrays)
+<a href=#169 id=169 data-nosnippet>169</a>        .map(|((name, <span class="kw">_</span>, unit), values)| {
+<a href=#170 id=170 data-nosnippet>170</a>            <span class="kw">let </span>array = CasaValue::Floats {
+<a href=#171 id=171 data-nosnippet>171</a>                shape: shape.to_vec(),
+<a href=#172 id=172 data-nosnippet>172</a>                values,
+<a href=#173 id=173 data-nosnippet>173</a>            };
+<a href=#174 id=174 data-nosnippet>174</a>            (
+<a href=#175 id=175 data-nosnippet>175</a>                name,
+<a href=#176 id=176 data-nosnippet>176</a>                CasaValue::record([(<span class="string">"unit"</span>, CasaValue::Text(unit.into())), (<span class="string">"value"</span>, array)]),
+<a href=#177 id=177 data-nosnippet>177</a>            )
+<a href=#178 id=178 data-nosnippet>178</a>        })
+<a href=#179 id=179 data-nosnippet>179</a>        .collect())
 <a href=#180 id=180 data-nosnippet>180</a>}
 <a href=#181 id=181 data-nosnippet>181</a>
-<a href=#182 id=182 data-nosnippet>182</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>plane_axes(record: <span class="kw-2">&amp;</span>RecordValue) -&gt; PyResult&lt;(<span class="prelude-ty">Option</span>&lt;usize&gt;, <span class="prelude-ty">Option</span>&lt;usize&gt;)&gt; {
-<a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">let </span>axes = CoordinateSystem::record_coordinates(record).map_err(raised)<span class="question-mark">?</span>;
-<a href=#184 id=184 data-nosnippet>184</a>    <span class="kw">let </span>axis = |kind: <span class="kw-2">&amp;</span>str| {
-<a href=#185 id=185 data-nosnippet>185</a>        axes.iter()
-<a href=#186 id=186 data-nosnippet>186</a>            .find(|axis| axis.field.starts_with(kind))
-<a href=#187 id=187 data-nosnippet>187</a>            .and_then(|axis| axis.pixel_axes.first().copied().flatten())
-<a href=#188 id=188 data-nosnippet>188</a>    };
-<a href=#189 id=189 data-nosnippet>189</a>    <span class="prelude-val">Ok</span>((axis(<span class="string">"spectral"</span>), axis(<span class="string">"stokes"</span>)))
-<a href=#190 id=190 data-nosnippet>190</a>}
-<a href=#191 id=191 data-nosnippet>191</a>
-<a href=#192 id=192 data-nosnippet>192</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>axis_length(image: <span class="kw-2">&amp;</span>ImageHandle, axis: <span class="prelude-ty">Option</span>&lt;usize&gt;) -&gt; PyResult&lt;usize&gt; {
-<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">match </span>axis {
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="prelude-val">Some</span>(axis) =&gt; image
-<a href=#195 id=195 data-nosnippet>195</a>            .shape()
-<a href=#196 id=196 data-nosnippet>196</a>            .get(axis)
-<a href=#197 id=197 data-nosnippet>197</a>            .copied()
-<a href=#198 id=198 data-nosnippet>198</a>            .ok_or_else(|| raised(<span class="string">"Image coordinate axis is outside the image shape"</span>)),
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="number">1</span>),
-<a href=#200 id=200 data-nosnippet>200</a>    }
-<a href=#201 id=201 data-nosnippet>201</a>}
-<a href=#202 id=202 data-nosnippet>202</a>
-<a href=#203 id=203 data-nosnippet>203</a><span class="kw">fn </span>beam_area(image: <span class="kw-2">&amp;</span>ImageHandle, channel: i64, polarization: i64) -&gt; PyResult&lt;CasaValue&gt; {
-<a href=#204 id=204 data-nosnippet>204</a>    <span class="kw">let </span>beams = image_info(image).map_err(raised)<span class="question-mark">?</span>.beam_set;
-<a href=#205 id=205 data-nosnippet>205</a>    <span class="kw">if </span>beams.is_empty() {
-<a href=#206 id=206 data-nosnippet>206</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#207 id=207 data-nosnippet>207</a>            <span class="string">"Exception: This image has no beam(s). The setrestoringbeam() method may be used to set its beam(s)."</span>,
-<a href=#208 id=208 data-nosnippet>208</a>        ));
-<a href=#209 id=209 data-nosnippet>209</a>    }
-<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">let </span>coord_record = image.coordinate_record();
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">let </span>coords = CoordinateSystem::from_record(<span class="kw-2">&amp;</span>coord_record).map_err(raised)<span class="question-mark">?</span>;
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">let </span>direction = coords
-<a href=#213 id=213 data-nosnippet>213</a>        .find_coordinate(CoordinateType::Direction)
-<a href=#214 id=214 data-nosnippet>214</a>        .ok_or_else(|| {
-<a href=#215 id=215 data-nosnippet>215</a>            raised(<span class="string">"directionCoordinate: Coordinate system has no direction coordinate"</span>)
-<a href=#216 id=216 data-nosnippet>216</a>        })<span class="question-mark">?</span>;
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">let </span>increment = coords.coordinate(direction).increment();
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">let </span>pixel_area = (increment[<span class="number">0</span>] * increment[<span class="number">1</span>]).abs();
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">let </span>to_arcsec = <span class="number">3600.0 </span>* <span class="number">180.0 </span>/ std::f64::consts::PI;
-<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">let </span>beam_in_arcsec = |area: f64| area * to_arcsec * to_arcsec;
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">let </span>single = |area| {
-<a href=#222 id=222 data-nosnippet>222</a>        CasaValue::record([
-<a href=#223 id=223 data-nosnippet>223</a>            (<span class="string">"arcsec2"</span>, CasaValue::Float(beam_in_arcsec(area))),
-<a href=#224 id=224 data-nosnippet>224</a>            (<span class="string">"pixels"</span>, CasaValue::Float(area / pixel_area)),
-<a href=#225 id=225 data-nosnippet>225</a>        ])
-<a href=#226 id=226 data-nosnippet>226</a>    };
-<a href=#227 id=227 data-nosnippet>227</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = beams.single_beam() {
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(single(beam.area()));
-<a href=#229 id=229 data-nosnippet>229</a>    }
-<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">let </span>(spectral, stokes) = plane_axes(<span class="kw-2">&amp;</span>coord_record)<span class="question-mark">?</span>;
-<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">let </span>channels = axis_length(image, spectral)<span class="question-mark">? </span><span class="kw">as </span>i64;
-<a href=#232 id=232 data-nosnippet>232</a>    <span class="kw">let </span>polarizations = axis_length(image, stokes)<span class="question-mark">? </span><span class="kw">as </span>i64;
-<a href=#233 id=233 data-nosnippet>233</a>    <span class="kw">if </span>channel &gt;= channels {
-<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#235 id=235 data-nosnippet>235</a>            <span class="string">"Exception: This image only has {channels} channels, so a channel value less than {channels} must be specified."
-<a href=#236 id=236 data-nosnippet>236</a>        </span>)));
-<a href=#237 id=237 data-nosnippet>237</a>    }
-<a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">if </span>polarization &gt;= polarizations {
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
-<a href=#240 id=240 data-nosnippet>240</a>            <span class="string">"Exception: This image only has {polarizations} polarizations, so a polarization value less than {polarizations} must be specified."
-<a href=#241 id=241 data-nosnippet>241</a>        </span>)));
-<a href=#242 id=242 data-nosnippet>242</a>    }
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">if </span>channel &gt;= <span class="number">0 </span>&amp;&amp; polarization &gt;= <span class="number">0 </span>{
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">if </span>(beams.n_channels() &gt; <span class="number">1 </span>&amp;&amp; channel <span class="kw">as </span>usize &gt;= beams.n_channels())
-<a href=#245 id=245 data-nosnippet>245</a>            || (beams.n_stokes() &gt; <span class="number">1 </span>&amp;&amp; polarization <span class="kw">as </span>usize &gt;= beams.n_stokes())
-<a href=#246 id=246 data-nosnippet>246</a>        {
-<a href=#247 id=247 data-nosnippet>247</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Selected plane is outside the restoring beam grid"</span>));
-<a href=#248 id=248 data-nosnippet>248</a>        }
-<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(single(
-<a href=#250 id=250 data-nosnippet>250</a>            beams.beam(channel <span class="kw">as </span>usize, polarization <span class="kw">as </span>usize).area(),
-<a href=#251 id=251 data-nosnippet>251</a>        ));
-<a href=#252 id=252 data-nosnippet>252</a>    }
-<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">if </span>channel &gt;= <span class="number">0 </span>|| polarization &gt;= <span class="number">0 </span>{
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="string">"Exception: In the case of a multibeam image, either both channel and polarization must be non-negative, or both must be negative."</span>,
-<a href=#256 id=256 data-nosnippet>256</a>        ));
-<a href=#257 id=257 data-nosnippet>257</a>    }
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">let </span>stokes_first = <span class="macro">matches!</span>((stokes, spectral), (<span class="prelude-val">Some</span>(s), <span class="prelude-val">Some</span>(c)) <span class="kw">if </span>s &lt; c);
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="prelude-val">Ok</span>(CasaValue::record([
-<a href=#260 id=260 data-nosnippet>260</a>        (
-<a href=#261 id=261 data-nosnippet>261</a>            <span class="string">"arcsec2"</span>,
-<a href=#262 id=262 data-nosnippet>262</a>            beam_matrix(<span class="kw-2">&amp;</span>beams, stokes_first, |beam| <span class="prelude-val">Ok</span>(beam_in_arcsec(beam.area())))<span class="question-mark">?</span>,
-<a href=#263 id=263 data-nosnippet>263</a>        ),
-<a href=#264 id=264 data-nosnippet>264</a>        (
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="string">"pixels"</span>,
-<a href=#266 id=266 data-nosnippet>266</a>            beam_matrix(<span class="kw-2">&amp;</span>beams, stokes_first, |beam| <span class="prelude-val">Ok</span>(beam.area() / pixel_area))<span class="question-mark">?</span>,
-<a href=#267 id=267 data-nosnippet>267</a>        ),
-<a href=#268 id=268 data-nosnippet>268</a>    ]))
-<a href=#269 id=269 data-nosnippet>269</a>}
-<a href=#270 id=270 data-nosnippet>270</a>
-<a href=#271 id=271 data-nosnippet>271</a><span class="kw">fn </span>common_beam(image: <span class="kw-2">&amp;</span>ImageHandle) -&gt; PyResult&lt;CasaValue&gt; {
-<a href=#272 id=272 data-nosnippet>272</a>    image.check_single_precision(<span class="string">"commonbeam"</span>)<span class="question-mark">?</span>;
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="kw">let </span>beams = image_info(image).map_err(raised)<span class="question-mark">?</span>.beam_set;
-<a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">if </span>beams.is_empty() {
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Exception: This image has no beam(s)."</span>));
-<a href=#276 id=276 data-nosnippet>276</a>    }
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">let </span>common = beams.common_beam().map_err(raised)<span class="question-mark">?</span>;
-<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span>info = image_info_record(image);
-<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">let </span>matching_plane = (<span class="number">0</span>..beams.n_stokes()).find_map(|polarization| {
-<a href=#280 id=280 data-nosnippet>280</a>        (<span class="number">0</span>..beams.n_channels())
-<a href=#281 id=281 data-nosnippet>281</a>            .find(|<span class="kw-2">&amp;</span>channel| <span class="kw-2">*</span>beams.beam(channel, polarization) == common)
-<a href=#282 id=282 data-nosnippet>282</a>            .map(|channel| (channel, polarization))
-<a href=#283 id=283 data-nosnippet>283</a>    });
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span><span class="kw-2">mut </span>record = <span class="kw">if let </span><span class="prelude-val">Some</span>((channel, polarization)) = matching_plane {
-<a href=#285 id=285 data-nosnippet>285</a>        stored_beam_record(info, <span class="kw-2">&amp;</span>beams, channel, polarization)
-<a href=#286 id=286 data-nosnippet>286</a>    } <span class="kw">else </span>{
-<a href=#287 id=287 data-nosnippet>287</a>        common.to_record()
-<a href=#288 id=288 data-nosnippet>288</a>    };
-<a href=#289 id=289 data-nosnippet>289</a>    <span class="kw">let </span>stored = StoredGaussianBeam::from_record(<span class="kw-2">&amp;</span>record).map_err(raised)<span class="question-mark">?</span>;
-<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">let </span>degrees = Unit::new(<span class="string">"deg"</span>).expect(<span class="string">"built-in degrees"</span>);
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">let </span>angle = casacore::convert(
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw-2">&amp;</span>stored.wrapped_position_angle().map_err(raised)<span class="question-mark">?</span>,
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>degrees),
-<a href=#294 id=294 data-nosnippet>294</a>    )
-<a href=#295 id=295 data-nosnippet>295</a>    .map_err(raised)<span class="question-mark">?</span>;
-<a href=#296 id=296 data-nosnippet>296</a>    record.remove(<span class="string">"positionangle"</span>);
-<a href=#297 id=297 data-nosnippet>297</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = <span class="macro">vec!</span>[(<span class="string">"pa"</span>, CasaValue::quantity(angle.value(), <span class="string">"deg"</span>))];
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">for </span>component <span class="kw">in </span>[<span class="string">"major"</span>, <span class="string">"minor"</span>] {
-<a href=#299 id=299 data-nosnippet>299</a>        result.push((
-<a href=#300 id=300 data-nosnippet>300</a>            component,
-<a href=#301 id=301 data-nosnippet>301</a>            CasaValue::from_record(
-<a href=#302 id=302 data-nosnippet>302</a>                subrecord(<span class="kw-2">&amp;</span>record, component).expect(<span class="string">"validated beam component"</span>),
-<a href=#303 id=303 data-nosnippet>303</a>            ),
-<a href=#304 id=304 data-nosnippet>304</a>        ));
-<a href=#305 id=305 data-nosnippet>305</a>    }
-<a href=#306 id=306 data-nosnippet>306</a>    <span class="prelude-val">Ok</span>(CasaValue::record(result))
-<a href=#307 id=307 data-nosnippet>307</a>}
-<a href=#308 id=308 data-nosnippet>308</a>
-<a href=#309 id=309 data-nosnippet>309</a><span class="attr">#[pymethods]
-<a href=#310 id=310 data-nosnippet>310</a></span><span class="kw">impl </span>PyImageTool {
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="attr">#[pyo3(signature = (channel=-<span class="number">1</span>, polarization=-<span class="number">1</span>, mbret=<span class="string">"list"</span>), text_signature = <span class="string">"($self, channel=-1, polarization=-1, mbret='list')"</span>)]
-<a href=#312 id=312 data-nosnippet>312</a>    </span><span class="kw">fn </span>restoringbeam(
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#314 id=314 data-nosnippet>314</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#315 id=315 data-nosnippet>315</a>        channel: i64,
-<a href=#316 id=316 data-nosnippet>316</a>        polarization: i64,
-<a href=#317 id=317 data-nosnippet>317</a>        mbret: <span class="kw-2">&amp;</span>str,
-<a href=#318 id=318 data-nosnippet>318</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#319 id=319 data-nosnippet>319</a>        py.detach(|| {
-<a href=#320 id=320 data-nosnippet>320</a>            <span class="self">self</span>.state().image.as_ref().map_or_else(
-<a href=#321 id=321 data-nosnippet>321</a>                || <span class="prelude-val">Ok</span>(CasaValue::empty_record()),
-<a href=#322 id=322 data-nosnippet>322</a>                |image| restoring_beam(<span class="kw-2">&amp;</span>image.lock(), channel, polarization, mbret),
-<a href=#323 id=323 data-nosnippet>323</a>            )
-<a href=#324 id=324 data-nosnippet>324</a>        })<span class="question-mark">?
-<a href=#325 id=325 data-nosnippet>325</a>        </span>.into_python(py)
-<a href=#326 id=326 data-nosnippet>326</a>    }
-<a href=#327 id=327 data-nosnippet>327</a>
-<a href=#328 id=328 data-nosnippet>328</a>    <span class="attr">#[pyo3(signature = (channel=-<span class="number">1</span>, polarization=-<span class="number">1</span>), text_signature = <span class="string">"($self, channel=-1, polarization=-1)"</span>)]
-<a href=#329 id=329 data-nosnippet>329</a>    </span><span class="kw">fn </span>beamarea(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, channel: i64, polarization: i64) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#330 id=330 data-nosnippet>330</a>        py.detach(|| {
-<a href=#331 id=331 data-nosnippet>331</a>            <span class="self">self</span>.state().image.as_ref().map_or_else(
-<a href=#332 id=332 data-nosnippet>332</a>                || <span class="prelude-val">Ok</span>(CasaValue::empty_record()),
-<a href=#333 id=333 data-nosnippet>333</a>                |image| beam_area(<span class="kw-2">&amp;</span>image.lock(), channel, polarization),
-<a href=#334 id=334 data-nosnippet>334</a>            )
-<a href=#335 id=335 data-nosnippet>335</a>        })<span class="question-mark">?
-<a href=#336 id=336 data-nosnippet>336</a>        </span>.into_python(py)
-<a href=#337 id=337 data-nosnippet>337</a>    }
-<a href=#338 id=338 data-nosnippet>338</a>
-<a href=#339 id=339 data-nosnippet>339</a>    <span class="kw">fn </span>commonbeam(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
-<a href=#340 id=340 data-nosnippet>340</a>        py.detach(|| {
-<a href=#341 id=341 data-nosnippet>341</a>            <span class="self">self</span>.state().image.as_ref().map_or_else(
-<a href=#342 id=342 data-nosnippet>342</a>                || <span class="prelude-val">Ok</span>(CasaValue::empty_record()),
-<a href=#343 id=343 data-nosnippet>343</a>                |image| common_beam(<span class="kw-2">&amp;</span>image.lock()),
-<a href=#344 id=344 data-nosnippet>344</a>            )
-<a href=#345 id=345 data-nosnippet>345</a>        })<span class="question-mark">?
-<a href=#346 id=346 data-nosnippet>346</a>        </span>.into_python(py)
-<a href=#347 id=347 data-nosnippet>347</a>    }
-<a href=#348 id=348 data-nosnippet>348</a>}
+<a href=#182 id=182 data-nosnippet>182</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>restoring_beam(
+<a href=#183 id=183 data-nosnippet>183</a>    view: <span class="kw-2">&amp;</span><span class="kw">super</span>::beam_view::BeamView,
+<a href=#184 id=184 data-nosnippet>184</a>    coordinate_record: <span class="kw">impl </span>FnOnce() -&gt; RecordValue,
+<a href=#185 id=185 data-nosnippet>185</a>    channel: i64,
+<a href=#186 id=186 data-nosnippet>186</a>    polarization: i64,
+<a href=#187 id=187 data-nosnippet>187</a>    mode: <span class="kw-2">&amp;</span>str,
+<a href=#188 id=188 data-nosnippet>188</a>) -&gt; PyResult&lt;CasaValue&gt; {
+<a href=#189 id=189 data-nosnippet>189</a>    <span class="kw">let </span>beams = view.beam_set().map_err(raised)<span class="question-mark">?</span>;
+<a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">let </span>first = mode.as_bytes().first().map(u8::to_ascii_lowercase);
+<a href=#191 id=191 data-nosnippet>191</a>    <span class="kw">let </span>matrix = first == <span class="prelude-val">Some</span>(<span class="string">b'm'</span>);
+<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">if </span>!matrix &amp;&amp; first != <span class="prelude-val">Some</span>(<span class="string">b'l'</span>) {
+<a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(<span class="string">"Unsupported mbret value {mode}"</span>)));
+<a href=#194 id=194 data-nosnippet>194</a>    }
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span>indexed = channel &gt;= <span class="number">0 </span>|| polarization &gt;= <span class="number">0</span>;
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="kw">if </span>matrix {
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">if </span>!beams.is_multi() {
+<a href=#198 id=198 data-nosnippet>198</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#199 id=199 data-nosnippet>199</a>                <span class="string">"Exception: mbret='matrix' only makes sense if the image has per-plane beams. This image does not."</span>,
+<a href=#200 id=200 data-nosnippet>200</a>            ));
+<a href=#201 id=201 data-nosnippet>201</a>        }
+<a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">if </span>indexed {
+<a href=#203 id=203 data-nosnippet>203</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#204 id=204 data-nosnippet>204</a>                <span class="string">"Exception: mbret='matrix' only makes sense if both channel and polarization are negative."</span>,
+<a href=#205 id=205 data-nosnippet>205</a>            ));
+<a href=#206 id=206 data-nosnippet>206</a>        }
+<a href=#207 id=207 data-nosnippet>207</a>    }
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">if </span>beams.is_empty() {
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(CasaValue::empty_record());
+<a href=#210 id=210 data-nosnippet>210</a>    }
+<a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">let </span>info = <span class="prelude-val">Some</span>(view.record());
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">let </span>beam = |channel, polarization| {
+<a href=#213 id=213 data-nosnippet>213</a>        CasaValue::from_record(<span class="kw-2">&amp;</span>stored_beam_record(info, <span class="kw-2">&amp;</span>beams, channel, polarization))
+<a href=#214 id=214 data-nosnippet>214</a>    };
+<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">if </span>beams.is_single() {
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(beam(<span class="number">0</span>, <span class="number">0</span>));
+<a href=#217 id=217 data-nosnippet>217</a>    }
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">let </span>channels = beams.n_channels() <span class="kw">as </span>i64;
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">let </span>stokes = beams.n_stokes() <span class="kw">as </span>i64;
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="kw">if </span>indexed {
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">if </span>channels &gt; <span class="number">1 </span>&amp;&amp; stokes &gt; <span class="number">1 </span>&amp;&amp; (channel &lt; <span class="number">0 </span>|| polarization &lt; <span class="number">0</span>) {
+<a href=#222 id=222 data-nosnippet>222</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#223 id=223 data-nosnippet>223</a>                <span class="string">"Exception: In the case of an image with both a nondegenerate spectral axis and a nondegenerate polarization axis either both channel and polarization must be positive, or both must be negative."</span>,
+<a href=#224 id=224 data-nosnippet>224</a>            ));
+<a href=#225 id=225 data-nosnippet>225</a>        }
+<a href=#226 id=226 data-nosnippet>226</a>        <span class="kw">if </span>channels &gt; <span class="number">1 </span>&amp;&amp; channel &gt;= channels {
+<a href=#227 id=227 data-nosnippet>227</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#228 id=228 data-nosnippet>228</a>                <span class="string">"Exception: channel value specified as {channel} must be less than the number of channels in the image, which is {channels}."
+<a href=#229 id=229 data-nosnippet>229</a>            </span>)));
+<a href=#230 id=230 data-nosnippet>230</a>        }
+<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">if </span>stokes &gt; <span class="number">1 </span>&amp;&amp; polarization &gt;= stokes {
+<a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#233 id=233 data-nosnippet>233</a>                <span class="string">"Exception: polarization value must be less than the number of polarization planes in the image, which is {stokes}."
+<a href=#234 id=234 data-nosnippet>234</a>            </span>)));
+<a href=#235 id=235 data-nosnippet>235</a>        }
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">if </span>(channels &gt; <span class="number">1 </span>&amp;&amp; channel &lt; <span class="number">0</span>) || (stokes &gt; <span class="number">1 </span>&amp;&amp; polarization &lt; <span class="number">0</span>) {
+<a href=#237 id=237 data-nosnippet>237</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#238 id=238 data-nosnippet>238</a>                <span class="string">"Failed AlwaysAssert chan &gt;=0 &amp;&amp; chan &lt; Int(nchan()) &amp;&amp; stokes &gt;= 0 &amp;&amp; stokes &lt; Int(nstokes())"</span>,
+<a href=#239 id=239 data-nosnippet>239</a>            ));
+<a href=#240 id=240 data-nosnippet>240</a>        }
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>channel = <span class="kw">if </span>channels == <span class="number">1 </span>{ <span class="number">0 </span>} <span class="kw">else </span>{ channel <span class="kw">as </span>usize };
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>polarization = <span class="kw">if </span>stokes == <span class="number">1 </span>{
+<a href=#243 id=243 data-nosnippet>243</a>            <span class="number">0
+<a href=#244 id=244 data-nosnippet>244</a>        </span>} <span class="kw">else </span>{
+<a href=#245 id=245 data-nosnippet>245</a>            polarization <span class="kw">as </span>usize
+<a href=#246 id=246 data-nosnippet>246</a>        };
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(beam(channel, polarization));
+<a href=#248 id=248 data-nosnippet>248</a>    }
+<a href=#249 id=249 data-nosnippet>249</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = <span class="macro">vec!</span>[
+<a href=#250 id=250 data-nosnippet>250</a>        (<span class="string">"nChannels"</span>, CasaValue::Int(channels)),
+<a href=#251 id=251 data-nosnippet>251</a>        (<span class="string">"nStokes"</span>, CasaValue::Int(stokes)),
+<a href=#252 id=252 data-nosnippet>252</a>    ];
+<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">if </span>matrix {
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">let </span>(spectral, stokes) = plane_axes(<span class="kw-2">&amp;</span>coordinate_record())<span class="question-mark">?</span>;
+<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>stokes_first = stokes.is_some_and(|stokes| {
+<a href=#256 id=256 data-nosnippet>256</a>            spectral.is_none_or(|spectral| spectral == <span class="number">0 </span>|| spectral &gt;= stokes)
+<a href=#257 id=257 data-nosnippet>257</a>        });
+<a href=#258 id=258 data-nosnippet>258</a>        result.extend(beam_parameter_matrices(
+<a href=#259 id=259 data-nosnippet>259</a>            view.record(),
+<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw-2">&amp;</span>beams,
+<a href=#261 id=261 data-nosnippet>261</a>            stokes_first,
+<a href=#262 id=262 data-nosnippet>262</a>        )<span class="question-mark">?</span>);
+<a href=#263 id=263 data-nosnippet>263</a>    } <span class="kw">else </span>{
+<a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">let </span>by_channel = (<span class="number">0</span>..beams.n_channels()).map(|channel| {
+<a href=#265 id=265 data-nosnippet>265</a>            <span class="kw">let </span>by_stokes = (<span class="number">0</span>..beams.n_stokes())
+<a href=#266 id=266 data-nosnippet>266</a>                .map(|polarization| (<span class="macro">format!</span>(<span class="string">"*{polarization}"</span>), beam(channel, polarization)));
+<a href=#267 id=267 data-nosnippet>267</a>            (<span class="macro">format!</span>(<span class="string">"*{channel}"</span>), CasaValue::record(by_stokes))
+<a href=#268 id=268 data-nosnippet>268</a>        });
+<a href=#269 id=269 data-nosnippet>269</a>        result.push((<span class="string">"beams"</span>, CasaValue::record(by_channel)));
+<a href=#270 id=270 data-nosnippet>270</a>    }
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="prelude-val">Ok</span>(CasaValue::record(result))
+<a href=#272 id=272 data-nosnippet>272</a>}
+<a href=#273 id=273 data-nosnippet>273</a>
+<a href=#274 id=274 data-nosnippet>274</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>plane_axes(record: <span class="kw-2">&amp;</span>RecordValue) -&gt; PyResult&lt;(<span class="prelude-ty">Option</span>&lt;usize&gt;, <span class="prelude-ty">Option</span>&lt;usize&gt;)&gt; {
+<a href=#275 id=275 data-nosnippet>275</a>    <span class="kw">let </span><span class="kw-2">mut </span>axes = CoordinateSystem::record_coordinates(record).map_err(raised)<span class="question-mark">?</span>;
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="comment">// CASA assigns beams by coordinate creation order, including after transposition.
+<a href=#277 id=277 data-nosnippet>277</a>    </span>axes.sort_by_key(|axis| {
+<a href=#278 id=278 data-nosnippet>278</a>        axis.field
+<a href=#279 id=279 data-nosnippet>279</a>            .trim_start_matches(|character: char| character.is_ascii_alphabetic())
+<a href=#280 id=280 data-nosnippet>280</a>            .parse::&lt;usize&gt;()
+<a href=#281 id=281 data-nosnippet>281</a>            .ok()
+<a href=#282 id=282 data-nosnippet>282</a>    });
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">let </span><span class="kw-2">mut </span>spectral = <span class="prelude-val">None</span>;
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span><span class="kw-2">mut </span>stokes = <span class="prelude-val">None</span>;
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">for </span>axis <span class="kw">in </span>axes {
+<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span>kind = <span class="kw">if </span>axis.field.starts_with(<span class="string">"spectral"</span>) {
+<a href=#287 id=287 data-nosnippet>287</a>            CoordinateType::Spectral
+<a href=#288 id=288 data-nosnippet>288</a>        } <span class="kw">else if </span>axis.field.starts_with(<span class="string">"stokes"</span>) {
+<a href=#289 id=289 data-nosnippet>289</a>            CoordinateType::Stokes
+<a href=#290 id=290 data-nosnippet>290</a>        } <span class="kw">else if </span>axis.field.starts_with(<span class="string">"coordinate"</span>) {
+<a href=#291 id=291 data-nosnippet>291</a>            axis.model(record).map_err(raised)<span class="question-mark">?</span>.coordinate_type()
+<a href=#292 id=292 data-nosnippet>292</a>        } <span class="kw">else </span>{
+<a href=#293 id=293 data-nosnippet>293</a>            <span class="kw">continue</span>;
+<a href=#294 id=294 data-nosnippet>294</a>        };
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">let </span>selected = <span class="kw">match </span>kind {
+<a href=#296 id=296 data-nosnippet>296</a>            CoordinateType::Spectral =&gt; <span class="kw-2">&amp;mut </span>spectral,
+<a href=#297 id=297 data-nosnippet>297</a>            CoordinateType::Stokes =&gt; <span class="kw-2">&amp;mut </span>stokes,
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">_ </span>=&gt; <span class="kw">continue</span>,
+<a href=#299 id=299 data-nosnippet>299</a>        };
+<a href=#300 id=300 data-nosnippet>300</a>        selected.get_or_insert_with(|| axis.pixel_axes.first().copied().flatten());
+<a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">if </span>spectral.is_some() &amp;&amp; stokes.is_some() {
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="kw">break</span>;
+<a href=#303 id=303 data-nosnippet>303</a>        }
+<a href=#304 id=304 data-nosnippet>304</a>    }
+<a href=#305 id=305 data-nosnippet>305</a>    <span class="prelude-val">Ok</span>((spectral.flatten(), stokes.flatten()))
+<a href=#306 id=306 data-nosnippet>306</a>}
+<a href=#307 id=307 data-nosnippet>307</a>
+<a href=#308 id=308 data-nosnippet>308</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>axis_length(image: <span class="kw-2">&amp;</span>ImageHandle, axis: <span class="prelude-ty">Option</span>&lt;usize&gt;) -&gt; PyResult&lt;usize&gt; {
+<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">match </span>axis {
+<a href=#310 id=310 data-nosnippet>310</a>        <span class="prelude-val">Some</span>(axis) =&gt; image
+<a href=#311 id=311 data-nosnippet>311</a>            .shape()
+<a href=#312 id=312 data-nosnippet>312</a>            .get(axis)
+<a href=#313 id=313 data-nosnippet>313</a>            .copied()
+<a href=#314 id=314 data-nosnippet>314</a>            .ok_or_else(|| raised(<span class="string">"Image coordinate axis is outside the image shape"</span>)),
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Ok</span>(<span class="number">1</span>),
+<a href=#316 id=316 data-nosnippet>316</a>    }
+<a href=#317 id=317 data-nosnippet>317</a>}
+<a href=#318 id=318 data-nosnippet>318</a>
+<a href=#319 id=319 data-nosnippet>319</a><span class="kw">fn </span>beam_area(
+<a href=#320 id=320 data-nosnippet>320</a>    image: <span class="kw-2">&amp;</span>ImageHandle,
+<a href=#321 id=321 data-nosnippet>321</a>    view: <span class="kw-2">&amp;</span><span class="kw">super</span>::beam_view::BeamView,
+<a href=#322 id=322 data-nosnippet>322</a>    channel: i64,
+<a href=#323 id=323 data-nosnippet>323</a>    polarization: i64,
+<a href=#324 id=324 data-nosnippet>324</a>) -&gt; PyResult&lt;CasaValue&gt; {
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">let </span>beams = view.beam_set().map_err(raised)<span class="question-mark">?</span>;
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">if </span>beams.is_empty() {
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#328 id=328 data-nosnippet>328</a>            <span class="string">"Exception: This image has no beam(s). The setrestoringbeam() method may be used to set its beam(s)."</span>,
+<a href=#329 id=329 data-nosnippet>329</a>        ));
+<a href=#330 id=330 data-nosnippet>330</a>    }
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">let </span>coord_record = image.coordinate_record();
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="kw">let </span>coords = CoordinateSystem::from_record(<span class="kw-2">&amp;</span>coord_record).map_err(raised)<span class="question-mark">?</span>;
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="kw">let </span>direction = coords
+<a href=#334 id=334 data-nosnippet>334</a>        .find_coordinate(CoordinateType::Direction)
+<a href=#335 id=335 data-nosnippet>335</a>        .ok_or_else(|| {
+<a href=#336 id=336 data-nosnippet>336</a>            raised(<span class="string">"directionCoordinate: Coordinate system has no direction coordinate"</span>)
+<a href=#337 id=337 data-nosnippet>337</a>        })<span class="question-mark">?</span>;
+<a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">let </span>increment = coords.coordinate(direction).increment();
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="kw">let </span>pixel_area = (increment[<span class="number">0</span>] * increment[<span class="number">1</span>]).abs();
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="kw">let </span>to_arcsec = <span class="number">3600.0 </span>* <span class="number">180.0 </span>/ std::f64::consts::PI;
+<a href=#341 id=341 data-nosnippet>341</a>    <span class="kw">let </span>beam_in_arcsec = |area: f64| area * to_arcsec * to_arcsec;
+<a href=#342 id=342 data-nosnippet>342</a>    <span class="kw">let </span>single = |area| {
+<a href=#343 id=343 data-nosnippet>343</a>        CasaValue::record([
+<a href=#344 id=344 data-nosnippet>344</a>            (<span class="string">"arcsec2"</span>, CasaValue::Float(beam_in_arcsec(area))),
+<a href=#345 id=345 data-nosnippet>345</a>            (<span class="string">"pixels"</span>, CasaValue::Float(area / pixel_area)),
+<a href=#346 id=346 data-nosnippet>346</a>        ])
+<a href=#347 id=347 data-nosnippet>347</a>    };
+<a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(beam) = beams.single_beam() {
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(single(beam.area()));
+<a href=#350 id=350 data-nosnippet>350</a>    }
+<a href=#351 id=351 data-nosnippet>351</a>    <span class="kw">let </span>(spectral, stokes) = plane_axes(<span class="kw-2">&amp;</span>coord_record)<span class="question-mark">?</span>;
+<a href=#352 id=352 data-nosnippet>352</a>    <span class="kw">let </span>channels = axis_length(image, spectral)<span class="question-mark">? </span><span class="kw">as </span>i64;
+<a href=#353 id=353 data-nosnippet>353</a>    <span class="kw">let </span>polarizations = axis_length(image, stokes)<span class="question-mark">? </span><span class="kw">as </span>i64;
+<a href=#354 id=354 data-nosnippet>354</a>    <span class="kw">if </span>channel &gt;= channels {
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#356 id=356 data-nosnippet>356</a>            <span class="string">"Exception: This image only has {channels} channels, so a channel value less than {channels} must be specified."
+<a href=#357 id=357 data-nosnippet>357</a>        </span>)));
+<a href=#358 id=358 data-nosnippet>358</a>    }
+<a href=#359 id=359 data-nosnippet>359</a>    <span class="kw">if </span>polarization &gt;= polarizations {
+<a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="macro">format!</span>(
+<a href=#361 id=361 data-nosnippet>361</a>            <span class="string">"Exception: This image only has {polarizations} polarizations, so a polarization value less than {polarizations} must be specified."
+<a href=#362 id=362 data-nosnippet>362</a>        </span>)));
+<a href=#363 id=363 data-nosnippet>363</a>    }
+<a href=#364 id=364 data-nosnippet>364</a>    <span class="kw">if </span>channel &gt;= <span class="number">0 </span>&amp;&amp; polarization &gt;= <span class="number">0 </span>{
+<a href=#365 id=365 data-nosnippet>365</a>        <span class="kw">if </span>(beams.n_channels() &gt; <span class="number">1 </span>&amp;&amp; channel <span class="kw">as </span>usize &gt;= beams.n_channels())
+<a href=#366 id=366 data-nosnippet>366</a>            || (beams.n_stokes() &gt; <span class="number">1 </span>&amp;&amp; polarization <span class="kw">as </span>usize &gt;= beams.n_stokes())
+<a href=#367 id=367 data-nosnippet>367</a>        {
+<a href=#368 id=368 data-nosnippet>368</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Selected plane is outside the restoring beam grid"</span>));
+<a href=#369 id=369 data-nosnippet>369</a>        }
+<a href=#370 id=370 data-nosnippet>370</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>(single(
+<a href=#371 id=371 data-nosnippet>371</a>            beams.beam(channel <span class="kw">as </span>usize, polarization <span class="kw">as </span>usize).area(),
+<a href=#372 id=372 data-nosnippet>372</a>        ));
+<a href=#373 id=373 data-nosnippet>373</a>    }
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">if </span>channel &gt;= <span class="number">0 </span>|| polarization &gt;= <span class="number">0 </span>{
+<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(
+<a href=#376 id=376 data-nosnippet>376</a>            <span class="string">"Exception: In the case of a multibeam image, either both channel and polarization must be non-negative, or both must be negative."</span>,
+<a href=#377 id=377 data-nosnippet>377</a>        ));
+<a href=#378 id=378 data-nosnippet>378</a>    }
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">let </span>stokes_first = <span class="macro">matches!</span>((stokes, spectral), (<span class="prelude-val">Some</span>(s), <span class="prelude-val">Some</span>(c)) <span class="kw">if </span>s &lt; c);
+<a href=#380 id=380 data-nosnippet>380</a>    <span class="prelude-val">Ok</span>(CasaValue::record([
+<a href=#381 id=381 data-nosnippet>381</a>        (
+<a href=#382 id=382 data-nosnippet>382</a>            <span class="string">"arcsec2"</span>,
+<a href=#383 id=383 data-nosnippet>383</a>            beam_matrix(<span class="kw-2">&amp;</span>beams, stokes_first, |beam| <span class="prelude-val">Ok</span>(beam_in_arcsec(beam.area())))<span class="question-mark">?</span>,
+<a href=#384 id=384 data-nosnippet>384</a>        ),
+<a href=#385 id=385 data-nosnippet>385</a>        (
+<a href=#386 id=386 data-nosnippet>386</a>            <span class="string">"pixels"</span>,
+<a href=#387 id=387 data-nosnippet>387</a>            beam_matrix(<span class="kw-2">&amp;</span>beams, stokes_first, |beam| <span class="prelude-val">Ok</span>(beam.area() / pixel_area))<span class="question-mark">?</span>,
+<a href=#388 id=388 data-nosnippet>388</a>        ),
+<a href=#389 id=389 data-nosnippet>389</a>    ]))
+<a href=#390 id=390 data-nosnippet>390</a>}
+<a href=#391 id=391 data-nosnippet>391</a>
+<a href=#392 id=392 data-nosnippet>392</a><span class="kw">fn </span>common_beam(image: <span class="kw-2">&amp;</span>ImageHandle, view: <span class="kw-2">&amp;</span><span class="kw">super</span>::beam_view::BeamView) -&gt; PyResult&lt;CasaValue&gt; {
+<a href=#393 id=393 data-nosnippet>393</a>    image.check_single_precision(<span class="string">"commonbeam"</span>)<span class="question-mark">?</span>;
+<a href=#394 id=394 data-nosnippet>394</a>    <span class="kw">let </span>beams = view.beam_set().map_err(raised)<span class="question-mark">?</span>;
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="kw">if </span>beams.is_empty() {
+<a href=#396 id=396 data-nosnippet>396</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(raised(<span class="string">"Exception: This image has no beam(s)."</span>));
+<a href=#397 id=397 data-nosnippet>397</a>    }
+<a href=#398 id=398 data-nosnippet>398</a>    <span class="kw">let </span>common = beams.common_beam().map_err(raised)<span class="question-mark">?</span>;
+<a href=#399 id=399 data-nosnippet>399</a>    <span class="kw">let </span>info = <span class="prelude-val">Some</span>(view.record());
+<a href=#400 id=400 data-nosnippet>400</a>    <span class="kw">let </span>matching_plane = (<span class="number">0</span>..beams.n_stokes()).find_map(|polarization| {
+<a href=#401 id=401 data-nosnippet>401</a>        (<span class="number">0</span>..beams.n_channels())
+<a href=#402 id=402 data-nosnippet>402</a>            .find(|<span class="kw-2">&amp;</span>channel| <span class="kw-2">*</span>beams.beam(channel, polarization) == common)
+<a href=#403 id=403 data-nosnippet>403</a>            .map(|channel| (channel, polarization))
+<a href=#404 id=404 data-nosnippet>404</a>    });
+<a href=#405 id=405 data-nosnippet>405</a>    <span class="kw">let </span><span class="kw-2">mut </span>record = <span class="kw">if let </span><span class="prelude-val">Some</span>((channel, polarization)) = matching_plane {
+<a href=#406 id=406 data-nosnippet>406</a>        stored_beam_record(info, <span class="kw-2">&amp;</span>beams, channel, polarization)
+<a href=#407 id=407 data-nosnippet>407</a>    } <span class="kw">else </span>{
+<a href=#408 id=408 data-nosnippet>408</a>        common.to_record()
+<a href=#409 id=409 data-nosnippet>409</a>    };
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="kw">let </span>stored = StoredGaussianBeam::from_record(<span class="kw-2">&amp;</span>record).map_err(raised)<span class="question-mark">?</span>;
+<a href=#411 id=411 data-nosnippet>411</a>    <span class="kw">let </span>degrees = Unit::new(<span class="string">"deg"</span>).expect(<span class="string">"built-in degrees"</span>);
+<a href=#412 id=412 data-nosnippet>412</a>    <span class="kw">let </span>angle = casacore::convert(
+<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw-2">&amp;</span>stored.wrapped_position_angle().map_err(raised)<span class="question-mark">?</span>,
+<a href=#414 id=414 data-nosnippet>414</a>        <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>degrees),
+<a href=#415 id=415 data-nosnippet>415</a>    )
+<a href=#416 id=416 data-nosnippet>416</a>    .map_err(raised)<span class="question-mark">?</span>;
+<a href=#417 id=417 data-nosnippet>417</a>    record.remove(<span class="string">"positionangle"</span>);
+<a href=#418 id=418 data-nosnippet>418</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = <span class="macro">vec!</span>[(<span class="string">"pa"</span>, CasaValue::quantity(angle.value(), <span class="string">"deg"</span>))];
+<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">for </span>component <span class="kw">in </span>[<span class="string">"major"</span>, <span class="string">"minor"</span>] {
+<a href=#420 id=420 data-nosnippet>420</a>        result.push((
+<a href=#421 id=421 data-nosnippet>421</a>            component,
+<a href=#422 id=422 data-nosnippet>422</a>            CasaValue::from_record(
+<a href=#423 id=423 data-nosnippet>423</a>                subrecord(<span class="kw-2">&amp;</span>record, component).expect(<span class="string">"validated beam component"</span>),
+<a href=#424 id=424 data-nosnippet>424</a>            ),
+<a href=#425 id=425 data-nosnippet>425</a>        ));
+<a href=#426 id=426 data-nosnippet>426</a>    }
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="prelude-val">Ok</span>(CasaValue::record(result))
+<a href=#428 id=428 data-nosnippet>428</a>}
+<a href=#429 id=429 data-nosnippet>429</a>
+<a href=#430 id=430 data-nosnippet>430</a><span class="attr">#[pymethods]
+<a href=#431 id=431 data-nosnippet>431</a></span><span class="kw">impl </span>PyImageTool {
+<a href=#432 id=432 data-nosnippet>432</a>    <span class="attr">#[pyo3(signature = (channel=-<span class="number">1</span>, polarization=-<span class="number">1</span>, mbret=<span class="string">"list"</span>), text_signature = <span class="string">"($self, channel=-1, polarization=-1, mbret='list')"</span>)]
+<a href=#433 id=433 data-nosnippet>433</a>    </span><span class="kw">fn </span>restoringbeam(
+<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#435 id=435 data-nosnippet>435</a>        py: Python&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#436 id=436 data-nosnippet>436</a>        channel: i64,
+<a href=#437 id=437 data-nosnippet>437</a>        polarization: i64,
+<a href=#438 id=438 data-nosnippet>438</a>        mbret: <span class="kw-2">&amp;</span>str,
+<a href=#439 id=439 data-nosnippet>439</a>    ) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#440 id=440 data-nosnippet>440</a>        py.detach(|| {
+<a href=#441 id=441 data-nosnippet>441</a>            <span class="self">self</span>.state().image.as_ref().map_or_else(
+<a href=#442 id=442 data-nosnippet>442</a>                || <span class="prelude-val">Ok</span>(CasaValue::empty_record()),
+<a href=#443 id=443 data-nosnippet>443</a>                |image| {
+<a href=#444 id=444 data-nosnippet>444</a>                    <span class="kw">let </span>handle = image.lock();
+<a href=#445 id=445 data-nosnippet>445</a>                    restoring_beam(
+<a href=#446 id=446 data-nosnippet>446</a>                        <span class="kw-2">&amp;</span>image.beam_view(),
+<a href=#447 id=447 data-nosnippet>447</a>                        || handle.coordinate_record(),
+<a href=#448 id=448 data-nosnippet>448</a>                        channel,
+<a href=#449 id=449 data-nosnippet>449</a>                        polarization,
+<a href=#450 id=450 data-nosnippet>450</a>                        mbret,
+<a href=#451 id=451 data-nosnippet>451</a>                    )
+<a href=#452 id=452 data-nosnippet>452</a>                },
+<a href=#453 id=453 data-nosnippet>453</a>            )
+<a href=#454 id=454 data-nosnippet>454</a>        })<span class="question-mark">?
+<a href=#455 id=455 data-nosnippet>455</a>        </span>.into_python(py)
+<a href=#456 id=456 data-nosnippet>456</a>    }
+<a href=#457 id=457 data-nosnippet>457</a>
+<a href=#458 id=458 data-nosnippet>458</a>    <span class="attr">#[pyo3(signature = (channel=-<span class="number">1</span>, polarization=-<span class="number">1</span>), text_signature = <span class="string">"($self, channel=-1, polarization=-1)"</span>)]
+<a href=#459 id=459 data-nosnippet>459</a>    </span><span class="kw">fn </span>beamarea(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;, channel: i64, polarization: i64) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#460 id=460 data-nosnippet>460</a>        py.detach(|| {
+<a href=#461 id=461 data-nosnippet>461</a>            <span class="self">self</span>.state().image.as_ref().map_or_else(
+<a href=#462 id=462 data-nosnippet>462</a>                || <span class="prelude-val">Ok</span>(CasaValue::empty_record()),
+<a href=#463 id=463 data-nosnippet>463</a>                |image| beam_area(<span class="kw-2">&amp;</span>image.lock(), <span class="kw-2">&amp;</span>image.beam_view(), channel, polarization),
+<a href=#464 id=464 data-nosnippet>464</a>            )
+<a href=#465 id=465 data-nosnippet>465</a>        })<span class="question-mark">?
+<a href=#466 id=466 data-nosnippet>466</a>        </span>.into_python(py)
+<a href=#467 id=467 data-nosnippet>467</a>    }
+<a href=#468 id=468 data-nosnippet>468</a>
+<a href=#469 id=469 data-nosnippet>469</a>    <span class="kw">fn </span>commonbeam(<span class="kw-2">&amp;</span><span class="self">self</span>, py: Python&lt;<span class="lifetime">'_</span>&gt;) -&gt; PyResult&lt;Py&lt;PyAny&gt;&gt; {
+<a href=#470 id=470 data-nosnippet>470</a>        py.detach(|| {
+<a href=#471 id=471 data-nosnippet>471</a>            <span class="self">self</span>.state().image.as_ref().map_or_else(
+<a href=#472 id=472 data-nosnippet>472</a>                || <span class="prelude-val">Ok</span>(CasaValue::empty_record()),
+<a href=#473 id=473 data-nosnippet>473</a>                |image| common_beam(<span class="kw-2">&amp;</span>image.lock(), <span class="kw-2">&amp;</span>image.beam_view()),
+<a href=#474 id=474 data-nosnippet>474</a>            )
+<a href=#475 id=475 data-nosnippet>475</a>        })<span class="question-mark">?
+<a href=#476 id=476 data-nosnippet>476</a>        </span>.into_python(py)
+<a href=#477 id=477 data-nosnippet>477</a>    }
+<a href=#478 id=478 data-nosnippet>478</a>}
 </code></pre></div></section></main></body></html>

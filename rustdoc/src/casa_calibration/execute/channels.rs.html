@@ -139,23 +139,23 @@
 <a href=#139 id=139 data-nosnippet>139</a>    row: <span class="kw-2">&amp;</span>ApplyRowPlan,
 <a href=#140 id=140 data-nosnippet>140</a>    input: ExecutionRowInputs&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#141 id=141 data-nosnippet>141</a>    plan: <span class="kw-2">&amp;</span>ApplyPlan,
-<a href=#142 id=142 data-nosnippet>142</a>    loaded: <span class="kw-2">&amp;</span>[LoadedCalibrationTable],
-<a href=#143 id=143 data-nosnippet>143</a>    parang: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>ParallacticAngleState&gt;,
-<a href=#144 id=144 data-nosnippet>144</a>    geometry: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>RowGeometryCache&gt;,
-<a href=#145 id=145 data-nosnippet>145</a>    profile: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>ApplyRowComputeProfile&gt;,
+<a href=#142 id=142 data-nosnippet>142</a>    chain: <span class="kw-2">&amp;</span>ApplyChain,
+<a href=#143 id=143 data-nosnippet>143</a>    geometry: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>RowGeometryCache&gt;,
+<a href=#144 id=144 data-nosnippet>144</a>    profile: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>ApplyRowComputeProfile&gt;,
+<a href=#145 id=145 data-nosnippet>145</a>    activity: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>ToolApplyActivity&gt;,
 <a href=#146 id=146 data-nosnippet>146</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ExecutionRowResult, ApplyExecutionError&gt; {
 <a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(selection) = plan.channel_selections.get(<span class="kw-2">&amp;</span>row.data_spw_id) <span class="kw">else </span>{
-<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">return </span>apply_row_all_channels(row, input, plan, loaded, parang, geometry, profile);
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">return </span>apply_row_all_channels(row, input, plan, chain, geometry, profile, activity);
 <a href=#149 id=149 data-nosnippet>149</a>    };
 <a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">let </span>selected = SelectedInputs::new(input, selection)<span class="question-mark">?</span>;
 <a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">let </span><span class="kw-2">mut </span>result = apply_row_all_channels(
 <a href=#152 id=152 data-nosnippet>152</a>        row,
 <a href=#153 id=153 data-nosnippet>153</a>        selected.inputs(input, selection),
 <a href=#154 id=154 data-nosnippet>154</a>        plan,
-<a href=#155 id=155 data-nosnippet>155</a>        loaded,
-<a href=#156 id=156 data-nosnippet>156</a>        parang,
-<a href=#157 id=157 data-nosnippet>157</a>        geometry,
-<a href=#158 id=158 data-nosnippet>158</a>        profile,
+<a href=#155 id=155 data-nosnippet>155</a>        chain,
+<a href=#156 id=156 data-nosnippet>156</a>        geometry,
+<a href=#157 id=157 data-nosnippet>157</a>        profile,
+<a href=#158 id=158 data-nosnippet>158</a>        activity,
 <a href=#159 id=159 data-nosnippet>159</a>    )<span class="question-mark">?</span>;
 <a href=#160 id=160 data-nosnippet>160</a>    result.corrected_data = scatter(
 <a href=#161 id=161 data-nosnippet>161</a>        input.preserved_corrected_data.unwrap_or(input.data),
