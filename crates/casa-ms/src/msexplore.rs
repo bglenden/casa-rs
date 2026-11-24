@@ -5448,8 +5448,11 @@ fn build_generic_visibility_scatter_with_averaging(
         && time_bins.is_some()
         && !extended_derived
         && plotms_columns::uses_direct_vector_time_channels(spec);
-    let average_operands =
-        extended_derived || scalar_channels || time_antenna || direct_time_channels;
+    let average_operands = extended_derived
+        || scalar_channels
+        || scalar_spw_time
+        || time_antenna
+        || direct_time_channels;
     let channel_first = channel_baselines || scalar_channels || antenna_channels || spw_channels;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())

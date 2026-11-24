@@ -320,9 +320,11 @@ def compare_scalar_time(root, native, base, vis):
         delayed = times + 2 * (table.getcol("DATA_DESC_ID") == 1)
         table.putcol("TIME", delayed)
         table.putcol("TIME_CENTROID", delayed)
-    scans, fields, spans, flagged = (root / f"{name}.ms" for name in
-                                     ("scan-boundary", "field-boundary", "both-boundaries", "flagged-time-bin"))
-    for source in (scans, fields, spans, flagged):
+    scans, fields, spans, flagged, nonfinite, varied = (root / f"{name}.ms" for name in (
+        "scan-boundary", "field-boundary", "both-boundaries", "flagged-time-bin", "nonfinite-time-bin",
+        "varied-channel-phases",
+    ))
+    for source in (scans, fields, spans, flagged, nonfinite, varied):
         copy_ms(staggered, source)
     for source in (fields, spans):
         with opened(source / "FIELD", True) as table:
@@ -344,11 +346,25 @@ def compare_scalar_time(root, native, base, vis):
         flags[0, 1, times == start + 10] = True
         table.putcol("FLAG", flags)
         table.putcol("FLAG_ROW", times == start + 2)
+    with opened(nonfinite, True) as table:
+        data = table.getcol("CORRECTED_DATA")
+        data[0, 1, table.getcol("TIME") == start + 2] = complex(np.nan, np.nan)
+        table.putcol("CORRECTED_DATA", data)
+    with opened(varied, True) as table:
+        data = table.getcol("CORRECTED_DATA")
+        w0 = table.getcol("DATA_DESC_ID") == 0
+        data[:, 0, w0] = 1
+        data[:, 1, w0] = 4j
+        data[:, 0, ~w0] = 3 + 4j
+        data[:, 1, ~w0] = 1
+        table.putcol("CORRECTED_DATA", data)
 
     low = np.angle(5 + 6j, deg=True)
     high = np.angle(7 + 8j, deg=True)
     first_phase = (2 * low + 3 * high) / 5
     mixed_phase = (low + 3 * high) / 4
+    varied_low, varied_high = np.angle([1 + 4j, 4 + 4j], deg=True)
+    varied_phase = (2 * varied_low + 3 * varied_high) / 5
     # A bin retains the first SPW ID and the last attached buffer's grid.
     closed = [(5, 1, 0, 0, "90.001000000"), (12, 1, 0, 1, "100.001000000")]
     scan_barrier = [(1, 1, 0, 0, "100.001000000"), (11, 2, 0, 0, "100.001000000")]
@@ -361,10 +377,12 @@ def compare_scalar_time(root, native, base, vis):
     ]
     cases = (
         ("scalar-time", {}, closed, [first_phase, high]),
-        ("scalar-time-channel", channels, closed_channels, [first_phase] * 2 + [high] * 2),
+        ("scalar-time-channel", channels | dict(vis=str(varied)), closed_channels,
+         [varied_phase, first_phase, varied_high, high]),
         ("scalar-time-frequency", dict(xaxis="frequency"), closed, [first_phase, high]),
         ("scalar-time-columns", dict(xaxis="amp", xdatacolumn="data"), closed, [first_phase, high]),
         ("scalar-time-flags", dict(vis=str(flagged)), closed, [mixed_phase, high]),
+        ("scalar-time-nonfinite", dict(vis=str(nonfinite)), closed, [np.nan, high]),
         ("scalar-scan-barrier", dict(vis=str(scans), avgtime="20"), scan_barrier, [mixed_phase] * 2),
         ("scalar-scan-span", dict(vis=str(scans), avgtime="20", avgscan=True),
          [(6, -1, 0, 0, "100.001000000")], [mixed_phase]),
