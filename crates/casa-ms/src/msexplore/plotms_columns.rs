@@ -82,6 +82,13 @@ pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) 
         .any(|(axis, column)| axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model())
 }
 
+pub(super) fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -> bool {
+    spec.averaging.avgchannel.is_some_and(|width| width > 1)
+        && [x.unwrap_or(spec.data_column), spec.data_column]
+            .into_iter()
+            .any(MsDataColumn::is_corrected_vector_projection)
+}
+
 pub(super) fn weight_axis_columns(
     axes: [Option<MsAxis>; 3],
     columns: [MsDataColumn; 3],
@@ -98,6 +105,7 @@ pub(super) fn weight_axis_columns(
 pub(super) fn check_averaging(
     averaging: bool,
     extended_averaging_with_independent_ordinates: bool,
+    channel_derived: bool,
     columns: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
     if extended_averaging_with_independent_ordinates {
@@ -105,7 +113,7 @@ pub(super) fn check_averaging(
             "time, baseline, antenna and SPW averaging of independent MeasurementSet ordinate columns is pending #1032",
         ));
     }
-    if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
+    if averaging && !channel_derived && columns.into_iter().any(MsDataColumn::is_derived) {
         return Err(TaskFailure::validation(
             "averaging derived data columns in this MeasurementSet plot is pending #1032",
         ));
@@ -175,7 +183,9 @@ pub(super) fn weight_kinds(
     let kind = |column| {
         let column = match column {
             MsDataColumn::Data => OptionalMainColumn::Data,
-            MsDataColumn::Corrected => OptionalMainColumn::CorrectedData,
+            MsDataColumn::Corrected
+            | MsDataColumn::CorrectedMinusModel
+            | MsDataColumn::CorrectedDivModel => OptionalMainColumn::CorrectedData,
             MsDataColumn::Model => OptionalMainColumn::ModelData,
             _ => return WeightKind::Unit,
         };

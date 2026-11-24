@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "4bdc33a7309379244453522f7946bef68d2dd5ba",
+  "source_revision": "4bdc33a7309379244453522f7946bef68d2dd5ba",
+  "baseline_revision": "1f0e2d81532d6b8812e2f267fb7bccc230d614bb",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Apply vector corrected-minus-model and corrected-over-model after channel-only averaging of the stored operands, with an independent visibility axis.",
+  "result": "passed",
+  "baseline_result": "Native refused both derived data columns when channel averaging was active.",
+  "text_exports": 8,
+  "points": 84,
+  "rendered_coordinates": 36,
+  "figures": 2,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "scope_refusals": 2,
+  "nonfinite_coordinates": 18
+}

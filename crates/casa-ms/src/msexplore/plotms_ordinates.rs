@@ -3,15 +3,16 @@
 
 use std::collections::HashSet;
 
-use casa_types::Complex64;
+use casa_types::{Complex32, Complex64};
 use ndarray::ArrayView2;
 
 use super::MsAxis;
 use super::{
     ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterSeries, PlotMsInput,
-    PreparedSelectedDataSource, VisibilityBinSamples, check_grid_shapes, collect_bin_samples_into,
-    compute_visibility_math, compute_weighted_visibility_math, plotms_figure,
-    scatter_series_identity, weighted_visibility_mean,
+    PreparedSelectedDataSource, VisibilityBinSamples, VisibilityColumnProjection,
+    check_grid_shapes, collect_bin_samples_into, compute_visibility_math,
+    compute_weighted_visibility_math, plotms_figure, scatter_series_identity,
+    weighted_visibility_mean,
 };
 use crate::MeasurementSet;
 use crate::selection::ChannelRange;
@@ -19,6 +20,7 @@ use crate::selection::ChannelRange;
 pub(super) struct VisibilityColumns<'a> {
     sources: Vec<(MsDataColumn, PreparedSelectedDataSource<'a>)>,
     axes: Vec<Option<usize>>,
+    channel_average: bool,
 }
 
 impl<'a> VisibilityColumns<'a> {
@@ -60,7 +62,11 @@ impl<'a> VisibilityColumns<'a> {
             };
             axes.push(Some(index));
         }
-        Ok(Self { sources, axes })
+        Ok(Self {
+            sources,
+            axes,
+            channel_average: spec.averaging.avgchannel.is_some_and(|width| width > 1),
+        })
     }
 
     pub(super) fn column(&self, ordinate: usize) -> Option<MsDataColumn> {
@@ -110,7 +116,7 @@ impl<'a> VisibilityColumns<'a> {
     ) -> Result<(), String> {
         grids.clear();
         for (_, source) in &self.sources {
-            let grid = source.row(row, project)?;
+            let grid = source.row(row, project, self.channel_average)?;
             if let Some(first) = grids.first() {
                 check_grid_shapes(first, &grid)?;
             }
@@ -146,20 +152,17 @@ impl<'a> VisibilityColumns<'a> {
         axis: usize,
         grids: &[ComplexGrid],
         buffers: &'b [BinBuffer],
-        corr: usize,
-        bin: &ChannelBin,
         zero_invalid_weight: bool,
     ) -> VisibilityBinSamples<'b> {
         self.axes[axis].map_or_else(VisibilityBinSamples::default, |index| {
             let buffer = &buffers[index];
-            VisibilityBinSamples::new(
-                Some(&grids[index]),
-                &buffer.values,
-                &buffer.weights,
-                corr,
-                bin,
+            VisibilityBinSamples {
+                values: &buffer.values,
+                weights: &buffer.weights,
+                projection: buffer.projection,
+                signed_amplitude: grids[index].signed_amplitude,
                 zero_invalid_weight,
-            )
+            }
         })
     }
 }
@@ -168,6 +171,7 @@ impl<'a> VisibilityColumns<'a> {
 pub(super) struct BinBuffer {
     values: Vec<Complex64>,
     weights: Vec<f64>,
+    projection: Option<(VisibilityColumnProjection, [Complex64; 2])>,
 }
 
 impl BinBuffer {
@@ -181,6 +185,15 @@ impl BinBuffer {
         show_flagged: bool,
     ) {
         self.weights.clear();
+        self.projection = None;
+        if bin.averaged
+            && let Some((projection, model)) = grid.model.as_ref()
+        {
+            self.values.clear();
+            self.projection = channel_averaged_operands(grid, model, flags, weight, corr, bin)
+                .map(|operands| (*projection, operands));
+            return;
+        }
         collect_bin_samples_into(
             grid,
             flags,
@@ -190,6 +203,16 @@ impl BinBuffer {
             weight.map(|spectrum| (spectrum, &mut self.weights)),
             &mut self.values,
         );
+        let Some((projection, model)) = grid.model.as_ref() else {
+            return;
+        };
+        if let Some(&observed) = self.values.first() {
+            debug_assert_eq!(bin.channels().count(), 1);
+            self.projection = Some((
+                *projection,
+                [observed, model[corr * grid.chan_count + bin.start]],
+            ));
+        }
     }
 
     pub(super) fn normalize_vector_average(&mut self) {
@@ -200,6 +223,47 @@ impl BinBuffer {
         self.values.truncate(1);
         self.weights.clear();
     }
+}
+
+fn channel_averaged_operands(
+    grid: &ComplexGrid,
+    model: &[Complex64],
+    flags: &ArrayView2<'_, bool>,
+    spectrum: Option<&FloatGrid>,
+    corr: usize,
+    bin: &ChannelBin,
+) -> Option<[Complex64; 2]> {
+    let mut sums = [Complex32::new(0.0, 0.0); 2];
+    let mut total_weight = 0.0_f32;
+    let mut sample_count = 0_usize;
+    for channel in bin.channels() {
+        if channel >= grid.chan_count || flags[(corr, channel)] {
+            continue;
+        }
+        let index = corr * grid.chan_count + channel;
+        let weight = spectrum.map_or(1.0, |weights| weights.values[index] as f32);
+        // The channel iterator accumulates both clear operands in Complex32.
+        // In particular it retains any nonfinite value on a clear channel.
+        for (sum, value) in sums.iter_mut().zip([grid.values[index], model[index]]) {
+            *sum += Complex32::new(value.re as f32, value.im as f32) * weight;
+        }
+        total_weight += weight;
+        sample_count += 1;
+    }
+    if sample_count == 0 {
+        return None;
+    }
+    let normalization = if spectrum.is_some() {
+        total_weight
+    } else {
+        sample_count as f32
+    };
+    let means = if normalization > 0.0 {
+        sums.map(|sum| sum / normalization)
+    } else {
+        [Complex32::new(0.0, 0.0); 2]
+    };
+    Some(means.map(|mean| Complex64::new(f64::from(mean.re), f64::from(mean.im))))
 }
 
 fn vector_mean(values: &[Complex64], weights: &[f64]) -> Option<Complex64> {

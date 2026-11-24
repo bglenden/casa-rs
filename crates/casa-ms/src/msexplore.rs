@@ -724,6 +724,10 @@ impl MsDataColumn {
         self == Self::Model || self.is_derived()
     }
 
+    fn is_corrected_vector_projection(self) -> bool {
+        matches!(self, Self::CorrectedMinusModel | Self::CorrectedDivModel)
+    }
+
     fn is_derived(self) -> bool {
         matches!(
             self,
@@ -2978,7 +2982,8 @@ fn build_uncalibrated_plotms_payload(
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
     if plot.is_some_and(|plot| {
-        (vector_baselines
+        (plotms_columns::uses_channel_derived(plot, columns.x)
+            || vector_baselines
             || scalar_time
             || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
@@ -4119,10 +4124,14 @@ fn build_generic_visibility_scatter(
     let mut phase_shift = calibration
         .and_then(|input| input.phasecenter.as_ref())
         .map(plotms_phasecenter::PhaseCenterShift::new);
+    let channel_derived = calibration.is_some_and(|input| {
+        input.rows.is_none() && plotms_columns::uses_channel_derived(spec, input.x_data_column)
+    });
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
+        || channel_derived
         || calibration.is_some()
             && (ordered_feed_selection
                 || use_ordinate_masks
@@ -4766,8 +4775,6 @@ fn build_generic_visibility_scatter(
                         axis_slot,
                         &visibility_grids,
                         &bin_buffers,
-                        *corr_index,
-                        bin,
                         transformed_channel_weights,
                     );
                     compute_axis_value(
@@ -4995,6 +5002,7 @@ fn build_generic_visibility_scatter(
                     || pointing.is_some()
                     || raw_symbols.is_some()
                     || phase_shift.is_some()
+                    || channel_derived
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
                 {
@@ -5816,14 +5824,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         }
                     }
                     let samples = |axis| {
-                        visibility_columns.samples(
-                            axis,
-                            &visibility_grids,
-                            &bin_buffers,
-                            *corr_index,
-                            bin,
-                            false,
-                        )
+                        visibility_columns.samples(axis, &visibility_grids, &bin_buffers, false)
                     };
                     let x_samples = samples(0);
                     collect_bin_flags_into(&flags, *corr_index, bin, &mut flag_samples);
@@ -6873,36 +6874,9 @@ struct VisibilityBinSamples<'a> {
     zero_invalid_weight: bool,
 }
 
-impl<'a> VisibilityBinSamples<'a> {
-    fn new(
-        grid: Option<&ComplexGrid>,
-        values: &'a [Complex64],
-        weights: &'a [f64],
-        corr_index: usize,
-        bin: &ChannelBin,
-        zero_invalid_weight: bool,
-    ) -> Self {
-        let projection = grid.and_then(|grid| {
-            let (projection, model) = grid.model.as_ref()?;
-            let observed = *values.first()?;
-            debug_assert_eq!(bin.channels().count(), 1);
-            Some((
-                *projection,
-                [observed, model[corr_index * grid.chan_count + bin.start]],
-            ))
-        });
-        Self {
-            values,
-            weights,
-            projection,
-            signed_amplitude: grid.is_some_and(|grid| grid.signed_amplitude),
-            zero_invalid_weight,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 enum VisibilityColumnProjection {
+    VectorResidual,
     ScalarResidual,
     VectorRatio,
     ScalarRatio,
@@ -6912,7 +6886,18 @@ impl VisibilityColumnProjection {
     fn axis_value(self, axis: MsAxis, [observed, model]: [Complex64; 2]) -> Option<f64> {
         let as_complex_float =
             |value: Complex64| num_complex::Complex32::new(value.re as f32, value.im as f32);
+        let complex_axis = |value: Complex64| {
+            let value = as_complex_float(value);
+            f64::from(match axis {
+                MsAxis::Amplitude => value.norm(),
+                MsAxis::Phase => Self::float_phase_degrees(value.arg()),
+                MsAxis::Real => value.re,
+                MsAxis::Imaginary => value.im,
+                _ => unreachable!("visibility projection requires a visibility axis"),
+            })
+        };
         match self {
+            Self::VectorResidual => Some(complex_axis(observed - model)),
             Self::ScalarResidual => {
                 let value = match axis {
                     MsAxis::Amplitude => observed.norm() - model.norm(),
@@ -6932,14 +6917,7 @@ impl VisibilityColumnProjection {
                     observed / model
                 };
                 // CASA caches the complex float quotient before converting its axes.
-                let value = as_complex_float(value);
-                Some(f64::from(match axis {
-                    MsAxis::Amplitude => value.norm(),
-                    MsAxis::Phase => Self::float_phase_degrees(value.arg()),
-                    MsAxis::Real => value.re,
-                    MsAxis::Imaginary => value.im,
-                    _ => unreachable!("visibility projection requires a visibility axis"),
-                }))
+                Some(complex_axis(value))
             }
             Self::ScalarRatio => {
                 let observed = as_complex_float(observed);
@@ -7867,7 +7845,12 @@ impl<'a> PreparedSelectedDataSource<'a> {
         }
     }
 
-    fn row(&self, row_slot: usize, project_plotms_columns: bool) -> Result<ComplexGrid, String> {
+    fn row(
+        &self,
+        row_slot: usize,
+        project_plotms_columns: bool,
+        project_after_channel_average: bool,
+    ) -> Result<ComplexGrid, String> {
         match self {
             Self::Single(column) => column.visibility_grid(row_slot),
             Self::Difference {
@@ -7879,6 +7862,9 @@ impl<'a> PreparedSelectedDataSource<'a> {
                 let right = right.visibility_grid(row_slot)?;
                 if *scalar && project_plotms_columns {
                     return left.with_model(right, VisibilityColumnProjection::ScalarResidual);
+                }
+                if project_plotms_columns && project_after_channel_average {
+                    return left.with_model(right, VisibilityColumnProjection::VectorResidual);
                 }
                 combine_grids(left, right, |left, right| {
                     if *scalar {
@@ -8163,8 +8149,8 @@ mod tests {
 
         let source = PreparedSelectedDataSource::new(&ms, MsDataColumn::Data, &[2, 0], None)
             .expect("prefetch");
-        let first = source.row(0, false).expect("selected row 0");
-        let second = source.row(1, false).expect("selected row 1");
+        let first = source.row(0, false, false).expect("selected row 0");
+        let second = source.row(1, false, false).expect("selected row 1");
 
         assert_eq!(first.corr_count, 1);
         assert_eq!(first.chan_count, 2);
@@ -9674,7 +9660,7 @@ mod tests {
             PreparedSelectedDataSource::new(&ms, MsDataColumn::CorrectedMinusModel, &[0, 1], None)
                 .unwrap();
         assert_eq!(
-            difference.row(0, false).unwrap().values[0],
+            difference.row(0, false, false).unwrap().values[0],
             Complex64::new(10.0, 0.0)
         );
 
@@ -9685,14 +9671,18 @@ mod tests {
             None,
         )
         .unwrap();
-        let scalar_ratio_row = scalar_ratio.row(0, false).unwrap();
+        let scalar_ratio_row = scalar_ratio.row(0, false, false).unwrap();
         assert_eq!(scalar_ratio_row.values[0], Complex64::new(6.0, 0.0));
-        assert!(scalar_ratio.row(1, false).unwrap().values[1].re.is_nan());
+        assert!(
+            scalar_ratio.row(1, false, false).unwrap().values[1]
+                .re
+                .is_nan()
+        );
 
         let direct_ratio =
             PreparedSelectedDataSource::new(&ms, MsDataColumn::DataDivModel, &[0], None).unwrap();
         assert_eq!(
-            direct_ratio.row(0, false).unwrap().values[1],
+            direct_ratio.row(0, false, false).unwrap().values[1],
             Complex64::new(5.0, 0.0)
         );
 

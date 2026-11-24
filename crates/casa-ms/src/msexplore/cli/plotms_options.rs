@@ -55,6 +55,20 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
+    pub(super) fn supports_channel_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
+        let supported_pair = |derived: MsDataColumn, stored| {
+            derived.is_corrected_vector_projection()
+                && matches!(stored, MsDataColumn::Data | MsDataColumn::Corrected)
+        };
+        self.avgchannel.is_some_and(|width| width > 1)
+            && !self.plotms_extended_averaging()
+            && self.x_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis2.is_none()
+            && self.iteraxis.is_none()
+            && (supported_pair(x, y) || supported_pair(y, x))
+    }
+
     pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
         self.x_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)

@@ -296,6 +296,7 @@ fn run_task(
                     options.plotms_extended_averaging()
                         && options.secondary_y_data_column.is_some()
                         && !options.plotms_independent_average(),
+                    options.supports_channel_derived(columns),
                     columns,
                 )?;
             }
@@ -415,6 +416,15 @@ fn run_visibility_plot(
     if calibration.is_none()
         && let Some(columns) = &mut axis_columns
     {
+        if options.supports_channel_derived(*columns)
+            && !ms.main_table().schema().is_some_and(|schema| {
+                schema.contains_column("CORRECTED_DATA") && schema.contains_column("MODEL_DATA")
+            })
+        {
+            return Err(TaskFailure::validation(
+                "channel-averaged corrected residuals and ratios require stored CORRECTED_DATA and MODEL_DATA (#1032)",
+            ));
+        }
         let axes = [options.x_axis, options.y_axis, options.y_axis2];
         let (adjusted, use_float) = plotms_columns::resolve_storage_columns(
             &ms,
