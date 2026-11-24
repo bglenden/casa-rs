@@ -214,7 +214,7 @@ const METHODS: &[Method] = &[
         Yes,
     ),
     method("getreferencedtables", &[], R::Any, Yes),
-    method("getscansummary", &[], R::Any, No),
+    method("getscansummary", &[], R::Record, Yes),
     method("getspectralwindowinfo", &[], R::Any, Yes),
     method(
         "hanningsmooth",

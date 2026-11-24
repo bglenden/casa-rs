@@ -71,7 +71,7 @@ IMPLEMENTED["singledishms"] = {
 }
 IMPLEMENTED["ms"] = {
     "close", "done", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
-    "ismultims", "iswritable",
+    "getscansummary", "ismultims", "iswritable",
     "iterend", "iterinit", "iternext", "iterorigin",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
     "open", "range", "reset", "select", "selectinit", "selecttaql", "statwt", "uvsub",

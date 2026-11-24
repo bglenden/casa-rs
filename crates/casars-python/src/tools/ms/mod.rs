@@ -9,6 +9,7 @@ pub(super) mod metadata_link;
 mod owned_record;
 mod putdata;
 mod range;
+mod scan_summary;
 mod selection_indices;
 mod selection_record;
 mod statwt;

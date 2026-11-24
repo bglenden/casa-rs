@@ -77,6 +77,7 @@ pub mod task_contract;
 mod task_front_end;
 pub mod tool_iteration;
 pub mod tool_range;
+pub mod tool_scan_summary;
 pub mod tool_visibility;
 pub mod transform;
 pub mod validate;

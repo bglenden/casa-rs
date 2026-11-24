@@ -37,6 +37,8 @@ pub(in crate::tools) struct MetadataSnapshot {
     view: Option<Arc<MetadataView>>,
 }
 
+type SourceAndRows = (Arc<MetadataSnapshot>, Option<Arc<[usize]>>);
+
 struct MetadataView {
     path: PathBuf,
     links: Option<HashMap<SubtableId, PathBuf>>,
@@ -140,6 +142,25 @@ impl MetadataLink {
         state.selected = selected;
         state.view = None;
         Ok(())
+    }
+
+    /// Open the source MAIN and its subtables, with the view's row indices
+    /// separately for callers that can project selected rows directly.
+    pub(super) fn source_and_rows(&self) -> MsResult<SourceAndRows> {
+        self.verify_directory()?;
+        let rows = self
+            .state
+            .lock()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?
+            .selected
+            .clone();
+        let snapshot = if rows.is_some() {
+            Arc::new(MetadataSnapshot::open(&self.path)?)
+        } else {
+            self.snapshot(None)?
+        };
+        self.verify_directory()?;
+        Ok((snapshot, rows))
     }
 
     pub(in crate::tools) fn snapshot(
@@ -314,7 +335,7 @@ impl AttachedMs {
         self.working_metadata_link()
     }
 
-    fn working_metadata_link(&self) -> Arc<MetadataLink> {
+    pub(super) fn working_metadata_link(&self) -> Arc<MetadataLink> {
         Arc::clone(
             self.metadata
                 .get_or_init(|| Arc::new(MetadataLink::new(self, self.selected_rows.clone()))),
