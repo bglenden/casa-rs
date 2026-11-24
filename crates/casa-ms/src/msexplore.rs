@@ -7048,6 +7048,22 @@ impl VisibilityColumnProjection {
             // Match C++ complex division at a zero denominator for text export.
             let infinity = f64::INFINITY.copysign(model.re);
             Complex64::new(infinity * observed.re, infinity * observed.im)
+        } else if observed.re.is_finite()
+            && observed.im.is_finite()
+            && (model.re.is_infinite() || model.im.is_infinite())
+        {
+            // C++ division keeps signed zero components for a finite value
+            // over an infinite model, including an overflowed Float mean.
+            let direction = |value: f64| {
+                let magnitude = if value.is_infinite() {
+                    1.0_f64
+                } else {
+                    0.0_f64
+                };
+                magnitude.copysign(value)
+            };
+            let model_direction = Complex64::new(direction(model.re), direction(model.im));
+            observed * model_direction.conj() * 0.0
         } else {
             observed / model
         }
