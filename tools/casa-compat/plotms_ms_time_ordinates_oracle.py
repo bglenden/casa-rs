@@ -17,8 +17,8 @@ from plotms_ms_baseline_channels_oracle import make_fixture as make_channel_base
 from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
 from plotms_ms_channel_ordinates_oracle import compare_sides
 from plotms_ms_columns_oracle import (
-    compare_ordinate_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request,
-    rows, time_average_fixture, time_scan_field_fixture,
+    compare_text, copy_ms, opened, plotms_launcher, reference, request, rows, time_average_fixture,
+    time_scan_field_fixture,
 )
 
 
@@ -249,8 +249,44 @@ def compare_spanned_ordinate_lists(root, native):
                                        rtol=0, atol=.00051)
             print(f"{label}: 3 matching averaged visibility ordinates", flush=True)
             if scalar and name == "scans-and-fields":
-                compare_ordinate_figure(root, label, native, controls, "Time (MJD seconds)",
-                                        ["Real", "Real:corrected", "Real:model"])
+                compare_sides(root, native, controls, expected_x="Time (MJD seconds)", name=label)
+    compare_span_controls(root, native, vis, base, times)
+
+
+def compare_span_controls(root, native, vis, base, times):
+    masked = root / "masked-field.ms"
+    copy_ms(vis, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1] = table.getcol("TIME") >= times[6]
+        table.putcol("FLAG", flags)
+    split = (times[[0, 6]] + 25, [(1., 3.), (10., 30.), (100., 300.)], [("1", "0"), ("2", "1")])
+    both = dict(avgscan=True, avgfield=True)
+    for name, overrides, x, y, ids in (
+        ("scan-averaging-retains-fields", dict(avgscan=True), *split),
+        ("field-averaging-retains-scans", dict(avgfield=True), *split),
+        ("spans-and-channels", both | dict(spw="0:0~1", avgchannel="2",
+                                          yaxis=["real", "real", "real", "phase"],
+                                          ydatacolumn=["data", "corrected", "model", "model"],
+                                          yaxislocation=["left", "right", "left", "right"]),
+         [times[0] + 55], [(2.6,), (28.,), (280.,), (0.,)], [("1", "0")]),
+        ("spans-with-masked-field", both | dict(vis=str(masked)),
+         [times[0] + 25], [(1.,), (10.,), (100.,)], [("1", "0")]),
+    ):
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        count = len(y) * len(ids)
+        assert [(point[3], point[4]) for point in selected] == ids * len(y)
+        coordinates = np.array([point[:2] for point in selected], dtype=float)
+        np.testing.assert_allclose(coordinates[:, 0], np.tile(x, len(y)), rtol=0, atol=.00051)
+        np.testing.assert_allclose(coordinates[:, 1], np.asarray(y).ravel(), rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], coordinates[:, 0],
+                                   rtol=0, atol=.00051)
+        print(f"{name}: {count} matching averaged visibility ordinates", flush=True)
 
 
 def main():
