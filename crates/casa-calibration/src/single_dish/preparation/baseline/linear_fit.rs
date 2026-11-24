@@ -21,7 +21,7 @@ pub(super) struct LinearFit {
 }
 
 impl LinearFit {
-    pub(super) fn prepare(&self, channels: usize, included: &[bool]) -> Option<LeastSquaresDesign> {
+    fn prepare(&self, channels: usize, included: &[bool]) -> Option<LeastSquaresDesign> {
         let basis = self
             .basis
             .iter()
@@ -37,7 +37,7 @@ impl LinearFit {
         included: &[bool],
         clip_sigma: f64,
         max_fits: usize,
-        first_design: Option<&LeastSquaresDesign>,
+        mut first_design: Option<&mut Option<LeastSquaresDesign>>,
     ) -> Result<Option<Fit>, String> {
         let mut included = included.to_vec();
         for iteration in 0..max_fits {
@@ -55,15 +55,15 @@ impl LinearFit {
                     Err(self.failure.into())
                 };
             }
-            let coefficients = if iteration == 0
-                && let Some(design) = first_design
-            {
-                design.solve(&observed)
-            } else {
-                self.prepare(spectrum.len(), &included)
-                    .and_then(|design| design.solve(&observed))
+            let mut uncached = None;
+            let design = first_design.take().unwrap_or(&mut uncached);
+            if design.is_none() && observed.iter().all(|value| value.is_finite()) {
+                *design = self.prepare(spectrum.len(), &included);
             }
-            .ok_or(self.failure)?;
+            let coefficients = design
+                .as_ref()
+                .and_then(|design| design.solve(&observed))
+                .ok_or(self.failure)?;
             let residuals = self
                 .basis
                 .iter()
