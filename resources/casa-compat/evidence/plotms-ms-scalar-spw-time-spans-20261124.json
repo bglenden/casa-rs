@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "450e669850146eb3f7b48894b5da97552736fdcb",
+  "source_revision": "450e669850146eb3f7b48894b5da97552736fdcb",
+  "baseline_revision": "80ded6363cfe47b662fcf420ead117720e0b4777",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate> --only scalar-time",
+  "scope": "Scalar time and SPW averaging of stored visibility columns with optional complex channel bins and scan and field spans.",
+  "result": "passed",
+  "baseline_result": "Main reported MJD seconds 4995075648 twice. CASA and the candidate report 4995075647 and 4995075654 for the two closed bins.",
+  "text_exports": 11,
+  "points": 22,
+  "figures": 1,
+  "rendered_coordinates": 2,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}
