@@ -12,7 +12,8 @@ use super::{
     cli::{PlotMsModelLoader, PlotMsModelReferences},
     plotms_columns::{
         supports_ordinary_time_axes, uses_antenna_visibility_average, uses_channel_derived,
-        uses_ordinary_time_averaging, uses_scalar_visibility_average, uses_vector_baseline_average,
+        uses_ordinary_time_averaging, uses_scalar_visibility_average, uses_spectral_window_average,
+        uses_vector_baseline_average,
     },
     selected_i32_values, uses_extended_averaging,
 };
@@ -20,7 +21,7 @@ use crate::selection::ResolvedMsSelectionRow;
 use crate::virtual_model::{VirtualModelEntry, selected_model_combinations, virtual_model};
 use crate::{MeasurementSet, initial_model_visibility, scratch_columns::virtual_model_fields};
 
-pub(super) fn needs_vector_model_references(
+pub(super) fn needs_model_references(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
     plot: &MsPlotSpec,
@@ -31,10 +32,13 @@ pub(super) fn needs_vector_model_references(
         && !averaging.avgbaseline
         && !averaging.avgantenna
         && !averaging.avgspw;
-    columns.implicit_derived_model
-        && averaging.avgtime.is_some()
+    let vector_time = averaging.avgtime.is_some()
         && !averaging.scalar
-        && (time_spans || uses_unspanned_antenna_or_baseline(plot))
+        && (time_spans || uses_unspanned_antenna_or_baseline(plot));
+    let spectral_windows =
+        !averaging.avgscan && !averaging.avgfield && uses_spectral_window_average(plot);
+    columns.implicit_derived_model
+        && (vector_time || spectral_windows)
         && plot.iteration.iteraxis.is_none()
         && supports_ordinary_time_axes(plot)
         && plot.y_axes.iter().all(|axis| axis.is_visibility_math())
@@ -43,6 +47,35 @@ pub(super) fn needs_vector_model_references(
             let fields = virtual_model_fields(ms);
             rows.iter().any(|row| fields.contains(&row.field_id))
         }
+}
+
+pub(super) fn ordered_model_reference_slots(
+    rows: &[ResolvedMsSelectionRow],
+    row_order: &[usize],
+    starts_buffer: &[bool],
+    phase_reference_rows: &[usize],
+) -> (Vec<usize>, Vec<usize>) {
+    let slots_by_row: HashMap<_, _> = rows
+        .iter()
+        .enumerate()
+        .map(|(slot, row)| (row.row_index, slot))
+        .collect();
+    let mut phase_slots = vec![0; rows.len()];
+    let mut recipe_slots = vec![0; rows.len()];
+    let mut reference = 0;
+    for ((&row, &starts), phase_row) in row_order
+        .iter()
+        .zip(starts_buffer)
+        .zip(phase_reference_rows)
+    {
+        let slot = slots_by_row[&row];
+        if starts {
+            reference = slot;
+        }
+        recipe_slots[slot] = reference;
+        phase_slots[slot] = slots_by_row[phase_row];
+    }
+    (phase_slots, recipe_slots)
 }
 
 fn uses_unspanned_antenna_or_baseline(plot: &MsPlotSpec) -> bool {
@@ -123,13 +156,17 @@ pub(super) fn selected_model_cells(
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
         )
     });
-    let vector_time = model_references.is_some();
-    let field_models_supported = !plot.averaging.avgfield || plot.averaging.scalar || vector_time;
+    let field_models_supported =
+        !plot.averaging.avgfield || plot.averaging.scalar || model_references.is_some();
     let derived_average = columns.implicit_derived_model
         && field_models_supported
         && (columns.extended_derived || (!extended && uses_channel_derived(plot, columns.x)));
     let can_predict = !averaging
-        || ((!extended || ordinary_time || scalar_span || vector_time || antenna_or_baseline)
+        || ((!extended
+            || ordinary_time
+            || scalar_span
+            || model_references.is_some()
+            || antenna_or_baseline)
             && standard_columns)
         || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {
