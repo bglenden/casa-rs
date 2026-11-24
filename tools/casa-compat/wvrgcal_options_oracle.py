@@ -3,7 +3,9 @@
 """Compare nondefault ALMA WVR task and direct-tool behavior with CASA 6.7.6.14."""
 
 import argparse
+from contextlib import redirect_stdout
 import inspect
+from io import StringIO
 import os
 import re
 import shutil
@@ -12,9 +14,10 @@ import subprocess
 import sys
 from pathlib import Path
 import time
+from unittest.mock import patch
 
 import casatasks
-from casatools import wvr
+from casatools import ctsys, wvr
 import numpy as np
 
 from applycal_oracle import copy_ms
@@ -137,6 +140,36 @@ def run_cases(root, vis, native, native_wvr):
     return len(cases)
 
 
+def path_failure(task, vis, output):
+    stdout = StringIO()
+    with redirect_stdout(stdout):
+        try:
+            task(vis, output)
+        except Exception as error:
+            return type(error), str(error), stdout.getvalue()
+    raise AssertionError(f'wvrgcal accepted {vis!r}, {output!r}')
+
+
+def path_resolution(root, vis, native):
+    runtime = root / 'runtime-paths'
+    runtime.mkdir()
+    inputs = runtime / 'wvr-input.ms'
+    copy_ms(vis, inputs)
+    existing = runtime / 'wvr-existing.cal'
+    existing.mkdir()
+    marker = existing / 'preserved'
+    marker.write_text('existing publication')
+    paths = ctsys.getpath()
+    ctsys.setpath([str(runtime), *paths])
+    try:
+        with patch.dict(os.environ, {'CASA_RS_MEASURESPATH': str(runtime)}):
+            for given, out in ((inputs.name, ''), (str(vis), existing.name), (np.str_(str(vis)), '')):
+                assert path_failure(native.wvrgcal, given, out) == path_failure(casatasks.wvrgcal, given, out)
+    finally:
+        ctsys.setpath(paths)
+    assert marker.read_text() == 'existing publication'
+
+
 def publication_controls(root, vis, native, native_wvr):
     defaults = dict(usefieldtab=True, wvrspw=[1], wvrflag=['0', '1'],
                     refant='0', maxdistm=0.)
@@ -169,12 +202,12 @@ def publication_controls(root, vis, native, native_wvr):
     before = protected.read_bytes()
     assert native_wvr().gcal(str(vis), str(denied), logfile=str(protected), **defaults) == -1
     assert protected.read_bytes() == before and not denied.exists()
-    try:
-        native.wvrgcal(str(vis), str(candidate), **defaults)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError('the task replaced an existing table')
+    before = (candidate / 'table.dat').read_bytes()
+    expected = path_failure(casatasks.wvrgcal, str(vis), str(candidate))
+    assert expected[:2] == (Exception, '')
+    assert path_failure(native.wvrgcal, str(vis), str(candidate)) == expected
+    assert (candidate / 'table.dat').read_bytes() == before
+    path_resolution(root, vis, native)
     from casacore.tables import table
     offsets = root / 'offsets'
     offset_view = root / 'offset-view'
