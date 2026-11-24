@@ -203,11 +203,7 @@ fn write_series(
         {
             let mut ordered = points.collect::<Vec<_>>();
             ordered.sort_unstable_by_key(|&(_, point, display)| {
-                let (row, channel, correlation) = point.plotms_order();
-                let order = display
-                    .and_then(|metadata| metadata.averaging_group)
-                    .unwrap_or(row);
-                (order, channel, correlation)
+                point.plotms_order(display.and_then(|metadata| metadata.averaging_group))
             });
             ordered.into_iter().try_for_each(write)?;
         } else {

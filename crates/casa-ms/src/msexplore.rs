@@ -2174,8 +2174,12 @@ pub struct MsScatterPointRef {
 }
 
 impl MsScatterPointRef {
-    fn plotms_order(&self) -> (usize, usize, usize) {
-        (self.row, self.chan_start, self.corr)
+    fn plotms_order(&self, iterator_slot: Option<usize>) -> (usize, usize, usize) {
+        (
+            iterator_slot.unwrap_or(self.row),
+            self.chan_start,
+            self.corr,
+        )
     }
 }
 
@@ -3968,7 +3972,8 @@ fn build_generic_visibility_scatter(
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
     let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
-    let use_ordinate_masks = calibration.is_some_and(|input| input.rows.is_none())
+    let use_ordinate_masks = spec.y_axes.len() > 2
+        && calibration.is_some_and(|input| input.rows.is_none())
         && spec.iteration.iteraxis.is_none()
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
         && plotms_columns::uses_channel_ordinate_masks(spec.x_axis, spec.y_axes.iter().copied());
@@ -5978,10 +5983,10 @@ fn build_generic_visibility_scatter_with_averaging(
             let mut plot_order = calibration.map(|_| {
                 let mut ordered = points.by_ref().collect::<Vec<_>>();
                 ordered.sort_by_key(|(_, order, entry)| {
-                    entry.representative.as_ref().map(|point| {
-                        let (row, channel, correlation) = point.plotms_order();
-                        (order.unwrap_or(row), channel, correlation)
-                    })
+                    entry
+                        .representative
+                        .as_ref()
+                        .map(|point| point.plotms_order(*order))
                 });
                 ordered.into_iter()
             });

@@ -454,7 +454,8 @@ def compare_multiple_ordinates(root, vis, native):
     def record(*args, **kwargs):
         figure, primary = render(*args, **kwargs)
         capture.append([(axis.get_yaxis().get_label_position(), axis.get_ylabel(),
-                         [layer.get_xydata() for layer in axis.lines]) for axis in figure.axes])
+                         [(layer.get_label(), layer.get_xydata()) for layer in axis.lines])
+                        for axis in figure.axes])
         return figure, primary
 
     dense = base | dict(correlation="")
@@ -481,7 +482,14 @@ def compare_multiple_ordinates(root, vis, native):
         first_baseline = (table.getcol("ANTENNA1") == 0) & (table.getcol("ANTENNA2") == 1)
         flags[:, 2, first_baseline] = True
         table.putcol("FLAG", flags)
-    both_baselines = dict(vis=str(multiple_baselines), antenna="A0&A1;A0&A2")
+        flag_rows = table.getcol("FLAG_ROW")
+        flag_rows[np.flatnonzero(first_baseline)[0]] = True
+        table.putcol("FLAG_ROW", flag_rows)
+        times = table.getcol("TIME")
+        times = times.min() + times.max() - times
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+    both_baselines = dict(vis=str(multiple_baselines), antenna="A0&A1;A0&A2", xconnector="line")
     first_baseline_ids = {("1", "1", "XX"), ("2", "1", "YY"), ("3", "1", "XX")}
     mixed_cases = (
         ("u", "U (m)", {}, 30, 18, first_baseline_ids),
@@ -525,11 +533,32 @@ def compare_multiple_ordinates(root, vis, native):
         assert len(axes) == len(expectations)
         for (side, label, layers), (expected_side, expected_label, indices) in zip(axes, expectations, strict=True):
             assert (side, label, len(layers)) == (expected_side, expected_label, len(indices))
-            for layer, index in zip(layers, indices, strict=True):
+            for (_, layer), index in zip(layers, indices, strict=True):
                 np.testing.assert_allclose(layer, ordinates[index], rtol=1.2e-5, atol=1e-7)
         for output in (expected, actual):
             with Image.open(output) as image:
                 assert image.size == (500, 360)
+
+    colored = dense | both_baselines | dict(yaxis=["real", "phase", "elevation"],
+                                            coloraxis="corr", expformat="png",
+                                            width=500, height=360, dpi=100)
+    expected, actual = (root / f"mixed-correlation-colors.{engine}.png" for engine in ("casa", "native"))
+    assert reference(**colored, plotfile=str(expected)) is None
+    with patch.object(_plot_document, "render_document", record):
+        assert native(**colored, plotfile=str(actual)) is None
+    [axes] = capture
+    plotted_groups = dict(layer for _, _, layers in axes for layer in layers)
+    points = rows(root / "three-ordinate-mixed-elevation-baselines.casa.txt")
+    labels = ("Real:model", "Phase (degrees)", "Elevation (deg)")
+    assert len(plotted_groups) == 2 * len(labels)
+    for label, section in zip(labels, np.split(points, (54, 108)), strict=True):
+        for correlation in ("XX", "YY"):
+            coordinates = np.array([point[:2] for point in section if point[12] == correlation], dtype=float)
+            np.testing.assert_allclose(plotted_groups[f"{label} · {correlation}"], coordinates,
+                                       rtol=1.2e-5, atol=1e-7)
+    for output in (expected, actual):
+        with Image.open(output) as image:
+            assert image.size == (500, 360)
     with opened(virtual) as table:
         assert "MODEL_DATA" not in table.colnames()
 
