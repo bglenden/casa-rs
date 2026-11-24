@@ -89,11 +89,9 @@ def scalar_manual(seed, work, model):
     match = re.search(r'to I = (\S+) Jy @ (\S+)Hz \(LSRK\)', message)
     assert match, message
     intensity, hz = map(float, match.groups())
-    # The manual scalar correction normalizes at a representative frequency.
-    # The band center is far enough from the edge to distinguish the reports.
-    spacing = abs(widths).max()
-    assert frequencies.max() - frequencies.min() > 10. * spacing
-    assert abs(hz - np.median(frequencies)) < spacing, message
+    # The manual scalar correction normalizes at the band center. Require
+    # agreement within half a channel and check the reported Jy independently.
+    assert abs(hz - np.median(frequencies)) < .5 * abs(widths).max(), message
     np.testing.assert_allclose(intensity, 1234. * (hz / 35e9)**-.7, rtol=5e-6)
     print('manual scalar', message, flush=True)
 
