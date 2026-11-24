@@ -23,7 +23,7 @@ pub(super) struct PolynomialFit {
 pub(super) struct PreparedPolynomial {
     basis: (Polynomial, usize, usize),
     included: Vec<bool>,
-    design: LeastSquaresDesign,
+    design: Option<LeastSquaresDesign>,
 }
 
 impl PolynomialFit {
@@ -59,21 +59,18 @@ impl PolynomialFit {
             .as_ref()
             .is_none_or(|cached| cached.basis != basis || cached.included != included)
         {
-            *prepared =
-                self.linear
-                    .prepare(spectrum.len(), included)
-                    .map(|design| PreparedPolynomial {
-                        basis,
-                        included: included.to_vec(),
-                        design,
-                    });
+            *prepared = Some(PreparedPolynomial {
+                basis,
+                included: included.to_vec(),
+                design: None,
+            });
         }
         let mut fit = self.linear.solve(
             spectrum,
             included,
             clip_sigma,
             max_fits,
-            prepared.as_ref().map(|cached| &cached.design),
+            prepared.as_mut().map(|cached| &mut cached.design),
         )?;
         if let Some(fit) = &mut fit {
             self.scale_table_coefficients(&mut fit.coefficients);
@@ -138,6 +135,34 @@ impl Polynomial {
 mod tests {
     use super::*;
     use casa_numerics::solve_weighted_least_squares;
+
+    #[test]
+    fn nonfinite_observations_do_not_prepare_a_design() {
+        let polynomial = PolynomialFit::new(Polynomial::Monomial, 1, 4).unwrap();
+        let spectrum = [0., f32::NAN, 2., f32::INFINITY];
+        let mut cached = None;
+        assert_eq!(
+            polynomial
+                .fit(&spectrum, &[true; 4], 3., 1, &mut cached)
+                .err()
+                .as_deref(),
+            Some(FIT_FAILED),
+        );
+        assert!(cached.as_ref().unwrap().design.is_none());
+        assert!(
+            polynomial
+                .fit(&spectrum, &[false, true, false, false], 3., 1, &mut cached)
+                .unwrap()
+                .is_none()
+        );
+        assert!(cached.as_ref().unwrap().design.is_none());
+        let fit = polynomial
+            .fit(&spectrum, &[true, false, true, false], 3., 1, &mut cached)
+            .unwrap()
+            .unwrap();
+        assert!((fit.coefficients[1] - 1.).abs() < 1e-12);
+        assert!(cached.as_ref().unwrap().design.is_some());
+    }
 
     #[test]
     fn prepared_polynomial_tracks_mask_and_basis() {
