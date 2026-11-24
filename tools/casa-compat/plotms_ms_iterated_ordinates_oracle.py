@@ -82,6 +82,8 @@ def compare_figures(root, native, name, controls, pages, file_tags, sides, *, sh
                     np.testing.assert_array_equal(axis.get_ylim(), shared_right)
                 for line, index in zip(lines, order, strict=True):
                     np.testing.assert_allclose(line, layers[index], rtol=1.2e-5, atol=1e-7)
+                    if controls["xaxis"] == "time":
+                        np.testing.assert_allclose(line[:, 0], layers[index][:, 0], rtol=0, atol=.00051)
     print(f"{name}: matched rendered coordinates, sides and {len(names)} filenames", flush=True)
 
 
@@ -147,9 +149,7 @@ def compare_review_cases(root, native, vis, base, polarizations, sides):
         copy_ms(vis, destination)
     with opened(fields, True) as table:
         table.putcol("FIELD_ID", 1 - table.getcol("FIELD_ID"))
-    with opened(corrs / "POLARIZATION", True) as table:
-        table.putcell("CORR_TYPE", 0, table.getcell("CORR_TYPE", 0)[::-1])
-        table.putcell("CORR_PRODUCT", 0, table.getcell("CORR_PRODUCT", 0)[:, ::-1])
+    reverse_correlation_slots(corrs)
     with opened(scans, True) as table:
         _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
         table.putcol("SCAN_NUMBER", (1 + integration % 5).astype(np.int32))
@@ -181,6 +181,12 @@ def compare_review_cases(root, native, vis, base, polarizations, sides):
     compare_figures(root, native, "shared-ordinates", shared_axes,
                     [list(zip(("XX", "YY"), coordinates, strict=True))], ["CorrXX,YY"], sides,
                     shared_right=right_bounds)
+
+
+def reverse_correlation_slots(vis):
+    with opened(vis / "POLARIZATION", True) as table:
+        table.putcell("CORR_TYPE", 0, table.getcell("CORR_TYPE", 0)[::-1])
+        table.putcell("CORR_PRODUCT", 0, table.getcell("CORR_PRODUCT", 0)[:, ::-1])
 
 
 def compare_averaged_ordinates(root, native):
@@ -233,6 +239,44 @@ def compare_averaged_ordinates(root, native):
     compare_text_pages(root, native, "ordinary-vector-time-correlation", time, corr)
     compare_text_pages(root, native, "ordinary-scalar-time-correlation", time | dict(scalar=True),
                        ((12, "XX", 8), (12, "YY", 4)))
+    compare_text_pages(root, native, "time-and-channel-correlation", time | dict(avgchannel="2"),
+                       ((12, "XX", 6), (12, "YY", 3)))
+    compare_time_iteration_layout(root, native, vis, time, sides)
+
+
+def compare_time_iteration_layout(root, native, vis, time, sides):
+    ordered = time | dict(field="", correlation="XX")
+    for axis, column, ceiling, metadata, labels, count, scalar in (
+        ("scan", "SCAN_NUMBER", 3, 3, ("1", "2"), 12, False),
+        ("field", "FIELD_ID", 1, 4, ("0", "1"), 8, True),
+    ):
+        reordered = root / f"time-reordered-{axis}.ms"
+        copy_ms(vis, reordered)
+        with opened(reordered, True) as table:
+            table.putcol(column, ceiling - table.getcol(column))
+        controls = ordered | dict(vis=str(reordered), iteraxis=axis, scalar=scalar)
+        panels = compare_text_pages(root, native, f"time-reordered-{axis}", controls,
+                                   tuple((metadata, label, count) for label in labels))
+        assert panels[0][:, 0].min() > panels[1][:, 0].max()
+
+    corrs = root / "time-reordered-corrs.ms"
+    copy_ms(vis, corrs)
+    reverse_correlation_slots(corrs)
+    compare_text_pages(root, native, "time-reordered-corrs", time | dict(vis=str(corrs)),
+                       ((12, "XX", 6), (12, "YY", 12)), flagged_correlation="XX")
+
+    scans = root / "time-five-scans.ms"
+    copy_ms(vis, scans)
+    with opened(scans, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        table.putcol("SCAN_NUMBER", np.minimum(1 + integration // 2, 5).astype(np.int32))
+    five = ordered | dict(vis=str(scans), iteraxis="scan", gridcols=2, xlabel="Time (MJD seconds)")
+    labels = ("1", "2", "3", "4")
+    first = compare_text_pages(root, native, "time-first-four-scans", five,
+                               tuple((3, label, 4) for label in labels))
+    last = compare_text_pages(root, native, "time-fifth-scan", five | dict(scan="5"), ((3, "5", 8),))
+    compare_figures(root, native, "time-five-scans", five, [list(zip(labels, first, strict=True)), [("5", last[0])]],
+                    ["Scan1,2,3,4", "Scan5_2"], sides)
 
 
 def main():
