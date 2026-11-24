@@ -233,7 +233,31 @@ def check_analytic(root, tasks, consumers):
                 compare_product(products['casa'] / key, fresh / key)
     check_errors(root, vis, antab, tasks)
     check_consumers(root, products, consumers)
+    check_bulk_time_edits(root, vis, antab, tasks)
     check_review_cases(root, vis, antab, tasks, products)
+
+
+def check_bulk_time_edits(root, vis, antab, tasks):
+    products = imports(root, 'before-time-edits', tasks, dict.fromkeys(tasks, vis), antab)
+    edited_gains = {}
+    for engine, product in products.items():
+        for subtable in ('GAIN_CURVE', 'SYSCAL'):
+            with opened(product / subtable, True) as table:
+                times = table.getcol('TIME')
+                times[-2:] = -1
+                table.putcol('TIME', times)
+            with opened(product / subtable) as table:
+                np.testing.assert_array_equal(table.getcol('TIME'), times,
+                                              err_msg=f'{engine} {subtable} bulk TIME edit')
+            if subtable == 'GAIN_CURVE':
+                edited_gains[engine] = times
+
+    repeated = imports(root, 'after-time-edits', tasks, products, antab, append_tsys=False)
+    compare_subtables(repeated)
+    for engine, product in repeated.items():
+        with opened(product / 'GAIN_CURVE') as table:
+            assert table.nrows() == 6
+            np.testing.assert_array_equal(table.getcol('TIME')[:4], edited_gains[engine])
 
 
 def check_errors(root, vis, antab, tasks):
