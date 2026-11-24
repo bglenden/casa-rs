@@ -24,6 +24,13 @@ pub(super) struct SelectionState {
 }
 
 impl SelectionState {
+    pub(super) fn use_implicit_selection(&mut self) {
+        self.indices.scan.clear();
+        self.indices.observation.clear();
+        self.indices.state.clear();
+        self.error = None;
+    }
+
     fn record(&self) -> PyResult<CasaValue> {
         match &self.error {
             None => Ok(index_record(&self.indices, true)),

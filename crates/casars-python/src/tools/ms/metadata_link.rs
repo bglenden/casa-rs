@@ -313,6 +313,7 @@ impl PyMsTool {
             if let Some(ms) = attached.as_mut() {
                 ms.set_selected_rows(None)?;
                 ms.selection_state = super::selection_indices::SelectionState::default();
+                ms.visibility_initialized = false;
             }
             Ok(true)
         })

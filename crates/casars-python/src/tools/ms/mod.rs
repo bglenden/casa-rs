@@ -5,11 +5,13 @@
 
 mod attachment_info;
 pub(super) mod metadata_link;
+mod owned_record;
 mod selection_indices;
 mod statwt;
 mod stubs;
 mod subtable_queries;
 pub(crate) mod surface;
+mod visibility;
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,6 +55,7 @@ struct AttachedMs {
     sources: Vec<PathBuf>,
     selected_rows: Option<Arc<[usize]>>,
     selection_state: selection_indices::SelectionState,
+    visibility_initialized: bool,
     metadata: OnceLock<Arc<metadata_link::MetadataLink>>,
     write_locks: BTreeMap<PathBuf, TableWriteLock>,
     read_locks: BTreeMap<PathBuf, Table>,
@@ -84,6 +87,7 @@ impl AttachedMs {
             sources,
             selected_rows: None,
             selection_state: selection_indices::SelectionState::default(),
+            visibility_initialized: false,
             metadata: OnceLock::new(),
             write_locks: BTreeMap::new(),
             read_locks: BTreeMap::new(),
