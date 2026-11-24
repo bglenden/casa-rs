@@ -40,7 +40,7 @@
       "persistence_class": "profile"
     },
     {
-      "id": "ephemeris.time_range",
+      "id": "solar_system.ephemeris.time_range",
       "semantic_revision": 1,
       "casa_name": "timerange",
       "value_domain": {
@@ -78,7 +78,7 @@
       "persistence_class": "profile"
     },
     {
-      "id": "ephemeris.output_table",
+      "id": "solar_system.ephemeris.output_table",
       "semantic_revision": 1,
       "casa_name": "outfile",
       "value_domain": {

@@ -1997,9 +1997,9 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 |---|---|---|---|---|---|
 | <code>objectname</code> | <code>ephemeris.object_name@r1</code> | <code>string</code> | <code>""</code>; optional | Input | Name or Horizons designation of the target. |
 | <code>asis</code> | <code>ephemeris.as_is@r1</code> | <code>bool</code> | <code>false</code>; optional | Input | Pass the supplied designation directly to Horizons. |
-| <code>timerange</code> | <code>ephemeris.time_range@r1</code> | <code>string</code> | <code>""</code>; optional | Input | Start and stop times separated by a tilde, in calendar, JD or MJD form. |
+| <code>timerange</code> | <code>solar_system.ephemeris.time_range@r1</code> | <code>string</code> | <code>""</code>; optional | Input | Start and stop times separated by a tilde, in calendar, JD or MJD form. |
 | <code>interval</code> | <code>ephemeris.interval@r1</code> | <code>string</code> | <code>"5m"</code>; optional | Input | Integer sample count or integer duration with a Horizons unit. |
-| <code>outfile</code> | <code>ephemeris.output_table@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Output | Write the MeasComet ephemeris table at this path. |
+| <code>outfile</code> | <code>solar_system.ephemeris.output_table@r1</code> | <code>path (table)</code> | <code>""</code>; optional | Output | Write the MeasComet ephemeris table at this path. |
 | <code>rawdatafile</code> | <code>ephemeris.raw_output@r1</code> | <code>path (file)</code> | <code>""</code>; optional | Output | Optionally write the original Horizons response text. |
 | <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
 
