@@ -659,8 +659,8 @@ def compare_combined_scalar_stored_columns(root, native, fixtures, start):
                                    rtol=0, atol=.00051 if x is None else 1e-7)
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == 4
-        if x is None:
-            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers if x is None else x * 2,
+                                   rtol=0, atol=.00051 if x is None else 1e-7)
         print(f"{name}: 4 matching stored visibility coordinates after channel and scalar time averaging", flush=True)
 
     controls = base | dict(xaxis="time", xdatacolumn="", yaxis=["amp", "real"],
