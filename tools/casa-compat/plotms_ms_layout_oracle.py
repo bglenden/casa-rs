@@ -122,6 +122,13 @@ def compare_offset_scan_pages(root, native, vis, base, scan_count=4):
         expected = 1 + index if scan % 2 else 10 - index
         np.testing.assert_array_equal(expected_coords[scan][:, 1], expected)
 
+    expected, actual = (root / f"unshifted-current.{engine}.txt" for engine in ("casa", "native"))
+    unshifted = controls | dict(colindex=0, exprange="current", expformat="txt")
+    assert reference(**unshifted, plotfile=str(expected)) is None
+    assert [point[3] for point in rows(expected)] == ["1"] * samples_per_scan + ["2"] * samples_per_scan
+    assert native(**unshifted, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2 * samples_per_scan
+
     pages = (
         ("_Scan1", ((1, (0, 1)),)),
         ("_Scan2,3_2", ((2, (0, 0)), (3, (0, 1)))),

@@ -69,7 +69,8 @@ pub(super) fn write_export(
         MsPlotPayload::ScatterGrid(grid) => {
             let axis = super::plotms_figure::iteration_name(grid.iteraxis);
             writeln!(writer, "# iteraxis: {axis}").map_err(io)?;
-            let capacity = grid.gridrows.saturating_mul(grid.gridcols);
+            let [rows, columns] = super::plotms_figure::requested_grid(task)?;
+            let capacity = (rows as usize).saturating_mul(columns as usize);
             for (panel, plot) in grid.panels.iter().take(capacity).enumerate() {
                 if panel == 0 {
                     writeln!(writer, "# From plot {index}").map_err(io)?;
