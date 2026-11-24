@@ -2000,16 +2000,16 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `xsharedaxis` | `False` | `False`; `xsharedaxis` → `xsharedaxis` | Partial | Iterated plots on a grid share a common external x-axis per column. Must also set xselfscale=True and gridrows>1. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `ysharedaxis` | `False` | `False`; `ysharedaxis` → `ysharedaxis` | Partial | Iterated plots on a grid share a common external y-axis per row. Must also set yselfscale=True and gridcols>1. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `customsymbol` | `[]` | `[]`; `customsymbol` → `customsymbol` | Partial | Enable custom symbol(s) for unflagged points [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
-| `symbolshape` | `'autoscaling'` | `'autoscaling'`; `symbolshape` → `symbolshape` | Partial | Shape of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `symbolshape` | `'autoscaling'` | `'autoscaling'`; `symbolshape` → `symbolshape` | Partial | Shape of plotted unflagged symbols Use nosymbol to hide clear points on a supported raw visibility pair. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols) |
 | `symbolsize` | `2` | `2`; `symbolsize` → `symbolsize` | Partial | Size of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `symbolcolor` | `'0000ff'` | `'0000ff'`; `symbolcolor` → `symbolcolor` | Partial | Color (name or hex code) of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `symbolfill` | `'fill'` | `'fill'`; `symbolfill` → `symbolfill` | Partial | Fill type of plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `symboloutline` | `False` | `False`; `symboloutline` → `symboloutline` | Partial | Outline plotted unflagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `coloraxis` | `''` | `''`; `coloraxis` → `coloraxis` | Partial | Selects data axis for colorizing [presentation](#plotms-behavior-presentation)<br>Catalog domain: `baseline`, `Antenna1`, `Baseline`, `ant1`, `corr`, `observation`, `Intent`, `antpos`, `Observation`, `Poln`, `Channel`, `AntPos`, `Scan`, `polarization`, `intent`, `channel`, `correlation`, `Time`, `antenna2`, `Antenna2`, `spw`, `chan`, `Field`, `poln`, `ant2`, `Corr`, ``, `antenna1`, `time`, `field`, `Spw`, `scan` | [paired](#plotms-evidence-paired) |
-| `customflaggedsymbol` | `False` | `False`; `customflaggedsymbol` → `customflaggedsymbol` | Partial | Enable custom symbols for flagged calibration solutions. Visible flagged points with independent stored MeasurementSet columns are refused under #1032. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
-| `flaggedsymbolshape` | `'circle'` | `'circle'`; `flaggedsymbolshape` → `flaggedsymbolshape` | Partial | Shape of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
-| `flaggedsymbolsize` | `2` | `2`; `flaggedsymbolsize` → `flaggedsymbolsize` | Partial | Size of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
-| `flaggedsymbolcolor` | `'ff0000'` | `'ff0000'`; `flaggedsymbolcolor` → `flaggedsymbolcolor` | Partial | Color (name or hex code) of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
+| `customflaggedsymbol` | `False` | `False`; `customflaggedsymbol` → `customflaggedsymbol` | Partial | Enable custom symbols for flagged calibration solutions and a single unaveraged MeasurementSet pair of observed or corrected visibility axes. Raw pairs use the selected visibility cube independently of the row flag. Other MeasurementSet flag combinations remain open under #1032. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols) |
+| `flaggedsymbolshape` | `'circle'` | `'circle'`; `flaggedsymbolshape` → `flaggedsymbolshape` | Partial | Shape of plotted flagged symbols Use nosymbol to hide flagged points on a supported raw visibility pair. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols) |
+| `flaggedsymbolsize` | `2` | `2`; `flaggedsymbolsize` → `flaggedsymbolsize` | Partial | Size of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols) |
+| `flaggedsymbolcolor` | `'ff0000'` | `'ff0000'`; `flaggedsymbolcolor` → `flaggedsymbolcolor` | Partial | Color (name or hex code) of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols) |
 | `flaggedsymbolfill` | `'fill'` | `'fill'`; `flaggedsymbolfill` → `flaggedsymbolfill` | Partial | Fill type of plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `flaggedsymboloutline` | `False` | `False`; `flaggedsymboloutline` → `flaggedsymboloutline` | Partial | Outline plotted flagged symbols [presentation](#plotms-behavior-presentation)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired) |
 | `xconnector` | `''` | `''`; `xconnector` → `xconnector` | Partial | Set connector for data points (blank="none"; "line","step") [presentation](#plotms-behavior-presentation)<br>Catalog domain: ``, `none`, `line`, `step` | [paired](#plotms-evidence-paired) |
@@ -2033,7 +2033,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `legendposition` | `''` | `''`; `legendposition` → `legendposition` | Partial | Legend position, default upperRight. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `exteriorRight`, `lowerRight`, `exteriorTop`, `exteriorLeft`, `lowerLeft`, `upperRight`, `upperLeft`, `exteriorBottom`, `` | [paired](#plotms-evidence-paired) |
 | `plotfile` | `''` | `''`; `plotfile` → `plotfile` | Partial | Name of plot file to save automatically [export](#plotms-behavior-export)<br>Catalog domain: `path` (file) | [paired](#plotms-evidence-paired) |
 | `expformat` | `''` | `''`; `expformat` → `expformat` | Partial | Export format type. If not provided, plotfile extension will be used to determine type. [export](#plotms-behavior-export)<br>Catalog domain: `pdf`, `jpg`, `png`, `txt`, `ps`, `` | [paired](#plotms-evidence-paired) |
-| `verbose` | `True` | `True`; `verbose` → `verbose` | Implemented | Include metadata in text export [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `verbose` | `True` | `True`; `verbose` → `verbose` | Implemented | Include metadata in text export [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols) |
 | `exprange` | `''` | `''`; `exprange` → `exprange` | Implemented | Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. [pages](#plotms-behavior-pages)<br>Catalog domain: ``, `current`, `all` | [paired](#plotms-evidence-paired) |
 | `highres` | `False` | `False`; `highres` → `highres` | Partial | Use high resolution [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `dpi` | `-1` | `-1`; `dpi` → `dpi` | Partial | DPI of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
@@ -2099,20 +2099,20 @@ Evidence: [paired](#plotms-evidence-paired).
 <a id="plotms-behavior-presentation"></a>
 ##### Render the shared plot document
 
-**Partial** — Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing.
+**Partial** — Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs.
 
 Renderer-specific marker fill patterns and interactive editing remain open.
 
-Evidence: [paired](#plotms-evidence-paired), [calibration-controls](#plotms-evidence-calibration-controls).
+Evidence: [paired](#plotms-evidence-paired), [calibration-controls](#plotms-evidence-calibration-controls), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols).
 
 <a id="plotms-behavior-export"></a>
 ##### Save and publish selected plot products
 
-**Partial** — Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export ordinary MeasurementSet visibility coordinates and independent stored visibility columns as text and figures. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.
+**Partial** — Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export ordinary MeasurementSet visibility coordinates and independent stored visibility columns as text and figures. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves. Write a successful empty text section and figure for fully hidden raw visibility pairs.
 
 More export, multi-plot state and interactive display forms remain open.
 
-Evidence: [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-ordinary-visibility](#plotms-evidence-ms-ordinary-visibility), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration).
+Evidence: [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-ordinary-visibility](#plotms-evidence-ms-ordinary-visibility), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols).
 
 <a id="plotms-behavior-advanced"></a>
 ##### Advanced calibration plotting controls
@@ -2507,6 +2507,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `ee3e0b7c2ed8d215d7f95dcb6e368cf96dc2e39d`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-metadata-pair-masks-20261124.json`.
+
+<a id="plotms-evidence-ms-raw-flag-symbols"></a>
+##### ms-raw-flag-symbols
+
+**Same-input raw MeasurementSet cube flags and markers — passed.** Nine paired text exports match 132 coordinates and two empty sections. The cases check independent FLAG_ROW, hidden and shown flagged symbols, a flagged-only plot, a one-element style list, two selected correlations and reversed integrations. Four 500 by 360 pixel PNGs match 84 drawn coordinates, including separate flagged diamonds and their requested color, unchanged clear-sample order and an empty plot. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged MeasurementSet observed and corrected visibility pairs with selected cube flags.
+
+- [https://github.com/bglenden/casa-rs/pull/2196](https://github.com/bglenden/casa-rs/pull/2196)
+- Revision: `c105ccd1b89dd98f4da4e562bfeaf7b23aafc6cb`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-raw-flag-symbols-20261124.json`.
 
 ### plotweather
 
