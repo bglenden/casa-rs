@@ -100,8 +100,9 @@ def compare_overlay_refusals(root, native, controls, sources):
     )
     for vis, (category, message) in zip(sources, errors, strict=True):
         output = root / f"{vis.stem}-overlay.native.txt"
+        options = controls | dict(vis=str(vis), showatm=True, expformat="txt", plotfile=str(output))
         try:
-            native(**(controls | dict(vis=str(vis), showatm=True, expformat="txt", plotfile=str(output))))
+            native(**options)
         except category as error:
             assert message in str(error), error
         else:
@@ -119,7 +120,8 @@ def compare_varying_fourier_expression(root, native):
     operands = []
     for column in ("corrected", "model"):
         output = root / f"{column}-operand.casa.txt"
-        assert reference(**samples, xdatacolumn=column, ydatacolumn=column, plotfile=str(output)) is None
+        raw = samples | dict(xdatacolumn=column, ydatacolumn=column)
+        assert reference(**raw, plotfile=str(output)) is None
         operands.append(np.array([point[:2] for point in rows(output)], dtype=float).reshape(3, 2, 2))
     corrected, model = operands
     average = np.average(corrected - model, weights=[1, 9], axis=1)
