@@ -1980,25 +1980,32 @@ def _execute_task(
         environment.pop("CASARS_BANDPASS_COMPLETED_PAGES", None)
         if bandpass_completed_pages is not None:
             environment["CASARS_BANDPASS_COMPLETED_PAGES"] = str(bandpass_completed_pages)
+    table_write = None
+    if task == "clearcal" and (vis := resolved.get("vis")):
+        table_write = _native().prepare_task_table_write(workspace / vis[0])
     try:
-        # The task runs in its own session, so a terminal's Ctrl-C reaches
-        # Python alone, which passes it on once, in a terminal as in a
-        # notebook: a second interrupt ends the imager at once.
-        process = subprocess.Popen(
-            command,
-            cwd=workspace,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            start_new_session=True,
-            env=environment,
-        )
-    except OSError as error:
-        raise TaskInvocationError(f"cannot start {task} ({command[0]}): {error}") from error
-    stdout, stderr = _communicate(process, invocation.stdin or "")
+        try:
+            # The task runs in its own session, so a terminal's Ctrl-C reaches
+            # Python alone, which passes it on once, in a terminal as in a
+            # notebook: a second interrupt ends the imager at once.
+            process = subprocess.Popen(
+                command,
+                cwd=workspace,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                start_new_session=True,
+                env=environment,
+            )
+        except OSError as error:
+            raise TaskInvocationError(f"cannot start {task} ({command[0]}): {error}") from error
+        stdout, stderr = _communicate(process, invocation.stdin or "")
+    finally:
+        if table_write is not None:
+            table_write.release()
 
     if payload is not None:
         try:

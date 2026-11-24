@@ -18,7 +18,31 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, TryLockError, Weak};
 
-use super::state::State;
+use super::state::{Fail, State};
+
+/// Yield a named table's automatic locks before the Python caller waits for
+/// its task provider subprocess to write the table.
+#[cfg(unix)]
+pub(crate) fn prepare_provider_write(
+    targets: &[PathBuf],
+) -> Result<Vec<casa_tables::DelegatedTableWrite>, Fail> {
+    let mut result = Ok(());
+    for_each_other(u64::MAX, |state| {
+        if result.is_ok()
+            && let Some(state) = state
+        {
+            result = state.relinquish_auto_lock(Some(targets));
+        }
+    });
+    result?;
+    targets
+        .iter()
+        .map(|path| {
+            casa_tables::DelegatedTableWrite::acquire(path)
+                .map_err(|error| Fail::Runtime(format!("{}: {error}", path.display())))
+        })
+        .collect()
+}
 
 /// Every tool made in this process that is still alive, with its
 /// `State::id`.
