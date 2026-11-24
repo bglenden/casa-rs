@@ -56,10 +56,9 @@ pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
                 && spec.y_axis().uses_uvw_metres()))
 }
 
-pub(super) fn uses_scalar_time_average(spec: &MsPlotSpec) -> bool {
+pub(super) fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.scalar
-        && spec.averaging.avgtime.is_some()
-        && !spec.averaging.avgbaseline
+        && (spec.averaging.avgtime.is_some() || spec.averaging.avgbaseline)
         && !spec.averaging.avgantenna
         && !spec.averaging.avgspw
         && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
@@ -226,7 +225,7 @@ pub(super) fn weight_kinds(
     };
     PlotMsWeightKinds {
         axes: columns.map(kind),
-        model: (input.time_derived || uses_channel_derived(spec, input.x_data_column))
+        model: (input.extended_derived || uses_channel_derived(spec, input.x_data_column))
             .then(|| kind(MsDataColumn::Model)),
         primary: kind(primary),
         row_weight: if has_corrected {

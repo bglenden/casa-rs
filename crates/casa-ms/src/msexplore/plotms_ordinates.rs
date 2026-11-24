@@ -68,7 +68,7 @@ impl<'a> VisibilityColumns<'a> {
             sources,
             axes,
             project_after_average: spec.averaging.avgchannel.is_some_and(|width| width > 1)
-                || input.is_some_and(|input| input.time_derived),
+                || input.is_some_and(|input| input.extended_derived),
         })
     }
 
@@ -438,7 +438,7 @@ impl TimeProjection {
         self.project_operands(axis, means)
     }
 
-    fn project_scalar_time(&self, axis: MsAxis) -> Option<f64> {
+    fn project_scalar(&self, axis: MsAxis) -> Option<f64> {
         use VisibilityColumnProjection::{
             ScalarRatio, ScalarResidual, VectorRatio, VectorResidual,
         };
@@ -627,7 +627,7 @@ impl AveragedVisibility {
     }
 
     /// The CASA scalar reducer stores amplitude and phase as separate components.
-    pub(super) fn add_scalar_time(&mut self, samples: VisibilityBinSamples<'_>, weight: f64) {
+    pub(super) fn add_scalar(&mut self, samples: VisibilityBinSamples<'_>, weight: f64) {
         let (values, weights) = self.weighted_mut();
         values.extend(
             samples
@@ -638,7 +638,7 @@ impl AveragedVisibility {
         weights.resize(values.len(), weight);
     }
 
-    pub(super) fn add_scalar_time_sample(
+    pub(super) fn add_scalar_sample(
         &mut self,
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
@@ -676,9 +676,9 @@ impl AveragedVisibility {
         true
     }
 
-    pub(super) fn project_scalar_time(&self, axis: MsAxis) -> Option<f64> {
+    pub(super) fn project_scalar(&self, axis: MsAxis) -> Option<f64> {
         if let VisibilitySamples::TimeProjection(average) = &self.0 {
-            return average.project_scalar_time(axis);
+            return average.project_scalar(axis);
         }
         let mean = self.vector_mean()?;
         match axis {
@@ -821,7 +821,7 @@ impl ScalarSpanPlan {
         descriptions: &MsDataDescription<'_>,
         averaging: &MsAverageSpec,
     ) -> Result<Self, String> {
-        let interval = averaging.avgtime.expect("scalar time interval");
+        let interval = averaging.avgtime.unwrap_or(0.0);
         let mut row_groups = Vec::with_capacity(columns.times.len());
         let mut metadata = Vec::<ScalarSpanMetadata>::new();
         let mut groups = BaselineIntegrationGroups::default();
@@ -877,11 +877,11 @@ impl ScalarSpanPlan {
 }
 
 #[derive(Default)]
-pub(super) struct ScalarTimeShapes {
+pub(super) struct ScalarAverageShapes {
     previous: Option<(usize, usize, usize)>,
 }
 
-impl ScalarTimeShapes {
+impl ScalarAverageShapes {
     pub(super) fn check_shape(
         &mut self,
         group: usize,
