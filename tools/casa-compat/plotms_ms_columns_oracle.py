@@ -121,9 +121,13 @@ def compare_raw_flag_symbols(root, vis, native):
     marked = base | dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
                          flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
                          flaggedsymbolfill="fill", flaggedsymboloutline=False)
+    marked_list = marked | dict(customflaggedsymbol=[True], flaggedsymbolshape=["diamond"],
+                                flaggedsymbolcolor=[marker_color], flaggedsymbolsize=[4])
     for name, controls, count, channels in (
         ("hidden-flags", base, 12, {"1", "3"}),
         ("visible-flags", marked, 18, {"1", "2", "3"}),
+        ("no-flag-marker", marked | dict(flaggedsymbolshape="nosymbol"), 12, {"1", "3"}),
+        ("list-flag-marker", marked_list, 18, {"1", "2", "3"}),
     ):
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected), expformat="txt") is None
@@ -146,7 +150,7 @@ def compare_raw_flag_symbols(root, vis, native):
         )
         captured.extend(axis.lines)
 
-    figure = marked | dict(width=500, height=360, dpi=100, expformat="png")
+    figure = marked_list | dict(width=500, height=360, dpi=100, expformat="png")
     expected, actual = (root / f"visible-flags.{engine}.png" for engine in ("casa", "native"))
     assert reference(**figure, plotfile=str(expected)) is None
     with patch.object(_plotms_plot, "configure", record):
@@ -155,7 +159,7 @@ def compare_raw_flag_symbols(root, vis, native):
     assert len(ordinary.get_xydata()) == 12 and len(flagged.get_xydata()) == 6
     assert flagged.get_marker() == "D" and flagged.get_markersize() == 4
     assert to_rgba(flagged.get_markerfacecolor()) == to_rgba(f"#{marker_color}")
-    points = rows(root / "visible-flags.casa.txt")
+    points = rows(root / "list-flag-marker.casa.txt")
     for artist, masked in ((ordinary, False), (flagged, True)):
         coordinates = np.array([point[:2] for point in points if (point[2] == "2") == masked], dtype=float)
         np.testing.assert_allclose(artist.get_xydata(), coordinates, rtol=1.2e-5, atol=1e-7)

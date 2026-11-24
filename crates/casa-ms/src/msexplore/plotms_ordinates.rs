@@ -178,6 +178,7 @@ impl BinBuffer {
         weight: Option<&FloatGrid>,
         corr: usize,
         bin: &ChannelBin,
+        show_flagged: bool,
     ) {
         self.weights.clear();
         collect_bin_samples_into(
@@ -185,6 +186,7 @@ impl BinBuffer {
             flags,
             corr,
             bin,
+            show_flagged,
             weight.map(|spectrum| (spectrum, &mut self.weights)),
             &mut self.values,
         );

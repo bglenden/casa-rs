@@ -54,6 +54,18 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
+    pub(super) fn supports_raw_flagged_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
+        self.x_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis2.is_none()
+            && !self.plotms_averaging_active()
+            && self.iteraxis.is_none()
+            && self.color_by == MsColorAxis::None
+            && columns[..2]
+                .iter()
+                .all(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
+    }
+
     pub(super) fn plotms_independent_average(&self) -> bool {
         let transforms_frequency =
             self.x_axis == Some(MsAxis::Frequency) && self.freqframe.is_some();
@@ -86,6 +98,15 @@ impl CliOptions {
             || self.avgantenna
             || self.avgspw
     }
+}
+
+pub(super) fn shows_raw_flagged_symbols(task: &TaskInvocation<'_>) -> bool {
+    let shape = match task.value("flaggedsymbolshape") {
+        Some(ParameterValue::Array(values)) => values.first(),
+        other => other,
+    };
+    calibration::figure::shows_flagged(task.value("customflaggedsymbol"), 0)
+        && !matches!(shape, Some(ParameterValue::String(value)) if value == "nosymbol")
 }
 
 fn right_ordinates(task: &TaskInvocation<'_>) -> Result<Vec<bool>, TaskFailure> {

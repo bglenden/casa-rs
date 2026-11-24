@@ -335,7 +335,11 @@ impl PanelStyle {
                         .map(|v| v / y_scale),
                 )
                 .map_err(write_failure)?;
-            layer.id = format!("{index}-visibility-{panel}");
+            layer.id = if layer.color_group == "flagged" {
+                format!("0-flagged-visibility-{panel}-{index}")
+            } else {
+                format!("{index}-visibility-{panel}")
+            };
             layer.data = Some(PlotLayerData::Points { x, y });
             layer.payload_strategy = PlotPayloadStrategy::BinaryArrays;
             layer.style = Some(PlotLayerStyle {
