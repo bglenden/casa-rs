@@ -19,6 +19,7 @@ from plotms_ms_columns_oracle import (
     compare_ordinate_figure,
     compare_text,
     copy_ms,
+    make_cal_ms,
     opened,
     plotms_launcher,
     reference,
@@ -371,6 +372,157 @@ def compare_empty_scalar_baselines(root, native, source, controls):
                          ("Amp", "Phase:corrected (degrees)"))
 
 
+def compare_antenna_averaged_export(root, native):
+    source = root / "antenna-averages.ms"
+    make_cal_ms(str(source), stokes="XX XY YX YY")
+    casa.clearcal(str(source), addmodel=True)
+    with opened(source, True) as table:
+        shape = table.getcol("DATA").shape
+        corr = np.arange(shape[0])[:, None, None]
+        observed = 1 + 2 * corr + 1j * (4 + corr)
+        corrected = 10 + 3 * corr + 1j * (14 + 2 * corr)
+        for name, values in (("DATA", observed), ("CORRECTED_DATA", corrected)):
+            table.putcol(name, np.broadcast_to(values.astype(np.complex64), shape).copy())
+        table.putcol("FLAG", np.zeros(shape, dtype=bool))
+        table.putcol("FLAG_ROW", np.zeros(shape[2], dtype=bool))
+        start = table.getcol("TIME").min()
+    base = request(source) | dict(
+        avgantenna=True, spw="0:1", msselect=f"TIME < {start + 1:.3f}",
+        xaxis="real", yaxis="imag", title="Per-antenna visibility averages",
+    )
+    names = ("XX", "XY", "YX", "YY")
+    for name, correlation, slots, scalar in (
+        ("cross-hands", "XY,YX", (1, 2), False),
+        ("parallel-hands", "XX,YY", (0, 3), False),
+        ("all-correlations", "", tuple(range(4)), False),
+        ("scalar-correlations", "", tuple(range(4)), True),
+        ("selected-cross-hand", "XY", (1,), False),
+    ):
+        controls = base | dict(correlation=correlation)
+        if scalar:
+            controls |= dict(xaxis="amp", yaxis="phase", scalar=True)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [tuple(point[5:9]) + (point[12],) for point in selected] == [
+            (str(antenna), "-1", f"A{antenna}@P{antenna}", "*", names[slot])
+            for antenna in (0, 1) for slot in slots
+        ]
+        x_values = [abs(complex(1 + 2 * slot, 4 + slot)) if scalar else 1 + 2 * slot for slot in slots]
+        y_values = [np.degrees(np.arctan2(14 + 2 * slot, 10 + 3 * slot)) if scalar else 14 + 2 * slot
+                    for slot in slots]
+        coordinates = [(x, direction * y) for direction in (1, -1)
+                       for x, y in zip(x_values, y_values, strict=True)]
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], start, rtol=0, atol=.00051)
+        assert {(point[2], point[10]) for point in selected} == {("1", "100.001000000")}
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        print(f"{name}: {len(coordinates)} matching per-antenna visibility coordinates", flush=True)
+        if scalar:
+            compare_figure(root, native, controls, expected,
+                           (base["title"], "Amp", "Phase:corrected (degrees)"))
+
+    compare_antenna_ordinate_order(root, native, base)
+    compare_weighted_antenna_exports(root, native, source, start, base)
+    compare_antenna_flagged_integration(root, native, source, start, base)
+
+
+def compare_antenna_ordinate_order(root, native, base):
+    controls = base | dict(correlation="XY", yaxis=["phase", "amp"], ydatacolumn=["data", "data"])
+    expected, actual = (root / f"ordinate-order.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert [(point[5], point[6], point[12]) for point in selected] == [("0", "-1", "XY"), ("1", "-1", "XY")] * 2
+    phase = np.degrees(np.arctan2(5, 3))
+    amplitude = np.hypot(3, 5)
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(3, phase), (3, -phase), (3, amplitude), (3, amplitude)], rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 4
+    print("ordinate-order: 4 matching points in requested phase and amplitude order", flush=True)
+
+
+def compare_weighted_antenna_exports(root, native, source, start, base):
+    weighted = root / "weighted-antenna-averages.ms"
+    copy_ms(source, weighted)
+    with opened(weighted, True) as table:
+        shape = table.getcol("DATA").shape
+        distant = table.getcol("ANTENNA2") == 2
+        for column in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(column)
+            values[:, :, distant] *= 2j
+            table.putcol(column, values)
+        descriptor = table.getcoldesc("DATA")
+        weights = np.where(distant, 3, 1)
+        for column, values in (("WEIGHT_SPECTRUM", weights), ("SIGMA_SPECTRUM", 1 / np.sqrt(weights))):
+            table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                        dataManagerGroup=column)})
+            table.putcol(column, np.broadcast_to(values.astype(np.float32), shape).copy())
+        flags = table.getcol("FLAG")
+        flags[1, 1, distant] = True
+        table.putcol("FLAG", flags)
+    controls = base | dict(vis=str(weighted), antenna="A0&A1;A0&A2", correlation="XX,XY",
+                           spw="0:0~1", msselect=f"TIME < {start + 11:.3f}")
+    expected, actual = (root / f"weighted-ordered.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    samples = (
+        (0, 0, "XX", -5.75, 18.5), (0, 0, "XY", -6.75, 23.5),
+        (0, 1, "XX", -5.75, 18.5), (0, 1, "XY", 3, 16),
+        (1, 0, "XX", 1, -14), (1, 0, "XY", 3, -16),
+        (1, 1, "XX", 1, -14), (1, 1, "XY", 3, -16),
+        (2, 0, "XX", -8, -20), (2, 0, "XY", -10, -26), (2, 1, "XX", -8, -20),
+    )
+    assert [(point[5], point[6], point[2], point[12]) for point in selected] == [
+        (str(antenna), "-1", str(channel), correlation)
+        for antenna, channel, correlation, _, _ in samples * 2
+    ]
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(x, y) for _, _, _, x, y in samples * 2], rtol=1.2e-5)
+    np.testing.assert_allclose([float(point[9]) for point in selected],
+                               [start] * len(samples) + [start + 10] * len(samples), rtol=0, atol=.00051)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 2 * len(samples)
+    print("weighted-ordered: 22 matching points in integration, antenna, channel and correlation order", flush=True)
+
+
+def compare_antenna_flagged_integration(root, native, source, start, base):
+    separated = root / "flagged-integration.ms"
+    copy_ms(source, separated)
+    with opened(separated, True) as table:
+        times = table.getcol("TIME")
+        _, integration = np.unique(times, return_inverse=True)
+        flagged = integration == 1
+        late_array = integration == 2
+        times[late_array] = start
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+        arrays = table.getcol("ARRAY_ID")
+        arrays[late_array] = 1
+        table.putcol("ARRAY_ID", arrays)
+        flags = table.getcol("FLAG")
+        flags[:, :, flagged] = True
+        table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", flagged)
+        for column in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(column)
+            values[:, :, late_array] *= 3
+            table.putcol(column, values)
+    controls = base | dict(vis=str(separated), correlation="XX", msselect=f"TIME < {start + 11:.3f}")
+    expected, actual = (root / f"flagged-integration.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert [(point[5], point[6], point[12]) for point in selected] == [("0", "-1", "XX"), ("1", "-1", "XX")] * 2
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(1, 14), (1, -14), (3, 42), (3, -42)], rtol=1.2e-5)
+    np.testing.assert_allclose([float(point[9]) for point in selected], start, rtol=0, atol=.00051)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 4
+    print("flagged-integration: 4 matching points in the separate visible integrations", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -393,6 +545,9 @@ def main():
         scalar = root / "scalar-baselines"
         scalar.mkdir()
         compare_scalar_baselines(scalar, native)
+        antennas = root / "antenna-averages"
+        antennas.mkdir()
+        compare_antenna_averaged_export(antennas, native)
 
 
 if __name__ == "__main__":

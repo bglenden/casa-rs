@@ -2233,8 +2233,17 @@ pub struct MsScatterSeries {
     pub provenance: Vec<MsScatterPointRef>,
     /// Display metadata for PlotMS points, when available.
     pub plotms_metadata: Vec<MsScatterPlotMsMetadata>,
-    /// Shared scalar-span `(scan, field)` IDs indexed by PlotMS averaging order.
-    pub plotms_averaged_scan_fields: Option<Arc<[(i32, i32)]>>,
+    /// Shared display IDs indexed by PlotMS averaging order.
+    pub plotms_averaged_ids: Option<MsScatterPlotMsAverageIds>,
+}
+
+/// MeasurementSet identifiers shared by the series of an averaged PlotMS plot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MsScatterPlotMsAverageIds {
+    /// Scan and field IDs for scalar bins spanning original scans or fields.
+    ScanAndField(Arc<[(i32, i32)]>),
+    /// Output antenna IDs for per-antenna averages.
+    Antenna(Arc<[i32]>),
 }
 
 /// Display metadata for one PlotMS export coordinate.
@@ -2492,7 +2501,7 @@ fn compact_scatter_series(
                 points,
                 provenance,
                 plotms_metadata,
-                plotms_averaged_scan_fields: entry.plotms_averaged_scan_fields,
+                plotms_averaged_ids: entry.plotms_averaged_ids,
             })
         })
         .collect();
@@ -2998,6 +3007,7 @@ fn build_uncalibrated_plotms_payload(
         .transpose()?
         .flatten();
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
+    let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
@@ -3038,7 +3048,7 @@ fn build_uncalibrated_plotms_payload(
         })
         .transpose()?;
     let (row_order, starts_visibility_buffer) =
-        if (vector_baselines && !time_baselines) || scalar_average {
+        if (vector_baselines && !time_baselines) || scalar_average || antenna_average {
             let rows = selected
                 .selected_rows
                 .iter()
@@ -4924,7 +4934,7 @@ fn build_generic_visibility_scatter(
                                 points: Vec::new(),
                                 provenance: Vec::new(),
                                 plotms_metadata: Vec::new(),
-                                plotms_averaged_scan_fields: None,
+                                plotms_averaged_ids: None,
                             });
                     let push_started = timing_enabled.then(Instant::now);
                     series.points.push((x_value, y_value));
@@ -5348,6 +5358,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let weighted_time_uvw = time_bins.is_some() && plotms_columns::uses_weighted_time_uvw(spec);
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
     let scalar_average = uncalibrated && plotms_columns::uses_scalar_visibility_average(spec);
+    let antenna_average = uncalibrated && plotms_columns::uses_antenna_visibility_average(spec);
     let collapse_baselines = (plotms_columns::uses_vector_baseline_average(spec)
         || (scalar_average && spec.averaging.avgbaseline))
         && uncalibrated;
@@ -5388,7 +5399,7 @@ fn build_generic_visibility_scatter_with_averaging(
         selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
     let selected_field_ids = selected_i32_values(ms.main_table(), "FIELD_ID", &row_numbers)?;
     let selected_scan_numbers = selected_i32_values(ms.main_table(), "SCAN_NUMBER", &row_numbers)?;
-    let selected_observations = (collapse_baselines || scalar_average)
+    let selected_observations = (collapse_baselines || scalar_average || antenna_average)
         .then(|| selected_i32_values(ms.main_table(), "OBSERVATION_ID", &row_numbers))
         .transpose()?;
     let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
@@ -5563,7 +5574,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut time_uvws = weighted_time_uvw.then(HashMap::<usize, TimeUvwAverage>::new);
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
-    let mut scalar_rows = std::collections::BTreeSet::new();
+    let mut averaged_rows = std::collections::BTreeSet::new();
     let mut scalar_shapes = plotms_ordinates::ScalarAverageShapes::default();
     let mut time_baseline_stats =
         time_baselines.then(plotms_time_baselines::TimeBaselineStatistics::default);
@@ -5576,12 +5587,12 @@ fn build_generic_visibility_scatter_with_averaging(
             scalar_channel_buffer_first = Some(row_slot);
         }
         let flag_row_value = selected_flag_rows[row_slot];
-        if flag_row_value
+        let skip_flagged_row = flag_row_value
             && !include_row_flagged_points
             && time_bins.is_none()
             && !collapse_baselines
-            && !scalar_average
-        {
+            && !scalar_average;
+        if skip_flagged_row && !antenna_average {
             continue;
         }
 
@@ -5593,6 +5604,29 @@ fn build_generic_visibility_scatter_with_averaging(
         let spw_id = data_description
             .spectral_window_id(ddid)
             .map_err(|error| error.to_string())?;
+        let field_id_value = selected_field_ids[row_slot];
+        let scan_number_value = selected_scan_numbers[row_slot];
+        let row_time_value = selected_times[row_slot];
+        // The iterator counts a flagged integration before applying the plot mask.
+        // It can separate two visible buffers that have the same timestamp.
+        let antenna_group = selected_observations
+            .as_ref()
+            .filter(|_| antenna_average)
+            .map(|observations| {
+                baseline_groups.observe(
+                    [
+                        observations[row_slot],
+                        scan_number_value,
+                        field_id_value,
+                        spw_id,
+                    ],
+                    row_time_value,
+                    0.0,
+                )
+            });
+        if skip_flagged_row {
+            continue;
+        }
         let pol_id = data_description
             .polarization_id(ddid)
             .map_err(|error| error.to_string())?;
@@ -5735,17 +5769,14 @@ fn build_generic_visibility_scatter_with_averaging(
             &mut selected_channel_bins,
         )?;
 
-        let field_id_value = selected_field_ids[row_slot];
-        let scan_number_value = selected_scan_numbers[row_slot];
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
-        let row_time_value = selected_times[row_slot];
         let row_uvw_value = selected_uvw[row_slot];
         let (time_group, representative_slot) = time_bins.map_or((None, row_slot), |bins| {
             let group = bins.group(row_slot);
             (Some(group), bins.first_row_slot(group))
         });
-        let group = time_group.or_else(|| {
+        let group = time_group.or(antenna_group).or_else(|| {
             if let Some(spans) = &scalar_spans {
                 return spans.group(row_slot);
             }
@@ -5841,7 +5872,7 @@ fn build_generic_visibility_scatter_with_averaging(
             } else {
                 (antenna1_value, antenna2_value)
             };
-            scalar_rows.insert((group, antenna1, antenna2));
+            averaged_rows.insert((group, antenna1, antenna2));
             // The scalar reducer uses the first row's interval for each buffer.
             if calibration.is_some_and(|input| input.starts_visibility_buffer[row_slot]) {
                 let start = row_time_value - row_interval_value / 2.0;
@@ -5854,6 +5885,9 @@ fn build_generic_visibility_scatter_with_averaging(
                     })
                     .or_insert((start, end));
             }
+        }
+        if antenna_average && let Some(group) = group {
+            averaged_rows.extend([(group, antenna1_value, -1), (group, antenna2_value, -1)]);
         }
         let shared_time_scope_value = if use_shared_time_scope_midpoint {
             let shared_scope = build_shared_time_average_scope_key(
@@ -6327,16 +6361,25 @@ fn build_generic_visibility_scatter_with_averaging(
             .map(|(group, average)| (group, average.mean()))
             .collect::<HashMap<_, _>>()
     });
-    let scalar_scan_fields = scalar_spans.as_ref().map(|spans| {
-        scalar_rows
+    let averaged_ids = if let Some(spans) = &scalar_spans {
+        let ids = averaged_rows
             .iter()
             .map(|&(group, _, _)| {
                 let metadata = spans.metadata(group);
                 (metadata.scan, metadata.field)
             })
-            .collect::<Arc<[_]>>()
-    });
-    let scalar_order = scalar_rows
+            .collect();
+        Some(MsScatterPlotMsAverageIds::ScanAndField(ids))
+    } else if antenna_average {
+        let ids = averaged_rows
+            .iter()
+            .map(|&(_, antenna, _)| antenna)
+            .collect();
+        Some(MsScatterPlotMsAverageIds::Antenna(ids))
+    } else {
+        None
+    };
+    let averaged_order = averaged_rows
         .into_iter()
         .enumerate()
         .map(|(order, row)| (row, order))
@@ -6363,18 +6406,18 @@ fn build_generic_visibility_scatter_with_averaging(
                 points: Vec::new(),
                 provenance: Vec::new(),
                 plotms_metadata: Vec::new(),
-                plotms_averaged_scan_fields: scalar_scan_fields.clone(),
+                plotms_averaged_ids: averaged_ids.clone(),
             };
             let mut points = series.points.into_iter().map(|(key, point)| {
                 let group = key.time_key.group();
-                let order = group.map(|group| {
-                    if scalar_average
-                        && let AveragingBaselineToken::Baseline(antenna1, antenna2) = key.baseline
-                    {
-                        scalar_order[&(group, antenna1, antenna2)]
-                    } else {
-                        group
+                let order = group.map(|group| match key.baseline {
+                    AveragingBaselineToken::Baseline(antenna1, antenna2) if scalar_average => {
+                        averaged_order[&(group, antenna1, antenna2)]
                     }
+                    AveragingBaselineToken::Antenna(antenna) if antenna_average => {
+                        averaged_order[&(group, antenna, -1)]
+                    }
+                    _ => group,
                 });
                 (group, order, point)
             });
@@ -6473,7 +6516,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 series_entries.push(output);
             }
         }
-        if time_weight_kinds.is_some() || collapse_baselines || scalar_average {
+        if time_weight_kinds.is_some() || collapse_baselines || scalar_average || antenna_average {
             series_entries.sort_by_key(|entry| entry.y_index);
         }
         if series_entries.is_empty() && !retain_empty_panel {
@@ -8324,7 +8367,7 @@ mod tests {
             y_index: 0,
             points: points.to_vec(),
             plotms_metadata: Vec::new(),
-            plotms_averaged_scan_fields: None,
+            plotms_averaged_ids: None,
             provenance: (0..points.len())
                 .map(|offset| scatter_point_ref(row_base + offset))
                 .collect(),
@@ -9350,7 +9393,7 @@ mod tests {
             y_index: 0,
             points: (0..5).map(|index| (index as f64, index as f64)).collect(),
             plotms_metadata: Vec::new(),
-            plotms_averaged_scan_fields: None,
+            plotms_averaged_ids: None,
             provenance: (0..5)
                 .map(|index| MsScatterPointRef {
                     row: index,
@@ -9405,7 +9448,7 @@ mod tests {
                     y_index: 0,
                     points: (0..5).map(|index| (index as f64, index as f64)).collect(),
                     plotms_metadata: Vec::new(),
-                    plotms_averaged_scan_fields: None,
+                    plotms_averaged_ids: None,
                     provenance: (0..5)
                         .map(|index| MsScatterPointRef {
                             row: index,
@@ -9422,7 +9465,7 @@ mod tests {
                     y_index: 0,
                     points: (5..10).map(|index| (index as f64, index as f64)).collect(),
                     plotms_metadata: Vec::new(),
-                    plotms_averaged_scan_fields: None,
+                    plotms_averaged_ids: None,
                     provenance: (5..10)
                         .map(|index| MsScatterPointRef {
                             row: index,
