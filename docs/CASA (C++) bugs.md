@@ -11060,3 +11060,33 @@ and grew past 5 GiB of resident memory before it was stopped.
 
 casa-rs computes the root sum of squares over the row axis once and
 retains the raw array returned for the literal `avg_sigma` item (#1030).
+
+## MS baseline-axis gap metadata can terminate the process
+
+In CASA 6.7.6.14, `ms.getdata(['axis_info'], ifraxis=True, ifraxisgap=1)`
+on a view with several first-antenna groups uses the gap sentinel `-1`
+as an ANTENNA row index. The pinned CASA process aborted in a casacore
+array slice. casa-rs preserves the `-1` baseline number and puts empty
+names and a zero length at each gap. The other axis coordinates remain
+available (#1030).
+
+## MS baseline-axis singleton integrations can return invalid coordinates or hang
+
+CASA 6.7.6.14 removes the time dimension of visibility arrays when exactly
+one integration is available. Its baseline `flag_sum` still reads that
+missing extent. The pinned process did not return from the two-row
+control within 30 seconds and was terminated. The `UT` coordinate also
+reads a second integration in this case. For a 5-second integration
+its result was the absolute MJD seconds instead of seconds from midnight.
+
+casa-rs retains the singleton visibility shape, counts the flags at each
+baseline's one integration, and uses that integration to determine
+midnight for `UT` (#1030).
+
+## Duplicate MS baseline-axis fields can append spurious integrations
+
+CASA 6.7.6.14 appends a baseline/time block each time an item occurs in
+`ms.getdata(items, ifraxis=True)`. A two-integration view queried for
+`['time', 'data', 'TIME']` reports four times for two data slices. casa-rs
+uses one integration axis for each case-insensitive field name and leaves
+the attachment selection intact (#1030).

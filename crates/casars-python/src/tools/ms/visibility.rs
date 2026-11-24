@@ -103,13 +103,16 @@ impl PyMsTool {
         #[pyo3(from_py_with = strict_bool)] average: bool,
     ) -> PyResult<Py<PyAny>> {
         let items = requested_items(items)?;
-        let _ = ifraxisgap;
+        let options = tool_visibility::VisibilityReadOptions {
+            average,
+            baseline_gap: ifraxis.then_some(ifraxisgap as i32),
+        };
         let reply = py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
-            ms.getdata_rows(&items, increment, ifraxis, average)
+            ms.getdata_rows(&items, increment, options)
         })?;
         reply.into_python(py)
     }
@@ -120,8 +123,7 @@ impl AttachedMs {
         &mut self,
         items: &[String],
         increment: i64,
-        ifraxis: bool,
-        average: bool,
+        options: tool_visibility::VisibilityReadOptions,
     ) -> PyResult<CasaValue> {
         let link = self.metadata_link();
         link.verify_directory().map_err(runtime_error)?;
@@ -141,8 +143,8 @@ impl AttachedMs {
         if count == 0 {
             return Ok(CasaValue::empty_record());
         }
-        if ifraxis {
-            return not_yet_implemented_in("ms", "getdata ifraxis", super::ISSUE);
+        if options.baseline_gap.is_some() && options.average {
+            return not_yet_implemented_in("ms", "getdata ifraxis averaging", super::ISSUE);
         }
         let axis_info = items
             .iter()
@@ -175,7 +177,7 @@ impl AttachedMs {
                 &rows,
                 items,
                 Some(&snapshot.ms),
-                average,
+                options,
             )
             .map_err(runtime_error)?;
             return Ok(visibility_record(record));
@@ -196,7 +198,7 @@ impl AttachedMs {
             &rows,
             items,
             None,
-            average,
+            options,
         )
         .map_err(runtime_error)?;
         link.verify_directory().map_err(runtime_error)?;

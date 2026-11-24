@@ -14,8 +14,10 @@ use num_complex::Complex32;
 use crate::{MeasurementSet, MsError, MsResult};
 
 mod averaging;
+mod baseline_axis;
 mod concatenation;
 use averaging::RowAverage;
+use baseline_axis::BaselineGrid;
 use concatenation::{MemberRows, concatenate_arrays, concatenate_scalars, member_rows};
 
 /// Determine whether CASA's implicit initialization needs to narrow this view
@@ -58,7 +60,17 @@ pub fn heterogeneous_row_shapes(ms: &MeasurementSet) -> MsResult<Option<Vec<usiz
     Ok(None)
 }
 
-/// Read the ordinary row-axis visibility record for a logical set of rows.
+/// Layout and reduction options for a visibility record.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct VisibilityReadOptions {
+    /// Reduce visibility products across their row axis.
+    pub average: bool,
+    /// Place rows on sorted baseline and integration axes with this many gaps
+    /// between first-antenna groups. A negative gap is treated as zero.
+    pub baseline_gap: Option<i32>,
+}
+
+/// Read a visibility record for a logical set of rows.
 /// Complex and float operations retain the precision of the stored cells.
 /// With `average`, visibility products are reduced across rows using flags and
 /// the weight of each row and correlation before amplitude or phase projection.
@@ -73,8 +85,15 @@ pub fn read_tool_visibility(
     rows: &[usize],
     items: &[String],
     metadata: Option<&MeasurementSet>,
-    average: bool,
+    options: VisibilityReadOptions,
 ) -> MsResult<RecordValue> {
+    let VisibilityReadOptions {
+        average,
+        baseline_gap,
+    } = options;
+    if average && baseline_gap.is_some() {
+        return Err(input("baseline-axis averaging is not supported"));
+    }
     let mut names = items
         .iter()
         .map(|name| name.to_ascii_lowercase())
@@ -84,14 +103,36 @@ pub fn read_tool_visibility(
         // prefix, then discards it because no such product exists.
         names.remove("data_desc_id");
     }
-    let mut read = VisibilityRead::new(main, members, reference, rows, &names)?;
+    let mut read = VisibilityRead::new(
+        main,
+        members,
+        reference,
+        rows,
+        &names,
+        baseline_gap.is_some(),
+    )?;
+    let grid = baseline_gap
+        .map(|gap| BaselineGrid::new(&read.scalar_columns, gap))
+        .transpose()?;
     let mut fields = BTreeMap::new();
     if names.contains("axis_info") {
         let RequiredScalarColumnValues::Int32(ids) = &read.scalar_columns["DATA_DESC_ID"] else {
             return Err(input("DATA_DESC_ID must contain an integer"));
         };
         let ms = metadata.ok_or_else(|| input("axis_info requires MeasurementSet metadata"))?;
-        fields.insert("axis_info".into(), Value::Record(axis_info(ms, ids)?));
+        let first_row = grid.as_ref().and_then(BaselineGrid::first_row).unwrap_or(0);
+        let mut axes = axis_info(ms, ids, first_row)?;
+        if let Some(grid) = &grid {
+            grid.add_axes(ms, &names, &read.scalar_columns, &mut axes)?;
+        }
+        fields.insert("axis_info".into(), Value::Record(axes));
+    }
+    let count_baseline_flags = grid.is_some() && names.remove("flag_sum");
+    let temporary_flags = count_baseline_flags && names.insert("flag".into());
+    if let Some(grid) = &grid
+        && names.remove("ifr_number")
+    {
+        fields.insert("ifr_number".into(), Value::Array(grid.numbers()?));
     }
     read.scalars(&names, &mut fields, average)?;
     if average {
@@ -100,6 +141,9 @@ pub fn read_tool_visibility(
     } else {
         read.arrays(&names, &mut fields, false, None)?;
         read.products(&names, &mut fields, false, items)?;
+    }
+    if let Some(grid) = grid {
+        grid.remap(&mut fields, count_baseline_flags, temporary_flags)?;
     }
     Ok(RecordValue::new(
         fields
@@ -153,13 +197,20 @@ impl<'a> VisibilityRead<'a> {
         reference: Option<&'a PlainReferenceRead>,
         rows: &'a [usize],
         names: &BTreeSet<String>,
+        baseline_axis: bool,
     ) -> MsResult<Self> {
+        let time_coordinates = baseline_axis
+            && names.contains("axis_info")
+            && (names.contains("ha") || names.contains("last"));
         let mut columns = SCALARS
             .into_iter()
             .filter_map(|(name, column)| {
                 (names.contains(name)
-                    || (matches!(name, "antenna1" | "antenna2") && names.contains("ifr_number")))
-                .then_some(column)
+                    || (matches!(name, "antenna1" | "antenna2")
+                        && (baseline_axis || names.contains("ifr_number")))
+                    || (baseline_axis && name == "time")
+                    || (time_coordinates && name == "field_id"))
+                    .then_some(column)
             })
             .collect::<Vec<_>>();
         if names.contains("axis_info") && !columns.contains(&"DATA_DESC_ID") {
@@ -820,7 +871,7 @@ fn pack_cells(column: TableColumn<'_>, rows: &[usize]) -> MsResult<ArrayValue> {
     }
 }
 
-fn axis_info(ms: &MeasurementSet, ids: &[i32]) -> MsResult<RecordValue> {
+fn axis_info(ms: &MeasurementSet, ids: &[i32], first_row: usize) -> MsResult<RecordValue> {
     use casa_coordinates::StokesType;
 
     let indices = ids
@@ -828,11 +879,10 @@ fn axis_info(ms: &MeasurementSet, ids: &[i32]) -> MsResult<RecordValue> {
         .copied()
         .map(|id| usize::try_from(id).map_err(|_| input("negative DATA_DESC_ID")));
     let dd = ms.data_description()?;
-    let first = indices
-        .clone()
-        .next()
-        .transpose()?
+    let first = ids
+        .get(first_row)
         .ok_or_else(|| input("no data descriptions in selection"))?;
+    let first = usize::try_from(*first).map_err(|_| input("negative DATA_DESC_ID"))?;
     let pol_id = usize::try_from(dd.polarization_id(first)?)
         .map_err(|_| input("negative POLARIZATION_ID"))?;
     let correlations = ms
