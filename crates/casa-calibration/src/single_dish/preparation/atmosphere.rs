@@ -65,8 +65,8 @@ impl SingleDishSession {
         if crate::paths::overlap(path, output).map_err(error_text)? {
             return Err("You are attempting to write the output on your input file.".into());
         }
-        let destination = CalibrationOutput::prepare_measurement_set(output, request.overwrite)
-            .map_err(error_text)?;
+        let destination =
+            CalibrationOutput::prepare_atmosphere(output, request.overwrite).map_err(error_text)?;
         let options = self.line_averaging.operation_options()?;
         let spw = self
             .selection
@@ -174,11 +174,7 @@ impl Configuration {
             atmosphere,
             ..ProfileParameters::default()
         };
-        let threads = match number(config, "nthreads")? {
-            None => 1,
-            Some(count) if count > 0. => count as usize,
-            Some(_) => std::thread::available_parallelism().map_or(1, |n| n.get().min(8)),
-        };
+        let threads = thread_count(number(config, "nthreads")?);
         Ok(Self {
             windows,
             factors,
@@ -201,6 +197,29 @@ impl Configuration {
             water_m: self.water.unwrap_or(incoming.water_m),
         }
     }
+}
+
+fn thread_count(requested: Option<f64>) -> usize {
+    match requested {
+        None => 1,
+        Some(count) if count > 0. => count as usize,
+        Some(_) => available_cpus().min(8),
+    }
+}
+
+fn available_cpus() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        // CASA's OpenMP default counts the process's affinity mask. The
+        // standard library also applies container CPU quotas on Linux.
+        // SAFETY: the mask is zeroed and writable for the length passed in.
+        let mut mask = unsafe { std::mem::zeroed::<libc::cpu_set_t>() };
+        if unsafe { libc::sched_getaffinity(0, std::mem::size_of_val(&mask), &mut mask) } == 0 {
+            // SAFETY: sched_getaffinity initialized the mask.
+            return (unsafe { libc::CPU_COUNT(&mask) } as usize).max(1);
+        }
+    }
+    std::thread::available_parallelism().map_or(1, usize::from)
 }
 
 struct Correction {
