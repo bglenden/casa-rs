@@ -22,9 +22,11 @@ impl ListObsSummary {
             )?)
         };
         Self::from_rows(ms, options, selected_rows.as_deref(), false, None)
+            .map(|(summary, _)| summary)
     }
 
     /// Summarize the current MS tool view, grouping each scan by field.
+    /// Returns the summary and one evaluated phase direction per displayed field.
     /// Row indices are in view order and may contain repeated rows.
     /// The attachment's Measures provider is initialized only when needed.
     pub fn from_tool_view(
@@ -34,7 +36,7 @@ impl ListObsSummary {
         listunfl: bool,
         cachesize: f64,
         measures: &OnceLock<Arc<dyn MeasuresProvider>>,
-    ) -> MsResult<Self> {
+    ) -> MsResult<(Self, Vec<MetadataDirection>)> {
         let options = ListObsOptions {
             verbose,
             listunfl,
@@ -50,15 +52,16 @@ impl ListObsSummary {
         selected_rows: Option<&[usize]>,
         tool_view: bool,
         measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
-    ) -> MsResult<Self> {
+    ) -> MsResult<(Self, Vec<MetadataDirection>)> {
         let unflagged_context = if options.listunfl {
-            Some(UnflaggedRowContext::new(ms)?)
+            Some(UnflaggedRowContext::new(ms, !tool_view)?)
         } else {
             None
         };
-        let observations = build_observations(ms, selected_rows)?;
+        let observation_rows = if tool_view { None } else { selected_rows };
+        let observations = build_observations(ms, observation_rows)?;
         let main_usage = analyze_main_table(ms, selected_rows, unflagged_context.as_ref())?;
-        let fields = build_fields(ms, &main_usage)?;
+        let (fields, directions) = build_fields(ms, &main_usage, tool_view)?;
         let polarization_setups = build_polarizations(ms)?;
         let data_descriptions = build_data_descriptions(ms, &main_usage)?;
         let spectral_windows =
@@ -68,7 +71,14 @@ impl ListObsSummary {
             .map(|summary| summary.spectral_window_id as i32)
             .collect::<BTreeSet<_>>();
         let sources = build_sources(ms, &used_spw_ids)?;
-        let antennas = build_antennas(ms, &observations, &main_usage, tool_view, measures)?;
+        let antennas = build_antennas(
+            ms,
+            &observations,
+            &main_usage,
+            tool_view,
+            options.verbose,
+            measures,
+        )?;
 
         let field_name_lookup: HashMap<i32, String> = fields
             .iter()
@@ -99,7 +109,7 @@ impl ListObsSummary {
             .map(|(start, end)| (Some(start), Some(end), Some(end - start)))
             .unwrap_or((None, None, None));
 
-        Ok(Self {
+        let summary = Self {
             schema_version: LISTOBS_SCHEMA_VERSION,
             options: options.clone(),
             measurement_set: MeasurementSetInfo {
@@ -127,7 +137,8 @@ impl ListObsSummary {
             spectral_windows,
             sources,
             antennas,
-        })
+        };
+        Ok((summary, directions))
     }
 
     /// Open an on-disk MeasurementSet and summarize it.
@@ -156,11 +167,66 @@ impl ListObsSummary {
     }
 
     /// Render the summary as CASA-style text using explicit render options.
+    pub fn render_text_with_options(&self, options: &ListObsOptions) -> String {
+        self.render_text_for_view(options, false)
+    }
+
+    /// Render the text reported by the public MS tool for its current view.
+    pub fn render_tool_text(&self) -> String {
+        self.render_text_for_view(&self.options, true)
+    }
+
+    fn render_observations(&self, out: &mut String, verbose: bool, tool_view: bool) {
+        let head = |field: fn(&ObservationSummary) -> &str| {
+            if tool_view {
+                self.observations.first().map_or("", field)
+            } else {
+                first_non_empty(self.observations.iter().map(field))
+            }
+        };
+        if tool_view && self.observations.is_empty() {
+            let _ = writeln!(out, "The OBSERVATION table is empty");
+            return;
+        }
+        let observer = head(|obs| &obs.observer);
+        let project = head(|obs| &obs.project);
+        let telescope = head(|obs| &obs.telescope_name);
+        let _ = writeln!(out, "Observer: {observer}     Project: {project}");
+        if verbose {
+            let _ = writeln!(out, "Observation: {telescope}");
+        } else {
+            let _ = writeln!(
+                out,
+                "Observation: {telescope}({} antennas)",
+                self.measurement_set.antenna_table_count
+            );
+        }
+        if tool_view && self.observations.len() > 1 {
+            let _ = writeln!(
+                out,
+                "\n  {:<10}{:<20}{:<15}Project",
+                "Telescope", "Observation Date", "Observer"
+            );
+            for observation in &self.observations {
+                let date = format!(
+                    "[{}, {}]",
+                    observation.start_mjd_seconds, observation.end_mjd_seconds
+                );
+                let _ = writeln!(
+                    out,
+                    "  {:<10}{:<20}{:<15}{}",
+                    observation.telescope_name, date, observation.observer, observation.project
+                );
+            }
+            let _ = writeln!(out);
+        }
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "predates the function-length limit; #705"
     )]
-    pub fn render_text_with_options(&self, options: &ListObsOptions) -> String {
+    fn render_text_for_view(&self, options: &ListObsOptions, tool_view: bool) -> String {
         let mut out = String::new();
         let name = self
             .measurement_set
@@ -172,13 +238,6 @@ impl ListObsSummary {
             .ms_version
             .map(|value| format!("{value:.0}"))
             .unwrap_or_else(|| "?".to_string());
-        let observer = first_non_empty(self.observations.iter().map(|obs| obs.observer.as_str()));
-        let project = first_non_empty(self.observations.iter().map(|obs| obs.project.as_str()));
-        let telescope = first_non_empty(
-            self.observations
-                .iter()
-                .map(|obs| obs.telescope_name.as_str()),
-        );
         let time_ref = self
             .measurement_set
             .time_reference
@@ -197,16 +256,7 @@ impl ListObsSummary {
             out,
             "================================================================================"
         );
-        let _ = writeln!(out, "Observer: {observer}     Project: {project}");
-        if options.verbose {
-            let _ = writeln!(out, "Observation: {telescope}");
-        } else {
-            let _ = writeln!(
-                out,
-                "Observation: {telescope}({} antennas)",
-                self.measurement_set.antenna_table_count
-            );
-        }
+        self.render_observations(&mut out, options.verbose, tool_view);
         let _ = writeln!(
             out,
             "Data records: {}       Total elapsed time = {}",
@@ -357,7 +407,11 @@ impl ListObsSummary {
             out,
             "Spectral Windows: ({} unique spectral windows and {} unique polarization setups)",
             self.spectral_windows.len(),
-            self.polarization_setups.len(),
+            if tool_view {
+                self.measurement_set.polarization_count
+            } else {
+                self.polarization_setups.len()
+            },
         );
         let _ = writeln!(
             out,

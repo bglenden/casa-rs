@@ -5,8 +5,8 @@ use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use casa_ms::subtables::FieldDirectionColumn;
-use casa_ms::{MeasurementSet, MeasurementSetScanSummary, MeasurementSetSummary, MsResult};
+use casa_ms::subtables::MetadataDirection;
+use casa_ms::{MeasurementSetScanSummary, MeasurementSetSummary};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
@@ -43,7 +43,7 @@ impl PyMsTool {
             let link = attachment.working_metadata_link();
             let (snapshot, rows) = link.source_and_rows().map_err(runtime_error)?;
             let ms = &snapshot.ms;
-            let mut summary = MeasurementSetSummary::from_tool_view(
+            let (mut summary, directions) = MeasurementSetSummary::from_tool_view(
                 ms,
                 rows.as_deref(),
                 verbose,
@@ -54,11 +54,11 @@ impl PyMsTool {
             .map_err(runtime_error)?;
             summary.measurement_set.path = Some(attachment.name.display().to_string());
             let record = if wantreturn {
-                summary_record(ms, &summary).map_err(runtime_error)?
+                summary_record(&summary, directions)
             } else {
                 CasaValue::empty_record()
             };
-            let report = summary.render_text();
+            let report = summary.render_tool_text();
             link.verify_directory().map_err(runtime_error)?;
             if let Some(path) = listfile.as_deref() {
                 write_report(path, overwrite, &report)?;
@@ -102,10 +102,13 @@ fn existing_report(path: &Path) -> PyErr {
     ))
 }
 
-fn summary_record(ms: &MeasurementSet, summary: &MeasurementSetSummary) -> MsResult<CasaValue> {
+fn summary_record(
+    summary: &MeasurementSetSummary,
+    directions: Vec<MetadataDirection>,
+) -> CasaValue {
     let info = &summary.measurement_set;
     let Some((begin, end)) = info.start_mjd_seconds.zip(info.end_mjd_seconds) else {
-        return Ok(CasaValue::empty_record());
+        return CasaValue::empty_record();
     };
     let mut record = vec![
         (
@@ -124,13 +127,7 @@ fn summary_record(ms: &MeasurementSet, summary: &MeasurementSetSummary) -> MsRes
             CasaValue::Int(info.field_count as i64),
         ),
     ];
-    let field_table = ms.field()?;
-    for field in &summary.fields {
-        let direction = field_table.metadata_direction_at_seconds(
-            field.field_id,
-            FieldDirectionColumn::Phase,
-            0.0,
-        )?;
+    for (field, direction) in summary.fields.iter().zip(directions) {
         record.push((
             format!("field_{}", field.field_id),
             CasaValue::record([
@@ -159,7 +156,7 @@ fn summary_record(ms: &MeasurementSet, summary: &MeasurementSetSummary) -> MsRes
             .map(|(index, value)| (index.to_string(), value));
         (format!("scan_{scan}"), CasaValue::record(subs))
     }));
-    Ok(CasaValue::record(record))
+    CasaValue::record(record)
 }
 
 fn scan_record(scan: &MeasurementSetScanSummary, verbose: bool) -> CasaValue {

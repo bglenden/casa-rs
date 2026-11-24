@@ -7,7 +7,7 @@ use std::str::FromStr;
 use casa_tables::table_measures::{MeasRefDesc, MeasureType, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_tables::taql::TaqlError;
-use casa_tables::{Table, TableColumn};
+use casa_tables::{Table, TableColumn, TableError};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::position::{MPosition, PositionRef};
@@ -89,6 +89,29 @@ pub(crate) fn antenna_position(table: &Table, index: usize) -> MsResult<MPositio
     PositionColumn::read(table)?.position(index)
 }
 
+pub(crate) fn selected_antenna_positions(
+    table: &Table,
+    rows: &[usize],
+) -> MsResult<Vec<MPosition>> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let column = PositionColumn::read(table)?;
+    column
+        .values
+        .array_cells_owned(rows)?
+        .into_iter()
+        .zip(rows)
+        .map(|(value, &row)| {
+            let value = value.ok_or_else(|| TableError::ColumnNotFound {
+                row_index: row,
+                column: "POSITION".to_string(),
+            })?;
+            column.position_from_cell(row, &value)
+        })
+        .collect()
+}
+
 struct PositionColumn<'a> {
     table: &'a Table,
     values: TableColumn<'a>,
@@ -109,7 +132,11 @@ impl<'a> PositionColumn<'a> {
     }
 
     fn position(&self, index: usize) -> MsResult<MPosition> {
-        let ArrayValue::Float64(coords) = self.values.array_cell(index)? else {
+        self.position_from_cell(index, self.values.array_cell(index)?)
+    }
+
+    fn position_from_cell(&self, index: usize, value: &ArrayValue) -> MsResult<MPosition> {
+        let ArrayValue::Float64(coords) = value else {
             return Err(invalid("ANTENNA POSITION requires a double array"));
         };
         let Some(&[x, y, z]) = coords.as_slice() else {

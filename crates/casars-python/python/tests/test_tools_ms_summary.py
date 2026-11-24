@@ -1,6 +1,7 @@
 """The public summary record, interval edges and report output."""
 
 import logging
+import re
 
 import numpy as np
 import pytest
@@ -26,13 +27,13 @@ def compare_summary(actual, expected):
         assert actual == expected
 
 
-def antenna_offsets(report):
+def antenna_geometry(report):
     _, rows = report.split("ITRF Geocentric coordinates", 1)
     result = {}
     for line in rows.splitlines():
         parts = line.split()
         if len(parts) == 13 and parts[0].isdigit():
-            result[int(parts[0])] = [float(value) for value in parts[7:10]]
+            result[int(parts[0])] = [float(value) for value in parts[7:13]]
     assert result
     return result
 
@@ -61,7 +62,7 @@ def test_ms_summary_matches_pinned_record_and_reports(native_dataset, tmp_path, 
         assert str(native_dataset) in report
         assert "nUnflRows" in report
         assert "ScanIntent" in report
-        offsets.append(antenna_offsets(report))
+        offsets.append(antenna_geometry(report))
         with pytest.raises(RuntimeError, match="already exists"):
             ms.summary(listfile=str(filename))
         assert filename.read_text() == report
@@ -138,3 +139,92 @@ def test_ms_summary_reports_a_failed_file_write(native_dataset, tmp_path):
     assert not rejected.exists()
     assert ms.summary()["numrecords"] == count
     assert ms.done()
+
+
+def append_subtable_row(casa, path, updates):
+    table = casa.table()
+    assert table.open(str(path), nomodify=False)
+    index = table.nrows()
+    row = {
+        name: table.getcell(name, 0)
+        for name in table.colnames()
+        if table.iscelldefined(name, 0)
+    }
+    row.update(updates)
+    assert table.addrows(1)
+    for name, value in row.items():
+        assert table.putcell(name, index, value)
+    assert table.done()
+
+
+def test_ms_summary_reports_physical_metadata_for_selected_rows(native_dataset, tmp_path):
+    casa = pinned_casa()
+    table = casa.table()
+    append_subtable_row(casa, native_dataset / "OBSERVATION", {
+        "TELESCOPE_NAME": "ALMA",
+        "OBSERVER": "Other observer",
+        "PROJECT": "Other project",
+    })
+    append_subtable_row(casa, native_dataset / "POLARIZATION", {})
+    append_subtable_row(casa, native_dataset / "DATA_DESCRIPTION", {"POLARIZATION_ID": 1})
+
+    assert table.open(str(native_dataset / "ANTENNA"), nomodify=False)
+    metres = table.getcol("POSITION")
+    assert table.putcol("POSITION", metres * np.array([[1e-3], [1.0], [1e2]]))
+    assert table.putcolkeyword("POSITION", "QuantumUnits", ["km", "m", "cm"])
+    assert table.done()
+    assert table.open(str(native_dataset / "FIELD"), nomodify=False)
+    degrees = np.rad2deg(table.getcell("PHASE_DIR", 0))
+    assert table.putcell("PHASE_DIR", 0, degrees)
+    assert table.putcolkeyword("PHASE_DIR", "QuantumUnits", ["deg", "deg"])
+    assert table.done()
+    assert table.open(str(native_dataset), nomodify=False)
+    selected = list(range(4))
+    for column, values in {
+        "OBSERVATION_ID": np.isin(np.arange(table.nrows()), selected).astype(np.int32),
+        "DATA_DESC_ID": (~np.isin(np.arange(table.nrows()), selected)).astype(np.int32),
+        "EXPOSURE": np.full(table.nrows(), 4.0),
+        "INTERVAL": np.full(table.nrows(), 10.0),
+        "FLAG_ROW": np.full(table.nrows(), True),
+    }.items():
+        assert table.putcol(column, values)
+    assert table.putcol("FLAG", np.zeros_like(table.getcol("FLAG")))
+    assert table.done()
+
+    offsets = []
+    records = []
+    for api in (casa, tools):
+        ms = api.ms()
+        assert ms.open(str(native_dataset))
+        assert ms.select({"rows": selected})
+        path = tmp_path / f"{api.__name__}-physical.txt"
+        records.append(ms.summary(verbose=True, listunfl=True, listfile=str(path)))
+        report = path.read_text()
+        assert "Observation: VLA" in report
+        assert "Other observer" in report and "Other project" in report
+        assert re.search(r"ObservationID\s*=\s*1", report)
+        assert re.search(r"F\s+4\s+4(?:\.00)?\s+\[0\]\s+\[10\]", report)
+        assert re.search(r"23:30:00\.000000\s+\+34\.00\.00\.00000\s+J2000", report)
+        assert "1 unique polarization setups" in report
+        scan, = [part for key, value in records[-1].items() if key.startswith("scan_")
+                 for part in value.values()]
+        assert scan["IntegrationTime"] == 4.0
+        offsets.append(antenna_geometry(report))
+        assert ms.done()
+    compare_summary(records[1], records[0])
+    assert offsets[1] == offsets[0]
+
+
+def test_ms_summary_validates_telescope_only_for_verbose_antenna_report(native_dataset):
+    casa = pinned_casa()
+    append_subtable_row(casa, native_dataset / "OBSERVATION", {
+        "TELESCOPE_NAME": "unrecognized summary test telescope"
+    })
+    for api in (casa, tools):
+        ms = api.ms()
+        assert ms.open(str(native_dataset))
+        assert ms.summary()["numrecords"] == ms.nrow()
+        with pytest.raises(RuntimeError, match="is not recognized by CASA"):
+            ms.summary(verbose=True)
+        assert ms.summary()["numrecords"] == ms.nrow()
+        assert ms.done()
