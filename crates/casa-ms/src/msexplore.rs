@@ -3006,82 +3006,28 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
-    let direct_time_projection =
-        !extended_derived && plot.is_some_and(plotms_columns::uses_direct_vector_time_projection);
+    let direct_time_projection = !extended_derived
+        && plot.is_some_and(|plot| {
+            plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
+        });
     if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_projection {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
             .sort_by(|left, right| left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds));
     }
-    let uses_model = |plot: &MsPlotSpec| {
-        plotms_columns::uses_model(
-            [
-                Some(plot.x_axis),
-                Some(plot.y_axis()),
-                plot.secondary_y_axis(),
-            ],
-            [
-                columns.x.unwrap_or(plot.data_column),
-                plot.data_column,
-                columns.secondary_y.unwrap_or(plot.data_column),
-            ],
-        ) || columns
-            .additional_y
-            .iter()
-            .any(|(axis, column)| axis.is_visibility_math() && column.needs_model())
-    };
-    if columns.phasecenter.is_some() && plot.is_some_and(uses_model) {
-        let virtual_fields = crate::scratch_columns::virtual_model_fields(ms);
-        if selected
-            .selected_rows
-            .iter()
-            .any(|row| virtual_fields.contains(&row.field_id))
-        {
-            return Err("PlotMS phasecenter with a virtual model is pending (#1032)".into());
-        }
-    }
+    let models = plotms_model::selected_model_cells(
+        ms,
+        &selected.selected_rows,
+        plot,
+        &columns,
+        load_models,
+    )?;
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
     let independent_ordinates = columns.secondary_y.is_some() || !columns.additional_y.is_empty();
-    if plot.is_some_and(|plot| {
-        (plotms_columns::uses_channel_derived(plot, columns.x)
-            || vector_baselines
-            || scalar_average
-            || spw_average
-            || (antenna_average && plot.averaging.avgtime.is_some())
-            || direct_time_projection
-            || extended_derived
-            || weighted_time_uvw
-            || (independent_ordinates && uses_extended_averaging(plot)))
-            && uses_model(plot)
-    }) {
-        plotms_model::refuse_selected_virtual_fields(
-            ms,
-            &selected.selected_rows,
-            "PlotMS virtual MeasurementSet models are pending #1032",
-        )?;
-    } else if load_models.is_none()
-        && plot.is_some_and(|plot| {
-            let channel_average = plot.averaging.avgchannel.is_some_and(|width| width > 1)
-                && !uses_extended_averaging(plot);
-            let iterated_ordinates =
-                plot.iteration.iteraxis.is_some() && plot.secondary_y_axis().is_some();
-            (channel_average || iterated_ordinates) && uses_model(plot)
-        })
-    {
-        plotms_model::refuse_selected_virtual_fields(
-            ms,
-            &selected.selected_rows,
-            "use casars.tasks.plotms to predict virtual MeasurementSet models",
-        )?;
-    }
-    let models = load_models
-        .map(|load| load(ms, &selected.selected_rows))
-        .transpose()?
-        .flatten();
     let time_bins = plot
         .filter(|_| {
             !(scalar_average || scalar_spw)
@@ -5528,7 +5474,10 @@ fn build_generic_visibility_scatter_with_averaging(
     let direct_time_projection = uncalibrated
         && time_bins.is_some()
         && !extended_derived
-        && plotms_columns::uses_direct_vector_time_projection(spec);
+        && plotms_columns::uses_direct_vector_time_projection(
+            spec,
+            calibration.and_then(|input| input.x_data_column),
+        );
     let average_operands = extended_derived
         || scalar_channels
         || scalar_spw_time

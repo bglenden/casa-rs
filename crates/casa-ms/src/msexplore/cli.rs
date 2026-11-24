@@ -464,17 +464,6 @@ fn run_visibility_plot(
     if !options.selection.selectdata {
         options.selection = MsSelection::default();
     }
-    let axes = [options.x_axis, options.y_axis, options.y_axis2];
-    let channel_models = !options.plotms_extended_averaging()
-        && !axis_columns.is_some_and(|columns| options.supports_channel_derived(columns));
-    let load_models = load_models.filter(|_| {
-        (!averaging || channel_models)
-            && (axis_columns.is_some_and(|columns| plotms_columns::uses_model(axes, columns))
-                || options
-                    .additional_ordinates
-                    .iter()
-                    .any(|(axis, column)| axis.is_visibility_math() && column.needs_model()))
-    });
     let library = calibration
         .as_ref()
         .map_or(&[][..], |(_, entries)| entries.as_slice());

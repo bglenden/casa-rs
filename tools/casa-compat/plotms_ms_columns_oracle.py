@@ -1696,8 +1696,6 @@ def compare_default_model(root, native):
         assert compare_text(actual, expected) == count
     average = controls | dict(vis=str(stored), xaxis="channel", xdatacolumn="",
                               yaxis=["amp", "amp"], ydatacolumn=["data", "model"], avgtime="20")
-    from casars.tasks import TaskExecutionError
-
     for name, field, spw, amplitude in (
         ("average-virtual-and-stored", "PHASE", "0:1", 7.25),
         ("average-unmodeled-window-and-stored", "PHASE", "1:1", 1),
@@ -1709,17 +1707,8 @@ def compare_default_model(root, native):
         coordinates = rows(expected)
         assert coordinates and len(coordinates) % 2 == 0
         assert {float(point[1]) for point in coordinates[len(coordinates) // 2:]} == {amplitude}
-        if field == "FLUX":
-            assert native(**selected, plotfile=str(actual)) is None
-            assert compare_text(actual, expected) == len(coordinates)
-        else:
-            try:
-                native(**selected, plotfile=str(actual))
-            except TaskExecutionError as error:
-                assert "virtual MeasurementSet models are pending #1032" in str(error), error
-            else:
-                raise AssertionError("PlotMS used the stored model for an averaged virtual-model field")
-            assert not actual.exists()
+        assert native(**selected, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(coordinates)
     with opened(stored) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
 
@@ -1747,9 +1736,48 @@ def compare_virtual_fourier_model(root, native):
     assert np.all(np.abs(first) > 0.5)
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == 12
-    with opened(vis) as table:
-        for name, values in columns.items():
-            np.testing.assert_array_equal(table.getcol(name), values)
+
+    # Give successive integrations distinct Fourier phases in the time test.
+    time_source = work / "time-varying-fourier.ms"
+    copy_ms(vis, time_source)
+    with opened(time_source, True) as table:
+        _, slots = np.unique(table.getcol("TIME"), return_inverse=True)
+        uvw = table.getcol("UVW")
+        uvw[:, slots % 2 == 1] *= 3
+        table.putcol("UVW", uvw)
+        weights = table.getcol("WEIGHT")
+        weights[:] = np.where(slots % 2 == 0, 1, 9)
+        table.putcol("WEIGHT", weights)
+    samples = controls | dict(vis=str(time_source), spw="0:1")
+    raw = work / "fourier-time-input.casa.txt"
+    assert reference(**samples, plotfile=str(raw), expformat="txt") is None
+    raw_points = rows(raw)
+    integrations = np.array([point[:2] for point in raw_points], dtype=float).reshape(3, 2, 2)
+    assert np.max(np.abs(integrations[:, 0] - integrations[:, 1])) > 1e-4
+    means = integrations.mean(axis=1)
+    times = np.array([float(point[9]) for point in raw_points]).reshape(3, 2).mean(axis=1)
+    for name, axes, coordinates in (
+        ("fourier-time", {}, means),
+        ("fourier-time-model-x", dict(yaxis="channel", ydatacolumn=""),
+         np.column_stack((means[:, 0], np.ones(3)))),
+        ("fourier-time-model-y", dict(xaxis="time", xdatacolumn="", yaxis="real"),
+         np.column_stack((times, means[:, 0]))),
+    ):
+        average = samples | axes | dict(avgtime="20")
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**average, plotfile=str(expected), expformat="txt") is None
+        selected = np.array([point[:2] for point in rows(expected)], dtype=float)
+        np.testing.assert_allclose(selected, coordinates, rtol=1.2e-5)
+        if average["xaxis"] == "time":
+            np.testing.assert_allclose(selected[:, 0], times, rtol=0, atol=0.00051)
+        assert native(**average, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 3
+        print(f"{name}: 3 matching averages from distinct virtual model samples", flush=True)
+
+    for source in (vis, time_source):
+        with opened(source) as table:
+            for name, values in columns.items():
+                np.testing.assert_array_equal(table.getcol(name), values)
 
 
 def main():
