@@ -1498,6 +1498,18 @@ impl TableImpl {
                     .to_string(),
             ));
         }
+        // A prepared write can update an initialized scalar cache in place.
+        // For edited handles let the caller use the cache-aware cell reader.
+        if self.generation() != 0
+            && destinations
+                .iter()
+                .any(|destination| self.has_loaded_scalar_column(destination.column()))
+        {
+            return Err(TableError::Storage(
+                "required scalar reusable fills do not support cached columns on edited tables"
+                    .to_string(),
+            ));
+        }
         let source = self
             .lazy_rows
             .as_ref()
@@ -2134,7 +2146,6 @@ impl TableImpl {
             .unwrap_or(0)
     }
 
-    #[cfg(test)]
     pub(crate) fn has_loaded_scalar_column(&self, column: &str) -> bool {
         self.loaded_scalar_columns
             .get(column)

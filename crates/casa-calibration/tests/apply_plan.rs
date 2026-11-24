@@ -6,9 +6,10 @@ use tempfile::TempDir;
 
 use casa_calibration::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
-    ApplyTableSelection, GainFieldSelector, plan_apply_from_path,
+    ApplyTableSelection, GainFieldSelector, plan_apply, plan_apply_from_path,
 };
-use casa_ms::selection::MsSelection;
+use casa_ms::{MeasurementSet, selection::MsSelection};
+use casa_types::{ScalarValue, Value};
 
 #[test]
 fn plan_apply_marks_corrected_data_creation_when_absent() {
@@ -36,6 +37,53 @@ fn plan_apply_marks_corrected_data_creation_when_absent() {
     assert_eq!(plan.selected_row_count, 2);
     assert_eq!(plan.selected_rows.len(), 2);
     assert_eq!(plan.selected_data_spw_ids, vec![0, 1]);
+}
+
+#[test]
+fn plan_apply_observes_unsaved_edits_to_cached_scalars() {
+    let dir = TempDir::new().expect("tempdir");
+    let ms_path = common::create_apply_fixture_ms(dir.path(), true);
+    let caltable_path = common::create_apply_fixture_caltable(
+        &dir.path().join("phase.gcal"),
+        &["TARGET0", "TARGET1"],
+        &[0, 1],
+        &[0, 1],
+    );
+    let mut ms = MeasurementSet::open(ms_path).expect("open measurement set");
+    let mut request = ApplyPlanRequest {
+        selection: MsSelection::new(),
+        apply_mode: ApplyMode::Trial,
+        parang: false,
+        calibration_tables: vec![ApplyCalibrationTableSpec::new(caltable_path)],
+    };
+
+    for (column, value) in [("FEED1", 3), ("FIELD_ID", 1)] {
+        assert_eq!(
+            ms.main_table()
+                .column_accessor(column)
+                .unwrap()
+                .scalar_cell(0)
+                .unwrap(),
+            &ScalarValue::Int32(0)
+        );
+        let mut edit = ms
+            .main_table_mut()
+            .row_accessor_mut()
+            .prepare(&[column])
+            .unwrap();
+        edit.seek(0).unwrap();
+        edit.set_value_at(0, Value::Scalar(ScalarValue::Int32(value)))
+            .unwrap();
+    }
+
+    let plan = plan_apply(&ms, &request).expect("plan edited measurement set");
+    assert_eq!(plan.selected_rows[0].feed1, 3);
+    assert_eq!(plan.selected_rows[0].field_id, 1);
+
+    request.selection = MsSelection::new().field(&[1]);
+    let plan = plan_apply(&ms, &request).expect("select on edited field ID");
+    assert_eq!(plan.selected_row_count, 2);
+    assert_eq!(plan.selected_rows[0].row_index, 0);
 }
 
 #[test]
