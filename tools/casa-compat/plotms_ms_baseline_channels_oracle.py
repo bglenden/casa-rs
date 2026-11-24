@@ -89,6 +89,28 @@ def compare(root, native):
         print(f"{name}: {len(selected)} matching channel-and-baseline coordinates", flush=True)
     figure = controls | dict(vis=str(spectral_flagged))
     compare_ordinate_figure(root, "spectra-with-flags", native, figure, "Real", ["Real:corrected", "Real:model"])
+    compare_single_columns(root, native, controls, source, spectral, spectral_flagged)
+
+
+def compare_single_columns(root, native, controls, source, spectral, spectral_flagged):
+    cases = (
+        ("observed-row-sigmas", source, "data", [4.4, 9.4] * 6),
+        ("observed-spectrum", spectral, "data", [5, 67 / 7] * 6),
+        ("calibrated-spectrum", spectral, "corrected", [31, 815 / 11] * 6),
+        ("model-unit-weights", spectral_flagged, "model", [100, 850, 340, 880] * 3),
+    )
+    for name, vis, column, values in cases:
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        options = controls | dict(vis=str(vis), xdatacolumn=column, yaxis="real",
+                                  ydatacolumn=column, yaxislocation="left", expformat="txt")
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 12
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   np.column_stack((values, values)), rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching channel-and-baseline coordinates", flush=True)
 
 
 def main():

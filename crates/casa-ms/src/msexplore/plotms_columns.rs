@@ -14,7 +14,6 @@ use crate::transform::{WeightKind, visibility_weight_kind, weight_from_sigma};
 pub(super) fn uses_integration_baseline_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgbaseline
         && spec.averaging.avgtime.is_none()
-        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
         && !spec.averaging.avgscan
         && !spec.averaging.avgfield
         && !spec.averaging.avgantenna
@@ -67,6 +66,7 @@ pub(super) fn check_averaging(
 pub(super) struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
     pub(super) primary: WeightKind,
+    pub(super) row_weight: WeightKind,
 }
 
 impl PlotMsWeightKinds {
@@ -132,7 +132,41 @@ pub(super) fn weight_kinds(
     PlotMsWeightKinds {
         axes: columns.map(kind),
         primary: kind(primary),
+        row_weight: if has_corrected {
+            WeightKind::Calibrated
+        } else {
+            kind(primary)
+        },
     }
+}
+
+/// The baseline reducer receives the transform's scalar weight, averaged
+/// across the usable output channels of the first selected correlation.
+pub(super) fn channel_averaged_row_weight(
+    weights: Option<&FloatGrid>,
+    mask_weights: Option<&FloatGrid>,
+    correlation: usize,
+    bins: &[ChannelBin],
+    flags: &ndarray::ArrayView2<'_, bool>,
+) -> f64 {
+    let mut count = 0;
+    let mut sum = 0.0;
+    for bin in bins {
+        let usable = bin
+            .channels()
+            .filter(|&channel| !flags[(correlation, channel)]);
+        let channels = usable.count();
+        if channels == 0
+            || mask_weights.is_some_and(|grid| !bin_has_weight(grid, correlation, bin, flags))
+        {
+            continue;
+        }
+        count += 1;
+        sum += weights.map_or(channels as f64, |grid| {
+            bin_weight(grid, correlation, bin, flags)
+        });
+    }
+    sum / count.max(1) as f64
 }
 
 pub(super) fn bin_has_weight(

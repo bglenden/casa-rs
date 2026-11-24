@@ -9,7 +9,7 @@ use super::{
     ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterPointRef,
     MsScatterSeries, PlotMsInput, PreparedSelectedDataSource, VisibilityBinSamples,
     check_grid_shapes, collect_bin_samples_into, compute_weighted_visibility_math, plotms_figure,
-    scatter_series_identity,
+    scatter_series_identity, weighted_visibility_mean,
 };
 use crate::MeasurementSet;
 use crate::selection::ChannelRange;
@@ -178,6 +178,25 @@ impl BinBuffer {
             weight.map(|spectrum| (spectrum, &mut self.weights)),
             &mut self.values,
         );
+    }
+
+    pub(super) fn normalize_vector_average(&mut self) {
+        if self.values.is_empty() {
+            return;
+        }
+        let average = if self.weights.is_empty() {
+            self.values.iter().copied().sum::<Complex64>() / self.values.len() as f64
+        } else {
+            let total = self.weights.iter().sum::<f64>();
+            if total > 0.0 {
+                weighted_visibility_mean(&self.values, &self.weights, total)
+            } else {
+                Complex64::new(0.0, 0.0)
+            }
+        };
+        self.values[0] = average;
+        self.values.truncate(1);
+        self.weights.clear();
     }
 }
 
