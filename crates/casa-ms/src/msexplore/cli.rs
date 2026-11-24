@@ -257,7 +257,7 @@ fn run_task(
             .transpose()?;
         if !options.additional_ordinates.is_empty() {
             if calibration.is_some()
-                || options.plotms_averaging_active()
+                || (options.plotms_averaging_active() && !options.supports_channel_ordinate_list())
                 || options.iteraxis.is_some()
             {
                 return Err(TaskFailure::validation(

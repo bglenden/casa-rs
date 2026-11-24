@@ -682,8 +682,6 @@ def compare_multiple_ordinates(root, vis, native):
             raise AssertionError(f"{engine} accepted duplicate ordinate and column pairs")
         assert not output.exists()
 
-    from casars.tasks import TaskParameterError
-
     invalid = base | dict(yaxislocation=["left", "right", "left", "top"])
     for engine, task in (("casa", reference), ("native", native)):
         output = root / f"three-ordinate-invalid-location.{engine}.txt"
@@ -698,14 +696,8 @@ def compare_multiple_ordinates(root, vis, native):
     averaged = base | dict(avgchannel="2", expformat="txt")
     expected, actual = (root / f"three-ordinate-averaged.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**averaged, plotfile=str(expected)) is None
-    assert len(rows(expected)) == 18
-    try:
-        native(**averaged, plotfile=str(actual))
-    except TaskParameterError as error:
-        assert "more than two MeasurementSet ordinates with averaging" in str(error), error
-    else:
-        raise AssertionError("PlotMS used the unaveraged ordinate path for an averaged request")
-    assert not actual.exists()
+    assert native(**averaged, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 18
 
 
 def compare_averaged_columns(root, native):

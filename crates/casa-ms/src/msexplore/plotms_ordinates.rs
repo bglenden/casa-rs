@@ -136,14 +136,14 @@ impl<'a> VisibilityColumns<'a> {
 
     pub(super) fn column_weights<'b>(
         &self,
-        axis_weights: [Option<&'b FloatGrid>; 3],
+        axis_weights: impl IntoIterator<Item = Option<&'b FloatGrid>>,
     ) -> Vec<Option<&'b FloatGrid>> {
-        if axis_weights.iter().all(Option::is_none) {
-            return Vec::new();
-        }
-        let mut weights = vec![None; self.sources.len()];
+        let mut weights = Vec::new();
         for (index, spectrum) in self.axes.iter().copied().zip(axis_weights) {
             if let (Some(index), Some(spectrum)) = (index, spectrum) {
+                if weights.is_empty() {
+                    weights.resize(self.sources.len(), None);
+                }
                 weights[index] = Some(spectrum);
             }
         }

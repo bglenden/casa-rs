@@ -4467,15 +4467,22 @@ fn build_generic_visibility_scatter(
         .map(|input| {
             statistics_kinds.unwrap_or_else(|| plotms_columns::weight_kinds(ms, spec, input))
         });
+    let additional_ordinates = calibration.map_or(&[][..], |input| input.additional_ordinates);
+    let channel_uses_weight = |kind| {
+        channel_weight_kinds.is_some_and(|kinds| {
+            kinds.uses(kind)
+                || additional_ordinates.iter().any(|&(axis, column)| {
+                    axis.is_visibility_math() && kinds.for_column(column) == kind
+                })
+        })
+    };
     let statistics_use = |kind| {
         statistics_kinds.is_some_and(|kinds| kinds.row_weight == kind || kinds.row_sigma == kind)
     };
-    let needs_observed_weights = channel_weight_kinds
-        .is_some_and(|kinds| kinds.uses(WeightKind::Observed))
-        || statistics_use(WeightKind::Observed);
-    let needs_calibrated_weights = channel_weight_kinds
-        .is_some_and(|kinds| kinds.uses(WeightKind::Calibrated))
-        || statistics_use(WeightKind::Calibrated);
+    let needs_observed_weights =
+        channel_uses_weight(WeightKind::Observed) || statistics_use(WeightKind::Observed);
+    let needs_calibrated_weights =
+        channel_uses_weight(WeightKind::Calibrated) || statistics_use(WeightKind::Calibrated);
     let selected_weights = if needs_weight_values || needs_calibrated_weights {
         Some(SelectedArrayColumn::load_for_plot(
             ms.main_table(),
@@ -4654,7 +4661,11 @@ fn build_generic_visibility_scatter(
         let axis_weights = channel_weight_kinds
             .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
             .map(weight_grid);
-        let column_weights = visibility_columns.column_weights(axis_weights);
+        let additional_weights = additional_ordinates.iter().map(|&(_, column)| {
+            channel_weight_kinds.and_then(|kinds| weight_grid(kinds.for_column(column)))
+        });
+        let column_weights =
+            visibility_columns.column_weights(axis_weights.into_iter().chain(additional_weights));
         let model_weights = channel_weight_kinds
             .and_then(|kinds| kinds.model)
             .and_then(weight_grid);
