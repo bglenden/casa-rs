@@ -345,7 +345,7 @@ mod tests {
             (vec![4, 10], vec![4, 0]),
             (vec![4, 6, 10], vec![4, 0, 5]),
             (vec![4, 6, 10], vec![4, 5]),
-            (vec![10], vec![5]),
+            (vec![], vec![]),
         ] {
             let cube = cube(cube_shape, tile_shape);
             let tiles = SelectedTiles::new(
@@ -370,5 +370,47 @@ mod tests {
         assert!(super::super::typed_1d_cube_shape(&short).is_err());
         let short = cube(vec![4, 6, 10], vec![4]);
         assert!(super::super::typed_2d_cube_shape(&short, 0, 1).is_err());
+    }
+
+    #[test]
+    fn row_axis_only_supports_complete_cells() {
+        let header = header();
+        let row_axis = cube(vec![10], vec![5]);
+        let tiles = SelectedTiles::new(
+            Path::new(""),
+            0,
+            &header,
+            0,
+            CasacoreDataType::TpFloat,
+            0,
+            &row_axis,
+        )
+        .expect("a row-axis-only cube stores scalar-shaped array cells");
+        let patch = SelectedCubeRow {
+            out_idx: 0,
+            pos_in_cube: 7,
+        };
+        assert_eq!(
+            tiles
+                .rows_by_tile(&[patch])
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            [1]
+        );
+        assert_eq!(tiles.row_offset(patch), 2);
+        assert!(super::super::typed_1d_cube_shape(&row_axis).is_err());
+        assert!(super::super::typed_2d_cube_shape(&row_axis, 0, 1).is_err());
+    }
+
+    #[test]
+    fn streaming_does_not_prefetch_across_a_bucket_wider_than_its_window() {
+        use super::super::{STREAMING_TILED_READ_AHEAD_BYTES, read_ahead_span};
+
+        let flags = 128 * 1024;
+        let bucket = STREAMING_TILED_READ_AHEAD_BYTES + flags;
+        assert_eq!(read_ahead_span(9, bucket, flags), Some(flags));
+        assert_eq!(read_ahead_span(9, 3 * flags, flags), Some(25 * flags));
+        assert_eq!(read_ahead_span(0, bucket, flags), None);
     }
 }

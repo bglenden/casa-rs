@@ -9557,11 +9557,10 @@ fn load_streamed_column_tile(
     let tile_nelem: usize = cube.tile_shape.iter().product();
     let tile_bytes = tile_nelem * tile_element_size(dt);
     let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
-    let useful_read_ahead_bytes = contiguous_tiles
-        .checked_sub(1)
-        .and_then(|remaining| remaining.checked_mul(bucket_size))
-        .and_then(|bytes| bytes.checked_add(file_tile_bytes))
-        .ok_or_else(|| StorageError::FormatMismatch("selected tile run size overflow".into()))?;
+    let useful_read_ahead_bytes = read_ahead_span(contiguous_tiles, bucket_size, file_tile_bytes)
+        .ok_or_else(|| {
+        StorageError::FormatMismatch("selected tile run size overflow".into())
+    })?;
     let swap_size = match dt {
         CasacoreDataType::TpComplex => 4,
         CasacoreDataType::TpDComplex => 8,
@@ -9584,6 +9583,18 @@ fn load_streamed_column_tile(
         needs_swap,
         swap_size,
     )
+}
+
+fn read_ahead_span(tiles: usize, bucket_bytes: usize, column_tile_bytes: usize) -> Option<usize> {
+    let additional_tiles = tiles.checked_sub(1)?;
+    // A bucket can contain large tiles from other columns. Read ahead only
+    // when the buffer can reach the end of a second tile of this column.
+    if bucket_bytes > STREAMING_TILED_READ_AHEAD_BYTES.saturating_sub(column_tile_bytes) {
+        return Some(column_tile_bytes);
+    }
+    additional_tiles
+        .checked_mul(bucket_bytes)?
+        .checked_add(column_tile_bytes)
 }
 
 /// The byte order of a shared tile's pixels: [`load_shared_column_tile`]
