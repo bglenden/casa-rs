@@ -109,6 +109,9 @@ def test_ms_selecttaql_accepts_uppercase_boolean_literals(baseline_fixture, nati
         assert selector.selecttaql("T")
         got = selector.getdata("data")["data"]
         np.testing.assert_array_equal(got, raw["data"][..., ~raw["flag_row"]], strict=True)
+        assert selector.reset()
+        assert selector.selecttaql("T != FLAG_ROW")
+        np.testing.assert_array_equal(selector.getdata("data")["data"], got, strict=True)
         assert selector.selecttaql("F") is False
         assert selector.nrow(True) == 0
         assert selector.done()
