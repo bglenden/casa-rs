@@ -15,7 +15,7 @@ pub(super) struct ListingState<'a> {
     output: &'a mut dyn Write,
     input: Option<&'a mut dyn BufRead>,
     show_page_prompt: bool,
-    page_rows: u64,
+    page_rows: usize,
     date: String,
     fixed: bool,
 }
@@ -24,13 +24,13 @@ impl<'a> ListingState<'a> {
     pub(super) fn new(
         output: &'a mut dyn Write,
         input: Option<&'a mut dyn BufRead>,
-        page_rows: i64,
+        page_rows: i32,
     ) -> Self {
         Self {
             output,
             input,
             show_page_prompt: true,
-            page_rows: page_rows.unsigned_abs(),
+            page_rows: page_rows.unsigned_abs() as usize,
             date: String::new(),
             fixed: false,
         }
@@ -77,14 +77,7 @@ pub(super) fn report_chunk(
     let geometry = Geometry::build(chunk, window, antenna_names)?;
     let widths = Widths::new(chunk, &geometry, spectra.multiple_channels);
     state.line("Units of columns are: Date/Time(YYMMDD/HH:MM:SS UT), UVDist(wavelength), Phase(deg), UVW(m)")?;
-    if let Some(value) = constant(
-        chunk
-            .amplitude
-            .iter()
-            .copied()
-            .filter(|value| *value >= 0.0)
-            .map(f64::from),
-    ) {
+    if let Some(value) = constant(chunk.amplitude.iter().copied().map(f64::from)) {
         state.line(&format!(
             "All selected data has AMPLITUDE = {}",
             state.display_value(value)
@@ -118,7 +111,7 @@ pub(super) fn report_chunk(
     if state.page_rows == 0 {
         header(state, window, &widths, &rule)?;
     }
-    let mut count = 0;
+    let mut count = 0usize;
     for (row, &seconds) in chunk.times.iter().enumerate() {
         let time = seconds / DAY_SECONDS;
         state.date = format_time(time, YMD | NO_TIME, 0);
@@ -128,7 +121,7 @@ pub(super) fn report_chunk(
             .get(&chunk.descriptions[row])
             .ok_or_else(|| listing_error("unknown data description in listing"))?;
         for &channel in &window.channels {
-            if state.page_rows != 0 && count % state.page_rows == 0 {
+            if state.page_rows != 0 && count.is_multiple_of(state.page_rows) {
                 if count != 0 && state.show_page_prompt && !state.prompt()? {
                     return Ok(false);
                 }
@@ -217,7 +210,11 @@ impl Widths {
             field: index_width(chunk.fields.iter().copied()),
             spw: index_width(chunk.descriptions.iter().copied()),
             channel: usize::from(multi_channel) * 5,
-            amplitude: (digits(chunk.amplitude.iter().copied().map(f64::from)) + 4).max(4) + 1,
+            amplitude: {
+                let sign = usize::from(chunk.amplitude.iter().any(|value| *value < 0.0));
+                let magnitude = chunk.amplitude.iter().map(|value| f64::from(value.abs()));
+                digits(magnitude) + 5 + sign
+            },
             phase: chunk.phase.map_or(0, |phase| {
                 let sign_and_border = if phase.iter().any(|value| *value < 0.0) {
                     3

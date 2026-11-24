@@ -78,7 +78,7 @@ impl PyMsTool {
                 ..MsSelection::default()
             },
             correlation: correlation.0,
-            page_rows: pagerows,
+            page_rows: pagerows as i32,
         };
         self.attachment_info(py, move |attachment| {
             let Some(attachment) = attachment else {

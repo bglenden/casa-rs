@@ -11486,3 +11486,24 @@ before reporting the missing visibility product. The file remains after
 the error. casa-rs writes the report to a temporary file beside the
 destination and publishes it only after successful rendering, without
 replacing an existing output (#1030).
+
+## MS lister can report success for a missing float column or raise a binding error
+
+In CASA 6.7.6.14 on a MeasurementSet without `FLOAT_DATA`,
+`ms.lister(datacolumn='float_data', listfile=...)` logs a missing column,
+returns true and leaves an empty report. casa-rs reports the missing
+product as an error without publishing a report. Passing
+`pagerows=numpy.bool_(True)` can also create a report before CASA raises
+`SystemError`. casa-rs raises `TypeError` during argument conversion
+before touching the output. Python integers, booleans and NumPy integers
+retain the usual pagination semantics (#1030).
+
+## MS lister can reject an all-negative float visibility buffer
+
+CASA 6.7.6.14 computes the display amplitude range for
+`ms.lister(datacolumn='float_data')` by taking the minimum after masking
+negative values. If all samples in a buffer are negative the resulting
+empty mask raises an exception. casa-rs prints the signed float samples
+with enough space for the sign and magnitude. For example, a visibility
+buffer containing only `-7.0` produces a report with `-7.000` for each
+sample (#1030).

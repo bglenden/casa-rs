@@ -25,7 +25,7 @@ pub struct ToolListerOptions {
     /// Correlation names requested in the report.
     pub correlation: String,
     /// Number of printed visibility rows between repeated headers.
-    pub page_rows: i64,
+    pub page_rows: i32,
 }
 
 /// List selected visibilities in the public MS tool report format.
@@ -154,10 +154,18 @@ impl ListingSpectra {
             let spw_row = valid_index(id)?;
             let count = valid_index(spectral_window.num_chan(spw_row)?)?;
             let channels = match selection.channel_selections.get(&id) {
-                Some(selection) => selection.indices_with_overlaps(count)?,
-                None => (0..count).collect(),
+                Some(selection) => {
+                    multiple_channels |= selection
+                        .segments
+                        .iter()
+                        .any(|segment| segment.start != segment.end);
+                    selection.indices_with_overlaps(count)?
+                }
+                None => {
+                    multiple_channels |= count > 1;
+                    (0..count).collect()
+                }
             };
-            multiple_channels |= channels.len() > 1;
             let correlations =
                 listing_correlations(&polarization.corr_type(valid_index(pol_id)?)?, correlation)?;
             let uvdist_scale = spectral_window.ref_frequency(spw_row)? / 299_792_458.0;
@@ -194,18 +202,24 @@ fn listing_correlations(codes: &[i32], request: &str) -> MsResult<Vec<(usize, St
             (index, name)
         })
         .collect();
-    if request.trim().is_empty() {
+    if !request.bytes().any(|byte| byte.is_ascii_alphabetic()) {
         return Ok(available);
     }
     request
-        .split(|char: char| char.is_ascii_whitespace() || char == ',')
-        .filter(|name| !name.is_empty())
+        .as_bytes()
+        .split(|byte| !byte.is_ascii_alphabetic())
+        .flat_map(|letters| letters.chunks(2))
         .map(|name| {
             available
                 .iter()
-                .find(|(_, found)| found.eq_ignore_ascii_case(name))
+                .find(|(_, found)| found.as_bytes().eq_ignore_ascii_case(name))
                 .cloned()
-                .ok_or_else(|| listing_error(format!("unrecognized correlation {name}")))
+                .ok_or_else(|| {
+                    listing_error(format!(
+                        "unrecognized correlation {}",
+                        String::from_utf8_lossy(name)
+                    ))
+                })
         })
         .collect()
 }
