@@ -365,14 +365,15 @@
       "status": "Implemented"
     },
     "avgchannel": {
-      "scope": "Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates.",
+      "scope": "Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product.",
       "evidence": [
         "paired",
         "ms-channel-columns",
         "ms-channel-time-columns",
         "ms-baseline-channel-columns",
         "ms-baseline-time-channel-columns",
-        "ms-channel-statistics"
+        "ms-channel-statistics",
+        "ms-empty-combined-averages"
       ],
       "behaviors": [
         "averaging"
@@ -380,7 +381,7 @@
       "status": "Partial"
     },
     "avgtime": {
-      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights.",
+      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. A selected fully masked combined vector average exports an empty product.",
       "evidence": [
         "paired",
         "ms-time-columns",
@@ -388,7 +389,8 @@
         "ms-baseline-time-columns",
         "ms-baseline-time-channel-columns",
         "ms-scalar-time-columns",
-        "ms-vector-time-uvw"
+        "ms-vector-time-uvw",
+        "ms-empty-combined-averages"
       ],
       "behaviors": [
         "averaging"
@@ -399,7 +401,8 @@
       "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata.",
       "evidence": [
         "paired",
-        "ms-scan-field-time-columns"
+        "ms-scan-field-time-columns",
+        "ms-empty-combined-averages"
       ],
       "behaviors": [
         "averaging"
@@ -410,7 +413,8 @@
       "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata.",
       "evidence": [
         "paired",
-        "ms-scan-field-time-columns"
+        "ms-scan-field-time-columns",
+        "ms-empty-combined-averages"
       ],
       "behaviors": [
         "averaging"
@@ -931,7 +935,8 @@
     "expformat": {
       "scope": "Export format type. If not provided, plotfile extension will be used to determine type.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-empty-combined-averages"
       ],
       "behaviors": [
         "export"
@@ -942,7 +947,8 @@
       "scope": "Include metadata in text export",
       "evidence": [
         "paired",
-        "ms-raw-flag-symbols"
+        "ms-raw-flag-symbols",
+        "ms-empty-combined-averages"
       ],
       "behaviors": [
         "export"
@@ -1751,6 +1757,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-raw-flag-symbols-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2196"
+      ]
+    },
+    "ms-empty-combined-averages": {
+      "kind": "Same-input empty MeasurementSet channel and time average exports",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs ordinary MeasurementSet vector channel and time averaging with no clear output.",
+      "result": "Zero primary spectral weight and fully cube-flagged bins with clear row flags match in verbose and quiet text export, including a bin spanning scans and fields. The six byte-identical files include the averaging headers and both empty ordinate sections. Three paired 500 by 360 PNG cases retain axis labels and have no plotted samples. Nineteen populated weighted controls match 76 selected coordinates.",
+      "casa_version": "6.7.6.14",
+      "revision": "be2e40e1c79fc2fb7673aa601f26cf41cf1bac55",
+      "source_revision": "be2e40e1c79fc2fb7673aa601f26cf41cf1bac55",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-empty-combined-averages-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2198"
       ]
     }
   }
