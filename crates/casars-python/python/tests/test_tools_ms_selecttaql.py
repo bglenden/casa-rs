@@ -1,5 +1,7 @@
 """Pinned CASA behavior for direct MeasurementSet TaQL selection."""
 
+import shutil
+
 import numpy as np
 import pytest
 
@@ -73,7 +75,7 @@ def test_ms_selecttaql_reports_parse_and_scalar_errors_without_changing_rows(nat
                 selector.selecttaql(bare)
             assert selector.nrow(True) == selected
             np.testing.assert_array_equal(selector.msselectedindices()["field"], [0])
-        for invalid in (" ", "ANTENNA1 == ", "NO_SUCH_COLUMN > 0"):
+        for invalid in (" ", "ANTENNA1 == ", "NO_SUCH_COLUMN > 0", "ROWID == 2", "t", "f"):
             with pytest.raises(RuntimeError, match="Error in select expression") as failed:
                 selector.selecttaql(invalid)
             with pytest.raises(RuntimeError) as indices:
@@ -95,4 +97,77 @@ def test_ms_selecttaql_preserves_saved_reference_order(baseline_fixture):
         assert selector.open(path)
         assert selector.selecttaql("ANTENNA1 != 2")
         np.testing.assert_array_equal(selector.getdata("data")["data"], raw["data"][..., selected], strict=True)
+        assert selector.done()
+
+
+def test_ms_selecttaql_accepts_uppercase_boolean_literals(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    for api in (casa, tools):
+        selector = api.ms()
+        assert selector.open(str(native_dataset))
+        assert selector.selecttaql("FLAG_ROW == F")
+        assert selector.selecttaql("T")
+        got = selector.getdata("data")["data"]
+        np.testing.assert_array_equal(got, raw["data"][..., ~raw["flag_row"]], strict=True)
+        assert selector.selecttaql("F") is False
+        assert selector.nrow(True) == 0
+        assert selector.done()
+
+
+def test_ms_selecttaql_distinguishes_rowid_column_from_function(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    path = str(native_dataset)
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    assert table.addcols({"ROWID": table.getcoldesc("ANTENNA1")})
+    values = np.full(raw["data"].shape[-1], -1, dtype=np.int32)
+    values[7] = 2
+    assert table.putcol("ROWID", values)
+    assert table.done()
+    for api in (casa, tools):
+        selector = api.ms()
+        assert selector.open(path)
+        for predicate, row in (("ROWID == 2", 7), ("ROWID() == 2", 2)):
+            assert selector.selecttaql(predicate)
+            result = selector.getdata("data")["data"]
+            np.testing.assert_array_equal(result, raw["data"][..., row:row + 1], strict=True)
+            assert selector.reset()
+        assert selector.done()
+
+
+@pytest.mark.parametrize("method,predicate,live", [
+    ("selecttaql", "TRUE", True),
+    ("selecttaql", "1 == 1", True),
+    ("msselect", "TRUE", True),
+    ("selecttaql", "ROWID() < 30", False),
+    ("selectinit", None, False),
+])
+def test_ms_taql_retains_live_and_fixed_views_after_append(
+    baseline_fixture, native_dataset, tmp_path, method, predicate, live,
+):
+    casa, _, raw = baseline_fixture
+    count = raw["data"].shape[-1]
+    for api in (casa, tools):
+        path = str(tmp_path / f"{api.__name__}.ms")
+        shutil.copytree(native_dataset, path)
+        selector = api.ms()
+        assert selector.open(path)
+        if method == "selecttaql":
+            assert selector.selecttaql(predicate)
+        elif method == "msselect":
+            assert selector.msselect({"taql": predicate})
+        else:
+            assert selector.selectinit()
+        if not live:
+            assert selector.selecttaql("TRUE")
+        assert selector.nrow(True) == count
+
+        writer = casa.table()
+        assert writer.open(path, nomodify=False)
+        assert writer.addrows(1)
+        assert writer.nrows() == count + 1
+        assert writer.done()
+        assert selector.nrow(True) == count + int(live)
+        assert selector.selecttaql(f"ROWID() == {count}") is live
+        assert selector.nrow(True) == int(live)
         assert selector.done()

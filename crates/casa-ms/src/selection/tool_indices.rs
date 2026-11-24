@@ -68,6 +68,7 @@ pub struct ParsedMsToolSelection {
     compiled: CompiledMsSelection,
     rows_per_block: usize,
     taql_is_row_predicate: bool,
+    constant_taql: Option<bool>,
     correlations: Vec<ToolCorrelationSelection>,
 }
 
@@ -87,6 +88,12 @@ impl ParsedMsToolSelection {
         !self.compiled.where_clauses().is_empty()
     }
 
+    /// A true predicate independent of rows retains the existing live or
+    /// saved view because it has no additional row restriction.
+    pub fn preserves_current_view(&self) -> bool {
+        self.constant_taql == Some(true)
+    }
+
     /// Take the in-row correlation projections from this selection.
     pub fn into_correlations(self) -> Vec<ToolCorrelationSelection> {
         self.correlations
@@ -101,6 +108,13 @@ impl ParsedMsToolSelection {
             return Err(MsError::InvalidInput(
                 "TaQL row predicate is not a Boolean scalar".into(),
             ));
+        }
+        if let Some(include) = self.constant_taql {
+            return Ok(if include {
+                (0..ms.row_count()).collect()
+            } else {
+                Vec::new()
+            });
         }
         self.compiled
             .apply_internal(ms, Some(self.rows_per_block), false)
@@ -141,15 +155,16 @@ impl MeasurementSet {
             }
         }
         let taql = rows.msselect.take();
-        let taql_type = if let Some(text) = nonempty(taql.as_deref().map(str::trim)) {
-            super::taql_selection::validate_predicate(
-                self,
-                &format!("SELECT * WHERE ({text})"),
-                Some(rows_per_block),
-            )?
-        } else {
-            RecordExpressionType::PossibleRowPredicate
-        };
+        let (taql_type, constant_taql) =
+            if let Some(text) = nonempty(taql.as_deref().map(str::trim)) {
+                super::taql_selection::validate_predicate(
+                    self,
+                    &format!("SELECT * WHERE ({text})"),
+                    Some(rows_per_block),
+                )?
+            } else {
+                (RecordExpressionType::PossibleRowPredicate, None)
+            };
         let taql_is_row_predicate = taql_type == RecordExpressionType::PossibleRowPredicate;
         if (taql_type == RecordExpressionType::NonBoolean && rows.has_text_selection())
             || (!taql_is_row_predicate && rows.timerange.is_some())
@@ -158,6 +173,11 @@ impl MeasurementSet {
                 "TaQL expression cannot be combined with the other row selectors".into(),
             ));
         }
+        let constant_taql = if rows.has_text_selection() {
+            None
+        } else {
+            constant_taql
+        };
         rows.msselect = taql;
         let compiled =
             rows.compile_with_row_grammar(self, RowGrammar::Transform, Some(rows_per_block))?;
@@ -170,6 +190,7 @@ impl MeasurementSet {
             compiled,
             rows_per_block,
             taql_is_row_predicate,
+            constant_taql,
             correlations,
         })
     }

@@ -3,7 +3,8 @@
 //!
 //! The [`Token`] enum is annotated with [`logos`] attributes so that a
 //! zero-allocation lexer is generated at compile time. Keywords are
-//! case-insensitive (via `ignore(ascii_case)`).
+//! case-insensitive (via `ignore(ascii_case)`), except for the one-letter
+//! Boolean literals.
 //!
 //! # C++ reference
 //!
@@ -14,7 +15,7 @@ use logos::Logos;
 
 /// A single lexical token produced by the TaQL lexer.
 ///
-/// All keyword variants are matched case-insensitively. Whitespace and
+/// Keywords are matched case-insensitively except for `T` and `F`. Whitespace and
 /// `#`-comments are skipped automatically.
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\r\n\f]+")] // skip whitespace
@@ -81,11 +82,13 @@ pub enum Token {
     /// The `NULL` keyword.
     #[token("NULL", ignore(ascii_case))]
     Null,
-    /// The `TRUE` keyword.
+    /// The `TRUE` keyword or CASA's uppercase `T` literal.
     #[token("TRUE", ignore(ascii_case))]
+    #[token("T")]
     True,
-    /// The `FALSE` keyword.
+    /// The `FALSE` keyword or CASA's uppercase `F` literal.
     #[token("FALSE", ignore(ascii_case))]
+    #[token("F")]
     False,
     /// The `ASC` keyword.
     #[token("ASC", ignore(ascii_case))]

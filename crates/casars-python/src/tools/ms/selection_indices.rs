@@ -232,6 +232,9 @@ impl AttachedMs {
         if !parsed.has_row_expression() {
             return Ok(false);
         }
+        if parsed.preserves_current_view() {
+            return Ok(ms.row_count() != 0);
+        }
         let rows = parsed
             .select_rows(ms)
             .map_err(|error| runtime_error(format!("Error in select expression: {error}")))?;
@@ -245,6 +248,9 @@ impl AttachedMs {
     ) -> PyResult<bool> {
         if !parsed.has_row_expression() {
             return Ok(false);
+        }
+        if parsed.preserves_current_view() {
+            return Ok(ms.row_count() != 0);
         }
         let Ok(rows) = parsed.select_rows(ms) else {
             return Ok(false);

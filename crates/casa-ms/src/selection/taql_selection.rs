@@ -177,13 +177,19 @@ pub(super) fn validate_predicate(
     ms: &MeasurementSet,
     query: &str,
     rows_per_block: Option<usize>,
-) -> MsResult<RecordExpressionType> {
+) -> MsResult<(RecordExpressionType, Option<bool>)> {
     if let Statement::Select(select) = selection_query(ms, query, rows_per_block)?
         && let Some(predicate) = &select.where_clause
     {
-        return taql::validate_record_expression(predicate, ms.main_table()).map_err(taql_error);
+        let kind =
+            taql::validate_record_expression(predicate, ms.main_table()).map_err(taql_error)?;
+        let constant = match taql::eval::eval_constant(predicate, "TaQL", select.style) {
+            Ok(taql::eval::ExprValue::Bool(value)) => Some(value),
+            _ => None,
+        };
+        return Ok((kind, constant));
     }
-    Ok(RecordExpressionType::PossibleRowPredicate)
+    Ok((RecordExpressionType::PossibleRowPredicate, None))
 }
 
 fn selection_query(
