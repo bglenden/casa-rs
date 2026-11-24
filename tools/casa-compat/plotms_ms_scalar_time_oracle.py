@@ -55,6 +55,16 @@ def compare(root, native):
         table.putcol("FLAG", flags)
     with opened(row_flags, True) as table:
         table.putcol("FLAG_ROW", integration == 2)
+    spectra = root / "spectra.ms"
+    copy_ms(source, spectra)
+    with opened(spectra, True) as table:
+        descriptor = table.getcoldesc("DATA")
+        shape = table.getcol("DATA").shape
+        for name, values in (("WEIGHT_SPECTRUM", [8, 1, 2]), ("SIGMA_SPECTRUM", [0.5, 1, 2])):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            spectrum = np.asarray(values, dtype=np.float32)[integration % 3]
+            table.putcol(name, np.broadcast_to(spectrum, shape).copy())
     controls = request(source) | dict(
         xaxis="amp", xdatacolumn="data", yaxis=["phase", "real"], ydatacolumn=["corrected", "model"],
         yaxislocation=["left", "right"], spw="0:1", avgtime="20", scalar=True,
@@ -68,6 +78,9 @@ def compare(root, native):
         ("scalar-cube-flags", dict(vis=str(cube_flags)),
          [(4, 156.75), (11 / 3, 74.5), (4, 23 / 4), (11 / 3, 31 / 6)]),
         ("scalar-row-flags", dict(vis=str(row_flags)), amplitude),
+        ("scalar-row-weight", dict(vis=str(spectra)), amplitude),
+        ("scalar-time-axis", dict(xaxis="time"),
+         [(start + offset, y) for y in (74.5, 31 / 6) for offset in (10, 40)]),
         ("scalar-single-ordinate", dict(yaxis="phase", ydatacolumn="corrected", yaxislocation="left"),
          amplitude[:2]),
     )
@@ -81,6 +94,9 @@ def compare(root, native):
         assert {tuple(point[5:9]) for point in selected} == {("0", "1", "A0@P0", "A1@P1")}
         np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
                                    coordinates, rtol=1.2e-5)
+        if options["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in selected],
+                                       [point[0] for point in coordinates], rtol=0, atol=0.00051)
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching scalar time coordinates", flush=True)

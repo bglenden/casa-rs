@@ -42,7 +42,7 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
-    pub(super) fn plotms_independent_vector_average(&self) -> bool {
+    pub(super) fn plotms_independent_average(&self) -> bool {
         let transforms_frequency =
             self.x_axis == Some(MsAxis::Frequency) && self.freqframe.is_some();
         let crosses_boundary = self.avgscan || self.avgfield;
@@ -50,10 +50,14 @@ impl CliOptions {
             && !self.avgbaseline
             && !(transforms_frequency && crosses_boundary);
         let baseline_average = self.avgbaseline && !crosses_boundary && !transforms_frequency;
+        let scalar_time = time_average
+            && !crosses_boundary
+            && !transforms_frequency
+            && self.avgchannel.is_none_or(|width| width <= 1);
         (time_average || baseline_average)
             && !self.avgantenna
             && !self.avgspw
-            && !self.scalar
+            && (!self.scalar || scalar_time)
             && !self.has_mixed_ordinate_dimensions()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()
