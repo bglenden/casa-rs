@@ -13,6 +13,7 @@ import numpy as np
 from plotms_ms_columns_oracle import (
     casa, compare_figure, compare_text, fixture, opened, plotms_launcher, reference, request, rows,
 )
+from plotms_ms_layout_oracle import occupied_marker_cells
 
 
 PHASE_CENTER = "J2000 00h00m02.00s -29d59m40.00s"
@@ -85,7 +86,8 @@ def main():
             row = np.arange(table.nrows())
             uvw = np.array([-30 - row / 16, 42 + row / 8, 4 + row / 32])
             table.putcol("UVW", uvw)
-        shifted = root / "shifted.ms"
+        shifted = root / "shifted" / vis.name
+        shifted.parent.mkdir()
         # Direct PlotMS text export stalls after its selection header. The
         # phaseshift task uses the same tviphaseshift iterator and materializes
         # its coordinates into a separate MS readable by pinned PlotMS.
@@ -100,9 +102,13 @@ def main():
             expected = compare_values(root, native, vis, shifted, axis, controls)
             if axis == "u":
                 image = request(vis) | controls | dict(transform=True, phasecenter=PHASE_CENTER,
-                                                       title="Shifted visibility")
+                                                       title="Shifted visibility", customsymbol=True,
+                                                       symbolshape="circle", symbolcolor="dd2255",
+                                                       symbolsize=5, symbolfill="fill", symboloutline=False)
                 compare_figure(root, native, image, expected,
                                ("Shifted visibility", "U (m)", "Phase (degrees)"))
+                for engine in ("casa", "native"):
+                    assert occupied_marker_cells(root / engine / "u.png", (1, 1)) == {(0, 0)}
         compare_values(root, native, vis, shifted, "model",
                        dict(xaxis="real", yaxis="imag", xdatacolumn="model"))
         check_refusals(root, native, vis)
