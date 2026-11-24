@@ -186,14 +186,6 @@ impl BinBuffer {
     ) {
         self.weights.clear();
         self.projection = None;
-        if bin.averaged
-            && let Some((projection, model)) = grid.model.as_ref()
-        {
-            self.values.clear();
-            self.projection = channel_averaged_operands(grid, model, flags, weight, corr, bin)
-                .map(|operands| (*projection, operands));
-            return;
-        }
         collect_bin_samples_into(
             grid,
             flags,
@@ -215,6 +207,39 @@ impl BinBuffer {
         }
     }
 
+    pub(super) fn collect_channel_average(
+        &mut self,
+        grid: &ComplexGrid,
+        flags: &ArrayView2<'_, bool>,
+        weight: Option<&FloatGrid>,
+        corr: usize,
+        bin: &ChannelBin,
+    ) {
+        self.values.clear();
+        self.weights.clear();
+        self.projection = None;
+        if let Some((projection, model)) = grid.model.as_ref() {
+            self.projection = channel_averaged_operands(
+                [grid.values.as_slice(), model.as_slice()],
+                grid.chan_count,
+                flags,
+                weight,
+                corr,
+                bin,
+            )
+            .map(|operands| (*projection, operands));
+        } else if let Some([value]) = channel_averaged_operands(
+            [grid.values.as_slice()],
+            grid.chan_count,
+            flags,
+            weight,
+            corr,
+            bin,
+        ) {
+            self.values.push(value);
+        }
+    }
+
     pub(super) fn normalize_vector_average(&mut self) {
         let Some(average) = vector_mean(&self.values, &self.weights) else {
             return;
@@ -225,26 +250,27 @@ impl BinBuffer {
     }
 }
 
-fn channel_averaged_operands(
-    grid: &ComplexGrid,
-    model: &[Complex64],
+fn channel_averaged_operands<const N: usize>(
+    inputs: [&[Complex64]; N],
+    channel_count: usize,
     flags: &ArrayView2<'_, bool>,
     spectrum: Option<&FloatGrid>,
     corr: usize,
     bin: &ChannelBin,
-) -> Option<[Complex64; 2]> {
-    let mut sums = [Complex32::new(0.0, 0.0); 2];
+) -> Option<[Complex64; N]> {
+    let mut sums = [Complex32::new(0.0, 0.0); N];
     let mut total_weight = 0.0_f32;
     let mut sample_count = 0_usize;
     for channel in bin.channels() {
-        if channel >= grid.chan_count || flags[(corr, channel)] {
+        if channel >= channel_count || flags[(corr, channel)] {
             continue;
         }
-        let index = corr * grid.chan_count + channel;
+        let index = corr * channel_count + channel;
         let weight = spectrum.map_or(1.0, |weights| weights.values[index] as f32);
-        // The channel iterator accumulates both clear operands in Complex32.
+        // The channel iterator accumulates clear visibility values in Complex32.
         // In particular it retains any nonfinite value on a clear channel.
-        for (sum, value) in sums.iter_mut().zip([grid.values[index], model[index]]) {
+        for (sum, values) in sums.iter_mut().zip(inputs) {
+            let value = values[index];
             *sum += Complex32::new(value.re as f32, value.im as f32) * weight;
         }
         total_weight += weight;
@@ -261,7 +287,7 @@ fn channel_averaged_operands(
     let means = if normalization > 0.0 {
         sums.map(|sum| sum / normalization)
     } else {
-        [Complex32::new(0.0, 0.0); 2]
+        [Complex32::new(0.0, 0.0); N]
     };
     Some(means.map(|mean| Complex64::new(f64::from(mean.re), f64::from(mean.im))))
 }
