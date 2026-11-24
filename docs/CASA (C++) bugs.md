@@ -11174,3 +11174,13 @@ normalized RMS on ordinary reads and 0.250 when averaging by baseline.
 casa-rs projects visibility flags and inverse variances to the selected
 Stokes products for the reduction. Public raw weight and sigma fields retain
 their recorded correlation axes, as in CASA (#1030).
+
+## MS channel averaging can abort when Stokes conversion changes the axis size
+
+On an MS with four channels and recorded RR and LL, call
+`selectchannel(2, 0, 2, 2)`, `selectpolarization(['I'])` and then
+`getdata(['data', 'flag', 'axis_info'])`. CASA 6.7.6.14 aborts with an
+uncaught `ArrayConformanceError`. Its flagged-data cleanup reshapes the
+one-correlation converted data using the two-correlation recorded flag cube.
+casa-rs uses the converted flag axis to zero the masked Stokes values and
+returns the recorded FLAG shape and the requested Stokes data shape (#1030).

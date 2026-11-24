@@ -299,6 +299,7 @@ struct VisibilityRead<'a> {
     polarization: Option<&'a VisibilityPolarization>,
     raw_flags: OnceCell<ArrayD<bool>>,
     selected_flags: OnceCell<ArrayD<bool>>,
+    converted_channel_flags: OnceCell<ArrayD<bool>>,
     sigma_weights: OnceCell<ChannelWeights>,
     corrected_weights: OnceCell<ChannelWeights>,
 }
@@ -414,6 +415,7 @@ impl<'a> VisibilityRead<'a> {
             polarization: options.polarization,
             raw_flags: OnceCell::new(),
             selected_flags: OnceCell::new(),
+            converted_channel_flags: OnceCell::new(),
             sigma_weights: OnceCell::new(),
             corrected_weights: OnceCell::new(),
         })
@@ -911,7 +913,7 @@ impl<'a> VisibilityRead<'a> {
                 data
             };
             let data = if let Some(polarization) = convert {
-                polarization.apply_conversion(data, self.polarization_ids()?)?
+                self.convert_visibility_product(data, polarization, !average)?
             } else {
                 data
             };
@@ -996,6 +998,40 @@ impl<'a> VisibilityRead<'a> {
             );
         }
         Ok(reduction)
+    }
+
+    fn convert_visibility_product(
+        &self,
+        data: ArrayValue,
+        polarization: &VisibilityPolarization,
+        mask_binned: bool,
+    ) -> MsResult<ArrayValue> {
+        let ids = self.polarization_ids()?;
+        let mut data = polarization.apply_conversion(data, ids)?;
+        if let Some(channels) = self
+            .channels
+            .filter(|channels| mask_binned && channels.width() > 1)
+        {
+            let flags = match self.converted_channel_flags.get() {
+                Some(flags) => flags,
+                None => {
+                    let flags = polarization.converted_flags(self.channel_flags(channels)?, ids)?;
+                    self.converted_channel_flags.get_or_init(|| flags)
+                }
+            };
+            let ArrayValue::Complex32(samples) = &mut data else {
+                return Err(input("Stokes projection requires Complex visibility data"));
+            };
+            if samples.shape() != flags.shape() {
+                return Err(input("converted FLAG and visibility dimensions differ"));
+            }
+            samples.zip_mut_with(flags, |sample, &flagged| {
+                if flagged {
+                    *sample = Complex32::ZERO;
+                }
+            });
+        }
+        Ok(data)
     }
 
     fn average_product<'grid>(

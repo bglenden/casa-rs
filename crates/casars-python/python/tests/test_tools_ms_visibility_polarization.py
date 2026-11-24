@@ -235,6 +235,31 @@ def test_ms_polarization_empty_request_still_initializes_mixed_shapes(two_spws_d
         assert reader.done()
 
 
+def test_ms_channel_binned_stokes_uses_its_own_flag_shape(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    path = str(native_dataset)
+    flags = np.zeros_like(raw["flag"])
+    flags[1, :2, 0] = True
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    assert table.putcol("FLAG", flags)
+    assert table.done()
+
+    rows = flags.shape[-1]
+    recorded_flags = flags.reshape(2, 2, 2, rows).all(axis=2)
+    recorded_data = raw["data"].astype(np.complex64).reshape(2, 2, 2, rows).mean(axis=2)
+    stokes_i = np.where(recorded_flags.any(axis=0), 0, recorded_data.mean(axis=0))
+    reader = tools.ms()
+    assert reader.open(path)
+    assert reader.selectchannel(2, 0, 2, 2)
+    assert reader.selectpolarization(["I"])
+    record = reader.getdata(["data", "flag", "axis_info"])
+    np.testing.assert_array_equal(record["axis_info"]["corr_axis"], ["I"])
+    np.testing.assert_array_equal(record["data"], stokes_i[None].astype(np.complex128), strict=True)
+    np.testing.assert_array_equal(record["flag"], recorded_flags, strict=True)
+    assert reader.done()
+
+
 @pytest.mark.parametrize("ifraxis", [False, True])
 def test_ms_averages_converted_stokes_with_corresponding_flags_and_variance(
     baseline_fixture, native_dataset, ifraxis,

@@ -107,6 +107,17 @@ impl VisibilityPolarization {
         .map(ArrayValue::Complex32)
     }
 
+    pub(super) fn converted_flags(
+        &self,
+        flags: &ArrayD<bool>,
+        ids: &[i32],
+    ) -> MsResult<ArrayD<bool>> {
+        let Projection::Converted { types, plans } = &self.project else {
+            return Err(input("Stokes projection is missing"));
+        };
+        project_rows(flags, ids, types.len(), plans, Conversion::append_flags)
+    }
+
     pub(super) fn averaging_inputs(
         &self,
         flags: ArrayValue,
@@ -131,7 +142,7 @@ impl VisibilityPolarization {
                 "polarization averaging requires nonempty correlation and channel axes",
             ));
         }
-        let mut flags = project_rows(&flags, ids, width, plans, Conversion::append_flags)?;
+        let mut flags = self.converted_flags(&flags, ids)?;
         let weights = project_rows(&weights, ids, width, plans, Conversion::append_weights)?;
         let flags_mem = flags
             .as_slice_memory_order_mut()
