@@ -182,7 +182,10 @@ pub(super) fn options_from_plotms(
         (y_axis2 == Some(y_axis) || secondary_y != data_column).then_some(secondary_y);
     let visibility_axes =
         x_axis.is_visibility_math() || y_axis.is_visibility_math() || y_axis2.is_some();
-    let visibility_document = visibility_document || visibility_axes;
+    let visibility_document = visibility_document
+        || visibility_axes
+        || x_axis.is_row_identifier()
+        || ordinates.iter().copied().any(MsAxis::is_row_identifier);
     let plot_format = if visibility_document {
         MsExportFormat::Txt
     } else {
