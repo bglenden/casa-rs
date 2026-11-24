@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "00e3bb3a760474f258b9ea97a92bb3e7c83d55c2",
+  "source_revision": "00e3bb3a760474f258b9ea97a92bb3e7c83d55c2",
+  "baseline_revision": "50e31763a98bcd187b379b15e5c28c7f220f605d",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_channels_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Baseline vector and scalar averages of independent stored MeasurementSet visibility ordinate lists, including compatible time and channel transformations.",
+  "result": "passed",
+  "baseline_result": "Main refuses more than two stored visibility ordinates with baseline averaging. The first candidate also discards the fully flagged vector plot.",
+  "text_exports": 8,
+  "points": 294,
+  "empty_text_exports": 3,
+  "figures": 1,
+  "rendered_coordinates": 36,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "refusal_controls": 2
+}
