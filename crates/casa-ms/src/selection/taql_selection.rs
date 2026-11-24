@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bind casacore's MSCAL selection functions to the shared MS row grammars.
 
-use casa_tables::taql::ast::{BinaryOp, Expr, InSetElement, Literal, SelectStatement};
+use casa_tables::taql::ast::{
+    BinaryOp, Expr, InSetElement, IndexElement, Literal, SelectStatement, UnaryOp,
+};
 use casa_tables::taql::{self, IndexStyle, RecordExpressionType, Statement, TaqlError, TaqlResult};
-use casa_tables::{ColumnType, RequiredScalarColumnValues, TableError};
+use casa_tables::{ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableError};
 use casa_types::PrimitiveType;
 
 use super::intent::MatchMode;
@@ -39,12 +41,12 @@ pub(super) fn select_rows(
     }
 }
 
-#[derive(Clone, Copy)]
 enum ScalarComparison {
     Integer {
         literal: i64,
         compare: fn(i64, i64) -> bool,
     },
+    IntegerSet(Vec<i64>),
     Boolean(bool),
 }
 
@@ -75,10 +77,59 @@ impl ScalarComparison {
         }
     }
 
-    fn primitive(self) -> PrimitiveType {
+    fn from_predicate(predicate: &Expr) -> Option<(&Expr, Self)> {
+        match predicate {
+            Expr::Binary { left, op, right } => match (left.as_ref(), right.as_ref()) {
+                (operand, Expr::Literal(literal)) => {
+                    Some((operand, Self::new(literal, *op, false)?))
+                }
+                (Expr::Literal(literal), operand) => {
+                    Some((operand, Self::new(literal, *op, true)?))
+                }
+                _ => None,
+            },
+            Expr::InSet {
+                expr,
+                elements,
+                negated: false,
+            } => {
+                let mut values = elements
+                    .iter()
+                    .map(|element| match element {
+                        InSetElement::Value(value) => integer_literal(value),
+                        InSetElement::Range { .. } => None,
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                values.sort_unstable();
+                values.dedup();
+                Some((expr, Self::IntegerSet(values)))
+            }
+            _ => None,
+        }
+    }
+
+    fn primitive(&self) -> PrimitiveType {
         match self {
-            Self::Integer { .. } => PrimitiveType::Int32,
+            Self::Integer { .. } | Self::IntegerSet(_) => PrimitiveType::Int32,
             Self::Boolean(_) => PrimitiveType::Bool,
+        }
+    }
+
+    fn row_numbers(&self, row_count: usize) -> Option<Vec<usize>> {
+        match self {
+            Self::Integer { literal, compare } => Some(
+                (0..row_count)
+                    .filter(|&row| compare(row as i64, *literal))
+                    .collect(),
+            ),
+            Self::IntegerSet(values) => Some(
+                values
+                    .iter()
+                    .filter_map(|&value| usize::try_from(value).ok())
+                    .take_while(|&row| row < row_count)
+                    .collect(),
+            ),
+            Self::Boolean(_) => None,
         }
     }
 }
@@ -100,7 +151,7 @@ fn select_simple_rows(
         limit: None,
         offset: None,
         distinct: false,
-        style: _,
+        style,
         giving: None,
         giving_expr: None,
     } = select
@@ -119,28 +170,31 @@ fn select_simple_rows(
             Vec::new()
         }));
     }
-    if let Some(rows) = literal_row_id_set(predicate, row_count) {
+    if let Some((axis, lower, upper)) = projected_uvw_range(predicate, *style)
+        && table
+            .schema()
+            .and_then(|schema| schema.column("UVW"))
+            .is_some_and(|schema| {
+                matches!(
+                    schema.column_type(),
+                    ColumnType::Array(ArrayShapeContract::Fixed { shape }) if shape == &[3]
+                ) && schema.data_type() == Some(PrimitiveType::Float64)
+                    && !schema.options().undefined
+            })
+    {
+        let rows = select_projected_uvw_rows(
+            table,
+            axis,
+            lower..=upper,
+            selection_block_size(rows_per_block)?,
+        )?;
         return Ok(Some(rows));
     }
-    let Expr::Binary { left, op, right } = predicate else {
+    let Some((operand, comparison)) = ScalarComparison::from_predicate(predicate) else {
         return Ok(None);
     };
-    let (operand, literal, reverse) = match (left.as_ref(), right.as_ref()) {
-        (operand, Expr::Literal(literal)) => (operand, literal, false),
-        (Expr::Literal(literal), operand) => (operand, literal, true),
-        _ => return Ok(None),
-    };
-    let Some(comparison) = ScalarComparison::new(literal, *op, reverse) else {
-        return Ok(None);
-    };
-    if matches!(operand, Expr::RowNumber)
-        && let ScalarComparison::Integer { literal, compare } = comparison
-    {
-        return Ok(Some(
-            (0..row_count)
-                .filter(|&row| compare(row as i64, literal))
-                .collect(),
-        ));
+    if matches!(operand, Expr::RowNumber) {
+        return Ok(comparison.row_numbers(row_count));
     }
     let Expr::ColumnRef(column) = operand else {
         return Ok(None);
@@ -160,26 +214,30 @@ fn select_simple_rows(
     }
 
     // These predicates need only one scalar column, even when the MS has large visibility arrays.
-    let rows_per_block = match rows_per_block {
-        Some(rows) => rows,
-        None => rows_per_block_for_budget(default_selection_budget()?)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?,
-    };
+    let rows_per_block = selection_block_size(rows_per_block)?;
     let mut selected_rows = Vec::new();
     for start in (0..row_count).step_by(rows_per_block) {
         let end = start.saturating_add(rows_per_block).min(row_count);
         let rows = (start..end).collect::<Vec<_>>();
         let mut columns = table.required_scalar_columns_owned_for_rows(&[name], &rows)?;
-        match (comparison, columns.remove(name)) {
+        match (&comparison, columns.remove(name)) {
             (
                 ScalarComparison::Integer { literal, compare },
                 Some(RequiredScalarColumnValues::Int32(values)),
             ) => {
                 selected_rows.extend(
                     rows.into_iter().zip(values).filter_map(|(row, value)| {
-                        compare(i64::from(value), literal).then_some(row)
+                        compare(i64::from(value), *literal).then_some(row)
                     }),
                 );
+            }
+            (
+                ScalarComparison::IntegerSet(set),
+                Some(RequiredScalarColumnValues::Int32(values)),
+            ) => {
+                selected_rows.extend(rows.into_iter().zip(values).filter_map(|(row, value)| {
+                    set.binary_search(&i64::from(value)).is_ok().then_some(row)
+                }));
             }
             (
                 ScalarComparison::Boolean(expected),
@@ -188,7 +246,7 @@ fn select_simple_rows(
                 selected_rows.extend(
                     rows.into_iter()
                         .zip(values)
-                        .filter_map(|(row, value)| (value == expected).then_some(row)),
+                        .filter_map(|(row, value)| (value == *expected).then_some(row)),
                 );
             }
             _ => {
@@ -201,32 +259,99 @@ fn select_simple_rows(
     Ok(Some(selected_rows))
 }
 
-fn literal_row_id_set(predicate: &Expr, row_count: usize) -> Option<Vec<usize>> {
-    let Expr::InSet {
-        expr,
-        elements,
-        negated: false,
+fn selection_block_size(rows_per_block: Option<usize>) -> MsResult<usize> {
+    match rows_per_block {
+        Some(rows) => Ok(rows),
+        None => rows_per_block_for_budget(default_selection_budget()?)
+            .map_err(|error| MsError::InvalidInput(error.to_string())),
+    }
+}
+
+fn integer_literal(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::Literal(Literal::Int(value)) => Some(*value),
+        Expr::Unary {
+            op: UnaryOp::Negate,
+            operand,
+        } => match operand.as_ref() {
+            Expr::Literal(Literal::Int(value)) => value.checked_neg(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn real_literal(expr: &Expr) -> Option<f64> {
+    match expr {
+        Expr::Literal(Literal::Float(value)) => Some(*value),
+        Expr::Unary {
+            op: UnaryOp::Negate,
+            operand,
+        } if let Expr::Literal(Literal::Float(value)) = operand.as_ref() => Some(-value),
+        _ => integer_literal(expr).map(|value| value as f64),
+    }
+}
+
+fn projected_uvw_range(predicate: &Expr, style: IndexStyle) -> Option<(usize, f64, f64)> {
+    let Expr::Binary {
+        left,
+        op: BinaryOp::And,
+        right,
     } = predicate
     else {
         return None;
     };
-    if !matches!(expr.as_ref(), Expr::RowNumber) {
+    let Expr::Binary {
+        left: projection,
+        op: BinaryOp::Ge,
+        right: lower,
+    } = left.as_ref()
+    else {
+        return None;
+    };
+    let Expr::Binary {
+        left: upper_projection,
+        op: BinaryOp::Le,
+        right: upper,
+    } = right.as_ref()
+    else {
+        return None;
+    };
+    let Expr::ArrayIndex { array, indices } = projection.as_ref() else {
+        return None;
+    };
+    let Expr::ColumnRef(column) = array.as_ref() else {
+        return None;
+    };
+    let [IndexElement::Single(Expr::Literal(Literal::Int(index)))] = indices.as_slice() else {
+        return None;
+    };
+    if column.table.is_some() || column.column != "UVW" || projection != upper_projection {
         return None;
     }
-    let mut rows = Vec::new();
-    for element in elements {
-        let InSetElement::Value(Expr::Literal(Literal::Int(id))) = element else {
-            return None;
-        };
-        if let Ok(row) = usize::try_from(*id)
-            && row < row_count
-        {
-            rows.push(row);
-        }
+    let axis = usize::try_from(index.checked_sub(i64::from(style.is_one_based()))?).ok()?;
+    (axis < 3).then_some((axis, real_literal(lower)?, real_literal(upper)?))
+}
+
+fn select_projected_uvw_rows(
+    table: &Table,
+    axis: usize,
+    range: std::ops::RangeInclusive<f64>,
+    rows_per_block: usize,
+) -> MsResult<Vec<usize>> {
+    let row_count = table.row_count();
+    let mut selected = Vec::new();
+    for start in (0..row_count).step_by(rows_per_block) {
+        let end = start.saturating_add(rows_per_block).min(row_count);
+        let rows = (start..end).collect::<Vec<_>>();
+        let values = super::columns::load_uvw_column(table, &rows)?;
+        selected.extend(
+            rows.into_iter()
+                .zip(values)
+                .filter_map(|(row, uvw)| range.contains(&uvw[axis]).then_some(row)),
+        );
     }
-    rows.sort_unstable();
-    rows.dedup();
-    Some(rows)
+    Ok(selected)
 }
 
 pub(super) fn validate_predicate(

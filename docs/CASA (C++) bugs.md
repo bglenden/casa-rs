@@ -11442,3 +11442,22 @@ that axis. In the control, CASA zeros the visibilities in 15 of 30 rows.
 casa-rs rejects the sampled baseline-axis record before
 mutation. A fresh read with `increment=1` supplies a complete writable
 grid (#1030).
+
+## MS record selection can misread non-native NumPy byte order
+
+In CASA 6.7.6.14 on a little-endian host, `ms.select({'antenna1': v})`
+selects antenna 0 from the big-endian Int64 array
+`v = numpy.array([1], dtype='>i8')`. On NGC 5921 that gives 1,619 rows
+instead of the 1,559 for antenna 1. An exact `times` selection using a
+big-endian Float64 array for a known integration selects zero of its 351
+rows. casa-rs reads the numeric values according to the array dtype's
+byte order and selects the specified antenna and integration (#1030).
+
+## A two-dimensional MS record selection can terminate CASA
+
+In CASA 6.7.6.14, `ms.select({'rows': numpy.array([[1, 2], [3, 4]])})`
+can abort with a casacore `ArrayNDimError` when it tries to construct a
+vector. casa-rs raises a Python `RuntimeError` when a numeric selection
+field has more than one non-singleton axis. It retains earlier successful
+fields in the same ordered record. A vector with a singleton axis, such
+as shape `(1, 4)`, is accepted (#1030).

@@ -465,8 +465,8 @@ const METHODS: &[Method] = &[
     method(
         "select",
         &[param("items", K::Record, EmptyRecord)],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "selectchannel",

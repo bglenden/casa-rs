@@ -190,7 +190,7 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
-    fn selection_snapshot(&self) -> PyResult<Arc<MetadataSnapshot>> {
+    pub(super) fn selection_snapshot(&self) -> PyResult<Arc<MetadataSnapshot>> {
         let link = self.metadata_link();
         if self.plain_rows.is_some()
             && let Some(rows) = self.selected_rows.as_deref()
@@ -208,7 +208,7 @@ impl AttachedMs {
         link.snapshot(None).map_err(runtime_error)
     }
 
-    fn apply_direct_taql(&mut self, text: String) -> PyResult<bool> {
+    pub(super) fn apply_direct_taql(&mut self, text: String) -> PyResult<bool> {
         let snapshot = self.selection_snapshot()?;
         let ms = &snapshot.ms;
         let parsed = if !text.is_empty() && text.trim().is_empty() {
@@ -230,9 +230,11 @@ impl AttachedMs {
             runtime_error(message)
         })?;
         if !parsed.has_row_expression() {
+            self.synchronize_metadata_selection()?;
             return Ok(false);
         }
         if parsed.preserves_current_view() {
+            self.synchronize_metadata_selection()?;
             return Ok(ms.row_count() != 0);
         }
         let rows = parsed
@@ -247,9 +249,11 @@ impl AttachedMs {
         parsed: &ParsedMsToolSelection,
     ) -> PyResult<bool> {
         if !parsed.has_row_expression() {
+            self.synchronize_metadata_selection()?;
             return Ok(false);
         }
         if parsed.preserves_current_view() {
+            self.synchronize_metadata_selection()?;
             return Ok(ms.row_count() != 0);
         }
         let Ok(rows) = parsed.select_rows(ms) else {
@@ -258,15 +262,19 @@ impl AttachedMs {
         self.apply_tool_rows(rows)
     }
 
-    fn apply_tool_rows(&mut self, mut rows: Vec<usize>) -> PyResult<bool> {
-        if let Some(previous) = &self.selected_rows {
-            for row in &mut rows {
-                *row = previous[*row];
-            }
-        }
+    pub(super) fn apply_tool_rows(&mut self, mut rows: Vec<usize>) -> PyResult<bool> {
+        self.map_tool_rows(&mut rows);
         let nonempty = !rows.is_empty();
         self.set_selected_rows(Some(rows))?;
         Ok(nonempty)
+    }
+
+    pub(super) fn map_tool_rows(&self, rows: &mut [usize]) {
+        if let Some(previous) = &self.selected_rows {
+            for row in rows {
+                *row = previous[*row];
+            }
+        }
     }
 }
 
@@ -284,7 +292,9 @@ fn selector(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
     Ok((!text.is_empty()).then_some(text))
 }
 
-fn selection_dictionary<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyDict>>> {
+pub(super) fn selection_dictionary<'py>(
+    value: &Bound<'py, PyAny>,
+) -> PyResult<Option<Bound<'py, PyDict>>> {
     value
         .cast::<PyDict>()
         .map(|record| Some(record.clone()))

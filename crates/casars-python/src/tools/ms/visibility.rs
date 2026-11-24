@@ -789,6 +789,14 @@ impl AttachedMs {
         Ok(nonempty)
     }
 
+    pub(super) fn initialize_record_selection(&mut self) -> PyResult<bool> {
+        if self.visibility.initialized {
+            return Ok(true);
+        }
+        let link = self.metadata_link();
+        Ok(self.initialize_visibility(&link)?.is_some())
+    }
+
     fn initialize_visibility(
         &mut self,
         link: &MetadataLink,

@@ -10,6 +10,7 @@ mod owned_record;
 mod putdata;
 mod range;
 mod selection_indices;
+mod selection_record;
 mod statwt;
 mod stubs;
 mod subtable_queries;
@@ -60,6 +61,7 @@ struct AttachedMs {
     selection_state: selection_indices::SelectionState,
     visibility: visibility::VisibilityState,
     metadata: OnceLock<Arc<metadata_link::MetadataLink>>,
+    exact_time_metadata: Option<Arc<metadata_link::MetadataLink>>,
     write_locks: BTreeMap<PathBuf, TableWriteLock>,
     read_locks: BTreeMap<PathBuf, Table>,
 }
@@ -92,6 +94,7 @@ impl AttachedMs {
             selection_state: selection_indices::SelectionState::default(),
             visibility: visibility::VisibilityState::default(),
             metadata: OnceLock::new(),
+            exact_time_metadata: None,
             write_locks: BTreeMap::new(),
             read_locks: BTreeMap::new(),
         };
