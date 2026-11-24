@@ -454,7 +454,8 @@ def compare_multiple_ordinates(root, vis, native):
     def record(*args, **kwargs):
         figure, primary = render(*args, **kwargs)
         capture.append([(axis.get_yaxis().get_label_position(), axis.get_ylabel(),
-                         [layer.get_xydata() for layer in axis.lines]) for axis in figure.axes])
+                         [(layer.get_label(), layer.get_xydata()) for layer in axis.lines])
+                        for axis in figure.axes])
         return figure, primary
 
     dense = base | dict(correlation="")
@@ -466,15 +467,60 @@ def compare_multiple_ordinates(root, vis, native):
 
     split = [("left", "Real:model, Amp:corrected", (0, 2)), ("right", "Phase (degrees)", (1,))]
     figures = (
-        ("three-ordinates", base, "three-ordinates", split),
+        ("three-ordinates", base, "three-ordinates", split, 3),
         ("three-ordinates-scalar-side", base | dict(yaxislocation="right"), "three-ordinates",
-         [("left", "Real:model, Phase (degrees), Amp:corrected", (0, 1, 2))]),
+         [("left", "Real:model, Phase (degrees), Amp:corrected", (0, 1, 2))], 3),
         ("three-ordinates-short-sides", base | dict(yaxislocation=["right"]), "three-ordinates",
-         [("left", "Phase (degrees), Amp:corrected", (1, 2)), ("right", "Real:model", (0,))]),
+         [("left", "Phase (degrees), Amp:corrected", (1, 2)), ("right", "Real:model", (0,))], 3),
         ("three-ordinates-two-correlations", dense | dict(xconnector="line"),
-         "three-ordinates-two-correlations", split),
+         "three-ordinates-two-correlations", split, 3),
     )
-    for name, controls, text, expectations in figures:
+    multiple_baselines = root / "mixed-ordinate-baselines.ms"
+    copy_ms(vis, multiple_baselines)
+    with opened(multiple_baselines, True) as table:
+        flags = table.getcol("FLAG")
+        first_baseline = (table.getcol("ANTENNA1") == 0) & (table.getcol("ANTENNA2") == 1)
+        flags[:, 2, first_baseline] = True
+        table.putcol("FLAG", flags)
+        flag_rows = table.getcol("FLAG_ROW")
+        flag_rows[np.flatnonzero(first_baseline)[0]] = True
+        table.putcol("FLAG_ROW", flag_rows)
+        times = table.getcol("TIME")
+        times = times.min() + times.max() - times
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+    both_baselines = dict(vis=str(multiple_baselines), antenna="A0&A1;A0&A2", xconnector="line")
+    first_baseline_ids = {("1", "1", "XX"), ("2", "1", "YY"), ("3", "1", "XX")}
+    mixed_cases = (
+        ("u", "U (m)", {}, 30, 18, first_baseline_ids),
+        ("elevation", "Elevation (deg)", {}, 30, 18, first_baseline_ids),
+        ("u-baselines", "U (m)", both_baselines, 54, 30, {
+            ("1", "1", "XX"), ("3", "1", "XX"), ("1", "2", "YY"),
+            ("2", "2", "XX"), ("3", "2", "YY"),
+        }),
+        ("elevation-baselines", "Elevation (deg)", both_baselines, 54, 18, first_baseline_ids),
+    )
+    for case, label, overrides, visibility_count, metadata_count, identifiers in mixed_cases:
+        axis = case.split("-")[0]
+        name = f"three-ordinate-mixed-{case}"
+        mixed = dense | overrides | dict(yaxis=["real", "phase", axis], expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**mixed, plotfile=str(expected)) is None
+        points = rows(expected)
+        assert len(points) == 2 * visibility_count + metadata_count
+        real = points[:visibility_count]
+        phase = points[visibility_count:2 * visibility_count]
+        metadata = points[2 * visibility_count:]
+        assert [point[2:] for point in real] == [point[2:] for point in phase]
+        assert {(point[2], point[6], point[12]) for point in metadata} == identifiers
+        assert native(**mixed, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(points)
+        print(f"{name}: {visibility_count} Real and Phase, {metadata_count} {axis} coordinates",
+              flush=True)
+        sides = [("left", f"Real:model, {label}", (0, 2)), ("right", "Phase (degrees)", (1,))]
+        figures += ((name, mixed, name, sides, (visibility_count, 2 * visibility_count)),)
+
+    for name, controls, text, expectations, sections in figures:
         figure = controls | dict(expformat="png", width=500, height=360, dpi=100)
         expected, actual = (root / f"{name}.{engine}.png" for engine in ("casa", "native"))
         assert reference(**figure, plotfile=str(expected)) is None
@@ -483,15 +529,38 @@ def compare_multiple_ordinates(root, vis, native):
         [axes] = capture
         capture.clear()
         coordinates = np.array([point[:2] for point in rows(root / f"{text}.casa.txt")], dtype=float)
-        ordinates = np.split(coordinates, 3)
+        ordinates = np.split(coordinates, sections)
         assert len(axes) == len(expectations)
         for (side, label, layers), (expected_side, expected_label, indices) in zip(axes, expectations, strict=True):
             assert (side, label, len(layers)) == (expected_side, expected_label, len(indices))
-            for layer, index in zip(layers, indices, strict=True):
+            for (_, layer), index in zip(layers, indices, strict=True):
                 np.testing.assert_allclose(layer, ordinates[index], rtol=1.2e-5, atol=1e-7)
         for output in (expected, actual):
             with Image.open(output) as image:
                 assert image.size == (500, 360)
+
+    colored = dense | both_baselines | dict(yaxis=["real", "phase", "elevation"],
+                                            coloraxis="corr", expformat="png",
+                                            width=500, height=360, dpi=100)
+    expected, actual = (root / f"mixed-correlation-colors.{engine}.png" for engine in ("casa", "native"))
+    assert reference(**colored, plotfile=str(expected)) is None
+    with patch.object(_plot_document, "render_document", record):
+        assert native(**colored, plotfile=str(actual)) is None
+    [axes] = capture
+    plotted_groups = dict(layer for _, _, layers in axes for layer in layers)
+    points = rows(root / "three-ordinate-mixed-elevation-baselines.casa.txt")
+    labels = ("Real:model", "Phase", "Elevation")
+    assert len(plotted_groups) == 2 * len(labels)
+    for label, section in zip(labels, np.split(points, (54, 108)), strict=True):
+        for correlation in ("XX", "YY"):
+            coordinates = np.array([point[:2] for point in section if point[12] == correlation], dtype=float)
+            np.testing.assert_allclose(plotted_groups[f"{label} · {correlation}"], coordinates,
+                                       rtol=1.2e-5, atol=1e-7)
+    for output in (expected, actual):
+        with Image.open(output) as image:
+            assert image.size == (500, 360)
+    print(f"mixed-correlation-colors: {len(points)} matching rendered coordinates in six groups",
+          flush=True)
     with opened(virtual) as table:
         assert "MODEL_DATA" not in table.colnames()
 
@@ -518,19 +587,6 @@ def compare_multiple_ordinates(root, vis, native):
         else:
             raise AssertionError(f"{engine} accepted an invalid ordinate location before export")
         assert not output.exists()
-
-    for axis in ("u", "elevation"):
-        mixed = dense | dict(yaxis=["real", "phase", axis], expformat="txt")
-        expected, actual = (root / f"three-ordinate-mixed-{axis}.{engine}.txt" for engine in ("casa", "native"))
-        assert reference(**mixed, plotfile=str(expected)) is None
-        assert len(rows(expected)) == 78
-        try:
-            native(**mixed, plotfile=str(actual))
-        except TaskParameterError as error:
-            assert "mixed MeasurementSet visibility and metadata ordinates or geometry abscissae are pending #1032" in str(error), error
-        else:
-            raise AssertionError(f"PlotMS used the visibility-only sample mask for the mixed {axis} plot")
-        assert not actual.exists()
 
     averaged = base | dict(avgchannel="2", expformat="txt")
     expected, actual = (root / f"three-ordinate-averaged.{engine}.txt" for engine in ("casa", "native"))

@@ -6,11 +6,10 @@ use ndarray::ArrayView2;
 
 use super::MsAxis;
 use super::{
-    ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterPointRef,
-    MsScatterSeries, PlotMsInput, PreparedSelectedDataSource, VisibilityBinSamples,
-    check_grid_shapes, collect_bin_samples_into, compute_visibility_math,
-    compute_weighted_visibility_math, plotms_figure, scatter_series_identity,
-    weighted_visibility_mean,
+    ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterSeries, PlotMsInput,
+    PreparedSelectedDataSource, VisibilityBinSamples, check_grid_shapes, collect_bin_samples_into,
+    compute_visibility_math, compute_weighted_visibility_math, plotms_figure,
+    scatter_series_identity, weighted_visibility_mean,
 };
 use crate::MeasurementSet;
 use crate::selection::ChannelRange;
@@ -421,15 +420,19 @@ impl VisibilityTimeBounds {
 }
 
 pub(super) fn order_series(series: &mut MsScatterSeries) {
-    if series
-        .provenance
-        .iter()
-        .is_sorted_by_key(MsScatterPointRef::plotms_order)
-    {
+    let point_order = |index: usize| {
+        let iterator_slot = series
+            .plotms_metadata
+            .get(index)
+            .and_then(|metadata| metadata.averaging_group);
+        series.provenance[index].plotms_order(iterator_slot)
+    };
+    let indices = 0..series.provenance.len();
+    if indices.clone().is_sorted_by_key(point_order) {
         return;
     }
-    let mut order = (0..series.provenance.len()).collect::<Vec<_>>();
-    order.sort_unstable_by_key(|&index| series.provenance[index].plotms_order());
+    let mut order = indices.collect::<Vec<_>>();
+    order.sort_unstable_by_key(|&index| point_order(index));
     series.points = order.iter().map(|&index| series.points[index]).collect();
     series.provenance = order
         .iter()

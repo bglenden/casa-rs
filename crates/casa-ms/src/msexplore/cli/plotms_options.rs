@@ -27,6 +27,18 @@ impl CliOptions {
                 .any(|axis| !axis.is_visibility_math())
     }
 
+    pub(super) fn uses_channel_ordinate_masks(&self) -> bool {
+        self.x_axis.is_some_and(|x_axis| {
+            plotms_columns::uses_channel_ordinate_masks(
+                x_axis,
+                self.y_axis
+                    .into_iter()
+                    .chain(self.y_axis2)
+                    .chain(self.additional_ordinates.iter().map(|&(axis, _)| axis)),
+            )
+        })
+    }
+
     pub(super) fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 3]> {
         (self.x_axis.is_some_and(MsAxis::is_visibility_math)
             || self.y_axis.is_some_and(MsAxis::is_visibility_math)

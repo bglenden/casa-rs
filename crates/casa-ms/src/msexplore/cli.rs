@@ -247,7 +247,7 @@ fn run_task(
                     "more than two MeasurementSet ordinates with averaging, iteration or a callibrary are pending #1032",
                 ));
             }
-            if options.has_mixed_ordinate_dimensions() {
+            if options.has_mixed_ordinate_dimensions() && !options.uses_channel_ordinate_masks() {
                 return Err(TaskFailure::validation(
                     "mixed MeasurementSet visibility and metadata ordinates or geometry abscissae are pending #1032",
                 ));

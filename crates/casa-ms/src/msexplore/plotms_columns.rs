@@ -14,6 +14,19 @@ use crate::transform::{
     weight_from_sigma,
 };
 
+pub(super) fn uses_channel_ordinate_masks(
+    x_axis: MsAxis,
+    mut ordinates: impl Iterator<Item = MsAxis> + Clone,
+) -> bool {
+    x_axis == MsAxis::Channel
+        && ordinates.clone().any(MsAxis::is_visibility_math)
+        && ordinates.clone().any(|axis| !axis.is_visibility_math())
+        && ordinates.all(|axis| {
+            axis.is_visibility_math()
+                || matches!(axis, MsAxis::U | MsAxis::V | MsAxis::W | MsAxis::Elevation)
+        })
+}
+
 pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgbaseline
         && !spec.averaging.avgscan
