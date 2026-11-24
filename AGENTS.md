@@ -128,10 +128,12 @@ locations are in `docs/agent-reference.md`.
   `Work source: <reason>`); `Evidence:`; `Decisions:`; `Review:` if there
   was one. Use `Closes #N` only when merge should close the issue.
 - A broad issue can ship through several bounded PRs. Each PR completes an
-  independently useful, tested behavior; keep its implementation, regression
-  test and required fixes together. Land it when ready and leave the issue's
-  other behaviors open. Do not hold finished work for the entire issue, or
-  split scaffolding and individual arguments into PRs to inflate delivery.
+  independently useful, tested behavior. Prefer batching closely related cases
+  that change the same code and need the same checks. Keep the implementation,
+  regression tests and required fixes together. Land the batch when ready and
+  leave the issue's other behaviors open. Do not hold finished work for the
+  entire issue, or split scaffolding and individual arguments into PRs to
+  inflate delivery.
 - Keep PR descriptions readable: lead with a crisp status summary and a
   list of open issues or limitations, then organize supporting details to
   follow those points. Group evidence and decisions by topic; avoid a single
@@ -341,14 +343,14 @@ isolated, strengthen its demonstration test instead of adding a review.
 
 ## Checks And Merging
 
-- During implementation, run the cheapest meaningful test that distinguishes
-  the selected behavior. On a stable diff, run one affected validation batch:
-  `cargo fmt`, clippy `-D warnings`, relevant tests and `just arch-check`.
-  Docs-only changes need `just docs-check`. Batch related changes on one PR.
+- During implementation, run the cheapest meaningful test for each behavior.
+  On the stable PR diff, run one affected validation batch with `cargo fmt`,
+  clippy `-D warnings`, relevant tests and `just arch-check`.
+  Docs-only changes need `just docs-check`.
   Run broader suites when the change's risk or `TESTING.md` calls for them.
   Preserve scientific, interop, performance and memory acceptance. Reuse
-  green results under `TESTING.md`'s evidence-reuse rules. Do not rebuild or
-  revalidate an unchanged component per case.
+  green results under `TESTING.md`'s evidence-reuse rules and rerun only the
+  gates affected by subsequent changes.
 - A PR may open as a draft while work continues. After applicable checks and
   review pass, record the evidence in the PR, mark it ready and squash merge
   with `gh pr merge --squash --match-head-commit <validated-head-sha>`.
