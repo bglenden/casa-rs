@@ -10,7 +10,9 @@ from pathlib import Path
 
 import numpy as np
 
-from plotms_ms_columns_oracle import casa, compare_figure, copy_ms, opened, plotms_launcher, request
+from plotms_ms_columns_oracle import (
+    casa, compare_figure, copy_ms, opened, plotms_launcher, reference, request, rows,
+)
 from plotms_ms_derived_average_oracle import weighted_fixture
 from plotms_ms_scalar_derived_average_oracle import compare_case
 
@@ -48,6 +50,52 @@ def compare_weighted(root, native, vis):
                  controls | dict(xdatacolumn="corrected/model_vector"), coordinates)
 
 
+def compare_weight_edges(root, native, vis):
+    base = request(vis) | dict(avgchannel="2", spw="0:0~3", xaxis="real",
+                               xdatacolumn="data/model_vector", yaxis="imag")
+    zero_model_weight = root / "zero-model-weight.ms"
+    copy_ms(vis, zero_model_weight)
+    with opened(zero_model_weight, True) as table:
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        weights[:, :2, :] = 0
+        table.putcol("WEIGHT_SPECTRUM", weights)
+    compare_case(root, native, "zero-model-weight",
+                 base | dict(vis=str(zero_model_weight), ydatacolumn="data"),
+                 [(np.inf, 5), (52 / 34, 1)])
+
+    mixed = root / "mixed-storage.ms"
+    copy_ms(vis, mixed)
+    with opened(mixed, True) as table:
+        descriptor = table.getcoldesc("DATA")
+        descriptor.update(name="FLOAT_DATA", valueType="float",
+                          dataManagerType="StandardStMan", dataManagerGroup="FloatVis")
+        table.addcols({"FLOAT_DATA": descriptor})
+        table.putcol("FLOAT_DATA", table.getcol("DATA").real - 6)
+    controls = base | dict(vis=str(mixed), ydatacolumn="corrected")
+    check_effective_float(root, native, controls)
+    compare_case(root, native, "unused-float",
+                 controls | dict(xdatacolumn="corrected/model_vector"),
+                 [(13.04 / 6.5, -0.6), (48 / 34, 4)])
+
+
+def check_effective_float(root, native, controls):
+    from casars.tasks import TaskParameterError
+
+    expected, actual = (root / f"effective-float.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    values = np.array([point[:2] for point in rows(expected)], dtype=float)
+    # This expression consumes FLOAT_DATA even with a physical DATA column.
+    np.testing.assert_allclose(values, [(-3.4 * 1.9 / 6.5, -0.6), (25 / 34, 4)] * 6, rtol=1.2e-5)
+    try:
+        native(**controls, plotfile=str(actual), expformat="txt")
+    except TaskParameterError as error:
+        assert "averaging MeasurementSet FLOAT_DATA is pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS used the stored complex DATA in a FLOAT_DATA average")
+    assert not actual.exists()
+    print("effective-float: reference uses weighted FLOAT_DATA and native retains its refusal", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -65,7 +113,9 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare_weighted(root, native, weighted_fixture(root))
+        vis = weighted_fixture(root)
+        compare_weighted(root, native, vis)
+        compare_weight_edges(root, native, vis)
 
 
 if __name__ == "__main__":

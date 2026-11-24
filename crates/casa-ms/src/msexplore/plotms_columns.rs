@@ -468,7 +468,9 @@ pub(super) fn resolve_storage_columns<const N: usize>(
                 ));
             }
         }
-        if averaging && has_float && matches!(column, Data | Float) {
+        let uses_observed = matches!(column, Data | Float)
+            || (column.is_derived() && !column.is_corrected_model_expression());
+        if averaging && has_float && uses_observed {
             return Err(TaskFailure::validation(
                 "averaging MeasurementSet FLOAT_DATA is pending #1032",
             ));
