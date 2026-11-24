@@ -190,7 +190,7 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
-    fn selection_snapshot(&self) -> PyResult<Arc<MetadataSnapshot>> {
+    pub(super) fn selection_snapshot(&self) -> PyResult<Arc<MetadataSnapshot>> {
         let link = self.metadata_link();
         if self.plain_rows.is_some()
             && let Some(rows) = self.selected_rows.as_deref()
@@ -208,7 +208,7 @@ impl AttachedMs {
         link.snapshot(None).map_err(runtime_error)
     }
 
-    fn apply_direct_taql(&mut self, text: String) -> PyResult<bool> {
+    pub(super) fn apply_direct_taql(&mut self, text: String) -> PyResult<bool> {
         let snapshot = self.selection_snapshot()?;
         let ms = &snapshot.ms;
         let parsed = if !text.is_empty() && text.trim().is_empty() {
@@ -258,7 +258,7 @@ impl AttachedMs {
         self.apply_tool_rows(rows)
     }
 
-    fn apply_tool_rows(&mut self, mut rows: Vec<usize>) -> PyResult<bool> {
+    pub(super) fn apply_tool_rows(&mut self, mut rows: Vec<usize>) -> PyResult<bool> {
         if let Some(previous) = &self.selected_rows {
             for row in &mut rows {
                 *row = previous[*row];
@@ -284,7 +284,9 @@ fn selector(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {
     Ok((!text.is_empty()).then_some(text))
 }
 
-fn selection_dictionary<'py>(value: &Bound<'py, PyAny>) -> PyResult<Option<Bound<'py, PyDict>>> {
+pub(super) fn selection_dictionary<'py>(
+    value: &Bound<'py, PyAny>,
+) -> PyResult<Option<Bound<'py, PyDict>>> {
     value
         .cast::<PyDict>()
         .map(|record| Some(record.clone()))

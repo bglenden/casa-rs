@@ -11442,3 +11442,13 @@ that axis. In the control, CASA zeros the visibilities in 15 of 30 rows.
 casa-rs rejects the sampled baseline-axis record before
 mutation. A fresh read with `increment=1` supplies a complete writable
 grid (#1030).
+
+## MS record selection can misread non-native NumPy byte order
+
+In CASA 6.7.6.14 on a little-endian host, `ms.select({'antenna1': v})`
+selects antenna 0 from the big-endian Int64 array
+`v = numpy.array([1], dtype='>i8')`. On NGC 5921 that gives 1,619 rows
+instead of the 1,559 for antenna 1. An exact `times` selection using a
+big-endian Float64 array for a known integration selects zero of its 351
+rows. casa-rs reads the numeric values according to the array dtype's
+byte order and selects the specified antenna and integration (#1030).

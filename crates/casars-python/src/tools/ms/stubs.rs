@@ -402,12 +402,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (items = None), text_signature = "($self, items={})")]
-    fn select(&self, items: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("select")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (nchan = None, start = None, width = None, inc = None), text_signature = "($self, nchan=1, start=0, width=1, inc=1)")]
     fn selectchannelold(
         &self,

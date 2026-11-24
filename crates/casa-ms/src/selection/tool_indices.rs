@@ -122,6 +122,45 @@ impl ParsedMsToolSelection {
 }
 
 impl MeasurementSet {
+    /// Select rows whose stored TIME is a member of the supplied second values.
+    /// The public `ms.select` record uses exact comparisons for its `times` field.
+    ///
+    /// # Errors
+    /// Returns an error when the MAIN TIME column cannot be read as doubles.
+    pub fn select_ms_tool_times(&self, mut times: Vec<f64>) -> MsResult<Vec<usize>> {
+        times.retain(|value| !value.is_nan());
+        if times.is_empty() {
+            return Ok(Vec::new());
+        }
+        times.sort_unstable_by(f64::total_cmp);
+        let rows_per_block = rows_per_block_for_budget(default_selection_budget()?)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        let table = self.main_table();
+        let mut selected = Vec::new();
+        for start in (0..table.row_count()).step_by(rows_per_block) {
+            let end = start.saturating_add(rows_per_block).min(table.row_count());
+            let rows = (start..end).collect::<Vec<_>>();
+            let mut columns = table.required_scalar_columns_owned_for_rows(&["TIME"], &rows)?;
+            let Some(casa_tables::RequiredScalarColumnValues::Float64(values)) =
+                columns.remove("TIME")
+            else {
+                return Err(MsError::InvalidInput(
+                    "expected a scalar Double TIME column".into(),
+                ));
+            };
+            selected.extend(rows.into_iter().zip(values).filter_map(|(row, time)| {
+                let inside = !time.is_nan()
+                    && times
+                        .binary_search_by(|value| {
+                            value.partial_cmp(&time).expect("NaN times were removed")
+                        })
+                        .is_ok();
+                inside.then_some(row)
+            }));
+        }
+        Ok(selected)
+    }
+
     /// Compile one CASA MS tool selection and update its auxiliary lists.
     /// An omitted antenna, field, window, or polarization clause retains
     /// its previous list. The compiled predicate describes only this request.

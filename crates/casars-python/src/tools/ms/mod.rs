@@ -10,6 +10,7 @@ mod owned_record;
 mod putdata;
 mod range;
 mod selection_indices;
+mod selection_record;
 mod statwt;
 mod stubs;
 mod subtable_queries;
