@@ -5715,7 +5715,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             .and_then(plotms_ordinates::VisibilityTimeBounds::midpoint)
                     }
                 });
-                let project = |axis, x_axis| {
+                let project = |axis: MsAxis, x_axis| {
                     if axis == MsAxis::Time && (time_bins.is_some() || scalar_time) {
                         planned_time
                     } else if scalar_time && axis.is_visibility_math() {
