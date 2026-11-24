@@ -154,7 +154,9 @@ def test_ms_getdata_baseline_time_coordinates(baseline_fixture):
     for api in (casa, tools):
         reader = api.ms()
         assert reader.open(path)
-        result = reader.getdata(["axis_info", "HA", "LAST", "UT"], ifraxis=True)
+        items = ["axis_info", "HA", "LAST", "UT"]
+        result = reader.getdata(items, ifraxis=True)
+        same_visibility(reader.getdata(items, ifraxis=True), result)
         assert set(result) == {"axis_info"}
         axis = result["axis_info"]["time_axis"]
         assert set(axis) == {"MJDseconds", "UT", "HA", "LAST"}

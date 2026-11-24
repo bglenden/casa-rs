@@ -2,11 +2,13 @@
 //! Column reads for the legacy MeasurementSet tool visibility record.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Arc, OnceLock};
 
 use casa_tables::{
     PlainReferenceRead, RequiredScalarColumnValues, SelectedArray1DCells, Table, TableColumn,
     TablePartNames,
 };
+use casa_types::measures::MeasuresProvider;
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex32;
@@ -61,13 +63,15 @@ pub fn heterogeneous_row_shapes(ms: &MeasurementSet) -> MsResult<Option<Vec<usiz
 }
 
 /// Layout and reduction options for a visibility record.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct VisibilityReadOptions {
+#[derive(Clone, Copy, Default)]
+pub struct VisibilityReadOptions<'a> {
     /// Reduce visibility products across their row axis.
     pub average: bool,
     /// Place rows on sorted baseline and integration axes with this many gaps
     /// between first-antenna groups. A negative gap is treated as zero.
     pub baseline_gap: Option<i32>,
+    /// Reuse the attachment's Measures provider for HA and LAST coordinates.
+    pub time_measures: Option<&'a OnceLock<Arc<dyn MeasuresProvider>>>,
 }
 
 /// Read a visibility record for a logical set of rows.
@@ -85,11 +89,12 @@ pub fn read_tool_visibility(
     rows: &[usize],
     items: &[String],
     metadata: Option<&MeasurementSet>,
-    options: VisibilityReadOptions,
+    options: VisibilityReadOptions<'_>,
 ) -> MsResult<RecordValue> {
     let VisibilityReadOptions {
         average,
         baseline_gap,
+        time_measures,
     } = options;
     if average && baseline_gap.is_some() {
         return Err(input("baseline-axis averaging is not supported"));
@@ -123,7 +128,7 @@ pub fn read_tool_visibility(
         let first_row = grid.as_ref().and_then(BaselineGrid::first_row).unwrap_or(0);
         let mut axes = axis_info(ms, ids, first_row)?;
         if let Some(grid) = &grid {
-            grid.add_axes(ms, &names, &read.scalar_columns, &mut axes)?;
+            grid.add_axes(ms, &names, &read.scalar_columns, time_measures, &mut axes)?;
         }
         fields.insert("axis_info".into(), Value::Record(axes));
     }

@@ -4,10 +4,11 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::{PI, TAU};
+use std::sync::{Arc, OnceLock};
 
 use casa_tables::RequiredScalarColumnValues;
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame};
+use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider};
 use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use ndarray::ArrayD;
 
@@ -124,6 +125,7 @@ impl BaselineGrid {
         ms: &MeasurementSet,
         names: &BTreeSet<String>,
         columns: &HashMap<String, RequiredScalarColumnValues>,
+        measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
         axes: &mut RecordValue,
     ) -> MsResult<()> {
         let antenna = ms.antenna()?;
@@ -166,7 +168,7 @@ impl BaselineGrid {
                 Value::Array(ArrayValue::Float64(vector(lengths))),
             ),
         ]);
-        let time = self.time_axis(ms, names, columns)?;
+        let time = self.time_axis(ms, names, columns, measures)?;
         axes.push(RecordField::new("ifr_axis", Value::Record(ifr)));
         axes.push(RecordField::new("time_axis", Value::Record(time)));
         Ok(())
@@ -177,6 +179,7 @@ impl BaselineGrid {
         ms: &MeasurementSet,
         names: &BTreeSet<String>,
         columns: &HashMap<String, RequiredScalarColumnValues>,
+        measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
     ) -> MsResult<RecordValue> {
         const DAY: f64 = 86400.0;
         let coordinate = |name, values| {
@@ -203,7 +206,17 @@ impl BaselineGrid {
         // MSDerivedValues::setAntennas selects antenna zero as its measure frame.
         let [x, y, z] = ms.antenna()?.position(0)?;
         let position = MPosition::new_itrf(x, y, z);
-        let provider = crate::open_measures_runtime()?;
+        let provider = match measures.and_then(OnceLock::get) {
+            Some(provider) => Arc::clone(provider),
+            None => {
+                let provider = crate::open_measures_runtime()?;
+                if let Some(cache) = measures {
+                    Arc::clone(cache.get_or_init(|| provider))
+                } else {
+                    provider
+                }
+            }
+        };
         let reference = detect_epoch_reference(ms.main_table(), "TIME", EpochRef::UTC);
         let fields = ms.field()?;
         let mut ha = Vec::with_capacity(self.times.len());

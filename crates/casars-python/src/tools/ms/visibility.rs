@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Read row-axis visibility records from the current MS attachment.
+//! Read visibility records from the current MS attachment.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use casa_ms::tool_visibility;
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
+use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyListMethods, PyString};
@@ -19,6 +21,7 @@ use crate::tools::not_yet_implemented_in;
 pub(super) struct VisibilityState {
     initialized: bool,
     main: Option<VisibilityMain>,
+    time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
 }
 
 struct VisibilityMain {
@@ -106,6 +109,7 @@ impl PyMsTool {
         let options = tool_visibility::VisibilityReadOptions {
             average,
             baseline_gap: ifraxis.then_some(ifraxisgap as i32),
+            time_measures: None,
         };
         let reply = py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
@@ -123,7 +127,7 @@ impl AttachedMs {
         &mut self,
         items: &[String],
         increment: i64,
-        options: tool_visibility::VisibilityReadOptions,
+        options: tool_visibility::VisibilityReadOptions<'_>,
     ) -> PyResult<CasaValue> {
         let link = self.metadata_link();
         link.verify_directory().map_err(runtime_error)?;
@@ -177,7 +181,10 @@ impl AttachedMs {
                 &rows,
                 items,
                 Some(&snapshot.ms),
-                options,
+                tool_visibility::VisibilityReadOptions {
+                    time_measures: Some(&self.visibility.time_measures),
+                    ..options
+                },
             )
             .map_err(runtime_error)?;
             return Ok(visibility_record(record));
