@@ -376,24 +376,26 @@
       "status": "Partial"
     },
     "avgscan": {
-      "scope": "Average over scans. Only valid with time averaging",
+      "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-scan-field-time-columns"
       ],
       "behaviors": [
         "averaging"
       ],
-      "status": "Implemented"
+      "status": "Partial"
     },
     "avgfield": {
-      "scope": "Average over fields. Only valid with time averaging",
+      "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-scan-field-time-columns"
       ],
       "behaviors": [
         "averaging"
       ],
-      "status": "Implemented"
+      "status": "Partial"
     },
     "avgbaseline": {
       "scope": "Average over all baselines (mutually exclusive with avgantenna)",
@@ -1115,14 +1117,15 @@
       "id": "averaging",
       "title": "Average selected plot samples",
       "status": "Partial",
-      "scope": "Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags. Ordinary vector time averaging uses the selected integrations, per-column weights and the MeasurementSet transform time groups. Channel averaging can follow ordinary vector time averaging. The primary channel weights determine which averaged bins render.",
+      "scope": "Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags. Ordinary vector time averaging uses the selected integrations, per-column weights and the MeasurementSet transform time groups. Channel averaging can follow ordinary vector time averaging. The primary channel weights determine which averaged bins render. Vector time bins can span the requested scan and field boundaries.",
       "evidence": [
         "paired",
         "ms-channel-columns",
         "ms-time-columns",
-        "ms-channel-time-columns"
+        "ms-channel-time-columns",
+        "ms-scan-field-time-columns"
       ],
-      "gap": "Scalar and cross-boundary cases, fully masked exports, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032."
+      "gap": "Scalar, baseline, antenna and spectral-window averaging cases, fully masked exports, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032."
     },
     {
       "id": "pages",
@@ -1506,6 +1509,20 @@
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2163",
         "docs/CASA (C++) bugs.md"
+      ]
+    },
+    "ms-scan-field-time-columns": {
+      "kind": "Same-input MeasurementSet vector time averaging across scans and fields",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with independent stored MeasurementSet visibility ordinates and vector time averaging across selected scans and fields.",
+      "result": "Twelve paired text exports match 34 coordinates, the time midpoint and the source scan and field. Cases cover each boundary alone, both boundaries together, retained boundaries, channel averaging, scan and field color grouping and reverse-ordered physical rows. Three 500 by 360 pixel PNGs match both labeled layers and ten artist coordinates. A cross-field BARY transform stays pending.",
+      "casa_version": "6.7.6.14",
+      "revision": "8fc7e86358ae20807b5c9896d1e047eec7379e7e",
+      "source_revision": "8fc7e86358ae20807b5c9896d1e047eec7379e7e",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-scan-field-time-columns-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2166"
       ]
     }
   }

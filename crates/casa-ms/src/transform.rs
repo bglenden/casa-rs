@@ -75,7 +75,7 @@ use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
 use subtable_copy::copy_subtables;
 pub use task_history::{TransformTaskHistory, append_task_history};
-pub(crate) use time_average::selected_plot_time_bins;
+pub(crate) use time_average::{PlotTimeGroups, selected_plot_time_groups};
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
 

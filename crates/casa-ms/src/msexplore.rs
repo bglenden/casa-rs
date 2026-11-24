@@ -70,7 +70,7 @@ use crate::spectral_selection::{
 use crate::subtables::SubTable;
 use crate::subtables::data_description::MsDataDescription;
 use crate::subtables::polarization::MsPolarization;
-use crate::transform::WeightKind;
+use crate::transform::{PlotTimeGroups, TimeAverageOptions, WeightKind};
 use crate::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
 
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
@@ -1707,10 +1707,12 @@ impl MsPlotSpec {
                     .to_string(),
             );
         }
-        if self.averaging.avgscan && self.color_by == MsColorAxis::Scan {
+        // Independent PlotMS ordinates color the averaged groups using their anchors.
+        if !independent_ordinates && self.averaging.avgscan && self.color_by == MsColorAxis::Scan {
             return Err("msexplore cannot color by scan while averaging across scans".to_string());
         }
-        if self.averaging.avgfield && self.color_by == MsColorAxis::Field {
+        if !independent_ordinates && self.averaging.avgfield && self.color_by == MsColorAxis::Field
+        {
             return Err(
                 "msexplore cannot color by field while averaging across fields".to_string(),
             );
@@ -2504,7 +2506,7 @@ pub struct PlotMsCalibration {
 /// CASA row and channel selection, optionally with transient calibrated arrays.
 struct PlotMsInput<'a> {
     row_order: &'a [usize],
-    time_bins: Option<&'a HashMap<usize, usize>>,
+    time_bins: Option<&'a PlotTimeGroups>,
     channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
     rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
     models: Option<&'a HashMap<usize, ArrayValue>>,
@@ -2775,8 +2777,18 @@ fn build_uncalibrated_plotms_payload(
             ) {
                 plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
             }
-            crate::transform::selected_plot_time_bins(ms, &selected.selected_rows, seconds)
-                .map_err(|error| error.to_string())
+            crate::transform::selected_plot_time_groups(
+                ms,
+                &selected.selected_rows,
+                TimeAverageOptions {
+                    interval_seconds: seconds,
+                    span_scans: plot.averaging.avgscan,
+                    span_states: true,
+                    span_fields: plot.averaging.avgfield,
+                    max_uvw_distance: 0.0,
+                },
+            )
+            .map_err(|error| error.to_string())
         })
         .transpose()?;
     let row_order = selected
@@ -4909,7 +4921,8 @@ fn build_generic_visibility_scatter_with_averaging(
     } else {
         None
     };
-    let use_shared_time_scope_midpoint = spec.averaging.avgtime.is_some()
+    let use_shared_time_scope_midpoint = time_bins.is_none()
+        && spec.averaging.avgtime.is_some()
         && (spec.averaging.avgfield || spec.averaging.avgscan || spec.averaging.avgspw);
 
     let mut time_scope_origins = std::collections::BTreeMap::<TimeAverageScopeKey, f64>::new();
@@ -5111,7 +5124,13 @@ fn build_generic_visibility_scatter_with_averaging(
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
         let row_time_value = selected_times[row_slot];
-        let time_group = time_bins.map(|bins| bins[&row]);
+        let (time_group, representative_slot) = time_bins.map_or((None, row_slot), |bins| {
+            let group = bins.group(row_slot);
+            (Some(group), bins.first_row_slot(group))
+        });
+        let representative_row = row_numbers[representative_slot];
+        let representative_field = selected_field_ids[representative_slot];
+        let representative_scan = selected_scan_numbers[representative_slot];
         if let Some(group) = time_group {
             // Time averaging sees selected input channels, including any
             // incomplete bin that channel averaging will subsequently drop.
@@ -5215,22 +5234,22 @@ fn build_generic_visibility_scatter_with_averaging(
                     }
                     let (group_key, group_label) = visibility_group(
                         spec.color_by,
-                        field_id_value,
+                        representative_field,
                         &field,
                         spw_id,
                         &spectral_window,
-                        scan_number_value,
+                        representative_scan,
                         antenna1_value,
                         antenna2_value,
                         Some(corr_label),
                     );
                     let (panel_key, panel_label) = iteration_group(
                         iteraxis,
-                        field_id_value,
+                        representative_field,
                         &field,
                         spw_id,
                         &spectral_window,
-                        scan_number_value,
+                        representative_scan,
                         Some(corr_label),
                     );
                     if !panels.contains_key(&panel_key) {
@@ -5280,7 +5299,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         if accumulator.representative.is_none() {
                             accumulator.display_channel = bin.display_channel();
                             accumulator.representative = Some(MsScatterPointRef {
-                                row,
+                                row: representative_row,
                                 corr: *corr_index,
                                 chan_start: bin.start,
                                 chan_end: bin.end,

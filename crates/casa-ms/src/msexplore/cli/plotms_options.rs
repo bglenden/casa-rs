@@ -43,13 +43,15 @@ impl CliOptions {
     }
 
     pub(super) fn plotms_independent_vector_time_average(&self) -> bool {
+        let transforms_frequency =
+            self.x_axis == Some(MsAxis::Frequency) && self.freqframe.is_some();
+        let crosses_boundary = self.avgscan || self.avgfield;
         self.avgtime.is_some()
-            && !self.avgscan
-            && !self.avgfield
             && !self.avgbaseline
             && !self.avgantenna
             && !self.avgspw
             && !self.scalar
+            && !(transforms_frequency && crosses_boundary)
             && !self.has_mixed_ordinate_dimensions()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()

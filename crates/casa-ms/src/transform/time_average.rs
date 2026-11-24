@@ -171,29 +171,53 @@ pub(super) fn uvw_coordinates(uvw: Option<&ArrayValue>) -> Option<[f64; 3]> {
     Some([uvw[0], uvw[1], uvw[2]])
 }
 
-/// Map each selected physical row to its shared vector time averaging group.
-pub(crate) fn selected_plot_time_bins(
+/// The selected physical rows and chronological anchors of PlotMS time groups.
+pub(crate) struct PlotTimeGroups {
+    group_by_row_slot: Vec<usize>,
+    first_row_slots: Vec<usize>,
+}
+
+impl PlotTimeGroups {
+    /// Return the time group for a row's position in the original selection.
+    pub(crate) fn group(&self, row_slot: usize) -> usize {
+        self.group_by_row_slot[row_slot]
+    }
+
+    /// Return the first chronological integration supplying the group's metadata.
+    pub(crate) fn first_row_slot(&self, group: usize) -> usize {
+        self.first_row_slots[group]
+    }
+}
+
+/// Plan vector time groups for the selected PlotMS rows and scan/field barriers.
+pub(crate) fn selected_plot_time_groups(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
-    interval_seconds: f64,
-) -> Result<HashMap<usize, usize>, MsTransformError> {
-    let groups = plan(
-        ms,
-        rows,
-        TimeAverageOptions {
-            interval_seconds,
-            span_scans: false,
-            span_states: true,
-            span_fields: false,
-            max_uvw_distance: 0.0,
-        },
-        MainRowOrder::Transform,
-    )?;
-    let mut bins = HashMap::with_capacity(rows.len());
+    options: TimeAverageOptions,
+) -> Result<PlotTimeGroups, MsTransformError> {
+    let groups = plan(ms, rows, options, MainRowOrder::Transform)?;
+    let mut group_by_row = HashMap::with_capacity(rows.len());
+    let mut first_rows = Vec::with_capacity(groups.len());
     for (index, group) in groups.into_iter().enumerate() {
-        bins.extend(group.rows.into_iter().map(|row| (row.physical, index)));
+        first_rows.push(group.first.row);
+        group_by_row.extend(group.rows.into_iter().map(|row| (row.physical, index)));
     }
-    Ok(bins)
+    let mut first_row_slots = vec![0; first_rows.len()];
+    let group_by_row_slot = rows
+        .iter()
+        .enumerate()
+        .map(|(row_slot, row)| {
+            let group = group_by_row[&row.row_index];
+            if first_rows[group] == row.row_index {
+                first_row_slots[group] = row_slot;
+            }
+            group
+        })
+        .collect();
+    Ok(PlotTimeGroups {
+        group_by_row_slot,
+        first_row_slots,
+    })
 }
 
 pub(super) fn group_baselines(
