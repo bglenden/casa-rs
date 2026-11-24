@@ -11123,3 +11123,13 @@ for a single integration and marks a sample with no unflagged
 observations flagged. Unchanged upstream tests still record the pinned
 CASA results (#1030).
 [Pinned casacore averaging loop](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSSelUtil2.tcc#L127-L147)
+
+## MS averaged sidereal time can fail when multiple fields are selected
+
+CASA 6.7.6.14 derives the common FIELD_ID as `-1` when a time-averaged
+selection spans fields. With `ifraxis=True, average=True`, a request for
+`axis_info` and `last` then tries to open FIELD row
+`18446744073709551615`. Local apparent sidereal time depends on the epoch
+and observatory position. casa-rs computes it in the first antenna's
+measure frame at the mean epoch, including when no single field describes
+the selection (#1030).

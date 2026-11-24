@@ -214,9 +214,7 @@ impl<'a> VisibilityRead<'a> {
         names: &BTreeSet<String>,
         baseline_axis: bool,
     ) -> MsResult<Self> {
-        let time_coordinates = baseline_axis
-            && names.contains("axis_info")
-            && (names.contains("ha") || names.contains("last"));
+        let hour_angle = baseline_axis && names.contains("axis_info") && names.contains("ha");
         let mut columns = SCALARS
             .into_iter()
             .filter_map(|(name, column)| {
@@ -224,7 +222,7 @@ impl<'a> VisibilityRead<'a> {
                     || (matches!(name, "antenna1" | "antenna2")
                         && (baseline_axis || names.contains("ifr_number")))
                     || (baseline_axis && name == "time")
-                    || (time_coordinates && name == "field_id"))
+                    || (hour_angle && name == "field_id"))
                     .then_some(column)
             })
             .collect::<Vec<_>>();
@@ -492,7 +490,9 @@ impl<'a> VisibilityRead<'a> {
                     ArrayValue::Float32(vector(Vec::new()))
                 };
                 fields.insert(name.clone(), Value::Array(empty));
-            } else if let Some((base, alias)) = raw_visibility_alias(name, names, average)? {
+            } else if let Some((base, alias)) =
+                raw_visibility_alias(name, names, average, self.baseline_axis)?
+            {
                 aliases.entry(base).or_default().push(alias);
             }
         }
@@ -674,6 +674,7 @@ fn raw_visibility_alias(
     name: &str,
     names: &BTreeSet<String>,
     average: bool,
+    baseline_axis: bool,
 ) -> MsResult<Option<(String, String)>> {
     let (alias, derived) = if average && PRODUCT_NAMES.iter().any(|&part| name.contains(part)) {
         if visibility_product(name) {
@@ -683,12 +684,14 @@ fn raw_visibility_alias(
         // item can still resolve to a raw visibility column under that name.
         (format!("avg_{name}"), name)
     } else if let Some(derived) = name.strip_prefix("avg_") {
+        let implicit_time = derived == "time" && baseline_axis && names.contains("axis_info");
         if average
             && matches!(
                 derived,
                 "antenna1" | "antenna2" | "feed1" | "feed2" | "sigma" | "time"
             )
             && !names.contains(derived)
+            && !implicit_time
         {
             return Err(input(format!(
                 "RecordInterface: field {derived} is unknown"

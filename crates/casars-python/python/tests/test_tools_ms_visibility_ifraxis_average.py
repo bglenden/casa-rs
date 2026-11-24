@@ -1,6 +1,7 @@
 """Pinned and independent baseline-axis averaging cases for the next slice."""
 
 import numpy as np
+import pytest
 
 from casars import tools
 from test_tools_ms_visibility import same_visibility
@@ -94,3 +95,59 @@ def test_ms_getdata_average_single_integration_retains_baselines(baseline_fixtur
     np.testing.assert_array_equal(result["sigma"], expected["sigma"][..., ordered], strict=True)
     np.testing.assert_array_equal(result["axis_info"]["time_axis"]["UT"], np.array([5.0]), strict=True)
     assert reader.done()
+
+
+def test_ms_getdata_averaged_last_across_fields(baseline_fixture, native_dataset):
+    casa, _, expected = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset / "FIELD"), nomodify=False)
+    assert table.addrows(1)
+    for column in table.colnames():
+        if table.iscelldefined(column, 0):
+            assert table.putcell(column, 1, table.getcell(column, 0))
+    assert table.done()
+    assert table.open(str(native_dataset), nomodify=False)
+    first_time = expected["time"].min()
+    assert table.putcol("FIELD_ID", (expected["time"] > first_time).astype(np.int32))
+    assert table.done()
+
+    assert table.open(str(native_dataset / "ANTENNA"))
+    position = table.getcell("POSITION", 0)
+    assert table.done()
+    mean_time = np.unique(expected["time"]).mean()
+    frame = casa.measures()
+    antenna = frame.position("ITRF", *({"value": float(x), "unit": "m"} for x in position))
+    assert frame.doframe(antenna)
+    mean_epoch = frame.epoch("UTC", {"value": float(mean_time), "unit": "s"})
+    want = frame.measure(mean_epoch, "LAST")["m0"]
+    assert want["unit"] == "d"
+    assert frame.done()
+
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    record = reader.getdata(["field_id", "axis_info", "last"], ifraxis=True, average=True)
+    assert record["field_id"].tolist() == [-1]
+    axis = record["axis_info"]["time_axis"]
+    np.testing.assert_array_equal(axis["MJDseconds"], np.array([mean_time]), strict=True)
+    assert axis["LAST"].dtype == np.float64 and axis["LAST"].shape == (1,)
+    np.testing.assert_allclose(axis["LAST"], [want["value"]], atol=0.015 / 86400, rtol=0)
+    assert reader.nrow(True) == len(expected["time"])
+    assert reader.done()
+
+
+def test_ms_getdata_averaged_time_alias_uses_internal_axis_time(baseline_fixture, native_dataset):
+    casa, _, _ = baseline_fixture
+    results = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        before = reader.getdata("data", ifraxis=True)["data"]
+        record = reader.getdata(["axis_info", "avg_time"], ifraxis=True, average=True)
+        assert set(record) == {"axis_info", "avg_time"}
+        np.testing.assert_array_equal(record["avg_time"], before, strict=True)
+        with pytest.raises(RuntimeError, match="field time is unknown"):
+            reader.getdata("avg_time", ifraxis=True, average=True)
+        assert reader.nrow(True) == 30
+        assert reader.done()
+        results.append(record)
+    same_visibility(results[1], results[0])

@@ -211,9 +211,6 @@ impl BaselineGrid {
         if !want_ha && !want_last {
             return Ok(axis);
         }
-        let RequiredScalarColumnValues::Int32(ids) = &columns["FIELD_ID"] else {
-            return Err(input("FIELD_ID must contain an integer"));
-        };
         // MSDerivedValues::setAntennas selects antenna zero as its measure frame.
         let position = antenna_position(ms.antenna()?.table(), 0)?;
         let provider = match measures.and_then(OnceLock::get) {
@@ -229,35 +226,42 @@ impl BaselineGrid {
         };
         let main = ms.main_table();
         let reference = TimeColumn::read(main)?.reference_at(main, first_selected)?;
-        let fields = ms.field()?;
-        let mut field_ids = self
-            .first_rows
-            .iter()
-            .map(|&row| ids[row])
-            .collect::<Vec<_>>();
-        if average {
-            averaging::common_id(&mut field_ids);
-        }
+        let hour_angle_fields = if want_ha {
+            let RequiredScalarColumnValues::Int32(ids) = &columns["FIELD_ID"] else {
+                return Err(input("FIELD_ID must contain an integer"));
+            };
+            let mut ids = self
+                .first_rows
+                .iter()
+                .map(|&row| ids[row])
+                .collect::<Vec<_>>();
+            if average {
+                averaging::common_id(&mut ids);
+            }
+            Some((ms.field()?, ids))
+        } else {
+            None
+        };
         let mut ha = Vec::with_capacity(times.len());
         let mut last = Vec::with_capacity(times.len());
-        for (&time, field) in times.iter().zip(field_ids) {
-            let field = usize::try_from(field).map_err(|_| input("negative FIELD_ID"))?;
-            let field_time = if fields.num_poly(field)? == 0 {
-                0.0
-            } else {
-                time
-            };
-            let direction = fields.metadata_direction_at_seconds(
-                field,
-                FieldDirectionColumn::Phase,
-                field_time,
-            )?;
+        for (index, &time) in times.iter().enumerate() {
             let epoch = MEpoch::from_mjd(time / DAY, reference);
             let frame = MeasFrame::new()
                 .with_measures(provider.clone())
                 .with_position(position.clone())
                 .with_epoch(epoch.clone());
-            if want_ha {
+            if let Some((fields, ids)) = &hour_angle_fields {
+                let field = usize::try_from(ids[index]).map_err(|_| input("negative FIELD_ID"))?;
+                let field_time = if fields.num_poly(field)? == 0 {
+                    0.0
+                } else {
+                    time
+                };
+                let direction = fields.metadata_direction_at_seconds(
+                    field,
+                    FieldDirectionColumn::Phase,
+                    field_time,
+                )?;
                 let lon = direction_at_frame(&direction, &frame)?
                     .convert_to(DirectionRef::HADEC, &frame)?
                     .longitude_rad();
