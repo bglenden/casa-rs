@@ -2647,6 +2647,12 @@ pub struct PlotMsCalibration {
     pub x_data_column: Option<MsDataColumn>,
 }
 
+#[derive(Clone, Copy)]
+struct RawSymbolVisibility {
+    unflagged: bool,
+    flagged: bool,
+}
+
 /// CASA row and channel selection, optionally with transient calibrated arrays.
 struct PlotMsInput<'a> {
     row_order: &'a [usize],
@@ -2660,6 +2666,7 @@ struct PlotMsInput<'a> {
     additional_ordinates: &'a [(MsAxis, MsDataColumn)],
     weight_axis_columns: [Option<MsDataColumn>; 3],
     prefer_float_data: bool,
+    raw_symbols: Option<RawSymbolVisibility>,
 }
 
 struct PlotMsColumnSelection<'a> {
@@ -2667,6 +2674,7 @@ struct PlotMsColumnSelection<'a> {
     secondary_y: Option<MsDataColumn>,
     additional_y: &'a [(MsAxis, MsDataColumn)],
     weights: [Option<MsDataColumn>; 3],
+    raw_symbols: Option<RawSymbolVisibility>,
 }
 
 fn build_msexplore_plot_payload_validated(
@@ -2892,6 +2900,7 @@ pub(crate) fn build_calibrated_plotms_payload(
         additional_ordinates: &[],
         weight_axis_columns: [None; 3],
         prefer_float_data: false,
+        raw_symbols: None,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -2999,6 +3008,7 @@ fn build_uncalibrated_plotms_payload(
         additional_ordinates: columns.additional_y,
         weight_axis_columns: columns.weights,
         prefer_float_data,
+        raw_symbols: columns.raw_symbols,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -4009,6 +4019,8 @@ fn build_generic_visibility_scatter(
     calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
     let needs_row_axes = plotms_row_axes::requested(spec);
+    let raw_symbols = calibration.and_then(|input| input.raw_symbols);
+    let show_flagged = raw_symbols.is_some_and(|symbols| symbols.flagged);
     if needs_row_axes && calibration.is_none() {
         return Err("MeasurementSet row identifier axes require the public plotms task".into());
     }
@@ -4055,6 +4067,7 @@ fn build_generic_visibility_scatter(
         .is_some_and(|feed| !feed.is_empty())
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
     let use_iterator_order = needs_row_axes
+        || raw_symbols.is_some()
         || calibration.is_some()
             && (ordered_feed_selection
                 || use_ordinate_masks
@@ -4336,6 +4349,8 @@ fn build_generic_visibility_scatter(
 
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
+    let flagged_series =
+        show_flagged.then(|| ("flagged".into(), "Flagged".into(), "flagged".into()));
     let mut ordinate_points = (use_ordinate_masks || metadata_pair.is_some())
         .then(plotms_ordinates::CollapsedPointMask::default);
     for (row_slot, _) in row_numbers.iter().enumerate() {
@@ -4632,12 +4647,17 @@ fn build_generic_visibility_scatter(
                         column_weights.get(index).copied().flatten(),
                         *corr_index,
                         bin,
+                        show_flagged,
                     );
                 }
                 if let Some(flags) = flags.as_ref() {
                     collect_bin_flags_into(flags, *corr_index, bin, &mut flag_samples);
                 } else {
                     flag_samples.clear();
+                }
+                let displayed_flagged = show_flagged && flag_samples.iter().all(|flag| *flag);
+                if !displayed_flagged && raw_symbols.is_some_and(|symbols| !symbols.unflagged) {
+                    continue;
                 }
                 if let Some(statistics) = &statistics {
                     weight_spectrum_samples.clear();
@@ -4748,7 +4768,12 @@ fn build_generic_visibility_scatter(
                         let (key, label) = group_for(point_row_slot, correlation);
                         visibility_columns.series_identity(spec, *y_index, &key, &label)
                     });
-                    let (series_key, series_label, color_group) = projected_series.as_ref().map_or(
+                    let display_series = if displayed_flagged {
+                        flagged_series.as_ref()
+                    } else {
+                        projected_series.as_ref()
+                    };
+                    let (series_key, series_label, color_group) = display_series.map_or(
                         (series_key, series_label, color_group),
                         |(key, label, color)| (key, label, color),
                     );
@@ -4826,7 +4851,7 @@ fn build_generic_visibility_scatter(
         VisibilityScatterTiming::checkpoint("expand_rows", &mut checkpoint_started);
     }
 
-    if contributing_points == 0 {
+    if contributing_points == 0 && (raw_symbols.is_none() || selected_row_count == 0) {
         return Err(format!(
             "{} produced no unflagged visibility points for the current selection",
             spec.preset
@@ -4891,7 +4916,11 @@ fn build_generic_visibility_scatter(
                 }
             } else {
                 series.sort_by_key(|entry| entry.y_index);
-                if needs_row_axes || ordered_feed_selection || spec.y_axes.len() > 2 {
+                if needs_row_axes
+                    || raw_symbols.is_some()
+                    || ordered_feed_selection
+                    || spec.y_axes.len() > 2
+                {
                     series.iter_mut().for_each(plotms_ordinates::order_series);
                 }
             }
@@ -5703,6 +5732,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             column_weights.get(index).copied().flatten(),
                             *corr_index,
                             bin,
+                            false,
                         );
                         if channel_baselines {
                             buffer.normalize_vector_average();
@@ -7182,6 +7212,7 @@ fn collect_bin_samples_into(
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
     bin: &ChannelBin,
+    show_flagged: bool,
     mut weights: Option<(&FloatGrid, &mut Vec<f64>)>,
     samples: &mut Vec<Complex64>,
 ) {
@@ -7193,7 +7224,7 @@ fn collect_bin_samples_into(
         return;
     }
     for channel in bin.channels() {
-        if channel >= grid.chan_count || flags[(corr_index, channel)] {
+        if channel >= grid.chan_count || (!show_flagged && flags[(corr_index, channel)]) {
             continue;
         }
         let index = corr_index * grid.chan_count + channel;

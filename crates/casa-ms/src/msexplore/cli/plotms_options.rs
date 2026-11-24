@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use super::super::{calibration, plotms_columns};
+use super::super::{RawSymbolVisibility, calibration, plotms_columns};
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
     MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count, legend_position, number,
@@ -54,6 +54,18 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
+    pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
+        self.x_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis2.is_none()
+            && !self.plotms_averaging_active()
+            && self.iteraxis.is_none()
+            && self.color_by == MsColorAxis::None
+            && columns[..2]
+                .iter()
+                .all(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
+    }
+
     pub(super) fn plotms_independent_average(&self) -> bool {
         let transforms_frequency =
             self.x_axis == Some(MsAxis::Frequency) && self.freqframe.is_some();
@@ -85,6 +97,21 @@ impl CliOptions {
             || self.avgbaseline
             || self.avgantenna
             || self.avgspw
+    }
+}
+
+pub(super) fn raw_symbol_visibility(task: &TaskInvocation<'_>) -> RawSymbolVisibility {
+    let is_custom = |name| calibration::figure::shows_flagged(task.value(name), 0);
+    let has_symbol = |name| {
+        let shape = match task.value(name) {
+            Some(ParameterValue::Array(values)) => values.first(),
+            other => other,
+        };
+        !matches!(shape, Some(ParameterValue::String(value)) if value == "nosymbol")
+    };
+    RawSymbolVisibility {
+        unflagged: !is_custom("customsymbol") || has_symbol("symbolshape"),
+        flagged: is_custom("customflaggedsymbol") && has_symbol("flaggedsymbolshape"),
     }
 }
 

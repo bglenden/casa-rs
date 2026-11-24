@@ -604,9 +604,10 @@
       "status": "Partial"
     },
     "symbolshape": {
-      "scope": "Shape of plotted unflagged symbols",
+      "scope": "Shape of plotted unflagged symbols Use nosymbol to hide clear points on a supported raw visibility pair.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-raw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -664,9 +665,10 @@
       "status": "Partial"
     },
     "customflaggedsymbol": {
-      "scope": "Enable custom symbols for flagged calibration solutions. Visible flagged points with independent stored MeasurementSet columns are refused under #1032.",
+      "scope": "Enable custom symbols for flagged calibration solutions and a single unaveraged MeasurementSet pair of observed or corrected visibility axes. Raw pairs use the selected visibility cube independently of the row flag. Other MeasurementSet flag combinations remain open under #1032.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-raw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -674,9 +676,10 @@
       "status": "Partial"
     },
     "flaggedsymbolshape": {
-      "scope": "Shape of plotted flagged symbols",
+      "scope": "Shape of plotted flagged symbols Use nosymbol to hide flagged points on a supported raw visibility pair.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-raw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -686,7 +689,8 @@
     "flaggedsymbolsize": {
       "scope": "Size of plotted flagged symbols",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-raw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -696,7 +700,8 @@
     "flaggedsymbolcolor": {
       "scope": "Color (name or hex code) of plotted flagged symbols",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-raw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -936,7 +941,8 @@
     "verbose": {
       "scope": "Include metadata in text export",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-raw-flag-symbols"
       ],
       "behaviors": [
         "export"
@@ -1179,10 +1185,11 @@
       "id": "presentation",
       "title": "Render the shared plot document",
       "status": "Partial",
-      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing.",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs.",
       "evidence": [
         "paired",
-        "calibration-controls"
+        "calibration-controls",
+        "ms-raw-flag-symbols"
       ],
       "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
     },
@@ -1190,13 +1197,14 @@
       "id": "export",
       "title": "Save and publish selected plot products",
       "status": "Partial",
-      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export ordinary MeasurementSet visibility coordinates and independent stored visibility columns as text and figures. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves.",
+      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export ordinary MeasurementSet visibility coordinates and independent stored visibility columns as text and figures. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves. Write a successful empty text section and figure for fully hidden raw visibility pairs.",
       "evidence": [
         "paired",
         "ms-columns",
         "ms-ordinary-visibility",
         "callibrary",
-        "legacy-calibration"
+        "legacy-calibration",
+        "ms-raw-flag-symbols"
       ],
       "gap": "More export, multi-plot state and interactive display forms remain open."
     },
@@ -1729,6 +1737,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-metadata-pair-masks-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2195"
+      ]
+    },
+    "ms-raw-flag-symbols": {
+      "kind": "Same-input raw MeasurementSet cube flags and markers",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged MeasurementSet observed and corrected visibility pairs with selected cube flags.",
+      "result": "Nine paired text exports match 132 coordinates and two empty sections. The cases check independent FLAG_ROW, hidden and shown flagged symbols, a flagged-only plot, a one-element style list, two selected correlations and reversed integrations. Four 500 by 360 pixel PNGs match 84 drawn coordinates, including separate flagged diamonds and their requested color, unchanged clear-sample order and an empty plot.",
+      "casa_version": "6.7.6.14",
+      "revision": "c105ccd1b89dd98f4da4e562bfeaf7b23aafc6cb",
+      "source_revision": "c105ccd1b89dd98f4da4e562bfeaf7b23aafc6cb",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-raw-flag-symbols-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2196"
       ]
     }
   }

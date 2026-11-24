@@ -90,7 +90,6 @@ def pending_cases(root, native, vis):
     cases = (
         ("averaged-vector", dict(xdatacolumn="corrected-model_vector", avgchannel="3"),
          6, "averaging derived data columns"),
-        ("visible-flags", dict(customflaggedsymbol=True), 18, "displaying flagged points"),
     )
     for name, options, point_count, diagnostic in cases:
         controls = request(vis) | options | dict(expformat="txt")
@@ -98,8 +97,6 @@ def pending_cases(root, native, vis):
         assert reference(**controls, plotfile=str(expected)) is None
         selected = rows(expected)
         assert len(selected) == point_count
-        if name == "visible-flags":
-            assert {sample[2] for sample in selected} == {"1", "2", "3"}
         try:
             native(**controls, plotfile=str(actual))
         except TaskParameterError as error:
@@ -107,6 +104,127 @@ def pending_cases(root, native, vis):
         else:
             raise AssertionError(f"An unsupported {name} plot was exported")
         assert not actual.exists()
+
+
+def compare_raw_flag_symbols(root, vis, native):
+    flagged_ms = root / "flagged-displays.ms"
+    copy_ms(vis, flagged_ms)
+    with opened(flagged_ms, True) as table:
+        timestamp = f"{table.getcell('TIME', 0):.3f}"
+        table.putcell("FLAG_ROW", 0, True)
+    base = request(flagged_ms) | dict(title="Flagged visibility")
+    marker_color = "dd2255"
+    marked = base | dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
+                         flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
+                         flaggedsymbolfill="fill", flaggedsymboloutline=False)
+    marked_list = marked | dict(customflaggedsymbol=[True], flaggedsymbolshape=["diamond"],
+                                flaggedsymbolcolor=[marker_color], flaggedsymbolsize=[4])
+    for name, controls, count, channels in (
+        ("hidden-flags", base, 12, {"1", "3"}),
+        ("visible-flags", marked, 18, {"1", "2", "3"}),
+        ("no-flag-marker", marked | dict(flaggedsymbolshape="nosymbol"), 12, {"1", "3"}),
+        ("list-flag-marker", marked_list, 18, {"1", "2", "3"}),
+        ("flagged-only", marked | dict(customsymbol=True, symbolshape="nosymbol"), 6, {"2"}),
+    ):
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        points = rows(expected)
+        assert len(points) == count
+        assert {point[2] for point in points} == channels
+        assert timestamp in {point[9] for point in points}
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching raw visibility coordinates", flush=True)
+
+    compare_flagged_figure(root, native, "list-flag-marker", marked_list, marker_color)
+
+    reversed_ms = root / "flagged-reversed.ms"
+    copy_ms(flagged_ms, reversed_ms)
+    with opened(reversed_ms, True) as table:
+        times = table.getcol("TIME")
+        times = times.min() + times.max() - times
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+    reversed_selection = dict(vis=str(reversed_ms), correlation="XX,YY")
+    reversed_hidden = base | reversed_selection
+    reversed_marked = marked | reversed_selection
+    for name, controls, count in (("reversed-hidden", reversed_hidden, 30),
+                                  ("reversed-marked", reversed_marked, 36)):
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching visibility coordinates in iterator order", flush=True)
+    compare_figure(root, native, reversed_hidden, root / "reversed-hidden.casa.txt",
+                   ("Flagged visibility", "Amp", "Phase:corrected (degrees)"))
+    compare_flagged_figure(root, native, "reversed-marked", reversed_marked, marker_color)
+    compare_empty_raw_flags(root, native, marked | dict(spw="0:2", flaggedsymbolshape="nosymbol"))
+
+
+def compare_flagged_figure(root, native, name, controls, marker_color):
+    from casars.tasks import _plotms_plot
+    from matplotlib.colors import to_rgba
+
+    captured = []
+    configure = _plotms_plot.configure
+
+    def record(figure, axes, document, options):
+        configure(figure, axes, document, options)
+        [axis] = figure.axes
+        assert (axis.get_title(), axis.get_xlabel(), axis.get_ylabel()) == (
+            "Flagged visibility", "Amp", "Phase:corrected (degrees)",
+        )
+        captured.extend(axis.lines)
+
+    figure = controls | dict(width=500, height=360, dpi=100, expformat="png")
+    expected, actual = (root / f"{name}.{engine}.png" for engine in ("casa", "native"))
+    assert reference(**figure, plotfile=str(expected)) is None
+    with patch.object(_plotms_plot, "configure", record):
+        assert native(**figure, plotfile=str(actual)) is None
+    [ordinary, flagged] = sorted(captured, key=lambda line: -len(line.get_xydata()))
+    assert flagged.get_marker() == "D" and flagged.get_markersize() == 4
+    assert to_rgba(flagged.get_markerfacecolor()) == to_rgba(f"#{marker_color}")
+    points = rows(root / f"{name}.casa.txt")
+    for artist, masked in ((ordinary, False), (flagged, True)):
+        coordinates = np.array([point[:2] for point in points if (point[2] == "2" and point[12] == "XX") == masked],
+                               dtype=float)
+        np.testing.assert_allclose(artist.get_xydata(), coordinates, rtol=1.2e-5, atol=1e-7)
+    rgb = np.round(np.array(to_rgba(f"#{marker_color}")[:3]) * 255).astype(np.uint8)
+    for path in (expected, actual):
+        with Image.open(path) as image:
+            assert image.size == (500, 360)
+            assert np.any(np.all(np.asarray(image.convert("RGB")) == rgb, axis=-1)), path
+    print(f"{name}.png: {len(ordinary.get_xydata())} clear and {len(flagged.get_xydata())} flagged points",
+          flush=True)
+
+
+def compare_empty_raw_flags(root, native, controls):
+    from casars import _plot_document
+
+    for verbose in (True, False):
+        expected, actual = (root / f"empty-raw-{verbose}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), verbose=verbose, expformat="txt") is None
+        assert not rows(expected) and expected.read_text().count("# No data to export") == 1
+        assert native(**controls, plotfile=str(actual), verbose=verbose, expformat="txt") is None
+        assert actual.read_bytes() == expected.read_bytes()
+
+    render = _plot_document.render_document
+
+    def record(*args, **kwargs):
+        figure, axis = render(*args, **kwargs)
+        assert not axis.lines
+        assert (axis.get_xlabel(), axis.get_ylabel()) == ("Amp", "Phase:corrected (degrees)")
+        return figure, axis
+
+    figure = controls | dict(width=500, height=360, dpi=100, expformat="png")
+    expected, actual = (root / f"empty-raw.{engine}.png" for engine in ("casa", "native"))
+    assert reference(**figure, plotfile=str(expected)) is None
+    with patch.object(_plot_document, "render_document", record):
+        assert native(**figure, plotfile=str(actual)) is None
+    for path in (expected, actual):
+        with Image.open(path) as image:
+            assert image.size == (500, 360)
+    print("empty-raw: matching empty text sections and 500 by 360 PNG", flush=True)
 
 
 def compare(root, vis, native):
@@ -187,6 +305,7 @@ def compare(root, vis, native):
                    ("Phase:corrected/model (scalar) vs. Amp:data/model (scalar)",
                     "Amp:data/model (scalar)", "Phase:corrected/model (scalar) (degrees)"))
     pending_cases(root, native, vis)
+    compare_raw_flag_symbols(root, vis, native)
 
 
 def compare_missing_corrected(root, vis, source, native):
