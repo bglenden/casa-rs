@@ -221,6 +221,7 @@ fn run_task(
     if task.surface() == "plotms"
         && let Some(path) = super::calibration::input(task)?
     {
+        super::plotms_pointing::refuse_nonpointing_controls(task)?;
         return super::calibration::run(task, &path, payload);
     }
     let options = if task.surface() == "plotms" {
@@ -305,6 +306,7 @@ fn run_task(
                 load_models,
             );
         }
+        super::plotms_pointing::refuse_nonpointing_controls(task)?;
         options
     } else {
         options_from(task)?
@@ -332,6 +334,26 @@ fn run_visibility_plot(
     atmosphere: Option<super::calibration::atmosphere::Options>,
     load_models: Option<PlotMsModelLoader>,
 ) -> Result<TaskSuccess, TaskFailure> {
+    let pointing =
+        super::plotms_pointing::PointingAxes::from_task(task, [options.x_axis, options.y_axis])?;
+    if pointing.is_some() {
+        let supported_axis = |axis: Option<MsAxis>| {
+            axis.is_some_and(|axis| axis.is_pointing() || axis == MsAxis::Time)
+        };
+        if !supported_axis(options.x_axis)
+            || !supported_axis(options.y_axis)
+            || options.y_axis2.is_some()
+            || options.plotms_averaging_active()
+            || options.iteraxis.is_some()
+            || calibration.is_some()
+            || atmosphere.is_some()
+            || plotms_options::raw_symbol_visibility(task).flagged
+        {
+            return Err(TaskFailure::validation(
+                "PlotMS pointing currently supports unaveraged Time, Ant-Ra and Ant-Dec pairs without iteration, a callibrary, overlays or flagged symbols (#1032)",
+            ));
+        }
+    }
     let output = options.plot_output.as_deref();
     super::task_contract::refuse_unwritable_outputs(
         &[("plotfile", output)],
@@ -411,7 +433,8 @@ fn run_visibility_plot(
     let figure_file = output.filter(|_| !is_text);
     let mut plots = Vec::new();
     if output.is_some() || show {
-        let spec = build_explore_spec(&options).map_err(TaskFailure::validation)?;
+        let spec =
+            build_explore_spec(&options, pointing.is_some()).map_err(TaskFailure::validation)?;
         let payload = match &calibrated {
             Some(input) => build_calibrated_plotms_payload(&ms, &spec, input),
             None => build_uncalibrated_plotms_payload(
@@ -423,6 +446,7 @@ fn run_visibility_plot(
                     additional_y: &options.additional_ordinates,
                     weights: options.weight_axis_columns,
                     raw_symbols,
+                    pointing,
                 },
                 prefer_float_data,
                 load_models,
@@ -489,7 +513,7 @@ fn run(options: CliOptions) -> Result<RunOutcome, TaskFailure> {
     .map_err(refused)?;
     let flag_edit = build_flag_edit_spec(&options).map_err(refused)?;
     let explore_spec = if options.plot_output.is_some() || flag_edit.is_some() {
-        Some(build_explore_spec(&options).map_err(refused)?)
+        Some(build_explore_spec(&options, false).map_err(refused)?)
     } else {
         None
     };
@@ -569,7 +593,7 @@ struct RunOutcome {
     note: Option<String>,
 }
 
-fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
+fn build_explore_spec(options: &CliOptions, pointing: bool) -> Result<MsExploreSpec, String> {
     if let Some(page_spec_path) = &options.page_spec {
         let page_spec = load_page_spec_file(page_spec_path)?;
         let mut header_items = parse_header_items(page_spec.headeritems.as_deref())?;
@@ -645,7 +669,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
         max_plot_points: options.max_points,
         plots: vec![plot_spec],
     };
-    spec.validate_with_ordinate_columns(options.has_independent_ordinates())?;
+    spec.validate_with_plotms(options.has_independent_ordinates(), pointing)?;
     Ok(spec)
 }
 
@@ -689,7 +713,6 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
     )?;
     spec.y_axes
         .extend(options.additional_ordinates.iter().map(|&(axis, _)| axis));
-    spec.validate_with_ordinate_columns(options.has_independent_ordinates())?;
     Ok(spec)
 }
 
