@@ -8,17 +8,17 @@ use std::sync::{Arc, OnceLock};
 
 use casa_tables::RequiredScalarColumnValues;
 use casa_types::measures::direction::{DirectionRef, MDirection};
-use casa_types::measures::{EpochRef, MEpoch, MPosition, MeasFrame, MeasuresProvider};
+use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use ndarray::ArrayD;
 
 use super::{input, shaped, vector};
-use crate::derived::engine::detect_epoch_reference;
-use crate::subtables::{FieldDirectionColumn, MetadataDirection};
+use crate::subtables::measured_columns::{TimeColumn, antenna_position};
+use crate::subtables::{FieldDirectionColumn, MetadataDirection, SubTable};
 use crate::{MeasurementSet, MsResult};
 
 pub(super) struct BaselineGrid {
-    baselines: BTreeMap<i32, usize>,
+    baselines: BTreeMap<(i32, i32), usize>,
     baseline_count: usize,
     times: Vec<f64>,
     first_rows: Vec<usize>,
@@ -49,16 +49,16 @@ impl BaselineGrid {
 
         let row_baselines = first
             .iter()
-            .zip(second)
-            .map(|(&a, &b)| a.wrapping_mul(1000).wrapping_add(b))
+            .copied()
+            .zip(second.iter().copied())
             .collect::<Vec<_>>();
         let ordered = row_baselines.iter().copied().collect::<BTreeSet<_>>();
         let mut previous = None;
         let mut baseline_count = 0_usize;
         let mut baselines = BTreeMap::new();
         let gap = gap.max(0) as usize;
-        for number in ordered {
-            let antenna = number / 1000;
+        for pair in ordered {
+            let antenna = pair.0;
             let increase = if previous.is_some_and(|prior| prior != antenna) {
                 1 + gap
             } else {
@@ -68,7 +68,7 @@ impl BaselineGrid {
                 .checked_add(increase)
                 .filter(|&length| length <= i32::MAX as usize)
                 .ok_or_else(|| input("baseline axis exceeds the supported length"))?;
-            baselines.insert(number, baseline_count - 1);
+            baselines.insert(pair, baseline_count - 1);
             previous = Some(antenna);
         }
 
@@ -114,8 +114,8 @@ impl BaselineGrid {
 
     pub(super) fn numbers(&self) -> MsResult<ArrayValue> {
         let mut numbers = filled(self.baseline_count, -1)?;
-        for (&number, &slot) in &self.baselines {
-            numbers[slot] = number;
+        for (&(first, second), &slot) in &self.baselines {
+            numbers[slot] = first.wrapping_mul(1000).wrapping_add(second);
         }
         Ok(ArrayValue::Int32(vector(numbers)))
     }
@@ -126,6 +126,7 @@ impl BaselineGrid {
         names: &BTreeSet<String>,
         columns: &HashMap<String, RequiredScalarColumnValues>,
         measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
+        first_selected: usize,
         axes: &mut RecordValue,
     ) -> MsResult<()> {
         let antenna = ms.antenna()?;
@@ -133,10 +134,9 @@ impl BaselineGrid {
         let mut labels = filled(self.baseline_count, String::new())?;
         let mut shorts = filled(self.baseline_count, String::new())?;
         let mut lengths = filled(self.baseline_count, 0.0)?;
-        for (&number, &slot) in &self.baselines {
-            let first = usize::try_from(number / 1000).map_err(|_| input("negative antenna ID"))?;
-            let second =
-                usize::try_from(number % 1000).map_err(|_| input("negative antenna ID"))?;
+        for (&(first, second), &slot) in &self.baselines {
+            let first = usize::try_from(first).map_err(|_| input("negative antenna ID"))?;
+            let second = usize::try_from(second).map_err(|_| input("negative antenna ID"))?;
             for id in [first, second] {
                 if let std::collections::hash_map::Entry::Vacant(entry) = metadata.entry(id) {
                     let name = antenna.name(id)?;
@@ -168,7 +168,7 @@ impl BaselineGrid {
                 Value::Array(ArrayValue::Float64(vector(lengths))),
             ),
         ]);
-        let time = self.time_axis(ms, names, columns, measures)?;
+        let time = self.time_axis(ms, names, columns, measures, first_selected)?;
         axes.push(RecordField::new("ifr_axis", Value::Record(ifr)));
         axes.push(RecordField::new("time_axis", Value::Record(time)));
         Ok(())
@@ -180,6 +180,7 @@ impl BaselineGrid {
         names: &BTreeSet<String>,
         columns: &HashMap<String, RequiredScalarColumnValues>,
         measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
+        first_selected: usize,
     ) -> MsResult<RecordValue> {
         const DAY: f64 = 86400.0;
         let coordinate = |name, values| {
@@ -204,8 +205,7 @@ impl BaselineGrid {
             return Err(input("FIELD_ID must contain an integer"));
         };
         // MSDerivedValues::setAntennas selects antenna zero as its measure frame.
-        let [x, y, z] = ms.antenna()?.position(0)?;
-        let position = MPosition::new_itrf(x, y, z);
+        let position = antenna_position(ms.antenna()?.table(), 0)?;
         let provider = match measures.and_then(OnceLock::get) {
             Some(provider) => Arc::clone(provider),
             None => {
@@ -217,7 +217,8 @@ impl BaselineGrid {
                 }
             }
         };
-        let reference = detect_epoch_reference(ms.main_table(), "TIME", EpochRef::UTC);
+        let main = ms.main_table();
+        let reference = TimeColumn::read(main)?.reference_at(main, first_selected)?;
         let fields = ms.field()?;
         let mut ha = Vec::with_capacity(self.times.len());
         let mut last = Vec::with_capacity(self.times.len());

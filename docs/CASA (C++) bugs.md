@@ -11090,3 +11090,15 @@ CASA 6.7.6.14 appends a baseline/time block each time an item occurs in
 `['time', 'data', 'TIME']` reports four times for two data slices. casa-rs
 uses one integration axis for each case-insensitive field name and leaves
 the attachment selection intact (#1030).
+
+## The legacy MS baseline number can identify two different antenna pairs
+
+CASA 6.7.6.14 uses `1000 * ANTENNA1 + ANTENNA2` as both the displayed
+baseline number and the key for placing data on the `ifraxis` grid.
+On a valid MS with 1,002 antennas, baselines `(0, 1001)` and `(1, 1)`
+at the same time yield one slot numbered 1001. CASA discards the earlier
+pair's visibility and derives the label for both from `(1, 1)`.
+
+casa-rs places and labels data by the actual antenna pair. Both
+slots and their separate labels remain available even when their
+legacy public baseline numbers coincide (#1030).

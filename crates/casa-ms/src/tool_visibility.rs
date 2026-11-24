@@ -128,7 +128,15 @@ pub fn read_tool_visibility(
         let first_row = grid.as_ref().and_then(BaselineGrid::first_row).unwrap_or(0);
         let mut axes = axis_info(ms, ids, first_row)?;
         if let Some(grid) = &grid {
-            grid.add_axes(ms, &names, &read.scalar_columns, time_measures, &mut axes)?;
+            let first_selected = rows.first().copied().unwrap_or(0);
+            grid.add_axes(
+                ms,
+                &names,
+                &read.scalar_columns,
+                time_measures,
+                first_selected,
+                &mut axes,
+            )?;
         }
         fields.insert("axis_info".into(), Value::Record(axes));
     }
@@ -165,6 +173,7 @@ struct VisibilityRead<'a> {
     members: Vec<MemberRows<'a>>,
     reference: Option<ReferenceRows<'a>>,
     scalar_columns: HashMap<String, RequiredScalarColumnValues>,
+    baseline_axis: bool,
 }
 
 struct ReferenceRows<'a> {
@@ -263,6 +272,7 @@ impl<'a> VisibilityRead<'a> {
             members,
             reference,
             scalar_columns,
+            baseline_axis,
         })
     }
 
@@ -497,6 +507,7 @@ impl<'a> VisibilityRead<'a> {
             }
         }
         let mut reduction = None;
+        let mut float_cells = None;
         for (prefix, source, uses_model) in COMPLEX_PRODUCTS {
             let requested = PRODUCT_NAMES.map(|name| {
                 let key = format!("{prefix}{name}");
@@ -518,7 +529,19 @@ impl<'a> VisibilityRead<'a> {
                 && [&amplitude, &phase, &real, &imaginary]
                     .into_iter()
                     .all(Option::is_none);
-            let data = self.matrix_cells(source, only_raw && !reduce)?;
+            let data = if self.baseline_axis && has_float && source == "DATA" {
+                // The CASA visibility iterator uses FLOAT_DATA for observed
+                // products whenever that column exists.
+                if float_cells.is_none() {
+                    float_cells = Some(self.matrix_cells("FLOAT_DATA", false)?);
+                }
+                let Some(ArrayValue::Float32(samples)) = &float_cells else {
+                    return Err(input("FLOAT_DATA cells must contain Float values"));
+                };
+                ArrayValue::Complex32(samples.mapv(|sample| Complex32::new(sample, 0.0)))
+            } else {
+                self.matrix_cells(source, only_raw && !reduce)?
+            };
             let data = if uses_model {
                 let model_values = self.matrix_cells("MODEL_DATA", false)?;
                 let (ArrayValue::Complex32(mut observed), ArrayValue::Complex32(expected)) =
@@ -585,7 +608,10 @@ impl<'a> VisibilityRead<'a> {
             .then(|| "float_data".to_owned());
         let mut float_aliases = aliases.remove("float_data");
         if has_float && (raw_float.is_some() || float_aliases.is_some()) {
-            let values = self.matrix_cells("FLOAT_DATA", false)?;
+            let values = match float_cells {
+                Some(values) => values,
+                None => self.matrix_cells("FLOAT_DATA", false)?,
+            };
             let values = if average && raw_float.is_some() {
                 require_single_average(items, "float_data")?;
                 let means = self.average_product(&mut reduction, &values)?;

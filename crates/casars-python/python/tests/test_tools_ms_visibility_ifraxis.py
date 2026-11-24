@@ -189,3 +189,112 @@ def test_ms_getdata_duplicate_baseline_items_keep_one_axis(baseline_fixture):
     assert got["data"].shape == (2, 4, 7, 2)
     assert reader.nrow(True) == 8
     assert reader.done()
+
+
+@pytest.mark.parametrize("keep_complex_data", [True, False])
+def test_ms_getdata_baseline_observed_products_use_float_data(
+    baseline_fixture, native_dataset, keep_complex_data
+):
+    casa, view, expected = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    complex_desc = table.getcoldesc("DATA")
+    float_desc = {**complex_desc, "valueType": "float"}
+    assert table.addcols({"FLOAT_DATA": float_desc, "MODEL_DATA": complex_desc})
+    samples = expected["data"].real.astype(np.float32) - 70.5
+    model = np.full(samples.shape, 2 - 3j, dtype=np.complex64)
+    assert table.putcol("FLOAT_DATA", samples)
+    assert table.putcol("MODEL_DATA", model)
+    if not keep_complex_data:
+        assert table.removecols("DATA")
+    assert table.done()
+
+    selected = [19, 13, 0, 6, 2, 11, 3, 8]
+    path = view("float-observed.ms", selected)
+    times = sorted(set(expected["time"][selected]))
+    baselines = [0, 1, 2, 3, 1003, 2003, 3003]
+    expected["observed"] = samples.astype(np.complex128)
+    expected["residual"] = (samples.astype(np.complex64) - model).astype(np.complex128)
+    observed = scatter(expected, "observed", selected, times, baselines)
+    residual = scatter(expected, "residual", selected, times, baselines)
+    results = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        items = ["data", "float_data", "amplitude", "phase", "real", "imaginary",
+                 "avg_amplitude", "obs_residual_data", "obs_residual_imaginary"]
+        result = reader.getdata(items, ifraxis=True)
+        np.testing.assert_array_equal(result["data"], observed, strict=True)
+        np.testing.assert_array_equal(result["float_data"], observed.real, strict=True)
+        np.testing.assert_array_equal(result["avg_amplitude"], observed, strict=True)
+        np.testing.assert_array_equal(result["amplitude"], np.abs(observed), strict=True)
+        np.testing.assert_allclose(result["phase"], np.angle(observed), rtol=1e-7)
+        np.testing.assert_array_equal(result["obs_residual_data"], residual, strict=True)
+        if keep_complex_data:
+            np.testing.assert_array_equal(reader.getdata("data")["data"], expected["data"][..., selected],
+                                          strict=True)
+        assert reader.nrow(True) == len(selected)
+        assert reader.done()
+        results.append(result)
+    same_visibility(results[1], results[0])
+
+
+@pytest.mark.parametrize("measure", ["antenna_position", "time_reference"])
+def test_ms_getdata_baseline_uses_stored_measure_frames(baseline_fixture, native_dataset, measure):
+    casa, view, expected = baseline_fixture
+    table = casa.table()
+    if measure == "antenna_position":
+        assert table.open(str(native_dataset / "ANTENNA"), nomodify=False)
+        assert table.putcolkeyword("POSITION", "MEASINFO", {"type": "position", "Ref": "WGS84"})
+        assert table.putcolkeyword("POSITION", "QuantumUnits", ["m", "rad", "rad"])
+        position = np.repeat([[2000.0], [-1.878], [0.59]], int(table.nrows()), axis=1)
+        assert table.putcol("POSITION", position)
+    else:
+        assert table.open(str(native_dataset), nomodify=False)
+        ref_desc = {**table.getcoldesc("FIELD_ID"), "valueType": "string",
+                    "dataManagerType": "StandardStMan", "dataManagerGroup": "TIME_REF"}
+        assert table.addcols({"TIME_REF": ref_desc})
+        refs = np.full(len(expected["time"]), "UTC")
+        # The reference comes from the first selected row, even though its
+        # integration is later than the others.
+        refs[19] = "TAI"
+        assert table.putcol("TIME_REF", refs)
+        assert table.putcolkeyword("TIME", "MEASINFO", {"type": "epoch", "VarRefCol": "TIME_REF"})
+    assert table.done()
+    path = view("stored-measures.ms", [19, 13, 0, 6, 2, 11, 3, 8])
+    axes = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        result = reader.getdata(["axis_info", "ha", "last"], ifraxis=True)
+        axes.append(result["axis_info"]["time_axis"])
+        assert reader.done()
+    np.testing.assert_array_equal(axes[1]["MJDseconds"], axes[0]["MJDseconds"], strict=True)
+    np.testing.assert_allclose(axes[1]["HA"], axes[0]["HA"], rtol=0, atol=0.015)
+    np.testing.assert_allclose(axes[1]["LAST"], axes[0]["LAST"], rtol=0, atol=0.015 / 86400)
+
+
+def test_ms_getdata_baseline_legacy_number_collision_preserves_each_pair(baseline_fixture, native_dataset):
+    casa, view, expected = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset / "ANTENNA"), nomodify=False)
+    assert table.addrows(1002 - int(table.nrows()))
+    assert table.putcell("NAME", 1001, "A1002")
+    assert table.putcell("POSITION", 1001, table.getcell("POSITION", 0) + [100.0, 0.0, 0.0])
+    assert table.done()
+    assert table.open(str(native_dataset), nomodify=False)
+    assert table.putcell("ANTENNA2", 0, 1001)
+    for name in ("ANTENNA1", "ANTENNA2"):
+        assert table.putcell(name, 1, 1)
+    assert table.done()
+
+    reader = tools.ms()
+    assert reader.open(view("colliding-baseline-numbers.ms", [0, 1]))
+    result = reader.getdata(["data", "axis_info", "ifr_number"], ifraxis=True, ifraxisgap=1)
+    wanted = np.zeros((2, 4, 3), dtype=np.complex128)
+    wanted[..., [0, 2]] = expected["data"][..., :2]
+    np.testing.assert_array_equal(result["data"], wanted, strict=True)
+    np.testing.assert_array_equal(result["ifr_number"], np.array([1001, -1, 1001]), strict=True)
+    assert result["axis_info"]["ifr_axis"]["ifr_name"].tolist() == ["A1-A1002", "", "A2-A2"]
+    assert reader.nrow(True) == 2
+    assert reader.done()

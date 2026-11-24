@@ -19,10 +19,8 @@ use casa_types::{ScalarValue, Value};
 
 use super::taql_selection::taql_error;
 use crate::subtables::SubTable;
+use crate::subtables::measured_columns::{self as measured, TimeColumn};
 use crate::{MeasurementSet, MsError, MsResult};
-
-mod measured;
-use measured::TimeColumn;
 
 pub(super) struct GeometryBinder<'a> {
     ms: &'a MeasurementSet,

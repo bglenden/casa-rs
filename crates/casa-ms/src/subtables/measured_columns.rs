@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! MeasurementSet measure column metadata used when binding MSCAL geometry.
+//! Read stored references and units for MeasurementSet geometry.
 
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, MeasureType, TableMeasDesc};
 use casa_tables::table_quantum::TableQuantumDesc;
 use casa_tables::taql::TaqlError;
+use casa_tables::{Table, TableColumn};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::position::{MPosition, PositionRef};
@@ -16,20 +16,20 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::{MsError, MsResult};
 
-pub(super) struct TimeColumn {
+pub(crate) struct TimeColumn {
     reference: Reference<EpochRef>,
     seconds_per_unit: f64,
 }
 
 impl TimeColumn {
-    pub(super) fn read(table: &Table) -> MsResult<Self> {
+    pub(crate) fn read(table: &Table) -> MsResult<Self> {
         Ok(Self {
             reference: Reference::read(table, "TIME", MeasureType::Epoch)?,
             seconds_per_unit: unit_scales(table, "TIME", ["s"])?[0],
         })
     }
 
-    pub(super) fn epoch(&self, row: &RecordValue) -> Result<MEpoch, TaqlError> {
+    pub(crate) fn epoch(&self, row: &RecordValue) -> Result<MEpoch, TaqlError> {
         let Some(Value::Scalar(ScalarValue::Float64(time))) = row.get("TIME") else {
             return Err(TaqlError::Table(
                 "MSCAL requires a double TIME column".into(),
@@ -40,9 +40,13 @@ impl TimeColumn {
             self.reference.at(row)?,
         ))
     }
+
+    pub(crate) fn reference_at(&self, table: &Table, index: usize) -> MsResult<EpochRef> {
+        self.reference.at_table_row(table, index)
+    }
 }
 
-pub(super) fn directions(table: &Table, column: &str) -> MsResult<Vec<MDirection>> {
+pub(crate) fn directions(table: &Table, column: &str) -> MsResult<Vec<MDirection>> {
     let reference = Reference::<DirectionRef>::read(table, column, MeasureType::Direction)?;
     let scale = unit_scales(table, column, ["rad"; 2])?;
     let values = table.column_accessor(column)?;
@@ -61,8 +65,7 @@ pub(super) fn directions(table: &Table, column: &str) -> MsResult<Vec<MDirection
             let longitude = angles[first.as_slice()];
             first[0] = 1;
             let latitude = angles[first.as_slice()];
-            let row = table.row_accessor().row(index)?;
-            let frame = reference.at(row).map_err(|err| invalid(err.to_string()))?;
+            let frame = reference.at_table_row(table, index)?;
             Ok(MDirection::from_angles(
                 longitude * scale[0],
                 latitude * scale[1],
@@ -72,61 +75,73 @@ pub(super) fn directions(table: &Table, column: &str) -> MsResult<Vec<MDirection
         .collect()
 }
 
-pub(super) fn antenna_positions(table: &Table) -> MsResult<Vec<MPosition>> {
-    let reference = Reference::<PositionRef>::read(table, "POSITION", MeasureType::Position)?;
-    let units = TableQuantumDesc::reconstruct(table, "POSITION");
-    let metric = unit_scales(table, "POSITION", ["m"; 3]);
-    let spherical = unit_scales(table, "POSITION", ["m", "rad", "rad"]);
-    let values = table.column_accessor("POSITION")?;
+pub(crate) fn antenna_positions(table: &Table) -> MsResult<Vec<MPosition>> {
+    let column = PositionColumn::read(table)?;
     (0..table.row_count())
         .map(|index| {
-            let ArrayValue::Float64(coords) = values.array_cell(index)? else {
-                return Err(invalid("ANTENNA POSITION requires a double array"));
-            };
-            let Some(&[x, y, z]) = coords.as_slice() else {
-                return Err(invalid("ANTENNA POSITION requires three coordinates"));
-            };
-            let row = table.row_accessor().row(index)?;
-            let frame = reference.at(row).map_err(|err| invalid(err.to_string()))?;
-            let cartesian = |scales: [f64; 3]| {
-                let [sx, sy, sz] = scales;
-                [x * sx, y * sy, z * sz]
-            };
-            let position = match frame {
-                PositionRef::ITRF => {
-                    let [x, y, z] = cartesian(
-                        metric
-                            .as_ref()
-                            .copied()
-                            .map_err(|err| invalid(err.to_string()))?,
-                    );
-                    MPosition::new_itrf(x, y, z)
-                }
-                PositionRef::WGS84 => {
-                    if units.is_some() && metric.is_err() {
-                        let [height, lon, lat] = cartesian(
-                            spherical
-                                .as_ref()
-                                .copied()
-                                .map_err(|err| invalid(err.to_string()))?,
-                        );
-                        MPosition::new_wgs84(lon, lat, height)
-                    } else {
-                        let [x, y, z] = cartesian(
-                            metric
-                                .as_ref()
-                                .copied()
-                                .map_err(|err| invalid(err.to_string()))?,
-                        );
-                        let radial = x.hypot(y);
-                        MPosition::new_wgs84(y.atan2(x), z.atan2(radial), radial.hypot(z))
-                    }
-                }
-            };
-            let [x, y, z] = position.as_itrf();
+            let [x, y, z] = column.position(index)?.as_itrf();
             Ok(MPosition::new_itrf(x, y, z))
         })
         .collect()
+}
+
+pub(crate) fn antenna_position(table: &Table, index: usize) -> MsResult<MPosition> {
+    PositionColumn::read(table)?.position(index)
+}
+
+struct PositionColumn<'a> {
+    table: &'a Table,
+    values: TableColumn<'a>,
+    reference: Reference<PositionRef>,
+    metric: MsResult<[f64; 3]>,
+    spherical: MsResult<[f64; 3]>,
+}
+
+impl<'a> PositionColumn<'a> {
+    fn read(table: &'a Table) -> MsResult<Self> {
+        Ok(Self {
+            table,
+            values: table.column_accessor("POSITION")?,
+            reference: Reference::read(table, "POSITION", MeasureType::Position)?,
+            metric: unit_scales(table, "POSITION", ["m"; 3]),
+            spherical: unit_scales(table, "POSITION", ["m", "rad", "rad"]),
+        })
+    }
+
+    fn position(&self, index: usize) -> MsResult<MPosition> {
+        let ArrayValue::Float64(coords) = self.values.array_cell(index)? else {
+            return Err(invalid("ANTENNA POSITION requires a double array"));
+        };
+        let Some(&[x, y, z]) = coords.as_slice() else {
+            return Err(invalid("ANTENNA POSITION requires three coordinates"));
+        };
+        let frame = self.reference.at_table_row(self.table, index)?;
+        let scaled = |scales: &MsResult<[f64; 3]>| {
+            scales
+                .as_ref()
+                .map(|&[sx, sy, sz]| [x * sx, y * sy, z * sz])
+                .map_err(|err| invalid(err.to_string()))
+        };
+        match frame {
+            PositionRef::ITRF => {
+                let [x, y, z] = scaled(&self.metric)?;
+                Ok(MPosition::new_itrf(x, y, z))
+            }
+            PositionRef::WGS84 if self.metric.is_err() => {
+                let [height, lon, lat] = scaled(&self.spherical)?;
+                Ok(MPosition::new_wgs84(lon, lat, height))
+            }
+            PositionRef::WGS84 => {
+                let [x, y, z] = scaled(&self.metric)?;
+                let radial = x.hypot(y);
+                Ok(MPosition::new_wgs84(
+                    y.atan2(x),
+                    z.atan2(radial),
+                    radial.hypot(z),
+                ))
+            }
+        }
+    }
 }
 
 enum Reference<T> {
@@ -169,6 +184,14 @@ impl<T: FromStr + Copy> Reference<T> {
                 }
             }
         })
+    }
+
+    fn at_table_row(&self, table: &Table, index: usize) -> MsResult<T> {
+        if let Self::Fixed(frame) = self {
+            return Ok(*frame);
+        }
+        self.at(table.row_accessor().row(index)?)
+            .map_err(|error| invalid(error.to_string()))
     }
 
     fn at(&self, row: &RecordValue) -> Result<T, TaqlError> {
