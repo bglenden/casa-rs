@@ -5626,7 +5626,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     0.0,
                 )
             });
-        if skip_flagged_row {
+        if skip_flagged_row && !antenna_channels {
             continue;
         }
         let pol_id = data_description
@@ -5949,13 +5949,17 @@ fn build_generic_visibility_scatter_with_averaging(
                     && (antenna_average || antenna1_value != antenna2_value);
                 for bin in channel_bins.iter() {
                     let antenna_weight = antenna_channels.then(|| {
-                        plotms_columns::channel_bin_weight(
-                            antenna_channel_spectrum,
-                            *corr_index,
-                            bin,
-                            &flags,
-                            channel_weight_mask,
-                        )
+                        if skip_flagged_row {
+                            (true, 0.0)
+                        } else {
+                            plotms_columns::channel_bin_weight(
+                                antenna_channel_spectrum,
+                                *corr_index,
+                                bin,
+                                &flags,
+                                channel_weight_mask,
+                            )
+                        }
                     });
                     let channel_masked = antenna_weight.map_or_else(
                         || {
