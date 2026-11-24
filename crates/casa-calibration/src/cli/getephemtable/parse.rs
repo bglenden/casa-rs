@@ -2,8 +2,8 @@
 //! Decode the observer table and its MeasComet metadata in the Horizons reply.
 
 use casa_tables::{ColumnSchema, Table, TableSchema};
-use casa_types::quanta::Quantity;
 use casa_types::quanta::format::{YMD, format_time};
+use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 const COLUMNS: [(&str, &str, &str); 14] = [
@@ -36,9 +36,13 @@ pub(super) fn ephemeris_table(response: &str) -> Result<Table, String> {
         .ok_or("no ephemeris data header was found")?;
     let names: Vec<_> = heading.split_whitespace().collect();
     let indexes = column_indexes(&names)?;
+    let radial_velocity_scale = Unit::new("AU/d")
+        .and_then(|unit| Quantity::new(1., "km/s")?.get_value_in(&unit))
+        .map_err(|error| error.to_string())?;
     let mut rows: Vec<[f64; COLUMNS.len()]> = Vec::new();
     for line in body.lines().filter(|line| !line.trim().is_empty()) {
-        let row = parse_row(line, &indexes, names.len() + 2)?;
+        let mut row = parse_row(line, &indexes, names.len() + 2)?;
+        row[4] *= radial_velocity_scale;
         if rows.last().is_some_and(|previous| previous[0] == row[0]) {
             return Err(format!(
                 "duplicated timestamp in ephemeris data: {}",
@@ -132,8 +136,6 @@ fn parse_row(
                 .map_err(|_| format!("invalid Horizons data item {value}"))?
         };
     }
-    // casacore's astronomical unit is used for the stored radial velocity.
-    row[4] *= 86_400. / 149_597_870.659;
     Ok(row)
 }
 
@@ -239,7 +241,7 @@ fn metadata(
         if keys.get("orb_per").is_none()
             && let Some((value, unit)) = period(
                 line,
-                &["orbital period", "orb. per.,", "orb per", "orbit period"],
+                &["Orbital period", "orb. per.,", "orb per", "orbit period"],
             )
         {
             keys.upsert("orb_per", quantity(&unit, number(value)));
@@ -247,12 +249,12 @@ fn metadata(
         if line.contains("Rotational period") && line.contains("Synchronous") {
             synchronous = true;
         } else if let Some((value, unit)) = period(
-            line,
+            &line.to_ascii_lowercase(),
             &["rot. period", "rot. per.", "rotational period", "rotper"],
         ) {
             keys.upsert("rot_per", quantity(&unit, number(value)));
         }
-        if let Some((value, _)) = period(line, &["mean temperature"]) {
+        if let Some((value, _)) = period(line, &["Mean Temperature", "Mean temperature"]) {
             keys.upsert("T_mean", quantity("K", number(value)));
         }
     }
@@ -301,7 +303,6 @@ fn object_name(value: &str) -> (&str, Option<&str>) {
 }
 
 fn period(line: &str, labels: &[&str]) -> Option<(f64, String)> {
-    let line = line.to_ascii_lowercase();
     let label = labels
         .iter()
         .find_map(|label| line.split_once(label).map(|(_, tail)| tail))?;
