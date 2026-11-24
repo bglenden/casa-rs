@@ -40,7 +40,8 @@
       "scope": "Number of subplot columns",
       "evidence": [
         "paired",
-        "ms-static-grid-placement"
+        "ms-static-grid-placement",
+        "ms-iterated-grid-start"
       ],
       "behaviors": [
         "pages"
@@ -59,10 +60,11 @@
       "status": "Partial"
     },
     "colindex": {
-      "scope": "Choose the zero-based column of a single noniterated MeasurementSet visibility plot.",
+      "scope": "Choose the zero-based column of a single noniterated MeasurementSet visibility plot. A Time versus observed amplitude scan sequence can start in the right cell of a one-row two-column grid.",
       "evidence": [
         "ms-static-grid-placement",
-        "remaining"
+        "remaining",
+        "ms-iterated-grid-start"
       ],
       "behaviors": [
         "pages"
@@ -566,7 +568,8 @@
     "iteraxis": {
       "scope": "The axis over which to iterate",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-iterated-grid-start"
       ],
       "behaviors": [
         "pages"
@@ -647,7 +650,8 @@
     "symbolcolor": {
       "scope": "Color (name or hex code) of plotted unflagged symbols",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-iterated-grid-start"
       ],
       "behaviors": [
         "presentation"
@@ -792,7 +796,8 @@
       "scope": "Font size for plot title",
       "evidence": [
         "paired",
-        "ms-static-grid-placement"
+        "ms-static-grid-placement",
+        "ms-iterated-grid-start"
       ],
       "behaviors": [
         "presentation"
@@ -955,7 +960,8 @@
         "paired",
         "ms-empty-combined-averages",
         "ms-pointing-directions",
-        "ms-static-grid-placement"
+        "ms-static-grid-placement",
+        "ms-iterated-grid-start"
       ],
       "behaviors": [
         "export"
@@ -978,7 +984,8 @@
       "scope": "Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported.",
       "evidence": [
         "paired",
-        "ms-static-grid-placement"
+        "ms-static-grid-placement",
+        "ms-iterated-grid-start"
       ],
       "behaviors": [
         "pages"
@@ -1203,12 +1210,13 @@
       "id": "pages",
       "title": "Lay out and export plot pages",
       "status": "Partial",
-      "scope": "Partition selected series across a grid. Text reports the current page. Image export provides current and all-page ranges and names the physical outputs in successful completions. A noniterated MeasurementSet visibility plot occupies the requested grid cell.",
+      "scope": "Partition selected series across a grid. Text uses the requested grid capacity. Image export provides current and all-page ranges and names the physical outputs in successful completions. A noniterated MeasurementSet visibility plot occupies the requested grid cell. Offset MeasurementSet scan pages account for the starting cell when exporting images.",
       "evidence": [
         "paired",
-        "ms-static-grid-placement"
+        "ms-static-grid-placement",
+        "ms-iterated-grid-start"
       ],
-      "gap": "Offset starts for iterated MeasurementSet pages, calibration-table placement, persistent pages and additional presentation modes remain open."
+      "gap": "Other offset iteration combinations, calibration-table placement, persistent pages and additional presentation modes remain open."
     },
     {
       "id": "presentation",
@@ -1822,6 +1830,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-grid-placement-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2204"
+      ]
+    },
+    "ms-iterated-grid-start": {
+      "kind": "Same-input MeasurementSet offset scan pagination",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged Time versus observed amplitude with scan iteration in a one-row two-column grid starting in column one.",
+      "result": "Six paired text products match 54 coordinates and identifiers. Seven paired 500 by 360 PNGs match the current and all-page filenames and occupied cells. The native figures draw 33 matching selected coordinates with scan-local titles, requested title font size and explicit marker color. A four-scan selection fills later pages from the first cell. With two scans CASA reuses the starting cell for the second scan and exports it with a page number alone.",
+      "casa_version": "6.7.6.14",
+      "revision": "2f8b232c878f3c5dfcfac41c7b0ef24a1f7fef5a",
+      "source_revision": "2f8b232c878f3c5dfcfac41c7b0ef24a1f7fef5a",
+      "command": "casa-python tools/casa-compat/plotms_ms_layout_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-iterated-grid-start-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2205"
       ]
     }
   }

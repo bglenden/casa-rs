@@ -344,7 +344,18 @@ fn run_visibility_plot(
     atmosphere: Option<super::calibration::atmosphere::Options>,
     load_models: Option<PlotMsModelLoader>,
 ) -> Result<TaskSuccess, TaskFailure> {
-    let static_grid = super::plotms_figure::static_grid(task, options.iteraxis.is_some())?;
+    let offset_scan_grid = options.iteraxis == Some(MsIterationAxis::Scan)
+        && options.gridrows == 1
+        && options.gridcols == 2
+        && options.x_axis == Some(MsAxis::Time)
+        && options.y_axis == Some(MsAxis::Amplitude)
+        && options.y_axis2.is_none()
+        && options.data_column == MsDataColumn::Data
+        && !options.plotms_averaging_active()
+        && calibration.is_none()
+        && atmosphere.is_none();
+    let static_grid =
+        super::plotms_figure::static_grid(task, options.iteraxis.is_some(), offset_scan_grid)?;
     if static_grid.is_some() {
         // The scatter computation receives a single plot. The grid places it on the page.
         options.gridrows = 1;
