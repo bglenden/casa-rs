@@ -23,6 +23,7 @@ from plotms_ms_columns_oracle import (
     request,
     rows,
     time_average_fixture,
+    time_scan_field_fixture,
 )
 
 
@@ -272,6 +273,63 @@ def compare_expressions(root, native):
             compare_figure(root, native, controls, expected, (controls["title"], *titles[name]))
 
 
+def compare_scalar_time_spans(root, native):
+    source, times, scan, field, reversed_time = time_scan_field_fixture(root)
+    start = times[0]
+    masked = root / "masked-spans.ms"
+    copy_ms(source, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, :] = table.getcol("TIME") >= times[6]
+        table.putcol("FLAG", flags)
+    base = request(source) | dict(field="", xaxis="time", xdatacolumn="", yaxis="amp",
+                                  ydatacolumn="corrected-model_vector", spw="0:1", avgtime="200",
+                                  scalar=True, title="Scalar averages across scans and fields")
+    split = [(None, -90., 25., "1", "0"), (None, -270., 85., "2", "1")]
+    joined = [(None, -252., 55., "-1", "0")]
+    cross = dict(avgscan=True, avgfield=True)
+    cases = (
+        ("separate-boundaries", {}, split),
+        ("cross-scan", dict(vis=str(scan), avgscan=True), joined),
+        ("cross-field", dict(vis=str(field), avgfield=True), [(None, -252., 55., "1", "0")]),
+        ("cross-scan-keeps-field", dict(avgscan=True), split),
+        ("cross-field-keeps-scan", dict(avgfield=True), split),
+        ("cross-both", cross, joined),
+        ("cross-both-reversed", cross | dict(vis=str(reversed_time)),
+         [(None, -90., 85., "1", "0"), (None, -270., 25., "2", "1")]),
+        ("cross-both-shorter", cross | dict(avgtime="75"),
+         [(None, -225., 35., "-1", "0"), (None, -270., 95., "2", "1")]),
+        ("cross-both-masked", cross | dict(vis=str(masked)), [(None, -90., 55., "-1", "0")]),
+        ("cross-both-derived-pair",
+         cross | dict(xaxis="amp", xdatacolumn="data-model_vector", ydatacolumn="corrected/model_scalar"),
+         [(-277.2, .1, 55., "-1", "0")]),
+        ("cross-both-stored", cross | dict(ydatacolumn="corrected"), [(None, 28., 55., "-1", "0")]),
+    )
+    for name, overrides, coordinates in cases:
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        centers = [start + point[2] for point in coordinates]
+        assert [(point[3], point[4]) for point in selected] == [(point[3], point[4]) for point in coordinates]
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected],
+                                   [point[1] for point in coordinates], rtol=1.2e-5)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in selected], centers, rtol=0, atol=.00051)
+        else:
+            np.testing.assert_allclose([float(point[0]) for point in selected],
+                                       [point[0] for point in coordinates], rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+        print(f"{name}: {len(coordinates)} matching scalar scan and field span coordinates", flush=True)
+        if name == "cross-both":
+            compare_figure(root, native, controls, expected, (controls["title"], "Time (MJD seconds)",
+                                                              "Amp:corrected-model (vector)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -296,6 +354,9 @@ def main():
         expressions = root / "expressions"
         expressions.mkdir()
         compare_expressions(expressions, native)
+        spans = root / "scan-field-spans"
+        spans.mkdir()
+        compare_scalar_time_spans(spans, native)
 
 
 if __name__ == "__main__":
