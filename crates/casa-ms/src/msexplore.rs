@@ -4123,6 +4123,13 @@ fn build_generic_visibility_scatter(
         && needs_visibility_grid
         && spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let project_plotms_columns = calibration.is_some_and(|input| input.rows.is_none());
+    let statistics_kinds = calibration
+        .filter(|_| {
+            project_plotms_columns
+                && use_spectral_weights
+                && (needs_weight_values || needs_sigma_values)
+        })
+        .map(|input| plotms_columns::weight_kinds(ms, spec, input));
     // PlotMS applies scalar averaging only with the extended averaging path.
     let scalar_average = spec.averaging.scalar && !project_plotms_columns;
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
@@ -4151,11 +4158,18 @@ fn build_generic_visibility_scatter(
                     .and_then(|column| column.find(0))
                     .is_some()
         })
-        .map(|input| plotms_columns::weight_kinds(ms, spec, input));
-    let needs_observed_weights =
-        channel_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Observed));
-    let needs_calibrated_weights =
-        channel_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Calibrated));
+        .map(|input| {
+            statistics_kinds.unwrap_or_else(|| plotms_columns::weight_kinds(ms, spec, input))
+        });
+    let statistics_use = |kind| {
+        statistics_kinds.is_some_and(|kinds| kinds.row_weight == kind || kinds.row_sigma == kind)
+    };
+    let needs_observed_weights = channel_weight_kinds
+        .is_some_and(|kinds| kinds.uses(WeightKind::Observed))
+        || statistics_use(WeightKind::Observed);
+    let needs_calibrated_weights = channel_weight_kinds
+        .is_some_and(|kinds| kinds.uses(WeightKind::Calibrated))
+        || statistics_use(WeightKind::Calibrated);
     let selected_weights = if needs_weight_values || needs_calibrated_weights {
         Some(SelectedArrayColumn::load_for_plot(
             ms.main_table(),
@@ -4294,15 +4308,19 @@ fn build_generic_visibility_scatter(
             .as_ref()
             .filter(|_| needs_observed_weights)
             .map(plotms_columns::inverse_variance);
-        let weight_grid = |kind| match kind {
+        let statistic_grid = |kind| match kind {
             WeightKind::Observed => observed_weights.as_ref(),
+            WeightKind::Calibrated => weight_spectrum_grid.as_ref(),
+            WeightKind::Unit => None,
+        };
+        let weight_grid = |kind| match kind {
             WeightKind::Calibrated
-                if use_spectral_weights
-                    && (!project_plotms_columns || channel_weight_kinds.is_some()) =>
+                if !use_spectral_weights
+                    || (project_plotms_columns && channel_weight_kinds.is_none()) =>
             {
-                weight_spectrum_grid.as_ref()
+                None
             }
-            _ => None,
+            _ => statistic_grid(kind),
         };
         let axis_weights = channel_weight_kinds
             .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
@@ -4382,8 +4400,21 @@ fn build_generic_visibility_scatter(
         let mut row_panels = std::collections::BTreeSet::<String>::new();
         for (corr_index, corr_label) in &selected_correlations {
             let grouping_started = timing_enabled.then(Instant::now);
-            let row_weight = weight_values[*corr_index];
-            let row_sigma = sigma_values[*corr_index];
+            let statistics = statistics_kinds.map(|kinds| {
+                plotms_columns::ChannelStatistics::from_bins(
+                    *corr_index,
+                    &channel_bins,
+                    flags.as_ref().expect("channel statistics load flags"),
+                    statistic_grid(kinds.row_weight),
+                    statistic_grid(kinds.row_sigma),
+                )
+            });
+            let row_weight = statistics
+                .as_ref()
+                .map_or(weight_values[*corr_index], |statistics| statistics.weight);
+            let row_sigma = statistics
+                .as_ref()
+                .map_or(sigma_values[*corr_index], |statistics| statistics.sigma);
             let (group_key, group_label) = visibility_group(
                 spec.color_by,
                 field_id_value,
@@ -4431,7 +4462,7 @@ fn build_generic_visibility_scatter(
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
-            for bin in channel_bins.iter() {
+            for (bin_index, bin) in channel_bins.iter().enumerate() {
                 let transformed_channel_weights = channel_weight_kinds.is_some() && bin.averaged;
                 if transformed_channel_weights
                     && let Some((weights, flags)) = primary_weight_grid.zip(flags.as_ref())
@@ -4456,33 +4487,24 @@ fn build_generic_visibility_scatter(
                 } else {
                     flag_samples.clear();
                 }
-                if let Some(grid) = weight_spectrum_grid.as_ref() {
-                    let flags = flags
-                        .as_ref()
-                        .expect("weight spectrum loads matching flag grid");
-                    collect_bin_float_samples_into(
-                        grid,
-                        flags,
-                        *corr_index,
-                        bin,
-                        &mut weight_spectrum_samples,
-                    );
-                } else {
+                if let Some(statistics) = &statistics {
+                    let (weight, sigma) = statistics.spectrum(bin_index);
                     weight_spectrum_samples.clear();
-                }
-                if let Some(grid) = sigma_spectrum_grid.as_ref() {
-                    let flags = flags
-                        .as_ref()
-                        .expect("sigma spectrum loads matching flag grid");
-                    collect_bin_float_samples_into(
-                        grid,
-                        flags,
-                        *corr_index,
-                        bin,
-                        &mut sigma_spectrum_samples,
-                    );
-                } else {
+                    weight_spectrum_samples.push(weight);
                     sigma_spectrum_samples.clear();
+                    sigma_spectrum_samples.push(sigma);
+                } else {
+                    for (grid, samples) in [
+                        (&weight_spectrum_grid, &mut weight_spectrum_samples),
+                        (&sigma_spectrum_grid, &mut sigma_spectrum_samples),
+                    ] {
+                        if let Some(grid) = grid {
+                            let flags = flags.as_ref().expect("spectrum loads matching flag grid");
+                            collect_bin_float_samples_into(grid, flags, *corr_index, bin, samples);
+                        } else {
+                            samples.clear();
+                        }
+                    }
                 }
                 if let Some(started) = bin_collect_started {
                     scatter_timing.bin_collect += started.elapsed();

@@ -64,7 +64,8 @@ mod visibility_columns;
 pub use baseline::{SpectrumBaseline, SpectrumRow, SpectrumWeights};
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
 pub(crate) use channel_average::{
-    WeightKind, mean_weight_preferring_unflagged, visibility_weight_kind, weight_from_sigma,
+    WeightKind, mean_weight_preferring_unflagged, sigma_from_weight, visibility_weight_kind,
+    weight_from_sigma,
 };
 use continuum::ContinuumFit;
 pub use continuum::ContinuumFitOptions;
