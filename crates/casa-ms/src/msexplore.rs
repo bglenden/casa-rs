@@ -3681,6 +3681,13 @@ struct AveragedPointAccumulator {
     combined_primary_weight: Option<f64>,
 }
 
+impl AveragedPointAccumulator {
+    fn has_usable_weight(&self) -> bool {
+        self.combined_primary_weight
+            .is_none_or(|weight| weight > 0.0)
+    }
+}
+
 #[derive(Debug)]
 struct AveragedSeriesAccumulator {
     label: String,
@@ -4853,7 +4860,7 @@ fn build_generic_visibility_scatter_with_averaging(
         && calibration.is_some_and(|input| input.rows.is_none());
     let time_baselines = collapse_baselines && time_bins.is_some();
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
-    let channel_baselines = collapse_baselines && average_channels;
+    let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
@@ -4861,6 +4868,11 @@ fn build_generic_visibility_scatter_with_averaging(
         .filter(|_| channel_baselines)
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
     let combined_vector_average = time_weight_kinds.is_some() && average_channels;
+    // A model-only request gives each surviving channel equal weight after
+    // the iterator has normalized that channel's time samples.
+    let average_model_channels_equally = time_baselines
+        && combined_vector_average
+        && time_weight_kinds.is_some_and(|kinds| kinds.row_weight == WeightKind::Unit);
     let visibility_weight_kinds = time_weight_kinds.or(channel_baseline_kinds);
     let needs_weight_kind = |kind| {
         visibility_weight_kinds.is_some_and(|kinds| kinds.uses(kind))
@@ -5144,7 +5156,13 @@ fn build_generic_visibility_scatter_with_averaging(
         let column_weights = visibility_columns.column_weights(axis_weights);
         let primary_weight_grid = time_weight_kinds
             .filter(|_| combined_vector_average)
-            .and_then(|kinds| weight_grid(kinds.primary));
+            .and_then(|kinds| {
+                weight_grid(if time_baselines {
+                    kinds.row_weight
+                } else {
+                    kinds.primary
+                })
+            });
         // The baseline reducer sees the mask after the last visibility cube
         // transform. Mixed stored columns use the calibrated mask here.
         let channel_mask_grid = channel_baseline_kinds
@@ -5276,6 +5294,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     correlation,
                     &channel_bins,
                     &flags,
+                    propagate_channel_weights,
                 )
             });
             plotms_columns::baseline_weight(weight)
@@ -5427,12 +5446,24 @@ fn build_generic_visibility_scatter_with_averaging(
                         let y_samples = samples(y_index + 1);
                         let mut series_used =
                             !x_samples.values.is_empty() || !y_samples.values.is_empty();
-                        accumulator
-                            .x_visibility
-                            .add(x_samples, scalar_weight, conjugate);
-                        accumulator
-                            .y_visibility
-                            .add(y_samples, scalar_weight, conjugate);
+                        if average_model_channels_equally {
+                            for (axis, average) in [
+                                (0, &mut accumulator.x_visibility),
+                                (y_index + 1, &mut accumulator.y_visibility),
+                            ] {
+                                if let Some(grid) = visibility_columns.grid(axis, &visibility_grids)
+                                {
+                                    average.add_channel_time_row(grid, &flags, *corr_index, bin);
+                                }
+                            }
+                        } else {
+                            accumulator
+                                .x_visibility
+                                .add(x_samples, scalar_weight, conjugate);
+                            accumulator
+                                .y_visibility
+                                .add(y_samples, scalar_weight, conjugate);
+                        }
                         if calibration.is_some()
                             && spec.averaging.avgtime.is_some()
                             && time_group.is_none()
@@ -5633,9 +5664,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 None => points.next(),
             });
             for (group, accumulator) in ordered {
-                if accumulator.combined_primary_weight.is_some_and(|weight| {
-                    weight.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
-                }) {
+                if !accumulator.has_usable_weight() {
                     continue;
                 }
                 let Some(representative) = accumulator.representative.clone() else {

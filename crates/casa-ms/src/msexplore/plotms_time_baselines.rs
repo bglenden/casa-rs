@@ -38,6 +38,7 @@ struct TimeAverageStatistics {
     last: Integration,
     last_usable: Option<Integration>,
     weights: Vec<ChannelWeightSum>,
+    channel_bin_widths: Vec<usize>,
 }
 
 struct ChannelWeightSum {
@@ -55,6 +56,10 @@ impl Default for ChannelWeightSum {
 }
 
 impl ChannelWeightSum {
+    fn sample(&self) -> (bool, f32) {
+        (self.flagged, self.sum)
+    }
+
     fn observe(&mut self, flagged: bool, weight: f32) {
         if flagged == self.flagged {
             self.sum += weight;
@@ -76,8 +81,16 @@ impl TimeAverageStatistics {
     }
 
     fn baseline_weight(&self) -> f64 {
-        let weight =
-            mean_weight_preferring_unflagged(self.weights.iter().map(|bin| (bin.flagged, bin.sum)));
+        let weight = if self.channel_bin_widths.is_empty() {
+            mean_weight_preferring_unflagged(self.weights.iter().map(ChannelWeightSum::sample))
+        } else {
+            let mut channels = self.weights.as_slice();
+            mean_weight_preferring_unflagged(self.channel_bin_widths.iter().map(|&width| {
+                let (bin, rest) = channels.split_at(width);
+                channels = rest;
+                plotms_columns::sum_channel_weights(bin.iter().map(ChannelWeightSum::sample), true)
+            }))
+        };
         plotms_columns::baseline_weight(f64::from(weight))
     }
 }
@@ -95,8 +108,14 @@ impl TimeBaselineStatistics {
                 weights: row
                     .bins
                     .iter()
+                    .flat_map(ChannelBin::channels)
                     .map(|_| ChannelWeightSum::default())
                     .collect(),
+                channel_bin_widths: if row.bins.iter().any(|bin| bin.averaged) {
+                    row.bins.iter().map(|bin| bin.channels().count()).collect()
+                } else {
+                    Vec::new()
+                },
             });
         if row.integration.time < group.first.time {
             group.first = row.integration;
@@ -111,8 +130,12 @@ impl TimeBaselineStatistics {
         {
             group.last_usable = Some(row.integration);
         }
-        for (bin, sample) in row.bins.iter().zip(&mut group.weights) {
-            let channel = bin.start;
+        for (channel, sample) in row
+            .bins
+            .iter()
+            .flat_map(ChannelBin::channels)
+            .zip(&mut group.weights)
+        {
             let correlation = row.first_correlation;
             let weight = row.weights.map_or(1.0, |grid| {
                 grid.values[correlation * grid.chan_count + channel] as f32
@@ -192,6 +215,9 @@ impl TimeBaselinePlan {
     /// Only project to the displayed amplitude or phase after this second mean.
     pub(super) fn combine_series(&self, series: &mut AveragedSeriesAccumulator) {
         for (mut key, mut point) in std::mem::take(&mut series.points) {
+            if !point.has_usable_weight() {
+                continue;
+            }
             let Some(&(group, weight)) = key
                 .time_key
                 .group()

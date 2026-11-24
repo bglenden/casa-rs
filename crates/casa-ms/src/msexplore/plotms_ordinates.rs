@@ -8,8 +8,9 @@ use super::MsAxis;
 use super::{
     ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterPointRef,
     MsScatterSeries, PlotMsInput, PreparedSelectedDataSource, VisibilityBinSamples,
-    check_grid_shapes, collect_bin_samples_into, compute_weighted_visibility_math, plotms_figure,
-    scatter_series_identity, weighted_visibility_mean,
+    check_grid_shapes, collect_bin_samples_into, compute_visibility_math,
+    compute_weighted_visibility_math, plotms_figure, scatter_series_identity,
+    weighted_visibility_mean,
 };
 use crate::MeasurementSet;
 use crate::selection::ChannelRange;
@@ -63,6 +64,14 @@ impl<'a> VisibilityColumns<'a> {
 
     pub(super) fn column(&self, ordinate: usize) -> Option<MsDataColumn> {
         self.axes[ordinate + 1].map(|index| self.sources[index].0)
+    }
+
+    pub(super) fn grid<'b>(
+        &self,
+        axis: usize,
+        grids: &'b [ComplexGrid],
+    ) -> Option<&'b ComplexGrid> {
+        self.axes[axis].map(|index| &grids[index])
     }
 
     pub(super) fn series_identity(
@@ -206,19 +215,84 @@ fn vector_mean(values: &[Complex64], weights: &[f64]) -> Option<Complex64> {
 }
 
 #[derive(Debug, Default)]
-pub(super) struct AveragedVisibility {
-    values: Vec<Complex64>,
-    weights: Vec<f64>,
+pub(super) struct AveragedVisibility(VisibilitySamples);
+
+#[derive(Debug)]
+enum VisibilitySamples {
+    Weighted {
+        values: Vec<Complex64>,
+        weights: Vec<f64>,
+    },
+    ChannelMeans(Vec<ChannelVisibilityMean>),
+}
+
+impl Default for VisibilitySamples {
+    fn default() -> Self {
+        Self::Weighted {
+            values: Vec::new(),
+            weights: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct ChannelVisibilityMean {
+    sum: Complex64,
+    samples: usize,
 }
 
 impl AveragedVisibility {
+    fn weighted_mut(&mut self) -> (&mut Vec<Complex64>, &mut Vec<f64>) {
+        let VisibilitySamples::Weighted { values, weights } = &mut self.0 else {
+            unreachable!("time channel means are combined before weighted accumulation");
+        };
+        (values, weights)
+    }
+
     pub(super) fn add_weighted_value(&mut self, value: Complex64, weight: f64) {
-        self.values.push(value);
-        self.weights.push(weight);
+        let (values, weights) = self.weighted_mut();
+        values.push(value);
+        weights.push(weight);
+    }
+
+    pub(super) fn add_channel_time_row(
+        &mut self,
+        grid: &ComplexGrid,
+        flags: &ArrayView2<'_, bool>,
+        correlation: usize,
+        bin: &ChannelBin,
+    ) {
+        if matches!(self.0, VisibilitySamples::Weighted { .. }) {
+            self.0 = VisibilitySamples::ChannelMeans(vec![
+                ChannelVisibilityMean::default();
+                bin.channels().count()
+            ]);
+        }
+        let VisibilitySamples::ChannelMeans(means) = &mut self.0 else {
+            unreachable!("model-only channel averaging prepares per-channel time means");
+        };
+        for (channel, mean) in bin.channels().zip(means) {
+            let value = grid.values[correlation * grid.chan_count + channel];
+            if !flags[(correlation, channel)] && value.re.is_finite() && value.im.is_finite() {
+                mean.sum += value;
+                mean.samples += 1;
+            }
+        }
     }
 
     pub(super) fn vector_mean(&self) -> Option<Complex64> {
-        vector_mean(&self.values, &self.weights)
+        match &self.0 {
+            VisibilitySamples::Weighted { values, weights } => vector_mean(values, weights),
+            VisibilitySamples::ChannelMeans(channels) => {
+                let mut sum = Complex64::default();
+                let mut usable = 0;
+                for channel in channels.iter().filter(|channel| channel.samples > 0) {
+                    sum += channel.sum / channel.samples as f64;
+                    usable += 1;
+                }
+                (usable > 0).then(|| sum / usable as f64)
+            }
+        }
     }
 
     pub(super) fn add(
@@ -227,15 +301,16 @@ impl AveragedVisibility {
         scalar_weight: f64,
         conjugate: bool,
     ) {
+        let (values, weights) = self.weighted_mut();
         if conjugate {
-            self.values.extend(samples.values.iter().map(|v| v.conj()));
+            values.extend(samples.values.iter().map(|v| v.conj()));
         } else {
-            self.values.extend_from_slice(samples.values);
+            values.extend_from_slice(samples.values);
         }
         if samples.weights.is_empty() {
-            self.weights.resize(self.values.len(), scalar_weight);
+            weights.resize(values.len(), scalar_weight);
         } else {
-            self.weights.extend_from_slice(samples.weights);
+            weights.extend_from_slice(samples.weights);
         }
     }
 
@@ -245,13 +320,15 @@ impl AveragedVisibility {
         scalar: bool,
         zero_invalid_weight: bool,
     ) -> Option<f64> {
-        compute_weighted_visibility_math(
-            axis,
-            &self.values,
-            &self.weights,
-            scalar,
-            zero_invalid_weight,
-        )
+        match &self.0 {
+            VisibilitySamples::Weighted { values, weights } => {
+                compute_weighted_visibility_math(axis, values, weights, scalar, zero_invalid_weight)
+            }
+            VisibilitySamples::ChannelMeans(_) => {
+                let mean = self.vector_mean()?;
+                compute_visibility_math(axis, &[mean], scalar)
+            }
+        }
     }
 }
 
