@@ -4243,7 +4243,7 @@ fn build_generic_visibility_scatter(
         )
     });
     let mut buffer_first_slot = 0;
-    for (row_slot, row) in row_numbers.iter().copied().enumerate() {
+    for (row_slot, _) in row_numbers.iter().enumerate() {
         if let Some((row_points, buffer_points)) = &mut ordinate_points {
             row_points.clear();
             if buffer_starts[row_slot] {
@@ -4425,7 +4425,6 @@ fn build_generic_visibility_scatter(
         let field_id_value = selected_field_ids[row_slot];
         let scan_number_value = selected_scan_numbers[row_slot];
         let antenna1_value = selected_antenna1[row_slot];
-        let antenna2_value = selected_antenna2[row_slot];
         let row_time_value = selected_times[row_slot];
         let row_uvw_value = if needs_uvw_values {
             selected_uvw[row_slot]
