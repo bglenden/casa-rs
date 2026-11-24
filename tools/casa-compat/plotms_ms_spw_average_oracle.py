@@ -471,6 +471,24 @@ def compare_vector_time(root, native, base, vis):
     compare_figure(root, native, options | dict(xaxis="frequency", xdatacolumn=""),
                    root / "vector-time-frequency.casa.txt", (options["title"], "Frequency (GHz)", "Imag:corrected"))
 
+    source = make_fixture(root, "vector-baselines-source", antenna_count=3)
+    vis, start = stagger_windows(root, source, "vector-sparse-baselines")
+    controls = options | dict(vis=str(vis), xaxis="frequency", xdatacolumn="", yaxis="amp",
+                              antenna="", spw="0:0~1,1:0~1", msselect="DATA_DESC_ID == 1 || ANTENNA2 == 1")
+    expected = export(root, "vector-sparse-baselines.casa", reference, controls)
+    selected = rows(expected)
+    frequencies = ["90.000000000", "90.001000000"] * 3
+    assert [p[0] for p in selected] == [p[10] for p in selected] == frequencies
+    assert [(p[5], p[6]) for p in selected] == [("0", "1")] * 2 + [("0", "2")] * 2 + [("1", "2")] * 2
+    assert {(p[9], p[11]) for p in selected} == {(f"{start + 5:.3f}", "0")}
+    amplitudes = [abs(6.5 + 7.5j), abs(7 + 8j), abs(7 + 8j)]
+    np.testing.assert_allclose(coordinates(selected)[:, 1],
+                               [value * scale for value in amplitudes for scale in (1, 2)], rtol=1.2e-5)
+    actual = export(root, "vector-sparse-baselines.native", native, controls)
+    assert compare_text(actual, expected) == 6
+    assert [p[0] for p in rows(actual)] == frequencies
+    print("vector-sparse-baselines: 6 matching coordinates with retained baseline IDs", flush=True)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
