@@ -3066,7 +3066,10 @@ fn build_uncalibrated_plotms_payload(
             .map_err(|error| error.to_string())
         })
         .transpose()?;
-    let (row_order, starts_visibility_buffer) = if (vector_baselines && !time_baselines)
+    let spw_model_references = needs_model_references && spw_average;
+    let ordered_spw_references = spw_model_references && !time_spw;
+    let (row_order, starts_visibility_buffer, phase_reference_rows) = if (vector_baselines
+        && !time_baselines)
         || scalar_average
         || (spw_average && !time_spw)
         || (antenna_average && !time_antenna)
@@ -3075,8 +3078,18 @@ fn build_uncalibrated_plotms_payload(
             .selected_rows
             .iter()
             .map(|row| (row.row_index, row.data_desc_id));
-        crate::transform::selected_plotms_integration_order(ms, rows, spw_average)
-            .map_err(|error| error.to_string())?
+        let ordered = crate::transform::selected_plotms_integration_order(
+            ms,
+            rows,
+            spw_average,
+            ordered_spw_references,
+        )
+        .map_err(|error| error.to_string())?;
+        (
+            ordered.rows,
+            ordered.starts_visibility_buffer,
+            ordered.phase_reference_rows,
+        )
     } else {
         (
             selected
@@ -3084,6 +3097,7 @@ fn build_uncalibrated_plotms_payload(
                 .iter()
                 .map(|row| row.row_index)
                 .collect(),
+            Vec::new(),
             Vec::new(),
         )
     };
@@ -3100,31 +3114,34 @@ fn build_uncalibrated_plotms_payload(
     for &range in selection.channel_list() {
         channels.entry(range.spw_id as i32).or_default().push(range);
     }
-    let spw_model_references = needs_model_references && spw_average;
-    let channel_ranges = spw_model_references.then_some(&channels);
-    let ordered_recipe_slots = (spw_model_references && !time_spw).then(|| {
-        plotms_model::ordered_model_recipe_slots(
+    let spectral_windows = spw_model_references.then_some(cli::PlotMsModelSpwSelection {
+        channels: &channels,
+        correlations: &selected.correlation_types,
+    });
+    let ordered_model_slots = ordered_spw_references.then(|| {
+        plotms_model::ordered_model_reference_slots(
             &selected.selected_rows,
             &row_order,
             &starts_visibility_buffer,
+            &phase_reference_rows,
         )
     });
     let model_references = time_bins
         .as_ref()
         .and_then(|groups| {
             Some(cli::PlotMsModelReferences {
-                phase_slots: Some(groups.model_phase_reference_slots()?),
+                phase_slots: groups.model_phase_reference_slots()?,
                 recipe_slots: groups.input_buffer_first_slots(),
-                channel_ranges,
+                spectral_windows,
             })
         })
         .or_else(|| {
-            ordered_recipe_slots
-                .as_deref()
-                .map(|recipe_slots| cli::PlotMsModelReferences {
-                    phase_slots: None,
+            ordered_model_slots
+                .as_ref()
+                .map(|(phase_slots, recipe_slots)| cli::PlotMsModelReferences {
+                    phase_slots,
                     recipe_slots,
-                    channel_ranges,
+                    spectral_windows,
                 })
         });
     let models = plotms_model::selected_model_cells(
@@ -4261,12 +4278,14 @@ fn build_generic_visibility_scatter(
                     .any(MsAxis::is_interval_or_wavelength));
     let (row_numbers, buffer_starts) = if use_iterator_order {
         let descriptions = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
-        crate::transform::selected_plotms_integration_order(
+        let ordered = crate::transform::selected_plotms_integration_order(
             ms,
             row_numbers.into_iter().zip(descriptions),
             false,
+            false,
         )
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+        (ordered.rows, ordered.starts_visibility_buffer)
     } else {
         (row_numbers, Vec::new())
     };

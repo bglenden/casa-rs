@@ -11131,6 +11131,13 @@ their output samples by bin position. The regression checks the shared
 physical grid against the single-window CASA request and verifies the
 two-window output against the weighted complex average (#1032).
 
+With two four-channel windows at 90 and 100 GHz, a virtual model, and
+`spw="0:1;200GHz,1:2"` with `avgspw=True`, the pinned PlotMS backend
+terminates when it receives the unmatched 200 GHz slice alongside valid
+channels. casa-rs skips that empty slice and retains the requested valid
+channels. Their averaged coordinates match the CASA control using
+`spw="0:1,1:2"` (#1032).
+
 ## Empty MS visibility strides can abort or change the attachment
 
 On a nonempty MS, `getdata(increment=4294967297)` can admit a

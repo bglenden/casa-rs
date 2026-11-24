@@ -18,10 +18,11 @@ use super::{
     MsTransformError, MsTransformRequest, rewrite_selected_table_rows, scalar_f64, scalar_i32,
 };
 
-pub(super) struct OrderedMainRows {
-    pub(super) rows: Vec<usize>,
+pub(crate) struct OrderedMainRows {
+    pub(crate) rows: Vec<usize>,
     pub(super) descriptions: Vec<i32>,
-    pub(super) starts_visibility_buffer: Vec<bool>,
+    pub(crate) starts_visibility_buffer: Vec<bool>,
+    pub(crate) phase_reference_rows: Vec<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -41,6 +42,7 @@ pub(super) fn sort_selected_rows(
     rows: Vec<usize>,
     descriptions: Vec<i32>,
     order: MainRowOrder,
+    collect_phase_references: bool,
 ) -> Result<OrderedMainRows, MsTransformError> {
     const GROUPS: [&str; 5] = [
         "OBSERVATION_ID",
@@ -103,16 +105,8 @@ pub(super) fn sort_selected_rows(
             })
             .then_with(|| left.3.cmp(&right.3))
     });
-    let mut starts_visibility_buffer = Vec::with_capacity(ordering.len());
-    for (index, &(keys, description, time, _)) in ordering.iter().enumerate() {
-        let start = index == 0 || {
-            let (previous_keys, previous_description, previous_time, _) = ordering[index - 1];
-            (keys, time) != (previous_keys, previous_time)
-                || (!matches!(order, MainRowOrder::SpectralWindowAverage)
-                    && description != previous_description)
-        };
-        starts_visibility_buffer.push(start);
-    }
+    let (starts_visibility_buffer, phase_reference_rows) =
+        plot_iterator_boundaries(&ordering, order, collect_phase_references);
     let (rows, descriptions) = ordering
         .into_iter()
         .map(|(_, ddid, _, row)| (row, ddid))
@@ -121,7 +115,38 @@ pub(super) fn sort_selected_rows(
         rows,
         descriptions,
         starts_visibility_buffer,
+        phase_reference_rows,
     })
+}
+
+type SortedMainRow = ([i32; 5], i32, f64, usize);
+
+fn plot_iterator_boundaries(
+    ordering: &[SortedMainRow],
+    order: MainRowOrder,
+    collect_phase_references: bool,
+) -> (Vec<bool>, Vec<usize>) {
+    let mut starts_visibility_buffer = Vec::with_capacity(ordering.len());
+    let mut phase_reference_rows = Vec::new();
+    if collect_phase_references {
+        phase_reference_rows.reserve_exact(ordering.len());
+    }
+    let mut chunk_head = 0;
+    let combine_windows = matches!(order, MainRowOrder::SpectralWindowAverage);
+    for (index, &(keys, description, time, row)) in ordering.iter().enumerate() {
+        let starts_chunk = index == 0 || {
+            let (previous_keys, previous_description, _, _) = ordering[index - 1];
+            keys != previous_keys || (!combine_windows && description != previous_description)
+        };
+        starts_visibility_buffer.push(starts_chunk || time != ordering[index - 1].2);
+        if collect_phase_references {
+            if starts_chunk {
+                chunk_head = row;
+            }
+            phase_reference_rows.push(chunk_head);
+        }
+    }
+    (starts_visibility_buffer, phase_reference_rows)
 }
 
 /// Return selected MAIN rows and buffer starts in PlotMS iterator order.
@@ -130,9 +155,10 @@ pub(crate) fn selected_plotms_integration_order(
     ms: &MeasurementSet,
     selected: impl Iterator<Item = (usize, i32)>,
     combine_spectral_windows: bool,
-) -> Result<(Vec<usize>, Vec<bool>), MsTransformError> {
+    collect_phase_references: bool,
+) -> Result<OrderedMainRows, MsTransformError> {
     let (rows, descriptions) = selected.unzip();
-    let ordered = sort_selected_rows(
+    sort_selected_rows(
         ms.main_table(),
         ms.path().unwrap_or_else(|| Path::new("<memory>")),
         rows,
@@ -142,8 +168,8 @@ pub(crate) fn selected_plotms_integration_order(
         } else {
             MainRowOrder::Transform
         },
-    )?;
-    Ok((ordered.rows, ordered.starts_visibility_buffer))
+        collect_phase_references,
+    )
 }
 
 #[derive(Default)]

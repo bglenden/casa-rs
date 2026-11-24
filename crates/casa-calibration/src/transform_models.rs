@@ -94,12 +94,9 @@ impl TransformInputView for ModelView<'_> {
                     .map(|references| references.recipe_slots),
             )
             .map_err(model_error)?;
-            if let Some(slots) = self
-                .plot_references
-                .and_then(|references| references.phase_slots)
-            {
+            if let Some(references) = self.plot_references {
                 models
-                    .set_plot_phase_references(rows, slots)
+                    .set_plot_phase_references(rows, references.phase_slots)
                     .map_err(model_error)?;
             }
             Some(models)
@@ -115,16 +112,17 @@ impl TransformInputView for ModelView<'_> {
                         && models
                             .as_ref()
                             .is_none_or(|models| models.reads_transform_column(row.row_index));
-                    let channel_remap = self.plot_references.and_then(|references| {
-                        let recipe = &rows[references.recipe_slots[slot]];
-                        remaps
-                            .get(&[row.spectral_window_id, recipe.spectral_window_id])?
-                            .clone()
-                    });
+                    let recipe = self
+                        .plot_references
+                        .filter(|references| references.spectral_windows.is_some())
+                        .map_or(row, |references| &rows[references.recipe_slots[slot]]);
+                    let channel_remap = remaps
+                        .get(&[row.spectral_window_id, recipe.spectral_window_id])
+                        .and_then(Clone::clone);
                     (
                         row.row_index,
                         ModelRow {
-                            polarization: row.polarization_id,
+                            polarization: [row.polarization_id, recipe.polarization_id],
                             reads_column,
                             channel_remap,
                         },
@@ -137,13 +135,28 @@ impl TransformInputView for ModelView<'_> {
         let mut correlations = BTreeMap::new();
         if !rows.is_empty() {
             let polarization = input.polarization().map_err(model_error)?;
+            let requested = self
+                .plot_references
+                .and_then(|references| references.spectral_windows)
+                .map_or(&[][..], |selection| selection.correlations);
             for id in rows
                 .values()
                 .filter(|row| !row.reads_column)
                 .map(|row| row.polarization)
             {
                 if let std::collections::btree_map::Entry::Vacant(entry) = correlations.entry(id) {
-                    entry.insert(polarization.corr_type(id as usize).map_err(model_error)?);
+                    let physical = polarization
+                        .corr_type(id[0] as usize)
+                        .map_err(model_error)?;
+                    let layout = if id[0] == id[1] {
+                        physical
+                    } else {
+                        let recipe = polarization
+                            .corr_type(id[1] as usize)
+                            .map_err(model_error)?;
+                        model_recipe_correlations(physical, recipe, requested)?
+                    };
+                    entry.insert(layout);
                 }
             }
         }
@@ -177,13 +190,34 @@ struct PreparedModelView<'a> {
     input: &'a MeasurementSet,
     models: Option<VisibilityModels>,
     rows: BTreeMap<usize, ModelRow>,
-    correlations: BTreeMap<i32, Vec<i32>>,
+    correlations: BTreeMap<[i32; 2], Vec<i32>>,
 }
 
 struct ModelRow {
-    polarization: i32,
+    polarization: [i32; 2],
     reads_column: bool,
     channel_remap: Option<Arc<ModelChannelRemap>>,
+}
+
+fn model_recipe_correlations(
+    mut physical: Vec<i32>,
+    recipe: Vec<i32>,
+    requested: &[i32],
+) -> Result<Vec<i32>, TableError> {
+    let selected = |code: i32| requested.is_empty() || requested.contains(&code);
+    let mut recipe = recipe.into_iter().filter(|&code| selected(code));
+    let shape_error = || {
+        model_error("PlotMS virtual SPW models require conforming selected correlations (#1032)")
+    };
+    // The predictor uses one correlation layout per input buffer. Place its
+    // selected codes in the corresponding physical FLAG and output slots.
+    for code in physical.iter_mut().filter(|code| selected(**code)) {
+        *code = recipe.next().ok_or_else(shape_error)?;
+    }
+    if recipe.next().is_some() {
+        return Err(shape_error());
+    }
+    Ok(physical)
 }
 
 struct ModelChannelRemap {
@@ -240,7 +274,7 @@ fn plot_model_channel_remaps(
 ) -> Result<BTreeMap<[i32; 2], Option<Arc<ModelChannelRemap>>>, TableError> {
     let mut remaps = BTreeMap::new();
     let Some((references, ranges)) =
-        references.and_then(|references| Some((references, references.channel_ranges?)))
+        references.and_then(|references| Some((references, references.spectral_windows?.channels)))
     else {
         return Ok(remaps);
     };
@@ -286,7 +320,7 @@ fn plot_model_channel_remaps(
 }
 
 fn selected_model_channels(ranges: Option<&[ChannelRange]>, count: usize) -> Vec<usize> {
-    let Some(ranges) = ranges.filter(|ranges| ranges.iter().all(|range| range.start >= 0)) else {
+    let Some(ranges) = ranges else {
         return (0..count).collect();
     };
     let mut selected: Vec<_> = ranges

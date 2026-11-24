@@ -789,14 +789,14 @@ def compare_ordinate_list_uvw(root, native, options, vis):
     print("uvw-spw-ordinates: pending SPW U guard and six ordinary time U coordinates verified", flush=True)
 
 
-def virtual_spw_models(root, name, *, spectral_index=0):
+def virtual_spw_models(root, name, *, spectral_index=0, stokes_q=0):
     vis = make_fixture(root, name)
     with opened(vis, True) as table:
         model = table.getcol("MODEL_DATA")
         table.putcol("MODEL_DATA", np.full_like(model, 19))
     for window, flux, frequency in ((0, 7.25, "90GHz"), (1, 3.25, "100GHz")):
         assert casa.setjy(str(vis), field="FLUX", spw=str(window), standard="manual", usescratch=False,
-                          fluxdensity=[flux, 0, 0, 0], reffreq=frequency, spix=[spectral_index])
+                          fluxdensity=[flux, stokes_q, 0, 0], reffreq=frequency, spix=[spectral_index])
     return vis
 
 
@@ -847,6 +847,69 @@ def compare_virtual_spw_models(root, native):
         if name == "channel-virtual-model-spw":
             compare_figure(root, native, controls, expected, (title, "Frequency (GHz)", "Real:model"))
     for source in (vis, sloped, shifted, reversed_windows, masked):
+        with opened(source) as table:
+            np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
+    compare_virtual_spw_model_references(root, native, base, vis, sloped)
+
+
+def compare_virtual_spw_model_references(root, native, base, vis, sloped):
+    moving, start = stagger_windows(root, vis, "moving-virtual-windows")
+    with opened(moving / "FIELD", True) as table:
+        table.putcell("NUM_POLY", 0, 1)
+        table.putcell("TIME", 0, start)
+        for column in ("PHASE_DIR", "REFERENCE_DIR", "DELAY_DIR"):
+            table.putcell(column, 0, np.column_stack((table.getcell(column, 0), [3e-6, 0.])))
+    phase_controls = base | dict(vis=str(moving), yaxis="imag")
+    for name, overrides, values, windows in (
+        ("moving-field-spw", {}, [0] * 4, ["0", "1"] * 2),
+        ("moving-field-selected-spw", dict(spw="1:1"), [2.6563, 2.65614], ["1"] * 2),
+        ("moving-field-scalar-time-spw", dict(scalar=True, avgtime="20"), [0], ["0"]),
+        ("moving-field-vector-time-spw", dict(avgtime="20"), [0], ["0"]),
+    ):
+        controls = phase_controls | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        assert [p[11] for p in selected] == windows
+        np.testing.assert_allclose([float(p[1]) for p in selected], values, rtol=1.2e-5, atol=1e-7)
+        assert compare_text(export(root, f"{name}.native", native, controls), expected) == len(values)
+        print(f"{name}: {len(values)} matching coordinates at the selected chunk epoch", flush=True)
+
+    polarized = virtual_spw_models(root, "polarized-virtual-windows", stokes_q=2.5)
+    with opened(polarized / "POLARIZATION", True) as table:
+        reversed_id = table.nrows()
+        table.addrows(1)
+        for column in table.colnames():
+            value = table.getcell(column, 0)
+            if column == "CORR_TYPE":
+                value = value[::-1]
+            if column == "CORR_PRODUCT":
+                value = value[:, ::-1]
+            table.putcell(column, reversed_id, value)
+    with opened(polarized / "DATA_DESCRIPTION", True) as table:
+        table.putcell("POLARIZATION_ID", 1, reversed_id)
+    polarized_controls = base | dict(vis=str(polarized), spw="0:1,1:2")
+    for name, correlation, pairs in (
+        ("all", "", [("XX", 9.75), ("YY", 4.75)] * 2),
+        ("xx", "XX", [("XX", 9.75)] * 2),
+        ("yy", "YY", [("YY", 4.75)] * 2),
+    ):
+        name = f"polarized-spw-{name}"
+        controls = polarized_controls | dict(correlation=correlation)
+        expected = export(root, f"{name}.casa", reference, controls)
+        assert [(p[12], float(p[1])) for p in rows(expected)] == pairs
+        assert compare_text(export(root, f"{name}.native", native, controls), expected) == len(pairs)
+        print(f"{name}: {len(pairs)} matching selected model correlation slots", flush=True)
+
+    # The mixed selector terminates pinned PlotMS. The matching positions of
+    # its nonempty slices are an independent reference for the valid cells.
+    controls = base | dict(vis=str(sloped), spw="0:1,1:2")
+    expected = export(root, "matching-slices.casa", reference, controls)
+    actual = export(root, "with-unmatched-slice.native", native, controls | dict(spw="0:1;200GHz,1:2"))
+    assert "# spw: 0:1;200GHz,1:2" in actual.read_text()
+    assert [p[2:] for p in rows(actual)] == [p[2:] for p in rows(expected)]
+    np.testing.assert_allclose(coordinates(rows(actual)), coordinates(rows(expected)), rtol=1.2e-5)
+    print("with-unmatched-slice: 2 matching coordinates against the nonempty CASA slices", flush=True)
+    for source in (moving, polarized):
         with opened(source) as table:
             np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
 

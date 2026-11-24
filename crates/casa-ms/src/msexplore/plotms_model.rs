@@ -49,26 +49,33 @@ pub(super) fn needs_model_references(
         }
 }
 
-pub(super) fn ordered_model_recipe_slots(
+pub(super) fn ordered_model_reference_slots(
     rows: &[ResolvedMsSelectionRow],
     row_order: &[usize],
     starts_buffer: &[bool],
-) -> Vec<usize> {
+    phase_reference_rows: &[usize],
+) -> (Vec<usize>, Vec<usize>) {
     let slots_by_row: HashMap<_, _> = rows
         .iter()
         .enumerate()
         .map(|(slot, row)| (row.row_index, slot))
         .collect();
+    let mut phase_slots = vec![0; rows.len()];
     let mut recipe_slots = vec![0; rows.len()];
     let mut reference = 0;
-    for (&row, &starts) in row_order.iter().zip(starts_buffer) {
+    for ((&row, &starts), phase_row) in row_order
+        .iter()
+        .zip(starts_buffer)
+        .zip(phase_reference_rows)
+    {
         let slot = slots_by_row[&row];
         if starts {
             reference = slot;
         }
         recipe_slots[slot] = reference;
+        phase_slots[slot] = slots_by_row[phase_row];
     }
-    recipe_slots
+    (phase_slots, recipe_slots)
 }
 
 fn uses_unspanned_antenna_or_baseline(plot: &MsPlotSpec) -> bool {
@@ -149,8 +156,8 @@ pub(super) fn selected_model_cells(
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
         )
     });
-    let vector_time = model_references.is_some_and(|references| references.phase_slots.is_some());
-    let field_models_supported = !plot.averaging.avgfield || plot.averaging.scalar || vector_time;
+    let field_models_supported =
+        !plot.averaging.avgfield || plot.averaging.scalar || model_references.is_some();
     let derived_average = columns.implicit_derived_model
         && field_models_supported
         && (columns.extended_derived || (!extended && uses_channel_derived(plot, columns.x)));
