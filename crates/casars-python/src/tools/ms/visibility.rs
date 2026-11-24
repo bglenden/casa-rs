@@ -15,7 +15,6 @@ use super::attachment_info::{TableFiles, TableStamp};
 use super::owned_record::visibility_record;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
-use crate::tools::not_yet_implemented_in;
 
 #[derive(Default)]
 pub(super) struct VisibilityState {
@@ -91,6 +90,31 @@ impl VisibilityMain {
         }
         Ok(members)
     }
+
+    fn read_selected(
+        &self,
+        selected: Option<&[usize]>,
+        mut rows: Vec<usize>,
+        items: &[String],
+        options: tool_visibility::VisibilityReadOptions<'_>,
+    ) -> PyResult<CasaValue> {
+        if let Some(selected) = selected {
+            for row in &mut rows {
+                *row = selected[*row];
+            }
+        }
+        let record = tool_visibility::read_tool_visibility(
+            &self.table,
+            &self.members,
+            self.reference.as_ref(),
+            &rows,
+            items,
+            None,
+            options,
+        )
+        .map_err(runtime_error)?;
+        Ok(visibility_record(record))
+    }
 }
 
 #[pymethods]
@@ -147,9 +171,6 @@ impl AttachedMs {
         if count == 0 {
             return Ok(CasaValue::empty_record());
         }
-        if options.baseline_gap.is_some() && options.average {
-            return not_yet_implemented_in("ms", "getdata ifraxis averaging", super::ISSUE);
-        }
         let axis_info = items
             .iter()
             .any(|item| item.eq_ignore_ascii_case("axis_info"));
@@ -174,6 +195,13 @@ impl AttachedMs {
             }
             self.visibility.initialized = true;
             let rows = sampled_rows(count, snapshot.ms.row_count(), increment)?;
+            if !axis_info {
+                let main = self.visibility.main(&self.path)?;
+                let reply =
+                    main.read_selected(self.selected_rows.as_deref(), rows, items, options)?;
+                link.verify_directory().map_err(runtime_error)?;
+                return Ok(reply);
+            }
             let record = tool_visibility::read_tool_visibility(
                 snapshot.ms.main_table(),
                 &[],
@@ -192,24 +220,10 @@ impl AttachedMs {
         if items.is_empty() {
             return Ok(CasaValue::empty_record());
         }
-        let mut rows = sampled_rows(count, count, increment)?;
-        if let Some(prior) = &self.selected_rows {
-            for row in &mut rows {
-                *row = prior[*row];
-            }
-        }
-        let record = tool_visibility::read_tool_visibility(
-            &main.table,
-            &main.members,
-            main.reference.as_ref(),
-            &rows,
-            items,
-            None,
-            options,
-        )
-        .map_err(runtime_error)?;
+        let rows = sampled_rows(count, count, increment)?;
+        let reply = main.read_selected(self.selected_rows.as_deref(), rows, items, options)?;
         link.verify_directory().map_err(runtime_error)?;
-        Ok(visibility_record(record))
+        Ok(reply)
     }
 }
 

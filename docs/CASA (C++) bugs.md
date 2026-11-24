@@ -11102,3 +11102,34 @@ pair's visibility and derives the label for both from `(1, 1)`.
 casa-rs places and labels data by the actual antenna pair. Both
 slots and their separate labels remain available even when their
 legacy public baseline numbers coincide (#1030).
+
+## MS baseline-axis averaging can weight the wrong cells and collapse baselines
+
+With `ifraxis=True, average=True`, CASA 6.7.6.14 advances its flattened
+WEIGHT pointer once per baseline and integration. The stored WEIGHT
+has a separate value for each correlation, baseline and integration.
+Zero-filled sparse slots also reach the averaging loop with their flag
+clear. On the sparse eight-row control, one measured sample of 89 is
+halved to 44.5, other measured samples disappear, and seven output flags
+disagree with the independent weighted calculation.
+
+With only one integration, the visibility cube has no final time axis.
+CASA interprets its baseline dimension as ordinary rows and collapses
+four distinct baselines into one result with no baseline dimension.
+
+casa-rs reduces occupied slots within each antenna pair using each
+unflagged sample's correlation weight. It retains the baseline axis
+for a single integration and marks a sample with no unflagged
+observations flagged. Unchanged upstream tests still record the pinned
+CASA results (#1030).
+[Pinned casacore averaging loop](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSSelUtil2.tcc#L127-L147)
+
+## MS averaged sidereal time can fail when multiple fields are selected
+
+CASA 6.7.6.14 derives the common FIELD_ID as `-1` when a time-averaged
+selection spans fields. With `ifraxis=True, average=True`, a request for
+`axis_info` and `last` then tries to open FIELD row
+`18446744073709551615`. Local apparent sidereal time depends on the epoch
+and observatory position. casa-rs computes it in the first antenna's
+measure frame at the mean epoch, including when no single field describes
+the selection (#1030).
