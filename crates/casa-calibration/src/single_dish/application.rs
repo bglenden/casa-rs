@@ -9,7 +9,7 @@ use casa_tables::{Table, TableOptions};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{ScalarValue, Value};
 
-use super::{generate_edges, generate_position_switch, selector, tsys};
+use super::{generate_edges, generate_position_switch, resolve_selection, selector, tsys};
 use crate::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
     CalibrationOutputMode, execute::execute_single_dish_apply,
@@ -46,8 +46,7 @@ pub(super) fn run(
                     intent,
                     ..selection.clone()
                 };
-                crate::session::resolve_casa_calibration_selection(&ms, &selection)
-                    .map_err(|error| TaskFailure::execution(error.to_string()))?
+                resolve_selection(&ms, &selection)?
             } else {
                 selected
             };
