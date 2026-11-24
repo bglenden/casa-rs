@@ -17,11 +17,11 @@ from plotms_ms_columns_oracle import compare_text, copy_ms, opened, plotms_launc
 from plotms_ms_spw_average_oracle import add_second_field
 
 
-def compare_antenna_ordinate_lists(root, native, *, spans_only):
+def compare_antenna_ordinate_lists(root, native, *, only):
     root.mkdir()
     vis, _, _, spectra_flags = make_fixture(root)
-    if spans_only:
-        compare_antenna_ordinate_list_spans(root, native, vis, spectra_flags)
+    if only is not None:
+        compare_antenna_ordinate_list_spans(root, native, vis, spectra_flags, edges_only=only == "span-edges")
         return
     controls = request(vis) | dict(antenna="A0&A1;A0&A2", xaxis="channel", xdatacolumn="", spw="0:0~3",
                                     avgantenna=True, yaxis=["real"] * 3,
@@ -135,11 +135,13 @@ def compare_antenna_row_flags(root, native, source, controls):
             print(f"{case}: {count if count else 'three empty sections'} matched", flush=True)
 
 
-def compare_antenna_ordinate_list_spans(root, native, source, masked_spectra):
+def compare_antenna_ordinate_list_spans(root, native, source, masked_spectra, *, edges_only=False):
     for case, scan, field, channels in (
         ("scan", True, False, False), ("field", False, True, False),
         ("both", True, True, False), ("both-channel-bins", True, True, True),
     ):
+        if edges_only and case != "both":
+            continue
         vis = root / f"list-span-{case}.ms"
         copy_ms(masked_spectra if channels else source, vis)
         with opened(vis / "FIELD") as table:
@@ -165,6 +167,10 @@ def compare_antenna_ordinate_list_spans(root, native, source, masked_spectra):
             ydatacolumn=["data", "corrected", "model"], yaxislocation=["left", "right", "left"],
             expformat="txt",
         )
+        if case == "both":
+            compare_antenna_span_edges(root, native, vis, controls, start)
+        if edges_only:
+            return
         count = 18 if channels else 9
         for mode, scalar in (("vector", False), ("scalar", True)):
             name = f"{mode}-{case}-antenna-ordinates"
@@ -190,13 +196,66 @@ def compare_antenna_ordinate_list_spans(root, native, source, masked_spectra):
                 compare_sides(root, native, options, expected_x="Time (MJD seconds)", name=name)
 
 
+def compare_antenna_span_edges(root, native, source, controls, start):
+    from casars.tasks import TaskParameterError
+
+    short, complex_data = (root / f"list-span-{name}.ms" for name in ("short", "complex"))
+    copy_ms(source, short)
+    copy_ms(source, complex_data)
+    with opened(short, True) as table:
+        late = table.getcol("TIME") >= start + 19
+        for column, value in (("SCAN_NUMBER", 7), ("FIELD_ID", 1)):
+            ids = table.getcol(column)
+            ids[late] = value
+            table.putcol(column, ids)
+    short_controls = controls | dict(vis=str(short), avgtime="20")
+    expected, actual = (root / f"vector-short-span-control.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**short_controls, plotfile=str(expected)) is None
+    assert native(**short_controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 18
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                               [float(point[0]) for point in rows(expected)], rtol=0, atol=.00051)
+    print("vector-short-span-control: 18 matching uncolored coordinates", flush=True)
+    for axis in ("scan", "field"):
+        output = root / f"vector-short-span-{axis}.native.txt"
+        try:
+            native(**short_controls, coloraxis=axis, plotfile=str(output))
+        except TaskParameterError as error:
+            assert "#1032" in str(error), error
+        else:
+            raise AssertionError(f"PlotMS accepted pending vector antenna spans colored by {axis}")
+        assert not output.exists()
+        print(f"vector-short-span-{axis}: pending color grouping refusal verified", flush=True)
+
+    with opened(complex_data, True) as table:
+        late = table.getcol("TIME") >= start + 29
+        for column, early, later in (
+            ("DATA", 1 + 2j, -2 + 3j), ("CORRECTED_DATA", 1 - 3j, 3 + 2j),
+            ("MODEL_DATA", -2 + 1j, 2 - 3j),
+        ):
+            values = table.getcol(column) * np.where(late, later, early)
+            table.putcol(column, values.astype(np.complex64))
+    complex_controls = controls | dict(vis=str(complex_data), xaxis="real", xdatacolumn="corrected",
+                                       yaxis=["real", "imag", "phase"], ydatacolumn=["data", "model", "corrected"])
+    for axis in ("scan", "field"):
+        for mode, scalar in (("vector", False), ("scalar", True)):
+            name = f"{mode}-antenna-keep-{axis}"
+            options = complex_controls | dict(avgscan=axis == "field", avgfield=axis == "scan", scalar=scalar)
+            expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**options, plotfile=str(expected)) is None
+            assert {tuple(point[3:5]) for point in rows(expected)} == {("1", "0"), ("7", "1")}
+            assert native(**options, plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == 18
+            print(f"{name}: 18 matching independent coordinates in retained groups", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("spans",))
+    parser.add_argument("--only", choices=("spans", "span-edges"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -208,7 +267,7 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare_antenna_ordinate_lists(root / "ordinate-lists", native, spans_only=args.only == "spans")
+        compare_antenna_ordinate_lists(root / "ordinate-lists", native, only=args.only)
 
 
 if __name__ == "__main__":
