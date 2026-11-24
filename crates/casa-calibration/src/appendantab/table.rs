@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use casa_tables::{
-    ColumnSchema, Table, TableOptions, TableSchema, TableWriteLock, strip_directory,
+    ColumnSchema, DataManagerKind, Table, TableOptions, TableSchema, TableWriteLock,
+    strip_directory,
 };
 use casa_types::{ArrayValue, PrimitiveType, RecordField, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -92,7 +93,11 @@ fn save_subtable(table: &Table, path: &Path) -> Result<(), String> {
     if let Some(lock) = lock.as_mut() {
         lock.record_write();
     }
-    table.save(TableOptions::new(path)).map_err(message)?;
+    // Use CASA's writable layout so casacore bulk column edits survive reopening.
+    let options = TableOptions::new(path)
+        .with_data_manager(DataManagerKind::StandardStMan)
+        .with_casacore_default_ssm(true);
+    table.save(options).map_err(message)?;
     if let Some(lock) = lock {
         lock.release().map_err(message)?;
     }
