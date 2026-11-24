@@ -329,7 +329,9 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 "Spwmap type must be list or dictionary.",
             ) or message.startswith("Table doesn't exist: "):
                 raise Exception(message) from error
-            if message == "Error in Calibrater::setapply.":
+            if (message == "Error in Calibrater::setapply."
+                or message.startswith("overwrite is False and output file exists:")
+                or (message.startswith("Applytable '") and message.endswith("' is not a caltable format"))):
                 raise RuntimeError(message) from error
             raise
     if name == "sdgaincal":
