@@ -785,7 +785,12 @@ def compare_time_averaged_columns(root, native):
             else:
                 uvw = np.zeros_like(table.getcol("UVW"))
                 uvw[0, odd] = 10
+                uvw[1] = -2 * uvw[0] - 1
+                uvw[2] = 3 * uvw[0] + 2
                 table.putcol("UVW", uvw)
+                weights = table.getcol("WEIGHT")
+                weights[1] = np.where(odd, 1, 5)
+                table.putcol("WEIGHT", weights)
 
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
                                ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
@@ -837,20 +842,39 @@ def compare_time_averaged_columns(root, native):
         if axis == "time":
             for path in (expected, actual):
                 assert all(float(row[0]) == float(row[9]) for row in rows(path))
-    from casars.tasks import TaskParameterError
-
-    controls = base | dict(vis=str(weighted_uvw), xaxis="u", xdatacolumn="", expformat="txt")
-    expected, actual = (work / f"time-weighted-u.{engine}.txt" for engine in ("casa", "native"))
-    assert reference(**controls, plotfile=str(expected)) is None
-    assert len(rows(expected)) == 6
-    assert {float(row[0]) for row in rows(expected)} == {9}
-    try:
-        native(**controls, plotfile=str(actual))
-    except TaskParameterError as error:
-        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
-    else:
-        raise AssertionError("PlotMS admitted a request requiring weighted UVW coordinates")
-    assert not actual.exists()
+    flagged_uvw = work / "flagged-uvw.ms"
+    copy_ms(weighted_uvw, flagged_uvw)
+    with opened(flagged_uvw, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, ~odd] = True
+        table.putcol("FLAG", flags)
+    uvw_controls = base | dict(vis=str(weighted_uvw), xaxis="u", xdatacolumn="")
+    single_ordinate = dict(yaxis="real", yaxislocation="left")
+    coordinate_cases = (
+        ("u", {}, 9, 0, 6),
+        ("v", dict(xaxis="v"), -19, 0, 6),
+        ("w", dict(xaxis="w"), 29, 0, 6),
+        ("uvdist", dict(xaxis="uvdist"), np.hypot(9, -19), 0, 6),
+        ("model-only", single_ordinate | dict(ydatacolumn="model"), 5, 0, 3),
+        ("observed-only", single_ordinate | dict(ydatacolumn="data"), 8, 0, 3),
+        ("both-correlations", single_ordinate | dict(ydatacolumn="corrected", correlation="XX,YY"), 6.25, 0, 6),
+        ("ordinate", single_ordinate | dict(xaxis="real", xdatacolumn="corrected", yaxis="u", ydatacolumn=""),
+         9, 1, 3),
+        ("one-clear-integration", dict(vis=str(flagged_uvw)), 10, 0, 6),
+        ("one-clear-channel", dict(vis=str(flagged_uvw), spw="0:0~1"), 9, 0, 12),
+    )
+    for name, overrides, coordinate, side, count in coordinate_cases:
+        options = uvw_controls | overrides | dict(expformat="txt")
+        expected, actual = (work / f"time-weighted-{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == count
+        np.testing.assert_allclose([float(point[side]) for point in selected], coordinate, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        print(f"time-weighted-{name}: {count} matching time-averaged UVW coordinates", flush=True)
+    compare_ordinate_figure(work, "time-weighted-u", native, uvw_controls, "U (m)",
+                            ["Real:corrected", "Real:model"])
     compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
 
 
