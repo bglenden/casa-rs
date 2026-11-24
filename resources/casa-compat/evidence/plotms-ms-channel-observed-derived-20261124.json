@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "execution_date": "2026-11-24",
-  "revision": "27c60fd7ec392890e8131519c6b5514a49adb3d9",
-  "source_revision": "27c60fd7ec392890e8131519c6b5514a49adb3d9",
+  "revision": "131b4a17cde4b4c76ab7a7b375efacc29c2aa55d",
+  "source_revision": "131b4a17cde4b4c76ab7a7b375efacc29c2aa55d",
   "baseline_revision": "ec2b41563a63eb7deb15c6617b278f30cc27f028",
   "casa_version": "6.7.6.14",
   "casaplotms_version": "2.9.1",
@@ -10,8 +10,8 @@
   "scope": "Observed DATA/model vector and scalar projections after channel-only averaging with separate operand spectra.",
   "result": "passed",
   "baseline_result": "Native refused the observed expressions while channel averaging was active.",
-  "text_exports": 9,
-  "points": 108,
+  "text_exports": 11,
+  "points": 132,
   "figures": 1,
   "rendered_coordinates": 12,
   "figure_size_px": [
@@ -19,5 +19,7 @@
     360
   ],
   "effective_float_reference_points": 12,
-  "scope_refusals": 1
+  "scope_refusals": 1,
+  "initial_spectrum_points": 12,
+  "complex_normalization_points": 12
 }

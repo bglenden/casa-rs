@@ -2591,10 +2591,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-channel-observed-derived"></a>
 ##### ms-channel-observed-derived
 
-**Same-input channel averages with separate observed and model spectra — passed.** Nine paired texts match 108 selected points, units and identifiers. The model uses calibrated weights when CORRECTED_DATA exists and observed weights otherwise. The corrected expression falls back to DATA. Cases include a partly flagged bin, the quotient on either axis, and an infinite ratio with zero model weights. A paired 500 by 360 PNG draws 12 matching native phase coordinates. On the mixed-storage MS, the corrected-only case matches. Pinned CASA feeds FLOAT_DATA to the observed expression and native retains the issue-linked effective FLOAT_DATA averaging refusal. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs channel-only scalar and vector observed DATA/model plots with a companion stored visibility axis.
+**Same-input channel averages with separate observed and model spectra — passed.** Eleven paired texts match 132 selected points, units and identifiers. The model uses calibrated weights when CORRECTED_DATA exists and observed weights otherwise. The corrected expression falls back to DATA. Cases include a partly flagged bin, the quotient on either axis, an infinite ratio with zero model weights, and an undefined spectrum on the first selected table row with reversed iterator order. Weighted complex normalization matches selected NaN and infinite components. A paired 500 by 360 PNG draws 12 native phase coordinates. On the mixed-storage MS, the corrected-only case matches. Pinned CASA feeds FLOAT_DATA to the observed expression and native retains the issue-linked effective FLOAT_DATA averaging refusal. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs channel-only scalar and vector observed DATA/model plots with a companion stored visibility axis.
 
 - [https://github.com/bglenden/casa-rs/pull/2213](https://github.com/bglenden/casa-rs/pull/2213)
-- Revision: `27c60fd7ec392890e8131519c6b5514a49adb3d9`; CASA: `6.7.6.14`.
+- Revision: `131b4a17cde4b4c76ab7a7b375efacc29c2aa55d`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_observed_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-channel-observed-derived-20261124.json`.
 
