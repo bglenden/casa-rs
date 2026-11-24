@@ -12,17 +12,16 @@ use std::collections::BTreeMap;
 
 use casa_tables::{Table, TableError, TableOptions};
 use casa_types::measures::MeasFrame;
-use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::doppler::{DopplerRef, MDoppler};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::frequency_conversion::PreparedFrequencyConversion;
 use casa_types::measures::radial_velocity::RadialVelocityRef;
-use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::{Array1, Ix2, Ix3};
 
 use crate::MeasurementSet;
 use crate::derived::engine::MsCalEngine;
+use crate::derived::parse_phase_direction;
 use crate::spectral_selection::CasaChannelFrequencies;
 
 use super::channel_average::{AveragedStatistics, sigma_from_weight, weight_from_sigma};
@@ -605,7 +604,11 @@ impl Frame {
             }
             engine.spectral_frame_observatory(reference_time, field)
         } else {
-            let direction = parse_direction(phasecenter)?;
+            let direction = parse_phase_direction(phasecenter).ok_or_else(|| {
+                invalid(format!(
+                    "Cannot interpret phasecenter {phasecenter:?} as a FIELD ID or direction."
+                ))
+            })?;
             engine.spectral_frame_observatory_direction(reference_time, direction)
         }
         .map_err(ms_error)?;
@@ -664,38 +667,6 @@ impl Frame {
 
 fn radial_shift(m_per_s: f64) -> MDoppler {
     MDoppler::new(m_per_s / 299_792_458., DopplerRef::BETA)
-}
-
-fn parse_direction(value: &str) -> Result<MDirection, MsTransformError> {
-    let error = || {
-        invalid(format!(
-            "Cannot interpret phasecenter {value:?} as a FIELD ID or direction."
-        ))
-    };
-    let mut parts = value.split_whitespace();
-    let (frame, longitude, latitude) =
-        match (parts.next(), parts.next(), parts.next(), parts.next()) {
-            (Some(longitude), Some(latitude), None, None) => {
-                (DirectionRef::J2000, longitude, latitude)
-            }
-            (Some(frame), Some(longitude), Some(latitude), None) => {
-                (frame.parse().map_err(|_| error())?, longitude, latitude)
-            }
-            _ => return Err(error()),
-        };
-    let rad = Unit::new("rad").expect("known angular unit");
-    let angle = |text| {
-        Quantity::read(text)
-            .ok()
-            .and_then(|qty| qty.get_value_in(&rad).ok())
-            .filter(|r| r.is_finite())
-            .ok_or_else(error)
-    };
-    Ok(MDirection::from_angles(
-        angle(longitude)?,
-        angle(latitude)?,
-        frame,
-    ))
 }
 
 pub(super) struct Projection<'a> {

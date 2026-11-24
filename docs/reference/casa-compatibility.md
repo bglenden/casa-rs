@@ -53,7 +53,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | mstransform | mstransform | yes | 55 | 55 | 0 | 0 | 0 | 0 |
 | pccor | pccor | yes | 9 | 9 | 0 | 0 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
-| plotms | plotms | yes | 102 | 102 | 0 | 6 | 0 | 0 |
+| plotms | plotms | yes | 102 | 102 | 0 | 5 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | polcal | polcal | yes | 27 | 27 | 0 | 0 | 0 | 0 |
 | polfromgain | polfromgain | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -1931,7 +1931,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: ERROR: DISPLAY environment variable is not set! Cannot run plotms.
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #1032: `plotindex`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
+- Accepted only at CASA's default until #1032: `plotindex`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 102, in CASA's order: yes
 - Defaults that differ: none
@@ -1940,7 +1940,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 6, Implemented: 22, Not implemented: 1, Partial: 73, Unassessed: 0.
+Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 5, Implemented: 22, Not implemented: 1, Partial: 74, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1986,11 +1986,11 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `avgantenna` | `False` | `False`; `avgantenna` → `avgantenna` | Implemented | Average per antenna (mutually exclusive with avgbaseline) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `avgspw` | `False` | `False`; `avgspw` → `avgspw` | Implemented | Average over all spectral windows [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `scalar` | `False` | `False`; `scalar` → `scalar` | Partial | Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. Ordinary scalar time averaging uses the first selected correlation’s row weight and reduces amplitude and phase separately for stored visibility axes. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-scalar-time-columns](#plotms-evidence-ms-scalar-time-columns) |
-| `transform` | `True` | `True`; `transform` → `transform` | Partial | Disable the frequency controls when false. Additional active calibration transforms remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `transform` | `True` | `True`; `transform` → `transform` | Partial | Disable frequency controls and the fixed MeasurementSet phase-center shift when false. Additional active calibration transforms remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool` | [selectors](#plotms-evidence-selectors), [ms-fixed-phasecenter](#plotms-evidence-ms-fixed-phasecenter), [remaining](#plotms-evidence-remaining) |
 | `freqframe` | `''` | `''`; `freqframe` → `freqframe` | Partial | Calibration-table PlotMS retains the table’s stored spectral coordinates and warns when an active frame is requested. MeasurementSet transform coverage is tracked separately. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `LSRK`, `CMB`, `GALACTO`, `GEO`, `TOPO`, `LSRD`, `LGROUP`, `BARY`, `` | [calibration-controls](#plotms-evidence-calibration-controls), [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `restfreq` | `''` | `''`; `restfreq` → `restfreq` | Partial | CASA leaves modern calibration-table coordinates unchanged for supplied rest-frequency values. Frequency and velocity transforms for other inputs remain separately tracked. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `veldef` | `'RADIO'` | `'RADIO'`; `veldef` → `veldef` | Not implemented | The definition in which to render velocity [advanced](#plotms-behavior-advanced)<br>Catalog domain: `RADIO`, `OPTICAL`, `TRUE` | [remaining](#plotms-evidence-remaining) |
-| `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter` | Default only | The direction coordinates of the desired center [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `phasecenter` | `''` | `''`; `phasecenter` → `phasecenter` | Partial | Shift selected unaveraged complex visibilities and UVW to a fixed J2000 phase center on a MeasurementSet with fixed J2000 field directions. Plot one complex visibility ordinate against a complex visibility or UVW coordinate in metres. Other frames and compositions with averaging, iteration, reporting frames, callibraries, overlays, selected FLOAT_DATA or virtual models remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: `string` | [ms-fixed-phasecenter](#plotms-evidence-ms-fixed-phasecenter), [remaining](#plotms-evidence-remaining) |
 | `extendflag` | `False` | `False`; `extendflag` → `extendflag` | Default only | Extend flagging to other data points not plotted [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `extcorr` | `False` | `False`; `extcorr` → `extcorr` | Default only | Extend flags based on correlation [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `extchannel` | `False` | `False`; `extchannel` → `extchannel` | Default only | Extend flags based on channel [advanced](#plotms-behavior-advanced)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
@@ -2557,6 +2557,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `2f8b232c878f3c5dfcfac41c7b0ef24a1f7fef5a`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_layout_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-iterated-grid-start-20261124.json`.
+
+<a id="plotms-evidence-ms-fixed-phasecenter"></a>
+##### ms-fixed-phasecenter
+
+**Paired MeasurementSet fixed J2000 phase-center shift — passed.** Seven byte-identical shifted text pairs and seven byte-identical inactive pairs each match 108 coordinates, units, selected identifiers and flags, including a complex plot on an MS with unused FLOAT_DATA. The numerical reference is pinned PlotMS on a separate MS written by CASA phaseshift using the same iterator. With fixed limits, pinned CASA draws identical marker positions using its direct active transform and the materialized shift. Its inactive image differs. A 500 by 360 native PNG draws the 30 reference coordinates in index order. A stored-only selection matches another 12 shifted coordinates when a different field has an unreadable virtual model. Five invalid or out-of-scope requests leave no output. Input visibility, UVW and flag arrays remain unchanged. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged visibility plots with a fixed J2000 target, independent stored complex columns, cube flags and U, V and W in metres.
+
+- [https://github.com/bglenden/casa-rs/pull/2207](https://github.com/bglenden/casa-rs/pull/2207)
+- Revision: `ef46b99f84d1db8511d7374ab0eb58f121b7cfb4`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_phasecenter_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-fixed-phasecenter-20261124.json`.
 
 ### plotweather
 

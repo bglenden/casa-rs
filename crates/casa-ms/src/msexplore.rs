@@ -32,6 +32,7 @@ mod plotms_columns;
 mod plotms_figure;
 mod plotms_model;
 mod plotms_ordinates;
+mod plotms_phasecenter;
 mod plotms_pointing;
 mod plotms_row_axes;
 mod plotms_text;
@@ -46,6 +47,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use casa_tables::Table;
+use casa_types::measures::direction::MDirection;
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 use casa_types::quanta::{MvAngle, MvTime};
@@ -2686,6 +2688,7 @@ struct PlotMsInput<'a> {
     prefer_float_data: bool,
     raw_symbols: Option<RawSymbolVisibility>,
     pointing: Option<plotms_pointing::PointingAxes>,
+    phasecenter: Option<MDirection>,
 }
 
 struct PlotMsColumnSelection<'a> {
@@ -2695,6 +2698,7 @@ struct PlotMsColumnSelection<'a> {
     weights: [Option<MsDataColumn>; 3],
     raw_symbols: Option<RawSymbolVisibility>,
     pointing: Option<plotms_pointing::PointingAxes>,
+    phasecenter: Option<MDirection>,
 }
 
 fn build_msexplore_plot_payload_validated(
@@ -2925,6 +2929,7 @@ pub(crate) fn build_calibrated_plotms_payload(
         prefer_float_data: false,
         raw_symbols: None,
         pointing: None,
+        phasecenter: None,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -2938,11 +2943,35 @@ fn build_uncalibrated_plotms_payload(
 ) -> Result<MsPlotPayload, String> {
     let selected = crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
         .map_err(|error| error.to_string())?;
+    let plot = spec.plots.first();
+    let uses_model = |plot: &MsPlotSpec| {
+        plotms_columns::uses_model(
+            [
+                Some(plot.x_axis),
+                Some(plot.y_axis()),
+                plot.secondary_y_axis(),
+            ],
+            [
+                columns.x.unwrap_or(plot.data_column),
+                plot.data_column,
+                columns.secondary_y.unwrap_or(plot.data_column),
+            ],
+        )
+    };
+    if columns.phasecenter.is_some() && plot.is_some_and(uses_model) {
+        let virtual_fields = crate::scratch_columns::virtual_model_fields(ms);
+        if selected
+            .selected_rows
+            .iter()
+            .any(|row| virtual_fields.contains(&row.field_id))
+        {
+            return Err("PlotMS phasecenter with a virtual model is pending (#1032)".into());
+        }
+    }
     let models = load_models
         .map(|load| load(ms, &selected.selected_rows))
         .transpose()?
         .flatten();
-    let plot = spec.plots.first();
     let scalar_time = plot.is_some_and(plotms_columns::uses_scalar_time_average);
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
@@ -2953,18 +2982,7 @@ fn build_uncalibrated_plotms_payload(
             || scalar_time
             || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
-            && plotms_columns::uses_model(
-                [
-                    Some(plot.x_axis),
-                    Some(plot.y_axis()),
-                    plot.secondary_y_axis(),
-                ],
-                [
-                    columns.x.unwrap_or(plot.data_column),
-                    plot.data_column,
-                    columns.secondary_y.unwrap_or(plot.data_column),
-                ],
-            )
+            && uses_model(plot)
     }) {
         plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
     }
@@ -3034,6 +3052,7 @@ fn build_uncalibrated_plotms_payload(
         prefer_float_data,
         raw_symbols: columns.raw_symbols,
         pointing: columns.pointing,
+        phasecenter: columns.phasecenter,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -4097,9 +4116,13 @@ fn build_generic_visibility_scatter(
         .as_deref()
         .is_some_and(|feed| !feed.is_empty())
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
+    let mut phase_shift = calibration
+        .and_then(|input| input.phasecenter.as_ref())
+        .map(plotms_phasecenter::PhaseCenterShift::new);
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
+        || phase_shift.is_some()
         || calibration.is_some()
             && (ordered_feed_selection
                 || use_ordinate_masks
@@ -4254,7 +4277,7 @@ fn build_generic_visibility_scatter(
     } else {
         Vec::new()
     };
-    let selected_uvw = if needs_uvw_values {
+    let selected_uvw = if needs_uvw_values || phase_shift.is_some() {
         selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?
     } else {
         Vec::new()
@@ -4440,6 +4463,18 @@ fn build_generic_visibility_scatter(
             .first()
             .map(|grid| (grid.corr_count, grid.chan_count))
             .unwrap_or((expected_corr_count, expected_chan_count));
+        let field_id_value = selected_field_ids[row_slot];
+        let row_uvw_value = if let Some(shift) = &mut phase_shift {
+            shift.apply(
+                ms,
+                field_id_value,
+                spw_row,
+                selected_uvw[row_slot],
+                &mut visibility_grids,
+            )?
+        } else {
+            selected_uvw.get(row_slot).copied().unwrap_or([0.0; 3])
+        };
         let flags = selected_flags
             .as_ref()
             .map(|column| match column.get(row_slot)? {
@@ -4570,7 +4605,6 @@ fn build_generic_visibility_scatter(
             )?
         };
 
-        let field_id_value = selected_field_ids[row_slot];
         let scan_number_value = selected_scan_numbers[row_slot];
         let antenna1_value = selected_antenna1[row_slot];
         let row_time_value = selected_times[row_slot];
@@ -4578,11 +4612,6 @@ fn build_generic_visibility_scatter(
             .as_ref()
             .map(|coordinates| coordinates.values(antenna1_value, row_time_value))
             .transpose()?;
-        let row_uvw_value = if needs_uvw_values {
-            selected_uvw[row_slot]
-        } else {
-            [0.0, 0.0, 0.0]
-        };
         let row_coordinates = RowCoordinates {
             time: row_time_value,
             interval: selected_intervals.get(row_slot).copied(),
@@ -4965,6 +4994,7 @@ fn build_generic_visibility_scatter(
                 if needs_row_axes
                     || pointing.is_some()
                     || raw_symbols.is_some()
+                    || phase_shift.is_some()
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
                 {

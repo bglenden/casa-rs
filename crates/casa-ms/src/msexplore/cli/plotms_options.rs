@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
+use casa_types::measures::direction::MDirection;
 
-use super::super::{RawSymbolVisibility, calibration, plotms_columns};
+use super::super::{RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter};
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
     MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count, legend_position, number,
@@ -64,6 +65,40 @@ impl CliOptions {
             && columns[..2]
                 .iter()
                 .all(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
+    }
+
+    pub(super) fn plotms_phasecenter(
+        &self,
+        value: &str,
+        without_calibration_or_overlays: bool,
+    ) -> Result<MDirection, TaskFailure> {
+        let raw_visibility = |axis: MsAxis, column: MsDataColumn| {
+            axis.is_visibility_math()
+                && matches!(
+                    column,
+                    MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+                )
+        };
+        let x = self.x_axis.is_some_and(|axis| {
+            axis.uses_uvw_metres()
+                || raw_visibility(axis, self.x_data_column.unwrap_or(self.data_column))
+        });
+        if !x
+            || !self
+                .y_axis
+                .is_some_and(|axis| raw_visibility(axis, self.data_column))
+            || !without_calibration_or_overlays
+            || self.y_axis2.is_some()
+            || self.plotms_averaging_active()
+            || self.iteraxis.is_some()
+            || self.freqframe.is_some()
+        {
+            return Err(TaskFailure::validation(
+                "PlotMS phasecenter currently supports one unaveraged complex visibility ordinate and a complex visibility or UVW abscissa, with no iteration, reporting frame, callibrary or overlays (#1032)",
+            )
+            .at("phasecenter"));
+        }
+        plotms_phasecenter::parse(value)
     }
 
     pub(super) fn plotms_independent_average(&self) -> bool {

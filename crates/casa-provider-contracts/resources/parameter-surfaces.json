@@ -26389,7 +26389,6 @@
         },
         {
           "name": "phasecenter",
-          "unimplemented": {"issue": 1032},
           "concept": {
             "id": "plotms.phasecenter",
             "semantic_revision": 1
