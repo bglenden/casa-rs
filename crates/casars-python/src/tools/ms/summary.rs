@@ -20,8 +20,7 @@ use crate::tools::{LogLine, emit};
 impl PyMsTool {
     #[pyo3(signature = (verbose = false, listfile = None, listunfl = false, cachesize = 50.0, overwrite = false, wantreturn = true), text_signature = "($self, verbose=False, listfile='', listunfl=False, cachesize=50.0, overwrite=False, wantreturn=True)")]
     fn summary(
-        &self,
-        py: Python<'_>,
+        slf: &Bound<'_, Self>,
         #[pyo3(from_py_with = strict_bool)] verbose: bool,
         #[pyo3(from_py_with = listfile_argument)] listfile: Option<PathBuf>,
         #[pyo3(from_py_with = strict_bool)] listunfl: bool,
@@ -29,8 +28,9 @@ impl PyMsTool {
         #[pyo3(from_py_with = strict_bool)] overwrite: bool,
         #[pyo3(from_py_with = strict_bool)] wantreturn: bool,
     ) -> PyResult<Py<PyAny>> {
+        let py = slf.py();
         let listfile = listfile.filter(|file| !file.as_os_str().is_empty());
-        let result = self.attachment_info(py, |attachment| {
+        let result = slf.get().attachment_info(py, |attachment| {
             let Some(attachment) = attachment else {
                 return Ok(None);
             };
