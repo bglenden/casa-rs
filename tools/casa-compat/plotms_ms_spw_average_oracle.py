@@ -24,13 +24,16 @@ from plotms_ms_columns_oracle import (
 )
 
 
-def make_fixture(root):
-    vis = root / "two-windows.ms"
+def make_fixture(root, name="two-windows", *, antenna_count=2):
+    vis = root / f"{name}.ms"
     ms, me = simulator(), measures()
     ms.open(str(vis))
-    ms.setconfig(telescopename="VLA", x=[0.0, 100.0], y=[0.0, 0.0], z=[0.0, 0.0],
-                 dishdiameter=[25.0, 25.0], mount=["alt-az", "alt-az"], antname=["A0", "A1"],
-                 padname=["P0", "P1"], coordsystem="local", referencelocation=me.observatory("VLA"))
+    ms.setconfig(telescopename="VLA", x=[0.0, 100.0, 170.0][:antenna_count],
+                 y=[0.0] * antenna_count, z=[0.0] * antenna_count,
+                 dishdiameter=[25.0] * antenna_count, mount=["alt-az"] * antenna_count,
+                 antname=[f"A{i}" for i in range(antenna_count)],
+                 padname=[f"P{i}" for i in range(antenna_count)],
+                 coordsystem="local", referencelocation=me.observatory("VLA"))
     for name, frequency in (("W0", "90GHz"), ("W1", "100GHz")):
         ms.setspwindow(spwname=name, freq=frequency, deltafreq="1MHz", freqresolution="1MHz",
                        nchannels=4, stokes="XX YY")
@@ -95,6 +98,48 @@ def compare_coordinates(root, native, base, vis):
         print(f"{name}: {len(anchors)} matching SPW-average coordinates", flush=True)
     compare_figure(root, native, base | frequency, root / "frequency.casa.txt",
                    (base["title"], "Frequency (GHz)", "Amp:corrected"))
+
+    sparse = make_fixture(root, "sparse-baselines", antenna_count=3)
+    with opened(sparse, True) as table:
+        w0 = table.getcol("DATA_DESC_ID") == 0
+        times = table.getcol("TIME") + 100 * (w0 & (table.getcol("ANTENNA2") == 2))
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+    controls = base | frequency | dict(vis=str(sparse), antenna="")
+    expected = export(root, "sparse-baselines.casa", reference, controls)
+    selected = rows(expected)
+    assert len(selected) == 10
+    assert {(p[0], p[10], p[11]) for p in selected} == {("90.001000000", "90.001000000", "0")}
+    assert [(p[5], p[6]) for p in selected] == [("0", "1"), ("0", "2"), ("1", "2")] * 2 + [
+        ("0", "2"), ("1", "2")
+    ] * 2
+    np.testing.assert_allclose(coordinates(selected)[:, 1],
+                               [abs(13 + 15j), abs(14 + 16j), abs(14 + 16j)] * 2 + [abs(10 + 12j)] * 4,
+                               rtol=1.2e-5)
+    assert compare_text(export(root, "sparse-baselines.native", native, controls), expected) == 10
+    print("sparse-baselines: all 10 points use their buffer's first spectral window", flush=True)
+
+
+def compare_flags(root, native, base, vis):
+    flagged = root / "flags.ms"
+    copy_ms(vis, flagged)
+    with opened(flagged, True) as table:
+        windows = table.getcol("DATA_DESC_ID")
+        times = table.getcol("TIME")
+        flags = table.getcol("FLAG")
+        flags[0, 1, (windows == 0) | (times > times.min())] = True
+        table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", (windows == 1) & (times == times.min()))
+        weights = table.getcol("WEIGHT")
+        weights[1] = np.where(windows == 0, 100, 1)
+        table.putcol("WEIGHT", weights)
+    controls = base | dict(vis=str(flagged), correlation="XX,YY")
+    expected = export(root, "flags.casa", reference, controls)
+    selected = rows(expected)
+    assert [p[12] for p in selected] == ["XX", "YY", "YY"]
+    np.testing.assert_allclose(coordinates(selected)[:, 0], [10, abs(5 - 5j), abs(5 - 5j)], rtol=1.2e-5)
+    assert compare_text(export(root, "flags.native", native, controls), expected) == 3
+    print("flags: 3 matching points with first-correlation row weights and cube flags", flush=True)
 
 
 def coordinates(points):
@@ -170,6 +215,7 @@ def main():
         base = request(vis) | dict(avgspw=True, spw="0:1,1:1", title="Spectral-window average")
         if args.only in (None, "coordinates"):
             compare_coordinates(root, native, base, vis)
+            compare_flags(root, native, base, vis)
         if args.only in (None, "selection"):
             compare_selection(root, native, base, vis)
 

@@ -310,7 +310,11 @@ fn write_point(
             .map_or((None, None), |&(scan, field, antenna)| {
                 (Some((scan, field)), Some(antenna))
             }),
-        None => (None, None),
+        Some((MsScatterPlotMsAverageIds::SpectralWindow(_), _)) | None => (None, None),
+    };
+    let spectral_window = match averaged.zip(order) {
+        Some((MsScatterPlotMsAverageIds::SpectralWindow(groups), order)) => groups.get(order),
+        _ => None,
     };
     let (scan, field) = scan_field.unwrap_or((row.scan, row.field));
     let (ant1, ant2, ant1name, ant2name) = if averaged_baselines {
@@ -330,14 +334,17 @@ fn write_point(
             row.ant2name.as_str(),
         )
     };
-    let frequency = frequency.unwrap_or_else(|| {
-        row.frequencies
-            .get(point.chan_start..point.chan_end)
-            .filter(|values| !values.is_empty())
-            .map_or(f64::NAN, |values| {
-                values.iter().sum::<f64>() / values.len() as f64
-            })
-    }) / 1e9;
+    let frequency = frequency
+        .or_else(|| spectral_window?.frequency_hz(display?.channel))
+        .unwrap_or_else(|| {
+            row.frequencies
+                .get(point.chan_start..point.chan_end)
+                .filter(|values| !values.is_empty())
+                .map_or(f64::NAN, |values| {
+                    values.iter().sum::<f64>() / values.len() as f64
+                })
+        })
+        / 1e9;
     let pol = row
         .correlations
         .get(point.corr)
@@ -353,7 +360,7 @@ fn write_point(
         display
             .and_then(|point| point.average_time)
             .unwrap_or(row.time),
-        row.spw,
+        spectral_window.map_or(row.spw, |window| window.spectral_window),
         row.observation,
     )
 }

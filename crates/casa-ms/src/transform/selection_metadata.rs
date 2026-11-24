@@ -27,6 +27,7 @@ pub(super) struct OrderedMainRows {
 #[derive(Clone, Copy)]
 pub(super) enum MainRowOrder {
     Transform,
+    SpectralWindowAverage,
     SingleDish,
     Baseline,
     Atmosphere,
@@ -60,7 +61,7 @@ pub(super) fn sort_selected_rows(
     };
     let mut groups = vec![[0; GROUPS.len()]; rows.len()];
     let columns: &[&str] = match order {
-        MainRowOrder::Transform => &GROUPS,
+        MainRowOrder::Transform | MainRowOrder::SpectralWindowAverage => &GROUPS,
         MainRowOrder::SingleDish => &SINGLE_DISH_GROUPS,
         MainRowOrder::Baseline => &[],
         MainRowOrder::Atmosphere => &["OBSERVATION_ID", "ARRAY_ID", "FEED1"],
@@ -81,6 +82,15 @@ pub(super) fn sort_selected_rows(
         })
         .collect::<Result<Vec<_>, MsTransformError>>()?;
     ordering.sort_unstable_by(|left, right| {
+        if matches!(order, MainRowOrder::SpectralWindowAverage) {
+            // The transform omits DATA_DESC_ID from the iterator's sort columns
+            // when combining spectral windows. Physical order breaks time ties.
+            return left
+                .0
+                .cmp(&right.0)
+                .then_with(|| left.2.total_cmp(&right.2))
+                .then_with(|| left.3.cmp(&right.3));
+        }
         left.0
             .cmp(&right.0)
             .then_with(|| left.1.cmp(&right.1))
@@ -112,11 +122,12 @@ pub(super) fn sort_selected_rows(
     })
 }
 
-/// Return selected MAIN rows and buffer starts in ordinary PlotMS iterator order.
+/// Return selected MAIN rows and buffer starts in PlotMS iterator order.
 /// Each input pair contains a row number and its data-description ID.
 pub(crate) fn selected_plotms_integration_order(
     ms: &MeasurementSet,
     selected: impl Iterator<Item = (usize, i32)>,
+    combine_spectral_windows: bool,
 ) -> Result<(Vec<usize>, Vec<bool>), MsTransformError> {
     let (rows, descriptions) = selected.unzip();
     let ordered = sort_selected_rows(
@@ -124,7 +135,11 @@ pub(crate) fn selected_plotms_integration_order(
         ms.path().unwrap_or_else(|| Path::new("<memory>")),
         rows,
         descriptions,
-        MainRowOrder::Transform,
+        if combine_spectral_windows {
+            MainRowOrder::SpectralWindowAverage
+        } else {
+            MainRowOrder::Transform
+        },
     )?;
     Ok((ordered.rows, ordered.starts_visibility_buffer))
 }
