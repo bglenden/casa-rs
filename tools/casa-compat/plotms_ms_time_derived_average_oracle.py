@@ -463,7 +463,8 @@ def compare_combined_observed_expressions(root, native):
         observed[:, 0] = 5368709
         observed[:, 1] = -33554432
         table.putcol("DATA", observed)
-        table.putcol("MODEL_DATA", np.zeros_like(observed))
+        table.putcol("MODEL_DATA", -observed)
+        table.removecols(["CORRECTED_DATA"])
         sigma = table.getcol("SIGMA_SPECTRUM")
         sigma[:, 0] = 1
         sigma[:, 1] = 2.5
@@ -472,9 +473,10 @@ def compare_combined_observed_expressions(root, native):
                            ydatacolumn="data-model_vector", spw="0:0~1", expformat="txt")
     expected, actual = (root / f"sigma-roundtrip.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected)) is None
-    # Reusing the raw time weights would give an exact zero at Float precision.
+    # Without CORRECTED_DATA both operands use the observed spectrum.
+    # Raw time weights would cancel to zero for either operand.
     np.testing.assert_allclose([float(row[1]) for row in rows(expected)],
-                               [0.8620688915] * 3, rtol=1.2e-5)
+                               [1.724137783] * 3, rtol=1.2e-5)
     assert native(**controls, plotfile=str(actual)) is None
     assert compare_text(actual, expected) == 3
     print("sigma-roundtrip: 3 matching nonzero Float results after observed reweighting", flush=True)
