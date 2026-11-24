@@ -11,7 +11,8 @@ from pathlib import Path
 import numpy as np
 
 from plotms_ms_columns_oracle import (
-    casa, compare_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request, rows,
+    casa, compare_empty_export, compare_figure, compare_text, copy_ms, opened, plotms_launcher,
+    reference, request, rows,
 )
 from plotms_ms_derived_average_oracle import weighted_fixture
 
@@ -73,6 +74,47 @@ def compare_time_derived(root, native):
         if name == "masked-ratio":
             compare_figure(root, native, controls, expected,
                            (controls["title"], "Time (MJD seconds)", "Real:corrected/model (vector)"))
+
+    fully_flagged = root / "fully-flagged-time.ms"
+    copy_ms(vis, fully_flagged)
+    with opened(fully_flagged, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1] = True
+        table.putcol("FLAG", flags)
+    empty = base | dict(vis=str(fully_flagged), ydatacolumn="corrected/model_vector")
+    compare_empty_export(root, native, "all-flagged-time", empty,
+                         ("Time (MJD seconds)", "Real:corrected/model (vector)"))
+    compare_buffer_time(root, native, base, integration, start)
+
+
+def compare_buffer_time(root, native, base, integration, start):
+    source = root / "two-baseline-time.ms"
+    copy_ms(Path(base["vis"]), source)
+    with opened(source, True) as table:
+        flags = table.getcol("FLAG")
+        antenna2 = table.getcol("ANTENNA2")
+        flags[0, 1] |= ((antenna2 == 1) & np.isin(integration, [2, 3])
+                        | (antenna2 == 2) & np.isin(integration, [1, 3]))
+        table.putcol("FLAG", flags)
+    controls = base | dict(vis=str(source), antenna="A0&A1;A0&A2",
+                           ydatacolumn="corrected/model_vector", expformat="txt")
+    expected, actual = (root / f"buffer-time.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [point[6] for point in selected] == ["1", "2", "2", "1", "2"]
+    shared_times = start + np.array([5, 5, 25, 45, 45])
+    offsets = np.array([.75, 0, 2, 4.75, 4.75])
+    corrected = 8 - 1j + (3 - 1j) * offsets
+    model = 2 + 2j + (.5 + .25j) * offsets
+    np.testing.assert_allclose([float(point[0]) for point in selected],
+                               shared_times, rtol=0, atol=.00051)
+    np.testing.assert_allclose([float(point[1]) for point in selected],
+                               (corrected / model).real, rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 5
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                               shared_times, rtol=0, atol=.00051)
+    print("buffer-time: 5 matching points sharing each output buffer's first baseline time", flush=True)
 
 
 def main():

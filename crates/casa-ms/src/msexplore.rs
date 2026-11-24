@@ -6184,6 +6184,19 @@ fn build_generic_visibility_scatter_with_averaging(
         .zip(time_bins)
         .zip(spec.averaging.avgtime)
         .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval));
+    let derived_buffer_times = time_bins.filter(|_| time_corrected_derived).map(|groups| {
+        // PlotMS caches the first averaged baseline's time for the whole buffer.
+        groups
+            .buffers()
+            .iter()
+            .flat_map(|buffer| {
+                let time = time_bounds
+                    .get(&buffer.start)
+                    .map(plotms_ordinates::VisibilityTimeBounds::buffer_midpoint);
+                std::iter::repeat_n(time, buffer.len())
+            })
+            .collect::<Vec<_>>()
+    });
     let time_uvws = time_uvws.map(|averages| {
         averages
             .into_iter()
@@ -6195,7 +6208,8 @@ fn build_generic_visibility_scatter_with_averaging(
         .enumerate()
         .map(|(order, row)| (row, order))
         .collect::<HashMap<_, _>>();
-    let retain_empty_panel = combined_vector_average && !collapse_baselines && iteraxis.is_none();
+    let retain_empty_panel = time_corrected_derived
+        || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
     for panel_key in panel_order {
@@ -6257,6 +6271,8 @@ fn build_generic_visibility_scatter_with_averaging(
                             .map(|(start, end)| start + (end - start) / 2.0)
                     } else if let Some(plan) = &time_baseline_plan {
                         plan.center(group)
+                    } else if let Some(times) = &derived_buffer_times {
+                        times[group]
                     } else {
                         time_bounds
                             .get(&group)

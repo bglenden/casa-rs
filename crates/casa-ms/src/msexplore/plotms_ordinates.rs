@@ -523,6 +523,7 @@ impl AveragedVisibility {
 
 pub(super) struct VisibilityTimeBounds {
     first: f64,
+    last: f64,
     last_unflagged: Option<f64>,
 }
 
@@ -569,12 +570,14 @@ impl VisibilityTimeBounds {
     pub(super) fn new(time: f64) -> Self {
         Self {
             first: time,
+            last: time,
             last_unflagged: None,
         }
     }
 
     pub(super) fn observe(&mut self, time: f64, unflagged: bool) {
         self.first = self.first.min(time);
+        self.last = self.last.max(time);
         if unflagged {
             self.last_unflagged = Some(self.last_unflagged.map_or(time, |last| last.max(time)));
         }
@@ -584,6 +587,12 @@ impl VisibilityTimeBounds {
         // CASA anchors on the first integration and ends at the last usable one.
         self.last_unflagged
             .map(|last| self.first + (last - self.first) / 2.0)
+    }
+
+    pub(super) fn buffer_midpoint(&self) -> f64 {
+        // A fully flagged first baseline still supplies the cache's buffer time.
+        let last = self.last_unflagged.unwrap_or(self.last);
+        self.first + (last - self.first) / 2.0
     }
 }
 
