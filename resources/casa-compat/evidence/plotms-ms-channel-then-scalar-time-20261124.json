@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "1c2e7e3a882eea684447467ee56a481ab4f7d5ea",
+  "source_revision": "1c2e7e3a882eea684447467ee56a481ab4f7d5ea",
+  "baseline_revision": "ff8c8165a946cc3801a82b0137fb276d9a560149",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_scalar_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Complex channel averaging followed by ordinary scalar time averaging with at least one derived visibility ordinate or abscissa and an independent visibility or metadata axis.",
+  "result": "passed",
+  "baseline_result": "Current main refuses an averaged derived ordinate with channel averaging and scalar time averaging.",
+  "text_exports": 22,
+  "points": 76,
+  "figures": 2,
+  "rendered_coordinates": 4,
+  "separate_control_points": 4,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}
