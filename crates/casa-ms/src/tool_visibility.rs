@@ -4,7 +4,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use casa_tables::{
-    RequiredScalarColumnValues, SelectedArray1DCells, Table, TableColumn, TablePartNames,
+    PlainReferenceRead, RequiredScalarColumnValues, SelectedArray1DCells, Table, TableColumn,
+    TablePartNames,
 };
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
@@ -12,7 +13,9 @@ use num_complex::Complex32;
 
 use crate::{MeasurementSet, MsError, MsResult};
 
+mod averaging;
 mod concatenation;
+use averaging::RowAverage;
 use concatenation::{MemberRows, concatenate_arrays, concatenate_scalars, member_rows};
 
 /// Determine whether CASA's implicit initialization needs to narrow this view
@@ -57,6 +60,8 @@ pub fn heterogeneous_row_shapes(ms: &MeasurementSet) -> MsResult<Option<Vec<usiz
 
 /// Read the ordinary row-axis visibility record for a logical set of rows.
 /// Complex and float operations retain the precision of the stored cells.
+/// With `average`, visibility products are reduced across rows using flags and
+/// the weight of each row and correlation before amplitude or phase projection.
 /// Contiguous groups of logical rows can reuse open plain members supplied in
 /// concatenation order. Other views use the table's persisted row projection.
 /// # Errors
@@ -64,15 +69,22 @@ pub fn heterogeneous_row_shapes(ms: &MeasurementSet) -> MsResult<Option<Vec<usiz
 pub fn read_tool_visibility(
     main: &Table,
     members: &[Table],
+    reference: Option<&PlainReferenceRead>,
     rows: &[usize],
     items: &[String],
     metadata: Option<&MeasurementSet>,
+    average: bool,
 ) -> MsResult<RecordValue> {
-    let names = items
+    let mut names = items
         .iter()
         .map(|name| name.to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
-    let mut read = VisibilityRead::new(main, members, rows, &names)?;
+    if average {
+        // CASA interprets this item as a visibility product with the averaging
+        // prefix, then discards it because no such product exists.
+        names.remove("data_desc_id");
+    }
+    let mut read = VisibilityRead::new(main, members, reference, rows, &names)?;
     let mut fields = BTreeMap::new();
     if names.contains("axis_info") {
         let RequiredScalarColumnValues::Int32(ids) = &read.scalar_columns["DATA_DESC_ID"] else {
@@ -81,9 +93,14 @@ pub fn read_tool_visibility(
         let ms = metadata.ok_or_else(|| input("axis_info requires MeasurementSet metadata"))?;
         fields.insert("axis_info".into(), Value::Record(axis_info(ms, ids)?));
     }
-    read.scalars(&names, &mut fields)?;
-    read.arrays(&names, &mut fields)?;
-    read.products(&names, &mut fields)?;
+    read.scalars(&names, &mut fields, average)?;
+    if average {
+        let reduced = read.products(&names, &mut fields, true, items)?;
+        read.arrays(&names, &mut fields, true, reduced)?;
+    } else {
+        read.arrays(&names, &mut fields, false, None)?;
+        read.products(&names, &mut fields, false, items)?;
+    }
     Ok(RecordValue::new(
         fields
             .into_iter()
@@ -97,7 +114,13 @@ struct VisibilityRead<'a> {
     rows: &'a [usize],
     plain: bool,
     members: Vec<MemberRows<'a>>,
+    reference: Option<ReferenceRows<'a>>,
     scalar_columns: HashMap<String, RequiredScalarColumnValues>,
+}
+
+struct ReferenceRows<'a> {
+    read: &'a PlainReferenceRead,
+    rows: Vec<usize>,
 }
 
 const SCALARS: [(&str, &str); 10] = [
@@ -113,10 +136,21 @@ const SCALARS: [(&str, &str); 10] = [
     ("time", "TIME"),
 ];
 
+const COMPLEX_PRODUCTS: [(&str, &str, bool); 6] = [
+    ("", "DATA", false),
+    ("corrected_", "CORRECTED_DATA", false),
+    ("model_", "MODEL_DATA", false),
+    ("ratio_", "CORRECTED_DATA", true),
+    ("residual_", "CORRECTED_DATA", true),
+    ("obs_residual_", "DATA", true),
+];
+const PRODUCT_NAMES: [&str; 5] = ["data", "amplitude", "phase", "real", "imaginary"];
+
 impl<'a> VisibilityRead<'a> {
     fn new(
         main: &'a Table,
         members: &'a [Table],
+        reference: Option<&'a PlainReferenceRead>,
         rows: &'a [usize],
         names: &BTreeSet<String>,
     ) -> MsResult<Self> {
@@ -131,7 +165,10 @@ impl<'a> VisibilityRead<'a> {
         if names.contains("axis_info") && !columns.contains(&"DATA_DESC_ID") {
             columns.push("DATA_DESC_ID");
         }
-        let plain = if let Some(path) = main.path().filter(|_| members.is_empty()) {
+        let plain = if let Some(path) = main
+            .path()
+            .filter(|_| members.is_empty() && reference.is_none())
+        {
             matches!(
                 Table::immediate_part_names(path, path)?,
                 TablePartNames::Plain(_)
@@ -140,6 +177,12 @@ impl<'a> VisibilityRead<'a> {
             false
         };
         let members = member_rows(members, main.row_count(), rows);
+        let reference = reference
+            .map(|read| {
+                read.parent_rows(rows)
+                    .map(|rows| ReferenceRows { read, rows })
+            })
+            .transpose()?;
         let scalar_columns = if columns.is_empty() {
             HashMap::new()
         } else if !members.is_empty() {
@@ -162,6 +205,7 @@ impl<'a> VisibilityRead<'a> {
             rows,
             plain,
             members,
+            reference,
             scalar_columns,
         })
     }
@@ -176,6 +220,14 @@ impl<'a> VisibilityRead<'a> {
     }
 
     fn matrix_cells(&self, name: &str, widen_complex: bool) -> MsResult<ArrayValue> {
+        if let Some(reference) = &self.reference {
+            return read_matrix_cells(
+                reference.read.parent(),
+                reference.read.parent_column(name)?,
+                &reference.rows,
+                widen_complex,
+            );
+        }
         if self.members.is_empty() {
             return read_matrix_cells(self.main, name, self.rows, widen_complex);
         }
@@ -188,6 +240,7 @@ impl<'a> VisibilityRead<'a> {
         &mut self,
         names: &BTreeSet<String>,
         fields: &mut BTreeMap<String, Value>,
+        average: bool,
     ) -> MsResult<()> {
         if names.contains("ifr_number") {
             let (
@@ -200,13 +253,16 @@ impl<'a> VisibilityRead<'a> {
             else {
                 return Err(input("invalid antenna ID column type"));
             };
-            let ifrs = first
+            let mut ifrs = first
                 .iter()
                 .zip(second)
                 .map(|(&left, &right)| left.wrapping_mul(1000).wrapping_add(right))
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
+            if average {
+                averaging::common_id(&mut ifrs);
+            }
             fields.insert(
                 "ifr_number".into(),
                 Value::Array(ArrayValue::Int32(vector(ifrs))),
@@ -222,8 +278,17 @@ impl<'a> VisibilityRead<'a> {
                 .ok_or_else(|| input(format!("missing column {column}")))?
             {
                 RequiredScalarColumnValues::Bool(values) => ArrayValue::Bool(vector(values)),
-                RequiredScalarColumnValues::Int32(values) => ArrayValue::Int32(vector(values)),
+                RequiredScalarColumnValues::Int32(mut values) => {
+                    if average {
+                        averaging::common_id(&mut values);
+                    }
+                    ArrayValue::Int32(vector(values))
+                }
                 RequiredScalarColumnValues::Float32(values) => ArrayValue::Float32(vector(values)),
+                RequiredScalarColumnValues::Float64(values) if average && name == "time" => {
+                    let mean = values.iter().sum::<f64>() / values.len() as f64;
+                    ArrayValue::Float64(vector(vec![mean]))
+                }
                 RequiredScalarColumnValues::Float64(values) => ArrayValue::Float64(vector(values)),
             };
             fields.insert(name.into(), Value::Array(value));
@@ -235,14 +300,38 @@ impl<'a> VisibilityRead<'a> {
         &self,
         names: &BTreeSet<String>,
         fields: &mut BTreeMap<String, Value>,
+        average: bool,
+        reduced: Option<RowAverage>,
     ) -> MsResult<()> {
-        for (name, column) in [("weight", "WEIGHT"), ("sigma", "SIGMA")] {
-            if names.contains(name) {
-                fields.insert(name.into(), Value::Array(self.vector_cells(column)?));
+        let (raw_flags, reduced_flags) = if let Some(reduced) = reduced {
+            let (raw, flags, weights) = reduced.into_fields();
+            let name = if names.contains("weight") {
+                "weight"
+            } else {
+                "avgweight"
+            };
+            fields.insert(name.into(), Value::Array(weights));
+            (Some(ArrayValue::Bool(raw)), Some(flags))
+        } else {
+            if names.contains("weight") {
+                fields.insert("weight".into(), Value::Array(self.vector_cells("WEIGHT")?));
             }
+            (None, None)
+        };
+        if names.contains("sigma") {
+            let values = self.vector_cells("SIGMA")?;
+            let values = if average {
+                averaging::sigma(values)?
+            } else {
+                values
+            };
+            fields.insert("sigma".into(), Value::Array(values));
         }
         if names.contains("flag") || names.contains("flag_sum") {
-            let flags = self.matrix_cells("FLAG", false)?;
+            let flags = match raw_flags {
+                Some(flags) => flags,
+                None => self.matrix_cells("FLAG", false)?,
+            };
             if names.contains("flag_sum") {
                 let ArrayValue::Bool(flag) = &flags else {
                     return Err(input("FLAG cells must be Boolean"));
@@ -268,6 +357,7 @@ impl<'a> VisibilityRead<'a> {
                 );
             }
             if names.contains("flag") {
+                let flags = reduced_flags.map_or(flags, ArrayValue::Bool);
                 fields.insert("flag".into(), Value::Array(flags));
             }
         }
@@ -316,7 +406,9 @@ impl<'a> VisibilityRead<'a> {
         &self,
         names: &BTreeSet<String>,
         fields: &mut BTreeMap<String, Value>,
-    ) -> MsResult<()> {
+        average: bool,
+        items: &[String],
+    ) -> MsResult<Option<RowAverage>> {
         let has_column = |column| {
             self.main
                 .schema()
@@ -344,37 +436,33 @@ impl<'a> VisibilityRead<'a> {
                     ArrayValue::Float32(vector(Vec::new()))
                 };
                 fields.insert(name.clone(), Value::Array(empty));
-            } else if let Some(derived) = name.strip_prefix("avg_") {
-                // The ordinary CASA reader accepts this prefix and returns its
-                // underlying visibility column without applying a projection.
-                let base = derived
-                    .rsplit_once('_')
-                    .map_or_else(|| "data".to_owned(), |(prefix, _)| format!("{prefix}_data"));
-                aliases.entry(base).or_default().push(name.clone());
+            } else if let Some((base, alias)) = raw_visibility_alias(name, names, average)? {
+                aliases.entry(base).or_default().push(alias);
             }
         }
-        for (prefix, source, uses_model) in [
-            ("", "DATA", false),
-            ("corrected_", "CORRECTED_DATA", false),
-            ("model_", "MODEL_DATA", false),
-            ("ratio_", "CORRECTED_DATA", true),
-            ("residual_", "CORRECTED_DATA", true),
-            ("obs_residual_", "DATA", true),
-        ] {
-            let requested = ["data", "amplitude", "phase", "real", "imaginary"].map(|name| {
+        let mut reduction = None;
+        for (prefix, source, uses_model) in COMPLEX_PRODUCTS {
+            let requested = PRODUCT_NAMES.map(|name| {
                 let key = format!("{prefix}{name}");
                 (names.contains(&key) && !fields.contains_key(&key)).then_some(key)
             });
-            let raw_aliases = aliases.remove(&format!("{prefix}data"));
-            if requested.iter().all(Option::is_none) && raw_aliases.is_none() {
+            let mut raw_aliases = aliases.remove(&format!("{prefix}data"));
+            let explicit = requested.iter().any(Option::is_some);
+            if !explicit && raw_aliases.is_none() {
                 continue;
+            }
+            let reduce = average && explicit;
+            if reduce {
+                for key in requested.iter().flatten() {
+                    require_single_average(items, key)?;
+                }
             }
             let [raw, amplitude, phase, real, imaginary] = requested;
             let only_raw = !uses_model
                 && [&amplitude, &phase, &real, &imaginary]
                     .into_iter()
                     .all(Option::is_none);
-            let data = self.matrix_cells(source, only_raw)?;
+            let data = self.matrix_cells(source, only_raw && !reduce)?;
             let data = if uses_model {
                 let model_values = self.matrix_cells("MODEL_DATA", false)?;
                 let (ArrayValue::Complex32(mut observed), ArrayValue::Complex32(expected)) =
@@ -393,6 +481,15 @@ impl<'a> VisibilityRead<'a> {
                     observed.zip_mut_with(&expected, |observed, expected| *observed -= *expected);
                 }
                 ArrayValue::Complex32(observed)
+            } else {
+                data
+            };
+            let data = if reduce {
+                let means = self.average_product(&mut reduction, &data)?;
+                if let Some(aliases) = raw_aliases.take() {
+                    insert_array_aliases(fields, aliases.into_iter(), data);
+                }
+                means
             } else {
                 data
             };
@@ -430,9 +527,19 @@ impl<'a> VisibilityRead<'a> {
         let raw_float = names
             .contains("float_data")
             .then(|| "float_data".to_owned());
-        let float_aliases = aliases.remove("float_data");
+        let mut float_aliases = aliases.remove("float_data");
         if has_float && (raw_float.is_some() || float_aliases.is_some()) {
             let values = self.matrix_cells("FLOAT_DATA", false)?;
+            let values = if average && raw_float.is_some() {
+                require_single_average(items, "float_data")?;
+                let means = self.average_product(&mut reduction, &values)?;
+                if let Some(aliases) = float_aliases.take() {
+                    insert_array_aliases(fields, aliases.into_iter(), values);
+                }
+                means
+            } else {
+                values
+            };
             insert_array_aliases(
                 fields,
                 raw_float
@@ -441,8 +548,78 @@ impl<'a> VisibilityRead<'a> {
                 values,
             );
         }
-        Ok(())
+        Ok(reduction)
     }
+
+    fn average_product(
+        &self,
+        reduction: &mut Option<RowAverage>,
+        values: &ArrayValue,
+    ) -> MsResult<ArrayValue> {
+        if reduction.is_none() {
+            *reduction = Some(RowAverage::new(
+                self.matrix_cells("FLAG", false)?,
+                self.vector_cells("WEIGHT")?,
+            )?);
+        }
+        reduction
+            .as_mut()
+            .expect("averaging input exists")
+            .reduce(values)
+    }
+}
+
+fn raw_visibility_alias(
+    name: &str,
+    names: &BTreeSet<String>,
+    average: bool,
+) -> MsResult<Option<(String, String)>> {
+    let (alias, derived) = if average && PRODUCT_NAMES.iter().any(|&part| name.contains(part)) {
+        let supported = name == "float_data"
+            || COMPLEX_PRODUCTS.iter().any(|&(prefix, _, _)| {
+                name.strip_prefix(prefix)
+                    .is_some_and(|part| PRODUCT_NAMES.contains(&part))
+            });
+        if supported {
+            return Ok(None);
+        }
+        // CASA adds the prefix before recognizing the item. An unrecognized
+        // item can still resolve to a raw visibility column under that name.
+        (format!("avg_{name}"), name)
+    } else if let Some(derived) = name.strip_prefix("avg_") {
+        if average
+            && matches!(
+                derived,
+                "antenna1" | "antenna2" | "feed1" | "feed2" | "sigma" | "time"
+            )
+            && !names.contains(derived)
+        {
+            return Err(input(format!(
+                "RecordInterface: field {derived} is unknown"
+            )));
+        }
+        (name.to_owned(), derived)
+    } else {
+        return Ok(None);
+    };
+    let base = derived
+        .rsplit_once('_')
+        .map_or_else(|| "data".to_owned(), |(prefix, _)| format!("{prefix}_data"));
+    Ok(Some((base, alias)))
+}
+
+fn require_single_average(items: &[String], name: &str) -> MsResult<()> {
+    if items
+        .iter()
+        .filter(|item| item.eq_ignore_ascii_case(name))
+        .nth(1)
+        .is_some()
+    {
+        return Err(input(format!(
+            "RecordInterface: field avg_{name} is unknown"
+        )));
+    }
+    Ok(())
 }
 
 fn insert_array_aliases(

@@ -45,8 +45,10 @@ def test_ms_getdata_column_products_on_casa_reference_table(native_dataset, tmp_
     flags[:] = (samples.astype(np.int64) % 7 == 0)
     assert parent.putcol("FLAG", flags)
     reference = tmp_path / "views.ms"
-    mapped = np.array([12, 4, 17, 9, 1, 7], dtype=np.int64)
+    mapped = np.array([12, 4, 17, 9, 12, 7], dtype=np.int64)
+    assert parent.renamecol("DATA", "OBSERVED_SAMPLES")
     view = parent.selectrows(mapped, str(reference))
+    assert view.renamecol("OBSERVED_SAMPLES", "DATA")
     assert view.done()
     assert parent.done()
 
@@ -67,6 +69,9 @@ def test_ms_getdata_column_products_on_casa_reference_table(native_dataset, tmp_
             expected["CORRECTED_DATA"][:, :, selected] / expected["MODEL_DATA"][:, :, selected], rtol=3e-6)
         assert result["float_data"].dtype == np.float64 and result["float_data"].shape == (0,)
         assert "unknown" not in result
+        ordinary = [item for item in items if item != "axis_info"]
+        same_visibility(ms.getdata(ordinary, increment=2),
+                        {key: value for key, value in result.items() if key != "axis_info"})
         assert ms.nrow(True) == len(mapped)
         assert ms.done()
         results.append(result)
