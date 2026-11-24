@@ -14,11 +14,15 @@ import numpy as np
 from plotms_ms_baseline_channels_oracle import make_fixture
 from plotms_ms_channel_ordinates_oracle import compare_sides
 from plotms_ms_columns_oracle import compare_text, copy_ms, opened, plotms_launcher, reference, request, rows
+from plotms_ms_spw_average_oracle import add_second_field
 
 
-def compare_antenna_ordinate_lists(root, native):
+def compare_antenna_ordinate_lists(root, native, *, spans_only):
     root.mkdir()
     vis, _, _, spectra_flags = make_fixture(root)
+    if spans_only:
+        compare_antenna_ordinate_list_spans(root, native, vis, spectra_flags)
+        return
     controls = request(vis) | dict(antenna="A0&A1;A0&A2", xaxis="channel", xdatacolumn="", spw="0:0~3",
                                     avgantenna=True, yaxis=["real"] * 3,
                                     ydatacolumn=["data", "corrected", "model"],
@@ -49,6 +53,7 @@ def compare_antenna_ordinate_lists(root, native):
             compare_sides(root, native, figure, expected_x="Channel bin", name=name)
     compare_antenna_ordinate_edges(root, native, vis, controls)
     compare_antenna_row_flags(root, native, vis, controls)
+    compare_antenna_ordinate_list_spans(root, native, vis, spectra_flags)
 
 
 def compare_antenna_ordinate_edges(root, native, vis, controls):
@@ -130,12 +135,68 @@ def compare_antenna_row_flags(root, native, source, controls):
             print(f"{case}: {count if count else 'three empty sections'} matched", flush=True)
 
 
+def compare_antenna_ordinate_list_spans(root, native, source, masked_spectra):
+    for case, scan, field, channels in (
+        ("scan", True, False, False), ("field", False, True, False),
+        ("both", True, True, False), ("both-channel-bins", True, True, True),
+    ):
+        vis = root / f"list-span-{case}.ms"
+        copy_ms(masked_spectra if channels else source, vis)
+        with opened(vis / "FIELD") as table:
+            has_second_field = table.nrows() > 1
+        if field and not has_second_field:
+            add_second_field(vis)
+        with opened(vis, True) as table:
+            times = table.getcol("TIME")
+            start = times.min()
+            late = times >= start + 29
+            for column, active, value in (("SCAN_NUMBER", scan, 7), ("FIELD_ID", field, 1)):
+                if active:
+                    ids = table.getcol(column)
+                    ids[late] = value
+                    table.putcol(column, ids)
+            for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA"):
+                table.putcol(column, (table.getcol(column) * (1 + late)).astype(np.complex64))
+        controls = request(vis) | dict(
+            antenna="A0&A1;A0&A2", field="0,1", xaxis="time", xdatacolumn="",
+            spw="0:0~3" if channels else "0:1", avgantenna=True, avgtime="80",
+            avgchannel="2" if channels else "", avgscan=scan, avgfield=field,
+            msselect=f"TIME < {start + 51:.3f}", yaxis=["real"] * 3,
+            ydatacolumn=["data", "corrected", "model"], yaxislocation=["left", "right", "left"],
+            expformat="txt",
+        )
+        count = 18 if channels else 9
+        for mode, scalar in (("vector", False), ("scalar", True)):
+            name = f"{mode}-{case}-antenna-ordinates"
+            expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+            options = controls | dict(scalar=scalar)
+            assert reference(**options, plotfile=str(expected)) is None
+            selected = rows(expected)
+            assert len(selected) == count
+            scan_id = "-1" if scalar and scan else "1"
+            assert {tuple(point[3:5]) for point in selected} == {(scan_id, "0")}
+            assert {tuple(point[5:9]) for point in selected} == {
+                (str(antenna), "-1", f"A{antenna}@P{antenna}", "*") for antenna in (0, 1, 2)
+            }
+            if not channels:
+                np.testing.assert_allclose([float(point[1]) for point in selected],
+                                           np.outer([1, 10, 100], [8.55, 4.5, 9]).ravel(), rtol=1.2e-5)
+            assert native(**options, plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == count
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                                       [float(point[0]) for point in selected], rtol=0, atol=.00051)
+            print(f"{name}: {count} matching per-antenna span coordinates", flush=True)
+            if channels and not scalar:
+                compare_sides(root, native, options, expected_x="Time (MJD seconds)", name=name)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
+    parser.add_argument("--only", choices=("spans",))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -147,7 +208,7 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare_antenna_ordinate_lists(root / "ordinate-lists", native)
+        compare_antenna_ordinate_lists(root / "ordinate-lists", native, spans_only=args.only == "spans")
 
 
 if __name__ == "__main__":
