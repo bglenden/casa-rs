@@ -2977,7 +2977,9 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
-    if (extended_derived && !scalar_average) || time_antenna {
+    let direct_time_channels =
+        !extended_derived && plot.is_some_and(plotms_columns::uses_direct_vector_time_channels);
+    if (extended_derived && !scalar_average) || time_antenna || direct_time_channels {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
@@ -3020,6 +3022,7 @@ fn build_uncalibrated_plotms_payload(
             || vector_baselines
             || scalar_average
             || (antenna_average && plot.averaging.avgtime.is_some())
+            || direct_time_channels
             || extended_derived
             || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
@@ -3033,6 +3036,7 @@ fn build_uncalibrated_plotms_payload(
                 && (time_antenna
                     || time_baselines
                     || weighted_time_uvw
+                    || direct_time_channels
                     || (!antenna_average && (columns.secondary_y.is_some() || extended_derived)))
         })
         .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
@@ -3047,7 +3051,11 @@ fn build_uncalibrated_plotms_payload(
                     span_fields: plot.averaging.avgfield,
                     max_uvw_distance: 0.0,
                 },
-                time_baselines || time_antenna || weighted_time_uvw || extended_derived,
+                time_baselines
+                    || time_antenna
+                    || weighted_time_uvw
+                    || extended_derived
+                    || direct_time_channels,
             )
             .map_err(|error| error.to_string())
         })
@@ -5397,7 +5405,12 @@ fn build_generic_visibility_scatter_with_averaging(
     let scalar_channels = scalar_average && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
     let time_antenna_channels = time_antenna && average_channels;
-    let average_operands = extended_derived || scalar_channels || time_antenna;
+    let direct_time_channels = uncalibrated
+        && time_bins.is_some()
+        && !extended_derived
+        && plotms_columns::uses_direct_vector_time_channels(spec);
+    let average_operands =
+        extended_derived || scalar_channels || time_antenna || direct_time_channels;
     let channel_first = channel_baselines || scalar_channels || antenna_channels;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
@@ -5789,7 +5802,7 @@ fn build_generic_visibility_scatter_with_averaging(
         let primary_weight_grid = primary_time_weight_kind.and_then(weight_grid);
         let time_channel_primary = primary_weight_grid
             .zip(primary_time_weight_kind)
-            .filter(|_| extended_derived || time_antenna_channels);
+            .filter(|_| extended_derived || time_antenna_channels || direct_time_channels);
         let time_antenna_spectrum = time_weight_kinds
             .filter(|_| time_antenna)
             .map(|kinds| weight_grid(kinds.row_weight));
@@ -6078,7 +6091,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     // Later channel and antenna reductions use the sums of
                     // weights from the vector time transform.
                     let primary_weight = primary_weight_grid
-                        .filter(|_| !extended_derived && !time_antenna_channels)
+                        .filter(|_| !average_operands)
                         .map(|grid| plotms_columns::bin_weight(grid, *corr_index, bin, &flags))
                         .or_else(|| {
                             let (flagged, weight) = plotms_columns::channel_bin_weight(
@@ -6239,7 +6252,8 @@ fn build_generic_visibility_scatter_with_averaging(
                                                     time_model_kind == Some(WeightKind::Observed),
                                                 ],
                                                 primary: time_channel_primary,
-                                                equal_channel_means: time_antenna_channels
+                                                equal_channel_means: (time_antenna_channels
+                                                    || direct_time_channels)
                                                     && model_channels_equally,
                                             },
                                             *corr_index,
@@ -6467,19 +6481,21 @@ fn build_generic_visibility_scatter_with_averaging(
             .filter_map(|(group, antenna, other)| Some((plan.output_group(group)?, antenna, other)))
             .collect();
     }
-    let derived_buffer_times = time_bins.filter(|_| extended_derived).map(|groups| {
-        // PlotMS caches the first averaged baseline's time for the whole buffer.
-        groups
-            .buffers()
-            .iter()
-            .flat_map(|buffer| {
-                let time = time_bounds
-                    .get(&buffer.start)
-                    .map(plotms_ordinates::VisibilityTimeBounds::buffer_midpoint);
-                std::iter::repeat_n(time, buffer.len())
-            })
-            .collect::<Vec<_>>()
-    });
+    let buffer_times = time_bins
+        .filter(|_| extended_derived || direct_time_channels)
+        .map(|groups| {
+            // PlotMS caches the first averaged baseline's time for the whole buffer.
+            groups
+                .buffers()
+                .iter()
+                .flat_map(|buffer| {
+                    let time = time_bounds
+                        .get(&buffer.start)
+                        .map(plotms_ordinates::VisibilityTimeBounds::buffer_midpoint);
+                    std::iter::repeat_n(time, buffer.len())
+                })
+                .collect::<Vec<_>>()
+        });
     let time_uvws = time_uvws.map(|averages| {
         averages
             .into_iter()
@@ -6597,7 +6613,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             .map(|(start, end)| start + (end - start) / 2.0)
                     } else if let Some(plan) = &time_baseline_plan {
                         plan.center(group)
-                    } else if let Some(times) = &derived_buffer_times {
+                    } else if let Some(times) = &buffer_times {
                         times[group]
                     } else {
                         time_bounds

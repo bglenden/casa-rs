@@ -838,15 +838,15 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
                                     lambda table: table.getcol("FLAG_ROW"))
     compare_average_shape_refusal(root, native, controls | dict(vis=str(mixed), expformat="txt"))
     print("scalar-antenna-time: matching unequal-shape refusal in a row-flagged buffer", flush=True)
-    compare_scalar_antenna_time_virtual_guard(root, native, source, controls)
+    compare_averaged_virtual_model_guard(root, native, source, controls, "scalar-antenna-time-virtual", 6)
     compare_vector_antenna_time_averages(root, native, source, start, controls, amplitudes, turns)
     compare_antenna_scan_field_spans(root, native, source, start, controls, amplitudes, turns)
 
 
-def compare_scalar_antenna_time_virtual_guard(root, native, source, base):
+def compare_averaged_virtual_model_guard(root, native, source, base, name, reference_points):
     from casars.tasks import TaskExecutionError
 
-    virtual = root / "scalar-antenna-stored-and-virtual.ms"
+    virtual = root / f"{name}.ms"
     copy_ms(source, virtual)
     with opened(virtual, True) as table:
         physical = np.full(table.getcol("MODEL_DATA").shape, 19, dtype=np.complex64)
@@ -855,9 +855,9 @@ def compare_scalar_antenna_time_virtual_guard(root, native, source, base):
                fluxdensity=[7.25, 0, 0, 0])
     request_args = base | dict(vis=str(virtual), xaxis="time", xdatacolumn="", yaxis="amp",
                                ydatacolumn="model", expformat="txt")
-    expected, actual = (root / f"scalar-antenna-virtual.{engine}.txt" for engine in ("casa", "native"))
+    expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**request_args, plotfile=str(expected)) is None
-    assert len(rows(expected)) == 6
+    assert len(rows(expected)) == reference_points
     assert {float(point[1]) for point in rows(expected)} == {7.25}
     try:
         native(**request_args, plotfile=str(actual))
@@ -868,7 +868,7 @@ def compare_scalar_antenna_time_virtual_guard(root, native, source, base):
     assert not actual.exists()
     with opened(virtual) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical)
-    print("scalar-antenna-time: refusing the pending averaged virtual model", flush=True)
+    print(f"{name}: refusing the pending averaged virtual model", flush=True)
 
 
 def compare_vector_antenna_time_averages(root, native, source, start, base, amplitudes, turns):
@@ -1370,6 +1370,8 @@ def compare_direct_stored_vector_time_channels(
                          ("Real", "Imag:corrected"))
     compare_empty_export(root, native, "direct-vector-time-channel-zero-observed",
                          base | dict(vis=str(zero_observed)), ("Real", "Imag:corrected"))
+    compare_averaged_virtual_model_guard(root, native, Path(base["vis"]), base,
+                                         "direct-vector-time-channel-virtual", 12)
 
 
 def compare_stored_model_time_channels(root, native, vis, base, start):
