@@ -103,7 +103,8 @@
         "ms-scalar-time-expressions",
         "ms-stored-channel-then-scalar-time",
         "ms-scalar-baseline-averages",
-        "ms-weighted-scalar-antenna"
+        "ms-weighted-scalar-antenna",
+        "ms-channel-before-antenna-averages"
       ],
       "behaviors": [
         "coordinates"
@@ -140,7 +141,8 @@
         "ms-stored-channel-then-scalar-time",
         "ms-channel-scalar-scan-field-spans",
         "ms-scalar-baseline-averages",
-        "ms-weighted-scalar-antenna"
+        "ms-weighted-scalar-antenna",
+        "ms-channel-before-antenna-averages"
       ],
       "behaviors": [
         "coordinates"
@@ -184,7 +186,8 @@
         "ms-scalar-time-expressions",
         "ms-stored-channel-then-scalar-time",
         "ms-scalar-baseline-averages",
-        "ms-weighted-scalar-antenna"
+        "ms-weighted-scalar-antenna",
+        "ms-channel-before-antenna-averages"
       ],
       "behaviors": [
         "coordinates"
@@ -230,7 +233,8 @@
         "ms-stored-channel-then-scalar-time",
         "ms-channel-scalar-scan-field-spans",
         "ms-scalar-baseline-averages",
-        "ms-weighted-scalar-antenna"
+        "ms-weighted-scalar-antenna",
+        "ms-channel-before-antenna-averages"
       ],
       "behaviors": [
         "coordinates"
@@ -437,7 +441,7 @@
       "status": "Implemented"
     },
     "avgchannel": {
-      "scope": "Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product. Channel-only corrected vector and scalar residuals and ratios project their stored complex operands after averaging with calibrated weights. Observed and model operands can use independent selected spectra before vector or scalar projection. A lone derived visibility ordinate uses the same separate stored operand spectra and observed-cube mask with a Channel or Time abscissa. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates.",
+      "scope": "Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product. Channel-only corrected vector and scalar residuals and ratios project their stored complex operands after averaging with calibrated weights. Observed and model operands can use independent selected spectra before vector or scalar projection. A lone derived visibility ordinate uses the same separate stored operand spectra and observed-cube mask with a Channel or Time abscissa. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Complex channels can be averaged before per-antenna reduction. The per-antenna stage uses the transformed spectral weight and retains the output antenna identity and order.",
       "evidence": [
         "paired",
         "ms-channel-columns",
@@ -457,7 +461,8 @@
         "ms-channel-then-scalar-time",
         "ms-stored-channel-then-scalar-time",
         "ms-channel-scalar-scan-field-spans",
-        "ms-scalar-baseline-averages"
+        "ms-scalar-baseline-averages",
+        "ms-channel-before-antenna-averages"
       ],
       "behaviors": [
         "averaging"
@@ -544,11 +549,12 @@
       "status": "Partial"
     },
     "avgantenna": {
-      "scope": "Average per antenna (mutually exclusive with avgbaseline) Static per-antenna visibility exports at individual integrations use the averaged antenna ID and name and follow integration, antenna, channel and correlation order. Scalar antenna averages use independently averaged amplitude and phase with a common visibility weight. They include the conjugated contribution from each second endpoint. Extended antenna averages remain partial.",
+      "scope": "Average per antenna (mutually exclusive with avgbaseline) Static per-antenna visibility exports at individual integrations use the averaged antenna ID and name and follow integration, antenna, channel and correlation order. Scalar antenna averages use independently averaged amplitude and phase with a common visibility weight. They include the conjugated contribution from each second endpoint. Extended antenna averages remain partial. Complex channels can be averaged before per-antenna reduction. The per-antenna stage uses the transformed spectral weight and retains the output antenna identity and order.",
       "evidence": [
         "paired",
         "ms-per-antenna-export",
-        "ms-weighted-scalar-antenna"
+        "ms-weighted-scalar-antenna",
+        "ms-channel-before-antenna-averages"
       ],
       "behaviors": [
         "averaging"
@@ -578,7 +584,8 @@
         "ms-stored-channel-then-scalar-time",
         "ms-channel-scalar-scan-field-spans",
         "ms-scalar-baseline-averages",
-        "ms-weighted-scalar-antenna"
+        "ms-weighted-scalar-antenna",
+        "ms-channel-before-antenna-averages"
       ],
       "behaviors": [
         "averaging"
@@ -2271,6 +2278,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-weighted-scalar-antenna-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2236"
+      ]
+    },
+    "ms-channel-before-antenna-averages": {
+      "kind": "Same-input channel averaging before per-antenna visibility averages",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Complex channel averaging followed by standalone scalar or vector per-antenna visibility reduction, including native output antenna IDs, spectra and row-weight fallback.",
+      "result": "Seven nonempty TXT pairs match 54 selected coordinates. They check partially cancelling channels, channel-specific flags, stored and alternate spectra, row-weight fallback, signed weights, GHz centers and output antenna IDs. Six empty TXT variants and three blank PNG pairs match all cube flags with or without row flags and zero calibrated spectra. One 500 by 360 PNG verifies six artist coordinates and units.",
+      "casa_version": "6.7.6.14",
+      "revision": "6732d965723304b3bef5b29a1596f5ed64dbe66f",
+      "source_revision": "6732d965723304b3bef5b29a1596f5ed64dbe66f",
+      "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-channel-before-antenna-averages-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2237"
       ]
     }
   }
