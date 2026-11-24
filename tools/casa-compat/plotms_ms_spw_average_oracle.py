@@ -351,8 +351,8 @@ def compare_scalar_time(root, native, base, vis):
     mixed_phase = (low + 3 * high) / 4
     # A bin retains the first SPW ID and the last attached buffer's grid.
     closed = [(5, 1, 0, 0, "90.001000000"), (12, 1, 0, 1, "100.001000000")]
-    scan_barrier = [(3, 1, 0, 0, "100.001000000"), (13, 2, 0, 0, "100.001000000")]
-    field_barrier = [(3, 1, 0, 0, "100.001000000"), (13, 1, 1, 0, "100.001000000")]
+    scan_barrier = [(1, 1, 0, 0, "100.001000000"), (11, 2, 0, 0, "100.001000000")]
+    field_barrier = [(1, 1, 0, 0, "100.001000000"), (11, 1, 1, 0, "100.001000000")]
     options = base | dict(vis=str(staggered), xaxis="time", xdatacolumn="", avgtime="10",
                           scalar=True, title="Scalar time and SPW average")
     channels = dict(avgchannel="2", spw="0:0~3,1:0~3")
@@ -367,12 +367,12 @@ def compare_scalar_time(root, native, base, vis):
         ("scalar-time-flags", dict(vis=str(flagged)), closed, [mixed_phase, high]),
         ("scalar-scan-barrier", dict(vis=str(scans), avgtime="20"), scan_barrier, [mixed_phase] * 2),
         ("scalar-scan-span", dict(vis=str(scans), avgtime="20", avgscan=True),
-         [(8, -1, 0, 0, "100.001000000")], [mixed_phase]),
+         [(6, -1, 0, 0, "100.001000000")], [mixed_phase]),
         ("scalar-field-barrier", dict(vis=str(fields), avgtime="20", field=""), field_barrier, [mixed_phase] * 2),
         ("scalar-field-span", dict(vis=str(fields), avgtime="20", field="", avgfield=True),
-         [(8, 1, 0, 0, "100.001000000")], [mixed_phase]),
+         [(6, 1, 0, 0, "100.001000000")], [mixed_phase]),
         ("scalar-both-spans", dict(vis=str(spans), avgtime="20", field="", avgscan=True, avgfield=True) | channels,
-         [(8, -1, 0, 0, "100.000500000"), (8, -1, 0, 0, "100.002500000")], [mixed_phase] * 2),
+         [(6, -1, 0, 0, "100.000500000"), (6, -1, 0, 0, "100.002500000")], [mixed_phase] * 2),
     )
     for name, overrides, bins, phases in cases:
         controls = options | overrides
