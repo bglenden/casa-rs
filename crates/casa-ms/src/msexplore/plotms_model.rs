@@ -20,7 +20,7 @@ use crate::selection::ResolvedMsSelectionRow;
 use crate::virtual_model::{VirtualModelEntry, selected_model_combinations, virtual_model};
 use crate::{MeasurementSet, initial_model_visibility, scratch_columns::virtual_model_fields};
 
-pub(super) fn needs_vector_field_phase_references(
+pub(super) fn needs_vector_span_phase_references(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
     plot: &MsPlotSpec,
@@ -29,7 +29,7 @@ pub(super) fn needs_vector_field_phase_references(
     let averaging = &plot.averaging;
     columns.implicit_derived_model
         && averaging.avgtime.is_some()
-        && averaging.avgfield
+        && (averaging.avgscan || averaging.avgfield)
         && !averaging.scalar
         && !averaging.avgbaseline
         && !averaging.avgantenna
@@ -110,14 +110,13 @@ pub(super) fn selected_model_cells(
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
         )
     });
-    let vector_field_span = model_phase_reference_slots.is_some();
-    let field_models_supported =
-        !plot.averaging.avgfield || plot.averaging.scalar || vector_field_span;
+    let vector_span = model_phase_reference_slots.is_some();
+    let field_models_supported = !plot.averaging.avgfield || plot.averaging.scalar || vector_span;
     let derived_average = columns.implicit_derived_model
         && field_models_supported
         && (columns.extended_derived || (!extended && uses_channel_derived(plot, columns.x)));
     let can_predict = !averaging
-        || ((!extended || ordinary_time || scalar_span || vector_field_span) && standard_columns)
+        || ((!extended || ordinary_time || scalar_span || vector_span) && standard_columns)
         || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {
         return load(ms, rows, model_phase_reference_slots);

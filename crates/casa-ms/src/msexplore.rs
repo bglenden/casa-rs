@@ -3011,8 +3011,8 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
-    let vector_field_models = plot.is_some_and(|plot| {
-        plotms_model::needs_vector_field_phase_references(
+    let vector_span_models = plot.is_some_and(|plot| {
+        plotms_model::needs_vector_span_phase_references(
             ms,
             &selected.selected_rows,
             plot,
@@ -3020,7 +3020,7 @@ fn build_uncalibrated_plotms_payload(
         )
     });
     let direct_time_projection = !extended_derived
-        && (vector_field_models
+        && (vector_span_models
             || plot.is_some_and(|plot| {
                 plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
             }));
@@ -3064,7 +3064,7 @@ fn build_uncalibrated_plotms_payload(
                     || extended_derived
                     || direct_time_projection,
                 time_spw,
-                vector_field_models,
+                vector_span_models,
             )
             .map_err(|error| error.to_string())
         })
@@ -5495,13 +5495,13 @@ fn build_generic_visibility_scatter_with_averaging(
         && !average_channels;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
-    let vector_field_models = spec.averaging.avgfield
+    let vector_span_models = (spec.averaging.avgscan || spec.averaging.avgfield)
         && !spec.averaging.scalar
         && calibration.is_some_and(|input| input.models.is_some());
     let direct_time_projection = uncalibrated
         && time_bins.is_some()
         && !extended_derived
-        && (vector_field_models
+        && (vector_span_models
             || plotms_columns::uses_direct_vector_time_projection(
                 spec,
                 calibration.and_then(|input| input.x_data_column),

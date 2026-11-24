@@ -227,8 +227,14 @@ def compare_scalar_field_spans(root, native):
             assert "MODEL_DATA" not in table.colnames()
 
 
-def compare_vector_field_spans(root, native):
-    both, times, _, field = make_virtual_span_fixture(root)
+def compare_vector_field_spans(root, native, *, only=None):
+    both, times, scan, field = make_virtual_span_fixture(root)
+    if only == "vector-field-channels":
+        compare_vector_field_channels(root, native, field)
+        return
+    if only == "vector-scan-spans":
+        compare_vector_scan_spans(root, native, scan, both, times[0])
+        return
     reverse = root / "virtual-reversed-time.ms"
     copy_ms(field, reverse)
     with opened(reverse, True) as table:
@@ -272,6 +278,61 @@ def compare_vector_field_spans(root, native):
     for vis in (field, both, reverse):
         with opened(vis) as table:
             assert "MODEL_DATA" not in table.colnames()
+    compare_vector_field_channels(root, native, field)
+    compare_vector_scan_spans(root, native, scan, both, times[0])
+
+
+def compare_vector_field_channels(root, native, field):
+    masked = root / "virtual-field-masked-channels.ms"
+    copy_ms(field, masked)
+    with opened(masked, True) as table:
+        early = table.getcol("FIELD_ID") == 0
+        flags = table.getcol("FLAG")
+        flags[:, :2, early] = True
+        table.putcol("FLAG", flags)
+    controls = request(field) | dict(field="", spw="0:0~3", xdatacolumn="", avgtime="200",
+                                     avgfield=True, avgchannel="2", expformat="txt")
+    for name, overrides, count in (
+        ("vector-field-channel-model", dict(vis=str(masked), xaxis="frequency", yaxis=["real", "imag"],
+                                            ydatacolumn=["model", "model"], yaxislocation=["left", "right"]), 4),
+        ("vector-field-channel-residual", dict(xaxis="time", yaxis="real", ydatacolumn="corrected-model_vector"), 2),
+    ):
+        options = controls | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [point[2] for point in selected] == ["0", "1"] * (count // 2)
+        assert {point[12] for point in selected} == {"XX"}
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        if options["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                                       [float(point[0]) for point in selected], rtol=0, atol=.00051)
+        else:
+            assert [point[0] for point in rows(actual)] == ["100.000500000", "100.002500000"] * 2
+        print(f"{name}: {count} matching virtual field coordinates with channel bins", flush=True)
+
+
+def compare_vector_scan_spans(root, native, scan, both, start):
+    base = request(scan) | dict(field="", spw="0:1", xaxis="time", xdatacolumn="", avgtime="200",
+                                avgscan=True, yaxis=["real", "imag"], ydatacolumn=["model", "model"],
+                                yaxislocation=["left", "right"], expformat="txt")
+    for name, vis, offsets, values, fields in (
+        ("vector-scan-model", scan, (55, 55), (7.25, 0), ["0", "0"]),
+        ("vector-scan-model-retains-field", both, (25, 85) * 2, (7.25, 3.25, 0, 0), ["0", "1"] * 2),
+    ):
+        options = base | dict(vis=str(vis))
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [point[4] for point in selected] == fields
+        np.testing.assert_allclose([float(point[1]) for point in selected], values, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(values)
+        for points in (selected, rows(actual)):
+            np.testing.assert_allclose([float(point[0]) for point in points],
+                                       start + np.asarray(offsets), rtol=0, atol=.00051)
+        print(f"{name}: {len(values)} matching virtual model coordinates across scans", flush=True)
 
 
 def main():
@@ -280,7 +341,8 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("scalar-field-spans", "vector-field-spans"))
+    parser.add_argument("--only", choices=("scalar-field-spans", "vector-field-spans", "vector-field-channels",
+                                           "vector-scan-spans"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -298,8 +360,8 @@ def main():
             compare_varying_fourier_expression(root / "fourier-model", native)
         if args.only in (None, "scalar-field-spans"):
             compare_scalar_field_spans(root / "scalar-field-spans", native)
-        if args.only in (None, "vector-field-spans"):
-            compare_vector_field_spans(root / "vector-field-spans", native)
+        if args.only in (None, "vector-field-spans", "vector-field-channels", "vector-scan-spans"):
+            compare_vector_field_spans(root / "vector-field-spans", native, only=args.only)
 
 
 if __name__ == "__main__":
