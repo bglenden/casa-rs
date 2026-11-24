@@ -484,12 +484,6 @@ impl PyMsTool {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (wantedpol = None), text_signature = "($self, wantedpol=[])")]
-    fn selectpolarization(&self, wantedpol: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("selectpolarization")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (wantedpol = None), text_signature = "($self, wantedpol=[])")]
     fn selectpolarizationold(&self, wantedpol: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("selectpolarizationold")
     }

@@ -11161,3 +11161,16 @@ error for `getdata('data_desc_id')`. Its flagged-visibility cleanup treats
 the integer field as complex data because its name contains `data`. casa-rs
 preserves the integer row IDs while averaging the visibility channels
 (#1030).
+
+## MS time averages use mismatched flags and weights after Stokes conversion
+
+For an MS recording RR and LL, select `I` and call `getdata` with
+`average=True`. CASA 6.7.6.14 passes the one-correlation visibility cube
+to its averaging loop with the original two-correlation flags and weights.
+The loop walks the flags by the converted data shape and does not select a
+weight for each output correlation. With unequal recorded weights and flags,
+one controlled MS differed from the propagated-variance calculation by 0.059
+normalized RMS on ordinary reads and 0.250 when averaging by baseline.
+casa-rs projects visibility flags and inverse variances to the selected
+Stokes products for the reduction. Public raw weight and sigma fields retain
+their recorded correlation axes, as in CASA (#1030).

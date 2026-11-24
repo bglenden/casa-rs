@@ -517,8 +517,8 @@ const METHODS: &[Method] = &[
     method(
         "selectpolarization",
         &[param("wantedpol", K::Any, Empty)],
-        R::Any,
-        No,
+        R::Bool,
+        Status::Partial,
     ),
     method(
         "selectpolarizationold",

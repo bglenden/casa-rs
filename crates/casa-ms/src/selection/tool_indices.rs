@@ -68,12 +68,28 @@ pub struct ParsedMsToolSelection {
     compiled: CompiledMsSelection,
     rows_per_block: usize,
     taql_is_row_predicate: bool,
+    correlations: Vec<ToolCorrelationSelection>,
+}
+
+/// Stored visibility correlations accepted by a CASA polarization clause.
+pub struct ToolCorrelationSelection {
+    /// DATA_DESCRIPTION row to which this projection applies.
+    pub description_id: i32,
+    /// Indices in the stored correlation axis, in requested order.
+    pub indices: Vec<usize>,
+    /// The CASA types in the projected correlation axis.
+    pub types: Vec<StokesType>,
 }
 
 impl ParsedMsToolSelection {
     /// Whether an expression constrains the rows of the supplied view.
     pub fn has_row_expression(&self) -> bool {
         !self.compiled.where_clauses().is_empty()
+    }
+
+    /// Take the in-row correlation projections from this selection.
+    pub fn into_correlations(self) -> Vec<ToolCorrelationSelection> {
+        self.correlations
     }
 
     /// Apply the predicate and return matching indices in the supplied view.
@@ -113,8 +129,13 @@ impl MeasurementSet {
         }
         let mut rows = request.clone();
         rows.correlation = None;
+        let mut correlations = Vec::new();
         if let Some(text) = nonempty(request.correlation.as_deref()) {
-            indices.poldd = polarization_indices(self, text)?;
+            correlations = polarization_projections(self, text)?;
+            indices.poldd = correlations
+                .iter()
+                .map(|plan| plan.description_id)
+                .collect();
             if !indices.poldd.is_empty() {
                 rows.data_description = Some(int_list(&indices.poldd));
             }
@@ -149,6 +170,7 @@ impl MeasurementSet {
             compiled,
             rows_per_block,
             taql_is_row_predicate,
+            correlations,
         })
     }
 }
@@ -256,13 +278,13 @@ fn selector_interval(text: &str, label: &str) -> MsResult<(i64, i64)> {
 
 /// CASA's polarization parser accepts semicolon-separated correlation terms.
 /// A term may name its own spectral windows before the colon.
-fn polarization_indices(ms: &MeasurementSet, text: &str) -> MsResult<Vec<i32>> {
-    use std::collections::HashSet;
-
+fn polarization_projections(
+    ms: &MeasurementSet,
+    text: &str,
+) -> MsResult<Vec<ToolCorrelationSelection>> {
     let data = ms.data_description()?;
     let polarization = ms.polarization()?;
     let mut result = Vec::new();
-    let mut seen = HashSet::new();
     let descriptions = (0..data.row_count())
         .filter_map(|row| match data.flag_row(row) {
             Ok(true) => None,
@@ -304,7 +326,6 @@ fn polarization_indices(ms: &MeasurementSet, text: &str) -> MsResult<Vec<i32>> {
             .map(|code| {
                 StokesType::from_name(code)
                     .filter(|stokes| *stokes != StokesType::Undefined)
-                    .map(StokesType::code)
                     .ok_or_else(|| MsError::InvalidInput(format!("invalid polarization {code:?}")))
             })
             .collect::<MsResult<Vec<_>>>()?;
@@ -317,18 +338,19 @@ fn polarization_indices(ms: &MeasurementSet, text: &str) -> MsResult<Vec<i32>> {
         let mut matches = Vec::new();
         for pol_id in 0..polarization.row_count() {
             let available = polarization.corr_type(pol_id)?;
-            if !codes
+            let Some(positions) = codes
                 .iter()
-                .all(|code| available.iter().any(|value| value == code))
-            {
+                .map(|code| available.iter().position(|value| *value == code.code()))
+                .collect::<Option<Vec<_>>>()
+            else {
                 continue;
-            }
+            };
             for &window in spectral_windows.spw_ids() {
                 if let Some(&(row, _, _)) = descriptions
                     .iter()
                     .find(|&&(_, spw, pol)| spw == window as i32 && pol == pol_id as i32)
                 {
-                    matches.push(row as i32);
+                    matches.push((row as i32, positions.clone()));
                 }
             }
         }
@@ -337,7 +359,35 @@ fn polarization_indices(ms: &MeasurementSet, text: &str) -> MsResult<Vec<i32>> {
                 "Poln. expression error: No match for polarization ID(s) (named {correlation})"
             )));
         }
-        result.extend(matches.into_iter().filter(|&id| seen.insert(id)));
+        for (description_id, positions) in matches {
+            append_correlations(&mut result, description_id, positions, &codes);
+        }
     }
     Ok(result)
+}
+
+fn append_correlations(
+    projections: &mut Vec<ToolCorrelationSelection>,
+    description_id: i32,
+    positions: Vec<usize>,
+    codes: &[StokesType],
+) {
+    let index = projections
+        .iter()
+        .position(|plan| plan.description_id == description_id)
+        .unwrap_or_else(|| {
+            projections.push(ToolCorrelationSelection {
+                description_id,
+                indices: Vec::new(),
+                types: Vec::new(),
+            });
+            projections.len() - 1
+        });
+    let plan = &mut projections[index];
+    for (position, &code) in positions.into_iter().zip(codes) {
+        if !plan.indices.contains(&position) {
+            plan.indices.push(position);
+            plan.types.push(code);
+        }
+    }
 }
