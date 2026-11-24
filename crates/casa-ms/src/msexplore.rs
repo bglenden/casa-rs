@@ -6061,6 +6061,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .enumerate()
         .map(|(order, row)| (row, order))
         .collect::<HashMap<_, _>>();
+    let retain_empty_panel = combined_vector_average && !collapse_baselines && iteraxis.is_none();
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
     for panel_key in panel_order {
@@ -6190,7 +6191,7 @@ fn build_generic_visibility_scatter_with_averaging(
         if time_weight_kinds.is_some() || collapse_baselines || scalar_time {
             series_entries.sort_by_key(|entry| entry.y_index);
         }
-        if series_entries.is_empty() {
+        if series_entries.is_empty() && !retain_empty_panel {
             continue;
         }
         let panel_point_count = series_entries
@@ -6212,7 +6213,7 @@ fn build_generic_visibility_scatter_with_averaging(
         });
     }
 
-    if contributing_points == 0 {
+    if finalized_panels.is_empty() {
         if combined_vector_average {
             return Err(
                 "empty MeasurementSet plots after channel and time averaging are pending #1032"
