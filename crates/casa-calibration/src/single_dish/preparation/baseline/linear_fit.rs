@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Least-squares fitting and residual clipping shared by the baseline families.
 
-use casa_numerics::solve_weighted_least_squares;
+use casa_numerics::LeastSquaresDesign;
 
 pub(super) struct Fit {
     pub(super) coefficients: Vec<f64>,
@@ -21,32 +21,49 @@ pub(super) struct LinearFit {
 }
 
 impl LinearFit {
+    pub(super) fn prepare(&self, channels: usize, included: &[bool]) -> Option<LeastSquaresDesign> {
+        let basis = self
+            .basis
+            .iter()
+            .take(channels)
+            .zip(included)
+            .filter_map(|(terms, &use_channel)| use_channel.then_some(terms.as_slice()));
+        LeastSquaresDesign::unweighted(basis, self.terms)
+    }
+
     pub(super) fn solve(
         &self,
         spectrum: &[f32],
         included: &[bool],
         clip_sigma: f64,
         max_fits: usize,
+        first_design: Option<&LeastSquaresDesign>,
     ) -> Result<Option<Fit>, String> {
         let mut included = included.to_vec();
         for iteration in 0..max_fits {
-            let samples = self
+            let observed = self
                 .basis
                 .iter()
                 .zip(spectrum)
                 .zip(&included)
-                .filter(|&(_, &use_channel)| use_channel)
-                .map(|((terms, &value), _)| (terms.clone(), f64::from(value), 1.))
+                .filter_map(|((_, &value), &use_channel)| use_channel.then_some(f64::from(value)))
                 .collect::<Vec<_>>();
-            if samples.len() < self.terms {
+            if observed.len() < self.terms {
                 return if iteration == 0 {
                     Ok(None)
                 } else {
                     Err(self.failure.into())
                 };
             }
-            let coefficients =
-                solve_weighted_least_squares(&samples, self.terms).ok_or(self.failure)?;
+            let coefficients = if iteration == 0
+                && let Some(design) = first_design
+            {
+                design.solve(&observed)
+            } else {
+                self.prepare(spectrum.len(), &included)
+                    .and_then(|design| design.solve(&observed))
+            }
+            .ok_or(self.failure)?;
             let residuals = self
                 .basis
                 .iter()
@@ -68,7 +85,7 @@ impl LinearFit {
                     let value = f64::from(value);
                     (sum + value, power + value * value)
                 });
-            let count = samples.len() as f64;
+            let count = observed.len() as f64;
             let mean = sum / count;
             let rms = (power / count - mean * mean).abs().sqrt();
             if iteration + 1 < max_fits
