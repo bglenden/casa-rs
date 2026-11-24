@@ -3011,7 +3011,10 @@ fn build_uncalibrated_plotms_payload(
                 plot.data_column,
                 columns.secondary_y.unwrap_or(plot.data_column),
             ],
-        )
+        ) || columns
+            .additional_y
+            .iter()
+            .any(|(axis, column)| axis.is_visibility_math() && column.needs_model())
     };
     if columns.phasecenter.is_some() && plot.is_some_and(uses_model) {
         let virtual_fields = crate::scratch_columns::virtual_model_fields(ms);
@@ -3023,10 +3026,6 @@ fn build_uncalibrated_plotms_payload(
             return Err("PlotMS phasecenter with a virtual model is pending (#1032)".into());
         }
     }
-    let models = load_models
-        .map(|load| load(ms, &selected.selected_rows))
-        .transpose()?
-        .flatten();
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
@@ -3043,8 +3042,28 @@ fn build_uncalibrated_plotms_payload(
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
             && uses_model(plot)
     }) {
-        plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
+        plotms_model::refuse_selected_virtual_fields(
+            ms,
+            &selected.selected_rows,
+            "PlotMS virtual MeasurementSet models are pending #1032",
+        )?;
+    } else if load_models.is_none()
+        && plot.is_some_and(|plot| {
+            plot.averaging.avgchannel.is_some_and(|width| width > 1)
+                && !uses_extended_averaging(plot)
+                && uses_model(plot)
+        })
+    {
+        plotms_model::refuse_selected_virtual_fields(
+            ms,
+            &selected.selected_rows,
+            "use casars.tasks.plotms to predict virtual MeasurementSet models before channel averaging",
+        )?;
     }
+    let models = load_models
+        .map(|load| load(ms, &selected.selected_rows))
+        .transpose()?
+        .flatten();
     let time_bins = plot
         .filter(|_| {
             !(scalar_average || scalar_spw)
@@ -4210,11 +4229,18 @@ fn build_generic_visibility_scatter(
     let channel_derived = calibration.is_some_and(|input| {
         input.rows.is_none() && plotms_columns::uses_channel_derived(spec, input.x_data_column)
     });
+    let needs_visibility_grid = spec.x_axis.is_visibility_math()
+        || spec.y_axes.iter().copied().any(MsAxis::is_visibility_math);
+    let channel_only_visibility = needs_visibility_grid
+        && calibration.is_some_and(|input| input.rows.is_none())
+        && spec.averaging.avgchannel.is_some_and(|width| width > 1)
+        && !uses_extended_averaging(spec);
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
         || channel_derived
+        || channel_only_visibility
         || calibration.is_some()
             && (ordered_feed_selection
                 || use_ordinate_masks
@@ -4241,8 +4267,6 @@ fn build_generic_visibility_scatter(
         VisibilityScatterTiming::checkpoint("resolve_selected_rows", &mut checkpoint_started);
     }
 
-    let needs_visibility_grid = spec.x_axis.is_visibility_math()
-        || spec.y_axes.iter().copied().any(MsAxis::is_visibility_math);
     let needs_spectral_coordinates = spec.x_axis.uses_spectral_coordinates()
         || spec
             .y_axes
@@ -4447,7 +4471,7 @@ fn build_generic_visibility_scatter(
         None
     };
     // CASA checks the first row of the selected table before sorting its iterator.
-    let spectrum_probe_slot = if channel_derived {
+    let spectrum_probe_slot = if channel_derived || channel_only_visibility {
         row_numbers
             .iter()
             .position(|&row| Some(row) == first_selected_row)
@@ -4525,7 +4549,7 @@ fn build_generic_visibility_scatter(
             mask.begin_row(row_slot, buffer_starts[row_slot]);
         }
         let flag_row_value = selected_flag_rows[row_slot];
-        // PlotMS iterator coordinates and channel statistics use the cube mask.
+        // PlotMS iterator coordinates and channel averages use the cube mask.
         if flag_row_value
             && !include_row_flagged_points
             && !use_iterator_order
@@ -5116,6 +5140,7 @@ fn build_generic_visibility_scatter(
                     || raw_symbols.is_some()
                     || phase_shift.is_some()
                     || channel_derived
+                    || channel_only_visibility
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
                 {

@@ -463,8 +463,10 @@ fn run_visibility_plot(
         options.selection = MsSelection::default();
     }
     let axes = [options.x_axis, options.y_axis, options.y_axis2];
+    let channel_models = !options.plotms_extended_averaging()
+        && !axis_columns.is_some_and(|columns| options.supports_channel_derived(columns));
     let load_models = load_models.filter(|_| {
-        (!averaging || options.supports_channel_visibility_ordinates())
+        (!averaging || channel_models)
             && (axis_columns.is_some_and(|columns| plotms_columns::uses_model(axes, columns))
                 || options
                     .additional_ordinates

@@ -13,6 +13,7 @@ import casatasks as casa
 import numpy as np
 from PIL import Image
 
+from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
 from plotms_ms_columns_oracle import compare_text, copy_ms, fixture, opened, plotms_launcher, reference, request, rows
 
 
@@ -86,15 +87,19 @@ def compare_sides(root, native, controls):
 
 def compare(root, native):
     vis = make_fixture(root)
-    masked, plain = (root / f"{name}.ms" for name in ("masked", "without-weight-spectrum"))
-    copy_ms(vis, masked)
-    copy_ms(vis, plain)
+    masked, plain, row_flagged = (root / f"{name}.ms" for name in
+                                 ("masked", "without-weight-spectrum", "row-flagged"))
+    for target in (masked, plain, row_flagged):
+        copy_ms(vis, target)
     with opened(masked, True) as table:
         flags = table.getcol("FLAG")
         flags[:, 2, :] = True
         table.putcol("FLAG", flags)
     with opened(plain, True) as table:
-        table.removecols(["WEIGHT_SPECTRUM"])
+        table.removecols(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
+    with opened(row_flagged, True) as table:
+        table.putcell("FLAG_ROW", 0, True)
+    reversed_rows = make_reversed_partial_spectrum(plain, root / "reverse-time-sparse-spectrum.ms")
     virtual, mixed, stored_model = virtual_fixtures(root, vis)
 
     base = request(vis) | dict(xaxis="channel", xdatacolumn="", spw="0:0~3", avgchannel="2",
@@ -116,10 +121,17 @@ def compare(root, native):
                                       ydatacolumn=["data", "model", "corrected"]),
          (observed, model, (0, 0))),
         ("masked-channel", dict(vis=str(masked)), ((2.6, 7), (28, 70), (280, 700))),
+        ("three-ordinates-ignore-row-flag", dict(vis=str(row_flagged)), (observed, corrected, model)),
+        ("two-ordinates-ignore-row-flag", dict(vis=str(row_flagged), yaxis=["real", "real"],
+                                              ydatacolumn=["data", "corrected"]), (observed, corrected)),
         ("uniform-channel", dict(vis=str(plain)), ((2, 6), (20, 60), (200, 600))),
+        ("iterator-order-sparse-spectrum", dict(vis=str(reversed_rows)), ((5, 0), (20, 60), (200, 600))),
         ("third-virtual-model", dict(vis=str(virtual)), (observed, corrected, (7.25, 7.25))),
         ("virtual-overrides-stored-model", dict(vis=str(mixed)), (observed, corrected, (7.25, 7.25))),
+        ("virtual-model-abscissa", dict(vis=str(mixed), xaxis="real", xdatacolumn="model",
+                                        yaxis="channel", ydatacolumn="", yaxislocation="left"), ((0, 1),)),
     )
+    real_x_values = {"corrected": corrected, "model": (7.25, 7.25)}
     for name, overrides, ordinates in cases:
         controls = base | overrides | dict(expformat="txt")
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
@@ -129,17 +141,36 @@ def compare(root, native):
         assert len(selected) == len(indices)
         assert [int(point[2]) for point in selected] == indices
         values = [coordinate for ordinate in ordinates for _ in range(6) for coordinate in ordinate]
-        x_values = corrected * (6 * len(ordinates)) if controls["xaxis"] == "real" else indices
+        x_values = real_x_values.get(controls["xdatacolumn"], (0, 1)) * (6 * len(ordinates))
         np.testing.assert_allclose(np.array([p[:2] for p in selected], dtype=float),
                                    np.column_stack((x_values, values)), rtol=1.2e-5)
+        if name == "iterator-order-sparse-spectrum":
+            first_ordinate_times = [float(point[9]) for point in selected[:12]]
+            assert first_ordinate_times == sorted(first_ordinate_times)
         assert native(**controls, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching channel-averaged coordinates", flush=True)
+    compare_model_provider(root, native, base | dict(vis=str(mixed), expformat="txt"))
     with opened(virtual) as table:
         assert "MODEL_DATA" not in table.colnames()
     with opened(mixed) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), stored_model)
     compare_sides(root, native, base)
+
+
+def compare_model_provider(root, native, controls):
+    from casars.tasks import TaskExecutionError, _runner
+
+    output = root / "direct-provider.txt"
+    # Exercise the standalone msexplore provider with the same resolved parameters.
+    with patch.object(_runner, "_plotms_model_requested", return_value=False):
+        try:
+            native(**controls, plotfile=str(output))
+        except TaskExecutionError as error:
+            assert "use casars.tasks.plotms to predict virtual MeasurementSet models" in str(error), error
+        else:
+            raise AssertionError("the standalone provider exported a virtual model without a predictor")
+    assert not output.exists()
 
 
 def main():
