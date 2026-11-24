@@ -370,16 +370,8 @@ fn run_visibility_plot(
     load_models: Option<PlotMsModelLoader>,
     phasecenter: Option<casa_types::measures::direction::MDirection>,
 ) -> Result<TaskSuccess, TaskFailure> {
-    let offset_scan_grid = options.iteraxis == Some(MsIterationAxis::Scan)
-        && options.gridrows == 1
-        && options.gridcols == 2
-        && options.x_axis == Some(MsAxis::Time)
-        && options.y_axis == Some(MsAxis::Amplitude)
-        && options.y_axis2.is_none()
-        && options.data_column == MsDataColumn::Data
-        && !options.plotms_averaging_active()
-        && calibration.is_none()
-        && atmosphere.is_none();
+    let offset_scan_grid =
+        calibration.is_none() && atmosphere.is_none() && options.supports_offset_scan_grid();
     let static_grid =
         super::plotms_figure::static_grid(task, options.iteraxis.is_some(), offset_scan_grid)?;
     if static_grid.is_some() {
