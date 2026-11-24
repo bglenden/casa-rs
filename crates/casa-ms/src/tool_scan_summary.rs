@@ -86,6 +86,8 @@ type Integrations = BTreeMap<IntegrationTime, Integration>;
 /// Report the consecutive integration runs within each observation, array
 /// and scan of the supplied MeasurementSet view. A change to an integration's
 /// ordered field, data description or state IDs starts a new run.
+/// A supplied selection is an ordered list of row indices into the view;
+/// otherwise all of MAIN is used.
 ///
 /// Keys are scan numbers. The vector is indexed by the subscan number in
 /// CASA's record. When a scan number recurs in another observation or array,
@@ -94,11 +96,15 @@ type Integrations = BTreeMap<IntegrationTime, Integration>;
 /// # Errors
 /// Returns an error for unreadable MAIN cells, nonfinite integration times
 /// or an invalid DATA_DESCRIPTION reference.
-pub fn tool_scan_summary(ms: &MeasurementSet) -> MsResult<BTreeMap<i32, Vec<ToolScanSummary>>> {
-    if ms.row_count() == 0 {
+pub fn tool_scan_summary(
+    ms: &MeasurementSet,
+    selected_rows: Option<&[usize]>,
+) -> MsResult<BTreeMap<i32, Vec<ToolScanSummary>>> {
+    let row_count = selected_rows.map_or_else(|| ms.row_count(), <[usize]>::len);
+    if row_count == 0 {
         return Ok(BTreeMap::new());
     }
-    let scans = read_integrations(ms)?;
+    let scans = read_integrations(ms, selected_rows, row_count)?;
     let description = ms.data_description()?;
     let spectral_windows = (0..description.row_count())
         .map(|row| description.spectral_window_id(row))
@@ -147,7 +153,11 @@ pub fn tool_scan_summary(ms: &MeasurementSet) -> MsResult<BTreeMap<i32, Vec<Tool
     Ok(by_scan)
 }
 
-fn read_integrations(ms: &MeasurementSet) -> MsResult<BTreeMap<ScanKey, Integrations>> {
+fn read_integrations(
+    ms: &MeasurementSet,
+    selected_rows: Option<&[usize]>,
+    row_count: usize,
+) -> MsResult<BTreeMap<ScanKey, Integrations>> {
     const COLUMNS: [&str; 8] = [
         "OBSERVATION_ID",
         "ARRAY_ID",
@@ -162,20 +172,21 @@ fn read_integrations(ms: &MeasurementSet) -> MsResult<BTreeMap<ScanKey, Integrat
         + 2 * std::mem::size_of::<f64>()
         + std::mem::size_of::<usize>();
     let plan = MsSelectionIoBudget::from_system_memory(1, bytes_per_row, None)
-        .and_then(|budget| MsReadPlan::new(ms.row_count(), budget))
+        .and_then(|budget| MsReadPlan::new(row_count, budget))
         .map_err(|error| MsError::InvalidInput(error.to_string()))?;
     let table = ms.main_table();
     let mut scans = BTreeMap::<ScanKey, Integrations>::new();
-    let mut rows = Vec::with_capacity(plan.rows_per_block);
-    for start in (0..ms.row_count()).step_by(plan.rows_per_block) {
-        rows.clear();
-        rows.extend(
-            start
-                ..start
-                    .saturating_add(plan.rows_per_block)
-                    .min(ms.row_count()),
-        );
-        let mut columns = table.required_scalar_columns_owned_for_rows(&COLUMNS, &rows)?;
+    let mut row_buffer = Vec::new();
+    for start in (0..row_count).step_by(plan.rows_per_block) {
+        let end = start.saturating_add(plan.rows_per_block).min(row_count);
+        let rows = if let Some(selected) = selected_rows {
+            &selected[start..end]
+        } else {
+            row_buffer.clear();
+            row_buffer.extend(start..end);
+            &row_buffer
+        };
+        let mut columns = table.required_scalar_columns_owned_for_rows(&COLUMNS, rows)?;
         let [
             observation,
             array,

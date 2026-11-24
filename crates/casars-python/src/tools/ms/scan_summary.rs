@@ -15,8 +15,8 @@ impl PyMsTool {
                 return Ok(CasaValue::empty_record());
             };
             let link = attachment.working_metadata_link();
-            let snapshot = link.snapshot(None).map_err(runtime_error)?;
-            let scans = tool_scan_summary(&snapshot.ms).map_err(runtime_error)?;
+            let (snapshot, rows) = link.source_and_rows().map_err(runtime_error)?;
+            let scans = tool_scan_summary(&snapshot.ms, rows.as_deref()).map_err(runtime_error)?;
             link.verify_directory().map_err(runtime_error)?;
             Ok(CasaValue::record(scans.into_iter().map(
                 |(scan, subscans)| {

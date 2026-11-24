@@ -142,6 +142,27 @@ impl MetadataLink {
         Ok(())
     }
 
+    /// Open the source MAIN and its subtables, with the view's row indices
+    /// separately for callers that can project selected rows directly.
+    pub(super) fn source_and_rows(
+        &self,
+    ) -> MsResult<(Arc<MetadataSnapshot>, Option<Arc<[usize]>>)> {
+        self.verify_directory()?;
+        let rows = self
+            .state
+            .lock()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?
+            .selected
+            .clone();
+        let snapshot = if rows.is_some() {
+            Arc::new(MetadataSnapshot::open(&self.path)?)
+        } else {
+            self.snapshot(None)?
+        };
+        self.verify_directory()?;
+        Ok((snapshot, rows))
+    }
+
     pub(in crate::tools) fn snapshot(
         &self,
         cached: Option<&Arc<MetadataSnapshot>>,
