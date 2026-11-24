@@ -11,7 +11,8 @@ from pathlib import Path
 import numpy as np
 
 from plotms_ms_columns_oracle import (
-    casa, compare_figure, compare_text, fixture, opened, plotms_launcher, reference, request, rows,
+    casa, compare_channel_vector_residual, compare_figure, compare_text, fixture, opened,
+    plotms_launcher, reference, request, rows,
 )
 
 
@@ -81,6 +82,10 @@ def main():
 
     with chdir(root), plotms_launcher(args.app_run):
         compare_weighted(root, native, weighted_fixture(root))
+        ordinary = root / "ordinary"
+        ordinary.mkdir()
+        vis, _ = fixture(ordinary)
+        compare_channel_vector_residual(ordinary, native, vis)
 
 
 if __name__ == "__main__":

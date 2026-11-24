@@ -84,26 +84,12 @@ def compare_figure(root, native, controls, expected, labels):
     print(f"{outputs[0].name}: {len(points)} matching rendered coordinates, labels and dimensions", flush=True)
 
 
-def pending_cases(root, native, vis):
-    from casars.tasks import TaskParameterError
-
-    cases = (
-        ("averaged-vector", dict(xdatacolumn="corrected-model_vector", avgchannel="3"),
-         6, "averaging derived data columns"),
-    )
-    for name, options, point_count, diagnostic in cases:
-        controls = request(vis) | options | dict(expformat="txt")
-        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
-        assert reference(**controls, plotfile=str(expected)) is None
-        selected = rows(expected)
-        assert len(selected) == point_count
-        try:
-            native(**controls, plotfile=str(actual))
-        except TaskParameterError as error:
-            assert diagnostic in str(error) and "#1032" in str(error)
-        else:
-            raise AssertionError(f"An unsupported {name} plot was exported")
-        assert not actual.exists()
+def compare_channel_vector_residual(root, native, vis):
+    controls = request(vis) | dict(xdatacolumn="corrected-model_vector", avgchannel="3", expformat="txt")
+    expected, actual = (root / f"averaged-vector.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
 
 
 def compare_raw_flag_symbols(root, vis, native):
@@ -306,7 +292,7 @@ def compare(root, vis, native):
     compare_figure(root, native, base | cases["scalar-amp-phase-ratio"], root / "scalar-amp-phase-ratio.casa.txt",
                    ("Phase:corrected/model (scalar) vs. Amp:data/model (scalar)",
                     "Amp:data/model (scalar)", "Phase:corrected/model (scalar) (degrees)"))
-    pending_cases(root, native, vis)
+        compare_channel_vector_residual(root, native, vis)
     compare_raw_flag_symbols(root, vis, native)
 
 

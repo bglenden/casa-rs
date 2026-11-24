@@ -724,6 +724,10 @@ impl MsDataColumn {
         self == Self::Model || self.is_derived()
     }
 
+    fn is_corrected_vector_projection(self) -> bool {
+        matches!(self, Self::CorrectedMinusModel | Self::CorrectedDivModel)
+    }
+
     fn is_derived(self) -> bool {
         matches!(
             self,
@@ -2978,7 +2982,12 @@ fn build_uncalibrated_plotms_payload(
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
     if plot.is_some_and(|plot| {
-        (vector_baselines
+        let channel_derived = plot.averaging.avgchannel.is_some_and(|width| width > 1)
+            && [columns.x.unwrap_or(plot.data_column), plot.data_column]
+                .into_iter()
+                .any(MsDataColumn::is_corrected_vector_projection);
+        (channel_derived
+            || vector_baselines
             || scalar_time
             || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
@@ -4766,8 +4775,6 @@ fn build_generic_visibility_scatter(
                         axis_slot,
                         &visibility_grids,
                         &bin_buffers,
-                        *corr_index,
-                        bin,
                         transformed_channel_weights,
                     );
                     compute_axis_value(
@@ -5816,14 +5823,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         }
                     }
                     let samples = |axis| {
-                        visibility_columns.samples(
-                            axis,
-                            &visibility_grids,
-                            &bin_buffers,
-                            *corr_index,
-                            bin,
-                            false,
-                        )
+                        visibility_columns.samples(axis, &visibility_grids, &bin_buffers, false)
                     };
                     let x_samples = samples(0);
                     collect_bin_flags_into(&flags, *corr_index, bin, &mut flag_samples);
@@ -6873,36 +6873,9 @@ struct VisibilityBinSamples<'a> {
     zero_invalid_weight: bool,
 }
 
-impl<'a> VisibilityBinSamples<'a> {
-    fn new(
-        grid: Option<&ComplexGrid>,
-        values: &'a [Complex64],
-        weights: &'a [f64],
-        corr_index: usize,
-        bin: &ChannelBin,
-        zero_invalid_weight: bool,
-    ) -> Self {
-        let projection = grid.and_then(|grid| {
-            let (projection, model) = grid.model.as_ref()?;
-            let observed = *values.first()?;
-            debug_assert_eq!(bin.channels().count(), 1);
-            Some((
-                *projection,
-                [observed, model[corr_index * grid.chan_count + bin.start]],
-            ))
-        });
-        Self {
-            values,
-            weights,
-            projection,
-            signed_amplitude: grid.is_some_and(|grid| grid.signed_amplitude),
-            zero_invalid_weight,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 enum VisibilityColumnProjection {
+    VectorResidual,
     ScalarResidual,
     VectorRatio,
     ScalarRatio,
@@ -6912,7 +6885,18 @@ impl VisibilityColumnProjection {
     fn axis_value(self, axis: MsAxis, [observed, model]: [Complex64; 2]) -> Option<f64> {
         let as_complex_float =
             |value: Complex64| num_complex::Complex32::new(value.re as f32, value.im as f32);
+        let complex_axis = |value: Complex64| {
+            let value = as_complex_float(value);
+            f64::from(match axis {
+                MsAxis::Amplitude => value.norm(),
+                MsAxis::Phase => Self::float_phase_degrees(value.arg()),
+                MsAxis::Real => value.re,
+                MsAxis::Imaginary => value.im,
+                _ => unreachable!("visibility projection requires a visibility axis"),
+            })
+        };
         match self {
+            Self::VectorResidual => Some(complex_axis(observed - model)),
             Self::ScalarResidual => {
                 let value = match axis {
                     MsAxis::Amplitude => observed.norm() - model.norm(),
@@ -6932,14 +6916,7 @@ impl VisibilityColumnProjection {
                     observed / model
                 };
                 // CASA caches the complex float quotient before converting its axes.
-                let value = as_complex_float(value);
-                Some(f64::from(match axis {
-                    MsAxis::Amplitude => value.norm(),
-                    MsAxis::Phase => Self::float_phase_degrees(value.arg()),
-                    MsAxis::Real => value.re,
-                    MsAxis::Imaginary => value.im,
-                    _ => unreachable!("visibility projection requires a visibility axis"),
-                }))
+                Some(complex_axis(value))
             }
             Self::ScalarRatio => {
                 let observed = as_complex_float(observed);
@@ -7286,7 +7263,7 @@ fn weighted_visibility_mean(samples: &[Complex64], weights: &[f64], weight_sum: 
 }
 
 fn collect_bin_samples_into(
-    grid: &ComplexGrid,
+    grid_values: &[Complex64],
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
     bin: &ChannelBin,
@@ -7298,19 +7275,20 @@ fn collect_bin_samples_into(
     if let Some((_, values)) = &mut weights {
         values.clear();
     }
-    if corr_index >= grid.corr_count {
+    let chan_count = flags.ncols();
+    let start = corr_index * chan_count;
+    let Some(correlation) = grid_values.get(start..start + chan_count) else {
         return;
-    }
+    };
     for channel in bin.channels() {
-        if channel >= grid.chan_count || (!show_flagged && flags[(corr_index, channel)]) {
+        if channel >= chan_count || (!show_flagged && flags[(corr_index, channel)]) {
             continue;
         }
-        let index = corr_index * grid.chan_count + channel;
-        let value = grid.values[index];
+        let value = correlation[channel];
         if value.re.is_finite() && value.im.is_finite() {
             samples.push(value);
             if let Some((spectrum, values)) = &mut weights {
-                values.push(spectrum.values[index]);
+                values.push(spectrum.values[start + channel]);
             }
         }
     }
@@ -7867,7 +7845,12 @@ impl<'a> PreparedSelectedDataSource<'a> {
         }
     }
 
-    fn row(&self, row_slot: usize, project_plotms_columns: bool) -> Result<ComplexGrid, String> {
+    fn row(
+        &self,
+        row_slot: usize,
+        project_plotms_columns: bool,
+        project_after_channel_average: bool,
+    ) -> Result<ComplexGrid, String> {
         match self {
             Self::Single(column) => column.visibility_grid(row_slot),
             Self::Difference {
@@ -7879,6 +7862,9 @@ impl<'a> PreparedSelectedDataSource<'a> {
                 let right = right.visibility_grid(row_slot)?;
                 if *scalar && project_plotms_columns {
                     return left.with_model(right, VisibilityColumnProjection::ScalarResidual);
+                }
+                if project_plotms_columns && project_after_channel_average {
+                    return left.with_model(right, VisibilityColumnProjection::VectorResidual);
                 }
                 combine_grids(left, right, |left, right| {
                     if *scalar {

@@ -98,6 +98,7 @@ pub(super) fn weight_axis_columns(
 pub(super) fn check_averaging(
     averaging: bool,
     extended_averaging_with_independent_ordinates: bool,
+    channel_derived: bool,
     columns: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
     if extended_averaging_with_independent_ordinates {
@@ -105,7 +106,7 @@ pub(super) fn check_averaging(
             "time, baseline, antenna and SPW averaging of independent MeasurementSet ordinate columns is pending #1032",
         ));
     }
-    if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
+    if averaging && !channel_derived && columns.into_iter().any(MsDataColumn::is_derived) {
         return Err(TaskFailure::validation(
             "averaging derived data columns in this MeasurementSet plot is pending #1032",
         ));
@@ -175,7 +176,9 @@ pub(super) fn weight_kinds(
     let kind = |column| {
         let column = match column {
             MsDataColumn::Data => OptionalMainColumn::Data,
-            MsDataColumn::Corrected => OptionalMainColumn::CorrectedData,
+            MsDataColumn::Corrected
+            | MsDataColumn::CorrectedMinusModel
+            | MsDataColumn::CorrectedDivModel => OptionalMainColumn::CorrectedData,
             MsDataColumn::Model => OptionalMainColumn::ModelData,
             _ => return WeightKind::Unit,
         };
