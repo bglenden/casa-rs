@@ -3,9 +3,10 @@
 
 use std::collections::HashMap;
 
+use casa_types::{Complex32, Complex64};
 use ndarray::ArrayView2;
 
-use super::plotms_ordinates::VisibilityAverageShapes;
+use super::plotms_ordinates::{AveragedVisibility, VisibilityAverageShapes};
 use super::{
     AveragedSeriesAccumulator, AveragingBaselineToken, AveragingPointKey, AveragingTimeKey,
     ChannelBin, FloatGrid, MsAverageSpec, plotms_columns,
@@ -25,7 +26,7 @@ pub(super) struct TimeBaselineRow<'a> {
     pub(super) partition: [i32; 4],
     pub(super) integration: Integration,
     pub(super) first_correlation: Option<usize>,
-    pub(super) antenna_shape: Option<(usize, usize)>,
+    pub(super) visibility_shape: Option<(usize, usize)>,
     pub(super) bins: &'a [ChannelBin],
     pub(super) flags: &'a ArrayView2<'a, bool>,
     pub(super) weights: Option<&'a FloatGrid>,
@@ -44,7 +45,7 @@ struct TimeAverageStatistics {
     last_usable: Option<Integration>,
     weights: Vec<ChannelWeightSum>,
     channel_bin_widths: Vec<usize>,
-    antenna_shape: Option<(usize, usize)>,
+    visibility_shape: Option<(usize, usize)>,
 }
 
 struct ChannelWeightSum {
@@ -128,7 +129,7 @@ impl TimeBaselineStatistics {
                 } else {
                     Vec::new()
                 },
-                antenna_shape: row.antenna_shape,
+                visibility_shape: row.visibility_shape,
             });
         if row.integration.time < group.first.time {
             group.first = row.integration;
@@ -167,7 +168,7 @@ impl TimeBaselineStatistics {
         let interval = averaging.avgtime.unwrap_or(0.0);
         let mut averages: Vec<BaselineAverage> = Vec::new();
         let mut rows_to_average = HashMap::with_capacity(self.groups.len());
-        let mut antenna_shapes = VisibilityAverageShapes::default();
+        let mut shapes = VisibilityAverageShapes::default();
         for buffer in time_plan.buffers() {
             let Some(anchor) = self.groups.get(&buffer.start) else {
                 continue;
@@ -178,7 +179,7 @@ impl TimeBaselineStatistics {
                 observation,
                 if averaging.avgscan { 0 } else { scan },
                 if averaging.avgfield { 0 } else { field },
-                window,
+                if averaging.avgspw { 0 } else { window },
             ];
             let (start, end) = (
                 bounds.time - bounds.interval / 2.0,
@@ -195,19 +196,24 @@ impl TimeBaselineStatistics {
                     field,
                     anchor_time: bounds.time,
                     row: rows[time_plan.first_row_slot(buffer.start)],
+                    first_buffer_group: buffer.start,
+                    last_buffer_group: buffer.start,
                     start,
                     end,
                 });
             } else if let Some(average) = averages.last_mut() {
                 average.start = average.start.min(start);
                 average.end = average.end.max(end);
+                average.last_buffer_group = buffer.start;
                 if average.scan != scan {
                     average.scan = -1;
                 }
             }
             let output = averages.len() - 1;
-            if let Some((correlations, channels)) = anchor.antenna_shape {
-                antenna_shapes.check_shape(
+            if !averaging.avgspw
+                && let Some((correlations, channels)) = anchor.visibility_shape
+            {
+                shapes.check_shape(
                     "vector antenna time averaging",
                     output,
                     correlations,
@@ -216,6 +222,16 @@ impl TimeBaselineStatistics {
             }
             for group in buffer.clone() {
                 if let Some(statistics) = self.groups.get(&group) {
+                    if averaging.avgspw
+                        && let Some((correlations, channels)) = statistics.visibility_shape
+                    {
+                        shapes.check_shape(
+                            "vector time and spectral window averaging",
+                            output,
+                            correlations,
+                            channels,
+                        )?;
+                    }
                     rows_to_average.insert(group, (output, statistics.baseline_weight()));
                 }
             }
@@ -233,6 +249,8 @@ struct BaselineAverage {
     field: i32,
     anchor_time: f64,
     row: usize,
+    first_buffer_group: usize,
+    last_buffer_group: usize,
     start: f64,
     end: f64,
 }
@@ -261,9 +279,34 @@ impl TimeBaselinePlan {
             .map(|average| average.start + (average.end - average.start) / 2.0)
     }
 
+    pub(super) fn spectral_window_buffers(
+        &self,
+    ) -> impl Iterator<Item = (usize, usize, (i32, i32))> + '_ {
+        self.averages.iter().map(|average| {
+            (
+                average.first_buffer_group,
+                average.last_buffer_group,
+                (average.scan, average.field),
+            )
+        })
+    }
+
     /// Each point here is a normalized complex time average for one baseline.
     /// Only project to the displayed amplitude or phase after this second mean.
-    pub(super) fn combine_series(&self, series: &mut AveragedSeriesAccumulator) {
+    pub(super) fn combine_series(
+        &self,
+        series: &mut AveragedSeriesAccumulator,
+        retain_baselines: bool,
+    ) {
+        let mean = |samples: &AveragedVisibility| {
+            if retain_baselines {
+                samples
+                    .transformed_vector_sample()
+                    .map(|(value, _)| Complex64::new(f64::from(value.re), f64::from(value.im)))
+            } else {
+                samples.vector_mean()
+            }
+        };
         for (mut key, mut point) in std::mem::take(&mut series.points) {
             if !point.has_usable_weight() {
                 continue;
@@ -275,24 +318,37 @@ impl TimeBaselinePlan {
             else {
                 continue;
             };
-            let Some(y) = point.y_visibility.vector_mean() else {
+            let Some(y) = mean(&point.y_visibility) else {
                 continue;
             };
-            let x = point.x_visibility.vector_mean();
+            let x = mean(&point.x_visibility);
             key.time_key = AveragingTimeKey::Group(group);
             let output = series.points.entry(key).or_default();
             if output.representative.is_none() {
                 if let Some(mut representative) = point.representative.take() {
-                    representative.row = self.averages[group].row;
+                    if !retain_baselines {
+                        representative.row = self.averages[group].row;
+                    }
                     output.representative = Some(representative);
                 }
                 output.display_channel = point.display_channel;
                 output.numeric_axis_samples = point.numeric_axis_samples;
             }
-            if let Some(x) = x {
-                output.x_visibility.add_weighted_value(x, weight);
+            for (output, sample) in [
+                (&mut output.x_visibility, x),
+                (&mut output.y_visibility, Some(y)),
+            ] {
+                if let Some(sample) = sample {
+                    if retain_baselines {
+                        output.add_normalized_vector_sample(
+                            Complex32::new(sample.re as f32, sample.im as f32),
+                            weight as f32,
+                        );
+                    } else {
+                        output.add_weighted_value(sample, weight);
+                    }
+                }
             }
-            output.y_visibility.add_weighted_value(y, weight);
         }
     }
 
