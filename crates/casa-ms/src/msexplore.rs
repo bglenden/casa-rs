@@ -5459,6 +5459,7 @@ fn build_generic_visibility_scatter_with_averaging(
         || scalar_channels
         || scalar_spw_time
         || time_antenna
+        || time_spw
         || direct_time_channels;
     let channel_first = channel_baselines || scalar_channels || antenna_channels || spw_channels;
     let time_weight_kinds = calibration
@@ -5475,6 +5476,10 @@ fn build_generic_visibility_scatter_with_averaging(
     let average_model_channels_equally = time_baselines && model_channels_equally;
     let visibility_weight_kinds = time_weight_kinds.or(channel_first_kinds);
     let needs_weight_kind = |kind| {
+        if time_spw {
+            return time_weight_kinds
+                .is_some_and(|kinds| kinds.primary == kind || kinds.row_weight == kind);
+        }
         visibility_weight_kinds.is_some_and(|kinds| kinds.uses(kind))
             || channel_first_kinds.is_some_and(|kinds| kinds.row_weight == kind)
             || ((time_baselines || time_antenna || time_spw)
@@ -5556,6 +5561,7 @@ fn build_generic_visibility_scatter_with_averaging(
         && needs_visibility_grid
         && (!scalar_average || scalar_channels)
         && (!spw_average || spw_channels || time_spw)
+        && (!time_spw || needs_calibrated_weights)
         && (!collapse_baselines || channel_baselines || time_baselines);
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec

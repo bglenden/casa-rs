@@ -3,9 +3,10 @@
 
 use std::collections::HashMap;
 
+use casa_types::{Complex32, Complex64};
 use ndarray::ArrayView2;
 
-use super::plotms_ordinates::VisibilityAverageShapes;
+use super::plotms_ordinates::{AveragedVisibility, VisibilityAverageShapes};
 use super::{
     AveragedSeriesAccumulator, AveragingBaselineToken, AveragingPointKey, AveragingTimeKey,
     ChannelBin, FloatGrid, MsAverageSpec, plotms_columns,
@@ -297,6 +298,15 @@ impl TimeBaselinePlan {
         series: &mut AveragedSeriesAccumulator,
         retain_baselines: bool,
     ) {
+        let mean = |samples: &AveragedVisibility| {
+            if retain_baselines {
+                samples
+                    .transformed_vector_sample()
+                    .map(|(value, _)| Complex64::new(f64::from(value.re), f64::from(value.im)))
+            } else {
+                samples.vector_mean()
+            }
+        };
         for (mut key, mut point) in std::mem::take(&mut series.points) {
             if !point.has_usable_weight() {
                 continue;
@@ -308,10 +318,10 @@ impl TimeBaselinePlan {
             else {
                 continue;
             };
-            let Some(y) = point.y_visibility.vector_mean() else {
+            let Some(y) = mean(&point.y_visibility) else {
                 continue;
             };
-            let x = point.x_visibility.vector_mean();
+            let x = mean(&point.x_visibility);
             key.time_key = AveragingTimeKey::Group(group);
             let output = series.points.entry(key).or_default();
             if output.representative.is_none() {
@@ -324,10 +334,21 @@ impl TimeBaselinePlan {
                 output.display_channel = point.display_channel;
                 output.numeric_axis_samples = point.numeric_axis_samples;
             }
-            if let Some(x) = x {
-                output.x_visibility.add_weighted_value(x, weight);
+            for (output, sample) in [
+                (&mut output.x_visibility, x),
+                (&mut output.y_visibility, Some(y)),
+            ] {
+                if let Some(sample) = sample {
+                    if retain_baselines {
+                        output.add_normalized_vector_sample(
+                            Complex32::new(sample.re as f32, sample.im as f32),
+                            weight as f32,
+                        );
+                    } else {
+                        output.add_weighted_value(sample, weight);
+                    }
+                }
             }
-            output.y_visibility.add_weighted_value(y, weight);
         }
     }
 

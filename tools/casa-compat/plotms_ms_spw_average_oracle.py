@@ -439,6 +439,25 @@ def compare_vector_time(root, native, base, vis):
         flags = table.getcol("FLAG")
         flags[0, 1, table.getcol("TIME") == start + 10] = True
         table.putcol("FLAG", flags)
+    nonfinite = root / "vector-time-nonfinite.ms"
+    copy_ms(staggered, nonfinite)
+    with opened(nonfinite, True) as table:
+        data = table.getcol("CORRECTED_DATA")
+        data[0, 1, table.getcol("TIME") == start + 12] = complex(np.nan, np.nan)
+        table.putcol("CORRECTED_DATA", data)
+    signed = root / "vector-time-signed.ms"
+    copy_ms(staggered, signed)
+    with opened(signed, True) as table:
+        data = table.getcol("CORRECTED_DATA")
+        data[:, 0] = 4j
+        data[:, 1] = 2j
+        table.putcol("CORRECTED_DATA", data)
+        descriptor = table.getcoldesc("DATA")
+        table.addcols({"WEIGHT_SPECTRUM": dict(descriptor, valueType="float",
+                                             dataManagerType="StandardStMan", dataManagerGroup="WEIGHT_SPECTRUM")})
+        weights = np.full(data.shape, 2, dtype=np.float32)
+        weights[:, 0] = np.where(table.getcol("TIME") == start, -1, 0)
+        table.putcol("WEIGHT_SPECTRUM", weights)
 
     options = base | dict(vis=str(staggered), xaxis="real", yaxis="imag", avgtime="10",
                           title="Vector time and SPW average")
@@ -450,6 +469,9 @@ def compare_vector_time(root, native, base, vis):
         ("vector-time-long", dict(avgtime="20"), closed, [(13.95, 116.25)]),
         ("vector-time-short", dict(avgtime="4"), [(1, 0, high), (10, 0, low)], [(7.75, 77.5), (15.5, 155)]),
         ("vector-time-mask", dict(vis=str(masked)), closed, [(13, 130)]),
+        ("vector-time-nonfinite", dict(vis=str(nonfinite), avgtime="20"), closed, [(13.95, np.nan)]),
+        ("vector-time-signed", dict(vis=str(signed), avgtime="20", xaxis="time", xdatacolumn="", spw="0:0~1"),
+         [(5, 0, "90.000000000"), (5, 0, low)], [(start + 5, -4), (start + 5, 2)]),
         ("vector-time-abscissa", dict(xaxis="time", xdatacolumn=""), closed, [(start + 5, 116.25)]),
         ("vector-time-frequency", dict(xaxis="frequency", xdatacolumn=""), closed, [(float(low), 116.25)]),
         ("vector-time-control", dict(avgtime=""), [(0, 0, low), (2, 1, high), (10, 0, low), (12, 1, high)],
@@ -490,6 +512,33 @@ def compare_vector_time(root, native, base, vis):
     print("vector-sparse-baselines: 6 matching coordinates with retained baseline IDs", flush=True)
 
 
+def compare_vector_optional_weights(root, native, base):
+    source = make_fixture(root, "vector-optional-spectra", antenna_count=3)
+    controls = base | dict(xaxis="real", yaxis="imag", avgtime="20", antenna="")
+    cases = (
+        ("WEIGHT_SPECTRUM", ("data", "model"), ((4, -2), (1, 0))),
+        ("SIGMA_SPECTRUM", ("corrected",), ((13, 15),)),
+    )
+    for spectrum, columns, coordinates_per_column in cases:
+        vis = root / f"{spectrum.lower()}-sparse.ms"
+        copy_ms(source, vis)
+        with opened(vis, True) as table:
+            descriptor = table.getcoldesc("DATA")
+            table.addcols({spectrum: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                          dataManagerGroup=spectrum)})
+            table.putcell(spectrum, 0, np.ones(table.getcell("DATA", 0).shape, dtype=np.float32))
+            assert table.getcell("TIME", 0) == table.getcell("TIME", 1)
+            assert not table.iscelldefined(spectrum, 1)
+        for column, xy in zip(columns, coordinates_per_column, strict=True):
+            options = controls | dict(vis=str(vis), xdatacolumn=column, ydatacolumn=column)
+            name = f"vector-unused-spectrum-{column}"
+            expected = export(root, f"{name}.casa", reference, options)
+            selected = rows(expected)
+            np.testing.assert_allclose(coordinates(selected), [xy] * 3, rtol=1.2e-5)
+            assert compare_text(export(root, f"{name}.native", native, options), expected) == 3
+            print(f"{name}: 3 matching coordinates with a sparse unused {spectrum}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -497,7 +546,7 @@ def main():
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
-                                           "malformed", "scalar-time", "vector-time"))
+                                           "malformed", "scalar-time", "vector-time", "vector-optional"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -528,6 +577,8 @@ def main():
             compare_scalar_time(root, native, base, vis)
         if args.only in (None, "vector-time"):
             compare_vector_time(root, native, base, vis)
+        if args.only in (None, "vector-optional"):
+            compare_vector_optional_weights(root, native, base)
 
 
 if __name__ == "__main__":
