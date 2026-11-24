@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "f2ebe7a025b62033c25ebf4863b74daa45a6c9a4",
+  "source_revision": "f2ebe7a025b62033c25ebf4863b74daa45a6c9a4",
+  "baseline_revision": "163201deba2f1ec8d1dcc01e2f8cc9fa3dc0c734",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_scalar_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Scalar corrected residual and ratio coordinates after channel-only vector averaging, paired with an independent stored visibility axis.",
+  "result": "passed",
+  "baseline_result": "Native refused the scalar derived expressions while channel averaging was active.",
+  "text_exports": 6,
+  "points": 60,
+  "figures": 1,
+  "rendered_coordinates": 12,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "companion_cancellation_points": 6,
+  "companion_nonfinite_points": 6
+}
