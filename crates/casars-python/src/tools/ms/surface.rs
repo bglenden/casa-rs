@@ -476,8 +476,8 @@ const METHODS: &[Method] = &[
             param("width", K::Int, Int(1)),
             param("inc", K::Int, Int(1)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Status::Partial,
     ),
     method(
         "selectchannelold",
@@ -496,8 +496,8 @@ const METHODS: &[Method] = &[
             param("datadescid", K::Int, Int(0)),
             param("reset", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "selectinitold",

@@ -73,7 +73,7 @@ IMPLEMENTED["ms"] = {
     "close", "done", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "ismultims", "iswritable",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
-    "open", "reset", "statwt", "uvsub",
+    "open", "reset", "selectinit", "statwt", "uvsub",
 }
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",
@@ -89,7 +89,7 @@ IMPLEMENTED["calibrater"] = {
     "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags", "fluxscale", "specifycal", "state",
 }
 PARTIAL = {
-    "ms": {"getdata"},
+    "ms": {"getdata", "selectchannel"},
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
 }
