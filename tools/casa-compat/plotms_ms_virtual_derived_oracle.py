@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Compare PlotMS averages of residuals and ratios using virtual or default models."""
+
+import argparse
+from contextlib import chdir
+from importlib.metadata import version
+import os
+from pathlib import Path
+
+import casatasks as casa
+import numpy as np
+
+from plotms_ms_channel_ordinates_oracle import virtual_fixtures
+from plotms_ms_columns_oracle import (
+    compare_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request, rows,
+    time_average_fixture, time_scan_field_fixture, varying_fourier_fixture, virtual_fourier_fixture,
+)
+
+
+def compare_averaged_expressions(root, native):
+    """Check residual and ratio operands without writing a scratch model."""
+    vis, integration = time_average_fixture(root)
+    virtual, mixed, stored_model = virtual_fixtures(root, vis)
+    default = root / "default-point.ms"
+    copy_ms(vis, default)
+    with opened(default, True) as table:
+        table.removecols(["MODEL_DATA"])
+    masked = root / "masked-virtual.ms"
+    copy_ms(virtual, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1] = (integration % 2 != 0) | (integration >= 4)
+        table.putcol("FLAG", flags)
+        start = table.getcol("TIME").min()
+
+    title = "Averaged virtual model residual"
+    base = request(virtual) | dict(xaxis="time", xdatacolumn="", yaxis="real", spw="0:1",
+                                   ydatacolumn="corrected-model_vector", avgtime="20", title=title)
+    vector_times = tuple(start + step for step in (5, 25, 45))
+    scalar_times = (start + 10, start + 40)
+    channel_times = tuple(time for time in vector_times for _ in range(2))
+    channel_columns = dict(avgtime="", avgchannel="2", spw="0:0~3", ydatacolumn="data/model_vector")
+    cases = (
+        ("virtual-residual", {}, vector_times, (20.75,) * 3),
+        ("virtual-precedes-stored-residual", dict(vis=str(mixed)), vector_times, (20.75,) * 3),
+        ("default-point-residual", dict(vis=str(default)), vector_times, (27.,) * 3),
+        ("masked-virtual-residual", dict(vis=str(masked)), (start, start + 20), (2.75, 2.75)),
+        ("virtual-scalar-ratio", dict(vis=str(mixed), ydatacolumn="data/model_scalar", scalar=True),
+         scalar_times, (29 / 11 - 7.25, 55 / 19 - 7.25)),
+        ("virtual-time-channel-residual", dict(vis=str(mixed), avgchannel="2", spw="0:0~3"),
+         channel_times, (20.75,) * 6),
+        ("virtual-channel-ratio", channel_columns | dict(xaxis="channel"),
+         (0, 1) * 6, (1 / 7.25, 1 / 7.25, 3 / 7.25, 3 / 7.25) * 3),
+        ("virtual-ratio-x", dict(xaxis="real", xdatacolumn="data/model_vector", ydatacolumn="corrected"),
+         (2.6 / 7.25,) * 3, (28.,) * 3),
+        ("virtual-channel-ratio-x", channel_columns | dict(xaxis="real", xdatacolumn="data/model_vector",
+                                                           ydatacolumn="corrected"),
+         (1 / 7.25, 1 / 7.25, 3 / 7.25, 3 / 7.25) * 3, (10., 10., 30., 30.) * 3),
+        ("virtual-scalar-baseline", dict(avgtime="", scalar=True, avgbaseline=True),
+         tuple(start + 10 * i for i in range(6)), (2.75, 22.75) * 3),
+    )
+    for name, overrides, x_values, y_values in cases:
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert len(selected) == len(x_values), (name, len(selected))
+        assert all(point[12] == "XX" for point in selected)
+        pairs = np.array([point[:2] for point in selected], dtype=float)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose(pairs[:, 0], x_values, rtol=0, atol=.00051)
+        else:
+            np.testing.assert_allclose(pairs[:, 0], x_values, rtol=1.2e-5)
+        np.testing.assert_allclose(pairs[:, 1], y_values, rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], x_values,
+                                       rtol=0, atol=.00051)
+        print(f"{name}: {len(selected)} matching averaged model expression coordinates", flush=True)
+        if name == "virtual-precedes-stored-residual":
+            compare_figure(root, native, controls, expected, (title, "Time (MJD seconds)",
+                                                              "Real:corrected-model (vector)"))
+
+    for source in (virtual, default, masked):
+        with opened(source) as table:
+            assert "MODEL_DATA" not in table.colnames()
+    with opened(mixed) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), stored_model)
+    compare_overlay_refusals(root, native, base | channel_columns | dict(xaxis="channel"), (virtual, mixed))
+
+
+def compare_overlay_refusals(root, native, controls, sources):
+    from casars.tasks import TaskExecutionError, TaskParameterError
+
+    errors = (
+        (TaskParameterError, "require stored MODEL_DATA (#1032)"),
+        (TaskExecutionError, "virtual MeasurementSet models are pending #1032"),
+    )
+    for vis, (category, message) in zip(sources, errors, strict=True):
+        output = root / f"{vis.stem}-overlay.native.txt"
+        options = controls | dict(vis=str(vis), showatm=True, expformat="txt", plotfile=str(output))
+        try:
+            native(**options)
+        except category as error:
+            assert message in str(error), error
+        else:
+            raise AssertionError(f"PlotMS enabled an implicit-model averaged expression with an overlay for {vis.name}")
+        assert not output.exists()
+    print("Implicit-model averaged expression overlay controls keep both refusals", flush=True)
+
+
+def compare_varying_fourier_expression(root, native):
+    root.mkdir()
+    vis, columns = virtual_fourier_fixture(root)
+    varying = root / "time-varying-fourier.ms"
+    varying_fourier_fixture(vis, varying)
+    samples = request(varying) | dict(xaxis="real", yaxis="imag", spw="0:1", expformat="txt")
+    operands = []
+    for column in ("corrected", "model"):
+        output = root / f"{column}-operand.casa.txt"
+        raw = samples | dict(xdatacolumn=column, ydatacolumn=column)
+        assert reference(**raw, plotfile=str(output)) is None
+        operands.append(np.array([point[:2] for point in rows(output)], dtype=float).reshape(3, 2, 2))
+    corrected, model = operands
+    average = np.average(corrected - model, weights=[1, 9], axis=1)
+    first_model = np.average(corrected, weights=[1, 9], axis=1) - model[:, 0]
+    assert np.max(np.abs(average - first_model)) > 1
+    column = "corrected-model_vector"
+    controls = samples | dict(xdatacolumn=column, ydatacolumn=column, avgtime="20")
+    expected, actual = (root / f"fourier-residual.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = np.array([point[:2] for point in rows(expected)], dtype=float)
+    np.testing.assert_allclose(selected, average, rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 3
+    with opened(varying) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), columns["MODEL_DATA"])
+    print("fourier-residual: 3 matching weighted residuals from distinct model samples", flush=True)
+
+
+def compare_scan_span(root, native):
+    root.mkdir()
+    _, times, vis, _, _ = time_scan_field_fixture(root)
+    with opened(vis, True) as table:
+        table.removecols(["MODEL_DATA"])
+    assert casa.setjy(str(vis), field="0", standard="manual", usescratch=False,
+                      fluxdensity=[7.25, 0, 0, 0])
+    controls = request(vis) | dict(field="", xaxis="time", xdatacolumn="", yaxis="real", spw="0:1",
+                                   avgtime="200", avgscan=True, ydatacolumn="corrected-model_vector",
+                                   expformat="txt")
+    expected, actual = (root / f"virtual-scan-span.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    [point] = rows(expected)
+    assert point[3:5] == ["1", "0"]
+    np.testing.assert_allclose(float(point[0]), times[0] + 55, rtol=0, atol=.00051)
+    np.testing.assert_allclose(float(point[1]), (10 + 9 * 30) / 10 - 7.25, rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 1
+    np.testing.assert_allclose(float(rows(actual)[0][0]), times[0] + 55, rtol=0, atol=.00051)
+    with opened(vis) as table:
+        assert "MODEL_DATA" not in table.colnames()
+    print("virtual-scan-span: 1 matching averaged model expression coordinate", flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--native-bin", type=Path, required=True)
+    parser.add_argument("--calibrate-bin", type=Path)
+    parser.add_argument("--app-run", type=Path)
+    args = parser.parse_args()
+    assert casa.version_string() == "6.7.6.14"
+    assert version("casaplotms") == "2.9.1"
+    root = args.work.resolve()
+    root.mkdir()
+    os.environ["CASARS_MSEXPLORE_BIN"] = str(args.native_bin.resolve())
+    calibrate = args.calibrate_bin or args.native_bin.with_name("calibrate")
+    os.environ["CASARS_CALIBRATE_BIN"] = str(calibrate.resolve())
+    from casars.tasks import plotms as native
+
+    with chdir(root), plotms_launcher(args.app_run):
+        compare_averaged_expressions(root, native)
+        compare_scan_span(root / "spans", native)
+        compare_varying_fourier_expression(root / "fourier-model", native)
+
+
+if __name__ == "__main__":
+    main()

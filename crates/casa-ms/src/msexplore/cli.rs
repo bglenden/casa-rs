@@ -415,6 +415,7 @@ fn run_visibility_plot(
     let mut axis_columns = options.plotms_axis_columns();
     let extended_derived = calibration.is_none()
         && axis_columns.is_some_and(|columns| options.supports_extended_derived(columns));
+    let implicit_derived_model = atmosphere.is_none() && !options.avgfield;
     let raw_symbols = (pointing.is_some()
         || axis_columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
     .then(|| plotms_options::raw_symbol_visibility(task));
@@ -430,7 +431,12 @@ fn run_visibility_plot(
             options.plotms_averaging_active(),
         )?;
         if let Some((storage, axis)) = options.derived_average_storage(*columns, adjusted) {
-            plotms_columns::check_averaged_derived_storage(&ms, storage, axis)?;
+            plotms_columns::check_averaged_derived_storage(
+                &ms,
+                storage,
+                axis,
+                implicit_derived_model,
+            )?;
         }
         prefer_float_data = use_float;
         if phasecenter.is_some()
@@ -503,6 +509,7 @@ fn run_visibility_plot(
                     pointing,
                     phasecenter,
                     extended_derived,
+                    implicit_derived_model,
                 },
                 prefer_float_data,
                 load_models,

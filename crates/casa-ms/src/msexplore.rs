@@ -2749,6 +2749,7 @@ struct PlotMsColumnSelection<'a> {
     pointing: Option<plotms_pointing::PointingAxes>,
     phasecenter: Option<MDirection>,
     extended_derived: bool,
+    implicit_derived_model: bool,
 }
 
 fn build_msexplore_plot_payload_validated(
