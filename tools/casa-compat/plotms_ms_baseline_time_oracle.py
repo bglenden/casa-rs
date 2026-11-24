@@ -650,6 +650,26 @@ def compare_channel_antenna_averages(root, native, weighted, start, base):
         weights = np.where(table.getcol("ANTENNA2") == 2, 3, 1).astype(np.float32)
         table.putcol("WEIGHT", np.broadcast_to(weights, table.getcol("WEIGHT").shape).copy())
         table.putcol("SIGMA", np.ones_like(table.getcol("SIGMA")))
+    split, signed, zero, flagged = (root / f"channel-antenna-{name}.ms"
+                                    for name in ("split", "signed", "zero", "flagged"))
+    for path in (split, signed, zero, flagged):
+        copy_ms(source, path)
+        with opened(path, True) as table:
+            if path == flagged:
+                table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
+                continue
+            weights = table.getcol("WEIGHT_SPECTRUM")
+            distant = table.getcol("ANTENNA2") == 2
+            if path == split:
+                weights[0, 1, ~distant] = 2
+                sigmas = table.getcol("SIGMA_SPECTRUM")
+                sigmas[0, 1, ~distant] = .5
+                table.putcol("SIGMA_SPECTRUM", sigmas)
+            elif path == signed:
+                weights[0, :2, distant] *= -1
+            else:
+                weights[0] = 0
+            table.putcol("WEIGHT_SPECTRUM", weights)
     controls = base | dict(vis=str(source), antenna="A0&A1;A0&A2", correlation="XX", spw="0:0~3",
                            avgchannel="2", xaxis="amp", yaxis="phase", scalar=True,
                            title="Channel and per-antenna averages")
@@ -677,6 +697,10 @@ def compare_channel_antenna_averages(root, native, weighted, start, base):
         ("scalar-channel-antenna", {}, values, ids),
         ("masked-channel-antenna", dict(correlation="XX,XY"), masked_values, masked_ids),
         ("row-weight-channel-antenna", dict(vis=str(row_weights), correlation="XX,XY"), masked_values, masked_ids),
+        ("split-spectra-channel-antenna", dict(vis=str(split)),
+         [(amplitude * 17 / 30, phase + 60), values[1], (amplitude * .7, -phase), *values[3:]], ids),
+        ("signed-spectrum-channel-antenna", dict(vis=str(signed)),
+         [(amplitude / 4, phase), *values[1:]], ids),
         ("vector-channel-antenna", dict(xaxis="real", yaxis="imag", scalar=False),
          [(-1.4375, 18.5), (-5.75, 18.5), (.25, -14), (1, -14), (-2, -20), (-8, -20)], ids),
         ("frequency-channel-antenna", dict(xaxis="frequency"),
@@ -702,6 +726,9 @@ def compare_channel_antenna_averages(root, native, weighted, start, base):
         if name == "scalar-channel-antenna":
             compare_figure(root, native, request_args, expected,
                            (controls["title"], "Amp", "Phase:corrected (degrees)"))
+    for name, source in (("zero-calibrated-channel-antenna", zero), ("all-flagged-channel-antenna", flagged)):
+        compare_empty_export(root, native, name, controls | dict(vis=str(source)),
+                             ("Amp", "Phase:corrected (degrees)"))
 
 
 def main():
