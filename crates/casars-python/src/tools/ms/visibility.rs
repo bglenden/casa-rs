@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read row-axis visibility records from the current MS attachment.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use casa_ms::tool_visibility;
-use casa_tables::{Table, TableOptions, TablePartNames};
+use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyListMethods, PyString};
@@ -24,6 +24,7 @@ pub(super) struct VisibilityState {
 struct VisibilityMain {
     table: Table,
     members: Vec<Table>,
+    reference: Option<PlainReferenceRead>,
     publication: Vec<(TableFiles, Option<TableStamp>)>,
 }
 
@@ -56,18 +57,25 @@ impl VisibilityMain {
             publication.push((files, stamp));
         })
         .map_err(runtime_error)?;
-        let members = Self::open_plain_members(path)?;
+        let (members, reference) = match Table::immediate_part_names(path, path)
+            .map_err(runtime_error)?
+        {
+            TablePartNames::Plain(_) => (Vec::new(), None),
+            TablePartNames::Reference(_) => (
+                Vec::new(),
+                Table::open_plain_reference(path).map_err(runtime_error)?,
+            ),
+            TablePartNames::Concatenation { parts, .. } => (Self::open_plain_members(parts)?, None),
+        };
         Ok(Self {
             table,
             members,
+            reference,
             publication,
         })
     }
 
-    fn open_plain_members(path: &Path) -> PyResult<Vec<Table>> {
-        let Some(paths) = Table::concatenated_source_paths(path).map_err(runtime_error)? else {
-            return Ok(Vec::new());
-        };
+    fn open_plain_members(paths: Vec<PathBuf>) -> PyResult<Vec<Table>> {
         let mut members = Vec::with_capacity(paths.len());
         for path in paths {
             if !matches!(
@@ -101,7 +109,7 @@ impl PyMsTool {
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
-            ms.getdata_rows(&items, increment, ifraxis || average)
+            ms.getdata_rows(&items, increment, ifraxis, average)
         })?;
         reply.into_python(py)
     }
@@ -112,7 +120,8 @@ impl AttachedMs {
         &mut self,
         items: &[String],
         increment: i64,
-        unsupported_axis: bool,
+        ifraxis: bool,
+        average: bool,
     ) -> PyResult<CasaValue> {
         let link = self.metadata_link();
         link.verify_directory().map_err(runtime_error)?;
@@ -132,8 +141,8 @@ impl AttachedMs {
         if count == 0 {
             return Ok(CasaValue::empty_record());
         }
-        if unsupported_axis {
-            return not_yet_implemented_in("ms", "getdata ifraxis or average", super::ISSUE);
+        if ifraxis {
+            return not_yet_implemented_in("ms", "getdata ifraxis", super::ISSUE);
         }
         let axis_info = items
             .iter()
@@ -162,9 +171,11 @@ impl AttachedMs {
             let record = tool_visibility::read_tool_visibility(
                 snapshot.ms.main_table(),
                 &[],
+                None,
                 &rows,
                 items,
                 Some(&snapshot.ms),
+                average,
             )
             .map_err(runtime_error)?;
             return Ok(visibility_record(record));
@@ -178,9 +189,16 @@ impl AttachedMs {
                 *row = prior[*row];
             }
         }
-        let record =
-            tool_visibility::read_tool_visibility(&main.table, &main.members, &rows, items, None)
-                .map_err(runtime_error)?;
+        let record = tool_visibility::read_tool_visibility(
+            &main.table,
+            &main.members,
+            main.reference.as_ref(),
+            &rows,
+            items,
+            None,
+            average,
+        )
+        .map_err(runtime_error)?;
         link.verify_directory().map_err(runtime_error)?;
         Ok(visibility_record(record))
     }

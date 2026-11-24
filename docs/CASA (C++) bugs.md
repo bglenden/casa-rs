@@ -11022,3 +11022,41 @@ row zero and leaves the attachment with zero selected rows.
 casa-rs preserves the empty stride result and returns typed empty UVW
 components and flag counts of shape `(0, 0)`. The axis metadata query
 raises while retaining the prior active row view (#1030).
+
+With `average=True`, CASA also indexes the missing channel and row
+dimensions of the rank-one empty visibility array. The pinned control
+reported DATA shape `(0, 1)`. casa-rs returns deterministic averaged shapes
+`(0, 0)` for data and `(0, 0, 1)` for flags, with typed empty weights.
+
+On the 30-row control, `getdata(['data', 'DATA'], increment=3, average=True)`
+raises because the first reduction consumed its temporary field. CASA then
+leaves the 10-row stride selected. casa-rs reports the duplicate averaging
+error and retains the original active rows.
+
+## MS visibility averaging uses the wrong row and correlation weights
+
+In CASA 6.7.6.14, `ms.getdata(['data', 'flag', 'weight'], average=True)`
+advances a flattened WEIGHT pointer once per row and applies that value
+to every correlation and channel. WEIGHT instead has a separate cell for
+each correlation and row. For six rows with first-channel correlation 0
+values `[1, 9, 17, 25, 33, 41]`, weights `[1, 3, 5, 7, 9, 11]`, and the
+second value flagged, CASA returns 29.631578. The unflagged weighted mean
+is 30.575758. The stock NGC 5921 `test_getdata_args` also records CASA's
+flattened-weight result.
+
+casa-rs applies each unflagged visibility's own row and correlation
+weight before projecting its amplitude, phase, real, or imaginary part.
+The original test stays verbatim, and an independent weighted regression
+checks the corrected scientific result (#1030).
+[Pinned casacore averaging loop](https://github.com/casacore/casacore/blob/aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6/ms/MSSel/MSSelUtil2.tcc#L127-L147)
+
+## Averaging the same MS sigma field twice can exhaust memory
+
+For an ordinary MS with a nonempty SIGMA matrix, CASA 6.7.6.14
+`ms.getdata(['avg_sigma', 'sigma'], average=True)` reduces SIGMA twice.
+The second call supplies a vector to a routine that indexes dimensions
+of a matrix or cube. On the 30-row control the process consumed one CPU
+and grew past 5 GiB of resident memory before it was stopped.
+
+casa-rs computes the root sum of squares over the row axis once and
+retains the raw array returned for the literal `avg_sigma` item (#1030).
