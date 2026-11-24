@@ -18,9 +18,13 @@ def test_ms_selectinit_uses_the_active_view_and_resets_to_original(two_spws_data
         assert reader.selectinit() is False
         assert reader.open(two_spws_dataset)
         total = reader.nrow(True)
+        assert reader.msselect({"field": "F", "scan": "1~2"}, onlyparse=True)
+        np.testing.assert_array_equal(reader.msselectedindices()["scan"], [1, 2])
         assert reader.selectinit()
         first = reader.nrow(True)
         assert 0 < first < total
+        np.testing.assert_array_equal(reader.msselectedindices()["field"], [0])
+        assert reader.msselectedindices()["scan"].size == 0
         assert reader.getdata("data")["data"].shape == (2, 4, first)
         assert reader.selectchannel(2, 1, 1, 2)
         subset = reader.getdata(["data", "axis_info"])
@@ -39,6 +43,29 @@ def test_ms_selectinit_uses_the_active_view_and_resets_to_original(two_spws_data
         assert reader.getdata("data")["data"].shape == (2, 3, total - first)
         assert reader.selectchannel(2, 0, 1, 2)
         assert reader.getdata("data")["data"].shape == (2, 2, total - first)
+        assert reader.done()
+
+
+def test_ms_selectinit_all_rows_freezes_the_selected_view(native_dataset):
+    casa = pinned_casa()
+    path = str(native_dataset)
+    readers = [api.ms() for api in (casa, tools)]
+    count = None
+    for reader in readers:
+        assert reader.open(path)
+        if count is None:
+            count = reader.nrow(True)
+        assert reader.nrow(True) == count
+        assert reader.selectinit()
+    writer = casa.table()
+    assert writer.open(path, nomodify=False)
+    assert writer.addrows(1)
+    assert writer.done()
+    for reader in readers:
+        assert reader.nrow(True) == count
+        assert reader.nrow(False) == count + 1
+        assert reader.reset()
+        assert reader.nrow(True) == count + 1
         assert reader.done()
 
 

@@ -192,6 +192,26 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    pub(super) fn select_visibility_description(&mut self, description: i64) -> PyResult<bool> {
+        let link = self.metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        let main = self.visibility.main(&self.path)?;
+        let selected = tool_visibility::select_tool_data_description(
+            &main.table,
+            &main.members,
+            main.reference.as_ref(),
+            self.selected_rows.as_deref(),
+            description,
+        )
+        .map_err(runtime_error)?;
+        link.verify_directory().map_err(runtime_error)?;
+        let nonempty = !selected.is_empty();
+        self.set_selected_rows(Some(selected))?;
+        self.selection_state.use_implicit_selection();
+        self.visibility.set_initialized(nonempty);
+        Ok(nonempty)
+    }
+
     fn initialize_visibility(
         &mut self,
         link: &MetadataLink,

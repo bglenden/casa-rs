@@ -67,6 +67,45 @@ pub fn heterogeneous_row_shapes(ms: &MeasurementSet) -> MsResult<Option<Vec<usiz
     Ok(None)
 }
 
+/// Restrict the current MS tool view to one data description in row order.
+/// # Errors
+/// The selected rows or their required DATA_DESC_ID scalar cannot be read.
+pub fn select_tool_data_description(
+    main: &Table,
+    members: &[Table],
+    reference: Option<&PlainReferenceRead>,
+    active: Option<&[usize]>,
+    description: i64,
+) -> MsResult<Vec<usize>> {
+    let rows = active.map_or_else(
+        || Cow::Owned((0..main.row_count()).collect()),
+        Cow::Borrowed,
+    );
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let column = "DATA_DESC_ID";
+    let parts = member_rows(members, main.row_count(), &rows);
+    let mut ids = if !parts.is_empty() {
+        concatenate_scalars(&parts, &[column])?
+    } else if let Some(reference) = reference {
+        reference
+            .parent()
+            .required_scalar_columns_owned_for_rows(&[column], &reference.parent_rows(&rows)?)?
+    } else {
+        main.required_scalar_columns_owned_for_rows(&[column], &rows)?
+    };
+    let Some(RequiredScalarColumnValues::Int32(ids)) = ids.remove(column) else {
+        return Err(input("DATA_DESC_ID must contain an integer"));
+    };
+    Ok(rows
+        .iter()
+        .copied()
+        .zip(ids)
+        .filter_map(|(row, id)| (i64::from(id) == description).then_some(row))
+        .collect())
+}
+
 /// Smallest spectral-window channel count in the active row view.
 /// # Errors
 /// A data description or its spectral window cannot be read.

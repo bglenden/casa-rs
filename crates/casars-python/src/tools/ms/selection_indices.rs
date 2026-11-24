@@ -13,8 +13,7 @@ use pyo3::types::{PyBytes, PyBytesMethods, PyDict, PyDictMethods, PyString};
 
 use super::metadata_link::MetadataSnapshot;
 use super::visibility::missing_selection_integer;
-
-use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
+use super::{PyMsTool, runtime_error, strict_bool};
 use crate::convert::selector::listing_selector;
 use crate::convert::value::CasaValue;
 
@@ -58,7 +57,39 @@ impl PyMsTool {
             let Some(attached) = attached.as_mut() else {
                 return Ok(false);
             };
-            attached.apply_tool_selection(&request.unwrap_or_default(), onlyparse)
+            let request = request.unwrap_or_default();
+            let snapshot = attached
+                .metadata_link()
+                .snapshot(None)
+                .map_err(runtime_error)?;
+            let ms = &snapshot.ms;
+            let parsed =
+                ms.parse_ms_tool_selection(&request, &mut attached.selection_state.indices);
+            let parsed = match parsed {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    attached.selection_state.error = Some(error.to_string());
+                    return Ok(false);
+                }
+            };
+            let has_expression = parsed.has_row_expression();
+            let rows = (!onlyparse && has_expression).then(|| parsed.select_rows(ms));
+            attached.selection_state.error = None;
+            if let Some(rows) = rows {
+                let Ok(mut rows) = rows else {
+                    return Ok(false);
+                };
+                if let Some(previous) = &attached.selected_rows {
+                    for row in &mut rows {
+                        *row = previous[*row];
+                    }
+                }
+                let nonempty = !rows.is_empty();
+                attached.set_selected_rows(Some(rows))?;
+                Ok(nonempty)
+            } else {
+                Ok(has_expression)
+            }
         })
     }
 
@@ -83,14 +114,7 @@ impl PyMsTool {
                     "The data description id must be a list of positive integers",
                 ));
             }
-            let request = MsSelection {
-                msselect: Some(format!("DATA_DESC_ID IN [{datadescid}]")),
-                ..MsSelection::default()
-            };
-            let selected = attached.apply_tool_selection(&request, true)?
-                && attached.apply_tool_selection(&request, false)?;
-            attached.visibility.set_initialized(selected);
-            Ok(selected)
+            attached.select_visibility_description(datadescid)
         })
     }
 
@@ -151,39 +175,6 @@ impl PyMsTool {
             Ok(indices)
         })?;
         index_record(&indices, false).into_python(py)
-    }
-}
-
-impl AttachedMs {
-    fn apply_tool_selection(&mut self, request: &MsSelection, onlyparse: bool) -> PyResult<bool> {
-        let snapshot = self.metadata_link().snapshot(None).map_err(runtime_error)?;
-        let ms = &snapshot.ms;
-        let parsed = ms.parse_ms_tool_selection(request, &mut self.selection_state.indices);
-        let parsed = match parsed {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                self.selection_state.error = Some(error.to_string());
-                return Ok(false);
-            }
-        };
-        let has_expression = parsed.has_row_expression();
-        let rows = (!onlyparse && has_expression).then(|| parsed.select_rows(ms));
-        self.selection_state.error = None;
-        if let Some(rows) = rows {
-            let Ok(mut rows) = rows else {
-                return Ok(false);
-            };
-            if let Some(previous) = &self.selected_rows {
-                for row in &mut rows {
-                    *row = previous[*row];
-                }
-            }
-            let nonempty = !rows.is_empty();
-            self.set_selected_rows(Some(rows))?;
-            Ok(nonempty)
-        } else {
-            Ok(has_expression)
-        }
     }
 }
 
