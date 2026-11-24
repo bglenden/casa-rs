@@ -11184,3 +11184,13 @@ uncaught `ArrayConformanceError`. Its flagged-data cleanup reshapes the
 one-correlation converted data using the two-correlation recorded flag cube.
 casa-rs uses the converted flag axis to zero the masked Stokes values and
 returns the recorded FLAG shape and the requested Stokes data shape (#1030).
+
+## MS polarization reads can reuse the wrong recorded correlation order
+
+Interleave two data descriptions for the same spectral window. The first
+records `[RR, LL]`. The second records `[LL, RR]` with matching receptor
+products. In CASA 6.7.6.14, both `selectpolarization(['RR'])` and conversion
+to `['I', 'V']` can use the first description's order for a row in the
+second description. For a second-description row with real samples
+`[9, 10]`, CASA read RR as 9 and Stokes V as −0.5. casa-rs uses each row's
+recorded correlation order, giving RR 10 and V +0.5 (#1030).

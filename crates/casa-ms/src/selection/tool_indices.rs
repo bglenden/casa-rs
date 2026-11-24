@@ -326,7 +326,7 @@ fn polarization_projections(
             .map(|code| {
                 StokesType::from_name(code)
                     .filter(|stokes| *stokes != StokesType::Undefined)
-                    .ok_or_else(|| MsError::InvalidInput(format!("invalid polarization {code:?}")))
+                    .ok_or_else(|| MsError::NoPolarizationMatch(correlation.into()))
             })
             .collect::<MsResult<Vec<_>>>()?;
         if codes.is_empty() {
@@ -355,9 +355,7 @@ fn polarization_projections(
             }
         }
         if matches.is_empty() {
-            return Err(MsError::VersionError(format!(
-                "Poln. expression error: No match for polarization ID(s) (named {correlation})"
-            )));
+            return Err(MsError::NoPolarizationMatch(correlation.into()));
         }
         for (description_id, positions) in matches {
             append_correlations(&mut result, description_id, positions, &codes);

@@ -243,11 +243,85 @@ def test_ms_polarization_selectors_preserve_or_clear_state_like_casa(native_data
             np.testing.assert_array_equal(reader.getdata("axis_info")["axis_info"]["corr_axis"], ["I"])
         with pytest.raises(TypeError, match="list _wantedpol must contain strings"):
             reader.selectpolarization(["RR", 1])
+        before = reader.getdata("data")["data"]
+        assert reader.selectpolarization("0:1:LL") is False
+        result = reader.getdata(["data", "axis_info"])
+        np.testing.assert_array_equal(result["axis_info"]["corr_axis"], ["I"])
+        np.testing.assert_array_equal(result["data"], before, strict=True)
         assert reader.selectpolarization(["missing"]) is False
         np.testing.assert_array_equal(reader.getdata("axis_info")["axis_info"]["corr_axis"], ["RR", "LL"])
         assert reader.selectpolarization("0:ll")
         np.testing.assert_array_equal(reader.getdata("axis_info")["axis_info"]["corr_axis"], ["LL"])
         assert reader.done()
+
+
+def test_ms_polarization_cannot_convert_an_empty_active_view(native_dataset):
+    for api in (pinned_casa(), tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.msselect({"taql": "ANTENNA1 < 0"}) is False
+        assert reader.nrow(True) == 0
+        assert reader.selectpolarization("I") is False
+        assert reader.getdata("data") == {}
+        assert reader.done()
+
+
+def test_ms_polarization_matches_uncomputed_generic_products(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    labels = ["PP", "PQ", "QP", "QQ", "RCircular", "LCircular", "Linear"]
+    expected = np.zeros((len(labels), *raw["data"].shape[1:]), dtype=np.complex128)
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.selectpolarization(labels)
+        result = reader.getdata(["axis_info", "data"])
+        np.testing.assert_array_equal(result["axis_info"]["corr_axis"], labels)
+        np.testing.assert_array_equal(result["data"], expected, strict=True)
+        assert reader.done()
+
+
+def test_ms_polarization_uses_each_row_description_correlation_order(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    add_description(casa, native_dataset)
+    path = str(native_dataset)
+    table = casa.table()
+    assert table.open(f"{path}/POLARIZATION", nomodify=False)
+    values = {name: table.getcell(name, 0) for name in table.colnames()}
+    values["CORR_TYPE"] = values["CORR_TYPE"][::-1]
+    values["CORR_PRODUCT"] = values["CORR_PRODUCT"][:, ::-1]
+    assert table.addrows(1)
+    for name, value in values.items():
+        assert table.putcell(name, 1, value)
+    assert table.done()
+    assert table.open(f"{path}/DATA_DESCRIPTION", nomodify=False)
+    assert table.putcell("POLARIZATION_ID", 1, 1)
+    assert table.done()
+    assert table.open(path, nomodify=False)
+    ids = np.arange(len(raw["time"]), dtype=np.int32) % 2
+    assert table.putcol("DATA_DESC_ID", ids)
+    assert table.done()
+
+    first, second = raw["data"].astype(np.complex64)
+    rr = np.where(ids == 0, first, second)
+    ll = np.where(ids == 0, second, first)
+    fields = ["data", "data_desc_id", "axis_info"]
+    for labels, expected in ((["RR"], rr[None]), (["I", "V"], np.stack([(rr + ll) / 2, (rr - ll) / 2]))):
+        for api in (casa, tools):
+            reader = api.ms()
+            assert reader.open(path)
+            assert reader.selectpolarization(labels)
+            result = reader.getdata(fields)
+            np.testing.assert_array_equal(result["data_desc_id"], ids.astype(np.int64), strict=True)
+            np.testing.assert_array_equal(result["axis_info"]["corr_axis"], labels)
+            if api is casa:
+                # CASA reuses the first description's correlation order for
+                # the next row, even though the second description reverses it.
+                wrong = first[0, 1] if labels == ["RR"] else (first[0, 1] - second[0, 1]) / 2
+                assert result["data"][-1, 0, 1] == wrong
+                assert result["data"][-1, 0, 1] != expected[-1, 0, 1]
+            else:
+                np.testing.assert_array_equal(result["data"], expected.astype(np.complex128), strict=True)
+            assert reader.done()
 
 
 def test_ms_polarization_empty_request_still_initializes_mixed_shapes(two_spws_dataset):

@@ -51,10 +51,14 @@ impl Conversion {
             .collect::<Vec<_>>();
         let plans = conversion.outputs.as_mut().expect("valid basis");
         for &output in outputs {
-            if output.code() <= 20 {
+            if (1..=20).contains(&output.code()) {
                 plans.push(Product::linear(coefficients(&basis, |stokes| {
                     project_product(output.code(), stokes)
                 })));
+            } else if (21..=27).contains(&output.code()) {
+                // CASA recognizes these generic and single-dish products but
+                // leaves their Complex output at zero when converting.
+                plans.push(Product::linear(Vec::new()));
             } else if matches!(
                 output,
                 StokesType::Ptotal

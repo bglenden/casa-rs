@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
-use casa_ms::{MeasurementSet, MsSelection};
+use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PySystemError, PyTypeError};
@@ -216,6 +216,9 @@ impl PyMsTool {
 impl AttachedMs {
     fn select_visibility_polarization(&mut self, wanted: &[String]) -> PyResult<bool> {
         let link = self.metadata_link();
+        if link.row_count().map_err(runtime_error)? == 0 {
+            return Ok(false);
+        }
         let Some(snapshot) = self.initialize_visibility(&link)? else {
             return Ok(false);
         };
@@ -233,7 +236,7 @@ impl AttachedMs {
                 }
                 VisibilityPolarization::stored(parsed.into_correlations())
             }
-            Err(_) => {
+            Err(MsError::NoPolarizationMatch(_)) => {
                 let Some(types) = wanted
                     .iter()
                     .map(|name| {
@@ -254,6 +257,7 @@ impl AttachedMs {
                 self.selection_state.clear_polarization_indices();
                 VisibilityPolarization::converted(&snapshot.ms, types).map_err(runtime_error)?
             }
+            Err(_) => return Ok(false),
         };
         self.visibility.polarization = Some(Arc::new(plan));
         Ok(true)
