@@ -8,8 +8,27 @@ use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 
 use super::selected_i32_values;
+use crate::selection::ResolvedMsSelectionRow;
 use crate::virtual_model::{VirtualModelEntry, selected_model_combinations, virtual_model};
 use crate::{MeasurementSet, initial_model_visibility, scratch_columns::virtual_model_fields};
+
+/// A selected virtual-model field overrides stored cells, including its
+/// fallback model in windows without a recipe.
+pub(super) fn refuse_averaged_virtual_fields(
+    ms: &MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+) -> Result<(), String> {
+    for field in virtual_model_fields(ms) {
+        if rows.iter().any(|row| row.field_id == field)
+            && virtual_model(ms, field)
+                .map_err(|error| error.to_string())?
+                .is_some()
+        {
+            return Err("PlotMS virtual MeasurementSet models are pending #1032".into());
+        }
+    }
+    Ok(())
+}
 
 /// Share one unit point model cell per selected data description.
 pub(super) fn default_cells(

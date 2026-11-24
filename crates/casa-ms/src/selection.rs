@@ -46,6 +46,7 @@ pub mod syntax;
 mod taql_geometry;
 mod taql_selection;
 pub mod time_expr;
+mod tool_indices;
 mod uv_expr;
 pub(crate) use uv_expr::UvDistanceSelection;
 
@@ -62,6 +63,7 @@ pub use time_expr::{
     LogicalRowFilter, TimeCondition, TimeDefaults, TimeListEntry, TimeSelection, TimeSelector,
     TimeSelectorDefaults, TimeTerm, msselection_first_logical_row, resolve_time_selector,
 };
+pub use tool_indices::{MsSelectionIndices, ParsedMsToolSelection};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RowGrammar {
@@ -503,12 +505,7 @@ impl MsSelection {
                 "selectdata=false cannot be combined with MeasurementSet selectors".to_string(),
             ));
         }
-        let mut compiled = parser::selection_from_options(
-            ms,
-            &self.to_summary_options(),
-            grammar,
-            rows_per_block,
-        )?;
+        let mut compiled = CompiledMsSelection::new();
         if let Some(value) = self.data_description.as_deref() {
             compiled = compiled.data_description(
                 &crate::selection::syntax::parse_numeric_id_selector(value, "data-description")?,
@@ -519,7 +516,13 @@ impl MsSelection {
                 value, "state",
             )?);
         }
-        Ok(compiled)
+        parser::selection_from_options(
+            ms,
+            &self.to_summary_options(),
+            compiled,
+            grammar,
+            rows_per_block,
+        )
     }
 
     /// Select rows matching the given FIELD_IDs.
@@ -970,10 +973,7 @@ impl CompiledMsSelection {
         };
 
         let taql_started_at = Instant::now();
-        let mut rows = taql_selection::select_rows(ms, &taql, structured_rows_per_block)?;
-        if first_only {
-            rows.truncate(1);
-        }
+        let rows = taql_selection::select_rows(ms, &taql, structured_rows_per_block, first_only)?;
         log_selection_profile(
             "apply_taql",
             apply_started_at.elapsed().as_nanos() as u64,

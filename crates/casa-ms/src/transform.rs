@@ -63,7 +63,9 @@ mod visibility_columns;
 
 pub use baseline::{SpectrumBaseline, SpectrumRow, SpectrumWeights};
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
-pub(crate) use channel_average::{WeightKind, visibility_weight_kind, weight_from_sigma};
+pub(crate) use channel_average::{
+    WeightKind, mean_weight_preferring_unflagged, visibility_weight_kind, weight_from_sigma,
+};
 use continuum::ContinuumFit;
 pub use continuum::ContinuumFitOptions;
 use convolution::{SpectralOperation, SpectrumOperator};
@@ -71,10 +73,12 @@ pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 pub use input_view::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use main_arrays::MainArrayBlock;
+pub(crate) use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
 use subtable_copy::copy_subtables;
 pub use task_history::{TransformTaskHistory, append_task_history};
+pub(crate) use time_average::{PlotTimeGroups, selected_plot_time_groups};
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
 
@@ -872,7 +876,7 @@ fn mstransform_staged(
     } else {
         selection_metadata::sort_selected_rows(
             input.main_table(),
-            request,
+            &request.input_ms,
             selected_rows,
             selected_ddids,
             order,

@@ -198,6 +198,11 @@ def _run_task(
     else:
         resolved = TaskParameters.defaults(task, workspace=resolved_workspace)
     if values:
+        if task == "setjy" and isinstance(fluxdict := values.get("fluxdict"), Mapping):
+            names = fluxdict.get("spwName")
+            if getattr(getattr(names, "dtype", None), "kind", None) == "S":
+                # Keep the byte labels printable in HISTORY. Model selection uses spwID.
+                values["fluxdict"] = dict(fluxdict, spwName=repr(names.tolist()))
         if task in ("split", "mstransform"):
             if "correlation" in values:
                 try:
@@ -312,6 +317,15 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
         return _call_jyperk(name, values)
     if name == "getantposalma":
         return _call_getantposalma(values)
+    if name == "setjy":
+        try:
+            return run(name, **values).value
+        except TaskExecutionError as error:
+            message = error.completion.message or ""
+            if (message.startswith("usescratch=False and standard=Butler-JPL-Horizons")
+                or (message.startswith("Table ") and message.endswith(" does not exist"))):
+                raise RuntimeError(message) from error
+            raise
     if name == "sdcal":
         _validate_required_path(values, "infile", arguments["infile"], search_data=True)
         if isinstance(arguments["spwmap"], dict):
@@ -329,8 +343,17 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 "Spwmap type must be list or dictionary.",
             ) or message.startswith("Table doesn't exist: "):
                 raise Exception(message) from error
-            if message == "Error in Calibrater::setapply.":
+            if (message == "Error in Calibrater::setapply."
+                or message.startswith("overwrite is False and output file exists:")
+                or message.startswith("Error in data selection specification: State Expression: ")
+                or (error.completion.parameter == "fraction" and message.startswith("Invalid fraction value ("))
+                or (message.startswith("Applytable '") and message.endswith("' is not a caltable format"))):
                 raise RuntimeError(message) from error
+            raise
+        except TaskParameterError as error:
+            if (error.completion.parameter == "fraction"
+                and error.completion.message == "Too many edge points. fraction must be < 0.5."):
+                raise ValueError(error.completion.message) from error
             raise
     if name == "sdgaincal":
         mode = arguments["calmode"]
@@ -1980,25 +2003,32 @@ def _execute_task(
         environment.pop("CASARS_BANDPASS_COMPLETED_PAGES", None)
         if bandpass_completed_pages is not None:
             environment["CASARS_BANDPASS_COMPLETED_PAGES"] = str(bandpass_completed_pages)
+    table_write = None
+    if task == "clearcal" and (vis := resolved.get("vis")):
+        table_write = _native().prepare_task_table_write(workspace / vis[0])
     try:
-        # The task runs in its own session, so a terminal's Ctrl-C reaches
-        # Python alone, which passes it on once, in a terminal as in a
-        # notebook: a second interrupt ends the imager at once.
-        process = subprocess.Popen(
-            command,
-            cwd=workspace,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            start_new_session=True,
-            env=environment,
-        )
-    except OSError as error:
-        raise TaskInvocationError(f"cannot start {task} ({command[0]}): {error}") from error
-    stdout, stderr = _communicate(process, invocation.stdin or "")
+        try:
+            # The task runs in its own session, so a terminal's Ctrl-C reaches
+            # Python alone, which passes it on once, in a terminal as in a
+            # notebook: a second interrupt ends the imager at once.
+            process = subprocess.Popen(
+                command,
+                cwd=workspace,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                start_new_session=True,
+                env=environment,
+            )
+        except OSError as error:
+            raise TaskInvocationError(f"cannot start {task} ({command[0]}): {error}") from error
+        stdout, stderr = _communicate(process, invocation.stdin or "")
+    finally:
+        if table_write is not None:
+            table_write.release()
 
     if payload is not None:
         try:

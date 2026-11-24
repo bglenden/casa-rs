@@ -101,6 +101,7 @@ pub(super) fn build(
                     let display = MsScatterPlotMsMetadata {
                         channel: grid.display_channels[bin],
                         average_time: sample.average_time,
+                        averaging_group: None,
                     };
                     let result = |y| CurveSample {
                         x: sample.x,

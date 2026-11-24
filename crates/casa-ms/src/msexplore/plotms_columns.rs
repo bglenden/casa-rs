@@ -9,7 +9,23 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use super::{ChannelBin, FloatGrid, MsAxis, MsDataColumn, MsPlotSpec, PlotMsInput};
 use crate::MeasurementSet;
 use crate::schema::main_table::OptionalMainColumn;
-use crate::transform::{WeightKind, visibility_weight_kind, weight_from_sigma};
+use crate::transform::{
+    WeightKind, mean_weight_preferring_unflagged, visibility_weight_kind, weight_from_sigma,
+};
+
+pub(super) fn uses_integration_baseline_average(spec: &MsPlotSpec) -> bool {
+    spec.averaging.avgbaseline
+        && spec.averaging.avgtime.is_none()
+        && !spec.averaging.avgscan
+        && !spec.averaging.avgfield
+        && !spec.averaging.avgantenna
+        && !spec.averaging.avgspw
+        && !spec.averaging.scalar
+        && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
+        && (spec.x_axis.is_visibility_math()
+            || matches!(spec.x_axis, MsAxis::Time | MsAxis::Channel)
+            || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
+}
 
 pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) -> bool {
     axes.into_iter()
@@ -49,22 +65,23 @@ pub(super) fn check_averaging(
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ChannelWeightKinds {
+pub(super) struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
     pub(super) primary: WeightKind,
+    pub(super) row_weight: WeightKind,
 }
 
-impl ChannelWeightKinds {
+impl PlotMsWeightKinds {
     pub(super) fn uses(self, kind: WeightKind) -> bool {
         self.primary == kind || self.axes.contains(&kind)
     }
 }
 
-pub(super) fn channel_weight_kinds(
+pub(super) fn weight_kinds(
     ms: &MeasurementSet,
     spec: &MsPlotSpec,
     input: &PlotMsInput<'_>,
-) -> ChannelWeightKinds {
+) -> PlotMsWeightKinds {
     let primary = spec.data_column;
     let columns = [
         input.x_data_column.unwrap_or(primary),
@@ -114,10 +131,37 @@ pub(super) fn channel_weight_kinds(
         };
         visibility_weight_kind(column, has_observed, has_corrected, false)
     };
-    ChannelWeightKinds {
+    PlotMsWeightKinds {
         axes: columns.map(kind),
         primary: kind(primary),
+        row_weight: if has_corrected {
+            WeightKind::Calibrated
+        } else {
+            kind(primary)
+        },
     }
+}
+
+/// The baseline reducer receives the transform's scalar weight, averaged
+/// across the output channels of the first selected correlation.
+pub(super) fn channel_averaged_row_weight(
+    weights: Option<&FloatGrid>,
+    correlation: usize,
+    bins: &[ChannelBin],
+    flags: &ndarray::ArrayView2<'_, bool>,
+) -> f64 {
+    f64::from(mean_weight_preferring_unflagged(bins.iter().map(|bin| {
+        let mut sums = [0.0, 0.0];
+        let mut all_flagged = true;
+        for channel in bin.channels() {
+            let flagged = flags[(correlation, channel)];
+            all_flagged &= flagged;
+            sums[usize::from(flagged)] += weights.map_or(1.0, |grid| {
+                grid.values[correlation * grid.chan_count + channel] as f32
+            });
+        }
+        (all_flagged, sums[usize::from(all_flagged)])
+    })))
 }
 
 pub(super) fn bin_has_weight(
@@ -126,11 +170,19 @@ pub(super) fn bin_has_weight(
     bin: &ChannelBin,
     flags: &ndarray::ArrayView2<'_, bool>,
 ) -> bool {
+    bin_weight(spectrum, corr, bin, flags) > 0.0
+}
+
+pub(super) fn bin_weight(
+    spectrum: &FloatGrid,
+    corr: usize,
+    bin: &ChannelBin,
+    flags: &ndarray::ArrayView2<'_, bool>,
+) -> f64 {
     bin.channels()
         .filter(|&channel| !flags[(corr, channel)])
         .map(|channel| spectrum.values[corr * spectrum.chan_count + channel])
-        .sum::<f64>()
-        > 0.0
+        .sum()
 }
 
 pub(super) fn inverse_variance(spectrum: &FloatGrid) -> FloatGrid {

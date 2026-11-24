@@ -12,7 +12,7 @@ task's generated module (`casatasks/<task>.py`, written by xml-casa from the
 task's XML) and its implementation (`casatasks/private/task_<task>.py`) say:
 
 - the call signature: every parameter in order, its kind and the `repr` of
-  its default;
+  its default, including named validator entries passed through `**kwargs`;
 - the validator schema each parameter is checked against: its CASA type
   (`cReqPath`, `cStr`, ...), its coercions, allowed values and bounds, read
   from the `schema = {...}` literal in the generated `__call__`;
@@ -254,7 +254,10 @@ def implementation_record(module_name: str | None, function_name: str | None) ->
     return None
 
 
-def parameters(task: Any, schema: dict[str, Any], described: dict[str, str]) -> list[dict[str, Any]]:
+def parameters(
+    task: Any, schema: dict[str, Any], described: dict[str, str],
+    impl_module: str | None, impl_function: str | None,
+) -> list[dict[str, Any]]:
     signature = inspect.signature(type(task).__call__)
     entries = []
     for parameter in signature.parameters.values():
@@ -270,6 +273,21 @@ def parameters(task: Any, schema: dict[str, Any], described: dict[str, str]) -> 
                 "description": described.get(parameter.name),
             }
         )
+    forwarded = [name for name in schema if name not in signature.parameters]
+    if forwarded and impl_module and impl_function and any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
+        module = sys.modules.get(impl_module) or __import__(impl_module, fromlist=[impl_function])
+        implementation = inspect.signature(getattr(module, impl_function)).parameters
+        for name in forwarded:
+            parameter = implementation.get(name)
+            if parameter is not None:
+                default = None if parameter.default is inspect.Parameter.empty else repr(parameter.default)
+                entries.insert(-1, {
+                    "name": name, "kind": "KEYWORD_ONLY", "default": default,
+                    "schema": schema[name], "description": described.get(name),
+                })
     return entries
 
 
@@ -324,7 +342,8 @@ def record(name: str, package: str, version: str) -> dict[str, Any]:
     tree = parse(text)
     header = text.splitlines()[:2]
     impl_module, impl_function = implementation(tree, generated)
-    names = set(inspect.signature(type(task).__call__).parameters) - {"self"}
+    schema = schema_of(call_function(tree))
+    names = (set(inspect.signature(type(task).__call__).parameters) | set(schema)) - {"self"}
     return {
         "casa_version": version,
         "task": name,
@@ -332,7 +351,7 @@ def record(name: str, package: str, version: str) -> dict[str, Any]:
         "source": source_path(inspect.getsourcefile(module) or ""),
         "generator": " ".join(" ".join(line.strip("# ").split()) for line in header),
         "parameters": parameters(
-            task, schema_of(call_function(tree)), descriptions(type(task).__doc__ or "", names)
+            task, schema, descriptions(type(task).__doc__ or "", names), impl_module, impl_function,
         ),
         "implementation": implementation_record(impl_module, impl_function),
         "defaults_call": probe(name, package),

@@ -13,6 +13,7 @@ fn resample(
     mode: crate::FrequencyInterpolation,
     relative: bool,
     parameter_family: Option<TimeParameterFamily>,
+    ordered_tsys: bool,
 ) -> Result<GainGrid, ApplyExecutionError> {
     let (relative_input, relative_output);
     let (input, output) = if relative {
@@ -46,12 +47,15 @@ fn resample(
     if matches!(parameter_family, Some(TimeParameterFamily::PositionAngle)) {
         return Ok(sampled);
     }
-    // StandardTsys evaluates sqrt(Tsys) and reverses the Jones inversion.
+    // StandardTsys uses sqrt(Tsys) as each station's correction. The regular
+    // apply path represents the same factor as a divisor.
     for (gain, flagged) in sampled.values.iter_mut().zip(&mut sampled.flags) {
         let tsys = gain.re;
         *flagged |= tsys <= 0.0 || tsys.is_nan();
         *gain = if *flagged {
             Complex32::new(1.0, 0.0)
+        } else if ordered_tsys {
+            Complex32::new(tsys.sqrt(), 0.0)
         } else {
             Complex32::new(1.0 / tsys.sqrt(), 0.0)
         };
@@ -100,7 +104,10 @@ pub(super) fn prepare(
     // A scalar is broadcast during application. On an aligned, unflagged
     // axis CASA copies the time interpolation result without reconstructing
     // it again. In both cases the ordered applicator can reuse this grid.
+    let ordered_tsys =
+        ordered_gain && matches!(table.time_parameter_family, Some(TimeParameterFamily::Tsys));
     let unchanged = ordered_gain
+        && !ordered_tsys
         && (gain.channel_count == 1
             || (input == output.channel_frequencies_hz && gain.flags.iter().all(|flag| !flag)));
     let prepared = if unchanged {
@@ -127,6 +134,7 @@ pub(super) fn prepare(
             } else {
                 table.time_parameter_family
             },
+            ordered_tsys,
         )?;
         Arc::new(if opacity {
             CalibrationGrid::SpectralOpacity(sampled)
@@ -208,6 +216,7 @@ pub(super) fn temperature_weight_factors(
     second: &CalibrationGrid,
     correlations: &[i32],
     channels: DataChannelGrid<'_>,
+    ordered_tsys: bool,
 ) -> Option<Vec<f32>> {
     let (CalibrationGrid::Complex(first), CalibrationGrid::Complex(second)) = (first, second)
     else {
@@ -217,14 +226,19 @@ pub(super) fn temperature_weight_factors(
         .map(|index| {
             let (left, right) = receptors(correlations, index)?;
             Some(
-                inverse_mean_tsys(first, left, channels)
-                    * inverse_mean_tsys(second, right, channels),
+                inverse_mean_tsys(first, left, channels, ordered_tsys)
+                    * inverse_mean_tsys(second, right, channels, ordered_tsys),
             )
         })
         .collect()
 }
 
-fn inverse_mean_tsys(grid: &GainGrid, receptor: usize, channels: DataChannelGrid<'_>) -> f32 {
+fn inverse_mean_tsys(
+    grid: &GainGrid,
+    receptor: usize,
+    channels: DataChannelGrid<'_>,
+    ordered_tsys: bool,
+) -> f32 {
     let receptor = receptor.min(grid.receptor_count.saturating_sub(1));
     let mut total = 0.0_f64;
     let mut count = 0;
@@ -232,8 +246,8 @@ fn inverse_mean_tsys(grid: &GainGrid, receptor: usize, channels: DataChannelGrid
         let channel = channels.original_index(index);
         let gain = f64::from(grid.value_at(receptor, channel).re);
         if !grid.flag_at(receptor, channel) && gain > 0.0 {
-            // The interpolated temperature is the inverse square of this gain.
-            total += 1.0 / (gain * gain);
+            let power = gain * gain;
+            total += if ordered_tsys { power } else { power.recip() };
             count += 1;
         }
     }
@@ -444,6 +458,7 @@ mod tests {
                 crate::FrequencyInterpolation::Linear,
                 false,
                 None,
+                false,
             )
             .unwrap();
             let expected = [
@@ -479,6 +494,7 @@ mod tests {
                 crate::FrequencyInterpolation::Linear,
                 false,
                 None,
+                false,
             )
             .unwrap();
             assert!(missing.flags.iter().all(|flag| *flag));
@@ -511,6 +527,7 @@ mod tests {
             crate::FrequencyInterpolation::Linear,
             false,
             None,
+            false,
         )
         .unwrap();
         assert!((result.values[[0, 0]] - Complex32::new(-1., 0.)).norm() < 1e-6);

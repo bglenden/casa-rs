@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Plain table names referenced by a table's on-disk metadata.
+//! Table paths referenced by a table's on-disk metadata.
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-use super::{Table, TableError};
+use super::{Table, TableError, TableOptions};
 use crate::storage::table_control::{TableDatResult, read_table_dat_dispatch};
 use crate::table_path::add_directory_for_link;
 
@@ -35,8 +35,9 @@ pub fn table_cache_name(path: &Path) -> Result<PathBuf, TableError> {
 fn visit(
     path: &Path,
     active: &mut HashSet<PathBuf>,
-    result: &mut BTreeSet<PathBuf>,
     depth: usize,
+    include_descriptors: bool,
+    record: &mut impl FnMut(&Path) -> Result<(), TableError>,
 ) -> Result<(), TableError> {
     if depth >= 128 {
         return Err(TableError::Storage(
@@ -48,16 +49,22 @@ fn visit(
     if !active.insert(real.clone()) {
         return Err(TableError::Storage("table reference cycle".into()));
     }
+    if include_descriptors {
+        record(path)?;
+    }
     match read_table_dat_dispatch(&path.join(crate::storage::TABLE_CONTROL_FILE))? {
         TableDatResult::Plain(_) => {
-            result.insert(table_cache_name(path)?);
+            if !include_descriptors {
+                record(path)?;
+            }
         }
         TableDatResult::Ref(reference) => {
             visit(
                 &add_directory_for_link(&reference.parent_relative_path, path),
                 active,
-                result,
                 depth + 1,
+                include_descriptors,
+                record,
             )?;
         }
         TableDatResult::Concat(concat) => {
@@ -65,8 +72,9 @@ fn visit(
                 visit(
                     &add_directory_for_link(part, path),
                     active,
-                    result,
                     depth + 1,
+                    include_descriptors,
+                    record,
                 )?;
             }
         }
@@ -149,7 +157,34 @@ impl Table {
             return Ok(Vec::new());
         };
         let mut paths = BTreeSet::new();
-        visit(path, &mut HashSet::new(), &mut paths, 0)?;
+        visit(path, &mut HashSet::new(), 0, false, &mut |path| {
+            paths.insert(table_cache_name(path)?);
+            Ok(())
+        })?;
         Ok(paths.into_iter().collect())
+    }
+
+    /// Open a table and refresh the tile cache across its persisted layout.
+    ///
+    /// The callback runs before reading each path's descriptor so a caller
+    /// can capture publication stamps for the full metadata dependency chain.
+    /// Relative links retain their on-disk interpretation and paths shared by
+    /// multiple branches can be visited more than once. Cells remain lazy.
+    ///
+    /// # Errors
+    /// A path is missing, cyclic, too deeply nested, or has invalid metadata.
+    #[doc(hidden)]
+    pub fn open_with_layout_paths(
+        options: TableOptions,
+        mut record: impl FnMut(&Path),
+    ) -> Result<Self, TableError> {
+        visit(options.path(), &mut HashSet::new(), 0, true, &mut |path| {
+            record(path);
+            if path != options.path() {
+                crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(path);
+            }
+            Ok(())
+        })?;
+        Self::open(options)
     }
 }

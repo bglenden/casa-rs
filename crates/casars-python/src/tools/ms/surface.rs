@@ -188,7 +188,7 @@ const METHODS: &[Method] = &[
             param("average", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Status::Partial,
     ),
     method(
         "getdataold",
@@ -298,7 +298,7 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method("msselectedindices", &[], R::Any, No),
+    method("msselectedindices", &[], R::Any, Yes),
     method(
         "msseltoindex",
         &[
@@ -314,7 +314,7 @@ const METHODS: &[Method] = &[
             param("taql", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("name", &[], R::Any, Yes),
     method(

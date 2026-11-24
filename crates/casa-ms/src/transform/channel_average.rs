@@ -347,19 +347,28 @@ impl<'a> ChannelAverages<'a> {
 
     fn mean_bins(&self, values: &Array2<f32>) -> Array1<f32> {
         Array1::from_shape_fn(values.nrows(), |corr| {
-            let statistics = self.bin_statistics.row(corr);
-            let all_flagged = statistics.iter().all(|bin| bin.flagged);
-            let mut sum = 0.0;
-            let mut samples = 0;
-            for (&value, bin) in values.row(corr).iter().zip(statistics) {
-                if bin.flagged == all_flagged {
-                    sum += value;
-                    samples += 1;
-                }
-            }
-            sum / samples.max(1) as f32
+            mean_weight_preferring_unflagged(
+                self.bin_statistics
+                    .row(corr)
+                    .iter()
+                    .zip(values.row(corr).iter().copied())
+                    .map(|(bin, value)| (bin.flagged, value)),
+            )
         })
     }
+}
+
+/// Reduce channel weights, using flagged channels only when all are flagged.
+pub(crate) fn mean_weight_preferring_unflagged(bins: impl Iterator<Item = (bool, f32)>) -> f32 {
+    let mut sums = [0.0, 0.0];
+    let mut counts = [0, 0];
+    for (flagged, value) in bins {
+        let index = usize::from(flagged);
+        sums[index] += value;
+        counts[index] += 1;
+    }
+    let index = usize::from(counts[0] == 0);
+    sums[index] / counts[index].max(1) as f32
 }
 
 pub(super) fn unaveraged_spectra(

@@ -171,7 +171,9 @@ pub(super) fn write(
 ) -> Result<usize, String> {
     let scans = ScanTiming::read(ms.main_table())?;
     let spectral = ms.spectral_window().map_err(error_text)?;
-    let mut writer = CalibrationTableWriter::with_mode(
+    let output = crate::output::CalibrationOutput::prepare_single_dish_solve(destination, mode)
+        .map_err(error_text)?;
+    let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
             output: destination,
@@ -184,9 +186,9 @@ pub(super) fn write(
             include_polarization_basis: true,
             time_extra_precision_column: None,
         },
+        output,
         mode,
-    )
-    .map_err(error_text)?;
+    );
     let mut written = 0;
     let mut present_windows = BTreeSet::new();
     let mut channel_widths = BTreeMap::new();

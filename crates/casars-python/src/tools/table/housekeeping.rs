@@ -12,6 +12,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::TryLockError;
 
 use casa_tables::{EndianFormat, LockType, Table, TableOptions, add_directory};
 use casa_types::{RecordValue, Value};
@@ -315,10 +316,10 @@ impl State {
     /// tables locked by the user or permanently keep theirs. Always `True`,
     /// with or without a table. A tool busy in another thread is not asked.
     pub(super) fn clearlocks(&mut self) -> Reply {
-        let mut result = self.relinquish_auto_lock();
+        let mut result = self.relinquish_auto_lock(None);
         registry::for_each_other(self.id, |tool| {
             if let Some(tool) = tool {
-                let released = tool.relinquish_auto_lock();
+                let released = tool.relinquish_auto_lock(None);
                 if result.is_ok() {
                     result = released;
                 }
@@ -329,9 +330,24 @@ impl State {
     }
 
     /// Gives up the lock an automatic mode keeps between calls.
-    fn relinquish_auto_lock(&mut self) -> Result<(), Fail> {
+    pub(super) fn relinquish_auto_lock(&mut self, targets: Option<&[PathBuf]>) -> Result<(), Fail> {
         if let Some(open) = self.open.as_ref() {
-            let mut root = open.root();
+            let mut root = if let Some(targets) = targets {
+                let matches = std::iter::once(&open.root_name)
+                    .chain(&open.plain_paths)
+                    .filter_map(|path| path.canonicalize().ok())
+                    .any(|path| targets.contains(&path));
+                if !matches {
+                    return Ok(());
+                }
+                match open.root.try_lock() {
+                    Ok(root) => root,
+                    Err(TryLockError::Poisoned(error)) => error.into_inner(),
+                    Err(TryLockError::WouldBlock) => return Ok(()),
+                }
+            } else {
+                open.root()
+            };
             if root.lock.automatic()
                 && (root.table.has_lock(LockType::Read) || root.table.has_lock(LockType::Write))
             {

@@ -61,6 +61,8 @@ mod mscal_lookup;
 mod mscal_stokes;
 mod mscal_wavelengths;
 mod row_function;
+mod selection_filter;
+mod type_check;
 
 pub use ast::{IndexStyle, Statement};
 pub use calc::{CalcOutput, evaluate_calc};
@@ -70,6 +72,10 @@ pub use exec::{
 };
 pub use mscal_wavelengths::UvwWavelengthScale;
 pub use row_function::BoundRowFunction;
+#[doc(hidden)]
+pub use selection_filter::first_matching_row;
+#[doc(hidden)]
+pub use type_check::{RecordExpressionType, validate_record_expression};
 
 /// Parses a TaQL query string into an AST [`Statement`].
 ///

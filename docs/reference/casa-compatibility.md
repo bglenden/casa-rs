@@ -61,7 +61,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | sdatmcor | sdatmcor | yes | 29 | 29 | 0 | 0 | 0 | 0 |
 | sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
-| sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdcal | sdcal | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | sdfit | sdfit | yes | 21 | 21 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
@@ -1940,7 +1940,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 12, Implemented: 26, Not implemented: 1, Partial: 63, Unassessed: 0.
+Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 12, Implemented: 22, Not implemented: 1, Partial: 67, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1954,11 +1954,11 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `colindex` | `0` | `0`; `colindex` → `colindex` | Default only | Column location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `plotindex` | `0` | `0`; `plotindex` → `plotindex` | Default only | Index to address a subplot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `xaxis` | `''` | `''`; `xaxis` → `xaxis` | Partial | Plot x-axis (blank for default/current) [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `parangle`, `baseline`, `delay`, `antenna position`, `swp`, `u`, `tec`, `ant-parang`, `gamp`, `Antenna1`, `UVdist`, `WeightSpectrum`, `Baseline`, `flag`, `Real`, `switchedpower`, `timeint`, `WtSp`, `Ant-Elevation`, `GainReal`, `time_interval`, `uvdist_l`, `GainAmp`, `ant1`, `flagrow`, `Wt`, `Velocity`, `opac`, `Feed2`, `corr`, `imaginary`, `gainamp`, `Vwave`, `wwave`, `Frequency`, `observation`, `feed1`, `ant-azimuth`, `rate`, `Elevation`, `Intent`, `Row`, `swpower`, `antpos`, `ant-elevation`, `antenna`, `v`, `V`, `interval`, `sigmaspectrum`, `DelayRate`, `tsys`, `gainphase`, `Ant-Parangle`, `imag`, `Radial Velocity`, `UVwave`, `Observation`, `Poln`, `W`, `timeinterval`, `Channel`, `snr`, `SNR`, `frequency`, `Interval`, `uvdistl`, `disp`, `Imag`, `dispdelay`, `Feed1`, `rho`, `Ant-RA`, `delayrate`, `spgain`, `Antenna`, `Uwave`, `SigmaSpectrum`, `Azimuth`, `Scan`, `Tsys`, `polarization`, `intent`, `phase`, `amp`, `ant-parangle`, `SigmaSp`, `freq`, `wt*amp`, `channel`, `uwave`, `Flag`, `correlation`, `FlagRow`, `TEC`, `SwPower`, `GainPhase`, `GainImag`, `ant-parallacticangle`, `real`, `Time`, `weight`, `antenna2`, `gainimag`, `gimag`, `Antenna2`, `spw`, `gphase`, `Opac`, `parang`, `Amp`, `ant-ra`, `Sigma`, `amplitude`, `Ant-DEC`, `HourAngle`, `U`, `row`, `Wt*Amp`, `gainreal`, `chan`, `Field`, `DispDelay`, `hourang`, `vwave`, `radialvelocity`, `sigma`, `Antenna Position`, `Delay`, `uvwave`, `vel`, `uvdist`, `velocity`, `hourangle`, `poln`, `ant2`, `Phase`, `azimuth`, `Corr`, `parallacticangle`, `weightspectrum`, `Ant-Azimuth`, `wtsp`, ``, `Distance`, `opacity`, `antenna1`, `feed2`, `sigmasp`, `time`, `w`, `wt`, `field`, `greal`, `elevation`, `del`, `ant`, `ant-dec`, `Spw`, `scan`, `Wwave`, `ParAngle` | [paired](#plotms-evidence-paired) |
-| `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel averaging supports separately weighted stored visibility columns. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-float-data](#plotms-evidence-ms-float-data), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [ms-default-model](#plotms-evidence-ms-default-model), [ms-virtual-model](#plotms-evidence-ms-virtual-model), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates) |
+| `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-float-data](#plotms-evidence-ms-float-data), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [ms-default-model](#plotms-evidence-ms-default-model), [ms-virtual-model](#plotms-evidence-ms-virtual-model), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns) |
 | `xframe` | `''` | `''`; `xframe` → `xframe` | Default only | Coordinate frame to use for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `icrs`, `azelgeo`, `b1950`, `galactic`, ``, `j2000`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `xinterp` | `''` | `''`; `xinterp` → `xinterp` | Default only | Interpolation method for x-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: ``, `nearest`, `cubic spline`, `spline`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yaxis` | `''` | `''`; `yaxis` → `yaxis` | Partial | Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates) |
-| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged visibility ordinates and up to two channel-averaged ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and mixed visibility and metadata ordinate lists remain open. Channel averaging supports separately weighted stored visibility columns. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-ordinate-columns](#plotms-evidence-ms-ordinate-columns), [ms-float-data](#plotms-evidence-ms-float-data), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [ms-default-model](#plotms-evidence-ms-default-model), [ms-virtual-model](#plotms-evidence-ms-virtual-model), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates) |
+| `ydatacolumn` | `''` | `''`; `ydatacolumn` → `ydatacolumn` | Partial | Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged visibility ordinates and up to two channel-averaged ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-ordinate-columns](#plotms-evidence-ms-ordinate-columns), [ms-float-data](#plotms-evidence-ms-float-data), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [ms-default-model](#plotms-evidence-ms-default-model), [ms-virtual-model](#plotms-evidence-ms-virtual-model), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns) |
 | `yframe` | `''` | `''`; `yframe` → `yframe` | Default only | Coordinate frame to use for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yinterp` | `''` | `''`; `yinterp` → `yinterp` | Default only | Interpolation method for y-axis [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `yaxislocation` | `''` | `''`; `yaxislocation` → `yaxislocation` | Partial | Choose the left or right side. PlotMS groups more than two unaveraged MeasurementSet visibility ordinates by side. An omitted position defaults to left. A scalar location does not apply to an ordinate list. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `variant` | [paired](#plotms-evidence-paired), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates) |
@@ -1978,11 +1978,11 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `feed` | `''` | `''`; `feed` → `feed` | Partial | Feed numbers (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `msselect` | `''` | `''`; `msselect` → `msselect` | Partial | Apply a TaQL row expression to a modern calibration table. Refuse a selection with no solutions. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors) |
 | `averagedata` | `True` | `True`; `averagedata` → `averagedata` | Implemented | Enable data averaging parameters [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
-| `avgchannel` | `''` | `''`; `avgchannel` → `avgchannel` | Partial | Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns) |
-| `avgtime` | `''` | `''`; `avgtime` → `avgtime` | Implemented | Average over time (blank = False, otherwise value in seconds) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
-| `avgscan` | `False` | `False`; `avgscan` → `avgscan` | Implemented | Average over scans. Only valid with time averaging [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
-| `avgfield` | `False` | `False`; `avgfield` → `avgfield` | Implemented | Average over fields. Only valid with time averaging [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
-| `avgbaseline` | `False` | `False`; `avgbaseline` → `avgbaseline` | Implemented | Average over all baselines (mutually exclusive with avgantenna) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `avgchannel` | `''` | `''`; `avgchannel` → `avgchannel` | Partial | Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns), [ms-baseline-channel-columns](#plotms-evidence-ms-baseline-channel-columns) |
+| `avgtime` | `''` | `''`; `avgtime` → `avgtime` | Partial | Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns) |
+| `avgscan` | `False` | `False`; `avgscan` → `avgscan` | Partial | Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-scan-field-time-columns](#plotms-evidence-ms-scan-field-time-columns) |
+| `avgfield` | `False` | `False`; `avgfield` → `avgfield` | Partial | Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-scan-field-time-columns](#plotms-evidence-ms-scan-field-time-columns) |
+| `avgbaseline` | `False` | `False`; `avgbaseline` → `avgbaseline` | Partial | Vector-average selected baselines within each integration for stored MeasurementSet visibility axes. Use the scalar weight of the first selected correlation for all plotted visibility columns. Vector baseline averaging can follow channel averaging at each integration. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-baseline-columns](#plotms-evidence-ms-baseline-columns), [ms-baseline-channel-columns](#plotms-evidence-ms-baseline-channel-columns) |
 | `avgantenna` | `False` | `False`; `avgantenna` → `avgantenna` | Implemented | Average per antenna (mutually exclusive with avgbaseline) [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `avgspw` | `False` | `False`; `avgspw` → `avgspw` | Implemented | Average over all spectral windows [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `scalar` | `False` | `False`; `scalar` → `scalar` | Partial | Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns) |
@@ -2074,18 +2074,18 @@ Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-select
 
 **Partial** — Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine.
 
-Pointing-coordinate axes, mixed visibility and metadata ordinate masks, time-averaged independent ordinate columns and additional MS column forms are open.
+Pointing-coordinate axes, mixed visibility and metadata ordinate masks, additional averaging modes and additional MS column forms are open.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-ordinate-columns](#plotms-evidence-ms-ordinate-columns), [ms-float-data](#plotms-evidence-ms-float-data), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration), [ms-default-model](#plotms-evidence-ms-default-model), [ms-virtual-model](#plotms-evidence-ms-virtual-model), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-ordinate-columns](#plotms-evidence-ms-ordinate-columns), [ms-float-data](#plotms-evidence-ms-float-data), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [legacy-calibration](#plotms-evidence-legacy-calibration), [ms-default-model](#plotms-evidence-ms-default-model), [ms-virtual-model](#plotms-evidence-ms-virtual-model), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates), [ms-time-columns](#plotms-evidence-ms-time-columns).
 
 <a id="plotms-behavior-averaging"></a>
 ##### Average selected plot samples
 
-**Partial** — Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags.
+**Partial** — Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags. Ordinary vector time averaging uses the selected integrations, per-column weights and the MeasurementSet transform time groups. Channel averaging can follow ordinary vector time averaging. The primary channel weights determine which averaged bins render. Vector time bins can span the requested scan and field boundaries. Vector baseline averages use the visibility iterator order and preserve separate observations. Text exports use synthetic antenna IDs. For combined channel and baseline averages, each visibility column is averaged across channels before the baseline reducer applies the transformed scalar weight.
 
-Independent time-averaged columns, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032.
+Combined baseline and time cases, scalar, antenna and spectral-window averaging, fully masked exports, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032.
 
-Evidence: [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns).
+Evidence: [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns), [ms-scan-field-time-columns](#plotms-evidence-ms-scan-field-time-columns), [ms-baseline-columns](#plotms-evidence-ms-baseline-columns), [ms-baseline-channel-columns](#plotms-evidence-ms-baseline-channel-columns).
 
 <a id="plotms-behavior-pages"></a>
 ##### Lay out and export calibration pages
@@ -2340,7 +2340,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-channel-columns"></a>
 ##### ms-channel-columns
 
-**Same-input channel-averaged MeasurementSet visibility columns — passed.** Eleven paired text exports matched 228 averaged coordinates and their source metadata. Tests cover mixed flags, the separate DATA and CORRECTED_DATA weights, MODEL_DATA with and without additional columns, missing and undefined spectra, zero-weight bins, a shared abscissa column and an ignored scalar request. One 500 by 360 pixel PNG matched both ordinate layers and their 24 coordinates. Twelve additional model abscissa coordinates match with a weight ordinate. Independent time averaging remains pending. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with independent stored visibility columns, selected channel bins and nonuniform spectral weights.
+**Same-input channel-averaged MeasurementSet visibility columns — passed.** Eleven paired text exports matched 228 averaged coordinates and their source metadata. Tests cover mixed flags, the separate DATA and CORRECTED_DATA weights, MODEL_DATA with and without additional columns, missing and undefined spectra, zero-weight bins, a shared abscissa column and an ignored scalar request. One 500 by 360 pixel PNG matched both ordinate layers and their 24 coordinates. Twelve additional model abscissa coordinates match with a weight ordinate. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with independent stored visibility columns, selected channel bins and nonuniform spectral weights.
 
 - [https://github.com/bglenden/casa-rs/pull/2150](https://github.com/bglenden/casa-rs/pull/2150)
 - Revision: `33caea79f77e79e183d1fd07e095f18b0caed403`; CASA: `6.7.6.14`.
@@ -2356,6 +2356,57 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `aa362fcb0cc9517990409ad4403ad7a5c4e64d7e`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-multiple-visibility-ordinates-20261123.json`.
+
+<a id="plotms-evidence-ms-time-columns"></a>
+##### ms-time-columns
+
+**Same-input vector time-averaged MeasurementSet visibility columns — passed.** Nineteen paired text exports match 118 selected coordinates and their source metadata. The cases cover inverse sigma squared and corrected weights, model weights with and without CORRECTED_DATA, per-channel spectra, zero weights, mixed flags, omitted all-flagged bins, singleton timestamps, scan boundaries, reverse-ordered physical rows and complex cancellation. One 500 by 360 pixel PNG matches both labeled layers and all six artist coordinates. Three cases verify the pending diagnostics for weighted U and virtual models. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with two independent stored visibility ordinates and ordinary vector time averaging on the same selected MeasurementSets.
+
+- [https://github.com/bglenden/casa-rs/pull/2160](https://github.com/bglenden/casa-rs/pull/2160)
+- Revision: `8120364a6e18c50406992d1c38ff53b8a91cd1cc`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-time-columns-20261123.json`.
+
+<a id="plotms-evidence-ms-channel-time-columns"></a>
+##### ms-channel-time-columns
+
+**Same-input channel and vector time-averaged MeasurementSet visibility columns — passed.** Eight paired text exports match 54 selected coordinates and metadata. The tests cover nonuniform spectral weights, time-derived row weights, mixed flags, discarded incomplete channel bins and zero primary or secondary weights. One 500 by 360 pixel PNG matches both labeled layers and six artist coordinates. A fully masked result has an explicit pending diagnostic. Two additional cases cover 18 coordinates on a mixed FLOAT_DATA input. The native complex ordinate averages retain their unit input values and match the exported CASA bin metadata. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with two independent stored visibility ordinates and combined channel and ordinary vector time averaging.
+
+- [https://github.com/bglenden/casa-rs/pull/2163](https://github.com/bglenden/casa-rs/pull/2163)
+- [docs/CASA (C++) bugs.md](https://github.com/bglenden/casa-rs/blob/ccebf2574c89d1b765a3ebed5329c7134cd75480/docs/CASA%20%28C%2B%2B%29%20bugs.md)
+- Revision: `ccebf2574c89d1b765a3ebed5329c7134cd75480`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-channel-time-columns-20261123.json`.
+
+<a id="plotms-evidence-ms-scan-field-time-columns"></a>
+##### ms-scan-field-time-columns
+
+**Same-input MeasurementSet vector time averaging across scans and fields — passed.** Twelve paired text exports match 34 coordinates, the time midpoint and the source scan and field. Cases cover each boundary alone, both boundaries together, retained boundaries, channel averaging, scan and field color grouping and reverse-ordered physical rows. Three 500 by 360 pixel PNGs match both labeled layers and ten artist coordinates. A cross-field BARY transform stays pending. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs with independent stored MeasurementSet visibility ordinates and vector time averaging across selected scans and fields.
+
+- [https://github.com/bglenden/casa-rs/pull/2166](https://github.com/bglenden/casa-rs/pull/2166)
+- Revision: `8fc7e86358ae20807b5c9896d1e047eec7379e7e`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-scan-field-time-columns-20261124.json`.
+
+<a id="plotms-evidence-ms-baseline-columns"></a>
+##### ms-baseline-columns
+
+**Same-input MeasurementSet baseline-averaged visibility columns — passed.** Twelve paired text exports match 156 selected coordinates and metadata. The cases check the first selected correlation weight, the positive weight floor, cube and row flags, ignored spectra, synthetic antenna fields, vector cancellation and separate overlapping observations in iterator order. A 500 by 360 pixel PNG matches both labeled layers and 12 artist coordinates. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs vector baseline averaging at each integration for one or two stored MeasurementSet visibility ordinates.
+
+- [https://github.com/bglenden/casa-rs/pull/2168](https://github.com/bglenden/casa-rs/pull/2168)
+- Revision: `4250f63eb3105688b24aae3568fe6677f86872f3`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-baseline-columns-20261124.json`.
+
+<a id="plotms-evidence-ms-baseline-channel-columns"></a>
+##### ms-baseline-channel-columns
+
+**Same-input MeasurementSet channel and baseline visibility averages — passed.** Twelve paired text exports match 258 selected coordinates and metadata. The cases check separate channel spectra, row-weight and row-sigma fallbacks, model-only weights, flags, selected bins, frequencies, synthetic antenna fields, vector cancellation, a fully flagged first correlation and partly defined spectra under reversed physical order. A 500 by 360 pixel PNG matches both labeled layers and 24 artist coordinates. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs vector channel and baseline averaging at each integration for one or two stored MeasurementSet visibility ordinates.
+
+- [https://github.com/bglenden/casa-rs/pull/2169](https://github.com/bglenden/casa-rs/pull/2169)
+- Revision: `308d53e4ed7d5d9c95f4a5e4ada69d3ce57edf14`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_baseline_channels_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-baseline-channel-columns-20261124.json`.
 
 ### plotweather
 
@@ -3030,21 +3081,21 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 ### sdcal
 
-- CASA source: `casatasks/sdcal.py`, 14 parameters
+- CASA source: `casatasks/sdcal.py`, 15 parameters
 - Implementation: `casatasks/private/task_sdcal.py`, `sdcal` (line 23): 1 return statements, 13 raise statements
   - returns at line 30: `None`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
 - CASA's named parameters: yes
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: none
-- Shared parameters: 14, in CASA's order: yes
+- Shared parameters: 15, in CASA's order: yes
 - Defaults that differ: none
 
 #### sdcal parameter implementation
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`. Status counts: Default only: 0, Implemented: 14, Not implemented: 0, Partial: 0, Unassessed: 0.
+Audit baseline: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`. Status counts: Default only: 0, Implemented: 15, Not implemented: 0, Partial: 0, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -3064,6 +3115,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `field` | `''` | `''`; `field` → `field` | Implemented | Select reference and science fields. Tsys uses the whole observation when generating a composite prior. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
 | `spw` | `''` | `''`; `spw` → `spw` | Implemented | Select reference windows and science channels. Direct Tsys generation requires the all-window form. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
 | `scan` | `''` | `''`; `scan` → `scan` | Implemented | Select scan rows for sky generation and application. Direct Tsys generation requires the all-scan form. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Select observing intents for sky-table generation. Direct apply and Tsys generation keep the keyword inactive. The OTF and raster composites with Tsys use the local on-source selection. [ps](#sdcal-behavior-ps) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [intent](#sdcal-evidence-intent) |
 
 #### sdcal interacting modes and task behavior
 
@@ -3159,6 +3211,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1974`.
+
+<a id="sdcal-evidence-intent"></a>
+##### intent
+
+**Paired public CASA intent selection and unchanged upstream tests — passed.** All 65 applicable stock cases passed with both implementations. Upstream unconditionally skips serial CASA Multi-MS sky application. The named intent changed position switching from scans 1 and 3 to scan 1, selected the same map spectra as explicit scan selection, and preserved both Tsys composite outputs under an unused intent. Position-switch, OTF and OTF raster intent selection, inactive direct apply and Tsys intent, and the local sky-intent override in Tsys composites.
+
+- [tools/casa-compat/sdcal_position_switch_oracle.py](https://github.com/bglenden/casa-rs/blob/b3d09768e9728c85dca2ab73f02874369efd6942/tools/casa-compat/sdcal_position_switch_oracle.py)
+- [tools/casa-compat/sdcal_edges_oracle.py](https://github.com/bglenden/casa-rs/blob/b3d09768e9728c85dca2ab73f02874369efd6942/tools/casa-compat/sdcal_edges_oracle.py)
+- [https://github.com/bglenden/casa-rs/issues/1530](https://github.com/bglenden/casa-rs/issues/1530)
+- Revision: `b3d09768e9728c85dca2ab73f02874369efd6942`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/upstream_calibration_suite.py sdcal --casatestdata <pinned-casatestdata> --out <results>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/2161`.
 
 ### sdfit
 
@@ -3345,7 +3409,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `interp` | `''` | `''`; `interp` → `interp` | Implemented | Use one interpolation for all tables or align entries by table index. [preapply](#sdgaincal-behavior-preapply)<br>Catalog domain: `variant` | [paired](#sdgaincal-evidence-paired) |
 | `spwmap` | `[]` | `[]`; `spwmap` → `spwmap` | Implemented | Use the same flat window map for all priors or configure each prior table. [preapply](#sdgaincal-behavior-preapply)<br>Catalog domain: `variant` | [paired](#sdgaincal-evidence-paired) |
 | `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | Write a CASA-readable complex SDGAIN_OTFD calibration table, including a valid empty table when some integrations reach the solver but the group is short. [product](#sdgaincal-behavior-product)<br>Catalog domain: `path` (calibration_table) | [paired](#sdgaincal-evidence-paired) |
-| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Replace an existing table when requested and keep its contents when no solution reaches the solver. [product](#sdgaincal-behavior-product)<br>Catalog domain: `bool` | [paired](#sdgaincal-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Replace an existing calibration table or separate MeasurementSet when requested and keep its contents when no solution reaches the solver. [product](#sdgaincal-behavior-product)<br>Catalog domain: `bool` | [paired](#sdgaincal-evidence-paired), [stock](#sdgaincal-evidence-stock) |
 
 #### sdgaincal interacting modes and task behavior
 
@@ -3370,11 +3434,11 @@ Evidence: [paired](#sdgaincal-evidence-paired).
 <a id="sdgaincal-behavior-preapply"></a>
 ##### Per-table prior calibration
 
-**Implemented** — Apply actual time-varying prior corrections and mapped spectral Tsys before solving, with scalar and indexed interpolation and window lists.
+**Implemented** — Apply time-varying priors to complex or real single-dish data. Mapped Tsys uses CASA's station order and Float rounding, with scalar and indexed interpolation and window lists.
 
 Release and dataset-scale benchmarks follow functionality under #979.
 
-Evidence: [paired](#sdgaincal-evidence-paired).
+Evidence: [paired](#sdgaincal-evidence-paired), [stock](#sdgaincal-evidence-stock).
 
 <a id="sdgaincal-behavior-product"></a>
 ##### Complex calibration table interoperability
@@ -3420,6 +3484,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `8407207930378977daae4a812e8f64a5038d99f7`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdgaincal_oracle.py <new-dir>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1975`.
+
+<a id="sdgaincal-evidence-stock"></a>
+##### stock
+
+**Unchanged upstream single-dish gain cases — passed.** All 13 cases passed on each Python implementation without skips. The applied gain tables also passed the paired writer-reader comparison. Official double-circle maps, explicit replacement, separate and combined sky and Tsys priors on FLOAT_DATA, SPW mapping and single polarization.
+
+- [resources/casa-compat/upstream-calibration-tests/6.7.6.14/test_task_sdgaincal.py](https://github.com/bglenden/casa-rs/blob/b3d09768e9728c85dca2ab73f02874369efd6942/resources/casa-compat/upstream-calibration-tests/6.7.6.14/test_task_sdgaincal.py)
+- [tools/casa-compat/sdgaincal_oracle.py](https://github.com/bglenden/casa-rs/blob/b3d09768e9728c85dca2ab73f02874369efd6942/tools/casa-compat/sdgaincal_oracle.py)
+- Revision: `b3d09768e9728c85dca2ab73f02874369efd6942`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/upstream_calibration_suite.py sdgaincal --casatestdata <pinned-casatestdata> --out <results>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/2161`.
 
 ### sdsmooth
 

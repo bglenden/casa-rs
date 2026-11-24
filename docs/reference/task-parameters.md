@@ -12,7 +12,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 - Parameter surface schema version: `1`
 - Concepts: 974
 - Surfaces: 64 (64 task, 0 session)
-- Surface bindings: 1442
+- Surface bindings: 1443
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
@@ -74,7 +74,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Water-vapour Radiometer Calibration](#surface-wvrgcal)<br><code>wvrgcal</code> | task | 1 | <code>calibration</code> | 24 | Use ALMA radiometer measurements to calibrate atmospheric phase. |
 | [Polarization Calibration](#surface-polcal)<br><code>polcal</code> | task | 1 | <code>calibration</code> | 27 | Solve polarization leakage and cross-hand calibration. |
 | [Polarization from Gains](#surface-polfromgain)<br><code>polfromgain</code> | task | 1 | <code>calibration</code> | 5 | Estimate fractional linear polarization from receptor gain amplitude ratios. |
-| [Single-Dish Sky Calibration](#surface-sdcal)<br><code>sdcal</code> | task | 1 | <code>calibration</code> | 14 | Generate and apply single-dish sky and system-temperature calibration. |
+| [Single-Dish Sky Calibration](#surface-sdcal)<br><code>sdcal</code> | task | 1 | <code>calibration</code> | 15 | Generate and apply single-dish sky and system-temperature calibration. |
 | [Single-Dish Gain Calibration](#surface-sdgaincal)<br><code>sdgaincal</code> | task | 1 | <code>calibration</code> | 14 | Solve single-dish double-circle gain calibration. |
 | [Single-dish spectral smoothing](#surface-sdsmooth)<br><code>sdsmooth</code> | task | 1 | <code>calibration</code> | 14 | Convolve selected single-dish spectra and publish a MeasurementSet. |
 | [Single-dish spectral baselines](#surface-sdbaseline)<br><code>sdbaseline</code> | task | 1 | <code>calibration</code> | 38 | Fit, subtract and apply spectral baselines to selected single-dish observations. |
@@ -2173,6 +2173,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>field</code> | <code>ms.selection.field@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | CASA field selector text. Empty selects every field. |
 | <code>spw</code> | <code>ms.selection.spw@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal spw selector text. |
 | <code>scan</code> | <code>ms.selection.scan@r4</code> | <code>string</code> | <code>""</code>; optional | Selection | Applycal scan selector text. |
+| <code>intent</code> | <code>ms.selection.intent@r3</code> | <code>string</code> | <code>""</code>; optional | Selection | Intent selector. |
 
 <a id="surface-sdgaincal"></a>
 

@@ -117,10 +117,6 @@ pub fn clear_udfs() {
 ///
 /// User-defined functions registered via [`register_udf`] take precedence
 /// over built-in functions.
-#[expect(
-    clippy::too_many_lines,
-    reason = "predates the function-length limit; #705"
-)]
 pub fn call_function(
     name: &str,
     args: &[ExprValue],
@@ -138,8 +134,50 @@ pub fn call_function(
     if let Some(result) = udf_result {
         return result;
     }
+    call_builtin(&lower, name, args, ctx)
+}
 
-    match lower.as_str() {
+/// Validate a call's name and arity without reading a source row or calling
+/// a user-defined function. Builtins receive null placeholders for the
+/// supplied arguments so validation can use their existing dispatch.
+///
+/// # Errors
+/// The builtin is unknown or its number of arguments is invalid.
+pub(super) fn validate_function_call(name: &str, arguments: usize) -> Result<(), TaqlError> {
+    let lower = name.to_lowercase();
+    if with_registry(|reg| reg.contains_key(&lower)) {
+        return Ok(());
+    }
+    let row = casa_types::RecordValue::default();
+    let context = EvalContext {
+        row: &row,
+        row_index: 0,
+        style: super::ast::IndexStyle::Glish,
+        measures: None,
+    };
+    match call_builtin(&lower, name, &vec![ExprValue::Null; arguments], &context) {
+        Err(error @ (TaqlError::UnknownFunction { .. } | TaqlError::ArgumentCount { .. })) => {
+            Err(error)
+        }
+        _ => Ok(()),
+    }
+}
+
+pub(super) fn has_udf(name: &str) -> bool {
+    with_registry(|registry| registry.contains_key(&name.to_ascii_lowercase()))
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "predates the function-length limit; #705"
+)]
+fn call_builtin(
+    lower: &str,
+    name: &str,
+    args: &[ExprValue],
+    ctx: &EvalContext<'_>,
+) -> Result<ExprValue, TaqlError> {
+    match lower {
         "mscal.help" | "derivedmscal.help" => super::mscal_help::help(name, args),
         // ── Math constants ─────────────────────────────────────────
         "pi" => {
@@ -1055,7 +1093,7 @@ pub fn call_function(
         // ── Boolean array reductions ─────────────────────────────────
         "any" | "all" | "ntrue" | "nfalse" => {
             check_arity(name, args, 1)?;
-            masked_arrays::reduce_bool(&lower, &args[0])
+            masked_arrays::reduce_bool(lower, &args[0])
         }
 
         // ── Min/Max for arrays (1-arg forms) ─────────────────────────
@@ -1219,7 +1257,7 @@ pub fn call_function(
         }
         "arraydata" | "getarrdata" | "arraymask" | "getarrmask" | "negatemask" => {
             check_arity(name, args, 1)?;
-            masked_arrays::inspect(&lower, &args[0])
+            masked_arrays::inspect(lower, &args[0])
         }
         "marray" => {
             check_arity(name, args, 2)?;
@@ -1227,7 +1265,7 @@ pub fn call_function(
         }
         "replacemasked" | "replaceunmasked" => {
             check_arity(name, args, 2)?;
-            masked_arrays::replace(&lower, &args[0], &args[1])
+            masked_arrays::replace(lower, &args[0], &args[1])
         }
 
         // ── Array inspection (now functional) ────────────────────────
@@ -1408,7 +1446,7 @@ pub fn call_function(
         }
 
         _ if lower.starts_with("meas.") => {
-            super::meas_udf::call_meas_function_with_provider(&lower, args, ctx.measures)
+            super::meas_udf::call_meas_function_with_provider(lower, args, ctx.measures)
         }
 
         _ => Err(TaqlError::UnknownFunction {

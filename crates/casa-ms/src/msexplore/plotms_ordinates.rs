@@ -4,12 +4,15 @@
 use casa_types::Complex64;
 use ndarray::ArrayView2;
 
+use super::MsAxis;
 use super::{
     ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterPointRef,
     MsScatterSeries, PlotMsInput, PreparedSelectedDataSource, VisibilityBinSamples,
-    check_grid_shapes, collect_bin_samples_into,
+    check_grid_shapes, collect_bin_samples_into, compute_weighted_visibility_math, plotms_figure,
+    scatter_series_identity, weighted_visibility_mean,
 };
 use crate::MeasurementSet;
+use crate::selection::ChannelRange;
 
 pub(super) struct VisibilityColumns<'a> {
     sources: Vec<(MsDataColumn, PreparedSelectedDataSource<'a>)>,
@@ -60,6 +63,33 @@ impl<'a> VisibilityColumns<'a> {
 
     pub(super) fn column(&self, ordinate: usize) -> Option<MsDataColumn> {
         self.axes[ordinate + 1].map(|index| self.sources[index].0)
+    }
+
+    pub(super) fn series_identity(
+        &self,
+        spec: &MsPlotSpec,
+        ordinate: usize,
+        group_key: &str,
+        group_label: &str,
+    ) -> (String, String, String) {
+        let axis = spec.y_axes[ordinate];
+        let (key, label, color) =
+            scatter_series_identity(axis, spec.y_axes.len() > 1, group_key, group_label);
+        if spec.y_axes.len() <= 2 && spec.secondary_y_axis() != Some(spec.y_axis()) {
+            return (key, label, color);
+        }
+        let column = self.column(ordinate).unwrap_or(spec.data_column);
+        let label = plotms_figure::column_axis_name(axis, column);
+        let label = if group_key == "all" {
+            label
+        } else {
+            format!("{label} · {group_label}")
+        };
+        (
+            format!("{ordinate}::{key}"),
+            label,
+            format!("{ordinate}::{color}"),
+        )
     }
 
     pub(super) fn read_row(
@@ -148,6 +178,132 @@ impl BinBuffer {
             weight.map(|spectrum| (spectrum, &mut self.weights)),
             &mut self.values,
         );
+    }
+
+    pub(super) fn normalize_vector_average(&mut self) {
+        if self.values.is_empty() {
+            return;
+        }
+        let average = if self.weights.is_empty() {
+            self.values.iter().copied().sum::<Complex64>() / self.values.len() as f64
+        } else {
+            let total = self.weights.iter().sum::<f64>();
+            if total > 0.0 {
+                weighted_visibility_mean(&self.values, &self.weights, total)
+            } else {
+                Complex64::new(0.0, 0.0)
+            }
+        };
+        self.values[0] = average;
+        self.values.truncate(1);
+        self.weights.clear();
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct AveragedVisibility {
+    values: Vec<Complex64>,
+    weights: Vec<f64>,
+}
+
+impl AveragedVisibility {
+    pub(super) fn add(
+        &mut self,
+        samples: VisibilityBinSamples<'_>,
+        scalar_weight: f64,
+        conjugate: bool,
+    ) {
+        if conjugate {
+            self.values.extend(samples.values.iter().map(|v| v.conj()));
+        } else {
+            self.values.extend_from_slice(samples.values);
+        }
+        if samples.weights.is_empty() {
+            self.weights.resize(self.values.len(), scalar_weight);
+        } else {
+            self.weights.extend_from_slice(samples.weights);
+        }
+    }
+
+    pub(super) fn project(
+        &self,
+        axis: MsAxis,
+        scalar: bool,
+        zero_invalid_weight: bool,
+    ) -> Option<f64> {
+        compute_weighted_visibility_math(
+            axis,
+            &self.values,
+            &self.weights,
+            scalar,
+            zero_invalid_weight,
+        )
+    }
+}
+
+pub(super) struct VisibilityTimeBounds {
+    first: f64,
+    last_unflagged: Option<f64>,
+}
+
+#[derive(Default)]
+pub(super) struct BaselineIntegrationGroups {
+    previous: Option<([i32; 4], f64)>,
+    ordinal: usize,
+}
+
+impl BaselineIntegrationGroups {
+    pub(super) fn observe(&mut self, ids: [i32; 4], time: f64) -> usize {
+        let integration = (ids, time);
+        if self
+            .previous
+            .replace(integration)
+            .is_some_and(|previous| previous != integration)
+        {
+            self.ordinal += 1;
+        }
+        self.ordinal
+    }
+}
+
+pub(super) fn has_unflagged_input(
+    flags: &ArrayView2<'_, bool>,
+    correlations: &[(usize, String)],
+    selection: Option<&[ChannelRange]>,
+) -> bool {
+    correlations.iter().any(|(corr, _)| {
+        let unflagged = |channel| !flags[(*corr, channel)];
+        match selection {
+            Some(ranges) => ranges
+                .iter()
+                .filter_map(ChannelRange::channels)
+                .flatten()
+                .filter(|&channel| channel < flags.ncols())
+                .any(unflagged),
+            None => (0..flags.ncols()).any(unflagged),
+        }
+    })
+}
+
+impl VisibilityTimeBounds {
+    pub(super) fn new(time: f64) -> Self {
+        Self {
+            first: time,
+            last_unflagged: None,
+        }
+    }
+
+    pub(super) fn observe(&mut self, time: f64, unflagged: bool) {
+        self.first = self.first.min(time);
+        if unflagged {
+            self.last_unflagged = Some(self.last_unflagged.map_or(time, |last| last.max(time)));
+        }
+    }
+
+    pub(super) fn midpoint(&self) -> Option<f64> {
+        // CASA anchors on the first integration and ends at the last usable one.
+        self.last_unflagged
+            .map(|last| self.first + (last - self.first) / 2.0)
     }
 }
 

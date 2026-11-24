@@ -49047,6 +49047,48 @@
               "group": "Selection"
             }
           }
+        },
+        {
+          "name": "intent",
+          "concept": {
+            "id": "ms.selection.intent",
+            "semantic_revision": 3
+          },
+          "order": 14,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": ""
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "projections": {
+            "cli": {
+              "flags": [
+                "--intent"
+              ],
+              "metavar": "SELECTOR"
+            },
+            "provider": {
+              "field": "intent",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "intent",
+              "keyword_only": true
+            },
+            "presentation": {
+              "label": "Intent",
+              "group": "Selection",
+              "advanced": true
+            }
+          }
         }
       ]
     },

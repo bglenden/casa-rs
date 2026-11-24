@@ -72,7 +72,8 @@ IMPLEMENTED["singledishms"] = {
 IMPLEMENTED["ms"] = {
     "close", "done", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "ismultims", "iswritable",
-    "metadata", "msselect", "name", "nrow", "open", "reset", "statwt", "uvsub",
+    "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
+    "open", "reset", "statwt", "uvsub",
 }
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",
@@ -88,6 +89,7 @@ IMPLEMENTED["calibrater"] = {
     "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags", "fluxscale", "specifycal", "state",
 }
 PARTIAL = {
+    "ms": {"getdata"},
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
 }

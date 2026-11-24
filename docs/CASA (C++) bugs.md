@@ -10838,6 +10838,17 @@ in `ngc5921_ut.ms` can keep returning all seven scans even though
 is removed or replaced, casa-rs reports an unavailable attachment on
 queries that need its data (#1030).
 
+## Out-of-range TaQL array indices can abort MS selection
+
+In CASA 6.7.6.14, open an MS with ordinary visibility arrays and pass
+`abs(DATA[999,1]) > 0` as `msselect`'s TaQL predicate.
+`msseltoindex` and `msselect(onlyparse=True)` accept the predicate
+without reading cells. Applying it can terminate the process with an
+uncaught array-slicing exception. casa-rs validates the expression
+without reading visibility cells and reports a failed selection when
+evaluation reaches an invalid index. The previously selected rows
+remain accessible (#1030).
+
 ## A Multi-MS metadata count can omit newly published member rows
 
 Open a genuine CASA Multi-MS and obtain its metadata with
@@ -10967,3 +10978,47 @@ that the cache leaves empty. The explicit axis validation permits real-valued pl
 casa-rs reads the real values directly. The regression checks the same
 selected samples against CASA's successful signed amplitude export, which
 has the same coordinates for float cells (#1032).
+
+## Clearcal releases a caller's explicit table lock
+
+In CASA 6.7.6.14, open a writable MeasurementSet with
+`table.open(vis, nomodify=False, lockoptions={'option': 'user'})` and take an
+explicit write lock with `table.lock(write=True)`. Calling
+`clearcal(vis, addmodel=True)` writes the scratch columns. The attached
+table then reports `haslock(write=True) == False` even though its owner never
+released the lock.
+
+CASA also releases automatic locks on unrelated tables open in the same process.
+casa-rs yields automatic locks on the input MeasurementSet before its
+clearcal provider starts and keeps the caller's table attached. An explicit
+or active lock still held by the caller produces a `RuntimeError` before
+the task writes. The caller retains ownership of that lock (#1520).
+
+## PlotMS time averaging can dilute complex visibilities when FLOAT_DATA is present
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, plot two Real ordinates from
+`CORRECTED_DATA` and `MODEL_DATA` against channel on a MeasurementSet that
+also stores `DATA` and `FLOAT_DATA`. With unit visibilities and unit
+weights, averaging pairs of integrations produces 0.666667 for both
+ordinates. Adding a two-channel average gives the same values.
+
+The mixed-column transform enables time averaging for the float column.
+Its accumulator adds observed float weights to the weight spectrum used
+to normalize the corrected and model columns. casa-rs accumulates weights
+for the requested complex columns and preserves the constant value 1. The
+paired fixture checks the selected bins and metadata in both modes (#1032).
+[Pinned transform setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/mstransform/MSTransform/MSTransformManager.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
+[Pinned time averager](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/AveragingTvi2.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
+
+## Empty MS visibility strides can abort or change the attachment
+
+On a nonempty MS, `getdata(increment=4294967297)` can admit a
+stride using its low 32 bits and select zero rows using the full stride.
+CASA 6.7.6.14 returns empty visibility and time arrays. `flag_sum` can
+report an arbitrary second extent, and requesting `u` aborts with
+`ArrayConformanceError`. An `axis_info` request raises on the missing
+row zero and leaves the attachment with zero selected rows.
+
+casa-rs preserves the empty stride result and returns typed empty UVW
+components and flag counts of shape `(0, 0)`. The axis metadata query
+raises while retaining the prior active row view (#1030).

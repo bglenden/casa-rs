@@ -1842,6 +1842,8 @@ def sdcal(
     field: str = '',
     spw: str = '',
     scan: str = '',
+    *,
+    intent: str = '',
 ) -> Any:
     """Generate and apply single-dish sky and system-temperature calibration.
 

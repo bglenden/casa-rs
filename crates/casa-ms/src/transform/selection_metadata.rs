@@ -36,7 +36,7 @@ pub(super) enum MainRowOrder {
 /// before ordering each group by TIME (MSTransformManager::setIterationApproach).
 pub(super) fn sort_selected_rows(
     table: &Table,
-    request: &MsTransformRequest,
+    input_path: &Path,
     rows: Vec<usize>,
     descriptions: Vec<i32>,
     order: MainRowOrder,
@@ -54,7 +54,7 @@ pub(super) fn sort_selected_rows(
             .column_accessor(name)
             .and_then(|column| column.scalar_cells_owned_for_rows(&rows))
             .map_err(|source| MsTransformError::MutateMeasurementSet {
-                path: request.input_ms.display().to_string(),
+                path: input_path.display().to_string(),
                 source: Box::new(source),
             })
     };
@@ -110,6 +110,25 @@ pub(super) fn sort_selected_rows(
         descriptions,
         starts_visibility_buffer,
     })
+}
+
+/// Return the selected MAIN rows in the ordinary PlotMS visibility iterator order.
+pub(crate) fn selected_plotms_integration_order(
+    ms: &MeasurementSet,
+    selected: &[ResolvedMsSelectionRow],
+) -> Result<Vec<usize>, MsTransformError> {
+    let (rows, descriptions) = selected
+        .iter()
+        .map(|row| (row.row_index, row.data_desc_id))
+        .unzip();
+    Ok(sort_selected_rows(
+        ms.main_table(),
+        ms.path().unwrap_or_else(|| Path::new("<memory>")),
+        rows,
+        descriptions,
+        MainRowOrder::Transform,
+    )?
+    .rows)
 }
 
 #[derive(Default)]

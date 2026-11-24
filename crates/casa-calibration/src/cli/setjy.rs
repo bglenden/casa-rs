@@ -63,7 +63,14 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     if task.flag("listmodels")? {
         return model_files::list(task);
     }
-    let path = task.input_path("vis")?;
+    let path = task.path("vis")?;
+    let table_path = task.workspace().join(&path);
+    if !table_path.exists() {
+        return Err(execution(format!(
+            "Table {} does not exist",
+            table_path.display()
+        )));
+    }
     let scratch = task.flag("usescratch")?;
     let value = if let Some(paths) = super::multi_ms::partition_paths(&path)? {
         run_multi(task, &path, &paths, scratch)?
@@ -135,13 +142,13 @@ fn run_ms(
     let standard = task.text("standard")?;
     let solar_2012 = standard.as_deref() == Some("Butler-JPL-Horizons 2012");
     if !scratch
-        && standard
-            .as_ref()
-            .is_some_and(|scale| scale.starts_with("Butler-JPL-Horizons"))
+        && let Some(scale) = standard
+            .as_deref()
+            .filter(|scale| scale.starts_with("Butler-JPL-Horizons"))
     {
-        return Err(execution(
-            "Virtual model can not be used for an ephemeris object calibrator. Use usescratch=True.",
-        ));
+        return Err(execution(format!(
+            "usescratch=False and standard={scale}. Virtual model can not be used for an ephemeris object calibrator. Use usescratch=True."
+        )));
     }
     let mut selection = selection(task)?;
     if standard.as_deref() == Some("fluxscale") {

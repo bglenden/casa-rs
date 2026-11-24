@@ -47,6 +47,21 @@ impl MetadataSnapshot {
     pub(in crate::tools) fn from_open(ms: MeasurementSet) -> Self {
         Self { ms, view: None }
     }
+
+    pub(super) fn open(path: &Path) -> MsResult<Self> {
+        Self::from_view(Arc::new(MetadataView::new(path, None)?))
+    }
+
+    fn from_view(view: Arc<MetadataView>) -> MsResult<Self> {
+        let ms = match &view.links {
+            Some(links) => MeasurementSet::open_with_subtable_paths(&view.path, links)?,
+            None => MeasurementSet::open(&view.path)?,
+        };
+        Ok(Self {
+            ms,
+            view: Some(view),
+        })
+    }
 }
 
 impl MetadataLink {
@@ -58,7 +73,7 @@ impl MetadataLink {
             original_rows: attached.original_rows,
             live_concatenation: matches!(attached.part_names, TablePartNames::Concatenation { .. }),
             state: Mutex::new(State {
-                selected: attached.selected_rows.as_deref().map(Arc::from),
+                selected: attached.selected_rows.clone(),
                 plain_rows: attached
                     .plain_rows
                     .as_ref()
@@ -138,7 +153,10 @@ impl MetadataLink {
                 .lock()
                 .map_err(|error| MsError::InvalidInput(error.to_string()))?;
             if state.view.is_none() {
-                state.view = Some(Arc::new(self.view(state.selected.as_deref())?));
+                state.view = Some(Arc::new(MetadataView::new(
+                    &self.path,
+                    state.selected.as_deref(),
+                )?));
             }
             Arc::clone(state.view.as_ref().expect("metadata view exists"))
         };
@@ -150,27 +168,23 @@ impl MetadataLink {
         {
             return Ok(Arc::clone(snapshot));
         }
-        let ms = match &view.links {
-            Some(links) => MeasurementSet::open_with_subtable_paths(&view.path, links)?,
-            None => MeasurementSet::open(&view.path)?,
-        };
+        let snapshot = MetadataSnapshot::from_view(view)?;
         self.verify_directory()?;
-        Ok(Arc::new(MetadataSnapshot {
-            ms,
-            view: Some(view),
-        }))
+        Ok(Arc::new(snapshot))
     }
+}
 
-    fn view(&self, selected: Option<&[usize]>) -> MsResult<MetadataView> {
-        let concatenated = contains_concatenation(&self.path)?;
+impl MetadataView {
+    fn new(main: &Path, selected: Option<&[usize]>) -> MsResult<Self> {
+        let concatenated = contains_concatenation(main)?;
         if selected.is_none() && !concatenated {
-            return Ok(MetadataView {
-                path: self.path.clone(),
+            return Ok(Self {
+                path: main.to_path_buf(),
                 links: None,
                 _scratch: None,
             });
         }
-        let source = Table::open(TableOptions::new(&self.path))?;
+        let source = Table::open(TableOptions::new(main))?;
         let view = tempfile::Builder::new()
             .prefix("casars-ms-metadata-")
             .tempdir()
@@ -180,14 +194,14 @@ impl MetadataLink {
             source.select_rows(rows)?.save(TableOptions::new(&path))?;
             path
         } else {
-            self.path.clone()
+            main.to_path_buf()
         };
         let links = if concatenated {
             Some(concatenated_subtables(&source, view.path())?)
         } else {
             None
         };
-        Ok(MetadataView {
+        Ok(Self {
             path,
             links,
             _scratch: Some(view),
@@ -258,16 +272,15 @@ fn concatenated_subtables(main: &Table, scratch: &Path) -> MsResult<HashMap<Subt
 
 impl AttachedMs {
     pub(super) fn set_selected_rows(&mut self, rows: Option<Vec<usize>>) -> PyResult<()> {
+        let rows = rows.map(Arc::from);
         if let Some(metadata) = self.metadata.get() {
-            metadata
-                .set_selected(rows.as_deref().map(Arc::from))
-                .map_err(runtime_error)?;
+            metadata.set_selected(rows.clone()).map_err(runtime_error)?;
         }
         self.selected_rows = rows;
         Ok(())
     }
 
-    fn metadata_link(&self) -> Arc<MetadataLink> {
+    pub(super) fn metadata_link(&self) -> Arc<MetadataLink> {
         Arc::clone(
             self.metadata
                 .get_or_init(|| Arc::new(MetadataLink::new(self))),
@@ -299,6 +312,8 @@ impl PyMsTool {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             if let Some(ms) = attached.as_mut() {
                 ms.set_selected_rows(None)?;
+                ms.selection_state = super::selection_indices::SelectionState::default();
+                ms.visibility.reset_selection();
             }
             Ok(true)
         })
