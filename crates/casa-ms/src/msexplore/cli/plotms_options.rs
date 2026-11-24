@@ -83,9 +83,15 @@ impl CliOptions {
                 )
         };
         let supported_abscissa = self.x_axis.is_some_and(|axis| {
-            let channel_abscissa =
-                axis == MsAxis::Channel && self.avgchannel.is_some_and(|width| width > 1);
-            if axis == MsAxis::Time || channel_abscissa {
+            let channel_average = self.avgchannel.is_some_and(|width| width > 1);
+            if self.scalar {
+                axis == MsAxis::Time
+                    && !channel_average
+                    && matches!(
+                        y,
+                        MsDataColumn::CorrectedMinusModel | MsDataColumn::CorrectedMinusModelScalar
+                    )
+            } else if axis == MsAxis::Time || (channel_average && axis == MsAxis::Channel) {
                 y.is_derived()
             } else {
                 axis.is_visibility_math()
@@ -99,7 +105,6 @@ impl CliOptions {
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
             && self.avgtime.is_some()
-            && !self.scalar
             && !self.avgscan
             && !self.avgfield
             && !self.avgbaseline
@@ -115,6 +120,9 @@ impl CliOptions {
         if self.supports_channel_derived(requested) {
             Some((adjusted, "channel"))
         } else if self.supports_time_derived(requested) {
+            if self.scalar {
+                return Some((requested, "scalar time"));
+            }
             let axis = if self.avgchannel.is_some_and(|width| width > 1) {
                 "time- and channel"
             } else {

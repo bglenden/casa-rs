@@ -515,13 +515,21 @@ impl AveragedVisibility {
         if flags[(corr, bin.start)] {
             return false;
         }
-        let sample = TimeProjection::channel_sample(grid, weights.spectra, corr, bin.start);
+        self.add_time_projection(TimeProjection::channel_sample(
+            grid,
+            weights.spectra,
+            corr,
+            bin.start,
+        ));
+        true
+    }
+
+    fn add_time_projection(&mut self, sample: TimeProjection) {
         if let VisibilitySamples::TimeProjection(average) = &mut self.0 {
             average.accumulate(sample);
         } else {
             self.0 = VisibilitySamples::TimeProjection(sample);
         }
-        true
     }
 
     fn add_time_channel_samples(
@@ -579,7 +587,40 @@ impl AveragedVisibility {
         weights.resize(values.len(), weight);
     }
 
+    pub(super) fn add_scalar_time_residual(
+        &mut self,
+        grid: &ComplexGrid,
+        flags: &ArrayView2<'_, bool>,
+        row_weight: f64,
+        corr: usize,
+        bin: &ChannelBin,
+    ) -> bool {
+        debug_assert_eq!(bin.channels().count(), 1);
+        if flags[(corr, bin.start)] {
+            return false;
+        }
+        let weight = row_weight as f32;
+        let mut sample = TimeProjection::channel_sample(grid, [None; 2], corr, bin.start);
+        // The scalar reducer packs amplitude and phase into the two Float
+        // components before accumulating either visibility operand.
+        sample.weighted_sums = sample
+            .weighted_sums
+            .map(|value| Complex32::new(value.norm(), value.arg()) * weight);
+        sample.total_weights = [weight; 2];
+        self.add_time_projection(sample);
+        true
+    }
+
     pub(super) fn project_scalar_time(&self, axis: MsAxis) -> Option<f64> {
+        if let VisibilitySamples::TimeProjection(average) = &self.0 {
+            let residual = average.time_mean(0) - average.time_mean(1);
+            return Some(f64::from(match axis {
+                MsAxis::Amplitude | MsAxis::Real => residual.re,
+                MsAxis::Phase => VisibilityColumnProjection::float_phase_degrees(residual.im),
+                MsAxis::Imaginary => residual.im,
+                _ => return None,
+            }));
+        }
         let mean = self.vector_mean()?;
         match axis {
             MsAxis::Amplitude | MsAxis::Real => Some(mean.re),

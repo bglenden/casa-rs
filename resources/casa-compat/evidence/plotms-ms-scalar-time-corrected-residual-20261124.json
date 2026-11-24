@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "046e12a47e17c20b68db6f6dad56399fa81e2ae0",
+  "source_revision": "046e12a47e17c20b68db6f6dad56399fa81e2ae0",
+  "baseline_revision": "3d64c10f235a6446a60420dcbd82e9d341944080",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_scalar_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "One stored corrected residual against Time with scalar=True and ordinary time averaging.",
+  "result": "passed",
+  "baseline_result": "Native refused the selected corrected residual with scalar=True and ordinary time averaging.",
+  "text_exports": 9,
+  "points": 14,
+  "figures": 2,
+  "rendered_coordinates": 2,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

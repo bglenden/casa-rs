@@ -2957,14 +2957,15 @@ fn build_uncalibrated_plotms_payload(
     let mut selected =
         crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
             .map_err(|error| error.to_string())?;
+    let plot = spec.plots.first();
+    let scalar_time = plot.is_some_and(plotms_columns::uses_scalar_time_average);
     let time_derived = columns.time_derived;
-    if time_derived {
+    if time_derived && !scalar_time {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
             .sort_by(|left, right| left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds));
     }
-    let plot = spec.plots.first();
     let uses_model = |plot: &MsPlotSpec| {
         plotms_columns::uses_model(
             [
@@ -2993,7 +2994,6 @@ fn build_uncalibrated_plotms_payload(
         .map(|load| load(ms, &selected.selected_rows))
         .transpose()?
         .flatten();
-    let scalar_time = plot.is_some_and(plotms_columns::uses_scalar_time_average);
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
@@ -5985,20 +5985,30 @@ fn build_generic_visibility_scatter_with_averaging(
                             ] {
                                 if let Some(grid) = visibility_columns.grid(axis, &visibility_grids)
                                 {
-                                    series_used |= average.add_vector_time_samples(
-                                        grid,
-                                        &flags,
-                                        plotms_ordinates::VectorTimeWeights {
-                                            spectra: [axis_weights[axis], time_model_weight],
-                                            observed_operands: [
-                                                axis_weight_kinds[axis] == WeightKind::Observed,
-                                                time_model_kind == Some(WeightKind::Observed),
-                                            ],
-                                            primary: time_channel_primary,
-                                        },
-                                        *corr_index,
-                                        bin,
-                                    );
+                                    series_used |= if scalar_time {
+                                        average.add_scalar_time_residual(
+                                            grid,
+                                            &flags,
+                                            scalar_weight,
+                                            *corr_index,
+                                            bin,
+                                        )
+                                    } else {
+                                        average.add_vector_time_samples(
+                                            grid,
+                                            &flags,
+                                            plotms_ordinates::VectorTimeWeights {
+                                                spectra: [axis_weights[axis], time_model_weight],
+                                                observed_operands: [
+                                                    axis_weight_kinds[axis] == WeightKind::Observed,
+                                                    time_model_kind == Some(WeightKind::Observed),
+                                                ],
+                                                primary: time_channel_primary,
+                                            },
+                                            *corr_index,
+                                            bin,
+                                        )
+                                    };
                                 }
                             }
                         } else if scalar_time {
@@ -6195,7 +6205,8 @@ fn build_generic_visibility_scatter_with_averaging(
         .unwrap_or_else(|| axis_label(spec.y_axis()));
     let secondary_y_label = spec.secondary_y_axis().map(axis_label);
     let bounds_for_column = |axis, column: MsDataColumn| {
-        fixed_bounds(axis).filter(|_| !(time_derived && column.has_unbounded_phase()))
+        let unbounded_phase = column.has_unbounded_phase() || (scalar_time && column.is_derived());
+        fixed_bounds(axis).filter(|_| !(time_derived && unbounded_phase))
     };
     let x_column = calibration
         .and_then(|input| input.x_data_column)

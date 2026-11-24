@@ -12,6 +12,8 @@ import casatasks as casa
 import numpy as np
 
 from plotms_ms_columns_oracle import (
+    compare_empty_export,
+    compare_figure,
     compare_ordinate_figure,
     compare_text,
     copy_ms,
@@ -129,6 +131,60 @@ def compare_baseline_order(root, native, controls, source, start):
         print(f"{name}: {len(selected)} matching scalar time coordinates", flush=True)
 
 
+def compare_corrected_residuals(root, native):
+    source, integration, start = make_fixture(root)
+    cube_flags, row_flags, unbounded, empty = (
+        root / f"{name}.ms" for name in ("cube-flags", "row-flags", "unbounded", "empty")
+    )
+    for path in (cube_flags, row_flags, unbounded, empty):
+        copy_ms(source, path)
+    for path in (cube_flags, empty):
+        with opened(path, True) as table:
+            flags = table.getcol("FLAG")
+            flags[0, 1] = True if path == empty else integration == 1
+            table.putcol("FLAG", flags)
+    with opened(row_flags, True) as table:
+        table.putcol("FLAG_ROW", integration == 1)
+    with opened(unbounded, True) as table:
+        unit = np.ones_like(table.getcol("CORRECTED_DATA"))
+        phase = np.exp(1j * np.deg2rad(170))
+        table.putcol("CORRECTED_DATA", unit * phase)
+        table.putcol("MODEL_DATA", unit * phase.conjugate())
+
+    base = request(source) | dict(xaxis="time", xdatacolumn="", spw="0:1", avgtime="20",
+                                  scalar=True, title="Scalar-time corrected residual")
+    cases = (
+        ("vector-amplitude", source, "amp", "corrected-model_vector", [-.5, -.5]),
+        ("vector-phase", source, "phase", "corrected-model_vector", [29.5, 29.5]),
+        ("scalar-phase", source, "phase", "corrected-model_scalar", [29.5, 29.5]),
+        ("scalar-imaginary", source, "imag", "corrected-model_scalar", [np.deg2rad(29.5)] * 2),
+        ("cube-flag-mask", cube_flags, "amp", "corrected-model_vector", [-.75, -.5]),
+        ("row-flag-only", row_flags, "amp", "corrected-model_vector", [-.5, -.5]),
+        ("unbounded-vector-phase", unbounded, "phase", "corrected-model_vector", [340., 340.]),
+    )
+    times = start + np.array([10., 40.])
+    for name, vis, axis, column, values in cases:
+        controls = base | dict(vis=str(vis), yaxis=axis, ydatacolumn=column)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [("1", "XX")] * 2
+        np.testing.assert_allclose([float(point[0]) for point in selected], times, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected], values, rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 2
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], times, rtol=0, atol=.00051)
+        print(f"{name}: 2 matching corrected residual coordinates under scalar time averaging", flush=True)
+        if name == "unbounded-vector-phase":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Time (MJD seconds)",
+                            "Phase:corrected-model (vector) (degrees)"))
+
+    controls = base | dict(vis=str(empty), yaxis="amp", ydatacolumn="corrected-model_vector")
+    compare_empty_export(root, native, "all-cube-flags", controls,
+                         ("Time (MJD seconds)", "Amp:corrected-model (vector)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -147,6 +203,9 @@ def main():
 
     with chdir(root), plotms_launcher(args.app_run):
         compare(root, native)
+        residual = root / "residual"
+        residual.mkdir()
+        compare_corrected_residuals(residual, native)
 
 
 if __name__ == "__main__":
