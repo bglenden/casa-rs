@@ -25,7 +25,7 @@ from plotms_ms_columns_oracle import (
 SPEED_OF_LIGHT = 299_792_458.0
 
 
-def make_fixture(root):
+def make_fixture(root, *, reverse_times=False):
     vis, _ = fixture(root)
     with opened(vis, True) as table:
         index = np.arange(table.nrows())
@@ -33,13 +33,17 @@ def make_fixture(root):
         interval = 6 + index / 256
         table.putcol("UVW", uvw)
         table.putcol("INTERVAL", interval)
+        times = table.getcol("TIME")
+        if reverse_times:
+            times = times.min() + times.max() - times
+            table.putcol("TIME", times)
+            table.putcol("TIME_CENTROID", times)
         selected = (
             (table.getcol("FIELD_ID") == 0)
             & (table.getcol("ANTENNA1") == 0)
             & np.isin(table.getcol("ANTENNA2"), [1, 2])
             & (table.getcol("DATA_DESC_ID") == 0)
         )
-        times = table.getcol("TIME")
         antennas = table.getcol("ANTENNA2")
         lookup = {(f"{times[row]:.3f}", str(antennas[row])): row for row in index[selected]}
         first_intervals = {}
@@ -51,19 +55,29 @@ def make_fixture(root):
 
 
 def compare(root, native):
-    vis, uvw, intervals, lookup, first_intervals, frequencies = make_fixture(root)
-    controls = request(vis) | dict(yaxis="amp", spw="0:1~3^2", xdatacolumn="", ydatacolumn="")
+    fixture_data = make_fixture(root)
+    reordered = root / "reordered"
+    reordered.mkdir()
+    reversed_data = make_fixture(reordered, reverse_times=True)
     cases = (
-        ("interval", "interval", "Interval", None),
-        ("uvwave", "uvwave", "UVwave", np.hypot(uvw[0], uvw[1])),
-        ("uwave", "uwave", "Uwave", uvw[0]),
-        ("vwave", "vwave", "Vwave", uvw[1]),
-        ("wwave", "wwave", "Wwave", uvw[2]),
-        ("interval-buffer", "interval", "Interval", None),
-        ("wavelength-ordinate", "wwave", "Wwave", uvw[2]),
+        ("interval", "interval", "Interval"),
+        ("uvwave", "uvwave", "UVwave"),
+        ("uwave", "uwave", "Uwave"),
+        ("vwave", "vwave", "Vwave"),
+        ("wwave", "wwave", "Wwave"),
+        ("interval-buffer", "interval", "Interval"),
+        ("wavelength-ordinate", "wwave", "Wwave"),
+        ("reordered-interval", "time_interval", "Interval"),
+        ("reordered-uvwave", "uvdist_l", "UVwave"),
     )
-    for name, axis, label, metres in cases:
-        options = controls | dict(xaxis=axis, expformat="txt")
+    def controls(vis):
+        return request(vis) | dict(yaxis="amp", spw="0:1~3^2", xdatacolumn="", ydatacolumn="")
+
+    for name, axis, label in cases:
+        vis, uvw, intervals, lookup, first_intervals, frequencies = (
+            reversed_data if name.startswith("reordered-") else fixture_data
+        )
+        options = controls(vis) | dict(xaxis=axis, expformat="txt")
         if name == "interval-buffer":
             options["antenna"] = "A0&A1;A0&A2"
         ordinate = name == "wavelength-ordinate"
@@ -82,9 +96,15 @@ def compare(root, native):
             coordinate = [first_intervals[point[9]] for point in selected]
         else:
             physical = [lookup[point[9], point[6]] for point in selected]
-            if metres is None:
+            if label == "Interval":
                 coordinate = intervals[physical]
             else:
+                metres = {
+                    "UVwave": np.hypot(uvw[0], uvw[1]),
+                    "Uwave": uvw[0],
+                    "Vwave": uvw[1],
+                    "Wwave": uvw[2],
+                }[label]
                 channels = [int(point[2]) for point in selected]
                 coordinate = metres[physical] * frequencies[channels] / SPEED_OF_LIGHT
         side = int(ordinate)
@@ -95,7 +115,7 @@ def compare(root, native):
     for name, xlabel in (("uwave", "Uwave (λ)"), ("interval", "Interval (s)")):
         label = xlabel.split()[0]
         compare_figure(
-            root, native, controls | dict(xaxis=name), root / f"{name}.casa.txt",
+            root, native, controls(fixture_data[0]) | dict(xaxis=name), root / f"{name}.casa.txt",
             (f"Amp vs. {label}", xlabel, "Amp"),
         )
 

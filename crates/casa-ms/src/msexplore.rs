@@ -610,6 +610,10 @@ impl MsAxis {
         matches!(self, Self::UvWave | Self::UWave | Self::VWave | Self::WWave)
     }
 
+    fn is_interval_or_wavelength(self) -> bool {
+        self == Self::Interval || self.uses_wavelengths()
+    }
+
     fn uses_uvw(self) -> bool {
         matches!(self, Self::UvDistance | Self::U | Self::V | Self::W) || self.uses_wavelengths()
     }
@@ -1777,10 +1781,12 @@ impl MsPlotSpec {
                     .to_string(),
             );
         }
-        let is_interval_or_wave =
-            |axis: MsAxis| axis == MsAxis::Interval || axis.uses_wavelengths();
-        if (is_interval_or_wave(self.x_axis)
-            || self.y_axes.iter().copied().any(is_interval_or_wave))
+        if (self.x_axis.is_interval_or_wavelength()
+            || self
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::is_interval_or_wavelength))
             && (uses_extended_averaging(self)
                 || self.averaging.avgchannel.is_some_and(|width| width > 1))
         {
@@ -1789,8 +1795,8 @@ impl MsPlotSpec {
             );
         }
         if self.y_axes.iter().copied().any(|y| {
-            (is_interval_or_wave(self.x_axis) && !y.is_visibility_math())
-                || (is_interval_or_wave(y) && !self.x_axis.is_visibility_math())
+            (self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
+                || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math())
         }) {
             return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
         }
@@ -1813,7 +1819,7 @@ impl MsPlotSpec {
                 | MsAxis::HourAngle
                 | MsAxis::ParallacticAngle
         );
-        if !supported_x && !is_interval_or_wave(self.x_axis) {
+        if !supported_x && !self.x_axis.is_interval_or_wavelength() {
             return Err(format!(
                 "msexplore x axis {} is modeled but not implemented yet",
                 self.x_axis
@@ -1841,7 +1847,7 @@ impl MsPlotSpec {
                     | MsAxis::HourAngle
                     | MsAxis::ParallacticAngle
             );
-            if !supported_y && !is_interval_or_wave(y_axis) {
+            if !supported_y && !y_axis.is_interval_or_wavelength() {
                 return Err(format!(
                     "msexplore y axis {} is modeled but not implemented yet",
                     y_axis
@@ -2124,7 +2130,7 @@ pub struct MsScatterPlotMsMetadata {
     pub channel: usize,
     /// Timestamp after time averaging, when enabled.
     pub average_time: Option<f64>,
-    /// Position of the time-averaged buffer in the selected visibility iterator.
+    /// Position in the selected visibility iterator, when export needs its order.
     pub averaging_group: Option<usize>,
 }
 
@@ -3925,7 +3931,14 @@ fn build_generic_visibility_scatter(
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
     let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
-    let (row_numbers, interval_buffer_starts) = if needs_interval && calibration.is_some() {
+    let use_iterator_order = calibration.is_some()
+        && (spec.x_axis.is_interval_or_wavelength()
+            || spec
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::is_interval_or_wavelength));
+    let (row_numbers, buffer_starts) = if use_iterator_order {
         let descriptions = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
         crate::transform::selected_plotms_integration_order(
             ms,
@@ -3987,7 +4000,10 @@ fn build_generic_visibility_scatter(
         .transpose()
         .map_err(|error| error.to_string())?;
 
-    let row_numbers = if interval_buffer_starts.is_empty() {
+    let row_numbers = if use_iterator_order {
+        // PlotMS exports the full selected iterator with its original buffer starts.
+        row_numbers
+    } else {
         predecimate_visibility_rows(
             ms,
             row_numbers,
@@ -4000,8 +4016,6 @@ fn build_generic_visibility_scatter(
                 requested_corr_codes: requested_corr_codes.as_deref(),
             },
         )?
-    } else {
-        row_numbers
     };
     let sampled_row_count = row_numbers.len();
     if timing_enabled {
@@ -4039,7 +4053,7 @@ fn build_generic_visibility_scatter(
     let selected_intervals = if needs_interval {
         let mut intervals = selected_f64_values(ms.main_table(), "INTERVAL", &row_numbers)?;
         let mut first_interval = 0.0;
-        for (interval, start) in intervals.iter_mut().zip(interval_buffer_starts) {
+        for (interval, start) in intervals.iter_mut().zip(buffer_starts) {
             if start {
                 first_interval = *interval;
             }
@@ -4548,11 +4562,13 @@ fn build_generic_visibility_scatter(
                         chan_start: bin.start,
                         chan_end: bin.end,
                     });
-                    if calibration.is_some() && spec.averaging.avgchannel.is_some() {
+                    if use_iterator_order
+                        || (calibration.is_some() && spec.averaging.avgchannel.is_some())
+                    {
                         series.plotms_metadata.push(MsScatterPlotMsMetadata {
                             channel: bin.display_channel(),
                             average_time: None,
-                            averaging_group: None,
+                            averaging_group: use_iterator_order.then_some(row_slot),
                         });
                     }
                     if let Some(started) = push_started {
