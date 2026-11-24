@@ -282,7 +282,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("listhistory", &[], R::Any, No),
+    method("listhistory", &[], R::Bool, Yes),
     method(
         "metadata",
         &[param("cachesize", K::Float, Float(50.0))],
@@ -720,8 +720,8 @@ const METHODS: &[Method] = &[
             param("msname", K::Text, Text("")),
             param("app", K::Text, Text("ms")),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "writehistory_batch",
@@ -732,8 +732,8 @@ const METHODS: &[Method] = &[
             param("msname", K::Text, Text("")),
             param("app", K::Text, Text("ms")),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
 ];
 

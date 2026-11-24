@@ -11461,3 +11461,12 @@ vector. casa-rs raises a Python `RuntimeError` when a numeric selection
 field has more than one non-singleton axis. It retains earlier successful
 fields in the same ordered record. A vector with a singleton axis, such
 as shape `(1, 4)`, is accepted (#1030).
+
+## The first MS history write can create HISTORY and then fail
+
+With the HISTORY keyword and subtable missing, CASA 6.7.6.14's
+`ms.writehistory("first", msname=path)` creates and links a standard HISTORY
+table and then raises `NullTable::getColumn - Table object is empty`.
+The out-of-date HISTORY handle prevents the first message from being saved.
+casa-rs opens the linked table before appending the message. CASA can read
+and append to the resulting subtable (#1030).
