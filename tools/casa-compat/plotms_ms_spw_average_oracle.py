@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Compare ordinary SPW averages through the public CASA and casa-rs PlotMS tasks."""
+
+import argparse
+from contextlib import chdir
+from importlib.metadata import version
+import os
+from pathlib import Path
+
+import casatasks as casa
+from casatools import measures, simulator
+import numpy as np
+
+from plotms_ms_columns_oracle import (
+    compare_figure,
+    compare_text,
+    copy_ms,
+    opened,
+    plotms_launcher,
+    reference,
+    request,
+    rows,
+)
+
+
+def make_fixture(root):
+    vis = root / "two-windows.ms"
+    ms, me = simulator(), measures()
+    ms.open(str(vis))
+    ms.setconfig(telescopename="VLA", x=[0.0, 100.0], y=[0.0, 0.0], z=[0.0, 0.0],
+                 dishdiameter=[25.0, 25.0], mount=["alt-az", "alt-az"], antname=["A0", "A1"],
+                 padname=["P0", "P1"], coordsystem="local", referencelocation=me.observatory("VLA"))
+    for name, frequency in (("W0", "90GHz"), ("W1", "100GHz")):
+        ms.setspwindow(spwname=name, freq=frequency, deltafreq="1MHz", freqresolution="1MHz",
+                       nchannels=4, stokes="XX YY")
+    ms.setfeed(mode="perfect X Y")
+    ms.setfield(sourcename="FLUX", sourcedirection=me.direction("J2000", "12h00m00s", "40d00m00s"))
+    ms.setauto(autocorrwt=0.0)
+    ms.settimes(integrationtime="10s", usehourangle=False,
+                referencetime=me.epoch("UTC", "2017/03/01/09:00:00"))
+    for window in ("W0", "W1"):
+        ms.observe("FLUX", window, starttime="0s", stoptime="20s")
+    ms.close()
+    casa.clearcal(str(vis), addmodel=True)
+    with opened(vis, True) as table:
+        descriptions = table.getcol("DATA_DESC_ID")
+        shape = table.getcol("DATA").shape
+        channels = np.arange(1, shape[1] + 1, dtype=np.float32)[None, :, None]
+        for column, low, high in (("DATA", 1 + 2j, 3 - 4j), ("CORRECTED_DATA", 5 + 6j, 7 + 8j)):
+            values = channels * np.where(descriptions == 0, low, high)
+            table.putcol(column, np.broadcast_to(values.astype(np.complex64), shape).copy())
+        for column, value in (("SCAN_NUMBER", 1), ("OBSERVATION_ID", 0), ("STATE_ID", 0)):
+            table.putcol(column, np.full_like(descriptions, value))
+        table.putcol("FLAG", np.zeros(shape, dtype=bool))
+        table.putcol("FLAG_ROW", np.zeros(shape[2], dtype=bool))
+        weights = np.where(descriptions == 0, 1, 3).astype(np.float32)
+        table.putcol("WEIGHT", np.broadcast_to(weights, table.getcol("WEIGHT").shape).copy())
+        table.putcol("SIGMA", np.ones_like(table.getcol("SIGMA")))
+    return vis
+
+
+def export(root, name, task, controls):
+    path = root / f"{name}.txt"
+    assert task(**controls, plotfile=str(path), expformat="txt") is None
+    return path
+
+
+def compare_coordinates(root, native, base, vis):
+    flipped = root / "flipped-windows.ms"
+    copy_ms(vis, flipped)
+    with opened(flipped, True) as table:
+        table.putcol("DATA_DESC_ID", 1 - table.getcol("DATA_DESC_ID"))
+    frequency = dict(xaxis="frequency", xdatacolumn="", yaxis="amp")
+    cases = (
+        ("frequency", frequency, [(1, "90.001000000", 0)] * 2),
+        ("flipped", frequency | dict(vis=str(flipped)), [(1, "100.001000000", 1)] * 2),
+        ("reordered-selector", frequency | dict(spw="1:1,0:1"), [(1, "90.001000000", 0)] * 2),
+        ("channel-bins", frequency | dict(spw="0:0~3,1:0~3", avgchannel="2"),
+         [(0, "90.000500000", 0), (1, "90.002500000", 0)] * 2),
+        ("scalar", dict(scalar=True), [(1, "90.001000000", 0)] * 2),
+        ("vector", {}, [(1, "90.001000000", 0)] * 2),
+        ("time", dict(xaxis="time", xdatacolumn=""), [(1, "90.001000000", 0)] * 2),
+        ("one-window", frequency | dict(spw="1:1"), [(1, "100.001000000", 1)] * 2),
+    )
+    for name, overrides, anchors in cases:
+        controls = base | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        assert [(int(p[2]), p[10], int(p[11])) for p in selected] == anchors
+        if controls["xaxis"] == "frequency":
+            assert [p[0] for p in selected] == [p[10] for p in selected]
+        actual = export(root, f"{name}.native", native, controls)
+        assert compare_text(actual, expected) == len(anchors)
+        print(f"{name}: {len(anchors)} matching SPW-average coordinates", flush=True)
+    compare_figure(root, native, base | frequency, root / "frequency.casa.txt",
+                   (base["title"], "Frequency (GHz)", "Amp:corrected"))
+
+
+def coordinates(points):
+    return np.array([point[:2] for point in points], dtype=float)
+
+
+def compare_selection(root, native, base, vis):
+    separate = base | dict(spw="0:0,1:2", avgspw=False)
+    raw = export(root, "raw.casa", reference, separate)
+    selected = rows(raw)
+    assert [(int(p[2]), int(p[11])) for p in selected] == [(0, 0)] * 2 + [(2, 1)] * 2
+    np.testing.assert_allclose(coordinates(selected)[:, 0], [abs(1 + 2j)] * 2 + [15] * 2, rtol=1.2e-5)
+    assert compare_text(export(root, "raw.native", native, separate), raw) == 4
+
+    # CASA uses window 0's selected indices for both windows. A control places
+    # window 1's explicitly selected sample at that index without changing its value.
+    aligned = root / "aligned-channels.ms"
+    copy_ms(vis, aligned)
+    with opened(aligned, True) as table:
+        high = table.getcol("DATA_DESC_ID") == 1
+        for name in ("DATA", "CORRECTED_DATA", "FLAG"):
+            values = table.getcol(name)
+            values[:, 0, high] = values[:, 2, high]
+            table.putcol(name, values)
+    options = separate | dict(avgspw=True)
+    original = rows(export(root, "different-channels.casa", reference, options))
+    np.testing.assert_allclose(coordinates(original)[:, 0], abs((1 + 2j + 3 * (3 - 4j)) / 4), rtol=1.2e-5)
+    expected = rows(export(root, "aligned-channels.casa", reference,
+                           options | dict(vis=str(aligned), spw="0:0,1:0")))
+    amplitude = abs((1 + 2j + 9 * (3 - 4j)) / 4)
+    phase = np.angle(5 + 6j + 9 * (7 + 8j), deg=True)
+    np.testing.assert_allclose(coordinates(expected), [(amplitude, phase)] * 2, rtol=1.2e-5)
+    actual = export(root, "different-channels.native", native, options)
+    assert "# spw: 0:0,1:2" in actual.read_text()
+    selected = rows(actual)
+    assert [p[2:] for p in selected] == [p[2:] for p in expected]
+    np.testing.assert_allclose(coordinates(selected), coordinates(expected), rtol=1.2e-5)
+    print("different-channels: 2 matching coordinates against the aligned CASA control", flush=True)
+
+    unequal = base | dict(spw="0:0~1,1:1")
+    expected = rows(export(root, "unequal.casa", reference, unequal))
+    assert [(p[2], p[11]) for p in expected] == [("0", "0"), ("1", "0")] * 2
+    actual = root / "unequal.native.txt"
+    try:
+        native(**unequal, plotfile=str(actual), expformat="txt")
+    except RuntimeError as error:
+        assert "spectral window averaging requires equal correlation and channel counts" in str(error), error
+    else:
+        raise AssertionError("Unequal selected channel counts should fail")
+    assert not actual.exists()
+    print("unequal: explicit shape refusal before export", flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--native-bin", type=Path, required=True)
+    parser.add_argument("--calibrate-bin", type=Path)
+    parser.add_argument("--app-run", type=Path)
+    parser.add_argument("--only", choices=("coordinates", "selection"))
+    args = parser.parse_args()
+    assert casa.version_string() == "6.7.6.14"
+    assert version("casaplotms") == "2.9.1"
+    root = args.work.resolve()
+    root.mkdir()
+    os.environ["CASARS_MSEXPLORE_BIN"] = str(args.native_bin.resolve())
+    calibrate = args.calibrate_bin or args.native_bin.with_name("calibrate")
+    os.environ["CASARS_CALIBRATE_BIN"] = str(calibrate.resolve())
+    from casars.tasks import plotms as native
+
+    with chdir(root), plotms_launcher(args.app_run):
+        vis = make_fixture(root)
+        base = request(vis) | dict(avgspw=True, spw="0:1,1:1", title="Spectral-window average")
+        if args.only in (None, "coordinates"):
+            compare_coordinates(root, native, base, vis)
+        if args.only in (None, "selection"):
+            compare_selection(root, native, base, vis)
+
+
+if __name__ == "__main__":
+    main()
