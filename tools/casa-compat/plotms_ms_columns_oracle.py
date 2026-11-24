@@ -638,19 +638,69 @@ def compare_averaged_columns(root, native):
     compare_ordinate_figure(work, "avg-independent-weighted", native, base, "Real",
                             ["Real:corrected", "Real:model"])
 
-    # Weight axes also select an input cache column. Their own averaged
-    # coordinate coverage is tracked in #1032.
-    weight_axis = base | dict(xdatacolumn="model", yaxis="weight", ydatacolumn="",
-                              yaxislocation="left", expformat="txt")
-    expected, actual = (work / f"avg-model-vs-weight.{engine}.txt" for engine in ("casa", "native"))
-    assert reference(**weight_axis, plotfile=str(expected)) is None
-    assert native(**weight_axis, plotfile=str(actual)) is None
-    casa_rows, native_rows = rows(expected), rows(actual)
-    assert len(casa_rows) == len(native_rows) == 12
-    assert float(casa_rows[0][0]) == 280
-    np.testing.assert_allclose([float(point[0]) for point in native_rows],
-                               [float(point[0]) for point in casa_rows], rtol=1.2e-5)
-    assert [point[2:] for point in native_rows] == [point[2:] for point in casa_rows]
+    row_flag = work / "statistics-row-flag-only.ms"
+    copy_ms(vis, row_flag)
+    with opened(row_flag, True) as table:
+        table.putcell("FLAG_ROW", 0, True)
+    statistics = base | dict(xdatacolumn="model", ydatacolumn="", yaxislocation="left")
+    statistic_cases = (
+        ("model", {}, (10, 9), (5, 4), {0, 1}),
+        ("model-only", dict(ydatacolumn="model"), (2, 1), (2, 1), {0, 1}),
+        ("data", dict(xdatacolumn="data", ydatacolumn="data"), (5, 4), (5, 4), {0, 1}),
+        ("corrected", dict(xdatacolumn="corrected", ydatacolumn="corrected"), (10, 9), (10, 9), {0, 1}),
+        ("without-weight-spectrum", dict(vis=str(without_weight)), (2, 1), (5, 4), {0, 1}),
+        ("without-sigma-spectrum", dict(vis=str(without_sigma)), (10, 9), (2, 1), {0, 1}),
+        ("without-corrected", dict(vis=str(without_corrected)), (5, 4), (5, 4), {0, 1}),
+        ("zero-observed", dict(vis=str(zero_observed)), (10, 9), (0, 4), {1}),
+        ("row-flag-only", dict(vis=str(row_flag)), (10, 9), (5, 4), {0, 1}),
+        ("single-channel", dict(spw="0:3"), (9,), (4,), {0}),
+    )
+    for name, overrides, weights, inverse_variances, bins in statistic_cases:
+        sigmas = [1 / np.sqrt(value) if value > 0 else -1 for value in inverse_variances]
+        coordinates = dict(
+            weight=[np.mean(weights)] * len(weights),
+            weightspectrum=weights,
+            sigma=[np.mean(sigmas)] * len(sigmas),
+            sigmaspectrum=sigmas,
+        )
+        for axis, values in coordinates.items():
+            options = statistics | overrides | dict(yaxis=axis, expformat="txt")
+            expected, actual = (work / f"avg-{name}-{axis}.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**options, plotfile=str(expected)) is None
+            selected = rows(expected)
+            channels = [int(point[2]) for point in selected]
+            assert len(selected) == 6 * len(bins)
+            assert set(channels) == bins
+            np.testing.assert_allclose([float(point[1]) for point in selected],
+                                       [values[channel] for channel in channels], rtol=1.2e-5)
+            assert native(**options, plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == len(selected)
+            print(f"avg-{name}-{axis}: {len(selected)} matching channel statistics", flush=True)
+    for name, source, column, coordinates in (
+        ("masked-model", vis, "model", [700, 1]),
+        ("masked-data", without_weight, "data", [7, 4]),
+    ):
+        masked = work / f"{name}.ms"
+        copy_ms(source, masked)
+        with opened(masked, True) as table:
+            flags_for_case = table.getcol("FLAG")
+            flags_for_case[:, :2, :] = True
+            table.putcol("FLAG", flags_for_case)
+        options = statistics | dict(vis=str(masked), xaxis="channel", xdatacolumn="",
+                                    yaxis=["real", "weightspectrum"], ydatacolumn=[column, column],
+                                    yaxislocation=["left", "right"], expformat="txt")
+        expected, actual = (work / f"avg-{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 12
+        assert {point[2] for point in selected} == {"1"}
+        np.testing.assert_allclose([float(point[1]) for point in selected],
+                                   np.repeat(coordinates, 6), rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"avg-{name}: {len(selected)} matching channel statistics", flush=True)
+    compare_figure(work, native, statistics | dict(yaxis="weight"), work / "avg-model-weight.casa.txt",
+                   ("Wt vs. Real:model", "Real:model", "Weight"))
 
     average_time = base | dict(avgtime="20", expformat="txt")
     expected, actual = (work / f"avg-with-time.{engine}.txt" for engine in ("casa", "native"))

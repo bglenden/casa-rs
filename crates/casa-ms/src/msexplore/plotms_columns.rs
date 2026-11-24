@@ -10,7 +10,8 @@ use super::{ChannelBin, FloatGrid, MsAxis, MsDataColumn, MsPlotSpec, PlotMsInput
 use crate::MeasurementSet;
 use crate::schema::main_table::OptionalMainColumn;
 use crate::transform::{
-    WeightKind, mean_weight_preferring_unflagged, visibility_weight_kind, weight_from_sigma,
+    WeightKind, mean_weight_preferring_unflagged, sigma_from_weight, visibility_weight_kind,
+    weight_from_sigma,
 };
 
 pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
@@ -88,6 +89,7 @@ pub(super) struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
     pub(super) primary: WeightKind,
     pub(super) row_weight: WeightKind,
+    pub(super) row_sigma: WeightKind,
 }
 
 impl PlotMsWeightKinds {
@@ -158,6 +160,67 @@ pub(super) fn weight_kinds(
         } else {
             kind(primary)
         },
+        row_sigma: if has_observed {
+            WeightKind::Observed
+        } else {
+            kind(primary)
+        },
+    }
+}
+
+pub(super) struct ChannelStatistics {
+    pub(super) weight: f64,
+    pub(super) sigma: f64,
+    spectra: Vec<(bool, f32, f32)>,
+}
+
+impl ChannelStatistics {
+    pub(super) fn from_bins(
+        correlation: usize,
+        bins: &[ChannelBin],
+        flags: &ndarray::ArrayView2<'_, bool>,
+        weight: Option<&FloatGrid>,
+        inverse_variance: Option<&FloatGrid>,
+    ) -> Self {
+        let sum = |grid: Option<&FloatGrid>, bin: &ChannelBin| {
+            sum_channel_weights(
+                bin.channels().map(|channel| {
+                    let value = grid.map_or(1.0, |grid| {
+                        grid.values[correlation * grid.chan_count + channel] as f32
+                    });
+                    (flags[(correlation, channel)], value)
+                }),
+                false,
+            )
+        };
+        let spectra: Vec<_> = bins
+            .iter()
+            .map(|bin| {
+                let (flagged, weight) = sum(weight, bin);
+                let variance_weight = sum(inverse_variance, bin).1;
+                (flagged, weight, sigma_from_weight(variance_weight))
+            })
+            .collect();
+        // The cache derives row statistics over the transformed spectra,
+        // using channel flags before the visibility projection's weight mask.
+        let weight = mean_weight_preferring_unflagged(
+            spectra
+                .iter()
+                .map(|&(flagged, weight, _)| (flagged, weight)),
+        );
+        let sigma = mean_weight_preferring_unflagged(
+            spectra.iter().map(|&(flagged, _, sigma)| (flagged, sigma)),
+        );
+        Self {
+            weight: f64::from(weight),
+            sigma: f64::from(sigma),
+            spectra,
+        }
+    }
+
+    pub(super) fn spectrum(&self, bin: usize) -> Option<(f64, f64)> {
+        let (flagged, weight, sigma) = self.spectra[bin];
+        (!flagged).then_some((f64::from(weight), f64::from(sigma)))
     }
 }
 

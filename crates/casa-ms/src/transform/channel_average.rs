@@ -411,7 +411,7 @@ pub(crate) fn weight_from_sigma(sigma: f32) -> f32 {
     }
 }
 
-pub(super) fn sigma_from_weight(weight: f32) -> f32 {
+pub(crate) fn sigma_from_weight(weight: f32) -> f32 {
     if weight > f32::MIN_POSITIVE {
         1.0 / weight.sqrt()
     } else {
