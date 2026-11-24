@@ -23,7 +23,8 @@
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
 use crate::selection::syntax::{ChannelSelection, parse_spw_selector};
-use casa_tables::{SelectedArray1DCells, Table};
+use casa_tables::Table;
+#[cfg(test)]
 use casa_types::ArrayValue;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,9 @@ use thiserror::Error;
 
 pub mod antenna_expr;
 pub(crate) mod array_expr;
+mod columns;
+pub(crate) use columns::load_uvw_column;
+use columns::{SelectedRowColumns, load_f64_column, load_field_ids, load_i32_column};
 mod edit;
 mod feed_expr;
 mod intent;
@@ -1197,12 +1201,14 @@ pub(crate) fn resolve_selected_row_facts(
                     "selected-row block lies outside the resolved selection".to_string(),
                 )
             })?;
-        let field_ids = load_i32_column(table, "FIELD_ID", rows)?;
-        let data_desc_ids = load_i32_column(table, "DATA_DESC_ID", rows)?;
-        let antenna1_ids = load_i32_column(table, "ANTENNA1", rows)?;
-        let antenna2_ids = load_i32_column(table, "ANTENNA2", rows)?;
-        let flag_rows = load_bool_column(table, "FLAG_ROW", rows)?;
-        let times = load_f64_column(table, "TIME", rows)?;
+        let SelectedRowColumns {
+            field_ids,
+            data_desc_ids,
+            antenna1_ids,
+            antenna2_ids,
+            flag_rows,
+            times,
+        } = SelectedRowColumns::read(table, rows)?;
 
         for slot in 0..rows.len() {
             let data_desc_id = data_desc_ids[slot];
@@ -1691,7 +1697,7 @@ fn load_structured_selection_columns(
     }
 
     if request.field {
-        columns.field = Some(load_i32_column(table, "FIELD_ID", rows)?);
+        columns.field = Some(load_field_ids(table, rows)?);
     }
     if request.data_desc {
         columns.data_desc = Some(load_i32_column(table, "DATA_DESC_ID", rows)?);
@@ -1728,130 +1734,6 @@ fn load_structured_selection_columns(
     }
 
     Ok(columns)
-}
-
-pub(crate) fn load_uvw_column(table: &Table, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
-    let accessor = table.column_accessor("UVW")?;
-    if let Ok(cells) = accessor.array_cells_1d_typed_uncached(rows) {
-        let SelectedArray1DCells::Float64(values) = cells else {
-            return Err(MsError::ColumnTypeMismatch {
-                column: "UVW".to_string(),
-                table: "MAIN".to_string(),
-                expected: "Float64 array".to_string(),
-                found: format!("{:?}", cells.primitive_type()),
-            });
-        };
-        if values.axis0_count() != 3 {
-            return Err(MsError::ColumnTypeMismatch {
-                column: "UVW".to_string(),
-                table: "MAIN".to_string(),
-                expected: "f64[3]".to_string(),
-                found: format!("f64[{}]", values.axis0_count()),
-            });
-        }
-        return Ok(values.into_values().as_chunks::<3>().0.to_vec());
-    }
-
-    let values = accessor.array_cells_owned_uncached(rows)?;
-    values
-        .into_iter()
-        .zip(rows.iter().copied())
-        .map(|(value, row)| match value {
-            Some(ArrayValue::Float64(values)) if values.len() == 3 => {
-                let values = values
-                    .as_slice()
-                    .ok_or_else(|| MsError::ColumnTypeMismatch {
-                        column: format!("UVW[row={row}]"),
-                        table: "MAIN".to_string(),
-                        expected: "contiguous f64[3]".to_string(),
-                        found: "non-contiguous Float64 array".to_string(),
-                    })?;
-                Ok([values[0], values[1], values[2]])
-            }
-            Some(ArrayValue::Float64(values)) => Err(MsError::ColumnTypeMismatch {
-                column: format!("UVW[row={row}]"),
-                table: "MAIN".to_string(),
-                expected: "f64[3]".to_string(),
-                found: format!("f64[{}]", values.len()),
-            }),
-            Some(other) => Err(MsError::ColumnTypeMismatch {
-                column: format!("UVW[row={row}]"),
-                table: "MAIN".to_string(),
-                expected: "Float64 array".to_string(),
-                found: format!("{:?}", other.primitive_type()),
-            }),
-            None => Err(MsError::MissingColumn {
-                column: format!("UVW[row={row}]"),
-                table: "MAIN".to_string(),
-            }),
-        })
-        .collect()
-}
-
-fn load_i32_column(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<i32>> {
-    table
-        .column_accessor(column)?
-        .scalar_cells_owned_for_rows(rows)?
-        .into_iter()
-        .zip(rows.iter().copied())
-        .map(|(value, row)| match value {
-            Some(casa_types::ScalarValue::Int32(v)) => Ok(v),
-            Some(other) => Err(MsError::ColumnTypeMismatch {
-                column: column.to_string(),
-                table: "MAIN".to_string(),
-                expected: "Int32".to_string(),
-                found: format!("{:?}", other.primitive_type()),
-            }),
-            None => Err(MsError::MissingColumn {
-                column: format!("{column}[row={row}]"),
-                table: "MAIN".to_string(),
-            }),
-        })
-        .collect()
-}
-
-fn load_f64_column(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<f64>> {
-    table
-        .column_accessor(column)?
-        .scalar_cells_owned_for_rows(rows)?
-        .into_iter()
-        .zip(rows.iter().copied())
-        .map(|(value, row)| match value {
-            Some(casa_types::ScalarValue::Float64(v)) => Ok(v),
-            Some(other) => Err(MsError::ColumnTypeMismatch {
-                column: column.to_string(),
-                table: "MAIN".to_string(),
-                expected: "Float64".to_string(),
-                found: format!("{:?}", other.primitive_type()),
-            }),
-            None => Err(MsError::MissingColumn {
-                column: format!("{column}[row={row}]"),
-                table: "MAIN".to_string(),
-            }),
-        })
-        .collect()
-}
-
-fn load_bool_column(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<bool>> {
-    table
-        .column_accessor(column)?
-        .scalar_cells_owned_for_rows(rows)?
-        .into_iter()
-        .zip(rows.iter().copied())
-        .map(|(value, row)| match value {
-            Some(casa_types::ScalarValue::Bool(v)) => Ok(v),
-            Some(other) => Err(MsError::ColumnTypeMismatch {
-                column: column.to_string(),
-                table: "MAIN".to_string(),
-                expected: "Bool".to_string(),
-                found: format!("{:?}", other.primitive_type()),
-            }),
-            None => Err(MsError::MissingColumn {
-                column: format!("{column}[row={row}]"),
-                table: "MAIN".to_string(),
-            }),
-        })
-        .collect()
 }
 
 fn int_list(ids: &[i32]) -> String {
