@@ -340,7 +340,8 @@
     "correlation": {
       "scope": "Correlations/polarizations (blank for all)",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-per-antenna-export"
       ],
       "behaviors": [
         "selection"
@@ -539,14 +540,15 @@
       "status": "Partial"
     },
     "avgantenna": {
-      "scope": "Average per antenna (mutually exclusive with avgbaseline)",
+      "scope": "Average per antenna (mutually exclusive with avgbaseline) Static per-antenna visibility exports at individual integrations use the averaged antenna ID and name and follow integration, antenna, channel and correlation order. Per-antenna scalar weighted phase and extended averages remain partial.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-per-antenna-export"
       ],
       "behaviors": [
         "averaging"
       ],
-      "status": "Implemented"
+      "status": "Partial"
     },
     "avgspw": {
       "scope": "Average over all spectral windows",
@@ -1042,7 +1044,8 @@
     "plotfile": {
       "scope": "Name of plot file to save automatically",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-per-antenna-export"
       ],
       "behaviors": [
         "export"
@@ -1056,7 +1059,8 @@
         "ms-empty-combined-averages",
         "ms-pointing-directions",
         "ms-static-grid-placement",
-        "ms-iterated-grid-start"
+        "ms-iterated-grid-start",
+        "ms-per-antenna-export"
       ],
       "behaviors": [
         "export"
@@ -2233,6 +2237,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-scalar-baseline-averages-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2234"
+      ]
+    },
+    "ms-per-antenna-export": {
+      "kind": "Same-input per-antenna visibility export identity and ordering",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Static scalar and vector per-antenna visibility plots at individual integrations, including antenna identities, correlation selection, spectral weights, cube flags and export order.",
+      "result": "Eight paired TXT exports match 56 selected coordinates and their antenna names and IDs, including individually selected correlations, conjugated phases and a weighted vector plot across two integrations with masked channels, the requested order of two ordinates, and a flagged integration between two visible buffers with the same time. A paired 500 by 360 PNG checks eight artist coordinates and axis units.",
+      "casa_version": "6.7.6.14",
+      "revision": "12ea23c0cf875538b1cc025308d41c8fb6fc6306",
+      "source_revision": "12ea23c0cf875538b1cc025308d41c8fb6fc6306",
+      "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-per-antenna-export-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2235"
       ]
     }
   }
