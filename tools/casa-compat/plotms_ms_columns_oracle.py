@@ -158,7 +158,8 @@ def compare_raw_flag_symbols(root, vis, native):
     compare_figure(root, native, reversed_hidden, root / "reversed-hidden.casa.txt",
                    ("Flagged visibility", "Amp", "Phase:corrected (degrees)"))
     compare_flagged_figure(root, native, "reversed-marked", reversed_marked, marker_color)
-    compare_empty_raw_flags(root, native, marked | dict(spw="0:2", flaggedsymbolshape="nosymbol"))
+    compare_empty_export(root, native, "empty-raw", marked | dict(spw="0:2", flaggedsymbolshape="nosymbol"),
+                         ("Amp", "Phase:corrected (degrees)"))
 
 
 def compare_flagged_figure(root, native, name, controls, marker_color):
@@ -198,11 +199,11 @@ def compare_flagged_figure(root, native, name, controls, marker_color):
           flush=True)
 
 
-def compare_empty_raw_flags(root, native, controls):
+def compare_empty_export(root, native, name, controls, labels):
     from casars import _plot_document
 
     for verbose in (True, False):
-        expected, actual = (root / f"empty-raw-{verbose}.{engine}.txt" for engine in ("casa", "native"))
+        expected, actual = (root / f"{name}-{verbose}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected), verbose=verbose, expformat="txt") is None
         assert not rows(expected) and expected.read_text().count("# No data to export") == 1
         assert native(**controls, plotfile=str(actual), verbose=verbose, expformat="txt") is None
@@ -212,19 +213,20 @@ def compare_empty_raw_flags(root, native, controls):
 
     def record(*args, **kwargs):
         figure, axis = render(*args, **kwargs)
-        assert not axis.lines
-        assert (axis.get_xlabel(), axis.get_ylabel()) == ("Amp", "Phase:corrected (degrees)")
+        assert not (axis.lines or axis.collections)
+        assert (axis.get_xlabel(), axis.get_ylabel()) == labels
         return figure, axis
 
     figure = controls | dict(width=500, height=360, dpi=100, expformat="png")
-    expected, actual = (root / f"empty-raw.{engine}.png" for engine in ("casa", "native"))
+    expected, actual = (root / f"{name}.{engine}.png" for engine in ("casa", "native"))
     assert reference(**figure, plotfile=str(expected)) is None
-    with patch.object(_plot_document, "render_document", record):
+    with patch.object(_plot_document, "render_document", side_effect=record) as renderer:
         assert native(**figure, plotfile=str(actual)) is None
+    renderer.assert_called_once()
     for path in (expected, actual):
         with Image.open(path) as image:
             assert image.size == (500, 360)
-    print("empty-raw: matching empty text sections and 500 by 360 PNG", flush=True)
+    print(f"{name}: matching empty text sections and 500 by 360 PNG", flush=True)
 
 
 def compare(root, vis, native):

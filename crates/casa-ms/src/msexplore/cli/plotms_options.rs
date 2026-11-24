@@ -211,7 +211,9 @@ pub(super) fn options_from_plotms(
         || y_axis.is_visibility_math()
         || y_axis2.is_some()
         || x_axis.is_row_identifier()
-        || y_axis.is_row_identifier();
+        || y_axis.is_row_identifier()
+        || x_axis.is_pointing()
+        || y_axis.is_pointing();
     let visibility_document = visibility_document || document_axes;
     let plot_format = if visibility_document {
         MsExportFormat::Txt

@@ -375,8 +375,8 @@ pub(super) fn name(axis: MsAxis) -> &'static str {
         MsAxis::SigmaSpectrum => "SigmaSp",
         MsAxis::Flag => "Flag",
         MsAxis::FlagRow => "FlagRow",
-        MsAxis::AntRa => "Ant-RA",
-        MsAxis::AntDec => "Ant-DEC",
+        MsAxis::AntRa => "Ant-Ra",
+        MsAxis::AntDec => "Ant-Dec",
     }
 }
 
@@ -384,6 +384,7 @@ fn coordinate(axis: MsAxis, value: f64) -> String {
     match axis {
         MsAxis::Time => format!("{value:.3}"),
         MsAxis::Frequency => format!("{:.9}", value / 1e9),
+        MsAxis::AntRa | MsAxis::AntDec => format!("{value:.5}"),
         _ => significant(value),
     }
 }

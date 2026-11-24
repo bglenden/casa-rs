@@ -183,6 +183,26 @@ impl PointingRows<'_> {
 }
 
 impl MsPointing<'_> {
+    pub(crate) fn plotms_samples(&self, antennas: &[i32]) -> MsResult<Vec<(i32, f64, MDirection)>> {
+        let mut samples = Vec::new();
+        PointingRows(self.table()).visit(0..self.row_count(), antennas, |id, sample, _, _| {
+            if !sample.time.is_finite() {
+                return Err(MsError::InvalidInput("Nonfinite POINTING time".into()));
+            }
+            samples.push((id, sample.time, sample.row));
+            Ok(false)
+        })?;
+        samples.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
+        samples.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
+        let rows = samples.iter().map(|&(_, _, row)| row).collect::<Vec<_>>();
+        let directions = self.read_metadata_directions(&rows)?;
+        Ok(samples
+            .into_iter()
+            .zip(directions)
+            .map(|((id, time, _), direction)| (id, time, direction.direction))
+            .collect())
+    }
+
     /// Read the pointing directions of the antennas associated with one MAIN
     /// row. Start at the requested POINTING row and wrap through the subtable.
     /// Interpolate only when requested and the integration interval is shorter

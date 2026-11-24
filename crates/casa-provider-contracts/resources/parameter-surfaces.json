@@ -24856,7 +24856,6 @@
         },
         {
           "name": "xframe",
-          "unimplemented": {"issue": 1032},
           "concept": {
             "id": "plotms.xframe",
             "semantic_revision": 1
@@ -24898,7 +24897,6 @@
         },
         {
           "name": "xinterp",
-          "unimplemented": {"issue": 1032},
           "concept": {
             "id": "plotms.xinterp",
             "semantic_revision": 1
@@ -25028,7 +25026,6 @@
         },
         {
           "name": "yframe",
-          "unimplemented": {"issue": 1032},
           "concept": {
             "id": "plotms.yframe",
             "semantic_revision": 1
@@ -25071,7 +25068,6 @@
         },
         {
           "name": "yinterp",
-          "unimplemented": {"issue": 1032},
           "concept": {
             "id": "plotms.yinterp",
             "semantic_revision": 1

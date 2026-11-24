@@ -32,6 +32,7 @@ mod plotms_columns;
 mod plotms_figure;
 mod plotms_model;
 mod plotms_ordinates;
+mod plotms_pointing;
 mod plotms_row_axes;
 mod plotms_text;
 mod plotms_time_baselines;
@@ -616,6 +617,10 @@ impl MsAxis {
                 | Self::Feed1
                 | Self::Feed2
         )
+    }
+
+    fn is_pointing(self) -> bool {
+        matches!(self, Self::AntRa | Self::AntDec)
     }
 
     fn uses_derived_geometry(self) -> bool {
@@ -1697,11 +1702,15 @@ impl MsPlotSpec {
 
     /// Validate the current plot specification against the current engine.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_with_ordinate_columns(false)
+        self.validate_with_plotms(false, false)
     }
 
-    fn validate_with_ordinate_columns(&self, independent_ordinates: bool) -> Result<(), String> {
-        self.validate_common(independent_ordinates)?;
+    fn validate_with_plotms(
+        &self,
+        independent_ordinates: bool,
+        pointing: bool,
+    ) -> Result<(), String> {
+        self.validate_common(independent_ordinates, pointing)?;
         if self.layout.rowindex != 0 || self.layout.colindex != 0 || self.layout.plotindex != 0 {
             return Err(
                 "msexplore per-plot rowindex/colindex/plotindex placement is reserved for multi-plot page composition".to_string(),
@@ -1717,7 +1726,7 @@ impl MsPlotSpec {
     }
 
     fn validate_for_page_child(&self) -> Result<(), String> {
-        self.validate_common(false)?;
+        self.validate_common(false, false)?;
         if self.flag_edit.is_some() {
             return Err(
                 "msexplore staged flag editing currently supports standalone scatter plots only"
@@ -1739,7 +1748,7 @@ impl MsPlotSpec {
         Ok(())
     }
 
-    fn validate_common(&self, independent_ordinates: bool) -> Result<(), String> {
+    fn validate_common(&self, independent_ordinates: bool, pointing: bool) -> Result<(), String> {
         if self.y_axes.is_empty() {
             return Err("msexplore requires at least one y axis per plot".to_string());
         }
@@ -1862,6 +1871,7 @@ impl MsPlotSpec {
         if !supported_x
             && !self.x_axis.is_interval_or_wavelength()
             && !self.x_axis.is_row_identifier()
+            && !(pointing && self.x_axis.is_pointing())
         {
             return Err(format!(
                 "msexplore x axis {} is modeled but not implemented yet",
@@ -1901,7 +1911,11 @@ impl MsPlotSpec {
                     | MsAxis::HourAngle
                     | MsAxis::ParallacticAngle
             );
-            if !supported_y && !y_axis.is_interval_or_wavelength() && !y_axis.is_row_identifier() {
+            if !supported_y
+                && !y_axis.is_interval_or_wavelength()
+                && !y_axis.is_row_identifier()
+                && !(pointing && (y_axis.is_pointing() || y_axis == MsAxis::Time))
+            {
                 return Err(format!(
                     "msexplore y axis {} is modeled but not implemented yet",
                     y_axis
@@ -2053,10 +2067,14 @@ pub struct MsExploreSpec {
 impl MsExploreSpec {
     /// Validate the high-level request.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_with_ordinate_columns(false)
+        self.validate_with_plotms(false, false)
     }
 
-    fn validate_with_ordinate_columns(&self, independent_ordinates: bool) -> Result<(), String> {
+    fn validate_with_plotms(
+        &self,
+        independent_ordinates: bool,
+        pointing: bool,
+    ) -> Result<(), String> {
         if self.plots.is_empty() {
             return Err("msexplore requires at least one plot per invocation".to_string());
         }
@@ -2064,7 +2082,7 @@ impl MsExploreSpec {
             return Err("msexplore max_plot_points must be a positive integer".to_string());
         }
         if self.plots.len() == 1 {
-            self.plots[0].validate_with_ordinate_columns(independent_ordinates)?;
+            self.plots[0].validate_with_plotms(independent_ordinates, pointing)?;
             return Ok(());
         }
 
@@ -2667,6 +2685,7 @@ struct PlotMsInput<'a> {
     weight_axis_columns: [Option<MsDataColumn>; 3],
     prefer_float_data: bool,
     raw_symbols: Option<RawSymbolVisibility>,
+    pointing: Option<plotms_pointing::PointingAxes>,
 }
 
 struct PlotMsColumnSelection<'a> {
@@ -2675,6 +2694,7 @@ struct PlotMsColumnSelection<'a> {
     additional_y: &'a [(MsAxis, MsDataColumn)],
     weights: [Option<MsDataColumn>; 3],
     raw_symbols: Option<RawSymbolVisibility>,
+    pointing: Option<plotms_pointing::PointingAxes>,
 }
 
 fn build_msexplore_plot_payload_validated(
@@ -2720,9 +2740,12 @@ fn build_msexplore_payload_internal(
     allow_decimation: bool,
     calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
-    spec.validate_with_ordinate_columns(calibration.is_some_and(|input| {
-        input.secondary_y_data_column.is_some() || !input.additional_ordinates.is_empty()
-    }))?;
+    spec.validate_with_plotms(
+        calibration.is_some_and(|input| {
+            input.secondary_y_data_column.is_some() || !input.additional_ordinates.is_empty()
+        }),
+        calibration.is_some_and(|input| input.pointing.is_some()),
+    )?;
     if calibration.and_then(|input| input.time_bins).is_none()
         && spec.plots.iter().any(|plot| {
             plot.averaging.avgtime.is_some() && plot.y_axes.contains(&MsAxis::UvDistance)
@@ -2901,6 +2924,7 @@ pub(crate) fn build_calibrated_plotms_payload(
         weight_axis_columns: [None; 3],
         prefer_float_data: false,
         raw_symbols: None,
+        pointing: None,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -3009,6 +3033,7 @@ fn build_uncalibrated_plotms_payload(
         weight_axis_columns: columns.weights,
         prefer_float_data,
         raw_symbols: columns.raw_symbols,
+        pointing: columns.pointing,
     };
     build_msexplore_payload_internal(ms, spec, true, Some(&input))
 }
@@ -4019,12 +4044,18 @@ fn build_generic_visibility_scatter(
     calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
     let needs_row_axes = plotms_row_axes::requested(spec);
+    let pointing = calibration.and_then(|input| input.pointing);
     let raw_symbols = calibration.and_then(|input| input.raw_symbols);
     let show_flagged = raw_symbols.is_some_and(|symbols| symbols.flagged);
     if needs_row_axes && calibration.is_none() {
         return Err("MeasurementSet row identifier axes require the public plotms task".into());
     }
-    let metadata_pair = if needs_row_axes {
+    let metadata_pair = if pointing.is_some() {
+        Some(plotms_ordinates::PointDimensions {
+            channel: false,
+            baseline: true,
+        })
+    } else if needs_row_axes {
         plotms_row_axes::metadata_pair(spec)
     } else {
         None
@@ -4067,6 +4098,7 @@ fn build_generic_visibility_scatter(
         .is_some_and(|feed| !feed.is_empty())
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
     let use_iterator_order = needs_row_axes
+        || pointing.is_some()
         || raw_symbols.is_some()
         || calibration.is_some()
             && (ordered_feed_selection
@@ -4206,6 +4238,9 @@ fn build_generic_visibility_scatter(
         })
         .transpose()?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
+    let pointing_coordinates = pointing
+        .map(|axes| plotms_pointing::PointingCoordinates::read(ms, axes, &selected_antenna1))
+        .transpose()?;
     let selected_intervals = if needs_interval {
         let mut intervals = selected_f64_values(ms.main_table(), "INTERVAL", &row_numbers)?;
         let mut first_interval = 0.0;
@@ -4539,6 +4574,10 @@ fn build_generic_visibility_scatter(
         let scan_number_value = selected_scan_numbers[row_slot];
         let antenna1_value = selected_antenna1[row_slot];
         let row_time_value = selected_times[row_slot];
+        let pointing_values = pointing_coordinates
+            .as_ref()
+            .map(|coordinates| coordinates.values(antenna1_value, row_time_value))
+            .transpose()?;
         let row_uvw_value = if needs_uvw_values {
             selected_uvw[row_slot]
         } else {
@@ -4684,6 +4723,11 @@ fn build_generic_visibility_scatter(
                 }
                 let axis_started = timing_enabled.then(Instant::now);
                 let axis_value = |axis_slot, axis| {
+                    if let Some(values) = pointing_values
+                        && let Some(value) = values[axis_slot]
+                    {
+                        return Ok(Some(value));
+                    }
                     if let Some(axes) = &row_axes
                         && let Some(value) = axes.value(axis, row_slot)
                     {
@@ -4877,11 +4921,13 @@ fn build_generic_visibility_scatter(
         .style
         .xlabel
         .clone()
+        .or_else(|| pointing.and_then(|axes| axes.label(0)))
         .unwrap_or_else(|| axis_label(spec.x_axis));
     let y_label = spec
         .style
         .ylabel
         .clone()
+        .or_else(|| pointing.and_then(|axes| axes.label(1)))
         .unwrap_or_else(|| axis_label(spec.y_axis()));
     let secondary_y_label = spec.secondary_y_axis().map(axis_label);
     let bounds_for_column = |axis, column: MsDataColumn| {
@@ -4917,6 +4963,7 @@ fn build_generic_visibility_scatter(
             } else {
                 series.sort_by_key(|entry| entry.y_index);
                 if needs_row_axes
+                    || pointing.is_some()
                     || raw_symbols.is_some()
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
