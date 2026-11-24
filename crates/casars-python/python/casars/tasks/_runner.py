@@ -416,6 +416,9 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             if value not in allowed:
                 message = "null value not allowed" if value is None else f"unallowed value {value}"
                 raise AssertionError(str({parameter: [message]}))
+        for parameter in ("addwn", "rejwn", "fftthresh"):
+            if arguments[parameter] is None:
+                raise AssertionError(str({parameter: ["null value not allowed"]}))
         if arguments["blfunc"].lower() == "sinusoid" and str(arguments["blmode"]).lower() == "fit":
             import numpy as np
 
@@ -425,11 +428,27 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                     raise AssertionError(str({parameter: ["must be of cVariant type"]}))
                 if isinstance(value, np.ndarray):
                     raise ValueError("wrong value given for addwn/rejwn")
+                if isinstance(value, str):
+                    if not value:
+                        raise IndexError("string index out of range")
+                    if value.isspace():
+                        # CASA reaches integer conversion for a blank input.
+                        int(value)
         try:
             return run(name, **values).value
         except TaskParameterError as error:
-            if error.completion.message == "Cannot sort a wavenumber list containing strings and numbers.":
-                raise TypeError(error.completion.message) from error
+            message = error.completion.message
+            if message == "Cannot sort a wavenumber list containing strings and numbers.":
+                # Preserve Python's comparison error for the actual element types.
+                sorted(set(arguments[error.completion.parameter]))
+                raise TypeError(message) from error
+            if message in (
+                "wrong value given for addwn/rejwn",
+                "fftthresh must be float or integer or string.",
+                "fftthresh has a wrong format.",
+                "threshold given to fftthresh must be positive.",
+            ):
+                raise ValueError(message) from error
             raise
         except TaskExecutionError as error:
             message = error.completion.message or ""
