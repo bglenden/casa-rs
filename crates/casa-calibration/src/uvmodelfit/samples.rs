@@ -8,6 +8,7 @@ use casa_components::ShapeTransform;
 use casa_ms::schema::main_table::VisibilityDataColumn;
 use casa_ms::write_session::maximum_visibility_cell_elements;
 use casa_ms::{MeasurementSet, MsResult, ResolvedMsSelection, ResolvedMsSelectionRow};
+use casa_tables::{SelectedArray1DCells, Table};
 use casa_types::{ArrayValue, Complex32, Complex64};
 use ndarray::{ArrayD, Axis};
 
@@ -114,7 +115,7 @@ impl<'a> FitSamples<'a> {
             data: read(CORRECTED.name())?,
             flags: read("FLAG")?,
             weights: read("WEIGHT")?,
-            uvw: read("UVW")?,
+            uvw: read_uvw(main, &indices)?,
         })
     }
 
@@ -157,11 +158,36 @@ impl<'a> FitSamples<'a> {
     }
 }
 
+fn read_uvw(table: &Table, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
+    let column = table.column_accessor("UVW")?;
+    // The typed selected-row reader avoids a whole-column read for IncrementalStMan.
+    if let Ok(SelectedArray1DCells::Float64(values)) = column.array_cells_1d_typed_uncached(rows) {
+        if values.axis0_count() != 3 {
+            return Err(invalid("a visibility fit row has an invalid cell shape"));
+        }
+        return Ok(values.values().as_chunks::<3>().0.to_vec());
+    }
+
+    column
+        .array_cells_owned_uncached(rows)?
+        .into_iter()
+        .map(|value| {
+            let Some(ArrayValue::Float64(uvw)) = value else {
+                return Err(invalid("UVW is not a Double array"));
+            };
+            if uvw.ndim() != 1 || uvw.len() != 3 {
+                return Err(invalid("a visibility fit row has an invalid cell shape"));
+            }
+            Ok(std::array::from_fn(|axis| uvw[axis]))
+        })
+        .collect()
+}
+
 struct Batch {
     data: Vec<Option<ArrayValue>>,
     flags: Vec<Option<ArrayValue>>,
     weights: Vec<Option<ArrayValue>>,
-    uvw: Vec<Option<ArrayValue>>,
+    uvw: Vec<[f64; 3]>,
 }
 
 impl Batch {
@@ -175,16 +201,7 @@ impl Batch {
         let Some(ArrayValue::Float32(weights)) = &self.weights[index] else {
             return Err(invalid("WEIGHT is not a Float array"));
         };
-        let Some(ArrayValue::Float64(uvw)) = &self.uvw[index] else {
-            return Err(invalid("UVW is not a Double array"));
-        };
-        if weights.is_empty()
-            || weights.ndim() != 1
-            || uvw.ndim() != 1
-            || uvw.len() != 3
-            || data.ndim() != 2
-            || flags.ndim() != 2
-        {
+        if weights.is_empty() || weights.ndim() != 1 || data.ndim() != 2 || flags.ndim() != 2 {
             return Err(invalid("a visibility fit row has an invalid cell shape"));
         }
         let first = weights[[0]];
@@ -194,7 +211,7 @@ impl Batch {
             data,
             flags,
             weight,
-            uvw: std::array::from_fn(|axis| uvw[[axis]]),
+            uvw: self.uvw[index],
         })
     }
 }
