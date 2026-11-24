@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "d200648543a48cd21fdcdb04d803fe7f3fb10841",
+  "source_revision": "d200648543a48cd21fdcdb04d803fe7f3fb10841",
+  "baseline_revision": "04fc189134b01aa91ab012aaba8e408466eaa8e6",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "One ordinary vector time-averaged model expression paired with a separately averaged DATA or CORRECTED_DATA visibility axis.",
+  "result": "passed",
+  "baseline_result": "Native refused the selected vector time-averaged derived visibility pair.",
+  "text_exports": 3,
+  "points": 8,
+  "figures": 1,
+  "rendered_coordinates": 3,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
