@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare channel averages of three and four stored PlotMS ordinate columns."""
+"""Compare channel averages of stored and virtual PlotMS ordinate columns."""
 
 import argparse
 from contextlib import chdir
@@ -31,6 +31,23 @@ def make_fixture(root):
             table.putcol(name, np.broadcast_to(10**exponent * channels, shape).copy())
         table.putcol("FLAG", np.zeros(shape, dtype=bool))
     return vis
+
+
+def virtual_fixtures(root, vis):
+    virtual = root / "virtual.ms"
+    copy_ms(vis, virtual)
+    with opened(virtual, True) as table:
+        table.removecols(["MODEL_DATA"])
+    assert casa.setjy(str(virtual), field="FLUX", standard="manual", usescratch=False,
+                      fluxdensity=[7.25, 0, 0, 0])
+
+    mixed = root / "stored-and-virtual.ms"
+    copy_ms(virtual, mixed)
+    with opened(vis) as stored, opened(mixed, True) as table:
+        model = stored.getcol("MODEL_DATA")
+        table.addcols({"MODEL_DATA": stored.getcoldesc("MODEL_DATA")})
+        table.putcol("MODEL_DATA", model)
+    return virtual, mixed, model
 
 
 def compare_sides(root, native, controls):
@@ -78,6 +95,7 @@ def compare(root, native):
         table.putcol("FLAG", flags)
     with opened(plain, True) as table:
         table.removecols(["WEIGHT_SPECTRUM"])
+    virtual, mixed, stored_model = virtual_fixtures(root, vis)
 
     base = request(vis) | dict(xaxis="channel", xdatacolumn="", spw="0:0~3", avgchannel="2",
                                yaxis=["real", "real", "real"], ydatacolumn=["data", "corrected", "model"],
@@ -93,8 +111,14 @@ def compare(root, native):
                                  ydatacolumn=["data", "data", "corrected"]), (observed, (0, 0), corrected)),
         ("third-observed", dict(yaxis=["real", "amp", "real"],
                                 ydatacolumn=["corrected", "model", "data"]), (corrected, model, observed)),
+        ("independent-abscissa", dict(xaxis="real", xdatacolumn="corrected",
+                                      yaxis=["real", "amp", "phase"],
+                                      ydatacolumn=["data", "model", "corrected"]),
+         (observed, model, (0, 0))),
         ("masked-channel", dict(vis=str(masked)), ((2.6, 7), (28, 70), (280, 700))),
         ("uniform-channel", dict(vis=str(plain)), ((2, 6), (20, 60), (200, 600))),
+        ("third-virtual-model", dict(vis=str(virtual)), (observed, corrected, (7.25, 7.25))),
+        ("virtual-overrides-stored-model", dict(vis=str(mixed)), (observed, corrected, (7.25, 7.25))),
     )
     for name, overrides, ordinates in cases:
         controls = base | overrides | dict(expformat="txt")
@@ -105,11 +129,16 @@ def compare(root, native):
         assert len(selected) == len(indices)
         assert [int(point[2]) for point in selected] == indices
         values = [coordinate for ordinate in ordinates for _ in range(6) for coordinate in ordinate]
+        x_values = corrected * (6 * len(ordinates)) if controls["xaxis"] == "real" else indices
         np.testing.assert_allclose(np.array([p[:2] for p in selected], dtype=float),
-                                   np.column_stack((indices, values)), rtol=1.2e-5)
+                                   np.column_stack((x_values, values)), rtol=1.2e-5)
         assert native(**controls, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching channel-averaged coordinates", flush=True)
+    with opened(virtual) as table:
+        assert "MODEL_DATA" not in table.colnames()
+    with opened(mixed) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), stored_model)
     compare_sides(root, native, base)
 
 

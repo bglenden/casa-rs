@@ -55,7 +55,7 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
-    pub(super) fn supports_channel_ordinate_list(&self) -> bool {
+    pub(super) fn supports_channel_visibility_ordinates(&self) -> bool {
         !self.plotms_extended_averaging()
             && !self.has_mixed_ordinate_dimensions()
             && self.plotms_axis_columns().is_some_and(|columns| {
