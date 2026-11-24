@@ -11009,3 +11009,16 @@ for the requested complex columns and preserves the constant value 1. The
 paired fixture checks the selected bins and metadata in both modes (#1032).
 [Pinned transform setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/mstransform/MSTransform/MSTransformManager.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 [Pinned time averager](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/AveragingTvi2.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
+
+## Empty MS visibility strides can abort or change the attachment
+
+On a nonempty MS, `getdata(increment=4294967297)` can admit a
+stride using its low 32 bits and select zero rows using the full stride.
+CASA 6.7.6.14 returns empty visibility and time arrays. `flag_sum` can
+report an arbitrary second extent, and requesting `u` aborts with
+`ArrayConformanceError`. An `axis_info` request raises on the missing
+row zero and leaves the attachment with zero selected rows.
+
+casa-rs preserves the empty stride result and returns typed empty UVW
+components and flag counts of shape `(0, 0)`. The axis metadata query
+raises while retaining the prior active row view (#1030).
