@@ -27,7 +27,7 @@ from plotms_ms_columns_oracle import (
     rows,
     time_average_fixture,
 )
-from plotms_ms_scalar_time_oracle import make_mixed_polarization
+from plotms_ms_scalar_time_oracle import compare_scalar_shape_refusal, make_mixed_polarization
 
 
 def make_fixture(root):
@@ -759,10 +759,12 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
         flags[:, :, times == np.unique(times)[2]] = True
         table.putcol("FLAG", flags)
     row_flagged = root / "scalar-antenna-row-flagged-time.ms"
-    copy_ms(masked, row_flagged)
-    with opened(row_flagged, True) as table:
-        times = table.getcol("TIME")
-        table.putcol("FLAG_ROW", times == np.unique(times)[2])
+    row_only = root / "scalar-antenna-row-only-time.ms"
+    for path, original in ((row_flagged, masked), (row_only, source)):
+        copy_ms(original, path)
+        with opened(path, True) as table:
+            times = table.getcol("TIME")
+            table.putcol("FLAG_ROW", times == np.unique(times)[2])
     controls = base | dict(vis=str(source), antenna="A0&A1;A0&A2", correlation="XX", spw="0:1",
                            avgtime="20", msselect="", xaxis="amp", yaxis="phase", scalar=True,
                            title="Scalar antenna time averages")
@@ -775,6 +777,8 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
         ("scalar-antenna-shorter-time", dict(avgtime="15"), 2),
         ("scalar-antenna-masked-time", dict(vis=str(masked)), 3),
         ("scalar-antenna-row-flagged-time", dict(vis=str(row_flagged)), 3),
+        ("scalar-antenna-row-only-time", dict(vis=str(row_only)), 3),
+        ("scalar-antenna-row-only-channels", dict(vis=str(row_only), avgchannel="2", spw="0:0~3"), 3),
     ):
         request_args = controls | overrides
         channels = (0, 1) if "avgchannel" in overrides else (1,)
@@ -811,6 +815,52 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
             compare_figure(root, native, request_args, expected,
                            (controls["title"], "Time (MJD seconds)", "Phase:corrected (degrees)"))
         print(f"{name}: {len(coordinates)} matching scalar antenna time coordinates", flush=True)
+
+    all_flagged = root / "scalar-antenna-all-flagged-time.ms"
+    copy_ms(source, all_flagged)
+    with opened(all_flagged, True) as table:
+        table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
+        table.putcol("FLAG_ROW", np.ones_like(table.getcol("FLAG_ROW")))
+    compare_empty_export(root, native, "all-flagged-scalar-antenna-time",
+                         controls | dict(vis=str(all_flagged)), ("Amp", "Phase:corrected (degrees)"))
+
+    variable = root / "scalar-antenna-variable-rows.ms"
+    copy_ms(row_only, variable)
+    with opened(variable, True) as table:
+        table.removecols(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
+    mixed = make_mixed_polarization(variable, root / "scalar-antenna-mixed-polarization.ms",
+                                    lambda table: table.getcol("FLAG_ROW"))
+    compare_scalar_shape_refusal(root, native, controls | dict(vis=str(mixed), expformat="txt"))
+    print("scalar-antenna-time: matching unequal-shape refusal in a row-flagged buffer", flush=True)
+    compare_scalar_antenna_time_virtual_guard(root, native, source, controls)
+
+
+def compare_scalar_antenna_time_virtual_guard(root, native, source, base):
+    from casars.tasks import TaskExecutionError
+
+    virtual = root / "scalar-antenna-stored-and-virtual.ms"
+    copy_ms(source, virtual)
+    with opened(virtual, True) as table:
+        physical = np.full(table.getcol("MODEL_DATA").shape, 19, dtype=np.complex64)
+        table.putcol("MODEL_DATA", physical)
+    casa.setjy(str(virtual), field="FLUX", spw="0", standard="manual", usescratch=False,
+               fluxdensity=[7.25, 0, 0, 0])
+    request_args = base | dict(vis=str(virtual), xaxis="time", xdatacolumn="", yaxis="amp",
+                               ydatacolumn="model", expformat="txt")
+    expected, actual = (root / f"scalar-antenna-virtual.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**request_args, plotfile=str(expected)) is None
+    assert len(rows(expected)) == 6
+    assert {float(point[1]) for point in rows(expected)} == {7.25}
+    try:
+        native(**request_args, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "PlotMS virtual MeasurementSet models are pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS used stored MODEL_DATA for an averaged virtual-model field")
+    assert not actual.exists()
+    with opened(virtual) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical)
+    print("scalar-antenna-time: refusing the pending averaged virtual model", flush=True)
 
 
 def main():
