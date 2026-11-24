@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "8e2040bffd9a330cbecaf90319a1fd6600f79817",
+  "source_revision": "8e2040bffd9a330cbecaf90319a1fd6600f79817",
+  "baseline_revision": "fb1c391934635e0fe9cba8aa8ccbe63d91ad61c1",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs feed selection for unaveraged MeasurementSet visibilities, with static PNG export, a unity callibrary and a measured-weather atmospheric overlay.",
+  "result": "passed",
+  "baseline_result": "CASA exports 30 feed-selected points, while native exports 55 from both feeds.",
+  "text_exports": 6,
+  "points": 134,
+  "figures": 1,
+  "rendered_coordinates": 30,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "overlay_normalized_rms": 5.35296e-06,
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}
