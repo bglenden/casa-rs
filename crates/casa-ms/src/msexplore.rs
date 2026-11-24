@@ -3055,15 +3055,17 @@ fn build_uncalibrated_plotms_payload(
         )?;
     } else if load_models.is_none()
         && plot.is_some_and(|plot| {
-            plot.averaging.avgchannel.is_some_and(|width| width > 1)
-                && !uses_extended_averaging(plot)
-                && uses_model(plot)
+            let channel_average = plot.averaging.avgchannel.is_some_and(|width| width > 1)
+                && !uses_extended_averaging(plot);
+            let iterated_ordinates =
+                plot.iteration.iteraxis.is_some() && plot.secondary_y_axis().is_some();
+            (channel_average || iterated_ordinates) && uses_model(plot)
         })
     {
         plotms_model::refuse_selected_virtual_fields(
             ms,
             &selected.selected_rows,
-            "use casars.tasks.plotms to predict virtual MeasurementSet models before channel averaging",
+            "use casars.tasks.plotms to predict virtual MeasurementSet models",
         )?;
     }
     let models = load_models
@@ -4241,12 +4243,16 @@ fn build_generic_visibility_scatter(
         && calibration.is_some_and(|input| input.rows.is_none())
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
+    let iterated_ordinate_list = calibration.is_some_and(|input| input.rows.is_none())
+        && spec.iteration.iteraxis.is_some()
+        && spec.secondary_y_axis().is_some();
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
         || channel_derived
         || channel_only_visibility
+        || iterated_ordinate_list
         || calibration.is_some()
             && (ordered_feed_selection
                 || use_ordinate_masks
@@ -5147,6 +5153,7 @@ fn build_generic_visibility_scatter(
                     || phase_shift.is_some()
                     || channel_derived
                     || channel_only_visibility
+                    || iterated_ordinate_list
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
                 {

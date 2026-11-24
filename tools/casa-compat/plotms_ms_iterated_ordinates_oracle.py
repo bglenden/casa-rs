@@ -13,7 +13,7 @@ import casatasks as casa
 import numpy as np
 from PIL import Image
 
-from plotms_ms_channel_ordinates_oracle import make_fixture
+from plotms_ms_channel_ordinates_oracle import compare_model_provider, make_fixture, virtual_fixtures
 from plotms_ms_columns_oracle import compare_text, opened, plotms_launcher, reference, request
 
 
@@ -97,9 +97,11 @@ def compare(root, native):
     both = base | dict(gridrows=2)
     polarizations = ((12, "XX", 24), (12, "YY", 18))
     three = compare_text_pages(root, native, "three-correlation", both, polarizations)
-    compare_text_pages(root, native, "two-correlation",
-                       both | dict(yaxis=["real", "amp"], ydatacolumn=["data", "corrected"],
-                                   yaxislocation=["right", "left"]), polarizations)
+    two_axes = both | dict(yaxis=["real", "amp"], ydatacolumn=["data", "corrected"],
+                           yaxislocation=["right", "left"])
+    two = compare_text_pages(root, native, "two-correlation", two_axes, polarizations)
+    compare_text_pages(root, native, "same-column-correlation",
+                       two_axes | dict(yaxis=["amp", "phase"], ydatacolumn=["data", "data"]), polarizations)
     compare_text_pages(root, native, "four-correlation",
                        both | dict(yaxis=["real", "real", "amp", "phase"],
                                    ydatacolumn=["data", "corrected", "model", "model"],
@@ -110,11 +112,26 @@ def compare(root, native):
         controls = both | dict(field="", correlation="XX", iteraxis=axis)
         compare_text_pages(root, native, f"three-{axis}", controls,
                            tuple((metadata, value, 24) for value in values))
+
+    _, mixed, stored_model = virtual_fixtures(root, vis)
+    model_axes = both | dict(vis=str(mixed))
+    virtual = compare_text_pages(root, native, "iterated-virtual-model", model_axes, polarizations)
+    for panel in virtual:
+        np.testing.assert_array_equal(np.split(panel, 3)[2][:, 1], 7.25)
+    compare_model_provider(root, native, model_axes | dict(expformat="txt"))
+    with opened(mixed) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), stored_model)
+
     sides = (("left", "Real, Real:model", (0, 2)), ("right", "Real:corrected", (1,)))
     panels = list(zip(("XX", "YY"), three, strict=True))
     compare_figures(root, native, "both-correlations", both, [panels], ["CorrXX,YY"], sides)
     compare_figures(root, native, "correlation-pages", base, [[panel] for panel in panels],
                     ["CorrXX", "CorrYY_2"], sides)
+    compare_figures(root, native, "current-correlation", base | dict(exprange="current"),
+                    [[panels[0]]], ["CorrXX"], sides)
+    two_sides = (("left", "Amp:corrected", (1,)), ("right", "Real", (0,)))
+    compare_figures(root, native, "two-correlation-sides", two_axes,
+                    [list(zip(("XX", "YY"), two, strict=True))], ["CorrXX,YY"], two_sides)
 
 
 def main():
