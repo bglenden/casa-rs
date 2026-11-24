@@ -1764,7 +1764,7 @@ def _call_wvrgcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
     if vis is not None:
         if not isinstance(vis, str):
             raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
-        _validate_required_path(values, "vis", vis)
+        _validate_required_path(values, "vis", vis, search_data=True)
 
     caltable = arguments["caltable"]
     errors = {}
@@ -1778,8 +1778,12 @@ def _call_wvrgcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
         raise AssertionError(str(errors))
 
     output = os.path.expanduser(caltable)
+    if output and not output.startswith(("/", "./", "../")) and not os.path.exists(output):
+        output = _resolve_relative_data_path(output)
     directory = os.path.dirname(output) or "."
-    if not output:
+    if type(values.get("vis", vis)) is not str:
+        problem = "Visibility data set not found - please verify the name"
+    elif not output:
         problem = "Must provide output calibration table name in parameter caltable."
     elif os.path.exists(output):
         problem = f"Output caltable {output} already exists - will not overwrite."
