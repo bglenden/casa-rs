@@ -51,7 +51,7 @@ def virtual_fixtures(root, vis):
     return virtual, mixed, model
 
 
-def compare_sides(root, native, controls):
+def compare_sides(root, native, controls, *, expected_x="Channel"):
     from casars import _plot_document
 
     captured = []
@@ -70,7 +70,7 @@ def compare_sides(root, native, controls):
     with patch.object(_plot_document, "render_document", record):
         assert native(**options, plotfile=str(actual)) is None
     [(xlabel, axes)] = captured
-    assert xlabel == "Channel"
+    assert xlabel == expected_x
     assert [(side, label) for side, label, _ in axes] == [
         ("left", "Real, Real:model"), ("right", "Real:corrected")
     ]
@@ -82,7 +82,7 @@ def compare_sides(root, native, controls):
     for image in (expected, actual):
         with Image.open(image) as opened_image:
             assert opened_image.size == (500, 360)
-    print("three ordinates: matched both sides and all 36 rendered coordinates", flush=True)
+    print(f"three ordinates: matched both sides and all {len(selected)} rendered coordinates", flush=True)
 
 
 def compare(root, native):
