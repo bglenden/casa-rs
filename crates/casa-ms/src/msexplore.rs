@@ -5449,7 +5449,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let scalar_channels = (scalar_average || scalar_spw_time) && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
-    let spw_channels = spw_average && average_channels;
+    let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
     let direct_time_channels = uncalibrated
         && time_bins.is_some()
@@ -5852,7 +5852,7 @@ fn build_generic_visibility_scatter_with_averaging(
             time_weight_kinds
                 .filter(|_| combined_vector_average)
                 .map(|kinds| {
-                    if time_baselines || time_antenna {
+                    if time_baselines || time_antenna || time_spw {
                         kinds.row_weight
                     } else {
                         kinds.primary
@@ -5861,7 +5861,9 @@ fn build_generic_visibility_scatter_with_averaging(
         let primary_weight_grid = primary_time_weight_kind.and_then(weight_grid);
         let time_channel_primary = primary_weight_grid
             .zip(primary_time_weight_kind)
-            .filter(|_| extended_derived || time_antenna_channels || direct_time_channels);
+            .filter(|_| {
+                extended_derived || time_antenna_channels || time_spw || direct_time_channels
+            });
         let time_antenna_spectrum = time_weight_kinds
             .filter(|_| time_antenna)
             .map(|kinds| weight_grid(kinds.row_weight));
@@ -6336,6 +6338,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                                 ],
                                                 primary: time_channel_primary,
                                                 equal_channel_means: (time_antenna_channels
+                                                    || time_spw
                                                     || direct_time_channels)
                                                     && model_channels_equally,
                                             },
