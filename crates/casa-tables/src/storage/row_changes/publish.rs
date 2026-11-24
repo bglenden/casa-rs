@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
-use crate::storage::standard_stman::SSM_HEADER_SIZE;
+use crate::storage::standard_stman::{DEFAULT_SSM_BUCKET_SIZE, SSM_HEADER_SIZE};
 
 use super::{Extension, StagedEdit, StorageError, TABLE_CONTROL_FILE, tiled_stman};
 
@@ -100,7 +100,8 @@ fn rewrite(
         let len = source.metadata()?.len();
         file.seek(SeekFrom::Start(end))?;
         source.seek(SeekFrom::Start(end))?;
-        std::io::copy(source, file)?;
+        let mut buckets = BufReader::with_capacity(DEFAULT_SSM_BUCKET_SIZE as usize, &mut *source);
+        std::io::copy(&mut buckets, file)?;
         file.set_len(len)?;
         file.rewind()?;
         source.rewind()?;
@@ -163,6 +164,7 @@ impl StagedEdit<'_> {
             let name = entry.file_name();
             let staged = entry.path();
             let target = self.table.join(&name);
+            let ssm_retained_end = self.ssm_retained_end.get(&name).copied();
             let original = match File::options()
                 .read(self.preserve_file_identity)
                 .write(true)
@@ -177,7 +179,7 @@ impl StagedEdit<'_> {
                         file,
                         original: File::open(backup)?,
                         updated: File::open(staged)?,
-                        ssm_retained_end: self.ssm_retained_end.get(&name).copied(),
+                        ssm_retained_end,
                     });
                     continue;
                 }
@@ -187,7 +189,12 @@ impl StagedEdit<'_> {
                     fs::hard_link(&target, &backup)?;
                     Some(backup)
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    if ssm_retained_end.is_some() {
+                        return Err(StorageError::MissingDataFile(target));
+                    }
+                    None
+                }
                 Err(error) => return Err(error.into()),
             };
             changes.push(Update::Replace {
@@ -254,5 +261,21 @@ mod tests {
         );
         update.undo().unwrap();
         assert_eq!(fs::read(&target).unwrap(), bytes);
+    }
+
+    #[test]
+    fn sparse_ssm_stage_cannot_replace_a_missing_manager() {
+        let table = tempfile::tempdir().unwrap();
+        let mut edit = StagedEdit::new(table.path()).unwrap();
+        let name = "table.f0";
+        let target = table.path().join(name);
+        fs::write(edit.staged.path().join(name), [0; 32]).unwrap();
+        edit.preserve_file_identity = true;
+        edit.ssm_retained_end.insert(name.into(), SSM_HEADER_SIZE);
+        assert!(matches!(
+            edit.publish(),
+            Err(StorageError::MissingDataFile(path)) if path == target
+        ));
+        assert!(!target.exists());
     }
 }

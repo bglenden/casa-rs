@@ -45,8 +45,12 @@ pub(crate) fn stage_records(
         return Err(malformed());
     }
 
-    fs::copy(original, destination)?;
-    let mut file = OpenOptions::new().write(true).open(destination)?;
+    // Only the new header and tail are published. The existing data buckets
+    // between them stay in the manager file and need no staged copy.
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
     let indirect_path = |path: &Path| {
         let mut name = path.as_os_str().to_os_string();
         name.push("i");
