@@ -17,6 +17,7 @@ use super::{
     write_i64_be, write_i64_le,
 };
 
+/// Stage the new header and tail, returning the end of the retained buckets.
 pub(crate) fn stage_records(
     original: &Path,
     destination: &Path,
@@ -25,7 +26,7 @@ pub(crate) fn stage_records(
     old_rows: u64,
     records: &[RecordValue],
     defaults: &RecordValue,
-) -> Result<(), StorageError> {
+) -> Result<u64, StorageError> {
     let mut source = File::open(original)?;
     let header = parse_ssm_header(&mut source)?;
     let mut indices = parse_ssm_indices(&mut source, &header)?;
@@ -63,7 +64,8 @@ pub(crate) fn stage_records(
         None
     };
     let bucket_bytes = header.bucket_size as usize;
-    let mut next_bucket = append_start(&mut source, &header, &indices)? as usize;
+    let first_changed_bucket = append_start(&mut source, &header, &indices)? as usize;
+    let mut next_bucket = first_changed_bucket;
     let string_start = next_bucket
         + indices
             .iter()
@@ -187,7 +189,7 @@ pub(crate) fn stage_records(
     file.seek(SeekFrom::Start(0))?;
     file.write_all(&revised)?;
     file.set_len(bucket_offset(nr_buckets, bucket_bytes))?;
-    Ok(())
+    Ok(bucket_offset(first_changed_bucket, bucket_bytes))
 }
 
 fn append_start(

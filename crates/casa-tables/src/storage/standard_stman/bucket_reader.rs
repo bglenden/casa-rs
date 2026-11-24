@@ -5,6 +5,28 @@ use std::io::BufReader;
 
 use super::*;
 
+/// Retain a single bucket for rows or payloads that share it.
+#[derive(Default)]
+pub(super) struct LastBucket {
+    number: Option<u32>,
+    data: Vec<u8>,
+}
+
+impl LastBucket {
+    pub(super) fn read(
+        &mut self,
+        file: &mut File,
+        header: &SsmHeader,
+        number: u32,
+    ) -> Result<&[u8], StorageError> {
+        if self.number != Some(number) {
+            self.data = read_bucket(file, header, number)?;
+            self.number = Some(number);
+        }
+        Ok(&self.data)
+    }
+}
+
 /// One operation owns this buffer; no cached bytes survive a table read.
 pub(super) struct ReadBuckets {
     file: BufReader<File>,

@@ -4,6 +4,8 @@ use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
+use crate::storage::standard_stman::SSM_HEADER_SIZE;
+
 use super::{Extension, StagedEdit, StorageError, TABLE_CONTROL_FILE, tiled_stman};
 
 enum Update {
@@ -22,6 +24,7 @@ enum Update {
         file: File,
         original: File,
         updated: File,
+        ssm_retained_end: Option<u64>,
     },
     Replace {
         staged: PathBuf,
@@ -44,7 +47,12 @@ impl Update {
                 old_len,
                 new_len,
             } => file.set_len((*new_len).max(*old_len)),
-            Self::Rewrite { file, updated, .. } => rewrite(file, updated),
+            Self::Rewrite {
+                file,
+                updated,
+                ssm_retained_end,
+                ..
+            } => rewrite(file, updated, *ssm_retained_end),
             Self::Replace { staged, target, .. } => fs::rename(staged, target),
         }
     }
@@ -58,7 +66,12 @@ impl Update {
                 ..
             } => write_index(file, *offset, original),
             Self::Extend { file, old_len, .. } => file.set_len(*old_len),
-            Self::Rewrite { file, original, .. } => rewrite(file, original),
+            Self::Rewrite {
+                file,
+                original,
+                ssm_retained_end,
+                ..
+            } => rewrite(file, original, *ssm_retained_end),
             Self::Replace {
                 target,
                 original: Some(original),
@@ -76,7 +89,24 @@ impl Update {
     }
 }
 
-fn rewrite(file: &mut File, source: &mut File) -> std::io::Result<()> {
+fn rewrite(
+    file: &mut File,
+    source: &mut File,
+    ssm_retained_end: Option<u64>,
+) -> std::io::Result<()> {
+    if let Some(end) = ssm_retained_end {
+        // The stage changed the file header and replaced or extended its
+        // tail. Leave the existing data buckets between them untouched.
+        let len = source.metadata()?.len();
+        file.seek(SeekFrom::Start(end))?;
+        source.seek(SeekFrom::Start(end))?;
+        std::io::copy(source, file)?;
+        file.set_len(len)?;
+        file.rewind()?;
+        source.rewind()?;
+        std::io::copy(&mut source.take(SSM_HEADER_SIZE), file)?;
+        return Ok(());
+    }
     file.seek(SeekFrom::Start(0))?;
     source.seek(SeekFrom::Start(0))?;
     let len = std::io::copy(source, file)?;
@@ -147,6 +177,7 @@ impl StagedEdit<'_> {
                         file,
                         original: File::open(backup)?,
                         updated: File::open(staged)?,
+                        ssm_retained_end: self.ssm_retained_end.get(&name).copied(),
                     });
                     continue;
                 }
@@ -186,5 +217,42 @@ impl StagedEdit<'_> {
         }
         tiled_stman::invalidate_shared_tile_cache_for_table(self.table);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rewrite_ssm_tail_keeps_published_buckets_and_restores_the_old_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        let original = dir.path().join("original");
+        let staged = dir.path().join("staged");
+        let header = SSM_HEADER_SIZE as usize;
+        let retained_end = header + 64;
+        let bytes = [vec![1; header], vec![2; 64], vec![3; 32]].concat();
+        fs::write(&target, &bytes).unwrap();
+        fs::write(&original, &bytes).unwrap();
+        fs::write(
+            &staged,
+            [vec![5; header], vec![9; 64], vec![7; 96]].concat(),
+        )
+        .unwrap();
+
+        let mut update = Update::Rewrite {
+            file: File::options().write(true).open(&target).unwrap(),
+            original: File::open(original).unwrap(),
+            updated: File::open(staged).unwrap(),
+            ssm_retained_end: Some(retained_end as u64),
+        };
+        update.apply().unwrap();
+        assert_eq!(
+            fs::read(&target).unwrap(),
+            [vec![5; header], vec![2; 64], vec![7; 96]].concat()
+        );
+        update.undo().unwrap();
+        assert_eq!(fs::read(&target).unwrap(), bytes);
     }
 }
