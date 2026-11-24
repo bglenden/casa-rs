@@ -327,6 +327,23 @@ def check_map_intent(root, engines, mapping, raster):
             compare_tables(intent_products['casa'], intent_products['native'])
         print(f'{mode} intent selects the expected scan in both implementations', flush=True)
 
+        expected = None
+        for engine, task in engines.items():
+            for method in ('direct', 'composite'):
+                work = root / f'{mode}-intent-{method}-{engine}.ms'
+                copy_ms(vis, work)
+                if method == 'direct':
+                    assert task(str(work), 'apply', applytable=str(intent_products[engine]), interp='linear') is None
+                else:
+                    assert task(str(work), mode + ',apply', intent=intent, interp='linear', **options) is None
+                with opened(work) as output:
+                    got = {column: output.getcol(column) for column in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
+                if expected is None:
+                    expected = got
+                else:
+                    compare_products(got, expected)
+        print(f'{mode} composite intent agrees with explicit sky selection', flush=True)
+
 
 def check_shared_pointings(root, engines, source):
     vis = root / 'shared-pointing-map.ms'

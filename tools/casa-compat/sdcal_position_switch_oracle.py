@@ -350,6 +350,53 @@ def check_intent(root, seed, temperatures, tasks):
     if 'native' in selected:
         compare_mapping(selected['native'], selected['casa'], False)
     print('Position-switch intent selection and inactive apply/Tsys intent matched', flush=True)
+    check_composite_intent(root, vis, temperatures, tasks)
+
+
+def check_composite_intent(root, vis, temperatures, tasks):
+    from sdcal_apply_oracle import compare_products
+
+    with_tsys = root / 'composite-intent-with-tsys.ms'
+    copy_ms(vis, with_tsys)
+    copy_ms(temperatures / 'SYSCAL', with_tsys / 'SYSCAL')
+    with opened(with_tsys, True) as main:
+        assert main.putkeyword('SYSCAL', f'Table: {with_tsys / "SYSCAL"}')
+    intent = 'CALIBRATE_FOCUS#ON_SOURCE'
+    for label, source in (('ps,apply', vis), ('ps,tsys,apply', with_tsys)):
+        expected = None
+        for engine, task in tasks.items():
+            priors = [str(root / f'{engine}-selected-intent.cal')]
+            if source == with_tsys:
+                tsys = root / f'{engine}-composite-intent-tsys.cal'
+                assert task(str(source), 'tsys', outfile=str(tsys)) is None
+                priors.append(str(tsys))
+            for implementation in ('direct', 'composite'):
+                work = root / f'{label}-{implementation}-{engine}.ms'
+                copy_ms(source, work)
+                if implementation == 'direct':
+                    assert task(str(work), 'apply', applytable=priors, interp='linear') is None
+                else:
+                    assert task(str(work), label, intent=intent, interp='linear') is None
+                with opened(work) as output:
+                    got = {column: output.getcol(column) for column in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
+                if expected is None:
+                    expected = got
+                else:
+                    compare_products(got, expected, corrected_rtol=4e-6 if source == with_tsys else 1e-7)
+        print(f'{label} with active intent agrees with explicit sky selection', flush=True)
+
+    for task in tasks.values():
+        for mode in ('ps', 'ps,apply'):
+            try:
+                task(str(vis), mode, outfile=str(root / 'invalid-intent.cal'), intent='UNKNOWN_INTENT')
+            except RuntimeError as error:
+                assert type(error) is RuntimeError
+                assert str(error) == (
+                    'Error in data selection specification: State Expression: No match found for "UNKNOWN_INTENT"\n'
+                    'State Expression: Partial or no match for State ID list []'
+                )
+            else:
+                raise AssertionError(f'{mode} accepted an unmatched intent')
 
 
 def check_measurement_set_replacement(root, seed, tasks):
