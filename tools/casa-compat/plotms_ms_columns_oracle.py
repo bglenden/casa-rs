@@ -881,16 +881,33 @@ def compare_time_averaged_columns(root, native):
     distance_ordinate = uvw_controls | single_ordinate | dict(
         xaxis="real", xdatacolumn="corrected", yaxis="uvdist", ydatacolumn="", avgtime="", expformat="txt",
     )
-    for name, overrides in (("raw", {}), ("channel", dict(spw="0:0~1", avgchannel="2"))):
+    reordered_uvw = work / "reordered-uvw.ms"
+    copy_ms(weighted_uvw, reordered_uvw)
+    with opened(reordered_uvw, True) as table:
+        times = table.getcol("TIME")
+        reversed_times = times.min() + times.max() - times
+        table.putcol("TIME", reversed_times)
+        table.putcol("TIME_CENTROID", reversed_times)
+        table.putcell("FLAG_ROW", 0, True)
+    unaveraged_distances = [1, np.hypot(10, 21)]
+    channel_distance = dict(spw="0:0~1", avgchannel="2")
+    reordered_distance = dict(vis=str(reordered_uvw))
+    for name, overrides, distances in (
+        ("raw", {}, unaveraged_distances),
+        ("channel", channel_distance, unaveraged_distances),
+        ("raw-reordered", reordered_distance, unaveraged_distances[::-1]),
+        ("channel-reordered", channel_distance | reordered_distance, unaveraged_distances[::-1]),
+    ):
         options = distance_ordinate | overrides
         expected, actual = (work / f"{name}-distance-ordinate.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**options, plotfile=str(expected)) is None
         np.testing.assert_allclose([float(point[1]) for point in rows(expected)],
-                                   np.tile([1, np.hypot(10, 21)], 3), rtol=1.2e-5)
+                                   np.tile(distances, 3), rtol=1.2e-5)
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == 6
         print(f"{name}-distance-ordinate: 6 matching UV distance coordinates", flush=True)
-    from casars.tasks import TaskParameterError
+    from casars.tasks import TaskExecutionError, TaskParameterError
+    from plotms_callibrary_oracle import library_entry
 
     output = work / "metadata-distance-ordinate.native.txt"
     try:
@@ -899,6 +916,23 @@ def compare_time_averaged_columns(root, native):
         assert "UV distance ordinate combination is pending (#1032)" in str(error)
     else:
         raise AssertionError("PlotMS admitted a pending UV distance and metadata pair")
+    assert not output.exists()
+
+    unity = work / "uvw-unity.cal"
+    casa.gencal(str(weighted_uvw), str(unity), "amp", parameter=[1.0])
+    calibrated = distance_ordinate | dict(avgtime="20", callib=library_entry(unity))
+    reference_path = work / "callib-distance-ordinate.casa.txt"
+    assert reference(**calibrated, plotfile=str(reference_path)) is None
+    selected = rows(reference_path)
+    assert len(selected) == 3
+    np.testing.assert_allclose([float(point[1]) for point in selected], np.hypot(8, 17), rtol=1.2e-5)
+    output = work / "callib-distance-ordinate.native.txt"
+    try:
+        native(**calibrated, plotfile=str(output))
+    except TaskExecutionError as error:
+        assert "UV distance ordinates with a callibrary or direct msexplore are pending (#1032)" in str(error)
+    else:
+        raise AssertionError("PlotMS admitted a pending time-averaged callibrary UV distance ordinate")
     assert not output.exists()
     compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
 

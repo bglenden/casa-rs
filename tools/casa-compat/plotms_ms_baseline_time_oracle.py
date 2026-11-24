@@ -117,6 +117,31 @@ def compare_partial_spectrum(root, native, controls):
     assert compare_text(actual, expected) == len(selected)
     print(f"spectrum-availability: {len(selected)} matching time-and-baseline coordinates", flush=True)
 
+    with opened(vis, True) as table:
+        antenna2 = table.getcol("ANTENNA2")
+        first_baseline = ((table.getcol("ANTENNA1") == 0) & (antenna2 == 1)
+                          & (table.getcol("FIELD_ID") == 0))
+        times = table.getcol("TIME")
+        first_row_time = times[np.flatnonzero(first_baseline)[0]]
+        shared_buffer = (antenna2 == 2) & (times == first_row_time)
+        weights = np.ones_like(table.getcol("WEIGHT"))
+        weights[:, shared_buffer] = 9
+        corrected = np.ones_like(table.getcol("CORRECTED_DATA")) * 10
+        corrected[:, :, shared_buffer] = 100
+        table.putcol("WEIGHT", weights)
+        table.putcol("CORRECTED_DATA", corrected)
+    options |= dict(xaxis="u", xdatacolumn="", yaxis="real", ydatacolumn="corrected",
+                    yaxislocation="left", avgbaseline=False, avgchannel="", spw="0:1")
+    expected, actual = (root / f"time-weighted-sparse-spectrum.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert len(selected) == 6
+    np.testing.assert_allclose([float(point[1]) for point in selected], [10, 10, 10, 10, 10, 91])
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == len(selected)
+    print(f"time-weighted-sparse-spectrum: {len(selected)} matching time-averaged UVW coordinates",
+          flush=True)
+
 
 def compare_time_channel_baselines(root, native):
     work = root / "time-channel-baselines"

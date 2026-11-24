@@ -2655,6 +2655,13 @@ fn build_msexplore_payload_internal(
     spec.validate_with_ordinate_columns(calibration.is_some_and(|input| {
         input.secondary_y_data_column.is_some() || !input.additional_ordinates.is_empty()
     }))?;
+    if calibration.and_then(|input| input.time_bins).is_none()
+        && spec.plots.iter().any(|plot| {
+            plot.averaging.avgtime.is_some() && plot.y_axes.contains(&MsAxis::UvDistance)
+        })
+    {
+        return Err("Time-averaged PlotMS UV distance ordinates with a callibrary or direct msexplore are pending (#1032)".into());
+    }
     let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
     let header_lines = resolve_page_header_lines(ms, spec)?;
     if spec.plots.len() == 1 {
@@ -2884,7 +2891,7 @@ fn build_uncalibrated_plotms_payload(
                     span_fields: plot.averaging.avgfield,
                     max_uvw_distance: 0.0,
                 },
-                time_baselines,
+                time_baselines || weighted_time_uvw,
             )
             .map_err(|error| error.to_string())
         })
@@ -3963,6 +3970,7 @@ fn build_generic_visibility_scatter(
     let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
     let use_iterator_order = calibration.is_some()
         && (spec.x_axis.is_interval_or_wavelength()
+            || spec.y_axes.contains(&MsAxis::UvDistance)
             || spec
                 .y_axes
                 .iter()
@@ -4224,7 +4232,7 @@ fn build_generic_visibility_scatter(
     let mut bin_buffers = visibility_columns.buffers();
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
-        // PlotMS interval, wavelength, and channel statistics use the cube mask.
+        // PlotMS iterator coordinates and channel statistics use the cube mask.
         if flag_row_value
             && !include_row_flagged_points
             && !use_iterator_order

@@ -196,7 +196,10 @@ fn write_series(
                 verbose,
             )
         };
-        if channel_major || x_axis.is_interval_or_wavelength() || y_axis.is_interval_or_wavelength()
+        if channel_major
+            || x_axis.is_interval_or_wavelength()
+            || y_axis.is_interval_or_wavelength()
+            || y_axis == MsAxis::UvDistance
         {
             let mut ordered = points.collect::<Vec<_>>();
             ordered.sort_unstable_by_key(|&(_, point, display)| {
