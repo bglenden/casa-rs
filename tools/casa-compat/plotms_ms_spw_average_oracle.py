@@ -647,7 +647,7 @@ def compare_vector_channel_spans(root, native, base, vis):
                    (options["title"], "Real", "Imag:corrected"))
 
 
-def compare_ordinate_lists(root, native, base, source, *, spans_only=False):
+def compare_ordinate_lists(root, native, base, source, *, only):
     root.mkdir()
     vis = root / "stored-list-model.ms"
     copy_ms(source, vis)
@@ -662,8 +662,11 @@ def compare_ordinate_lists(root, native, base, source, *, spans_only=False):
                           yaxis=["real", "imag", "real"], ydatacolumn=["data", "corrected", "model"],
                           yaxislocation=["left", "right", "left"])
     combined = dict(vis=str(staggered), xaxis="time", avgtime="20", avgchannel="2", spw="0:0~3,1:0~3")
-    if spans_only:
+    if only == "ordinate-list-spans":
         compare_ordinate_list_spans(root, native, options | combined, vis)
+        return
+    if only == "ordinate-list-uvw":
+        compare_ordinate_list_uvw(root, native, options, staggered)
         return
     for name, overrides, y in (
         ("vector-spw-ordinates", {}, [5, 5, 15, 15, 14.5, 14.5]),
@@ -691,6 +694,7 @@ def compare_ordinate_lists(root, native, base, source, *, spans_only=False):
                   name="vector-spw-ordinates")
     compare_ordinate_list_masks(root, native, options, vis, combined)
     compare_ordinate_list_spans(root, native, options | combined, vis)
+    compare_ordinate_list_uvw(root, native, options, staggered)
 
 
 def compare_ordinate_list_masks(root, native, options, vis, combined):
@@ -763,6 +767,28 @@ def compare_ordinate_list_spans(root, native, options, source):
             print(f"{case}: six matching coordinates across boundaries", flush=True)
 
 
+def compare_ordinate_list_uvw(root, native, options, vis):
+    from casars.tasks import TaskParameterError
+
+    controls = options | dict(vis=str(vis), xaxis="u", avgtime="20")
+    expected = export(root, "spw-list-u.casa", reference, controls)
+    assert len(rows(expected)) == 3
+    output = root / "spw-list-u.native.txt"
+    try:
+        native(**controls, plotfile=str(output), expformat="txt")
+    except TaskParameterError as error:
+        assert "#1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS accepted pending SPW averaging against a U abscissa")
+    assert not output.exists()
+
+    ordinary_time = controls | dict(avgspw=False)
+    expected = export(root, "time-list-u.casa", reference, ordinary_time)
+    actual = export(root, "time-list-u.native", native, ordinary_time)
+    assert compare_text(actual, expected) == 6
+    print("uvw-spw-ordinates: pending SPW U guard and six ordinary time U coordinates verified", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -771,7 +797,8 @@ def main():
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
                                            "malformed", "scalar-time", "vector-time", "vector-optional",
-                                           "vector-channel-spans", "ordinate-lists", "ordinate-list-spans"))
+                                           "vector-channel-spans", "ordinate-lists", "ordinate-list-spans",
+                                           "ordinate-list-uvw"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -806,9 +833,8 @@ def main():
             compare_vector_optional_weights(root, native, base)
         if args.only in (None, "vector-channel-spans"):
             compare_vector_channel_spans(root, native, base, vis)
-        if args.only in (None, "ordinate-lists", "ordinate-list-spans"):
-            compare_ordinate_lists(root / "ordinate-lists", native, base, vis,
-                                   spans_only=args.only == "ordinate-list-spans")
+        if args.only in (None, "ordinate-lists", "ordinate-list-spans", "ordinate-list-uvw"):
+            compare_ordinate_lists(root / "ordinate-lists", native, base, vis, only=args.only)
 
 
 if __name__ == "__main__":

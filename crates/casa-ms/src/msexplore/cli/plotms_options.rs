@@ -249,8 +249,11 @@ impl CliOptions {
             && (!crosses_boundary || self.avgtime.is_some())
             && self.freqframe.is_none();
         let channel_average = self.avgchannel.is_some_and(|width| width > 1);
-        let ordinary_time =
-            time_average && !transforms_frequency && !crosses_boundary && !channel_average;
+        let ordinary_time = time_average
+            && !self.avgspw
+            && !transforms_frequency
+            && !crosses_boundary
+            && !channel_average;
         let scalar_time = time_average && !transforms_frequency;
         (spectral_window_average
             || (!self.avgspw
