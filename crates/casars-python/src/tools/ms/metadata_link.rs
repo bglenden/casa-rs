@@ -37,6 +37,8 @@ pub(in crate::tools) struct MetadataSnapshot {
     view: Option<Arc<MetadataView>>,
 }
 
+type SourceAndRows = (Arc<MetadataSnapshot>, Option<Arc<[usize]>>);
+
 struct MetadataView {
     path: PathBuf,
     links: Option<HashMap<SubtableId, PathBuf>>,
@@ -144,9 +146,7 @@ impl MetadataLink {
 
     /// Open the source MAIN and its subtables, with the view's row indices
     /// separately for callers that can project selected rows directly.
-    pub(super) fn source_and_rows(
-        &self,
-    ) -> MsResult<(Arc<MetadataSnapshot>, Option<Arc<[usize]>>)> {
+    pub(super) fn source_and_rows(&self) -> MsResult<SourceAndRows> {
         self.verify_directory()?;
         let rows = self
             .state
