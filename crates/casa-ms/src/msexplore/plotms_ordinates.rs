@@ -361,18 +361,18 @@ pub(super) struct VisibilityTimeBounds {
 
 #[derive(Default)]
 pub(super) struct BaselineIntegrationGroups {
-    previous: Option<([i32; 4], f64)>,
+    anchor: Option<([i32; 4], f64)>,
     ordinal: usize,
 }
 
 impl BaselineIntegrationGroups {
     pub(super) fn observe(&mut self, ids: [i32; 4], time: f64, interval: f64) -> usize {
-        match self.previous {
-            Some((previous_ids, start))
-                if previous_ids == ids && time >= start && time - start <= interval => {}
-            previous => {
-                self.ordinal += usize::from(previous.is_some());
-                self.previous = Some((ids, time));
+        match self.anchor {
+            Some((anchor_ids, start))
+                if anchor_ids == ids && time >= start && time - start <= interval => {}
+            anchor => {
+                self.ordinal += usize::from(anchor.is_some());
+                self.anchor = Some((ids, time));
             }
         }
         self.ordinal

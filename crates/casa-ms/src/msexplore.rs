@@ -2507,6 +2507,7 @@ pub struct PlotMsCalibration {
 /// CASA row and channel selection, optionally with transient calibrated arrays.
 struct PlotMsInput<'a> {
     row_order: &'a [usize],
+    starts_visibility_buffer: &'a [bool],
     time_bins: Option<&'a PlotTimeGroups>,
     channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
     rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
@@ -2731,6 +2732,7 @@ pub(crate) fn build_calibrated_plotms_payload(
 ) -> Result<MsPlotPayload, String> {
     let input = PlotMsInput {
         row_order: &calibration.row_order,
+        starts_visibility_buffer: &[],
         time_bins: None,
         channels: &calibration.channels,
         rows: Some(&calibration.rows),
@@ -2800,16 +2802,20 @@ fn build_uncalibrated_plotms_payload(
             .map_err(|error| error.to_string())
         })
         .transpose()?;
-    let row_order = if (vector_baselines && !time_baselines) || scalar_time {
-        crate::transform::selected_plotms_integration_order(ms, &selected.selected_rows)
-            .map_err(|error| error.to_string())?
-    } else {
-        selected
-            .selected_rows
-            .into_iter()
-            .map(|row| row.row_index)
-            .collect()
-    };
+    let (row_order, starts_visibility_buffer) =
+        if (vector_baselines && !time_baselines) || scalar_time {
+            crate::transform::selected_plotms_integration_order(ms, &selected.selected_rows)
+                .map_err(|error| error.to_string())?
+        } else {
+            (
+                selected
+                    .selected_rows
+                    .into_iter()
+                    .map(|row| row.row_index)
+                    .collect(),
+                Vec::new(),
+            )
+        };
     let spw = spec
         .selection
         .spw
@@ -2825,6 +2831,7 @@ fn build_uncalibrated_plotms_payload(
     }
     let input = PlotMsInput {
         row_order: &row_order,
+        starts_visibility_buffer: &starts_visibility_buffer,
         time_bins: time_bins.as_ref(),
         channels: &channels,
         rows: None,
@@ -5047,6 +5054,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
+    let mut scalar_time_rows = std::collections::BTreeSet::new();
     let mut time_baseline_stats =
         time_baselines.then(plotms_time_baselines::TimeBaselineStatistics::default);
 
@@ -5275,15 +5283,19 @@ fn build_generic_visibility_scatter_with_averaging(
         let row_uvw_value = selected_uvw[row_slot];
         let row_interval_value = selected_intervals[row_slot];
         if let Some(group) = group.filter(|_| scalar_time) {
-            let start = row_time_value - row_interval_value / 2.0;
-            let end = row_time_value + row_interval_value / 2.0;
-            scalar_time_bounds
-                .entry(group)
-                .and_modify(|(first, last)| {
-                    *first = first.min(start);
-                    *last = last.max(end);
-                })
-                .or_insert((start, end));
+            scalar_time_rows.insert((group, antenna1_value, antenna2_value));
+            // The scalar reducer uses the first row's interval for each buffer.
+            if calibration.is_some_and(|input| input.starts_visibility_buffer[row_slot]) {
+                let start = row_time_value - row_interval_value / 2.0;
+                let end = row_time_value + row_interval_value / 2.0;
+                scalar_time_bounds
+                    .entry(group)
+                    .and_modify(|(first, last)| {
+                        *first = first.min(start);
+                        *last = last.max(end);
+                    })
+                    .or_insert((start, end));
+            }
         }
         let shared_time_scope_value = if use_shared_time_scope_midpoint {
             let shared_scope = build_shared_time_average_scope_key(
@@ -5657,6 +5669,11 @@ fn build_generic_visibility_scatter_with_averaging(
         .zip(time_bins)
         .zip(spec.averaging.avgtime)
         .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval));
+    let scalar_time_order = scalar_time_rows
+        .into_iter()
+        .enumerate()
+        .map(|(order, row)| (row, order))
+        .collect::<HashMap<_, _>>();
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
     for panel_key in panel_order {
@@ -5677,16 +5694,25 @@ fn build_generic_visibility_scatter_with_averaging(
                 provenance: Vec::new(),
                 plotms_metadata: Vec::new(),
             };
-            let mut points = series
-                .points
-                .into_iter()
-                .map(|(key, point)| (key.time_key.group(), point));
+            let mut points = series.points.into_iter().map(|(key, point)| {
+                let group = key.time_key.group();
+                let order = group.map(|group| {
+                    if scalar_time
+                        && let AveragingBaselineToken::Baseline(antenna1, antenna2) = key.baseline
+                    {
+                        scalar_time_order[&(group, antenna1, antenna2)]
+                    } else {
+                        group
+                    }
+                });
+                (group, order, point)
+            });
             let mut plot_order = calibration.map(|_| {
                 let mut ordered = points.by_ref().collect::<Vec<_>>();
-                ordered.sort_by_key(|(group, entry)| {
+                ordered.sort_by_key(|(_, order, entry)| {
                     entry.representative.as_ref().map(|point| {
                         let (row, channel, correlation) = point.plotms_order();
-                        (group.unwrap_or(row), channel, correlation)
+                        (order.unwrap_or(row), channel, correlation)
                     })
                 });
                 ordered.into_iter()
@@ -5695,7 +5721,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 Some(points) => points.next(),
                 None => points.next(),
             });
-            for (group, accumulator) in ordered {
+            for (group, order, accumulator) in ordered {
                 if !accumulator.has_usable_weight() {
                     continue;
                 }
@@ -5751,7 +5777,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             .averaging
                             .avgtime
                             .and_then(|_| project(MsAxis::Time, false)),
-                        averaging_group: group,
+                        averaging_group: order,
                     });
                 }
                 point_budget.record_points(

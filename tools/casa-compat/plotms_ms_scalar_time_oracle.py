@@ -102,6 +102,31 @@ def compare(root, native):
         print(f"{name}: {len(selected)} matching scalar time coordinates", flush=True)
     compare_ordinate_figure(root, "scalar-amplitude", native, controls, "Amp",
                            ["Phase:corrected (degrees)", "Real:model"])
+    compare_baseline_order(root, native, controls, source, start)
+
+
+def compare_baseline_order(root, native, controls, source, start):
+    different_interval = root / "nonanchor-interval.ms"
+    copy_ms(source, different_interval)
+    with opened(different_interval, True) as table:
+        intervals = table.getcol("INTERVAL")
+        nonanchor = (table.getcol("TIME") == start) & (table.getcol("ANTENNA2") == 2)
+        intervals[nonanchor] = 30
+        table.putcol("INTERVAL", intervals)
+    options = controls | dict(antenna="A0&A1;A0&A2", spw="0:0~1", correlation="XX,YY", expformat="txt")
+    expected_order = [(antenna, channel, poln) for antenna in ("1", "2")
+                      for channel in ("0", "1") for poln in ("XX", "YY")]
+    expected_times = [f"{start + offset:.3f}" for offset in (10, 40) for _ in expected_order]
+    for name, vis in (("scalar-baseline-order", source), ("scalar-buffer-interval", different_interval)):
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**(options | dict(vis=str(vis))), plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 32
+        assert [(point[6], point[2], point[12]) for point in selected] == expected_order * 4
+        assert [point[9] for point in selected] == expected_times * 2
+        assert native(**(options | dict(vis=str(vis))), plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching scalar time coordinates", flush=True)
 
 
 def main():

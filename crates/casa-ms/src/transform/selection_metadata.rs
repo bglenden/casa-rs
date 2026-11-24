@@ -112,23 +112,23 @@ pub(super) fn sort_selected_rows(
     })
 }
 
-/// Return the selected MAIN rows in the ordinary PlotMS visibility iterator order.
+/// Return the selected MAIN rows and buffer starts in ordinary PlotMS iterator order.
 pub(crate) fn selected_plotms_integration_order(
     ms: &MeasurementSet,
     selected: &[ResolvedMsSelectionRow],
-) -> Result<Vec<usize>, MsTransformError> {
+) -> Result<(Vec<usize>, Vec<bool>), MsTransformError> {
     let (rows, descriptions) = selected
         .iter()
         .map(|row| (row.row_index, row.data_desc_id))
         .unzip();
-    Ok(sort_selected_rows(
+    let ordered = sort_selected_rows(
         ms.main_table(),
         ms.path().unwrap_or_else(|| Path::new("<memory>")),
         rows,
         descriptions,
         MainRowOrder::Transform,
-    )?
-    .rows)
+    )?;
+    Ok((ordered.rows, ordered.starts_visibility_buffer))
 }
 
 #[derive(Default)]
