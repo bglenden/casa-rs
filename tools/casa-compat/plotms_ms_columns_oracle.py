@@ -90,7 +90,6 @@ def pending_cases(root, native, vis):
     cases = (
         ("averaged-vector", dict(xdatacolumn="corrected-model_vector", avgchannel="3"),
          6, "averaging derived data columns"),
-        ("visible-flags", dict(customflaggedsymbol=True), 18, "displaying flagged points"),
     )
     for name, options, point_count, diagnostic in cases:
         controls = request(vis) | options | dict(expformat="txt")
@@ -98,8 +97,6 @@ def pending_cases(root, native, vis):
         assert reference(**controls, plotfile=str(expected)) is None
         selected = rows(expected)
         assert len(selected) == point_count
-        if name == "visible-flags":
-            assert {sample[2] for sample in selected} == {"1", "2", "3"}
         try:
             native(**controls, plotfile=str(actual))
         except TaskParameterError as error:
@@ -107,6 +104,66 @@ def pending_cases(root, native, vis):
         else:
             raise AssertionError(f"An unsupported {name} plot was exported")
         assert not actual.exists()
+
+
+def compare_raw_flag_symbols(root, vis, native):
+    from casars.tasks import _plotms_plot
+    from matplotlib.colors import to_rgba
+
+    flagged_ms = root / "flagged-displays.ms"
+    copy_ms(vis, flagged_ms)
+    with opened(flagged_ms, True) as table:
+        timestamp = f"{table.getcell('TIME', 0):.3f}"
+        table.putcell("FLAG_ROW", 0, True)
+    base = request(flagged_ms) | dict(title="Flagged visibility")
+    rgb = (221, 34, 85)
+    marker_color = "dd2255"
+    marked = base | dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
+                         flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
+                         flaggedsymbolfill="fill", flaggedsymboloutline=False)
+    for name, controls, count, channels in (
+        ("hidden-flags", base, 12, {"1", "3"}),
+        ("visible-flags", marked, 18, {"1", "2", "3"}),
+    ):
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        points = rows(expected)
+        assert len(points) == count
+        assert {point[2] for point in points} == channels
+        assert timestamp in {point[9] for point in points}
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching raw visibility coordinates", flush=True)
+
+    captured = []
+    configure = _plotms_plot.configure
+
+    def record(figure, axes, document, options):
+        configure(figure, axes, document, options)
+        [axis] = figure.axes
+        assert (axis.get_title(), axis.get_xlabel(), axis.get_ylabel()) == (
+            "Flagged visibility", "Amp", "Phase:corrected (degrees)",
+        )
+        captured.extend(axis.lines)
+
+    figure = marked | dict(width=500, height=360, dpi=100, expformat="png")
+    expected, actual = (root / f"visible-flags.{engine}.png" for engine in ("casa", "native"))
+    assert reference(**figure, plotfile=str(expected)) is None
+    with patch.object(_plotms_plot, "configure", record):
+        assert native(**figure, plotfile=str(actual)) is None
+    [ordinary, flagged] = sorted(captured, key=lambda line: -len(line.get_xydata()))
+    assert len(ordinary.get_xydata()) == 12 and len(flagged.get_xydata()) == 6
+    assert flagged.get_marker() == "D" and flagged.get_markersize() == 4
+    assert to_rgba(flagged.get_markerfacecolor()) == to_rgba(f"#{marker_color}")
+    points = rows(root / "visible-flags.casa.txt")
+    for artist, masked in ((ordinary, False), (flagged, True)):
+        coordinates = np.array([point[:2] for point in points if (point[2] == "2") == masked], dtype=float)
+        np.testing.assert_allclose(artist.get_xydata(), coordinates, rtol=1.2e-5, atol=1e-7)
+    for path in (expected, actual):
+        with Image.open(path) as image:
+            assert image.size == (500, 360)
+            assert np.any(np.all(np.asarray(image.convert("RGB")) == rgb, axis=-1)), path
+    print("visible-flags.png: 12 clear and six flagged points with separate markers", flush=True)
 
 
 def compare(root, vis, native):
@@ -187,6 +244,7 @@ def compare(root, vis, native):
                    ("Phase:corrected/model (scalar) vs. Amp:data/model (scalar)",
                     "Amp:data/model (scalar)", "Phase:corrected/model (scalar) (degrees)"))
     pending_cases(root, native, vis)
+    compare_raw_flag_symbols(root, vis, native)
 
 
 def compare_missing_corrected(root, vis, source, native):
