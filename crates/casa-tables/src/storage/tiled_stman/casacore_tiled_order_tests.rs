@@ -94,6 +94,14 @@ fn assert_cells(
     assert_eq!(table.row_count(), rows);
     for &column in columns {
         let cells = table.column_accessor(column).expect("column");
+        let selection = [rows - 1, 0, rows - 1, 0];
+        assert_eq!(
+            cells
+                .array_cells_owned_uncached(&selection)
+                .expect("complete selected cells"),
+            selection.map(|row| Some(expected(column, row))),
+            "mixed cube selection for {column}"
+        );
         for row in 0..rows {
             assert_eq!(
                 cells.array_cell(row).expect("lazy cell"),
