@@ -202,10 +202,13 @@ fn query(target: &str, start: &str, stop: &str, step: &str) -> Option<String> {
         ("QUANTITIES", "'1,14,15,17,19,20,24'"),
         ("ANG_FORMAT", "DEG"),
     ];
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(10)))
-        .build()
-        .into();
+    let agent = match horizons_agent() {
+        Ok(agent) => agent,
+        Err(error) => {
+            tracing::warn!(%error, "unable to configure JPL Horizons TLS");
+            return None;
+        }
+    };
     let reply = agent.post(&url).send_form(form).and_then(|mut response| {
         response
             .body_mut()
@@ -232,6 +235,31 @@ fn query(target: &str, start: &str, stop: &str, step: &str) -> Option<String> {
             None
         }
     }
+}
+
+fn horizons_agent() -> Result<ureq::Agent, String> {
+    use ureq::tls::{PemItem, RootCerts, TlsConfig, parse_pem};
+
+    let mut builder = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10)));
+    if let Some(path) = std::env::var_os("SSL_CERT_FILE") {
+        let bytes = std::fs::read(path).map_err(|error| format!("read SSL_CERT_FILE: {error}"))?;
+        let certificates = parse_pem(&bytes)
+            .filter_map(|item| match item {
+                Ok(PemItem::Certificate(certificate)) => Some(Ok(certificate)),
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("parse SSL_CERT_FILE: {error}"))?;
+        if certificates.is_empty() {
+            return Err("SSL_CERT_FILE contains no root certificates".to_owned());
+        }
+        let tls = TlsConfig::builder()
+            .root_certs(RootCerts::from(certificates))
+            .build();
+        builder = builder.tls_config(tls);
+    }
+    Ok(builder.build().into())
 }
 
 fn publish_raw(path: &Path, text: &str, overwrite: bool) -> Result<(), TaskFailure> {
