@@ -993,6 +993,72 @@ def compare_time_scan_field_columns(root, native):
     assert not actual.exists()
 
 
+def compare_baseline_averaged_columns(root, native):
+    work = root / "baseline-averaged-columns"
+    work.mkdir()
+    source, integration = time_average_fixture(work)
+    with opened(source, True) as table:
+        high = table.getcol("ANTENNA2") == 2
+        shape = table.getcol("DATA").shape
+        amplitude = np.where(high, 3, 1).astype(np.complex64)
+        for factor, name in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            table.putcol(name, np.broadcast_to(amplitude * 10**factor, shape).copy())
+        for name, high_value in (("WEIGHT", 9), ("SIGMA", 0.5)):
+            values = np.where(high, high_value, 1).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, (shape[0], shape[2])).copy())
+    controls = request(source) | dict(antenna="A0&A1;A0&A2", xaxis="real", xdatacolumn="data",
+                                      yaxis=["real", "real"], ydatacolumn=["corrected", "model"],
+                                      yaxislocation=["left", "right"], spw="0:1", avgbaseline=True)
+    cases = (
+        ("baseline-independent", "XX", [(2.8, 28)] * 6),
+        ("baseline-both-correlations", "XX,YY", [(2.8, 28)] * 12),
+        ("baseline-selected-yy", "YY", [(1.2, 12)] * 6),
+        ("baseline-mixed-flags", "XX", [(1, 10), (2.8, 28)] * 3),
+        ("baseline-row-flags-only", "XX", [(2.8, 28)] * 6),
+        ("baseline-zero-row-weights", "XX", [(2, 20)] * 6),
+        ("baseline-ignores-spectral-weights", "XX", [(2.8, 28)] * 6),
+    )
+    for name, correlation, corrected in cases:
+        vis = work / f"{name}.ms"
+        copy_ms(source, vis)
+        with opened(vis, True) as table:
+            if name in ("baseline-both-correlations", "baseline-selected-yy"):
+                values = table.getcol("WEIGHT")
+                values[1, :] = np.where(high, 1, 9)
+                table.putcol("WEIGHT", values)
+            if name == "baseline-mixed-flags":
+                flags = table.getcol("FLAG")
+                flags[:, 1, high & (integration % 2 == 0)] = True
+                table.putcol("FLAG", flags)
+            if name == "baseline-row-flags-only":
+                table.putcol("FLAG_ROW", high & (integration % 2 == 0))
+            if name == "baseline-zero-row-weights":
+                table.putcol("WEIGHT", np.zeros_like(table.getcol("WEIGHT")))
+            if name == "baseline-ignores-spectral-weights":
+                column = "WEIGHT_SPECTRUM"
+                descriptor = table.getcoldesc("DATA")
+                table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                            dataManagerGroup=column)})
+                spectrum = np.where(high, 1, 9).astype(np.float32)
+                table.putcol(column, np.broadcast_to(spectrum, shape).copy())
+        options = controls | dict(vis=str(vis), correlation=correlation)
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, expformat="txt", plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 2 * len(corrected)
+        assert {tuple(point[5:9]) for point in selected} == {("-1", "-1", "*", "*")}
+        correlations = correlation.split(",")
+        assert [point[12] for point in selected] == correlations * (len(selected) // len(correlations))
+        model = [(x, 10 * y) for x, y in corrected]
+        np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float),
+                                   corrected + model, rtol=1.2e-5)
+        assert native(**options, expformat="txt", plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching baseline-averaged coordinates", flush=True)
+    figure = controls | dict(vis=str(work / "baseline-independent.ms"))
+    compare_ordinate_figure(work, "baseline-independent", native, figure, "Real", ["Real:corrected", "Real:model"])
+
+
 def compare_float_columns(root, vis, source, native):
     float_only = root / "float-only.ms"
     mixed = root / "float-and-complex.ms"
@@ -1350,6 +1416,7 @@ def main():
         compare_time_averaged_columns(root, native)
         compare_combined_averaged_columns(root, native)
         compare_time_scan_field_columns(root, native)
+        compare_baseline_averaged_columns(root, native)
         compare_float_columns(root, vis, source, native)
         compare_default_model(root, native)
         compare_virtual_fourier_model(root, native)
