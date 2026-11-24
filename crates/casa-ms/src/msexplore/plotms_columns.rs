@@ -15,8 +15,6 @@ use crate::transform::{
 
 pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgbaseline
-        && (spec.averaging.avgtime.is_none()
-            || spec.averaging.avgchannel.is_none_or(|width| width <= 1))
         && !spec.averaging.avgscan
         && !spec.averaging.avgfield
         && !spec.averaging.avgantenna
@@ -157,17 +155,23 @@ pub(super) fn channel_averaged_row_weight(
     flags: &ndarray::ArrayView2<'_, bool>,
 ) -> f64 {
     f64::from(mean_weight_preferring_unflagged(bins.iter().map(|bin| {
-        let mut sums = [0.0, 0.0];
-        let mut all_flagged = true;
-        for channel in bin.channels() {
-            let flagged = flags[(correlation, channel)];
-            all_flagged &= flagged;
-            sums[usize::from(flagged)] += weights.map_or(1.0, |grid| {
+        sum_channel_weights(bin.channels().map(|channel| {
+            let weight = weights.map_or(1.0, |grid| {
                 grid.values[correlation * grid.chan_count + channel] as f32
             });
-        }
-        (all_flagged, sums[usize::from(all_flagged)])
+            (flags[(correlation, channel)], weight)
+        }))
     })))
+}
+
+pub(super) fn sum_channel_weights(samples: impl Iterator<Item = (bool, f32)>) -> (bool, f32) {
+    let mut sums = [0.0, 0.0];
+    let mut all_flagged = true;
+    for (flagged, weight) in samples {
+        all_flagged &= flagged;
+        sums[usize::from(flagged)] += weight;
+    }
+    (all_flagged, sums[usize::from(all_flagged)])
 }
 
 pub(super) fn bin_has_weight(

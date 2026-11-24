@@ -3681,6 +3681,13 @@ struct AveragedPointAccumulator {
     combined_primary_weight: Option<f64>,
 }
 
+impl AveragedPointAccumulator {
+    fn has_usable_weight(&self) -> bool {
+        self.combined_primary_weight
+            .is_none_or(|weight| weight > 0.0)
+    }
+}
+
 #[derive(Debug)]
 struct AveragedSeriesAccumulator {
     label: String,
@@ -4853,7 +4860,7 @@ fn build_generic_visibility_scatter_with_averaging(
         && calibration.is_some_and(|input| input.rows.is_none());
     let time_baselines = collapse_baselines && time_bins.is_some();
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
-    let channel_baselines = collapse_baselines && average_channels;
+    let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
@@ -5144,7 +5151,13 @@ fn build_generic_visibility_scatter_with_averaging(
         let column_weights = visibility_columns.column_weights(axis_weights);
         let primary_weight_grid = time_weight_kinds
             .filter(|_| combined_vector_average)
-            .and_then(|kinds| weight_grid(kinds.primary));
+            .and_then(|kinds| {
+                weight_grid(if time_baselines {
+                    kinds.row_weight
+                } else {
+                    kinds.primary
+                })
+            });
         // The baseline reducer sees the mask after the last visibility cube
         // transform. Mixed stored columns use the calibrated mask here.
         let channel_mask_grid = channel_baseline_kinds
@@ -5633,9 +5646,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 None => points.next(),
             });
             for (group, accumulator) in ordered {
-                if accumulator.combined_primary_weight.is_some_and(|weight| {
-                    weight.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater)
-                }) {
+                if !accumulator.has_usable_weight() {
                     continue;
                 }
                 let Some(representative) = accumulator.representative.clone() else {
