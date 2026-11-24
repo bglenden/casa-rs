@@ -4074,6 +4074,15 @@ directly and preserves the residual of 1 in both cases. The paired
 oracle also checks signed nonzero totals and the separate observed mask
 when an accumulated inverse variance overflows during time averaging.
 
+In observed-only vector time, channel and antenna averaging, sigmas of
+`[2^63, 2^62]` and `[2^62, 2^62]` produce the original time weights
+`[1, 4]` and `[4, 4]` in units of Float's minimum positive normal value.
+CASA hides the channel bin on each baseline through the same normalization
+underflow. Native PlotMS preserves the complex channel means and uses the
+original spectral sums of 5 and 8 for antenna reduction. Its three output
+points match a CASA control that scales both sigma pairs down by `2^60`.
+The shared antenna has Real and Imaginary values of 29/13 (#2240).
+
 The parameter bridge narrows widths before comparing them to the window
 length. A width of `4294967298` wraps into two channels, which can flag two
 samples even though the whole-window mean falls outside the clipping

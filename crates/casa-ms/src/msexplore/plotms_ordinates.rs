@@ -513,11 +513,15 @@ impl TimeChannelProjection {
         let first = usable.next()?;
         let mut sums = [Complex32::default(); 2];
         let mut totals = [0.0_f32; 2];
-        let mut primary = 0.0_f32;
+        let mut visibility_weight = 0.0_f32;
+        let mut spectrum_weight = 0.0_f32;
         // The channel transform receives normalized Float means and the time
         // stage's spectra, including the observed weight-to-sigma round trip.
         for channel in std::iter::once(first).chain(usable) {
-            primary += channel_weight_after_time(channel.primary_weight, self.primary_is_observed);
+            visibility_weight +=
+                channel_weight_after_time(channel.primary_weight, self.primary_is_observed);
+            // The output WEIGHT_SPECTRUM sums the original time weights.
+            spectrum_weight += channel.primary_weight;
             for (operand, sum) in sums.iter_mut().enumerate() {
                 let weight = if self.equal_channel_means {
                     1.0
@@ -531,13 +535,13 @@ impl TimeChannelProjection {
                 totals[operand] += weight;
             }
         }
-        if !has_channel_weight(primary) {
+        if !has_channel_weight(visibility_weight) {
             return None;
         }
         let means = std::array::from_fn(|operand| {
             channel_visibility_mean(sums[operand], totals[operand], true)
         });
-        Some((&first.operands, means, primary))
+        Some((&first.operands, means, spectrum_weight))
     }
 }
 
