@@ -11,8 +11,8 @@ use super::{
     MsAxis, MsDataColumn, MsPlotSpec, PlotMsColumnSelection,
     cli::{PlotMsModelLoader, PlotMsModelReferences},
     plotms_columns::{
-        supports_ordinary_time_axes, uses_channel_derived, uses_ordinary_time_averaging,
-        uses_scalar_visibility_average,
+        supports_ordinary_time_axes, uses_antenna_visibility_average, uses_channel_derived,
+        uses_ordinary_time_averaging, uses_scalar_visibility_average, uses_vector_baseline_average,
     },
     selected_i32_values, uses_extended_averaging,
 };
@@ -20,20 +20,21 @@ use crate::selection::ResolvedMsSelectionRow;
 use crate::virtual_model::{VirtualModelEntry, selected_model_combinations, virtual_model};
 use crate::{MeasurementSet, initial_model_visibility, scratch_columns::virtual_model_fields};
 
-pub(super) fn needs_vector_span_phase_references(
+pub(super) fn needs_vector_model_references(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
     plot: &MsPlotSpec,
     columns: &PlotMsColumnSelection<'_>,
 ) -> bool {
     let averaging = &plot.averaging;
-    columns.implicit_derived_model
-        && averaging.avgtime.is_some()
-        && (averaging.avgscan || averaging.avgfield)
-        && !averaging.scalar
+    let time_spans = (averaging.avgscan || averaging.avgfield)
         && !averaging.avgbaseline
         && !averaging.avgantenna
-        && !averaging.avgspw
+        && !averaging.avgspw;
+    columns.implicit_derived_model
+        && averaging.avgtime.is_some()
+        && !averaging.scalar
+        && (time_spans || uses_unspanned_antenna_or_baseline(plot))
         && plot.iteration.iteraxis.is_none()
         && supports_ordinary_time_axes(plot)
         && plot.y_axes.iter().all(|axis| axis.is_visibility_math())
@@ -42,6 +43,14 @@ pub(super) fn needs_vector_span_phase_references(
             let fields = virtual_model_fields(ms);
             rows.iter().any(|row| fields.contains(&row.field_id))
         }
+}
+
+fn uses_unspanned_antenna_or_baseline(plot: &MsPlotSpec) -> bool {
+    !plot.averaging.avgscan
+        && !plot.averaging.avgfield
+        && (uses_antenna_visibility_average(plot)
+            || uses_vector_baseline_average(plot)
+            || (plot.averaging.avgbaseline && uses_scalar_visibility_average(plot)))
 }
 
 fn visibility_columns<'a>(
@@ -104,19 +113,24 @@ pub(super) fn selected_model_cells(
         && plot.iteration.iteraxis.is_none()
         && supports_ordinary_time_axes(plot)
         && uses_scalar_visibility_average(plot);
+    let antenna_or_baseline = columns.implicit_derived_model
+        && plot.iteration.iteraxis.is_none()
+        && supports_ordinary_time_axes(plot)
+        && uses_unspanned_antenna_or_baseline(plot);
     let standard_columns = visibility_columns.all(|column| {
         matches!(
             column,
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
         )
     });
-    let vector_span = model_references.is_some();
-    let field_models_supported = !plot.averaging.avgfield || plot.averaging.scalar || vector_span;
+    let vector_time = model_references.is_some();
+    let field_models_supported = !plot.averaging.avgfield || plot.averaging.scalar || vector_time;
     let derived_average = columns.implicit_derived_model
         && field_models_supported
         && (columns.extended_derived || (!extended && uses_channel_derived(plot, columns.x)));
     let can_predict = !averaging
-        || ((!extended || ordinary_time || scalar_span || vector_span) && standard_columns)
+        || ((!extended || ordinary_time || scalar_span || vector_time || antenna_or_baseline)
+            && standard_columns)
         || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {
         return load(ms, rows, model_references);
