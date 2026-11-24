@@ -157,12 +157,7 @@ impl Selection {
                 source.rows.iter().map(|row| row.antenna),
                 |id| name_at(&source.antennas, id),
             )?,
-            field: select(
-                "field",
-                &selectors.field,
-                source.rows.iter().map(|row| row.field),
-                |id| name_at(&source.fields, id),
-            )?,
+            field: select_fields(source, &selectors.field)?,
             window: select_windows(source, &selectors.spw)?,
             time,
             scan,
@@ -187,6 +182,41 @@ impl Selection {
 
 fn included(selected: &BTreeSet<i32>, value: Option<i32>) -> bool {
     selected.is_empty() || value.is_some_and(|id| selected.contains(&id))
+}
+
+fn select_fields(
+    source: &Solutions,
+    selectors: &[String],
+) -> Result<BTreeSet<i32>, SelectionMismatch> {
+    // The MeasurementSet supplies names even for fields that contributed no
+    // solutions to this table. CASA resolves the selector before intersecting.
+    let requested = select(
+        "field",
+        selectors,
+        source
+            .rows
+            .iter()
+            .map(|row| row.field)
+            .chain(0..source.fields.len() as i32),
+        |id| name_at(&source.fields, id),
+    )?;
+    if requested.is_empty() {
+        return Ok(requested);
+    }
+    let selected = source
+        .rows
+        .iter()
+        .map(|row| row.field)
+        .filter(|id| requested.contains(id))
+        .collect::<BTreeSet<_>>();
+    if selected.is_empty() {
+        return Err(SelectionMismatch {
+            parameter: "field",
+            word: selectors.join(","),
+            invalid_integer: false,
+        });
+    }
+    Ok(selected)
 }
 
 fn name_at(names: &[String], id: i32) -> &str {
@@ -291,15 +321,16 @@ fn select<'a>(
         let (word, exclude) = raw
             .strip_prefix('!')
             .map_or((*raw, false), |word| (word, true));
+        let number = word.parse::<i32>().ok();
+        let range = word.split_once('~').and_then(|(start, stop)| {
+            Some(start.trim().parse::<i32>().ok()?..=stop.trim().parse::<i32>().ok()?)
+        });
         let matches = identifiers.iter().copied().filter(|&id| {
-            if let Ok(number) = word.parse::<i32>() {
+            if let Some(number) = number {
                 return id == number;
             }
-            if let Some((start, stop)) = word.split_once('~')
-                && let (Ok(start), Ok(stop)) =
-                    (start.trim().parse::<i32>(), stop.trim().parse::<i32>())
-            {
-                return (start..=stop).contains(&id);
+            if let Some(range) = &range {
+                return range.contains(&id);
             }
             let stored = name(id);
             word.strip_suffix('*')
@@ -314,7 +345,7 @@ fn select<'a>(
                 }
             })
             .count();
-        if count == 0 {
+        if count == 0 && !(parameter == "field" && (number.is_some() || range.is_some())) {
             return Err(SelectionMismatch {
                 parameter,
                 word: word.into(),
