@@ -186,11 +186,7 @@ pub(super) fn apply_array_feed_uv(
             .push(row_ids_predicate("ARRAY_ID", &ranges));
         compiled.casa_array_ranges = Some(ranges);
     }
-    if let Some(text) = options.feed.as_deref().filter(|text| !text.is_empty()) {
-        let selection = FeedSelection::parse(ms, text)?;
-        compiled.casa_taql_exprs.push(selection.to_taql());
-        compiled.casa_feed = Some(selection);
-    }
+    apply_feed(ms, &mut compiled, options.feed.as_deref())?;
     let uvrange = options.uvrange.as_deref();
     let uvrange = if flagdata {
         uvrange.map(flagdata_c_string)
@@ -208,6 +204,19 @@ pub(super) fn apply_array_feed_uv(
         compiled.casa_uv = Some(selection);
     }
     Ok(compiled)
+}
+
+pub(super) fn apply_feed(
+    ms: &MeasurementSet,
+    selection: &mut CompiledMsSelection,
+    feed: Option<&str>,
+) -> MsResult<()> {
+    if let Some(text) = feed.filter(|text| !text.is_empty()) {
+        let feeds = FeedSelection::parse(ms, text)?;
+        selection.casa_taql_exprs.push(feeds.to_taql());
+        selection.casa_feed = Some(feeds);
+    }
+    Ok(())
 }
 
 fn row_ids_predicate(column: &str, ranges: &[(i32, i32)]) -> String {

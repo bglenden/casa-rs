@@ -329,10 +329,11 @@
       "status": "Partial"
     },
     "feed": {
-      "scope": "Feed numbers (blank for all). Modern calibration tables reject this selector.",
+      "scope": "Select feed numbers and feed pairs on unaveraged MeasurementSet plots, including with array selection, a callibrary and atmospheric overlays. Modern calibration tables reject this selector.",
       "evidence": [
         "selectors",
-        "remaining"
+        "remaining",
+        "ms-feed-selection"
       ],
       "behaviors": [
         "selection"
@@ -1099,12 +1100,13 @@
       "id": "selection",
       "title": "Select solution samples",
       "status": "Partial",
-      "scope": "Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC. Route ordinary MeasurementSet visibility plots through native row, baseline, channel, correlation and flag selection.",
+      "scope": "Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC. Route ordinary MeasurementSet visibility plots through native row, baseline, channel, correlation and flag selection. Apply the same feed predicate to the selected visibility rows and the row selection used by atmospheric overlays.",
       "evidence": [
         "paired",
         "selectors",
         "ms-ordinary-visibility",
-        "legacy-calibration"
+        "legacy-calibration",
+        "ms-feed-selection"
       ],
       "gap": "Remaining MeasurementSet selection paths are open under #1032 and #215."
     },
@@ -1678,6 +1680,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-channel-ordinate-masks-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2187"
+      ]
+    },
+    "ms-feed-selection": {
+      "kind": "Same-input MeasurementSet feed selection",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs feed selection for unaveraged MeasurementSet visibilities, with static PNG export, a unity callibrary and a measured-weather atmospheric overlay.",
+      "result": "Six paired text exports match 134 points, including a single feed, cross- and same-feed pairs, a combined array selection, selected cube flags, an independent row flag, strided channels and both correlations. The 500 by 360 pixel PNG matches 30 rendered points. The measured-weather overlay matches seven atmospheric coordinates with normalized RMS 5.35296e-06.",
+      "casa_version": "6.7.6.14",
+      "revision": "8e2040bffd9a330cbecaf90319a1fd6600f79817",
+      "source_revision": "8e2040bffd9a330cbecaf90319a1fd6600f79817",
+      "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-feed-selection-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2190"
       ]
     }
   }

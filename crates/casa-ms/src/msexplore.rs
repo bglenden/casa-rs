@@ -3977,8 +3977,14 @@ fn build_generic_visibility_scatter(
         && spec.iteration.iteraxis.is_none()
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
         && plotms_columns::uses_channel_ordinate_masks(spec.x_axis, spec.y_axes.iter().copied());
+    let ordered_feed_selection = selection
+        .feed
+        .as_deref()
+        .is_some_and(|feed| !feed.is_empty())
+        && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
     let use_iterator_order = calibration.is_some()
-        && (use_ordinate_masks
+        && (ordered_feed_selection
+            || use_ordinate_masks
             || spec.x_axis.is_interval_or_wavelength()
             || spec.y_axes.contains(&MsAxis::UvDistance)
             || spec
@@ -4807,7 +4813,7 @@ fn build_generic_visibility_scatter(
                 }
             } else {
                 series.sort_by_key(|entry| entry.y_index);
-                if spec.y_axes.len() > 2 {
+                if ordered_feed_selection || spec.y_axes.len() > 2 {
                     series.iter_mut().for_each(plotms_ordinates::order_series);
                 }
             }

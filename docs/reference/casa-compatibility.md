@@ -1975,7 +1975,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `array` | `''` | `''`; `array` → `array` | Partial | (Sub)array numbers (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
 | `observation` | `''` | `''`; `observation` → `observation` | Implemented | Observation IDs (blank for all) [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
 | `intent` | `''` | `''`; `intent` → `intent` | Partial | Observing intent (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
-| `feed` | `''` | `''`; `feed` → `feed` | Partial | Feed numbers (blank for all). Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining) |
+| `feed` | `''` | `''`; `feed` → `feed` | Partial | Select feed numbers and feed pairs on unaveraged MeasurementSet plots, including with array selection, a callibrary and atmospheric overlays. Modern calibration tables reject this selector. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors), [remaining](#plotms-evidence-remaining), [ms-feed-selection](#plotms-evidence-ms-feed-selection) |
 | `msselect` | `''` | `''`; `msselect` → `msselect` | Partial | Apply a TaQL row expression to a modern calibration table. Refuse a selection with no solutions. [selection](#plotms-behavior-selection)<br>Catalog domain: `string` | [selectors](#plotms-evidence-selectors) |
 | `averagedata` | `True` | `True`; `averagedata` → `averagedata` | Implemented | Enable data averaging parameters [averaging](#plotms-behavior-averaging)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `avgchannel` | `''` | `''`; `avgchannel` → `avgchannel` | Partial | Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. [averaging](#plotms-behavior-averaging)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns), [ms-baseline-channel-columns](#plotms-evidence-ms-baseline-channel-columns), [ms-baseline-time-channel-columns](#plotms-evidence-ms-baseline-time-channel-columns), [ms-channel-statistics](#plotms-evidence-ms-channel-statistics) |
@@ -2063,11 +2063,11 @@ Evidence: [paired](#plotms-evidence-paired), [legacy-calibration](#plotms-eviden
 <a id="plotms-behavior-selection"></a>
 ##### Select solution samples
 
-**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC. Route ordinary MeasurementSet visibility plots through native row, baseline, channel, correlation and flag selection.
+**Partial** — Select solution rows and channels by field, window, time, antenna, scan, observation, polarization, antenna-position component and TaQL. Refuse unsupported modern calibration selectors. Resolve GSPLINE selection directly against source table rows and CAL_DESC. Route ordinary MeasurementSet visibility plots through native row, baseline, channel, correlation and flag selection. Apply the same feed predicate to the selected visibility rows and the row selection used by atmospheric overlays.
 
 Remaining MeasurementSet selection paths are open under #1032 and #215.
 
-Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [ms-ordinary-visibility](#plotms-evidence-ms-ordinary-visibility), [legacy-calibration](#plotms-evidence-legacy-calibration).
+Evidence: [paired](#plotms-evidence-paired), [selectors](#plotms-evidence-selectors), [ms-ordinary-visibility](#plotms-evidence-ms-ordinary-visibility), [legacy-calibration](#plotms-evidence-legacy-calibration), [ms-feed-selection](#plotms-evidence-ms-feed-selection).
 
 <a id="plotms-behavior-coordinates"></a>
 ##### Project axes and flags
@@ -2477,6 +2477,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `4a1e8d085bd0916e58a72f403f8a32a45d6a7c39`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-channel-ordinate-masks-20261124.json`.
+
+<a id="plotms-evidence-ms-feed-selection"></a>
+##### ms-feed-selection
+
+**Same-input MeasurementSet feed selection — passed.** Six paired text exports match 134 points, including a single feed, cross- and same-feed pairs, a combined array selection, selected cube flags, an independent row flag, strided channels and both correlations. The 500 by 360 pixel PNG matches 30 rendered points. The measured-weather overlay matches seven atmospheric coordinates with normalized RMS 5.35296e-06. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs feed selection for unaveraged MeasurementSet visibilities, with static PNG export, a unity callibrary and a measured-weather atmospheric overlay.
+
+- [https://github.com/bglenden/casa-rs/pull/2190](https://github.com/bglenden/casa-rs/pull/2190)
+- Revision: `8e2040bffd9a330cbecaf90319a1fd6600f79817`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-feed-selection-20261124.json`.
 
 ### plotweather
 
