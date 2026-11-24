@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Validated row-axis writes through the MeasurementSet mutation session.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 
-use casa_tables::{RequiredScalarColumnValues, Table, TableWriteLock};
+use casa_tables::{
+    ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableWriteLock,
+};
 use casa_types::{ArrayValue, RecordValue, ScalarValue};
 use ndarray::{ArrayD, ArrayViewD, Axis, IxDyn};
 
@@ -53,17 +54,12 @@ impl RecordedLayout<'_> {
 }
 
 impl WriteGrid {
-    fn new(
-        ms: &MeasurementSet,
-        rows: &[usize],
-        options: VisibilityWriteOptions<'_>,
-    ) -> MsResult<Self> {
+    fn new(main: &Table, rows: &[usize], options: VisibilityWriteOptions<'_>) -> MsResult<Self> {
         let gap = options.baseline_gap.ok_or_else(|| {
             input("call getdata with ifraxis=True before writing a baseline-axis record")
         })?;
-        let columns = ms
-            .main_table()
-            .required_scalar_columns_owned_for_rows(&["TIME", "ANTENNA1", "ANTENNA2"], rows)?;
+        let columns =
+            main.required_scalar_columns_owned_for_rows(&["TIME", "ANTENNA1", "ANTENNA2"], rows)?;
         let grid = BaselineGrid::new(&columns, options.baseline_pairs, gap)?;
         Ok(Self {
             shape: [grid.baseline_count(), grid.time_count()],
@@ -72,93 +68,199 @@ impl WriteGrid {
     }
 }
 
-/// Persist rows from a visibility record on a row or baseline/time axis.
-/// The caller owns the writable MAIN lock for the selected physical rows.
-///
-/// # Errors
-/// A recognized item's dtype, rank, row axis or cell shape does not match MAIN,
-/// or the existing storage manager cannot persist the requested cells.
-pub fn put_tool_visibility_rows(
-    ms: &mut MeasurementSet,
-    lock: &mut TableWriteLock,
-    rows: &[usize],
-    items: RecordValue,
-    options: VisibilityWriteOptions<'_>,
-) -> MsResult<bool> {
-    if rows.is_empty() {
-        return Ok(false);
-    }
-    let columns = write_columns(ms.main_table(), items)?;
-    if columns.is_empty() {
-        return Ok(false);
-    }
-    let ordered_rows = if !options.iterator && options.polarization.is_some() {
-        rows_by_time(ms.main_table(), rows)?
-    } else {
-        Cow::Borrowed(rows)
-    };
-    let rows = ordered_rows.as_ref();
-    let layouts = if columns.iter().any(|field| field.column.cell_rank() > 0) {
-        recorded_cell_layouts(ms, rows, options.polarization)?
-    } else {
-        Vec::new()
-    };
-    let grid = columns
-        .iter()
-        .any(|field| field.values.ndim() == field.column.cell_rank() + 2)
-        .then(|| WriteGrid::new(ms, rows, options))
-        .transpose()?;
-    let plans = columns
-        .iter()
-        .map(|field| row_column_plan(field, rows.len(), &layouts, grid.as_ref()))
-        .collect::<MsResult<Vec<_>>>()?;
-    let bytes_per_row = plans.iter().try_fold(0usize, |total, field| {
-        total
-            .checked_add(field.bytes_per_row)
-            .ok_or_else(|| input("putdata row size overflow"))
-    })?;
-    let mut resources = MeasurementSetWriteResources::from_system_memory(1).map_err(write_error)?;
-    resources.available_bytes = resources
-        .available_bytes
-        .min(TARGET_BATCH_BYTES.max(bytes_per_row));
-    let plan = MeasurementSetWritePlan::selected_row_mutation(rows.to_vec(), plans, resources)
-        .map_err(write_error)?;
-    let batch_rows = plan.batch_rows();
-    MeasurementSetWriteSession::mutate_selected_rows(
-        ms,
-        plan,
-        Some(lock),
-        write_error,
-        |writer, ms| {
-            for (batch, rows) in rows.chunks(batch_rows).enumerate() {
-                let first = batch * batch_rows;
-                let values = columns
-                    .iter()
-                    .map(|field| {
-                        row_column_batch(
-                            ms.main_table(),
-                            field,
-                            rows,
-                            first,
-                            &layouts,
-                            grid.as_ref(),
-                        )
-                    })
-                    .collect::<MsResult<Vec<_>>>()?;
-                writer
-                    .write_mutation_batch(
-                        ms,
-                        MeasurementSetMutationBatch {
-                            row_indices: rows.to_vec(),
-                            columns: values,
-                        },
-                    )
-                    .map_err(write_error)?;
+/// Normalized visibility arrays and their mapping from the public MS view.
+pub struct VisibilityWriteRecord<'a> {
+    rows: Vec<usize>,
+    columns: Vec<WriteColumn>,
+    grid: Option<WriteGrid>,
+    polarization: Option<&'a VisibilityPolarization>,
+}
+
+/// Validated destination rows for one physical MAIN table.
+pub struct VisibilityWritePart<'a> {
+    rows: Vec<usize>,
+    positions: Vec<usize>,
+    names: Vec<String>,
+    layouts: Vec<RecordedLayout<'a>>,
+    plan: MeasurementSetWritePlan,
+}
+
+impl<'a> VisibilityWriteRecord<'a> {
+    /// Interpret the input record using the same ordering and grid as `getdata`.
+    ///
+    /// # Errors
+    /// A recognized item cannot be converted or its row or baseline axis is invalid.
+    pub fn new(
+        main: &Table,
+        mut rows: Vec<usize>,
+        items: RecordValue,
+        options: VisibilityWriteOptions<'a>,
+    ) -> MsResult<Self> {
+        let columns = write_columns(main, items)?;
+        if !options.iterator && options.polarization.is_some() && !columns.is_empty() {
+            let ordered = rows_by_time(main, &rows)?;
+            if let std::borrow::Cow::Owned(ordered) = ordered {
+                rows = ordered;
             }
-            Ok(())
-        },
-    )?;
-    Ok(true)
+        }
+        let grid = columns
+            .iter()
+            .any(|field| field.values.ndim() == field.column.cell_rank() + 2)
+            .then(|| WriteGrid::new(main, &rows, options))
+            .transpose()?;
+        for field in &columns {
+            let shape = field.values.shape();
+            let axes = shape.get(field.column.cell_rank()..).unwrap_or_default();
+            if axes != [rows.len()] && !grid.as_ref().is_some_and(|grid| axes == grid.shape) {
+                return Err(input(format!(
+                    "putdata {} shape {shape:?} requires {} selected rows",
+                    field.column.name(),
+                    rows.len()
+                )));
+            }
+        }
+        Ok(Self {
+            rows,
+            columns,
+            grid,
+            polarization: options.polarization,
+        })
+    }
+
+    /// Logical rows in the order represented by the record's row axis.
+    pub fn rows(&self) -> &[usize] {
+        &self.rows
+    }
+
+    /// Recognized logical columns, in the normalized record order.
+    pub fn column_names(&self) -> impl ExactSizeIterator<Item = &'static str> + '_ {
+        self.columns.iter().map(|field| field.column.name())
+    }
+
+    /// Validate one physical destination before writing any of the record.
+    /// Each pair gives a physical row and its position in the logical record.
+    ///
+    /// # Errors
+    /// A row, column binding, dtype, physical cell shape, or write budget is invalid.
+    pub fn prepare_part(
+        &self,
+        ms: &MeasurementSet,
+        targets: Vec<(usize, usize)>,
+        names: Vec<String>,
+    ) -> MsResult<VisibilityWritePart<'a>> {
+        if names.len() != self.columns.len()
+            || targets.iter().any(|&(_, source)| source >= self.rows.len())
+        {
+            return Err(input("invalid visibility write projection"));
+        }
+        let (rows, positions): (Vec<_>, Vec<_>) = targets.into_iter().unzip();
+        if rows.is_empty() || rows.iter().any(|&row| row >= ms.row_count()) {
+            return Err(input("putdata row is outside the physical MeasurementSet"));
+        }
+        if names.iter().collect::<std::collections::HashSet<_>>().len() != names.len() {
+            return Err(input(
+                "putdata record resolves more than once to the same physical column",
+            ));
+        }
+        let layouts = if self
+            .columns
+            .iter()
+            .any(|field| field.column.cell_rank() > 0)
+        {
+            recorded_cell_layouts(ms, &rows, self.polarization)?
+        } else {
+            Vec::new()
+        };
+        let plans = self
+            .columns
+            .iter()
+            .zip(&names)
+            .map(|(field, name)| row_column_plan(ms.main_table(), field, name, &layouts))
+            .collect::<MsResult<Vec<_>>>()?;
+        let bytes_per_row = plans.iter().try_fold(0usize, |total, field| {
+            total
+                .checked_add(field.bytes_per_row)
+                .ok_or_else(|| input("putdata row size overflow"))
+        })?;
+        let mut resources =
+            MeasurementSetWriteResources::from_system_memory(1).map_err(write_error)?;
+        resources.available_bytes = resources
+            .available_bytes
+            .min(TARGET_BATCH_BYTES.max(bytes_per_row));
+        let plan = MeasurementSetWritePlan::selected_row_mutation(rows.clone(), plans, resources)
+            .map_err(write_error)?;
+        Ok(VisibilityWritePart {
+            rows,
+            positions,
+            names,
+            layouts,
+            plan,
+        })
+    }
+
+    /// Persist a validated part while the caller holds that MAIN table's lock.
+    ///
+    /// # Errors
+    /// The storage manager cannot read or persist one of the selected cells.
+    pub fn write_part(
+        &self,
+        ms: &mut MeasurementSet,
+        lock: &mut TableWriteLock,
+        part: VisibilityWritePart<'a>,
+    ) -> MsResult<()> {
+        let VisibilityWritePart {
+            rows,
+            positions,
+            names,
+            layouts,
+            plan,
+        } = part;
+        let batch_rows = plan.batch_rows();
+        MeasurementSetWriteSession::mutate_selected_rows(
+            ms,
+            plan,
+            Some(lock),
+            write_error,
+            |writer, ms| {
+                for (batch, rows) in rows.chunks(batch_rows).enumerate() {
+                    let first = batch * batch_rows;
+                    let range = first..first + rows.len();
+                    let values = self
+                        .columns
+                        .iter()
+                        .zip(&names)
+                        .map(|(field, name)| {
+                            let recorded = if field.column.cell_rank() == 0 {
+                                &[]
+                            } else {
+                                &layouts[range.clone()]
+                            };
+                            row_column_batch(
+                                ms.main_table(),
+                                field,
+                                name,
+                                rows,
+                                &positions[range.clone()],
+                                recorded,
+                                self.grid.as_ref(),
+                            )
+                        })
+                        .collect::<MsResult<Vec<_>>>()?;
+                    writer
+                        .write_mutation_batch(
+                            ms,
+                            MeasurementSetMutationBatch {
+                                row_indices: rows.to_vec(),
+                                columns: values,
+                            },
+                        )
+                        .map_err(write_error)?;
+                }
+                Ok(())
+            },
+        )?;
+        Ok(())
+    }
 }
 
 fn write_error(error: MeasurementSetWriteError) -> MsError {
@@ -221,19 +323,31 @@ fn nonnegative(value: i32, name: &str) -> MsResult<usize> {
 }
 
 fn row_column_plan(
+    table: &Table,
     field: &WriteColumn,
-    row_count: usize,
+    name: &str,
     layouts: &[RecordedLayout<'_>],
-    grid: Option<&WriteGrid>,
 ) -> MsResult<MeasurementSetWriteColumnPlan> {
     let column = field.column;
-    let name = column.name();
     let rank = column.cell_rank();
     let shape = field.values.shape();
-    let axes = shape.get(rank..).unwrap_or_default();
-    if axes != [row_count] && !grid.is_some_and(|grid| axes == grid.shape) {
+    let descriptor = table
+        .schema()
+        .and_then(|schema| schema.column(name))
+        .ok_or_else(|| input(format!("putdata physical column {name} is unavailable")))?;
+    let valid_shape = match descriptor.column_type() {
+        ColumnType::Scalar => rank == 0,
+        ColumnType::Array(ArrayShapeContract::Fixed { shape }) => {
+            rank != 0 && layouts.iter().all(|layout| layout.shape[..rank] == **shape)
+        }
+        ColumnType::Array(ArrayShapeContract::Variable { ndim }) => {
+            rank != 0 && ndim.is_none_or(|ndim| ndim == rank)
+        }
+        _ => false,
+    };
+    if descriptor.data_type() != Some(field.values.primitive_type()) || !valid_shape {
         return Err(input(format!(
-            "putdata {name} shape {shape:?} requires {row_count} selected rows"
+            "putdata physical column {name} has an incompatible type or shape"
         )));
     }
     if layouts
@@ -273,26 +387,27 @@ fn row_column_plan(
 fn row_column_batch(
     table: &Table,
     field: &WriteColumn,
+    name: &str,
     rows: &[usize],
-    first: usize,
+    positions: &[usize],
     layouts: &[RecordedLayout<'_>],
     grid: Option<&WriteGrid>,
 ) -> MsResult<MeasurementSetMutationColumnBatch> {
-    let name = field.column.name();
     let rank = field.column.cell_rank();
-    let end = first + rows.len();
     macro_rules! cells {
         ($values:ident, $variant:ident) => {{
-            let rows = (first..end)
-                .map(|row| ArrayValue::$variant(input_cell($values, rank, row, grid).to_owned()));
+            let rows = positions
+                .iter()
+                .map(|&row| ArrayValue::$variant(input_cell($values, rank, row, grid).to_owned()));
             MeasurementSetMutationColumnValues::Arrays(rows.collect())
         }};
     }
     let mut values = match &field.values {
         ArrayValue::Bool(values) if field.column == Column::FlagRow => {
             MeasurementSetMutationColumnValues::Scalars(
-                (first..end)
-                    .map(|row| ScalarValue::Bool(input_cell(values, rank, row, grid)[IxDyn(&[])]))
+                positions
+                    .iter()
+                    .map(|&row| ScalarValue::Bool(input_cell(values, rank, row, grid)[IxDyn(&[])]))
                     .collect(),
             )
         }
@@ -302,7 +417,7 @@ fn row_column_batch(
         _ => unreachable!("putdata arrays have been normalized to storage precision"),
     };
     if let MeasurementSetMutationColumnValues::Arrays(new) = &mut values {
-        patch_recorded_correlations(table, name, rows, &layouts[first..end], new)?;
+        patch_recorded_correlations(table, name, rows, layouts, new)?;
     }
     Ok(MeasurementSetMutationColumnBatch {
         name: name.into(),

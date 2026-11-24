@@ -11369,3 +11369,13 @@ on the same attachment can then abort. Closing and reopening before the
 second selection succeeds. casa-rs validates the record before starting
 a mutation. The error leaves the attachment usable for a new selection
 and write (#1030).
+
+## MS writes can reorder values read from saved views
+
+Read `getdata('data')` from a saved reference whose rows are out of order,
+or from a multi-MS whose members cover the same integration times. With
+no explicit iterator, CASA 6.7.6.14 can sort the rows for `putdata` even
+though it returned the input in view order. Modified samples then go to
+different physical rows or members. casa-rs writes each row to its saved
+physical location in view order. Where a reference repeats one physical
+row, its final supplied value wins (#1030).

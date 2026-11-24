@@ -33,7 +33,7 @@ use concatenation::{MemberRows, concatenate_arrays};
 pub(crate) use concatenation::{concatenate_scalars, member_rows};
 pub use polarization_axis::VisibilityPolarization;
 pub(crate) use projection::read_reference_scalars;
-pub use write_rows::{VisibilityWriteOptions, put_tool_visibility_rows};
+pub use write_rows::{VisibilityWriteOptions, VisibilityWriteRecord};
 
 /// Determine whether CASA's implicit initialization needs to narrow this view
 /// to data description zero. The iterator's row shape comes from its logical

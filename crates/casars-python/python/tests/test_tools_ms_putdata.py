@@ -1,5 +1,7 @@
 """CASA controls for persistent writes through the public visibility tool."""
 
+import shutil
+
 import numpy as np
 import pytest
 
@@ -19,6 +21,30 @@ def assert_main_columns(casa, path, expected):
     for name, values in expected.items():
         np.testing.assert_array_equal(table.getcol(name), values, strict=True, err_msg=name)
     assert table.done()
+
+
+def test_ms_visibility_scalar_taql_preserves_physical_order(
+    baseline_fixture, native_dataset, writer_api,
+):
+    _, _, raw = baseline_fixture
+    antenna = raw["antenna1"]
+    selections = {
+        "ANTENNA1 == 0": antenna == 0,
+        "ANTENNA1 != 1": antenna != 1,
+        "ANTENNA1 < 1": antenna < 1,
+        "1 >= ANTENNA1": antenna <= 1,
+        "0 < ANTENNA1": antenna > 0,
+        "ANTENNA1 >= 1": antenna >= 1,
+        "4000000000 > ANTENNA1": antenna < 4_000_000_000,
+    }
+    reader = writer_api.ms()
+    assert reader.open(str(native_dataset))
+    for predicate, selected in selections.items():
+        assert reader.msselect({"taql": predicate}), predicate
+        actual = reader.getdata("data")["data"]
+        np.testing.assert_array_equal(actual, raw["data"][..., selected], strict=True, err_msg=predicate)
+        assert reader.reset()
+    assert reader.done()
 
 
 @pytest.mark.parametrize("correlations", [False, True], ids=["all", "stored"])
@@ -182,3 +208,51 @@ def test_ms_putdata_remains_usable_after_a_type_error(baseline_fixture, native_d
     flags = raw["flag_row"].copy()
     flags[0] = False
     assert_main_columns(casa, native_dataset, {"FLAG_ROW": flags})
+
+
+def test_ms_putdata_retains_reordered_reference_rows(baseline_fixture, native_dataset):
+    casa, make_view, raw = baseline_fixture
+    rows = [29, 2, 4, 13, 0, 2]
+    writer = tools.ms()
+    assert writer.open(make_view("scrambled-write.ms", rows), nomodify=False)
+    block = writer.getdata("data")["data"]
+    np.testing.assert_array_equal(block, raw["data"][..., rows], strict=True)
+    updates = block * (-2 + 0.5j) + np.arange(len(rows))
+    assert writer.putdata({"DATA": updates})
+    assert writer.done()
+
+    expected = raw["data"].copy()
+    for index, physical in enumerate(rows):
+        expected[..., physical] = updates[..., index]
+    assert_main_columns(casa, native_dataset, {"DATA": expected})
+
+
+def test_ms_putdata_keeps_values_in_the_correct_multi_ms_member(
+    baseline_fixture, native_dataset, tmp_path,
+):
+    casa, _, raw = baseline_fixture
+    paths = []
+    for index, name in enumerate(("part-z.ms", "part-a.ms")):
+        path = tmp_path / name
+        shutil.copytree(native_dataset, path)
+        paths.append(str(path))
+        table = casa.table()
+        assert table.open(str(path), nomodify=False)
+        assert table.putcol("DATA", raw["data"] + 1000 * index)
+        assert table.done()
+    path = str(tmp_path / "ordered-write.mms")
+    assembly = casa.ms()
+    assert assembly.createmultims(path, paths, ["ANTENNA", "DATA_DESCRIPTION", "FEED"])
+    assert assembly.done()
+
+    writer = tools.ms()
+    assert writer.open(path, nomodify=False)
+    initial = writer.getdata("data")["data"]
+    updates = initial * (-2 + 0.5j)
+    assert writer.putdata({"DATA": updates})
+    assert writer.done()
+
+    reader = casa.ms()
+    assert reader.open(path)
+    np.testing.assert_array_equal(reader.getdata("data")["data"], updates, strict=True)
+    assert reader.done()

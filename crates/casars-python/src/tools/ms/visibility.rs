@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read visibility records from the current MS attachment.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -43,6 +44,12 @@ pub(super) struct VisibilityMain {
     reference: Option<PlainReferenceRead>,
     publication: Vec<(TableFiles, Option<TableStamp>)>,
     plain: bool,
+}
+
+struct VisibilityWriteTarget {
+    path: PathBuf,
+    names: Vec<String>,
+    rows: BTreeMap<usize, usize>,
 }
 
 impl VisibilityState {
@@ -137,6 +144,84 @@ impl VisibilityMain {
             ));
         }
         Ok(())
+    }
+
+    fn verify_write_layout(&self) -> PyResult<()> {
+        if self
+            .publication
+            .iter()
+            .all(|(files, stamp)| files.same_descriptor(*stamp))
+        {
+            Ok(())
+        } else {
+            Err(runtime_error(
+                "MeasurementSet row layout changed. Refresh the selection before putdata.",
+            ))
+        }
+    }
+
+    fn write_targets(
+        &self,
+        rows: &[usize],
+        names: &[&str],
+    ) -> PyResult<Vec<VisibilityWriteTarget>> {
+        let own_names = || names.iter().map(|name| (*name).to_owned()).collect();
+        if self.plain {
+            return Ok(vec![VisibilityWriteTarget {
+                path: self.table.path().expect("disk-backed MAIN").to_owned(),
+                names: own_names(),
+                rows: rows.iter().copied().zip(0..).collect(),
+            }]);
+        }
+        if let Some(reference) = self
+            .table
+            .reference_write_projection(rows, names)
+            .map_err(runtime_error)?
+        {
+            return Ok(vec![VisibilityWriteTarget {
+                path: reference.path.canonicalize().map_err(runtime_error)?,
+                names: reference.columns,
+                rows: reference.rows.into_iter().zip(0..).collect(),
+            }]);
+        }
+        let mut count = 0;
+        let mut ends = Vec::with_capacity(self.members.len());
+        let mut paths = Vec::with_capacity(self.members.len());
+        for part in &self.members {
+            count += part.row_count();
+            ends.push(count);
+            paths.push(
+                part.path()
+                    .expect("disk-backed multi-MS member")
+                    .canonicalize()
+                    .map_err(runtime_error)?,
+            );
+        }
+        if ends.is_empty() || count != self.table.row_count() {
+            return Err(runtime_error(
+                "putdata cannot map the physical rows of this concatenation (#1030)",
+            ));
+        }
+        let mut groups = BTreeMap::<&Path, BTreeMap<usize, usize>>::new();
+        for (position, &row) in rows.iter().enumerate() {
+            let index = ends.partition_point(|&end| end <= row);
+            let path = paths
+                .get(index)
+                .ok_or_else(|| runtime_error("putdata row is outside the multi-MS"))?;
+            let first = if index == 0 { 0 } else { ends[index - 1] };
+            groups
+                .entry(path)
+                .or_default()
+                .insert(row - first, position);
+        }
+        Ok(groups
+            .into_iter()
+            .map(|(path, rows)| VisibilityWriteTarget {
+                path: path.to_owned(),
+                names: own_names(),
+                rows,
+            })
+            .collect())
     }
 
     fn open_plain_members(paths: Vec<PathBuf>) -> PyResult<Vec<Table>> {
@@ -310,12 +395,8 @@ impl AttachedMs {
             .visibility
             .main
             .as_ref()
-            .expect("MAIN table was opened");
-        if !main.plain {
-            return Err(runtime_error(
-                "putdata projection is not yet supported (#1030)",
-            ));
-        }
+            .expect("MAIN table was opened")
+            .clone();
         let rows = if let Some(iteration) = &self.visibility.iteration {
             iteration.cursor.rows().map_err(runtime_error)?.to_vec()
         } else if let Some(rows) = &self.selected_rows {
@@ -329,7 +410,7 @@ impl AttachedMs {
         let layout = self.visibility.baseline_write;
         let baseline_pairs = if self.visibility.iteration.is_some() {
             layout
-                .map(|(_, increment)| self.iteration_baselines(main, increment))
+                .map(|(_, increment)| self.iteration_baselines(&main, increment))
                 .transpose()?
         } else {
             None
@@ -346,32 +427,48 @@ impl AttachedMs {
                 }),
             iterator: self.visibility.iteration.is_some(),
         };
-        let mut temporary = None;
-        let lock = if let Some(lock) = self.write_locks.get_mut(&self.path) {
-            lock
-        } else {
-            temporary
-                .insert(TableWriteLock::acquire_to_reread(&self.path, 0).map_err(runtime_error)?)
-        };
+        let record = tool_visibility::VisibilityWriteRecord::new(&main.table, rows, items, options)
+            .map_err(runtime_error)?;
+        let names = record.column_names().collect::<Vec<_>>();
+        if names.is_empty() {
+            return Ok(false);
+        }
+        let targets = main.write_targets(record.rows(), &names)?;
+        let mut temporary = BTreeMap::new();
+        for target in &targets {
+            if !self.write_locks.contains_key(&target.path) {
+                let lock =
+                    TableWriteLock::acquire_to_reread(&target.path, 0).map_err(runtime_error)?;
+                temporary.insert(target.path.clone(), lock);
+            }
+        }
         link.verify_directory().map_err(runtime_error)?;
-        main.verify_iterator_layout()?;
-        let mut destination = MeasurementSet::open(&self.path).map_err(runtime_error)?;
-        let result = tool_visibility::put_tool_visibility_rows(
-            &mut destination,
-            lock,
-            &rows,
-            items,
-            options,
-        )
-        .map_err(runtime_error)?;
-        drop(destination);
-        if let Some(lock) = temporary {
+        main.verify_write_layout()?;
+        let prepared = targets
+            .into_iter()
+            .map(|target| {
+                let ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
+                let part = record
+                    .prepare_part(&ms, target.rows.into_iter().collect(), target.names)
+                    .map_err(runtime_error)?;
+                Ok((target.path, ms, part))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        self.visibility.main = None;
+        for (path, mut ms, part) in prepared {
+            let lock = self
+                .write_locks
+                .get_mut(&path)
+                .or_else(|| temporary.get_mut(&path))
+                .expect("physical MAIN write lock was acquired");
+            record
+                .write_part(&mut ms, lock, part)
+                .map_err(runtime_error)?;
+        }
+        for (_, lock) in temporary {
             lock.release().map_err(runtime_error)?;
         }
-        if result {
-            self.visibility.main = None;
-        }
-        Ok(result)
+        Ok(true)
     }
 
     pub(super) fn visibility_range(&mut self, request: &ToolRangeRequest) -> PyResult<CasaValue> {
