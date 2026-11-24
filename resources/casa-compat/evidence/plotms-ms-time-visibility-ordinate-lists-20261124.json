@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "7d34e4b824835abc9234365d5024a836eccd3fb3",
+  "source_revision": "7d34e4b824835abc9234365d5024a836eccd3fb3",
+  "baseline_revision": "c08aa75e9c2f01345654c085c728dd59b1cd3a7b",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_ordinates_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Ordinary vector and scalar time averages of independent MeasurementSet visibility ordinate lists with optional complex channel bins and independent observed, corrected and model weights.",
+  "result": "passed",
+  "baseline_result": "Main refuses three visibility ordinates with time averaging. A two-ordinate model-only time/channel case exports 342.857 on main and 300 in CASA.",
+  "text_exports": 18,
+  "points": 162,
+  "empty_text_exports": 2,
+  "figures": 3,
+  "rendered_coordinates": 9,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
