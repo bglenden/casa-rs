@@ -191,12 +191,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn getscansummary(&self) -> PyResult<Py<PyAny>> {
-        stub("getscansummary")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (datacolumn = None), text_signature = "($self, datacolumn='corrected')")]
     fn hanningsmooth(&self, datacolumn: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("hanningsmooth")

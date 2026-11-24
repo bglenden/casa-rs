@@ -314,7 +314,7 @@ impl AttachedMs {
         self.working_metadata_link()
     }
 
-    fn working_metadata_link(&self) -> Arc<MetadataLink> {
+    pub(super) fn working_metadata_link(&self) -> Arc<MetadataLink> {
         Arc::clone(
             self.metadata
                 .get_or_init(|| Arc::new(MetadataLink::new(self, self.selected_rows.clone()))),
