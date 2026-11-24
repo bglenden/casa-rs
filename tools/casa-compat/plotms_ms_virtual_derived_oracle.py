@@ -164,12 +164,71 @@ def compare_scan_span(root, native):
     print("virtual-scan-span: 1 matching averaged model expression coordinate", flush=True)
 
 
+def compare_scalar_field_spans(root, native):
+    root.mkdir()
+    both, times, scan_only, field, _ = time_scan_field_fixture(root)
+    for vis in (field, both, scan_only):
+        with opened(vis, True) as table:
+            table.removecols(["MODEL_DATA"])
+        for field_id, flux in ((0, 7.25), (1, 3.25)):
+            if vis == scan_only and field_id == 1:
+                continue
+            assert casa.setjy(str(vis), field=str(field_id), standard="manual", usescratch=False,
+                              fluxdensity=[flux, 0, 0, 0])
+    title = "Scalar virtual model across fields"
+    base = request(field) | dict(field="", xaxis="time", xdatacolumn="", yaxis="real", spw="0:1",
+                                 avgtime="200", avgfield=True, scalar=True, title=title, expformat="txt")
+    center = times[0] + 55
+    model = (7.25 + 9 * 3.25) / 10
+    corrected = (10 + 9 * 30) / 10
+    observed = (1 + 9 * 3) / 10
+    residual = dict(ydatacolumn="corrected-model_vector")
+    for name, overrides, x_values, y_values in (
+        ("scalar-field-model", dict(ydatacolumn="model"), (center,), (model,)),
+        ("scalar-field-complex-model", dict(xaxis="amp", xdatacolumn="corrected", yaxis=["real", "imag"],
+                                           ydatacolumn=["model", "model"], yaxislocation=["left", "right"]),
+         (corrected, corrected), (model, 0)),
+        ("scalar-field-residual", residual, (center,), (corrected - model,)),
+        ("scalar-field-ratio", dict(yaxis="amp", ydatacolumn="data/model_scalar"),
+         (center,), (observed / model,)),
+        ("scalar-field-channel-residual", residual | dict(avgchannel="2", spw="0:0~3"),
+         (center, center), (corrected - model,) * 2),
+        ("scalar-scan-and-field-model", dict(vis=str(both), avgscan=True, ydatacolumn="model"),
+         (center,), (model,)),
+        ("scalar-scan-model", dict(vis=str(scan_only), avgscan=True, avgfield=False, ydatacolumn="model"),
+         (center,), (7.25,)),
+    ):
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == len(x_values)
+        scan = "-1" if controls.get("avgscan") else "1"
+        assert {tuple(point[3:9]) for point in selected} == {(scan, "0", "0", "1", "A0@P0", "A1@P1")}
+        assert {point[12] for point in selected} == {"XX"}
+        np.testing.assert_allclose([float(point[1]) for point in selected], y_values, rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        for points in (selected, rows(actual)):
+            relative = 0 if controls["xaxis"] == "time" else 1.2e-5
+            np.testing.assert_allclose([float(point[0]) for point in points], x_values,
+                                       rtol=relative, atol=.00051)
+        print(f"{name}: {len(selected)} matching scalar virtual field coordinates", flush=True)
+        if name == "scalar-field-residual":
+            compare_figure(root, native, controls, expected, (title, "Time (MJD seconds)",
+                                                              "Real:corrected-model (vector)"))
+    for vis in (field, both, scan_only):
+        with opened(vis) as table:
+            assert "MODEL_DATA" not in table.colnames()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
+    parser.add_argument("--only", choices=("scalar-field-spans",))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -181,9 +240,11 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare_averaged_expressions(root, native)
-        compare_scan_span(root / "spans", native)
-        compare_varying_fourier_expression(root / "fourier-model", native)
+        if args.only is None:
+            compare_averaged_expressions(root, native)
+            compare_scan_span(root / "spans", native)
+            compare_varying_fourier_expression(root / "fourier-model", native)
+        compare_scalar_field_spans(root / "scalar-field-spans", native)
 
 
 if __name__ == "__main__":
