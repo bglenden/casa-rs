@@ -18,6 +18,17 @@ impl CliOptions {
         self.secondary_y_data_column.is_some() || !self.additional_ordinates.is_empty()
     }
 
+    pub(super) fn supports_offset_scan_grid(&self) -> bool {
+        self.iteraxis == Some(MsIterationAxis::Scan)
+            && self.gridrows == 1
+            && self.gridcols == 2
+            && self.x_axis == Some(MsAxis::Time)
+            && self.y_axis == Some(MsAxis::Amplitude)
+            && self.y_axis2.is_none()
+            && self.data_column == MsDataColumn::Data
+            && !self.plotms_averaging_active()
+    }
+
     pub(super) fn has_mixed_ordinate_dimensions(&self) -> bool {
         self.x_axis.is_some_and(MsAxis::uses_derived_geometry)
             || self
@@ -55,8 +66,16 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
-    pub(super) fn supports_channel_visibility_ordinates(&self) -> bool {
-        !self.plotms_extended_averaging()
+    pub(super) fn supports_visibility_ordinate_averaging(&self) -> bool {
+        let ordinary_time = self.avgtime.is_some()
+            && !self.avgscan
+            && !self.avgfield
+            && !self.avgbaseline
+            && !self.avgantenna
+            && !self.avgspw
+            && self.freqframe.is_none()
+            && self.plotms_independent_average();
+        (!self.plotms_extended_averaging() || ordinary_time)
             && !self.has_mixed_ordinate_dimensions()
             && self.plotms_axis_columns().is_some_and(|columns| {
                 columns
