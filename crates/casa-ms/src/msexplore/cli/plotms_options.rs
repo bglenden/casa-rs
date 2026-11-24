@@ -246,7 +246,7 @@ impl CliOptions {
             && self.avgspw
             && !self.avgbaseline
             && !self.avgantenna
-            && !crosses_boundary
+            && (!crosses_boundary || self.avgtime.is_some())
             && self.freqframe.is_none();
         let channel_average = self.avgchannel.is_some_and(|width| width > 1);
         let ordinary_time =

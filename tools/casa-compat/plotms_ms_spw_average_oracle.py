@@ -647,7 +647,7 @@ def compare_vector_channel_spans(root, native, base, vis):
                    (options["title"], "Real", "Imag:corrected"))
 
 
-def compare_ordinate_lists(root, native, base, source):
+def compare_ordinate_lists(root, native, base, source, *, spans_only=False):
     root.mkdir()
     vis = root / "stored-list-model.ms"
     copy_ms(source, vis)
@@ -662,6 +662,9 @@ def compare_ordinate_lists(root, native, base, source):
                           yaxis=["real", "imag", "real"], ydatacolumn=["data", "corrected", "model"],
                           yaxislocation=["left", "right", "left"])
     combined = dict(vis=str(staggered), xaxis="time", avgtime="20", avgchannel="2", spw="0:0~3,1:0~3")
+    if spans_only:
+        compare_ordinate_list_spans(root, native, options | combined, vis)
+        return
     for name, overrides, y in (
         ("vector-spw-ordinates", {}, [5, 5, 15, 15, 14.5, 14.5]),
         ("scalar-spw-ordinates", dict(scalar=True), [8.61803, 8.61803, .857989, .857989, 17.4659, 17.4659]),
@@ -687,6 +690,7 @@ def compare_ordinate_lists(root, native, base, source):
     compare_sides(root, native, options, expected_x="Frequency (GHz)", expected_right="Imag:corrected",
                   name="vector-spw-ordinates")
     compare_ordinate_list_masks(root, native, options, vis, combined)
+    compare_ordinate_list_spans(root, native, options | combined, vis)
 
 
 def compare_ordinate_list_masks(root, native, options, vis, combined):
@@ -728,6 +732,37 @@ def compare_ordinate_list_masks(root, native, options, vis, combined):
             print(f"{name}: {count if count else 'three empty sections'} matched", flush=True)
 
 
+def compare_ordinate_list_spans(root, native, options, source):
+    for name, scan, field in (("scan", True, False), ("field", False, True), ("both", True, True)):
+        vis, start = stagger_windows(root, source, f"list-span-{name}")
+        if field:
+            add_second_field(vis)
+        with opened(vis, True) as table:
+            late = (table.getcol("TIME") >= start + 10).astype(np.int32)
+            if scan:
+                table.putcol("SCAN_NUMBER", 1 + late)
+            if field:
+                table.putcol("FIELD_ID", late)
+            for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA"):
+                table.putcol(column, (table.getcol(column) * (1 + late)).astype(np.complex64))
+        for mode, scalar, y in (
+            ("vector", False, [5.625, 13.125, 16.875, 39.375, 16.3125, 38.0625]),
+            ("scalar", True, [9.69529, 22.6223, .857989, .857989, 19.6491, 45.8479]),
+        ):
+            case = f"{mode}-{name}-spw-ordinates"
+            controls = options | dict(vis=str(vis), field="", avgscan=scan, avgfield=field, scalar=scalar)
+            expected = export(root, f"{case}.casa", reference, controls)
+            selected = rows(expected)
+            scan_id = "-1" if scalar and scan else "1"
+            assert [tuple(point[3:5]) for point in selected] == [(scan_id, "0")] * 6
+            np.testing.assert_allclose(coordinates(selected)[:, 1], y, rtol=1.2e-5)
+            actual = export(root, f"{case}.native", native, controls)
+            assert compare_text(actual, expected) == 6
+            np.testing.assert_allclose(coordinates(rows(actual))[:, 0], coordinates(selected)[:, 0],
+                                       rtol=0, atol=.00051)
+            print(f"{case}: six matching coordinates across boundaries", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -736,7 +771,7 @@ def main():
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
                                            "malformed", "scalar-time", "vector-time", "vector-optional",
-                                           "vector-channel-spans", "ordinate-lists"))
+                                           "vector-channel-spans", "ordinate-lists", "ordinate-list-spans"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -771,8 +806,9 @@ def main():
             compare_vector_optional_weights(root, native, base)
         if args.only in (None, "vector-channel-spans"):
             compare_vector_channel_spans(root, native, base, vis)
-        if args.only in (None, "ordinate-lists"):
-            compare_ordinate_lists(root / "ordinate-lists", native, base, vis)
+        if args.only in (None, "ordinate-lists", "ordinate-list-spans"):
+            compare_ordinate_lists(root / "ordinate-lists", native, base, vis,
+                                   spans_only=args.only == "ordinate-list-spans")
 
 
 if __name__ == "__main__":
