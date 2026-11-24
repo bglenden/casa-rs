@@ -25,6 +25,7 @@ use super::{
     build_msexplore_payload, build_uncalibrated_plotms_payload, export_msexplore_plot,
     preview_msexplore_flag_edit_for_request,
 };
+use crate::selection::ChannelRange;
 use crate::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
@@ -188,7 +189,7 @@ pub fn task_front_end_with_plot_payload(
 pub type PlotMsCalibrationLoader =
     fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
 
-/// Iterator references for vector time averaging of virtual model cells. Both
+/// Iterator references for averaging virtual model cells. Both slot
 /// slices are indexed by input selection slot and contain slots in that same
 /// selection.
 #[derive(Debug, Clone, Copy)]
@@ -197,6 +198,18 @@ pub struct PlotMsModelReferences<'a> {
     pub phase_slots: &'a [usize],
     /// The first row of each input visibility buffer supplies the model recipe.
     pub recipe_slots: &'a [usize],
+    /// Selected cells for aligning predictions with the first input buffer
+    /// window. Only supplied for spectral-window averaging.
+    pub spectral_windows: Option<PlotMsModelSpwSelection<'a>>,
+}
+
+/// Physical selection to align with the prediction buffer by cell position.
+#[derive(Debug, Clone, Copy)]
+pub struct PlotMsModelSpwSelection<'a> {
+    /// Selected channel ranges in each physical spectral window.
+    pub channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
+    /// Requested correlation types, or empty to select all physical slots.
+    pub correlations: &'a [i32],
 }
 
 /// Compute MODEL_DATA on the exact selected MAIN rows. Return None when the

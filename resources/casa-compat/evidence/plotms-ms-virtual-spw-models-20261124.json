@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "6ddaf7c51dce20eaca38bc61f0215947731ab152",
+  "source_revision": "6ddaf7c51dce20eaca38bc61f0215947731ab152",
+  "baseline_revision": "e8e53f5f465b6ed4305115ab72246716d76570d4",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only virtual-models --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Selected read-only virtual MeasurementSet models in supported vector and scalar spectral-window averages with ordinary time and channel compositions.",
+  "result": "passed",
+  "baseline_result": "Main matches the raw models and refuses the first combined public request with virtual MeasurementSet models pending #1032.",
+  "text_exports": 19,
+  "points": 44,
+  "equivalent_casa_control_points": 2,
+  "figures": 1,
+  "rendered_coordinates": 4,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "physical_models_changed": 0
+}

@@ -789,6 +789,131 @@ def compare_ordinate_list_uvw(root, native, options, vis):
     print("uvw-spw-ordinates: pending SPW U guard and six ordinary time U coordinates verified", flush=True)
 
 
+def virtual_spw_models(root, name, *, spectral_index=0, stokes_q=0):
+    vis = make_fixture(root, name)
+    with opened(vis, True) as table:
+        model = table.getcol("MODEL_DATA")
+        table.putcol("MODEL_DATA", np.full_like(model, 19))
+    for window, flux, frequency in ((0, 7.25, "90GHz"), (1, 3.25, "100GHz")):
+        assert casa.setjy(str(vis), field="FLUX", spw=str(window), standard="manual", usescratch=False,
+                          fluxdensity=[flux, stokes_q, 0, 0], reffreq=frequency, spix=[spectral_index])
+    return vis
+
+
+def compare_virtual_spw_models(root, native):
+    root.mkdir()
+    vis = virtual_spw_models(root, "virtual-windows")
+    sloped = virtual_spw_models(root, "sloped-virtual-windows", spectral_index=9)
+    shifted, _ = stagger_windows(root, vis, "virtual-staggered-windows")
+    reversed_windows = root / "virtual-reversed-windows.ms"
+    copy_ms(vis, reversed_windows)
+    with opened(reversed_windows, True) as table:
+        table.putcol("DATA_DESC_ID", 1 - table.getcol("DATA_DESC_ID"))
+    masked = root / "virtual-masked-windows.ms"
+    copy_ms(vis, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, table.getcol("DATA_DESC_ID") == 0] = True
+        table.putcol("FLAG", flags)
+    title = "Virtual spectral-window models"
+    base = request(vis) | dict(xaxis="frequency", xdatacolumn="", spw="0:1,1:1", yaxis="real",
+                                ydatacolumn="model", avgspw=True, title=title)
+    first, second = ("90.001000000", 7.25, "0"), ("100.001000000", 3.25, "1")
+    channels = dict(avgchannel="2", spw="0:0~3,1:0~3")
+    binned = [(freq, 7.25, "0") for freq in ("90.000500000", "90.002500000")]
+    for name, overrides, values in (
+        ("raw-virtual-model-windows", dict(avgspw=False), [first, first, second, second]),
+        ("vector-virtual-model-spw", {}, [first] * 2),
+        ("scalar-virtual-model-spw", dict(scalar=True), [first] * 2),
+        ("selected-virtual-model-spw", dict(spw="1:1"), [second] * 2),
+        ("reversed-virtual-model-spw", dict(vis=str(reversed_windows)), [second] * 2),
+        ("staggered-virtual-model-spw", dict(vis=str(shifted)), [first, second] * 2),
+        ("vector-time-virtual-model-spw", dict(vis=str(shifted), avgtime="20"), [(first[0], 5.25, "0")]),
+        ("scalar-time-virtual-model-spw", dict(vis=str(shifted), avgtime="20", scalar=True), [(second[0], 4.25, "0")]),
+        ("channel-virtual-model-spw", channels, binned * 2),
+        ("time-channel-virtual-model-spw", channels | dict(avgtime="20"), binned),
+        ("sloped-model-spw-channel-indices", dict(vis=str(sloped), spw="0:1,1:2"),
+         [(first[0], 7.25 * (90.001 / 90) ** 9, "0")] * 2),
+        ("masked-virtual-model-spw", dict(vis=str(masked)), [first] * 2),
+    ):
+        controls = base | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        assert [(p[0], p[11]) for p in selected] == [(freq, spw) for freq, _, spw in values], name
+        np.testing.assert_allclose([float(p[1]) for p in selected], [model for _, model, _ in values], rtol=1.2e-5)
+        actual = export(root, f"{name}.native", native, controls)
+        assert compare_text(actual, expected) == len(values)
+        print(f"{name}: {len(values)} matching virtual model coordinates", flush=True)
+        if name == "channel-virtual-model-spw":
+            compare_figure(root, native, controls, expected, (title, "Frequency (GHz)", "Real:model"))
+    for source in (vis, sloped, shifted, reversed_windows, masked):
+        with opened(source) as table:
+            np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
+    compare_virtual_spw_model_references(root, native, base, vis, sloped)
+
+
+def compare_virtual_spw_model_references(root, native, base, vis, sloped):
+    moving, start = stagger_windows(root, vis, "moving-virtual-windows")
+    with opened(moving / "FIELD", True) as table:
+        table.putcell("NUM_POLY", 0, 1)
+        table.putcell("TIME", 0, start)
+        for column in ("PHASE_DIR", "REFERENCE_DIR", "DELAY_DIR"):
+            table.putcell(column, 0, np.column_stack((table.getcell(column, 0), [3e-6, 0.])))
+    phase_controls = base | dict(vis=str(moving), yaxis="imag")
+    for name, overrides, values, windows in (
+        ("moving-field-spw", {}, [0] * 4, ["0", "1"] * 2),
+        ("moving-field-selected-spw", dict(spw="1:1"), [2.6563, 2.65614], ["1"] * 2),
+        ("moving-field-scalar-time-spw", dict(scalar=True, avgtime="20"), [0], ["0"]),
+        ("moving-field-vector-time-spw", dict(avgtime="20"), [0], ["0"]),
+    ):
+        controls = phase_controls | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        assert [p[11] for p in selected] == windows
+        np.testing.assert_allclose([float(p[1]) for p in selected], values, rtol=1.2e-5, atol=1e-7)
+        assert compare_text(export(root, f"{name}.native", native, controls), expected) == len(values)
+        print(f"{name}: {len(values)} matching coordinates at the selected chunk epoch", flush=True)
+
+    polarized = virtual_spw_models(root, "polarized-virtual-windows", stokes_q=2.5)
+    with opened(polarized / "POLARIZATION", True) as table:
+        reversed_id = table.nrows()
+        table.addrows(1)
+        for column in table.colnames():
+            value = table.getcell(column, 0)
+            if column == "CORR_TYPE":
+                value = value[::-1]
+            if column == "CORR_PRODUCT":
+                value = value[:, ::-1]
+            table.putcell(column, reversed_id, value)
+    with opened(polarized / "DATA_DESCRIPTION", True) as table:
+        table.putcell("POLARIZATION_ID", 1, reversed_id)
+    polarized_controls = base | dict(vis=str(polarized), spw="0:1,1:2")
+    for name, correlation, pairs in (
+        ("all", "", [("XX", 9.75), ("YY", 4.75)] * 2),
+        ("xx", "XX", [("XX", 9.75)] * 2),
+        ("yy", "YY", [("YY", 4.75)] * 2),
+    ):
+        name = f"polarized-spw-{name}"
+        controls = polarized_controls | dict(correlation=correlation)
+        expected = export(root, f"{name}.casa", reference, controls)
+        assert [(p[12], float(p[1])) for p in rows(expected)] == pairs
+        assert compare_text(export(root, f"{name}.native", native, controls), expected) == len(pairs)
+        print(f"{name}: {len(pairs)} matching selected model correlation slots", flush=True)
+
+    # The mixed selector terminates pinned PlotMS. The matching positions of
+    # its nonempty slices are an independent reference for the valid cells.
+    controls = base | dict(vis=str(sloped), spw="0:1,1:2")
+    expected = export(root, "matching-slices.casa", reference, controls)
+    actual = export(root, "with-unmatched-slice.native", native, controls | dict(spw="0:1;200GHz,1:2"))
+    assert "# spw: 0:1;200GHz,1:2" in actual.read_text()
+    assert [p[2:] for p in rows(actual)] == [p[2:] for p in rows(expected)]
+    np.testing.assert_allclose(coordinates(rows(actual)), coordinates(rows(expected)), rtol=1.2e-5)
+    print("with-unmatched-slice: 2 matching coordinates against the nonempty CASA slices", flush=True)
+    for source in (moving, polarized):
+        with opened(source) as table:
+            np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -798,7 +923,7 @@ def main():
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
                                            "malformed", "scalar-time", "vector-time", "vector-optional",
                                            "vector-channel-spans", "ordinate-lists", "ordinate-list-spans",
-                                           "ordinate-list-uvw"))
+                                           "ordinate-list-uvw", "virtual-models"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -810,6 +935,9 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
+        if args.only == "virtual-models":
+            compare_virtual_spw_models(root / "virtual-models", native)
+            return
         vis = make_fixture(root)
         base = request(vis) | dict(avgspw=True, spw="0:1,1:1", title="Spectral-window average")
         if args.only in (None, "coordinates"):
@@ -835,6 +963,8 @@ def main():
             compare_vector_channel_spans(root, native, base, vis)
         if args.only in (None, "ordinate-lists", "ordinate-list-spans", "ordinate-list-uvw"):
             compare_ordinate_lists(root / "ordinate-lists", native, base, vis, only=args.only)
+        if args.only is None:
+            compare_virtual_spw_models(root / "virtual-models", native)
 
 
 if __name__ == "__main__":
