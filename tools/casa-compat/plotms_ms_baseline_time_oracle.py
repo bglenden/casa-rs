@@ -758,6 +758,11 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
         flags = table.getcol("FLAG")
         flags[:, :, times == np.unique(times)[2]] = True
         table.putcol("FLAG", flags)
+    row_flagged = root / "scalar-antenna-row-flagged-time.ms"
+    copy_ms(masked, row_flagged)
+    with opened(row_flagged, True) as table:
+        times = table.getcol("TIME")
+        table.putcol("FLAG_ROW", times == np.unique(times)[2])
     controls = base | dict(vis=str(source), antenna="A0&A1;A0&A2", correlation="XX", spw="0:1",
                            avgtime="20", msselect="", xaxis="amp", yaxis="phase", scalar=True,
                            title="Scalar antenna time averages")
@@ -769,6 +774,7 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
         ("scalar-antenna-time-channels", dict(avgchannel="2", spw="0:0~3"), 3),
         ("scalar-antenna-shorter-time", dict(avgtime="15"), 2),
         ("scalar-antenna-masked-time", dict(vis=str(masked)), 3),
+        ("scalar-antenna-row-flagged-time", dict(vis=str(row_flagged)), 3),
     ):
         request_args = controls | overrides
         channels = (0, 1) if "avgchannel" in overrides else (1,)
@@ -777,7 +783,8 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
         for begin in range(0, len(amplitudes), width):
             end = begin + width
             center = start + (begin + end - 1) * 5
-            visible_end = end - 1 if name == "scalar-antenna-masked-time" and begin == 0 else end
+            final_input_flagged = request_args["vis"] in {str(masked), str(row_flagged)} and begin == 0
+            visible_end = end - int(final_input_flagged)
             mean_amplitude = amplitude * amplitudes[begin:visible_end].mean()
             mean_phase = phase + turns[begin:visible_end].mean()
             for antenna, (gain, angle) in enumerate(((7 / 4, mean_phase + 67.5),
