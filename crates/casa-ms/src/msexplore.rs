@@ -382,12 +382,16 @@ pub enum MsAxis {
     /// W coordinate in meters.
     W,
     /// UV distance in wavelengths at the selected channel frequency.
+    #[serde(rename = "uvwave")]
     UvWave,
     /// U coordinate in wavelengths at the selected channel frequency.
+    #[serde(rename = "uwave")]
     UWave,
     /// V coordinate in wavelengths at the selected channel frequency.
+    #[serde(rename = "vwave")]
     VWave,
     /// W coordinate in wavelengths at the selected channel frequency.
+    #[serde(rename = "wwave")]
     WWave,
     /// Scan number metadata axis.
     Scan,
@@ -8259,6 +8263,12 @@ mod tests {
             }
         }
         assert!(MsAxis::parse("bogus").unwrap_err().contains("unsupported"));
+
+        for axis in [MsAxis::UvWave, MsAxis::UWave, MsAxis::VWave, MsAxis::WWave] {
+            let token = serde_json::to_value(axis).unwrap();
+            assert_eq!(token.as_str(), Some(axis.as_str()));
+            assert_eq!(serde_json::from_value::<MsAxis>(token).unwrap(), axis);
+        }
 
         let data_columns = [
             (MsDataColumn::Data, &["data"][..]),
