@@ -69,6 +69,7 @@ mod gspline;
 mod ionosphere;
 mod sky;
 pub(crate) use fields::load as load_interpolated_calibration_table;
+mod gain_arrays;
 mod gain_validity;
 mod initialization;
 mod ordered_gain;
@@ -5204,6 +5205,15 @@ fn load_parameters(
 
     let baseline = ms.is_some() && baseline::is_subtype(&table_plan.summary.table_subtype);
     let x_mueller = table_plan.summary.table_subtype == "X Mueller";
+    let batch_gain_arrays = table_plan.summary.parameter_family
+        == CalibrationParameterFamily::Complex
+        && matches!(
+            table_plan.summary.table_subtype.as_str(),
+            "G Jones" | "T Jones"
+        )
+        && table.row_count() > 1;
+    let mut gain_arrays = None;
+    let path = &table_plan.spec.path;
     let mut solutions: HashMap<(i32, i32, i32), Vec<CalibrationSolution>> = HashMap::new();
     for row_index in 0..table.row_count() {
         let field_id = get_i32(&table, row_index, COL_FIELD_ID)?;
@@ -5219,27 +5229,20 @@ fn load_parameters(
             continue;
         };
         let time_seconds = get_f64(&table, row_index, COL_TIME)?;
-        let flags = table
-            .cell_accessor(row_index, COL_FLAG)
-            .and_then(|cell| cell.array())
-            .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                path: table_plan.spec.path.display().to_string(),
-                source: MsError::from(source),
-            })?;
-        let read_fparam = || {
-            table
-                .cell_accessor(row_index, COL_FPARAM)
-                .and_then(|cell| cell.array())
-                .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-                    path: table_plan.spec.path.display().to_string(),
-                    source: MsError::from(source),
-                })
-        };
+        if batch_gain_arrays && row_index.is_multiple_of(gain_arrays::GainArrayBatch::ROWS) {
+            gain_arrays = gain_arrays::GainArrayBatch::read(&table, row_index);
+        }
+        let (flag_cell, gain_cell) = gain_arrays
+            .as_ref()
+            .map(|batch| batch.cells(row_index))
+            .unwrap_or_default();
+        let flags = gain_arrays::load_array(&table, path, row_index, COL_FLAG, flag_cell)?;
+        let read_fparam = || gain_arrays::load_array(&table, path, row_index, COL_FPARAM, None);
         let grid = match table_plan.summary.parameter_family {
             CalibrationParameterFamily::Complex => load_complex_parameters(
-                &table,
+                gain_arrays::load_array(&table, path, row_index, COL_CPARAM, gain_cell)?,
                 row_index,
-                &table_plan.spec.path,
+                path,
                 flags,
                 match table_plan.summary.table_subtype.as_str() {
                     baseline::NOISE_SUBTYPE => Some((4, "additive noise")),
@@ -5382,7 +5385,7 @@ fn load_parameter_antenna(
 }
 
 fn load_complex_parameters(
-    table: &Table,
+    gains: &ArrayValue,
     row_index: usize,
     path: &Path,
     flags: &ArrayValue,
@@ -5390,13 +5393,6 @@ fn load_complex_parameters(
     cross_hand_phase: bool,
     reversed: bool,
 ) -> Result<CalibrationGrid, ApplyExecutionError> {
-    let gains = table
-        .cell_accessor(row_index, COL_CPARAM)
-        .and_then(|cell| cell.array())
-        .map_err(|source| ApplyExecutionError::MutateMeasurementSet {
-            path: path.display().to_string(),
-            source: MsError::from(source),
-        })?;
     if let Some((count, family)) = parameter_shape
         && gains.shape().first() != Some(&count)
     {
