@@ -252,7 +252,23 @@ def compare_scalar_baselines(root, native):
     flagged_pairs = [pairs[0], (5, -80), pairs[2], (9, -80), (11, -80), pairs[5]]
     avgtime_pairs = [(3, 400 / 11), (7.5, 20)]
     avgtime_times = [start + 10, start + 40]
-    channels = dict(spw="0:0~3", avgchannel="2")
+    channel_source = root / "channels.ms"
+    copy_ms(source, channel_source)
+    with opened(channel_source, True) as table:
+        data = table.getcol("DATA")
+        # The first two channels partially cancel before scalar averaging.
+        data[:, 0, :] *= -0.5
+        table.putcol("DATA", data)
+    channels = dict(vis=str(channel_source), spw="0:0~3", avgchannel="2")
+
+    def channel_pairs(coordinates):
+        return [pair for amp, phase in coordinates for pair in ((amp / 4, phase), (amp, phase))]
+
+    spans = root / "scan-span.ms"
+    copy_ms(source, spans)
+    with opened(spans, True) as table:
+        scans = np.where(table.getcol("TIME") >= start + 30, 2, table.getcol("SCAN_NUMBER"))
+        table.putcol("SCAN_NUMBER", scans.astype(np.int32))
     cases = (
         ("independent", {}, pairs, times),
         ("time-axis", dict(xaxis="time"), list(zip(times, phases, strict=True)), times),
@@ -260,9 +276,14 @@ def compare_scalar_baselines(root, native):
         ("signed-residual", dict(yaxis="amp", ydatacolumn="corrected-model_vector"),
          [(amp, -90 * amp) for amp in amplitudes], times),
         ("avgtime", dict(avgtime="20"), avgtime_pairs, avgtime_times),
-        ("avgchannel", channels, [pair for pair in pairs for _ in range(2)], np.repeat(times, 2)),
+        ("avgchannel", channels, channel_pairs(pairs), np.repeat(times, 2)),
         ("avgtime-avgchannel", channels | dict(avgtime="20"),
-         [pair for pair in avgtime_pairs for _ in range(2)], np.repeat(avgtime_times, 2)),
+         channel_pairs(avgtime_pairs), np.repeat(avgtime_times, 2)),
+        ("independent-ordinates", dict(yaxis=["phase", "amp"], ydatacolumn=["corrected", "model"],
+                                       yaxislocation=["left", "right"]),
+         pairs + [(amp, 100 * amp) for amp in amplitudes], times * 2),
+        ("scan-span", dict(vis=str(spans), avgtime="200", avgscan=True),
+         [(279 / 57, 1680 / 57)], [start + 25]),
     )
     for name, overrides, coordinates, centers in cases:
         controls = base | overrides
@@ -270,7 +291,8 @@ def compare_scalar_baselines(root, native):
         assert reference(**controls, plotfile=str(expected), expformat="txt") is None
         selected = rows(expected)
         assert len(selected) == len(coordinates)
-        assert {tuple(point[3:9]) for point in selected} == {("1", "0", "-1", "-1", "*", "*")}
+        scan = "-1" if name == "scan-span" else "1"
+        assert {tuple(point[3:9]) for point in selected} == {(scan, "0", "-1", "-1", "*", "*")}
         assert {tuple(point[11:13]) for point in selected} == {("0", "XX")}
         np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
         np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
@@ -282,6 +304,8 @@ def compare_scalar_baselines(root, native):
             assert {(point[2], point[10]) for point in selected} == {("1", "100.001000000")}
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == len(coordinates)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
         print(f"{name}: {len(coordinates)} matching scalar baseline coordinates", flush=True)
         if name == "independent":
             compare_figure(root, native, controls, expected, (base["title"], "Amp", "Phase:corrected (degrees)"))
