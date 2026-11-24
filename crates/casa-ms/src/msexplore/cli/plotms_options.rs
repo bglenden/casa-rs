@@ -74,8 +74,13 @@ impl CliOptions {
             && self.iteraxis.is_none()
     }
 
-    pub(super) fn supports_time_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
+    pub(super) fn supports_extended_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
         let channel_average = self.avgchannel.is_some_and(|width| width > 1);
+        let supported_average = if self.avgbaseline {
+            self.scalar
+        } else {
+            self.avgtime.is_some()
+        };
         let visibility_column = |column: MsDataColumn| {
             column.is_derived()
                 || matches!(
@@ -98,8 +103,7 @@ impl CliOptions {
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
-            && self.avgtime.is_some()
-            && !self.avgbaseline
+            && supported_average
             && !self.avgantenna
             && !self.avgspw
     }
@@ -111,8 +115,10 @@ impl CliOptions {
     ) -> Option<([MsDataColumn; 3], &'static str)> {
         if self.supports_channel_derived(requested) {
             Some((adjusted, "channel"))
-        } else if self.supports_time_derived(requested) {
-            let axis = if self.scalar {
+        } else if self.supports_extended_derived(requested) {
+            let axis = if self.scalar && self.avgbaseline {
+                "scalar baseline"
+            } else if self.scalar {
                 "scalar time"
             } else if self.avgchannel.is_some_and(|width| width > 1) {
                 "time- and channel"
@@ -178,7 +184,8 @@ impl CliOptions {
         let time_average = self.avgtime.is_some()
             && !self.avgbaseline
             && !(transforms_frequency && crosses_boundary);
-        let baseline_average = self.avgbaseline && !crosses_boundary && !transforms_frequency;
+        let baseline_average =
+            self.avgbaseline && (!crosses_boundary || self.scalar) && !transforms_frequency;
         let channel_average = self.avgchannel.is_some_and(|width| width > 1);
         let ordinary_time =
             time_average && !transforms_frequency && !crosses_boundary && !channel_average;
@@ -186,7 +193,7 @@ impl CliOptions {
         (time_average || baseline_average)
             && !self.avgantenna
             && !self.avgspw
-            && (!self.scalar || scalar_time)
+            && (!self.scalar || scalar_time || baseline_average)
             && !self.has_mixed_ordinate_dimensions()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()
