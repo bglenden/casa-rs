@@ -41,6 +41,7 @@ pub(super) fn write_export(
     let index = task.integer("plotindex")?;
     let verbose = task.flag("verbose")?;
     let mut metadata = Metadata::new(ms).map_err(io)?;
+    metadata.averaged_baselines = task.flag("averagedata")? && task.flag("avgbaseline")?;
     match payload {
         MsPlotPayload::Scatter(plot) => {
             writeln!(writer, "# From plot {index}").map_err(io)?;
@@ -264,7 +265,18 @@ fn write_point(
     if !verbose {
         return writeln!(output, "{x} {y}");
     }
+    let averaged_baselines = metadata.averaged_baselines;
     let row = metadata.row(point.row)?;
+    let (ant1, ant2, ant1name, ant2name) = if averaged_baselines {
+        (-1, -1, "*", "*")
+    } else {
+        (
+            row.ant1,
+            row.ant2,
+            row.ant1name.as_str(),
+            row.ant2name.as_str(),
+        )
+    };
     let frequency = frequency.unwrap_or_else(|| {
         row.frequencies
             .get(point.chan_start..point.chan_end)
@@ -283,10 +295,10 @@ fn write_point(
         display.map_or(point.chan_start, |point| point.channel),
         row.scan,
         row.field,
-        row.ant1,
-        row.ant2,
-        row.ant1name,
-        row.ant2name,
+        ant1,
+        ant2,
+        ant1name,
+        ant2name,
         display
             .and_then(|point| point.average_time)
             .unwrap_or(row.time),
@@ -342,6 +354,7 @@ pub(super) struct Metadata<'a> {
     ms: &'a MeasurementSet,
     time: TimeColumn<'a>,
     antennas: Vec<String>,
+    averaged_baselines: bool,
     last_row: Option<(usize, Row)>,
     frequencies: HashMap<i32, Arc<[f64]>>,
     correlations: HashMap<i32, Arc<[i32]>>,
@@ -372,6 +385,7 @@ impl<'a> Metadata<'a> {
             ms,
             time: TimeColumn::new(ms.main_table()),
             antennas,
+            averaged_baselines: false,
             last_row: None,
             frequencies: HashMap::new(),
             correlations: HashMap::new(),

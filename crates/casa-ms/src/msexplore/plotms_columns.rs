@@ -11,6 +11,21 @@ use crate::MeasurementSet;
 use crate::schema::main_table::OptionalMainColumn;
 use crate::transform::{WeightKind, visibility_weight_kind, weight_from_sigma};
 
+pub(super) fn uses_integration_baseline_average(spec: &MsPlotSpec) -> bool {
+    spec.averaging.avgbaseline
+        && spec.averaging.avgtime.is_none()
+        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
+        && !spec.averaging.avgscan
+        && !spec.averaging.avgfield
+        && !spec.averaging.avgantenna
+        && !spec.averaging.avgspw
+        && !spec.averaging.scalar
+        && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
+        && (spec.x_axis.is_visibility_math()
+            || matches!(spec.x_axis, MsAxis::Time | MsAxis::Channel)
+            || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
+}
+
 pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) -> bool {
     axes.into_iter()
         .zip(columns)

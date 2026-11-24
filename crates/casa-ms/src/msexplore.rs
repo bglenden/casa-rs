@@ -2756,14 +2756,11 @@ fn build_uncalibrated_plotms_payload(
         .map(|load| load(ms, &selected.selected_rows))
         .transpose()?
         .flatten();
-    let time_bins = columns
-        .secondary_y
-        .and_then(|_| {
-            let plot = spec.plots.first()?;
-            Some((plot, plot.averaging.avgtime?))
-        })
-        .map(|(plot, seconds)| {
-            if plotms_columns::uses_model(
+    let plot = spec.plots.first();
+    if plot.is_some_and(|plot| {
+        (plotms_columns::uses_integration_baseline_average(plot)
+            || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
+            && plotms_columns::uses_model(
                 [
                     Some(plot.x_axis),
                     Some(plot.y_axis()),
@@ -2774,9 +2771,14 @@ fn build_uncalibrated_plotms_payload(
                     plot.data_column,
                     columns.secondary_y.unwrap_or(plot.data_column),
                 ],
-            ) {
-                plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
-            }
+            )
+    }) {
+        plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
+    }
+    let time_bins = plot
+        .filter(|_| columns.secondary_y.is_some())
+        .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
+        .map(|(plot, seconds)| {
             crate::transform::selected_plot_time_groups(
                 ms,
                 &selected.selected_rows,
@@ -2791,11 +2793,16 @@ fn build_uncalibrated_plotms_payload(
             .map_err(|error| error.to_string())
         })
         .transpose()?;
-    let row_order = selected
-        .selected_rows
-        .into_iter()
-        .map(|row| row.row_index)
-        .collect::<Vec<_>>();
+    let row_order = if plot.is_some_and(plotms_columns::uses_integration_baseline_average) {
+        crate::transform::selected_plotms_integration_order(ms, &selected.selected_rows)
+            .map_err(|error| error.to_string())?
+    } else {
+        selected
+            .selected_rows
+            .into_iter()
+            .map(|row| row.row_index)
+            .collect()
+    };
     let spw = spec
         .selection
         .spw
@@ -3651,7 +3658,7 @@ struct AveragingPointKeyInputs<'a> {
     baseline: AveragingBaselineToken,
     corr_index: usize,
     row_time_value: f64,
-    time_group: Option<usize>,
+    group: Option<usize>,
     bin: &'a ChannelBin,
 }
 
@@ -4706,7 +4713,7 @@ fn build_averaging_point_key(
     spec: &MsPlotSpec,
     time_scope_origins: &std::collections::BTreeMap<TimeAverageScopeKey, f64>,
 ) -> AveragingPointKey {
-    let time_key = if let Some(group) = inputs.time_group {
+    let time_key = if let Some(group) = inputs.group {
         AveragingTimeKey::Group(group)
     } else if let Some(avgtime) = spec.averaging.avgtime {
         let scope = build_time_average_scope_key(
@@ -4838,6 +4845,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let visibility_columns =
         plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
     let time_bins = calibration.and_then(|input| input.time_bins);
+    let collapse_baselines = plotms_columns::uses_integration_baseline_average(spec)
+        && calibration.is_some_and(|input| input.rows.is_none());
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
@@ -4858,6 +4867,9 @@ fn build_generic_visibility_scatter_with_averaging(
         selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
     let selected_field_ids = selected_i32_values(ms.main_table(), "FIELD_ID", &row_numbers)?;
     let selected_scan_numbers = selected_i32_values(ms.main_table(), "SCAN_NUMBER", &row_numbers)?;
+    let selected_observations = collapse_baselines
+        .then(|| selected_i32_values(ms.main_table(), "OBSERVATION_ID", &row_numbers))
+        .transpose()?;
     let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
     let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
@@ -4895,7 +4907,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let iteraxis = spec.iteration.iteraxis;
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
-    let use_spectral_weights = calibration.is_some() && needs_visibility_grid;
+    let use_spectral_weights =
+        calibration.is_some() && needs_visibility_grid && !collapse_baselines;
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
             .y_axes
@@ -4989,10 +5002,15 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
+    let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
-        if flag_row_value && !include_row_flagged_points && time_bins.is_none() {
+        if flag_row_value
+            && !include_row_flagged_points
+            && time_bins.is_none()
+            && !collapse_baselines
+        {
             continue;
         }
 
@@ -5128,6 +5146,19 @@ fn build_generic_visibility_scatter_with_averaging(
             let group = bins.group(row_slot);
             (Some(group), bins.first_row_slot(group))
         });
+        let group = time_group.or_else(|| {
+            selected_observations.as_ref().map(|observations| {
+                baseline_groups.observe(
+                    [
+                        observations[row_slot],
+                        scan_number_value,
+                        field_id_value,
+                        spw_id,
+                    ],
+                    row_time_value,
+                )
+            })
+        });
         let representative_row = row_numbers[representative_slot];
         let representative_field = selected_field_ids[representative_slot];
         let representative_scan = selected_scan_numbers[representative_slot];
@@ -5171,6 +5202,11 @@ fn build_generic_visibility_scatter_with_averaging(
         )?;
 
         let baseline_tokens = averaging_baseline_tokens(antenna1_value, antenna2_value, spec);
+        let shared_baseline_weight = collapse_baselines.then(|| {
+            let weight = weight_values[selected_correlations[0].0];
+            let minimum = f64::from(f32::MIN_POSITIVE);
+            if weight < minimum { minimum } else { weight }
+        });
         let mut row_panels = std::collections::BTreeSet::<String>::new();
         for (corr_index, corr_label) in &selected_correlations {
             let row_weight = weight_values[*corr_index];
@@ -5178,7 +5214,8 @@ fn build_generic_visibility_scatter_with_averaging(
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
-            let scalar_weight = time_weight_kinds.map_or(row_weight, |_| 1.0);
+            let scalar_weight = shared_baseline_weight
+                .unwrap_or_else(|| time_weight_kinds.map_or(row_weight, |_| 1.0));
             for baseline_token in &baseline_tokens {
                 let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(target)
                     if antenna1_value != antenna2_value && *target == antenna2_value);
@@ -5270,7 +5307,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             baseline: baseline_token.clone(),
                             corr_index: *corr_index,
                             row_time_value,
-                            time_group,
+                            group,
                             bin,
                         },
                         spec,
@@ -5516,9 +5553,11 @@ fn build_generic_visibility_scatter_with_averaging(
                 let Some(representative) = accumulator.representative.clone() else {
                     continue;
                 };
-                let planned_time = group.and_then(|group| time_bounds[&group].midpoint());
+                let planned_time = group
+                    .and_then(|group| time_bounds.get(&group))
+                    .and_then(plotms_ordinates::VisibilityTimeBounds::midpoint);
                 let project = |axis, x_axis| {
-                    if axis == MsAxis::Time && group.is_some() {
+                    if axis == MsAxis::Time && time_bins.is_some() {
                         planned_time
                     } else {
                         finalize_averaged_axis_value(
@@ -5527,7 +5566,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             spec.averaging.scalar,
                             spec.averaging.avgtime.is_some(),
                             x_axis,
-                            group.is_some(),
+                            time_bins.is_some(),
                         )
                     }
                 };
@@ -5565,7 +5604,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 series_entries.push(output);
             }
         }
-        if time_weight_kinds.is_some() {
+        if time_weight_kinds.is_some() || collapse_baselines {
             series_entries.sort_by_key(|entry| entry.y_index);
         }
         if series_entries.is_empty() {

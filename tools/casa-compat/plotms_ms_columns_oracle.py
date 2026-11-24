@@ -993,6 +993,119 @@ def compare_time_scan_field_columns(root, native):
     assert not actual.exists()
 
 
+def compare_baseline_averaged_columns(root, native):
+    work = root / "baseline-averaged-columns"
+    work.mkdir()
+    source, integration = time_average_fixture(work)
+    with opened(source, True) as table:
+        high = table.getcol("ANTENNA2") == 2
+        shape = table.getcol("DATA").shape
+        amplitude = np.where(high, 3, 1).astype(np.complex64)
+        for factor, name in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            table.putcol(name, np.broadcast_to(amplitude * 10**factor, shape).copy())
+        for name, high_value in (("WEIGHT", 9), ("SIGMA", 0.5)):
+            values = np.where(high, high_value, 1).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, (shape[0], shape[2])).copy())
+    controls = request(source) | dict(antenna="A0&A1;A0&A2", xaxis="real", xdatacolumn="data",
+                                      yaxis=["real", "real"], ydatacolumn=["corrected", "model"],
+                                      yaxislocation=["left", "right"], spw="0:1", avgbaseline=True)
+    cases = (
+        ("baseline-independent", "XX", [(2.8, 28)] * 6),
+        ("baseline-axis-order", "XX", [(2.8, 28)] * 6),
+        ("baseline-both-correlations", "XX,YY", [(2.8, 28)] * 12),
+        ("baseline-selected-yy", "YY", [(1.2, 12)] * 6),
+        ("baseline-mixed-flags", "XX", [(1, 10), (2.8, 28)] * 3),
+        ("baseline-row-flags-only", "XX", [(2.8, 28)] * 6),
+        ("baseline-zero-row-weights", "XX", [(2, 20)] * 6),
+        ("baseline-ignores-spectral-weights", "XX", [(2.8, 28)] * 6),
+    )
+    for name, correlation, corrected in cases:
+        vis = work / f"{name}.ms"
+        copy_ms(source, vis)
+        with opened(vis, True) as table:
+            if name in ("baseline-both-correlations", "baseline-selected-yy"):
+                values = table.getcol("WEIGHT")
+                values[1, :] = np.where(high, 1, 9)
+                table.putcol("WEIGHT", values)
+            if name == "baseline-mixed-flags":
+                flags = table.getcol("FLAG")
+                flags[:, 1, high & (integration % 2 == 0)] = True
+                table.putcol("FLAG", flags)
+            if name == "baseline-row-flags-only":
+                table.putcol("FLAG_ROW", high & (integration % 2 == 0))
+            if name == "baseline-zero-row-weights":
+                table.putcol("WEIGHT", np.zeros_like(table.getcol("WEIGHT")))
+            if name == "baseline-ignores-spectral-weights":
+                column = "WEIGHT_SPECTRUM"
+                descriptor = table.getcoldesc("DATA")
+                table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                            dataManagerGroup=column)})
+                spectrum = np.where(high, 1, 9).astype(np.float32)
+                table.putcol(column, np.broadcast_to(spectrum, shape).copy())
+        options = controls | dict(vis=str(vis), correlation=correlation)
+        if name == "baseline-axis-order":
+            options["yaxis"] = ["real", "amp"]
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, expformat="txt", plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 2 * len(corrected)
+        assert {tuple(point[5:9]) for point in selected} == {("-1", "-1", "*", "*")}
+        correlations = correlation.split(",")
+        assert [point[12] for point in selected] == correlations * (len(selected) // len(correlations))
+        model = [(x, 10 * y) for x, y in corrected]
+        np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float),
+                                   corrected + model, rtol=1.2e-5)
+        assert native(**options, expformat="txt", plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching baseline-averaged coordinates", flush=True)
+        if name in ("baseline-both-correlations", "baseline-row-flags-only", "baseline-ignores-spectral-weights"):
+            one_ordinate = options | dict(yaxis="real", ydatacolumn="corrected", yaxislocation="left")
+            expected, actual = (work / f"{name}-one-ordinate.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**one_ordinate, expformat="txt", plotfile=str(expected)) is None
+            assert native(**one_ordinate, expformat="txt", plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == len(corrected)
+    figure = controls | dict(vis=str(work / "baseline-independent.ms"))
+    compare_ordinate_figure(work, "baseline-independent", native, figure, "Real", ["Real:corrected", "Real:model"])
+    compare_baselines_in_observation_order(work, source, controls, native)
+
+
+def compare_baselines_in_observation_order(work, source, controls, native):
+    vis = work / "overlapping-observations.ms"
+    copy_ms(source, vis)
+    with opened(vis / "OBSERVATION", True) as table:
+        other = table.nrows()
+        table.addrows(1)
+        for name in table.colnames():
+            if table.iscelldefined(name, 0):
+                table.putcell(name, other, table.getcell(name, 0))
+    with opened(vis, True) as table:
+        times, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        second_observation = integration >= 6
+        reversed_times = times[5 - integration % 6]
+        table.putcol("TIME", reversed_times)
+        table.putcol("TIME_CENTROID", reversed_times)
+        table.putcol("OBSERVATION_ID", np.where(second_observation, other, 0).astype(np.int32))
+        for name, value in (("FIELD_ID", 0), ("SCAN_NUMBER", 1), ("WEIGHT", 1)):
+            table.putcol(name, np.full_like(table.getcol(name), value))
+        high = table.getcol("ANTENNA2") == 2
+        for name, values in (("DATA", np.where(second_observation, 9, 1)),
+                             ("CORRECTED_DATA", np.where(second_observation, 9, np.where(high, -1, 1))),
+                             ("MODEL_DATA", np.where(second_observation, 15, 5))):
+            shape = table.getcol(name).shape
+            table.putcol(name, np.broadcast_to(values.astype(np.complex64), shape).copy())
+    options = controls | dict(vis=str(vis), yaxis=["amp", "real"], expformat="txt")
+    expected, actual = (work / f"observation-order.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [point[13] for point in selected] == (["0"] * 6 + [str(other)] * 6) * 2
+    assert [point[9] for point in selected] == [f"{time:.3f}" for time in times[:6]] * 4
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(1, 0)] * 6 + [(9, 9)] * 6 + [(1, 5)] * 6 + [(9, 15)] * 6)
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == len(selected)
+    print(f"observation-order: {len(selected)} matching baseline-averaged coordinates", flush=True)
+
+
 def compare_float_columns(root, vis, source, native):
     float_only = root / "float-only.ms"
     mixed = root / "float-and-complex.ms"
@@ -1350,6 +1463,7 @@ def main():
         compare_time_averaged_columns(root, native)
         compare_combined_averaged_columns(root, native)
         compare_time_scan_field_columns(root, native)
+        compare_baseline_averaged_columns(root, native)
         compare_float_columns(root, vis, source, native)
         compare_default_model(root, native)
         compare_virtual_fourier_model(root, native)

@@ -227,6 +227,26 @@ pub(super) struct VisibilityTimeBounds {
     last_unflagged: Option<f64>,
 }
 
+#[derive(Default)]
+pub(super) struct BaselineIntegrationGroups {
+    previous: Option<([i32; 4], f64)>,
+    ordinal: usize,
+}
+
+impl BaselineIntegrationGroups {
+    pub(super) fn observe(&mut self, ids: [i32; 4], time: f64) -> usize {
+        let integration = (ids, time);
+        if self
+            .previous
+            .replace(integration)
+            .is_some_and(|previous| previous != integration)
+        {
+            self.ordinal += 1;
+        }
+        self.ordinal
+    }
+}
+
 pub(super) fn has_unflagged_input(
     flags: &ArrayView2<'_, bool>,
     correlations: &[(usize, String)],
