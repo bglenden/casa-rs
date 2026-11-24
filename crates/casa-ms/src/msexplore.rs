@@ -3045,7 +3045,14 @@ fn build_uncalibrated_plotms_payload(
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
-    let independent_ordinates = columns.secondary_y.is_some() || !columns.additional_y.is_empty();
+    let multiple_visibility_ordinates = columns.secondary_y.is_some()
+        || !columns.additional_y.is_empty()
+        || plot.is_some_and(|plot| {
+            plot.y_axis().is_visibility_math()
+                && plot
+                    .secondary_y_axis()
+                    .is_some_and(MsAxis::is_visibility_math)
+        });
     if plot.is_some_and(|plot| {
         (plotms_columns::uses_channel_derived(plot, columns.x)
             || vector_baselines
@@ -3055,7 +3062,7 @@ fn build_uncalibrated_plotms_payload(
             || direct_time_channels
             || extended_derived
             || weighted_time_uvw
-            || (independent_ordinates && uses_extended_averaging(plot)))
+            || (multiple_visibility_ordinates && uses_extended_averaging(plot)))
             && uses_model(plot)
     }) {
         plotms_model::refuse_selected_virtual_fields(
@@ -3090,7 +3097,7 @@ fn build_uncalibrated_plotms_payload(
                     || time_spw
                     || weighted_time_uvw
                     || direct_time_channels
-                    || (!antenna_average && (independent_ordinates || extended_derived)))
+                    || (!antenna_average && (multiple_visibility_ordinates || extended_derived)))
         })
         .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
         .map(|(plot, seconds)| {

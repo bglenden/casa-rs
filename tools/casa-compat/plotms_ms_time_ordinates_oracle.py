@@ -53,6 +53,12 @@ def compare(root, native):
     with opened(row_flagged, True) as table:
         table.putcol("FLAG_ROW", integration % 2 == 1)
     spectra = spectral_fixture(root, vis, integration)
+    masked_spectrum = root / "masked-spectrum.ms"
+    copy_ms(spectra, masked_spectrum)
+    with opened(masked_spectrum, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, integration % 2 == 1] = True
+        table.putcol("FLAG", flags)
 
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", spw="0:1", avgtime="20",
                                yaxis=["real", "real", "real"], ydatacolumn=["data", "corrected", "model"],
@@ -60,6 +66,8 @@ def compare(root, native):
     vector = (2.6,) * 3
     times = tuple(start + offset for offset in (5, 25, 45))
     scalar = (29 / 11, 55 / 19)
+    model_only = dict(vis=str(masked_spectrum), xaxis="channel", xdatacolumn="",
+                      spw="0:0~1", avgchannel="2")
     cases = (
         ("three-ordinates", {}, vector, [vector, (28,) * 3, (280,) * 3]),
         ("four-ordinates", dict(yaxis=["real", "real", "amp", "phase"],
@@ -83,9 +91,16 @@ def compare(root, native):
                                          yaxis=["real", "phase", "real"],
                                          ydatacolumn=["data", "data", "corrected"]),
          times, [(3.8,) * 3, (0,) * 3, (34,) * 3]),
+        ("two-shared-model-ordinates", model_only | dict(yaxis=["amp", "real"],
+             ydatacolumn=["model"] * 2, yaxislocation=["left", "right"]), (0,) * 3, [(300,) * 3] * 2),
+        ("three-shared-model-ordinates", model_only | dict(yaxis=["amp", "real", "phase"],
+             ydatacolumn=["model"] * 3), (0,) * 3, [(300,) * 3, (300,) * 3, (0,) * 3]),
         ("scalar-time", dict(xaxis="time", xdatacolumn="", scalar=True),
          (start + 10, start + 40),
          [tuple(value * scale for value in scalar) for scale in (1, 10, 100)]),
+        ("scalar-time-and-channel", dict(vis=str(masked_spectrum), xaxis="time", xdatacolumn="",
+                                         scalar=True, spw="0:0~1", avgchannel="2"),
+         (start + 10, start + 40), [(3, 11 / 3), (95 / 3, 340 / 9), (950 / 3, 3400 / 9)]),
     )
     for name, overrides, x_values, ordinates in cases:
         controls = base | overrides | dict(expformat="txt")
