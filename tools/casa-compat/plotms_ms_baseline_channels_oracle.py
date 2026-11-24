@@ -173,8 +173,7 @@ def compare_vector_cancellation(root, native, controls, source):
     print(f"cancellation: {len(selected)} matching channel-and-baseline coordinates", flush=True)
 
 
-def compare_spectrum_availability(root, native, controls, source):
-    vis = root / "reversed-partial-spectrum.ms"
+def make_reversed_partial_spectrum(source, vis):
     copy_ms(source, vis)
     with opened(vis, True) as table:
         selected = ((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
@@ -200,6 +199,11 @@ def compare_spectrum_availability(root, native, controls, source):
         sigma = np.ones(shape, dtype=np.float32)
         sigma[:, 1, :] = 0.5
         table.putcol("SIGMA_SPECTRUM", sigma)
+    return vis
+
+
+def compare_spectrum_availability(root, native, controls, source):
+    vis = make_reversed_partial_spectrum(source, root / "reversed-partial-spectrum.ms")
     options = controls | dict(vis=str(vis), xdatacolumn="data", yaxis="real", ydatacolumn="data",
                               yaxislocation="left", spw="0:0~1", expformat="txt")
     expected, actual = (root / f"spectrum-availability.{engine}.txt" for engine in ("casa", "native"))

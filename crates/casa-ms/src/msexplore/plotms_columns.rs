@@ -13,9 +13,10 @@ use crate::transform::{
     WeightKind, mean_weight_preferring_unflagged, visibility_weight_kind, weight_from_sigma,
 };
 
-pub(super) fn uses_integration_baseline_average(spec: &MsPlotSpec) -> bool {
+pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgbaseline
-        && spec.averaging.avgtime.is_none()
+        && (spec.averaging.avgtime.is_none()
+            || spec.averaging.avgchannel.is_none_or(|width| width <= 1))
         && !spec.averaging.avgscan
         && !spec.averaging.avgfield
         && !spec.averaging.avgantenna
@@ -25,6 +26,11 @@ pub(super) fn uses_integration_baseline_average(spec: &MsPlotSpec) -> bool {
         && (spec.x_axis.is_visibility_math()
             || matches!(spec.x_axis, MsAxis::Time | MsAxis::Channel)
             || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
+}
+
+pub(super) fn baseline_weight(weight: f64) -> f64 {
+    let minimum = f64::from(f32::MIN_POSITIVE);
+    if weight < minimum { minimum } else { weight }
 }
 
 pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) -> bool {

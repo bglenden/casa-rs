@@ -2,6 +2,7 @@
 //! Baseline and visibility accumulation for MeasurementSet time averaging.
 
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
 use std::path::Path;
 
 use casa_tables::TableError;
@@ -41,6 +42,7 @@ pub(super) struct TimeGroup {
     pub(super) first: TimeSample,
     pub(super) rows: Vec<TimeInputRow>,
     pub(super) row_in_chunk: usize,
+    completed_before: Option<usize>,
 }
 
 impl TimeGroup {
@@ -49,6 +51,7 @@ impl TimeGroup {
             first,
             rows: vec![row],
             row_in_chunk: 0,
+            completed_before: None,
         }
     }
 
@@ -175,6 +178,8 @@ pub(super) fn uvw_coordinates(uvw: Option<&ArrayValue>) -> Option<[f64; 3]> {
 pub(crate) struct PlotTimeGroups {
     group_by_row_slot: Vec<usize>,
     first_row_slots: Vec<usize>,
+    buffers: Vec<Range<usize>>,
+    input_buffer_first_slots: Vec<usize>,
 }
 
 impl PlotTimeGroups {
@@ -187,6 +192,16 @@ impl PlotTimeGroups {
     pub(crate) fn first_row_slot(&self, group: usize) -> usize {
         self.first_row_slots[group]
     }
+
+    /// The emitted subchunks needed by the downstream PlotMS baseline reducer.
+    pub(crate) fn buffers(&self) -> &[Range<usize>] {
+        &self.buffers
+    }
+
+    /// Identify the input row that determines optional spectrum availability.
+    pub(crate) fn input_buffer_first_slot(&self, row_slot: usize) -> Option<usize> {
+        self.input_buffer_first_slots.get(row_slot).copied()
+    }
 }
 
 /// Plan vector time groups for the selected PlotMS rows and scan/field barriers.
@@ -194,30 +209,52 @@ pub(crate) fn selected_plot_time_groups(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
     options: TimeAverageOptions,
+    collect_buffers: bool,
 ) -> Result<PlotTimeGroups, MsTransformError> {
     let groups = plan(ms, rows, options, MainRowOrder::Transform)?;
-    let mut group_by_row = HashMap::with_capacity(rows.len());
-    let mut first_rows = Vec::with_capacity(groups.len());
-    for (index, group) in groups.into_iter().enumerate() {
-        first_rows.push(group.first.row);
-        group_by_row.extend(group.rows.into_iter().map(|row| (row.physical, index)));
-    }
-    let mut first_row_slots = vec![0; first_rows.len()];
-    let group_by_row_slot = rows
+    let buffers = if collect_buffers {
+        plot_time_buffers(&groups)
+    } else {
+        Vec::new()
+    };
+    let row_slots = rows
         .iter()
         .enumerate()
-        .map(|(row_slot, row)| {
-            let group = group_by_row[&row.row_index];
-            if first_rows[group] == row.row_index {
-                first_row_slots[group] = row_slot;
+        .map(|(slot, row)| (row.row_index, slot))
+        .collect::<HashMap<_, _>>();
+    let mut group_by_row_slot = vec![0; rows.len()];
+    let mut first_row_slots = Vec::with_capacity(groups.len());
+    let mut input_buffer_first_slots = vec![0; if collect_buffers { rows.len() } else { 0 }];
+    for (index, group) in groups.into_iter().enumerate() {
+        first_row_slots.push(row_slots[&group.first.row]);
+        for row in group.rows {
+            let slot = row_slots[&row.physical];
+            group_by_row_slot[slot] = index;
+            if collect_buffers {
+                input_buffer_first_slots[slot] = row_slots[&row.buffer_first];
             }
-            group
-        })
-        .collect();
+        }
+    }
     Ok(PlotTimeGroups {
         group_by_row_slot,
         first_row_slots,
+        buffers,
+        input_buffer_first_slots,
     })
+}
+
+fn plot_time_buffers(groups: &[TimeGroup]) -> Vec<Range<usize>> {
+    let mut offset = 0;
+    groups
+        .chunk_by(|left, right| {
+            left.first.chunk == right.first.chunk && left.completed_before == right.completed_before
+        })
+        .map(|buffer| {
+            let start = offset;
+            offset += buffer.len();
+            start..offset
+        })
+        .collect()
 }
 
 pub(super) fn group_baselines(
@@ -260,10 +297,9 @@ pub(super) fn group_baselines(
         if slot == active.len() {
             active.push(TimeGroup::new(sample, row));
         } else if active[slot].exceeds(&sample, max_time, max_uvw_squared) {
-            finished.push(std::mem::replace(
-                &mut active[slot],
-                TimeGroup::new(sample, row),
-            ));
+            let mut complete = std::mem::replace(&mut active[slot], TimeGroup::new(sample, row));
+            complete.completed_before = Some(first.row);
+            finished.push(complete);
         } else {
             active[slot].rows.push(row);
         }
@@ -340,19 +376,17 @@ impl TimeCoordinatesAverage {
     }
 
     pub(super) fn finish(self) -> TimeCoordinates {
-        let elapsed = self.last.time - self.first.time;
-        let interval = if elapsed == 0.0 {
-            self.first.interval
-        } else {
-            elapsed + (self.first.interval + self.last.interval) * 0.5
-        };
+        let (time, interval) = centered_time_and_interval(
+            (self.first.time, self.first.interval),
+            (self.last.time, self.last.interval),
+        );
         let normalization = if self.weight == 0.0 {
             self.count.max(1) as f64
         } else {
             self.weight
         };
         TimeCoordinates {
-            time: self.first.time + elapsed * 0.5,
+            time,
             centroid: self.first.time + self.centroid_offset / normalization,
             interval,
             exposure: self.exposure,
@@ -362,6 +396,17 @@ impl TimeCoordinatesAverage {
             flag_row: false,
         }
     }
+}
+
+/// Center the first and last visibility times and span both integrations.
+pub(crate) fn centered_time_and_interval(first: (f64, f64), last: (f64, f64)) -> (f64, f64) {
+    let elapsed = last.0 - first.0;
+    let interval = if elapsed == 0.0 {
+        first.1
+    } else {
+        elapsed + (first.1 + last.1) * 0.5
+    };
+    (first.0 + elapsed * 0.5, interval)
 }
 
 use ndarray::{Array1, Array2, ArrayD, ArrayView2, Ix2};

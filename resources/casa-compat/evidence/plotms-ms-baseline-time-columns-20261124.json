@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "222516750d98b6e15ea9d55fd26473c0061a890e",
+  "source_revision": "222516750d98b6e15ea9d55fd26473c0061a890e",
+  "baseline_revision": "093b99a83cc30152dbc7d5e2da2c17f9030bdcb9",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs vector time and baseline averages for one or two stored MeasurementSet visibility ordinates.",
+  "result": "passed",
+  "baseline_result": "The 20-second CASA request emitted two bins per ordinate. Native refused the dual-ordinate request.",
+  "text_exports": 10,
+  "points": 46,
+  "figures": 1,
+  "rendered_coordinates": 4,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}

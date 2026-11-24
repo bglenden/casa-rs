@@ -181,23 +181,28 @@ impl BinBuffer {
     }
 
     pub(super) fn normalize_vector_average(&mut self) {
-        if self.values.is_empty() {
+        let Some(average) = vector_mean(&self.values, &self.weights) else {
             return;
-        }
-        let average = if self.weights.is_empty() {
-            self.values.iter().copied().sum::<Complex64>() / self.values.len() as f64
-        } else {
-            let total = self.weights.iter().sum::<f64>();
-            if total > 0.0 {
-                weighted_visibility_mean(&self.values, &self.weights, total)
-            } else {
-                Complex64::new(0.0, 0.0)
-            }
         };
         self.values[0] = average;
         self.values.truncate(1);
         self.weights.clear();
     }
+}
+
+fn vector_mean(values: &[Complex64], weights: &[f64]) -> Option<Complex64> {
+    if values.is_empty() {
+        return None;
+    }
+    if weights.is_empty() {
+        return Some(values.iter().copied().sum::<Complex64>() / values.len() as f64);
+    }
+    let total = weights.iter().sum::<f64>();
+    Some(if total > 0.0 {
+        weighted_visibility_mean(values, weights, total)
+    } else {
+        Complex64::new(0.0, 0.0)
+    })
 }
 
 #[derive(Debug, Default)]
@@ -207,6 +212,15 @@ pub(super) struct AveragedVisibility {
 }
 
 impl AveragedVisibility {
+    pub(super) fn add_weighted_value(&mut self, value: Complex64, weight: f64) {
+        self.values.push(value);
+        self.weights.push(weight);
+    }
+
+    pub(super) fn vector_mean(&self) -> Option<Complex64> {
+        vector_mean(&self.values, &self.weights)
+    }
+
     pub(super) fn add(
         &mut self,
         samples: VisibilityBinSamples<'_>,
