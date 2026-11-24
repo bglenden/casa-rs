@@ -57,7 +57,7 @@ impl CliOptions {
 
     pub(super) fn supports_channel_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
         let supported_pair = |derived: MsDataColumn, stored| {
-            derived.is_corrected_vector_projection()
+            derived.is_corrected_model_expression()
                 && matches!(stored, MsDataColumn::Data | MsDataColumn::Corrected)
         };
         self.avgchannel.is_some_and(|width| width > 1)

@@ -724,8 +724,14 @@ impl MsDataColumn {
         self == Self::Model || self.is_derived()
     }
 
-    fn is_corrected_vector_projection(self) -> bool {
-        matches!(self, Self::CorrectedMinusModel | Self::CorrectedDivModel)
+    fn is_corrected_model_expression(self) -> bool {
+        matches!(
+            self,
+            Self::CorrectedMinusModel
+                | Self::CorrectedMinusModelScalar
+                | Self::CorrectedDivModel
+                | Self::CorrectedDivModelScalar
+        )
     }
 
     fn is_derived(self) -> bool {
@@ -6883,7 +6889,12 @@ enum VisibilityColumnProjection {
 }
 
 impl VisibilityColumnProjection {
-    fn axis_value(self, axis: MsAxis, [observed, model]: [Complex64; 2]) -> Option<f64> {
+    fn axis_value(
+        self,
+        axis: MsAxis,
+        [observed, model]: [Complex64; 2],
+        channel_averaged: bool,
+    ) -> Option<f64> {
         let as_complex_float =
             |value: Complex64| num_complex::Complex32::new(value.re as f32, value.im as f32);
         let complex_axis = |value: Complex64| {
@@ -6898,6 +6909,17 @@ impl VisibilityColumnProjection {
         };
         match self {
             Self::VectorResidual => Some(complex_axis(observed - model)),
+            Self::ScalarResidual if channel_averaged => {
+                let observed = as_complex_float(observed);
+                let model = as_complex_float(model);
+                Some(f64::from(match axis {
+                    MsAxis::Amplitude => observed.norm() - model.norm(),
+                    MsAxis::Phase => Self::float_phase_degrees(observed.arg() - model.arg()),
+                    MsAxis::Real => observed.re - model.re,
+                    MsAxis::Imaginary => observed.im - model.im,
+                    _ => unreachable!("visibility projection requires a visibility axis"),
+                }))
+            }
             Self::ScalarResidual => {
                 let value = match axis {
                     MsAxis::Amplitude => observed.norm() - model.norm(),
@@ -6995,7 +7017,7 @@ fn compute_axis_value(
 ) -> Result<Option<f64>, String> {
     if axis.is_visibility_math() {
         if let Some((projection, operands)) = visibility.projection {
-            return Ok(projection.axis_value(axis, operands));
+            return Ok(projection.axis_value(axis, operands, bin.averaged));
         }
         let axis = if visibility.signed_amplitude && axis == MsAxis::Amplitude {
             MsAxis::Real

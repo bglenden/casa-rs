@@ -86,7 +86,7 @@ pub(super) fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -
     spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && [x.unwrap_or(spec.data_column), spec.data_column]
             .into_iter()
-            .any(MsDataColumn::is_corrected_vector_projection)
+            .any(MsDataColumn::is_corrected_model_expression)
 }
 
 pub(super) fn weight_axis_columns(
@@ -185,7 +185,9 @@ pub(super) fn weight_kinds(
             MsDataColumn::Data => OptionalMainColumn::Data,
             MsDataColumn::Corrected
             | MsDataColumn::CorrectedMinusModel
-            | MsDataColumn::CorrectedDivModel => OptionalMainColumn::CorrectedData,
+            | MsDataColumn::CorrectedMinusModelScalar
+            | MsDataColumn::CorrectedDivModel
+            | MsDataColumn::CorrectedDivModelScalar => OptionalMainColumn::CorrectedData,
             MsDataColumn::Model => OptionalMainColumn::ModelData,
             _ => return WeightKind::Unit,
         };
