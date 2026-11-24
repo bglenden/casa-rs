@@ -549,7 +549,7 @@ def compare_multiple_ordinates(root, vis, native):
     [axes] = capture
     plotted_groups = dict(layer for _, _, layers in axes for layer in layers)
     points = rows(root / "three-ordinate-mixed-elevation-baselines.casa.txt")
-    labels = ("Real:model", "Phase (degrees)", "Elevation (deg)")
+    labels = ("Real:model", "Phase", "Elevation")
     assert len(plotted_groups) == 2 * len(labels)
     for label, section in zip(labels, np.split(points, (54, 108)), strict=True):
         for correlation in ("XX", "YY"):
@@ -559,6 +559,8 @@ def compare_multiple_ordinates(root, vis, native):
     for output in (expected, actual):
         with Image.open(output) as image:
             assert image.size == (500, 360)
+    print(f"mixed-correlation-colors: {len(points)} matching rendered coordinates in six groups",
+          flush=True)
     with opened(virtual) as table:
         assert "MODEL_DATA" not in table.colnames()
 
