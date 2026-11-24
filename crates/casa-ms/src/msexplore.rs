@@ -3011,10 +3011,10 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
-    let vector_model_references = plot.is_some_and(|plot| {
-        plotms_model::needs_vector_model_references(ms, &selected.selected_rows, plot, &columns)
+    let needs_model_references = plot.is_some_and(|plot| {
+        plotms_model::needs_model_references(ms, &selected.selected_rows, plot, &columns)
     });
-    let vector_span_models = vector_model_references
+    let vector_span_models = needs_model_references
         && plot.is_some_and(|plot| plot.averaging.avgscan || plot.averaging.avgfield);
     let direct_time_projection = !extended_derived
         && (vector_span_models
@@ -3061,24 +3061,11 @@ fn build_uncalibrated_plotms_payload(
                     || extended_derived
                     || direct_time_projection,
                 time_spw,
-                vector_model_references,
+                needs_model_references,
             )
             .map_err(|error| error.to_string())
         })
         .transpose()?;
-    let models = plotms_model::selected_model_cells(
-        ms,
-        &selected.selected_rows,
-        plot,
-        &columns,
-        time_bins.as_ref().and_then(|groups| {
-            Some(cli::PlotMsModelReferences {
-                phase_slots: groups.model_phase_reference_slots()?,
-                recipe_slots: groups.input_buffer_first_slots(),
-            })
-        }),
-        load_models,
-    )?;
     let (row_order, starts_visibility_buffer) = if (vector_baselines && !time_baselines)
         || scalar_average
         || (spw_average && !time_spw)
@@ -3094,7 +3081,7 @@ fn build_uncalibrated_plotms_payload(
         (
             selected
                 .selected_rows
-                .into_iter()
+                .iter()
                 .map(|row| row.row_index)
                 .collect(),
             Vec::new(),
@@ -3113,6 +3100,41 @@ fn build_uncalibrated_plotms_payload(
     for &range in selection.channel_list() {
         channels.entry(range.spw_id as i32).or_default().push(range);
     }
+    let spw_model_references = needs_model_references && spw_average;
+    let channel_ranges = spw_model_references.then_some(&channels);
+    let ordered_recipe_slots = (spw_model_references && !time_spw).then(|| {
+        plotms_model::ordered_model_recipe_slots(
+            &selected.selected_rows,
+            &row_order,
+            &starts_visibility_buffer,
+        )
+    });
+    let model_references = time_bins
+        .as_ref()
+        .and_then(|groups| {
+            Some(cli::PlotMsModelReferences {
+                phase_slots: Some(groups.model_phase_reference_slots()?),
+                recipe_slots: groups.input_buffer_first_slots(),
+                channel_ranges,
+            })
+        })
+        .or_else(|| {
+            ordered_recipe_slots
+                .as_deref()
+                .map(|recipe_slots| cli::PlotMsModelReferences {
+                    phase_slots: None,
+                    recipe_slots,
+                    channel_ranges,
+                })
+        });
+    let models = plotms_model::selected_model_cells(
+        ms,
+        &selected.selected_rows,
+        plot,
+        &columns,
+        model_references,
+        load_models,
+    )?;
     let input = PlotMsInput {
         row_order: &row_order,
         starts_visibility_buffer: &starts_visibility_buffer,

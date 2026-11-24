@@ -25,6 +25,7 @@ use super::{
     build_msexplore_payload, build_uncalibrated_plotms_payload, export_msexplore_plot,
     preview_msexplore_flag_edit_for_request,
 };
+use crate::selection::ChannelRange;
 use crate::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
@@ -188,15 +189,18 @@ pub fn task_front_end_with_plot_payload(
 pub type PlotMsCalibrationLoader =
     fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
 
-/// Iterator references for vector time averaging of virtual model cells. Both
+/// Iterator references for averaging virtual model cells. Both slot
 /// slices are indexed by input selection slot and contain slots in that same
 /// selection.
 #[derive(Debug, Clone, Copy)]
 pub struct PlotMsModelReferences<'a> {
     /// The first row of the iterator chunk supplies FIELD direction and epoch.
-    pub phase_slots: &'a [usize],
+    pub phase_slots: Option<&'a [usize]>,
     /// The first row of each input visibility buffer supplies the model recipe.
     pub recipe_slots: &'a [usize],
+    /// Selected physical channels for aligning predictions with the first
+    /// input buffer window. Only supplied for spectral-window averaging.
+    pub channel_ranges: Option<&'a BTreeMap<i32, Vec<ChannelRange>>>,
 }
 
 /// Compute MODEL_DATA on the exact selected MAIN rows. Return None when the

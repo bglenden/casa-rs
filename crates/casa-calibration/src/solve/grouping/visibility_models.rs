@@ -292,7 +292,7 @@ fn transform_model_rows(
             field_id: recipe.field_id,
             observation_id: integer(&observations, "OBSERVATION_ID")?,
             data_desc_id: row.data_desc_id,
-            data_spw_id: row.spectral_window_id,
+            data_spw_id: recipe.spectral_window_id,
             channel_selection: None,
             antenna1: row.antenna1_id,
             antenna2: row.antenna2_id,
