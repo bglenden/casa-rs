@@ -4079,6 +4079,20 @@ length. A width of `4294967298` wraps into two channels, which can flag two
 samples even though the whole-window mean falls outside the clipping
 range. Native flagdata applies the same whole-window rule as other widths
 larger than the window, for both scalar and per-window forms.
+
+## PlotMS scalar time plots can fail after encountering a sparse weight spectrum
+
+With `avgchannel="2"`, `avgtime="20"`, and `scalar=True`, CASA 6.7.6.14
+with casaplotms 2.9.1 can export a corrected-minus-model plot when the
+first selected input buffer starts with an undefined `WEIGHT_SPECTRUM`
+cell. Reversing the integration times in the same fixture makes the
+iterator reach a fully defined buffer before the incomplete one. CASA then
+returns `INVALID_ARGUMENT` during export. Native PlotMS resolves spectral
+weight availability for each input buffer and uses the scalar `WEIGHT`
+values for the buffer that lacks a spectrum. Its four exported coordinates
+match the separate CASA control with `WEIGHT_SPECTRUM` removed. Both
+implementations agree on the original chronological fixture (#2231).
+
 ## Time-averaged clipping and TFCrop can substitute zeros for defined inputs
 
 In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping or

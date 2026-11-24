@@ -565,6 +565,7 @@ def compare_combined_scalar_time(root, native):
 
 
 def compare_combined_scalar_spectrum_availability(root, native, controls):
+    from grpc import RpcError, StatusCode
     from plotms_ms_baseline_channels_oracle import make_fixture as channel_fixture
     from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
 
@@ -602,6 +603,32 @@ def compare_combined_scalar_spectrum_availability(root, native, controls):
     assert compare_text(actual, expected) == 4
     np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
     print("buffer-spectrum: 4 matching coordinates using spectra from the selected input buffer", flush=True)
+
+    reversed_vis, implicit_vis = (work / f"{name}.ms" for name in ("reversed", "implicit"))
+    copy_ms(vis, reversed_vis)
+    with opened(reversed_vis, True) as table:
+        times, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        for column in ("TIME", "TIME_CENTROID"):
+            table.putcol(column, times[-1 - integration])
+    copy_ms(reversed_vis, implicit_vis)
+    with opened(implicit_vis, True) as table:
+        table.removecols("WEIGHT_SPECTRUM")
+    reversed_options = options | dict(vis=str(reversed_vis), expformat="txt")
+    expected, actual = work / "implicit.casa.txt", work / "reversed.native.txt"
+    assert reference(**(reversed_options | dict(vis=str(implicit_vis))), plotfile=str(expected)) is None
+    failed = work / "reversed.casa.txt"
+    try:
+        reference(**reversed_options, plotfile=str(failed))
+    except RpcError as error:
+        assert error.code() == StatusCode.INVALID_ARGUMENT, error
+    else:
+        raise AssertionError("CASA unexpectedly accepted the reversed sparse spectrum")
+    assert not failed.exists()
+
+    assert native(**reversed_options, plotfile=str(actual)) is None
+    assert rows(actual) == rows(expected)
+    np.testing.assert_allclose([float(point[1]) for point in rows(actual)], [9, 9, 9, 909 / 11], rtol=1.2e-5)
+    print("reversed-spectrum: 4 native coordinates matching the separate CASA row-weight control", flush=True)
 
 
 def main():
