@@ -1066,10 +1066,12 @@ def compare_spw_ordinate_order(root, native, source):
 
 def compare_single_spw_iteration_layout(root, native):
     from PIL import Image
-    from plotms_ms_iterated_ordinates_oracle import reverse_correlation_slots
 
     reversed_slots = virtual_spw_models(root, "single-model-reversed-corrs")
-    reverse_correlation_slots(reversed_slots)
+    with opened(reversed_slots / "POLARIZATION", True) as table:
+        for row in range(table.nrows()):
+            table.putcell("CORR_TYPE", row, table.getcell("CORR_TYPE", row)[::-1])
+            table.putcell("CORR_PRODUCT", row, table.getcell("CORR_PRODUCT", row)[:, ::-1])
     base = request(reversed_slots) | dict(field="", xaxis="frequency", xdatacolumn="", spw="0:1,1:1",
                                           yaxis="real", ydatacolumn="model", avgspw=True, exprange="all")
     corr = base | dict(iteraxis="corr", correlation="")
