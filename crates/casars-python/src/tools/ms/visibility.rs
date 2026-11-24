@@ -4,7 +4,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
-use casa_ms::tool_visibility::{self, VisibilityChannels};
+use casa_coordinates::StokesType;
+use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
+use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PySystemError, PyTypeError};
@@ -23,6 +25,7 @@ pub(super) struct VisibilityState {
     main: Option<VisibilityMain>,
     time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
     channels: Option<VisibilityChannels>,
+    polarization: Option<Arc<VisibilityPolarization>>,
 }
 
 struct VisibilityMain {
@@ -36,6 +39,7 @@ impl VisibilityState {
     pub(super) fn reset_selection(&mut self) {
         self.initialized = false;
         self.channels = None;
+        self.polarization = None;
     }
 
     pub(super) fn set_initialized(&mut self, initialized: bool) {
@@ -103,6 +107,7 @@ impl VisibilityMain {
         selected: Option<&[usize]>,
         mut rows: Vec<usize>,
         items: &[String],
+        metadata: Option<&MeasurementSet>,
         options: tool_visibility::VisibilityReadOptions<'_>,
     ) -> PyResult<CasaValue> {
         if let Some(selected) = selected {
@@ -116,7 +121,7 @@ impl VisibilityMain {
             self.reference.as_ref(),
             &rows,
             items,
-            None,
+            metadata,
             options,
         )
         .map_err(runtime_error)?;
@@ -141,6 +146,7 @@ impl PyMsTool {
             average,
             baseline_gap: ifraxis.then_some(ifraxisgap as i32),
             channels: None,
+            polarization: None,
             time_measures: None,
         };
         let reply = py.detach(|| {
@@ -189,9 +195,74 @@ impl PyMsTool {
             Ok(true)
         })
     }
+
+    #[pyo3(signature = (wantedpol = None), text_signature = "($self, wantedpol=[])")]
+    fn selectpolarization(
+        &self,
+        py: Python<'_>,
+        wantedpol: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<bool> {
+        let wanted = requested_strings(wantedpol, "wantedpol")?;
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            match attached.as_mut() {
+                Some(ms) => ms.select_visibility_polarization(&wanted),
+                None => Ok(false),
+            }
+        })
+    }
 }
 
 impl AttachedMs {
+    fn select_visibility_polarization(&mut self, wanted: &[String]) -> PyResult<bool> {
+        let link = self.metadata_link();
+        if link.row_count().map_err(runtime_error)? == 0 {
+            return Ok(false);
+        }
+        let Some(snapshot) = self.initialize_visibility(&link)? else {
+            return Ok(false);
+        };
+        if wanted.iter().all(String::is_empty) {
+            return Ok(false);
+        }
+        let request = MsSelection {
+            correlation: Some(wanted.join(",")),
+            ..MsSelection::default()
+        };
+        let plan = match self.selection_state.parse(&snapshot.ms, &request) {
+            Ok(parsed) => {
+                if !self.apply_parsed_selection(&snapshot.ms, &parsed)? {
+                    return Ok(false);
+                }
+                VisibilityPolarization::stored(parsed.into_correlations())
+            }
+            Err(MsError::NoPolarizationMatch(_)) => {
+                let Some(types) = wanted
+                    .iter()
+                    .map(|name| {
+                        StokesType::from_name(name).filter(|kind| *kind != StokesType::Undefined)
+                    })
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    if self
+                        .visibility
+                        .polarization
+                        .as_deref()
+                        .is_some_and(VisibilityPolarization::is_conversion)
+                    {
+                        self.visibility.polarization = None;
+                    }
+                    return Ok(false);
+                };
+                self.selection_state.clear_polarization_indices();
+                VisibilityPolarization::converted(&snapshot.ms, types).map_err(runtime_error)?
+            }
+            Err(_) => return Ok(false),
+        };
+        self.visibility.polarization = Some(Arc::new(plan));
+        Ok(true)
+    }
+
     pub(super) fn select_visibility_description(&mut self, description: i64) -> PyResult<bool> {
         let link = self.metadata_link();
         link.verify_directory().map_err(runtime_error)?;
@@ -254,8 +325,10 @@ impl AttachedMs {
             return Ok(CasaValue::empty_record());
         }
         let initialized = self.visibility.initialized;
+        let polarization = self.visibility.polarization.clone();
         let options = tool_visibility::VisibilityReadOptions {
             channels: self.visibility.channels,
+            polarization: polarization.as_deref(),
             ..options
         };
         let main = self.visibility.main(&self.path)?;
@@ -274,10 +347,23 @@ impl AttachedMs {
                 return Ok(CasaValue::empty_record());
             };
             let rows = sampled_rows(count, snapshot.ms.row_count(), increment)?;
-            if !axis_info {
-                let main = self.visibility.main(&self.path)?;
-                let reply =
-                    main.read_selected(self.selected_rows.as_deref(), rows, items, options)?;
+            if !axis_info || polarization.is_some() {
+                self.visibility.main(&self.path)?;
+                let main = self
+                    .visibility
+                    .main
+                    .as_ref()
+                    .expect("MAIN table was opened");
+                let reply = main.read_selected(
+                    self.selected_rows.as_deref(),
+                    rows,
+                    items,
+                    axis_info.then_some(&snapshot.ms),
+                    tool_visibility::VisibilityReadOptions {
+                        time_measures: axis_info.then_some(&self.visibility.time_measures),
+                        ..options
+                    },
+                )?;
                 link.verify_directory().map_err(runtime_error)?;
                 return Ok(reply);
             }
@@ -300,13 +386,18 @@ impl AttachedMs {
             return Ok(CasaValue::empty_record());
         }
         let rows = sampled_rows(count, count, increment)?;
-        let reply = main.read_selected(self.selected_rows.as_deref(), rows, items, options)?;
+        let reply =
+            main.read_selected(self.selected_rows.as_deref(), rows, items, None, options)?;
         link.verify_directory().map_err(runtime_error)?;
         Ok(reply)
     }
 }
 
 fn requested_items(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
+    requested_strings(value, "items")
+}
+
+fn requested_strings(value: Option<&Bound<'_, PyAny>>, argument: &str) -> PyResult<Vec<String>> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -320,7 +411,7 @@ fn requested_items(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {
         .map(|value| {
             value
                 .extract::<String>()
-                .map_err(|_| PyTypeError::new_err("list _items must contain strings"))
+                .map_err(|_| PyTypeError::new_err(format!("list _{argument} must contain strings")))
         })
         .collect()
 }

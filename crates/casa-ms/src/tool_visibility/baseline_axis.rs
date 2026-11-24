@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::{PI, TAU};
 use std::sync::{Arc, OnceLock};
 
-use casa_tables::RequiredScalarColumnValues;
+use casa_tables::{RequiredScalarColumnValues, Table};
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 use casa_types::{ArrayValue, RecordField, RecordValue, Value};
@@ -136,7 +136,7 @@ impl BaselineGrid {
         names: &BTreeSet<String>,
         columns: &HashMap<String, RequiredScalarColumnValues>,
         measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
-        first_selected: usize,
+        time_source: (&Table, usize),
         average: bool,
     ) -> MsResult<(RecordValue, RecordValue)> {
         let antenna = ms.antenna()?;
@@ -178,7 +178,7 @@ impl BaselineGrid {
                 Value::Array(ArrayValue::Float64(vector(lengths))),
             ),
         ]);
-        let time = self.time_axis(ms, names, columns, measures, first_selected, average)?;
+        let time = self.time_axis(ms, names, columns, measures, time_source, average)?;
         Ok((ifr, time))
     }
 
@@ -188,7 +188,7 @@ impl BaselineGrid {
         names: &BTreeSet<String>,
         columns: &HashMap<String, RequiredScalarColumnValues>,
         measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
-        first_selected: usize,
+        time_source: (&Table, usize),
         average: bool,
     ) -> MsResult<RecordValue> {
         const DAY: f64 = 86400.0;
@@ -224,7 +224,7 @@ impl BaselineGrid {
                 }
             }
         };
-        let main = ms.main_table();
+        let (main, first_selected) = time_source;
         let reference = TimeColumn::read(main)?.reference_at(main, first_selected)?;
         let hour_angle_fields = if want_ha {
             let RequiredScalarColumnValues::Int32(ids) = &columns["FIELD_ID"] else {

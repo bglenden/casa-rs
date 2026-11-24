@@ -86,6 +86,10 @@ pub enum MsError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    /// The polarization expression found no matching recorded correlations.
+    #[error("Poln. expression error: No match for polarization ID(s) (named {0})")]
+    NoPolarizationMatch(String),
+
     /// A read that would hold more bytes than its caller's budget allows.
     #[error("{what} requires {required} bytes but the planner supplied {available} bytes")]
     OverBudget {

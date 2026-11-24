@@ -21,11 +21,13 @@ mod averaging;
 mod baseline_axis;
 mod channel_axis;
 mod concatenation;
+mod polarization_axis;
 use averaging::RowAverage;
 use baseline_axis::BaselineGrid;
 pub use channel_axis::VisibilityChannels;
 use channel_axis::{ChannelWeightKind, ChannelWeights};
 use concatenation::{MemberRows, concatenate_arrays, concatenate_scalars, member_rows};
+pub use polarization_axis::VisibilityPolarization;
 
 /// Determine whether CASA's implicit initialization needs to narrow this view
 /// to data description zero. The iterator's row shape comes from its logical
@@ -151,6 +153,8 @@ pub struct VisibilityReadOptions<'a> {
     pub baseline_gap: Option<i32>,
     /// Channel selection applied on each logical row before visibility products.
     pub channels: Option<VisibilityChannels>,
+    /// Correlation selection or Stokes projection on the active row view.
+    pub polarization: Option<&'a VisibilityPolarization>,
     /// Reuse the attachment's Measures provider for HA and LAST coordinates.
     pub time_measures: Option<&'a OnceLock<Arc<dyn MeasuresProvider>>>,
 }
@@ -177,9 +181,10 @@ pub fn read_tool_visibility(
         average,
         baseline_gap,
         channels,
+        polarization,
         time_measures,
     } = options;
-    let ordered_rows = if channels.is_some() && baseline_gap.is_none() {
+    let ordered_rows = if (channels.is_some() || polarization.is_some()) && baseline_gap.is_none() {
         rows_by_time(main, rows)?
     } else {
         Cow::Borrowed(rows)
@@ -212,7 +217,7 @@ pub fn read_tool_visibility(
         };
         let ms = metadata.ok_or_else(|| input("axis_info requires MeasurementSet metadata"))?;
         let first_row = grid.as_ref().and_then(BaselineGrid::first_row).unwrap_or(0);
-        let mut axes = axis_info(ms, ids, first_row, channels)?;
+        let mut axes = axis_info(ms, ids, first_row, channels, polarization)?;
         if let Some(grid) = &grid {
             let first_selected = rows.first().copied().unwrap_or(0);
             let (baseline_axis, time_axis) = grid.axes(
@@ -220,7 +225,7 @@ pub fn read_tool_visibility(
                 &names,
                 &read.scalar_columns,
                 time_measures,
-                first_selected,
+                (main, first_selected),
                 average,
             )?;
             axes.push(RecordField::new("ifr_axis", Value::Record(baseline_axis)));
@@ -291,8 +296,10 @@ struct VisibilityRead<'a> {
     scalar_columns: HashMap<String, RequiredScalarColumnValues>,
     baseline_axis: bool,
     channels: Option<VisibilityChannels>,
+    polarization: Option<&'a VisibilityPolarization>,
     raw_flags: OnceCell<ArrayD<bool>>,
     selected_flags: OnceCell<ArrayD<bool>>,
+    converted_channel_flags: OnceCell<ArrayD<bool>>,
     sigma_weights: OnceCell<ChannelWeights>,
     corrected_weights: OnceCell<ChannelWeights>,
 }
@@ -333,7 +340,7 @@ impl<'a> VisibilityRead<'a> {
         rows: &'a [usize],
         first_row: Option<usize>,
         names: &BTreeSet<String>,
-        options: VisibilityReadOptions<'_>,
+        options: VisibilityReadOptions<'a>,
     ) -> MsResult<Self> {
         let baseline_axis = options.baseline_gap.is_some();
         let channels = options.channels;
@@ -355,7 +362,9 @@ impl<'a> VisibilityRead<'a> {
                     .then_some(column)
             })
             .collect::<Vec<_>>();
-        if names.contains("axis_info") && !columns.contains(&"DATA_DESC_ID") {
+        if (names.contains("axis_info") || options.polarization.is_some())
+            && !columns.contains(&"DATA_DESC_ID")
+        {
             columns.push("DATA_DESC_ID");
         }
         let plain = if let Some(path) = main
@@ -403,18 +412,21 @@ impl<'a> VisibilityRead<'a> {
             scalar_columns,
             baseline_axis,
             channels,
+            polarization: options.polarization,
             raw_flags: OnceCell::new(),
             selected_flags: OnceCell::new(),
+            converted_channel_flags: OnceCell::new(),
             sigma_weights: OnceCell::new(),
             corrected_weights: OnceCell::new(),
         })
     }
 
     fn vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
-        if let Some(channels) = self.channels
+        let is_row_weight = matches!(name, "WEIGHT" | "SIGMA");
+        let values = if let Some(channels) = self.channels
             && channels.width() > 1
             && !self.rows.is_empty()
-            && matches!(name, "WEIGHT" | "SIGMA")
+            && is_row_weight
         {
             let sigma = name == "SIGMA";
             let kind = if sigma {
@@ -422,13 +434,19 @@ impl<'a> VisibilityRead<'a> {
             } else {
                 ChannelWeightKind::Corrected
             };
-            return Ok(ArrayValue::Float32(channels.statistic(
+            ArrayValue::Float32(channels.statistic(
                 self.raw_flags()?,
                 self.channel_weights(kind)?,
                 sigma,
-            )?));
+            )?)
+        } else {
+            self.raw_vector_cells(name)?
+        };
+        if is_row_weight {
+            self.gather_correlations(values)
+        } else {
+            Ok(values)
         }
-        self.raw_vector_cells(name)
     }
 
     fn raw_vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
@@ -442,13 +460,28 @@ impl<'a> VisibilityRead<'a> {
 
     fn matrix_cells(&self, name: &str, widen_complex: bool) -> MsResult<ArrayValue> {
         let Some(channels) = self.channels.filter(|_| !self.rows.is_empty()) else {
-            return self.raw_matrix_cells(name, widen_complex);
+            return self.gather_correlations(self.raw_matrix_cells(name, widen_complex)?);
         };
         if name == "FLAG" {
             return Ok(ArrayValue::Bool(self.channel_flags(channels)?.clone()));
         }
         let values = self.raw_matrix_cells(name, widen_complex && channels.width() == 1)?;
-        self.select_channels(channels, name, &values)
+        self.gather_correlations(self.select_channels(channels, name, &values)?)
+    }
+
+    fn polarization_ids(&self) -> MsResult<&[i32]> {
+        match self.scalar_columns.get("DATA_DESC_ID") {
+            Some(RequiredScalarColumnValues::Int32(ids)) => Ok(ids),
+            _ => Err(input("DATA_DESC_ID must contain an integer")),
+        }
+    }
+
+    fn gather_correlations(&self, values: ArrayValue) -> MsResult<ArrayValue> {
+        if let Some(polarization) = self.polarization.filter(|_| !self.rows.is_empty()) {
+            polarization.gather(values, self.polarization_ids()?)
+        } else {
+            Ok(values)
+        }
     }
 
     fn raw_matrix_cells(&self, name: &str, widen_complex: bool) -> MsResult<ArrayValue> {
@@ -482,7 +515,10 @@ impl<'a> VisibilityRead<'a> {
         if let Some(flags) = self.selected_flags.get() {
             return Ok(flags);
         }
-        let flags = channels.flags(self.raw_flags()?)?;
+        let flags = ArrayValue::Bool(channels.flags(self.raw_flags()?)?);
+        let ArrayValue::Bool(flags) = self.gather_correlations(flags)? else {
+            return Err(input("FLAG cells must be Boolean"));
+        };
         Ok(self.selected_flags.get_or_init(|| flags))
     }
 
@@ -564,7 +600,7 @@ impl<'a> VisibilityRead<'a> {
         let ArrayValue::Float32(samples) = selected.as_ref().unwrap_or(raw) else {
             return Err(input("FLOAT_DATA cells must contain Float values"));
         };
-        Ok(ArrayValue::Complex32(
+        self.gather_correlations(ArrayValue::Complex32(
             samples.mapv(|sample| Complex32::new(sample, 0.0)),
         ))
     }
@@ -591,7 +627,7 @@ impl<'a> VisibilityRead<'a> {
                 .zip(second)
                 .map(|(&left, &right)| left.wrapping_mul(1000).wrapping_add(right))
                 .collect::<Vec<_>>();
-            if self.channels.is_none() {
+            if self.channels.is_none() && self.polarization.is_none() {
                 ifrs.sort_unstable();
                 ifrs.dedup();
             }
@@ -605,6 +641,13 @@ impl<'a> VisibilityRead<'a> {
         }
         for (name, column) in SCALARS {
             if !names.contains(name) {
+                continue;
+            }
+            if name == "data_desc_id" && self.polarization.is_some() {
+                fields.insert(
+                    name.into(),
+                    Value::Array(ArrayValue::Int32(vector(self.polarization_ids()?.to_vec()))),
+                );
                 continue;
             }
             if name == "flag_row"
@@ -660,13 +703,24 @@ impl<'a> VisibilityRead<'a> {
     ) -> MsResult<()> {
         let (raw_flags, reduced_flags) = if let Some(reduced) = reduced {
             let (raw, flags, weights) = reduced.into_fields();
+            let (raw, weights) = if self
+                .polarization
+                .is_some_and(VisibilityPolarization::is_conversion)
+            {
+                (
+                    self.matrix_cells("FLAG", false)?,
+                    self.vector_cells("WEIGHT")?,
+                )
+            } else {
+                (ArrayValue::Bool(raw), weights)
+            };
             let name = if names.contains("weight") {
                 "weight"
             } else {
                 "avgweight"
             };
             fields.insert(name.into(), Value::Array(weights));
-            (Some(ArrayValue::Bool(raw)), Some(flags))
+            (Some(raw), Some(flags))
         } else {
             if names.contains("weight") {
                 fields.insert("weight".into(), Value::Array(self.vector_cells("WEIGHT")?));
@@ -808,8 +862,11 @@ impl<'a> VisibilityRead<'a> {
                 && [&amplitude, &phase, &real, &imaginary]
                     .into_iter()
                     .all(Option::is_none);
+            let convert = self.polarization.filter(|plan| plan.is_conversion());
             let data =
-                if (self.baseline_axis || self.channels.is_some()) && has_float && source == "DATA"
+                if (self.baseline_axis || self.channels.is_some() || self.polarization.is_some())
+                    && has_float
+                    && source == "DATA"
                 {
                     // The CASA visibility iterator uses FLOAT_DATA for observed
                     // products whenever that column exists.
@@ -818,7 +875,7 @@ impl<'a> VisibilityRead<'a> {
                     }
                     self.observed_float(float_cells.as_ref().expect("FLOAT_DATA was read"))?
                 } else {
-                    self.matrix_cells(source, only_raw && !reduce)?
+                    self.matrix_cells(source, only_raw && !reduce && convert.is_none())?
                 };
             let data = if uses_model {
                 let model_values = self.matrix_cells("MODEL_DATA", false)?;
@@ -855,8 +912,13 @@ impl<'a> VisibilityRead<'a> {
             } else {
                 data
             };
+            let data = if let Some(polarization) = convert {
+                self.convert_visibility_product(data, polarization, !average)?
+            } else {
+                data
+            };
             let data = if reduce {
-                let means = self.average_product(&mut reduction, &data, grid)?;
+                let means = self.average_product(&mut reduction, &data, grid, convert)?;
                 if let Some(aliases) = raw_aliases.take() {
                     insert_array_aliases(fields, aliases.into_iter(), data);
                 }
@@ -901,15 +963,25 @@ impl<'a> VisibilityRead<'a> {
         let mut float_aliases = aliases.remove("float_data");
         if has_float && (raw_float.is_some() || float_aliases.is_some()) {
             let values = match (float_cells, self.channels.filter(|_| !self.rows.is_empty())) {
-                (Some(values), Some(channels)) => {
-                    self.select_channels(channels, "FLOAT_DATA", &values)?
-                }
-                (Some(values), None) => values,
+                (Some(values), Some(channels)) => self.gather_correlations(
+                    self.select_channels(channels, "FLOAT_DATA", &values)?,
+                )?,
+                (Some(values), None) => self.gather_correlations(values)?,
                 (None, _) => self.matrix_cells("FLOAT_DATA", false)?,
             };
             let values = if average && raw_float.is_some() {
                 require_single_average(items, "float_data")?;
-                let means = self.average_product(&mut reduction, &values, grid)?;
+                let mut float_average = None;
+                let input = if self
+                    .polarization
+                    .is_some_and(VisibilityPolarization::is_conversion)
+                    && reduction.is_some()
+                {
+                    &mut float_average
+                } else {
+                    &mut reduction
+                };
+                let means = self.average_product(input, &values, grid, None)?;
                 if let Some(aliases) = float_aliases.take() {
                     insert_array_aliases(fields, aliases.into_iter(), values);
                 }
@@ -928,18 +1000,56 @@ impl<'a> VisibilityRead<'a> {
         Ok(reduction)
     }
 
+    fn convert_visibility_product(
+        &self,
+        data: ArrayValue,
+        polarization: &VisibilityPolarization,
+        mask_binned: bool,
+    ) -> MsResult<ArrayValue> {
+        let ids = self.polarization_ids()?;
+        let mut data = polarization.apply_conversion(data, ids)?;
+        if let Some(channels) = self
+            .channels
+            .filter(|channels| mask_binned && channels.width() > 1)
+        {
+            let flags = match self.converted_channel_flags.get() {
+                Some(flags) => flags,
+                None => {
+                    let flags = polarization.converted_flags(self.channel_flags(channels)?, ids)?;
+                    self.converted_channel_flags.get_or_init(|| flags)
+                }
+            };
+            let ArrayValue::Complex32(samples) = &mut data else {
+                return Err(input("Stokes projection requires Complex visibility data"));
+            };
+            if samples.shape() != flags.shape() {
+                return Err(input("converted FLAG and visibility dimensions differ"));
+            }
+            samples.zip_mut_with(flags, |sample, &flagged| {
+                if flagged {
+                    *sample = Complex32::ZERO;
+                }
+            });
+        }
+        Ok(data)
+    }
+
     fn average_product<'grid>(
         &self,
         reduction: &mut Option<RowAverage<'grid>>,
         values: &ArrayValue,
         grid: Option<&'grid BaselineGrid>,
+        convert: Option<&VisibilityPolarization>,
     ) -> MsResult<ArrayValue> {
         if reduction.is_none() {
-            *reduction = Some(RowAverage::new(
-                self.matrix_cells("FLAG", false)?,
-                self.vector_cells("WEIGHT")?,
-                grid,
-            )?);
+            let flags = self.matrix_cells("FLAG", false)?;
+            let weights = self.vector_cells("WEIGHT")?;
+            let (flags, weights) = if let Some(polarization) = convert {
+                polarization.averaging_inputs(flags, weights, self.polarization_ids()?)?
+            } else {
+                (flags, weights)
+            };
+            *reduction = Some(RowAverage::new(flags, weights, grid)?);
         }
         reduction
             .as_mut()
@@ -1229,6 +1339,7 @@ fn axis_info(
     ids: &[i32],
     first_row: usize,
     channels: Option<VisibilityChannels>,
+    polarization: Option<&VisibilityPolarization>,
 ) -> MsResult<RecordValue> {
     use casa_coordinates::StokesType;
 
@@ -1240,19 +1351,26 @@ fn axis_info(
     let first = ids
         .get(first_row)
         .ok_or_else(|| input("no data descriptions in selection"))?;
-    let first = usize::try_from(*first).map_err(|_| input("negative DATA_DESC_ID"))?;
-    let pol_id = usize::try_from(dd.polarization_id(first)?)
-        .map_err(|_| input("negative POLARIZATION_ID"))?;
-    let correlations = ms
-        .polarization()?
-        .corr_type(pol_id)?
-        .into_iter()
-        .map(|code| {
-            StokesType::from_code(code)
-                .map_or("??", StokesType::name)
-                .to_owned()
-        })
-        .collect();
+    let correlations = if let Some(polarization) = polarization {
+        polarization
+            .types(*first)?
+            .iter()
+            .map(|name| name.name().to_owned())
+            .collect()
+    } else {
+        let first = usize::try_from(*first).map_err(|_| input("negative DATA_DESC_ID"))?;
+        let pol_id = usize::try_from(dd.polarization_id(first)?)
+            .map_err(|_| input("negative POLARIZATION_ID"))?;
+        ms.polarization()?
+            .corr_type(pol_id)?
+            .into_iter()
+            .map(|code| {
+                StokesType::from_code(code)
+                    .map_or("??", StokesType::name)
+                    .to_owned()
+            })
+            .collect()
+    };
     let descriptions = indices.collect::<MsResult<BTreeSet<_>>>()?;
     let windows = descriptions
         .into_iter()

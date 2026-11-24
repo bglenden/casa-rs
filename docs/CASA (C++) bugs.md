@@ -11161,3 +11161,36 @@ error for `getdata('data_desc_id')`. Its flagged-visibility cleanup treats
 the integer field as complex data because its name contains `data`. casa-rs
 preserves the integer row IDs while averaging the visibility channels
 (#1030).
+
+## MS time averages use mismatched flags and weights after Stokes conversion
+
+For an MS recording RR and LL, select `I` and call `getdata` with
+`average=True`. CASA 6.7.6.14 passes the one-correlation visibility cube
+to its averaging loop with the original two-correlation flags and weights.
+The loop walks the flags by the converted data shape and does not select a
+weight for each output correlation. With unequal recorded weights and flags,
+one controlled MS differed from the propagated-variance calculation by 0.059
+normalized RMS on ordinary reads and 0.250 when averaging by baseline.
+casa-rs projects visibility flags and inverse variances to the selected
+Stokes products for the reduction. Public raw weight and sigma fields retain
+their recorded correlation axes, as in CASA (#1030).
+
+## MS channel averaging can abort when Stokes conversion changes the axis size
+
+On an MS with four channels and recorded RR and LL, call
+`selectchannel(2, 0, 2, 2)`, `selectpolarization(['I'])` and then
+`getdata(['data', 'flag', 'axis_info'])`. CASA 6.7.6.14 aborts with an
+uncaught `ArrayConformanceError`. Its flagged-data cleanup reshapes the
+one-correlation converted data using the two-correlation recorded flag cube.
+casa-rs uses the converted flag axis to zero the masked Stokes values and
+returns the recorded FLAG shape and the requested Stokes data shape (#1030).
+
+## MS polarization reads can reuse the wrong recorded correlation order
+
+Interleave two data descriptions for the same spectral window. The first
+records `[RR, LL]`. The second records `[LL, RR]` with matching receptor
+products. In CASA 6.7.6.14, both `selectpolarization(['RR'])` and conversion
+to `['I', 'V']` can use the first description's order for a row in the
+second description. For a second-description row with real samples
+`[9, 10]`, CASA read RR as 9 and Stokes V as −0.5. casa-rs uses each row's
+recorded correlation order, giving RR 10 and V +0.5 (#1030).

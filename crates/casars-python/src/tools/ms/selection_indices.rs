@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use casa_ms::MsSelection;
-use casa_ms::selection::MsSelectionIndices;
+use casa_ms::selection::{MsSelectionIndices, ParsedMsToolSelection};
+use casa_ms::{MeasurementSet, MsResult, MsSelection};
 use casa_tables::lexical_absolute;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -13,7 +13,7 @@ use pyo3::types::{PyBytes, PyBytesMethods, PyDict, PyDictMethods, PyString};
 
 use super::metadata_link::MetadataSnapshot;
 use super::visibility::missing_selection_integer;
-use super::{PyMsTool, runtime_error, strict_bool};
+use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::selector::listing_selector;
 use crate::convert::value::CasaValue;
 
@@ -36,6 +36,21 @@ impl SelectionState {
             None => Ok(index_record(&self.indices, true)),
             Some(error) => Err(runtime_error(error)),
         }
+    }
+
+    pub(super) fn parse(
+        &mut self,
+        ms: &MeasurementSet,
+        request: &MsSelection,
+    ) -> MsResult<ParsedMsToolSelection> {
+        let parsed = ms.parse_ms_tool_selection(request, &mut self.indices);
+        self.error = parsed.as_ref().err().map(ToString::to_string);
+        parsed
+    }
+
+    pub(super) fn clear_polarization_indices(&mut self) {
+        self.indices.poldd.clear();
+        self.error = None;
     }
 }
 
@@ -63,32 +78,13 @@ impl PyMsTool {
                 .snapshot(None)
                 .map_err(runtime_error)?;
             let ms = &snapshot.ms;
-            let parsed =
-                ms.parse_ms_tool_selection(&request, &mut attached.selection_state.indices);
-            let parsed = match parsed {
-                Ok(parsed) => parsed,
-                Err(error) => {
-                    attached.selection_state.error = Some(error.to_string());
-                    return Ok(false);
-                }
+            let Ok(parsed) = attached.selection_state.parse(ms, &request) else {
+                return Ok(false);
             };
-            let has_expression = parsed.has_row_expression();
-            let rows = (!onlyparse && has_expression).then(|| parsed.select_rows(ms));
-            attached.selection_state.error = None;
-            if let Some(rows) = rows {
-                let Ok(mut rows) = rows else {
-                    return Ok(false);
-                };
-                if let Some(previous) = &attached.selected_rows {
-                    for row in &mut rows {
-                        *row = previous[*row];
-                    }
-                }
-                let nonempty = !rows.is_empty();
-                attached.set_selected_rows(Some(rows))?;
-                Ok(nonempty)
+            if onlyparse {
+                Ok(parsed.has_row_expression())
             } else {
-                Ok(has_expression)
+                attached.apply_parsed_selection(ms, &parsed)
             }
         })
     }
@@ -175,6 +171,29 @@ impl PyMsTool {
             Ok(indices)
         })?;
         index_record(&indices, false).into_python(py)
+    }
+}
+
+impl AttachedMs {
+    pub(super) fn apply_parsed_selection(
+        &mut self,
+        ms: &MeasurementSet,
+        parsed: &ParsedMsToolSelection,
+    ) -> PyResult<bool> {
+        if !parsed.has_row_expression() {
+            return Ok(false);
+        }
+        let Ok(mut rows) = parsed.select_rows(ms) else {
+            return Ok(false);
+        };
+        if let Some(previous) = &self.selected_rows {
+            for row in &mut rows {
+                *row = previous[*row];
+            }
+        }
+        let nonempty = !rows.is_empty();
+        self.set_selected_rows(Some(rows))?;
+        Ok(nonempty)
     }
 }
 

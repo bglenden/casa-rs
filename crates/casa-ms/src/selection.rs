@@ -63,7 +63,7 @@ pub use time_expr::{
     LogicalRowFilter, TimeCondition, TimeDefaults, TimeListEntry, TimeSelection, TimeSelector,
     TimeSelectorDefaults, TimeTerm, msselection_first_logical_row, resolve_time_selector,
 };
-pub use tool_indices::{MsSelectionIndices, ParsedMsToolSelection};
+pub use tool_indices::{MsSelectionIndices, ParsedMsToolSelection, ToolCorrelationSelection};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RowGrammar {
