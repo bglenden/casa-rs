@@ -407,6 +407,230 @@ def compare_scalar_span_shapes(root, native, source, controls, center):
     print("selected-polarization: 1 matching point and matching incompatible-shape refusals", flush=True)
 
 
+def compare_combined_scalar_time(root, native):
+    source, integration, start = make_fixture(root)
+    with opened(source, True) as table:
+        shape = table.getcol("DATA").shape
+        for name, values in (
+            ("DATA", (3, 1, 5, 5)),
+            ("CORRECTED_DATA", (2j, -2j, 3 + 4j, 3 + 4j)),
+            ("MODEL_DATA", (1, 1, 1, 1)),
+        ):
+            column = table.getcol(name)
+            column[:, :4, :] = np.broadcast_to(np.asarray(values, dtype=np.complex64)[None, :, None],
+                                               (shape[0], 4, shape[2]))
+            table.putcol(name, column)
+    masked, spectra, varying = (root / f"{name}.ms" for name in ("masked", "spectra", "varying"))
+    for path in (masked, spectra, varying):
+        copy_ms(source, path)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 0, :] = True
+        table.putcol("FLAG", flags)
+    with opened(spectra, True) as table:
+        descriptor = table.getcoldesc("DATA")
+        shape = table.getcol("DATA").shape
+        for name, first in (("WEIGHT_SPECTRUM", (1, 3, 4, 4)), ("SIGMA_SPECTRUM", (1, .5, 1, 1))):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            values = np.ones(shape, dtype=np.float32)
+            values[:, :4, :] = np.broadcast_to(np.asarray(first, dtype=np.float32)[None, :, None],
+                                              (shape[0], 4, shape[2]))
+            table.putcol(name, values)
+    with opened(varying, True) as table:
+        values = table.getcol("CORRECTED_DATA")
+        values[:, :4, :] = 2 * (integration % 3) + 1
+        table.putcol("CORRECTED_DATA", values)
+        table.putcol("WEIGHT", np.ones_like(table.getcol("WEIGHT")))
+        descriptor = table.getcoldesc("DATA")
+        table.addcols({"WEIGHT_SPECTRUM": dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                              dataManagerGroup="WEIGHT_SPECTRUM")})
+        table.putcol("WEIGHT_SPECTRUM", np.broadcast_to((integration % 3 + 1).astype(np.float32), values.shape).copy())
+
+    zero_observed, zero_calibrated = (root / f"{name}.ms" for name in ("zero-observed", "zero-calibrated"))
+    for path, col in ((zero_observed, "SIGMA_SPECTRUM"), (zero_calibrated, "WEIGHT_SPECTRUM")):
+        copy_ms(spectra, path)
+        with opened(path, True) as table:
+            values = table.getcol(col)
+            values[:, :2, :] = 0
+            table.putcol(col, values)
+
+    implicit_spectrum = root / "implicit-spectrum.ms"
+    copy_ms(source, implicit_spectrum)
+    with opened(implicit_spectrum, True) as table:
+        values = table.getcol("CORRECTED_DATA")
+        values[:, :4, :] = 2 * (integration % 3) + 1
+        table.putcol("CORRECTED_DATA", values)
+        flags = table.getcol("FLAG")
+        flags[0, 0, :] = integration % 3 == 2
+        table.putcol("FLAG", flags)
+
+    sigma_only, no_corrected, flagged = (
+        root / f"{name}.ms" for name in ("sigma-only", "without-corrected", "flagged")
+    )
+    copy_ms(spectra, sigma_only)
+    copy_ms(spectra, no_corrected)
+    copy_ms(source, flagged)
+    with opened(sigma_only, True) as table:
+        table.removecols("WEIGHT_SPECTRUM")
+    with opened(no_corrected, True) as table:
+        table.removecols("CORRECTED_DATA")
+    with opened(flagged, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, :4, :] = True
+        table.putcol("FLAG", flags)
+
+    signed, weighted_model, observed_model = (
+        root / f"{name}.ms" for name in ("signed-weights", "weighted-model", "observed-model")
+    )
+    copy_ms(spectra, signed)
+    with opened(signed, True) as table:
+        cycle = integration % 3
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        weights[:, :2, :] = np.where(cycle == 1, -2, -1)
+        weights[:, 2:4, :] = 5
+        table.putcol("WEIGHT_SPECTRUM", weights)
+        adjusted = table.getcol("CORRECTED_DATA")
+        adjusted[:, 2:4, :] = np.array([1, 3, 7])[cycle]
+        table.putcol("CORRECTED_DATA", adjusted)
+    copy_ms(spectra, weighted_model)
+    with opened(weighted_model, True) as table:
+        model = table.getcol("MODEL_DATA")
+        model[:, 1, :] = 3
+        table.putcol("MODEL_DATA", model)
+    copy_ms(weighted_model, observed_model)
+    with opened(observed_model, True) as table:
+        table.removecols("CORRECTED_DATA")
+
+    base = request(source) | dict(xaxis="channel", xdatacolumn="", yaxis="amp",
+                                  ydatacolumn="corrected-model_vector", spw="0:0~3",
+                                  avgtime="20", avgchannel="2", scalar=True,
+                                  title="Channel and scalar time averaging")
+    phase = np.rad2deg(np.arctan2(4., 3.))
+    cases = (
+        ("channels-amplitude", {}, (0, 1), [0., 1.], [-1., 4.]),
+        ("channels-phase", dict(yaxis="phase"), (0, 1), [0., 1.], [0., phase]),
+        ("masked-channel", dict(vis=str(masked)), (0, 1), [0., 1.], [1., 4.]),
+        ("separate-axes", dict(xaxis="amp", xdatacolumn="data", yaxis="phase"),
+         (0, 1), [2., 5.], [0., phase]),
+        ("spectral-weights", dict(vis=str(spectra), xaxis="amp", xdatacolumn="data", yaxis="phase"),
+         (0, 1), [1.4, 5.], [-90., phase]),
+        ("sigma-only", dict(vis=str(sigma_only), xaxis="amp", xdatacolumn="data", yaxis="phase"),
+         (0, 1), [2., 5.], [0., phase]),
+        ("time-weight-monitor", dict(vis=str(varying), xaxis="time"), (0, 1), None, [8 / 3] * 2),
+        ("implicit-weight-spectrum", dict(vis=str(implicit_spectrum)), (0, 1), [0., 1.], [2.4] * 2),
+        ("zero-observed", dict(vis=str(zero_observed)), (0, 1), [0., 1.], [0., 4.]),
+        ("clamped-channel", dict(vis=str(zero_observed), spw="0:0", xaxis="amp", xdatacolumn="data"),
+         (0,), [0.], [1.]),
+        ("zero-calibrated", dict(vis=str(zero_calibrated)), (1,), [1.], [4.]),
+        ("signed-calibrated", dict(vis=str(signed)), (0, 1), [0., 1.], [-1., 20 / 7]),
+        ("corrected-vector-ratio", dict(ydatacolumn="corrected/model_vector"),
+         (0, 1), [0., 1.], [0., 5.]),
+        ("corrected-ratio-abscissa", dict(xaxis="real", xdatacolumn="corrected/model_vector", ydatacolumn="data"),
+         (0, 1), [0., 5.], [2., 5.]),
+        ("observed-scalar-ratio", dict(ydatacolumn="data/model_scalar"),
+         (0, 1), [0., 1.], [2., 5.]),
+        ("without-corrected", dict(vis=str(no_corrected), ydatacolumn="data/model_scalar"),
+         (0, 1), [0., 1.], [1.4, 5.]),
+        ("corrected-fallback", dict(vis=str(no_corrected), ydatacolumn="corrected/model_scalar"),
+         (0, 1), [0., 1.], [1.4, 5.]),
+        ("calibrated-model-spectrum", dict(vis=str(weighted_model)), (0, 1), [0., 1.], [-1.5, 4.]),
+        ("observed-model-spectrum", dict(vis=str(observed_model), ydatacolumn="data/model_scalar"),
+         (0, 1), [0., 1.], [7 / 13, 5.]),
+    )
+    for name, options, channels, x, y in cases:
+        controls = base | options
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        centers = np.repeat(start + np.array([10., 40.]), len(channels))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [int(point[2]) for point in selected] == [*channels] * 2
+        assert {(point[5], point[6], point[12]) for point in selected} == {("0", "1", "XX")}
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected], y * 2, rtol=1.2e-5, atol=1e-7)
+        np.testing.assert_allclose([float(point[0]) for point in selected], centers if x is None else x * 2,
+                                   rtol=0 if x is None else 1.2e-5, atol=.00051 if x is None else 1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        if x is None:
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+        print(f"{name}: {len(selected)} matching channel and scalar time coordinates", flush=True)
+        if name == "channels-phase":
+            compare_figure(root, native, controls, expected, (controls["title"], "Channel",
+                                                              "Phase:corrected-model (vector) (degrees)"))
+
+    compare_empty_export(root, native, "all-channel-cube-flags", base | dict(vis=str(flagged)),
+                         ("Channel", "Amp:corrected-model (vector)"))
+    compare_combined_scalar_spectrum_availability(root, native, base)
+
+
+def compare_combined_scalar_spectrum_availability(root, native, controls):
+    from grpc import RpcError, StatusCode
+    from plotms_ms_baseline_channels_oracle import make_fixture as channel_fixture
+    from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
+
+    work = root / "partial-spectrum"
+    work.mkdir()
+    source, *_ = channel_fixture(work)
+    vis = make_reversed_partial_spectrum(source, work / "sparse.ms")
+    with opened(vis, True) as table:
+        times, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        chronological = times[-1 - integration]
+        table.putcol("TIME", chronological)
+        table.putcol("TIME_CENTROID", chronological)
+        antenna2 = table.getcol("ANTENNA2")
+        first_baseline = ((table.getcol("ANTENNA1") == 0) & (antenna2 == 1)
+                          & (table.getcol("FIELD_ID") == 0))
+        first_time = chronological[np.flatnonzero(first_baseline)[0]]
+        shared_buffer = (antenna2 == 2) & (chronological == first_time)
+        weights = np.ones_like(table.getcol("WEIGHT"))
+        weights[:, shared_buffer] = 9
+        corrected = np.ones_like(table.getcol("CORRECTED_DATA")) * 10
+        corrected[:, :, shared_buffer] = 100
+        table.putcol("WEIGHT", weights)
+        table.putcol("CORRECTED_DATA", corrected)
+        table.putcol("MODEL_DATA", np.ones_like(corrected))
+
+    options = controls | dict(vis=str(vis), antenna="A0&A1;A0&A2", xaxis="time", spw="0:0~1")
+    expected, actual = (root / f"buffer-spectrum.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert [(point[2], point[6], point[12]) for point in selected] == [("0", ant, "XX") for ant in "1212"]
+    np.testing.assert_allclose([float(point[1]) for point in selected], [9, 909 / 11, 9, 9], rtol=1.2e-5)
+    centers = np.repeat(first_time + np.array([10., 40.]), 2)
+    np.testing.assert_allclose([float(point[0]) for point in selected], centers, rtol=0, atol=.00051)
+    assert native(**options, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 4
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+    print("buffer-spectrum: 4 matching coordinates using spectra from the selected input buffer", flush=True)
+
+    reversed_vis, implicit_vis = (work / f"{name}.ms" for name in ("reversed", "implicit"))
+    copy_ms(vis, reversed_vis)
+    with opened(reversed_vis, True) as table:
+        times, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        for column in ("TIME", "TIME_CENTROID"):
+            table.putcol(column, times[-1 - integration])
+    copy_ms(reversed_vis, implicit_vis)
+    with opened(implicit_vis, True) as table:
+        table.removecols("WEIGHT_SPECTRUM")
+    reversed_options = options | dict(vis=str(reversed_vis), expformat="txt")
+    expected, actual = work / "implicit.casa.txt", work / "reversed.native.txt"
+    assert reference(**(reversed_options | dict(vis=str(implicit_vis))), plotfile=str(expected)) is None
+    failed = work / "reversed.casa.txt"
+    try:
+        reference(**reversed_options, plotfile=str(failed))
+    except RpcError as error:
+        assert error.code() == StatusCode.INVALID_ARGUMENT, error
+    else:
+        raise AssertionError("CASA unexpectedly accepted the reversed sparse spectrum")
+    assert not failed.exists()
+
+    assert native(**reversed_options, plotfile=str(actual)) is None
+    assert rows(actual) == rows(expected)
+    np.testing.assert_allclose([float(point[1]) for point in rows(actual)], [9, 9, 9, 909 / 11], rtol=1.2e-5)
+    print("reversed-spectrum: 4 native coordinates matching the separate CASA row-weight control", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -434,6 +658,9 @@ def main():
         spans = root / "scan-field-spans"
         spans.mkdir()
         compare_scalar_time_spans(spans, native)
+        combined = root / "time-channel"
+        combined.mkdir()
+        compare_combined_scalar_time(combined, native)
 
 
 if __name__ == "__main__":
