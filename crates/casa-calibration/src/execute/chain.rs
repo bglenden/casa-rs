@@ -16,6 +16,7 @@ pub(super) struct ApplyChain {
     pub(super) additive: Option<additive::ToolState>,
     pub(super) legacy_corruption: bool,
     pub(super) legacy_scans: crate::plan::LegacyScanOverrides,
+    pub(super) single_dish_solve: bool,
 }
 
 impl ApplyChain {
@@ -81,6 +82,7 @@ impl ApplyChain {
             additive: None,
             legacy_corruption: false,
             legacy_scans: Default::default(),
+            single_dish_solve: false,
         })
     }
 
