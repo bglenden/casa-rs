@@ -17,6 +17,27 @@ from plotms_ms_columns_oracle import (
 )
 
 
+def spectral_fixture(root, source, integration):
+    vis = root / "spectral-time.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        descriptor = table.getcoldesc("DATA")
+        shape = table.getcol("DATA").shape
+        early = integration % 2 == 0
+        odd_channel = np.arange(shape[1]) % 2 == 1
+        amplitude = (1 + 4 * (~early)[None, None, :] + 2 * odd_channel[None, :, None]).astype(np.complex64)
+        for factor, column in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            table.putcol(column, np.broadcast_to(amplitude * 10**factor, shape).copy())
+        for column, first, last in (("WEIGHT_SPECTRUM", [1, 9], [4, 1]),
+                                    ("SIGMA_SPECTRUM", [1, 0.5], [1, 1])):
+            table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                        dataManagerGroup=column)})
+            weights = np.where(early[None, :], np.resize(first, shape[1])[:, None],
+                               np.resize(last, shape[1])[:, None]).astype(np.float32)
+            table.putcol(column, np.broadcast_to(weights, shape).copy())
+    return vis
+
+
 def compare(root, native):
     vis, integration = time_average_fixture(root)
     masked = root / "masked-time.ms"
@@ -31,6 +52,7 @@ def compare(root, native):
         start = np.min(table.getcol("TIME"))
     with opened(row_flagged, True) as table:
         table.putcol("FLAG_ROW", integration % 2 == 1)
+    spectra = spectral_fixture(root, vis, integration)
 
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", spw="0:1", avgtime="20",
                                yaxis=["real", "real", "real"], ydatacolumn=["data", "corrected", "model"],
@@ -55,6 +77,12 @@ def compare(root, native):
         ("row-only-flags", dict(vis=str(row_flagged)), vector, [vector, (28,) * 3, (280,) * 3]),
         ("time-and-channel", dict(avgchannel="2", spw="0:0~3"),
          vector * 2, [vector * 2, (28,) * 6, (280,) * 6]),
+        ("time-and-channel-spectra", dict(vis=str(spectra), avgchannel="2", spw="0:0~1"),
+         (25 / 7,) * 3, [(25 / 7,) * 3, (550 / 15,) * 3, (5500 / 15,) * 3]),
+        ("late-corrected-spectrum", dict(vis=str(spectra), xaxis="time", xdatacolumn="",
+                                         yaxis=["real", "phase", "real"],
+                                         ydatacolumn=["data", "data", "corrected"]),
+         times, [(3.8,) * 3, (0,) * 3, (34,) * 3]),
         ("scalar-time", dict(xaxis="time", xdatacolumn="", scalar=True),
          (start + 10, start + 40),
          [tuple(value * scale for value in scalar) for scale in (1, 10, 100)]),
