@@ -5393,7 +5393,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let scalar_channels = scalar_average && average_channels;
-    let antenna_channels = antenna_average && average_channels;
+    let antenna_channels = antenna_average && average_channels && !time_antenna;
+    let time_antenna_channels = time_antenna && average_channels;
     let average_operands = extended_derived || scalar_channels || time_antenna;
     let channel_first = channel_baselines || scalar_channels || antenna_channels;
     let time_weight_kinds = calibration
@@ -5767,18 +5768,20 @@ fn build_generic_visibility_scatter_with_averaging(
         let column_weights = visibility_columns.column_weights(axis_weights);
         let time_model_kind = visibility_weight_kinds.and_then(|kinds| kinds.model);
         let time_model_weight = time_model_kind.and_then(weight_grid);
-        let primary_weight_grid = time_weight_kinds
-            .filter(|_| combined_vector_average)
-            .and_then(|kinds| {
-                weight_grid(if time_baselines {
-                    kinds.row_weight
-                } else {
-                    kinds.primary
-                })
-            });
+        let primary_time_weight_kind =
+            time_weight_kinds
+                .filter(|_| combined_vector_average)
+                .map(|kinds| {
+                    if time_baselines || time_antenna {
+                        kinds.row_weight
+                    } else {
+                        kinds.primary
+                    }
+                });
+        let primary_weight_grid = primary_time_weight_kind.and_then(weight_grid);
         let time_channel_primary = primary_weight_grid
-            .zip(time_weight_kinds.map(|kinds| kinds.primary))
-            .filter(|_| extended_derived);
+            .zip(primary_time_weight_kind)
+            .filter(|_| extended_derived || time_antenna_channels);
         let time_antenna_spectrum = time_weight_kinds
             .filter(|_| time_antenna)
             .map(|kinds| weight_grid(kinds.row_weight));
@@ -6067,11 +6070,11 @@ fn build_generic_visibility_scatter_with_averaging(
                     // Later channel and antenna reductions use the sums of
                     // weights from the vector time transform.
                     let primary_weight = primary_weight_grid
-                        .filter(|_| !extended_derived)
+                        .filter(|_| !extended_derived && !time_antenna_channels)
                         .map(|grid| plotms_columns::bin_weight(grid, *corr_index, bin, &flags))
                         .or_else(|| {
                             let (flagged, weight) = plotms_columns::channel_bin_weight(
-                                time_antenna_spectrum?,
+                                time_antenna_spectrum.filter(|_| !bin.averaged)?,
                                 *corr_index,
                                 bin,
                                 &flags,

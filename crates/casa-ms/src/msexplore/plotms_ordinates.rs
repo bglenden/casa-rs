@@ -502,6 +502,11 @@ struct TimeChannelProjection {
 
 impl TimeChannelProjection {
     fn project(&self, axis: MsAxis) -> Option<f64> {
+        let (operands, means, _) = self.means_and_weight()?;
+        operands.project_operands(axis, means)
+    }
+
+    fn means_and_weight(&self) -> Option<(&TimeProjection, [Complex64; 2], f32)> {
         let mut usable = self.channels.iter().flatten();
         let first = usable.next()?;
         let mut sums = [Complex32::default(); 2];
@@ -526,7 +531,7 @@ impl TimeChannelProjection {
         let means = std::array::from_fn(|operand| {
             channel_visibility_mean(sums[operand], totals[operand], true)
         });
-        first.operands.project_operands(axis, means)
+        Some((&first.operands, means, primary))
     }
 }
 
@@ -740,11 +745,16 @@ impl AveragedVisibility {
         }
     }
 
-    pub(super) fn time_vector_mean(&self) -> Option<Complex32> {
-        let VisibilitySamples::TimeProjection(average) = &self.0 else {
-            return None;
-        };
-        Some(average.time_mean(0))
+    pub(super) fn transformed_vector_sample(&self) -> Option<(Complex32, Option<f32>)> {
+        match &self.0 {
+            VisibilitySamples::TimeProjection(average) => Some((average.time_mean(0), None)),
+            VisibilitySamples::TimeChannelProjection(average) => {
+                let (_, [visibility, _], weight) = average.means_and_weight()?;
+                let value = Complex32::new(visibility.re as f32, visibility.im as f32);
+                Some((value, Some(weight)))
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn add_normalized_vector_sample(&mut self, value: Complex32, weight: f32) {
