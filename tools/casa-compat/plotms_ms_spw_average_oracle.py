@@ -12,6 +12,7 @@ import casatasks as casa
 from casatools import measures, simulator
 import numpy as np
 
+from plotms_ms_channel_ordinates_oracle import compare_sides
 from plotms_ms_columns_oracle import (
     compare_empty_export,
     compare_figure,
@@ -217,22 +218,26 @@ def coordinates(points):
     return np.array([point[:2] for point in points], dtype=float)
 
 
+def put_channel_spectra(table):
+    descriptions = table.getcol("DATA_DESC_ID")
+    shape = table.getcol("DATA").shape
+    descriptor = table.getcoldesc("DATA")
+    for column, low, high in (
+        ("WEIGHT_SPECTRUM", [1, 3, 5, 7], [8, 4, 2, 1]),
+        ("SIGMA_SPECTRUM", [1, 0.5, 1, 0.5], [0.5, 1, 0.5, 1]),
+    ):
+        table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                    dataManagerGroup=column)})
+        values = np.where(descriptions == 0, np.asarray(low, dtype=np.float32)[:, None],
+                          np.asarray(high, dtype=np.float32)[:, None])
+        table.putcol(column, np.broadcast_to(values, shape).copy())
+
+
 def compare_channel_weights(root, native, base, vis):
     spectral = root / "channel-spectra.ms"
     copy_ms(vis, spectral)
     with opened(spectral, True) as table:
-        descriptions = table.getcol("DATA_DESC_ID")
-        shape = table.getcol("DATA").shape
-        descriptor = table.getcoldesc("DATA")
-        for column, low, high in (
-            ("WEIGHT_SPECTRUM", [1, 3, 5, 7], [8, 4, 2, 1]),
-            ("SIGMA_SPECTRUM", [1, 0.5, 1, 0.5], [0.5, 1, 0.5, 1]),
-        ):
-            table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
-                                        dataManagerGroup=column)})
-            values = np.where(descriptions == 0, np.asarray(low, dtype=np.float32)[:, None],
-                              np.asarray(high, dtype=np.float32)[:, None])
-            table.putcol(column, np.broadcast_to(values, shape).copy())
+        put_channel_spectra(table)
     observed = np.array([[1.8 * (1 + 2j), 3.8 * (1 + 2j)], [1.2 * (3 - 4j), 3.2 * (3 - 4j)]])
     corrected = np.array([[1.75 * (5 + 6j), (43 / 12) * (5 + 6j)],
                           [(4 / 3) * (7 + 8j), (10 / 3) * (7 + 8j)]])
@@ -642,6 +647,148 @@ def compare_vector_channel_spans(root, native, base, vis):
                    (options["title"], "Real", "Imag:corrected"))
 
 
+def compare_ordinate_lists(root, native, base, source, *, only):
+    root.mkdir()
+    vis = root / "stored-list-model.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        descriptions = table.getcol("DATA_DESC_ID")
+        shape = table.getcol("MODEL_DATA").shape
+        channels = np.arange(1, shape[1] + 1, dtype=np.float32)[None, :, None]
+        model = channels * np.where(descriptions == 0, 2 + 5j, 9 - 4j)
+        table.putcol("MODEL_DATA", np.broadcast_to(model.astype(np.complex64), shape))
+    staggered, _ = stagger_windows(root, vis, "list-staggered")
+    options = base | dict(vis=str(vis), xaxis="frequency", xdatacolumn="",
+                          yaxis=["real", "imag", "real"], ydatacolumn=["data", "corrected", "model"],
+                          yaxislocation=["left", "right", "left"])
+    combined = dict(vis=str(staggered), xaxis="time", avgtime="20", avgchannel="2", spw="0:0~3,1:0~3")
+    if only == "ordinate-list-spans":
+        compare_ordinate_list_spans(root, native, options | combined, vis)
+        return
+    if only == "ordinate-list-uvw":
+        compare_ordinate_list_uvw(root, native, options, staggered)
+        return
+    for name, overrides, y in (
+        ("vector-spw-ordinates", {}, [5, 5, 15, 15, 14.5, 14.5]),
+        ("scalar-spw-ordinates", dict(scalar=True), [8.61803, 8.61803, .857989, .857989, 17.4659, 17.4659]),
+        ("vector-time-channel-spw-ordinates", combined, [3.75, 8.75, 11.25, 26.25, 10.875, 25.375]),
+        ("scalar-time-channel-spw-ordinates", combined | dict(scalar=True),
+         [6.46353, 15.0816, .857989, .857989, 13.0994, 30.5653]),
+    ):
+        controls = options | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        assert len(selected) == 6
+        assert {tuple(point[5:9]) for point in selected} == {("0", "1", "A0@P0", "A1@P1")}
+        assert {tuple(point[11:13]) for point in selected} == {("0", "XX")}
+        np.testing.assert_allclose(coordinates(selected)[:, 1], y, rtol=1.2e-5)
+        actual = export(root, f"{name}.native", native, controls)
+        assert compare_text(actual, expected) == 6
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose(coordinates(rows(actual))[:, 0], coordinates(selected)[:, 0],
+                                       rtol=0, atol=.00051)
+        else:
+            assert [point[0] for point in rows(actual)] == ["90.001000000"] * 6
+        print(f"{name}: six matching SPW-averaged coordinates", flush=True)
+    compare_sides(root, native, options, expected_x="Frequency (GHz)", expected_right="Imag:corrected",
+                  name="vector-spw-ordinates")
+    compare_ordinate_list_masks(root, native, options, vis, combined)
+    compare_ordinate_list_spans(root, native, options | combined, vis)
+    compare_ordinate_list_uvw(root, native, options, staggered)
+
+
+def compare_ordinate_list_masks(root, native, options, vis, combined):
+    weighted, _ = stagger_windows(root, vis, "weighted-list-staggered")
+    with opened(weighted, True) as table:
+        descriptions = table.getcol("DATA_DESC_ID")
+        flags = table.getcol("FLAG")
+        flags[:, 2:, descriptions == 0] = True
+        flags[0, 0, descriptions == 1] = True
+        table.putcol("FLAG", flags)
+        put_channel_spectra(table)
+    complex_axes = combined | dict(vis=str(weighted), xaxis="real", xdatacolumn="corrected",
+                                   yaxis=["real", "imag", "amp", "phase"],
+                                   ydatacolumn=["data", "model", "corrected", "data"],
+                                   yaxislocation=["left", "right", "left", "right"])
+    for mode, scalar in (("vector", False), ("scalar", True)):
+        name = f"{mode}-weighted-spw-ordinates"
+        controls = options | complex_axes | dict(scalar=scalar)
+        expected = export(root, f"{name}.casa", reference, controls)
+        actual = export(root, f"{name}.native", native, controls)
+        assert compare_text(actual, expected) == 8
+        assert [point[2] for point in rows(expected)] == ["0", "1"] * 4
+        print(f"{name}: eight matching independent coordinates with masked spectral weights", flush=True)
+    for flag, count in (("FLAG_ROW", 6), ("FLAG", 0)):
+        masked = root / f"all-{flag.lower()}.ms"
+        copy_ms(vis, masked)
+        with opened(masked, True) as table:
+            table.putcol(flag, np.ones_like(table.getcol(flag)))
+        for mode, scalar in (("vector", False), ("scalar", True)):
+            name = f"{mode}-{flag.lower()}-spw-ordinates"
+            controls = options | dict(vis=str(masked), scalar=scalar)
+            expected = export(root, f"{name}.casa", reference, controls)
+            actual = export(root, f"{name}.native", native, controls)
+            if count:
+                assert compare_text(actual, expected) == count
+            else:
+                assert expected.read_text().count("# No data to export") == 3
+                assert actual.read_bytes() == expected.read_bytes()
+            print(f"{name}: {count if count else 'three empty sections'} matched", flush=True)
+
+
+def compare_ordinate_list_spans(root, native, options, source):
+    for name, scan, field in (("scan", True, False), ("field", False, True), ("both", True, True)):
+        vis, start = stagger_windows(root, source, f"list-span-{name}")
+        if field:
+            add_second_field(vis)
+        with opened(vis, True) as table:
+            late = (table.getcol("TIME") >= start + 10).astype(np.int32)
+            if scan:
+                table.putcol("SCAN_NUMBER", 1 + late)
+            if field:
+                table.putcol("FIELD_ID", late)
+            for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA"):
+                table.putcol(column, (table.getcol(column) * (1 + late)).astype(np.complex64))
+        for mode, scalar, y in (
+            ("vector", False, [5.625, 13.125, 16.875, 39.375, 16.3125, 38.0625]),
+            ("scalar", True, [9.69529, 22.6223, .857989, .857989, 19.6491, 45.8479]),
+        ):
+            case = f"{mode}-{name}-spw-ordinates"
+            controls = options | dict(vis=str(vis), field="", avgscan=scan, avgfield=field, scalar=scalar)
+            expected = export(root, f"{case}.casa", reference, controls)
+            selected = rows(expected)
+            scan_id = "-1" if scalar and scan else "1"
+            assert [tuple(point[3:5]) for point in selected] == [(scan_id, "0")] * 6
+            np.testing.assert_allclose(coordinates(selected)[:, 1], y, rtol=1.2e-5)
+            actual = export(root, f"{case}.native", native, controls)
+            assert compare_text(actual, expected) == 6
+            np.testing.assert_allclose(coordinates(rows(actual))[:, 0], coordinates(selected)[:, 0],
+                                       rtol=0, atol=.00051)
+            print(f"{case}: six matching coordinates across boundaries", flush=True)
+
+
+def compare_ordinate_list_uvw(root, native, options, vis):
+    from casars.tasks import TaskParameterError
+
+    controls = options | dict(vis=str(vis), xaxis="u", avgtime="20")
+    expected = export(root, "spw-list-u.casa", reference, controls)
+    assert len(rows(expected)) == 3
+    output = root / "spw-list-u.native.txt"
+    try:
+        native(**controls, plotfile=str(output), expformat="txt")
+    except TaskParameterError as error:
+        assert "#1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS accepted pending SPW averaging against a U abscissa")
+    assert not output.exists()
+
+    ordinary_time = controls | dict(avgspw=False)
+    expected = export(root, "time-list-u.casa", reference, ordinary_time)
+    actual = export(root, "time-list-u.native", native, ordinary_time)
+    assert compare_text(actual, expected) == 6
+    print("uvw-spw-ordinates: pending SPW U guard and six ordinary time U coordinates verified", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -650,7 +797,8 @@ def main():
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
                                            "malformed", "scalar-time", "vector-time", "vector-optional",
-                                           "vector-channel-spans"))
+                                           "vector-channel-spans", "ordinate-lists", "ordinate-list-spans",
+                                           "ordinate-list-uvw"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -685,6 +833,8 @@ def main():
             compare_vector_optional_weights(root, native, base)
         if args.only in (None, "vector-channel-spans"):
             compare_vector_channel_spans(root, native, base, vis)
+        if args.only in (None, "ordinate-lists", "ordinate-list-spans", "ordinate-list-uvw"):
+            compare_ordinate_lists(root / "ordinate-lists", native, base, vis, only=args.only)
 
 
 if __name__ == "__main__":

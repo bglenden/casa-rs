@@ -51,7 +51,8 @@ def virtual_fixtures(root, vis):
     return virtual, mixed, model
 
 
-def compare_sides(root, native, controls, *, expected_x="Channel", name="three-ordinates"):
+def compare_sides(root, native, controls, *, expected_x="Channel", expected_right="Real:corrected",
+                  name="three-ordinates"):
     from casars import _plot_document
 
     captured = []
@@ -72,7 +73,7 @@ def compare_sides(root, native, controls, *, expected_x="Channel", name="three-o
     [(xlabel, axes)] = captured
     assert xlabel == expected_x
     assert [(side, label) for side, label, _ in axes] == [
-        ("left", "Real, Real:model"), ("right", "Real:corrected")
+        ("left", "Real, Real:model"), ("right", expected_right)
     ]
     selected = np.array([p[:2] for p in rows(root / f"{name}.casa.txt")], dtype=float)
     sections = np.split(selected, 3)
