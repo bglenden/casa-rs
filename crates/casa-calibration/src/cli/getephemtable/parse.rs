@@ -2,7 +2,7 @@
 //! Decode the observer table and its MeasComet metadata in the Horizons reply.
 
 use casa_tables::{ColumnSchema, Table, TableSchema};
-use casa_types::quanta::MvTime;
+use casa_types::quanta::Quantity;
 use casa_types::quanta::format::{YMD, format_time};
 use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
@@ -146,18 +146,15 @@ fn metadata(
     let mut keys = RecordValue::new(Vec::new());
     keys.upsert("VS_VERSION", text("0004.0001"));
     keys.upsert("VS_TYPE", text("Table of comet/planetary positions"));
+    let whole_minutes = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_secs()
+        / 60;
+    let now = format_time(whole_minutes as f64 / 1_440. + 40_587., YMD, 6);
     keys.upsert(
         "VS_DATE",
-        text(&format_time(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| error.to_string())?
-                .as_secs_f64()
-                / 86_400.
-                + 40_587.,
-            YMD,
-            4,
-        )),
+        text(now.rsplit_once(':').map_or(&now, |(minute, _)| minute)),
     );
     keys.upsert("posrefsys", text("ICRS"));
     let mut start = first;
@@ -310,6 +307,11 @@ fn period(line: &str, labels: &[&str]) -> Option<(f64, String)> {
         .find_map(|label| line.split_once(label).map(|(_, tail)| tail))?;
     let (prelude, value) = label.split_once(['=', '~'])?;
     let value = value.trim();
+    if labels.contains(&"rotper")
+        && let Some(hours) = rotational_clock_hours(value)
+    {
+        return Some((hours, "h".into()));
+    }
     let end = value
         .find(|ch: char| !matches!(ch, '0'..='9' | '.' | '-'))
         .unwrap_or(value.len());
@@ -328,6 +330,14 @@ fn period(line: &str, labels: &[&str]) -> Option<(f64, String)> {
         })
         .unwrap_or(if labels.contains(&"rotper") { "h" } else { "d" });
     Some((number, unit.to_owned()))
+}
+
+fn rotational_clock_hours(value: &str) -> Option<f64> {
+    let (hours, rest) = value.split_once('h')?;
+    let (minutes, rest) = rest.split_once('m')?;
+    let (seconds, _) = rest.split_once('s')?;
+    let parse = |value: &str| value.trim().parse::<f64>().ok();
+    Some(parse(hours)? + parse(minutes)? / 60. + parse(seconds)? / 3_600.)
 }
 
 fn step_days(value: &str, start: f64, stop: f64) -> Result<f64, String> {
@@ -365,15 +375,12 @@ fn header_epoch(value: &str) -> Option<f64> {
 }
 
 fn calendar(date: &str, time: &str) -> Option<f64> {
-    let mut date = date.split('-');
-    let year = date.next()?.parse().ok()?;
-    let month = month_index(date.next()?)?;
-    let day = date.next()?.parse().ok()?;
-    let mut time = time.split(':');
-    let hour = time.next()?.parse().ok()?;
-    let minute = time.next()?.parse().ok()?;
-    let second = time.next().map_or(Some(0.), |value| value.parse().ok())?;
-    MvTime::from_ymd_hms_utc(year, month, day, hour, minute, second).map(MvTime::as_mjd_days)
+    let (year_month, day) = date.rsplit_once('-')?;
+    let (year, month) = year_month.rsplit_once('-')?;
+    let month = month_index(month)?;
+    Quantity::read(&format!("{year}/{month:02}/{day}/{time}"))
+        .ok()
+        .map(|epoch| epoch.value())
 }
 
 fn month_index(month: &str) -> Option<u32> {

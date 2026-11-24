@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import threading
 from unittest.mock import patch
@@ -55,7 +56,7 @@ def read(api, path):
     try:
         cols = {name: (table.getcolkeywords(name), table.getcol(name)) for name in table.colnames()}
         keywords = table.getkeywords()
-        keywords.pop("VS_DATE")
+        assert re.fullmatch(r"\d{4}/\d{2}/\d{2}/\d{2}:\d{2}", keywords.pop("VS_DATE"))
         return table.info(), cols, keywords
     finally:
         assert table.done()
@@ -131,6 +132,29 @@ def check_http_error(work, apis):
         assert len(requests) == len(apis)
 
 
+def check_destination_protection(work, raw):
+    output = work / "calendar/native.tab"
+    leap_seconds = work / "leap-seconds.tab"
+    shutil.copytree(casatools.ctsys.resolve("geodetic/TAI_UTC"), leap_seconds)
+    snapshots = {table: (table / "table.dat").read_bytes() for table in (output, leap_seconds)}
+    with horizons(raw) as (url, requests), route_horizons_requests(url):
+        for destination, rawfile, expected in (
+            (output, str(output / "table.dat"), "rawdatafile and outfile overlap"),
+            (leap_seconds, "", "is not a IERS Comet table"),
+        ):
+            try:
+                tasks.getephemtable(
+                    "Titan", timerange="2023/09/01/20:00~2023/09/04/20:00",
+                    outfile=str(destination), rawdatafile=rawfile, overwrite=True,
+                )
+            except (ValueError, RuntimeError) as error:
+                assert expected in str(error)
+            else:
+                raise AssertionError(f"the task replaced {destination}")
+        assert not requests
+    assert all((table / "table.dat").read_bytes() == data for table, data in snapshots.items())
+
+
 def compare_moving_field(work):
     source = work / "source.ms"
     make_cal_ms(str(source))
@@ -167,9 +191,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("work", type=Path)
     parser.add_argument("raw_geocentric", type=Path)
+    parser.add_argument("--jupiter", type=Path, help="recorded Jupiter reply with a sidereal rotation period")
+    parser.add_argument("--historical-moon", type=Path, help="recorded Moon reply from the Julian calendar")
     args = parser.parse_args()
     assert casatasks.version_string() == "6.7.6.14"
     raw = args.raw_geocentric.read_text()
+    extra = [(name, file.read_text(), target, timerange)
+             for name, file, target, timerange in (
+                 ("jupiter", args.jupiter, "Jupiter", "2023/09/01~2023/09/04"),
+                 ("historical-moon", args.historical_moon, "Moon", "1500/09/01~1500/09/04"),
+             ) if file is not None]
     root = args.work.resolve()
     root.mkdir()
     os.chdir(root)
@@ -190,6 +221,17 @@ def main():
             print("Three moving J2000 phase centres agree through both MeasurementSet readers")
     check_http_error(root, (("casa", casatasks), ("native", tasks)))
     print("Both public tasks handle a real HTTP 404 without publishing products")
+    check_destination_protection(root, raw)
+    print("An overlapping raw path and an unrelated IERS table retain their original storage")
+    for name, data, target, site_time in extra:
+        case = root / name
+        case.mkdir()
+        start, stop = (f"{date}/00:00:00" for date in site_time.split("~"))
+        expected = {key: [value] for key, value in (common | dict(
+            START_TIME=start, STOP_TIME=stop, COMMAND="'599'" if target == "Jupiter" else "'301'",
+        )).items()}
+        compare_case(case, data, target, False, site_time, "1d", expected)
+        print(f"{name} metadata matched in both writers and both readers")
 
 
 if __name__ == "__main__":

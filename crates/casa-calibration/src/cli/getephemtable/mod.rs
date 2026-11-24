@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use casa_provider_contracts::CasaValue;
-use casa_tables::TableOptions;
+use casa_tables::{TableOptions, publication::lock_table_tree_for_replacement};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::quanta::Quantity;
 use casa_types::quanta::format::{YMD, format_time};
@@ -39,25 +39,32 @@ pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
     let rawfile = task.text("rawdatafile")?.filter(|path| !path.is_empty());
     let overwrite = task.flag("overwrite")?;
     let raw = rawfile.as_ref().map(|path| task.workspace().join(path));
-    if let Some(raw) = &raw
-        && !overwrite
-        && raw.exists()
-    {
-        return Err(invalid(
-            "rawdatafile",
-            format!("{} exists and overwrite=False", raw.display()),
-        ));
-    }
     if !overwrite && outfile.exists() {
         return Err(invalid(
             "outfile",
             format!("{} exists and overwrite=False", outfile.display()),
         ));
     }
+    if let Some(raw) = &raw {
+        if crate::paths::overlap(&outfile, raw).map_err(execution)? {
+            return Err(invalid("rawdatafile", "rawdatafile and outfile overlap"));
+        }
+        if !overwrite && raw.exists() {
+            return Err(invalid(
+                "rawdatafile",
+                format!("{} exists and overwrite=False", raw.display()),
+            ));
+        }
+    }
     let target = if asis {
         objectname
     } else {
         known_object(objectname)?
+    };
+    let _output_locks = if overwrite && outfile.join("table.dat").is_file() {
+        lock_table_tree_for_replacement(&outfile).map_err(execution)?
+    } else {
+        Vec::new()
     };
     let destination =
         CalibrationOutput::prepare_ephemeris_table(&outfile, overwrite).map_err(execution)?;
