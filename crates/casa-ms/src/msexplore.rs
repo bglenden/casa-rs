@@ -2234,16 +2234,16 @@ pub struct MsScatterSeries {
     /// Display metadata for PlotMS points, when available.
     pub plotms_metadata: Vec<MsScatterPlotMsMetadata>,
     /// Shared display IDs indexed by PlotMS averaging order.
-    pub plotms_averaged_ids: Option<Arc<[MsScatterPlotMsAverageIds]>>,
+    pub plotms_averaged_ids: Option<MsScatterPlotMsAverageIds>,
 }
 
-/// MeasurementSet identifiers assigned to an averaged PlotMS output row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MsScatterPlotMsAverageIds {
-    /// Scan and field IDs for a scalar bin spanning original scans or fields.
-    pub scan_field: Option<(i32, i32)>,
-    /// Output antenna for a per-antenna average.
-    pub antenna: Option<i32>,
+/// MeasurementSet identifiers shared by the series of an averaged PlotMS plot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MsScatterPlotMsAverageIds {
+    /// Scan and field IDs for scalar bins spanning original scans or fields.
+    ScanAndField(Arc<[(i32, i32)]>),
+    /// Output antenna IDs for per-antenna averages.
+    Antenna(Arc<[i32]>),
 }
 
 /// Display metadata for one PlotMS export coordinate.
@@ -6341,18 +6341,24 @@ fn build_generic_visibility_scatter_with_averaging(
             .map(|(group, average)| (group, average.mean()))
             .collect::<HashMap<_, _>>()
     });
-    let averaged_ids = (scalar_spans.is_some() || antenna_average).then(|| {
-        averaged_rows
+    let averaged_ids = if let Some(spans) = &scalar_spans {
+        let ids = averaged_rows
             .iter()
-            .map(|&(group, antenna, _)| MsScatterPlotMsAverageIds {
-                scan_field: scalar_spans.as_ref().map(|spans| {
-                    let metadata = spans.metadata(group);
-                    (metadata.scan, metadata.field)
-                }),
-                antenna: antenna_average.then_some(antenna),
+            .map(|&(group, _, _)| {
+                let metadata = spans.metadata(group);
+                (metadata.scan, metadata.field)
             })
-            .collect::<Arc<[_]>>()
-    });
+            .collect();
+        Some(MsScatterPlotMsAverageIds::ScanAndField(ids))
+    } else if antenna_average {
+        let ids = averaged_rows
+            .iter()
+            .map(|&(_, antenna, _)| antenna)
+            .collect();
+        Some(MsScatterPlotMsAverageIds::Antenna(ids))
+    } else {
+        None
+    };
     let averaged_order = averaged_rows
         .into_iter()
         .enumerate()
