@@ -225,7 +225,7 @@ pub fn read_tool_visibility(
                 &names,
                 &read.scalar_columns,
                 time_measures,
-                first_selected,
+                (main, first_selected),
                 average,
             )?;
             axes.push(RecordField::new("ifr_axis", Value::Record(baseline_axis)));

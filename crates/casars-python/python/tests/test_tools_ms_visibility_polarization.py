@@ -204,6 +204,35 @@ def test_ms_polarization_converts_each_complex_visibility_product(baseline_fixtu
         assert reader.done()
 
 
+def test_ms_polarized_baseline_metadata_uses_the_first_active_row_reference(baseline_fixture, native_dataset):
+    casa, view, expected = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    description = {**table.getcoldesc("FIELD_ID"), "valueType": "string",
+                   "dataManagerType": "StandardStMan", "dataManagerGroup": "TIME_REF"}
+    assert table.addcols({"TIME_REF": description})
+    refs = np.full(len(expected["time"]), "UTC")
+    refs[13] = "TAI"
+    assert table.putcol("TIME_REF", refs)
+    assert table.putcolkeyword("TIME", "MEASINFO", {"type": "epoch", "VarRefCol": "TIME_REF"})
+    assert table.done()
+    path = view("polarized-time-axis.ms", [19, 13, 0, 6, 2, 11, 3, 8])
+
+    axes = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        assert reader.msselect({"taql": "ANTENNA1 == 0"})
+        assert reader.selectpolarization("RR")
+        result = reader.getdata(["axis_info", "ha", "last"], ifraxis=True)
+        np.testing.assert_array_equal(result["axis_info"]["corr_axis"], ["RR"])
+        axes.append(result["axis_info"]["time_axis"])
+        assert reader.done()
+    np.testing.assert_array_equal(axes[1]["MJDseconds"], axes[0]["MJDseconds"], strict=True)
+    np.testing.assert_allclose(axes[1]["HA"], axes[0]["HA"], rtol=0, atol=0.015)
+    np.testing.assert_allclose(axes[1]["LAST"], axes[0]["LAST"], rtol=0, atol=0.015 / 86400)
+
+
 def test_ms_polarization_selectors_preserve_or_clear_state_like_casa(native_dataset):
     for api in (pinned_casa(), tools):
         reader = api.ms()

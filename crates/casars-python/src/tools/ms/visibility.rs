@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
-use casa_ms::MsSelection;
+use casa_ms::{MeasurementSet, MsSelection};
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
 use casa_types::measures::MeasuresProvider;
@@ -107,6 +107,7 @@ impl VisibilityMain {
         selected: Option<&[usize]>,
         mut rows: Vec<usize>,
         items: &[String],
+        metadata: Option<&MeasurementSet>,
         options: tool_visibility::VisibilityReadOptions<'_>,
     ) -> PyResult<CasaValue> {
         if let Some(selected) = selected {
@@ -120,7 +121,7 @@ impl VisibilityMain {
             self.reference.as_ref(),
             &rows,
             items,
-            None,
+            metadata,
             options,
         )
         .map_err(runtime_error)?;
@@ -342,10 +343,19 @@ impl AttachedMs {
                 return Ok(CasaValue::empty_record());
             };
             let rows = sampled_rows(count, snapshot.ms.row_count(), increment)?;
-            if !axis_info {
-                let main = self.visibility.main(&self.path)?;
-                let reply =
-                    main.read_selected(self.selected_rows.as_deref(), rows, items, options)?;
+            if !axis_info || polarization.is_some() {
+                self.visibility.main(&self.path)?;
+                let main = self.visibility.main.as_ref().expect("MAIN table was opened");
+                let reply = main.read_selected(
+                    self.selected_rows.as_deref(),
+                    rows,
+                    items,
+                    axis_info.then_some(&snapshot.ms),
+                    tool_visibility::VisibilityReadOptions {
+                        time_measures: axis_info.then_some(&self.visibility.time_measures),
+                        ..options
+                    },
+                )?;
                 link.verify_directory().map_err(runtime_error)?;
                 return Ok(reply);
             }
@@ -368,7 +378,7 @@ impl AttachedMs {
             return Ok(CasaValue::empty_record());
         }
         let rows = sampled_rows(count, count, increment)?;
-        let reply = main.read_selected(self.selected_rows.as_deref(), rows, items, options)?;
+        let reply = main.read_selected(self.selected_rows.as_deref(), rows, items, None, options)?;
         link.verify_directory().map_err(runtime_error)?;
         Ok(reply)
     }
