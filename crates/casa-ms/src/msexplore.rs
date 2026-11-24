@@ -3015,6 +3015,7 @@ fn build_uncalibrated_plotms_payload(
         (plotms_columns::uses_channel_derived(plot, columns.x)
             || vector_baselines
             || scalar_average
+            || (antenna_average && plot.averaging.avgtime.is_some())
             || extended_derived
             || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
@@ -5613,7 +5614,7 @@ fn build_generic_visibility_scatter_with_averaging(
             && !include_row_flagged_points
             && time_bins.is_none()
             && !collapse_baselines
-            && !scalar_average;
+            && !scalar_intervals;
         if skip_flagged_row && !antenna_average {
             continue;
         }
@@ -6453,6 +6454,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .collect::<HashMap<_, _>>();
     let retain_empty_panel = average_operands
         || antenna_channels
+        || antenna_time
         || (scalar_average && collapse_baselines)
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
