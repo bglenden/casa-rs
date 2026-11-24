@@ -311,8 +311,8 @@ def compare_selection(root, native, base, vis):
     print("unequal: explicit shape refusal before export", flush=True)
 
 
-def compare_scalar_time(root, native, base, vis):
-    staggered = root / "staggered-windows.ms"
+def stagger_windows(root, vis, name):
+    staggered = root / f"{name}.ms"
     copy_ms(vis, staggered)
     with opened(staggered, True) as table:
         times = table.getcol("TIME")
@@ -320,6 +320,11 @@ def compare_scalar_time(root, native, base, vis):
         delayed = times + 2 * (table.getcol("DATA_DESC_ID") == 1)
         table.putcol("TIME", delayed)
         table.putcol("TIME_CENTROID", delayed)
+    return staggered, start
+
+
+def compare_scalar_time(root, native, base, vis):
+    staggered, start = stagger_windows(root, vis, "staggered-windows")
     scans, fields, spans, flagged, nonfinite, varied = (root / f"{name}.ms" for name in (
         "scan-boundary", "field-boundary", "both-boundaries", "flagged-time-bin", "nonfinite-time-bin",
         "varied-channel-phases",
@@ -417,6 +422,56 @@ def compare_scalar_time(root, native, base, vis):
                    (options["title"], "Time (MJD seconds)", "Phase:corrected (degrees)"))
 
 
+def compare_vector_time(root, native, base, vis):
+    staggered, start = stagger_windows(root, vis, "vector-staggered-windows")
+    with opened(staggered, True) as table:
+        descriptions = table.getcol("DATA_DESC_ID")
+        second = table.getcol("TIME") >= start + 10
+        code = (1 + second) * np.where(descriptions == 0, 1, 10)
+        for column, value in (("DATA", code), ("CORRECTED_DATA", 10j * code)):
+            shape = table.getcol(column).shape
+            table.putcol(column, np.broadcast_to(value.astype(np.complex64), shape).copy())
+        sigma = np.where(second, 0.5, 1).astype(np.float32)
+        table.putcol("SIGMA", np.broadcast_to(sigma, table.getcol("SIGMA").shape).copy())
+    masked = root / "vector-time-mask.ms"
+    copy_ms(staggered, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, table.getcol("TIME") == start + 10] = True
+        table.putcol("FLAG", flags)
+
+    options = base | dict(vis=str(staggered), xaxis="real", yaxis="imag", avgtime="10",
+                          title="Vector time and SPW average")
+    low = "90.001000000"
+    high = "100.001000000"
+    closed = [(5, 0, low)]
+    cases = (
+        ("vector-time-closed", {}, closed, [(11.625, 116.25)]),
+        ("vector-time-long", dict(avgtime="20"), closed, [(13.95, 116.25)]),
+        ("vector-time-short", dict(avgtime="4"), [(1, 0, high), (10, 0, low)], [(7.75, 77.5), (15.5, 155)]),
+        ("vector-time-mask", dict(vis=str(masked)), closed, [(13, 130)]),
+        ("vector-time-abscissa", dict(xaxis="time", xdatacolumn=""), closed, [(start + 5, 116.25)]),
+        ("vector-time-frequency", dict(xaxis="frequency", xdatacolumn=""), closed, [(float(low), 116.25)]),
+        ("vector-time-control", dict(avgtime=""), [(0, 0, low), (2, 1, high), (10, 0, low), (12, 1, high)],
+         [(1, 10), (10, 100), (2, 20), (20, 200)]),
+    )
+    for name, overrides, anchors, values in cases:
+        controls = options | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        assert [(p[9], p[11], p[10]) for p in selected] == [
+            (f"{start + time:.3f}", str(spw), frequency) for time, spw, frequency in anchors
+        ]
+        np.testing.assert_allclose(coordinates(selected), values, rtol=1.2e-5)
+        actual = export(root, f"{name}.native", native, controls)
+        assert compare_text(actual, expected) == len(anchors)
+        if controls["xaxis"] in ("time", "frequency"):
+            assert [p[0] for p in rows(actual)] == [p[0] for p in selected]
+        print(f"{name}: {len(anchors)} matching vector time and SPW coordinates", flush=True)
+    compare_figure(root, native, options | dict(xaxis="frequency", xdatacolumn=""),
+                   root / "vector-time-frequency.casa.txt", (options["title"], "Frequency (GHz)", "Imag:corrected"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -424,7 +479,7 @@ def main():
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
-                                           "malformed", "scalar-time"))
+                                           "malformed", "scalar-time", "vector-time"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -453,6 +508,8 @@ def main():
             compare_malformed_shape(root, native, base, vis)
         if args.only in (None, "scalar-time"):
             compare_scalar_time(root, native, base, vis)
+        if args.only in (None, "vector-time"):
+            compare_vector_time(root, native, base, vis)
 
 
 if __name__ == "__main__":
