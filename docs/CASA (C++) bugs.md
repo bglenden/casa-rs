@@ -11252,5 +11252,6 @@ contiguous prefix of the original two-correlation data into the one-hand
 shape. This mixes recorded correlations, channels, and rows. With RR
 selected, the same test also changes the sample amplitudes. casa-rs
 applies the live conversion to the captured data and its physical
-correlation label. The reduction uses the corresponding flags and variances
-(#1030).
+correlation label, giving half the recorded parallel-hand visibility
+for I when only that hand is present. The reduction uses the
+corresponding flags and variances (#1030).

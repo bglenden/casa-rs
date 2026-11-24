@@ -408,7 +408,7 @@ def test_ms_iterator_converts_the_captured_recorded_hand(baseline_fixture, nativ
         assert reader.iterorigin()
         assert reader.selectpolarization("I")
         record = reader.getdata(["data", "flag", "axis_info"])
-        expected = raw["data"][index:index + 1, :, :3]
+        expected = raw["data"][index:index + 1, :, :3] / 2
         if api is casa:
             expected = raw["data"][..., :3].ravel(order="F")[:expected.size].reshape(
                 expected.shape, order="F")
