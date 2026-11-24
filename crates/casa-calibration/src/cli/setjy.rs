@@ -559,7 +559,11 @@ fn prepare(
     let mut returned = BTreeMap::new();
     let mut completed = true;
     let mut imager_history = Vec::new();
+    let mut manual_samples = Vec::new();
+    let report_manual = image.is_none()
+        && matches!(flux, FluxParameters::Manual(manual) if manual.reports_spectral_index());
     for (field, windows_for_field) in groups.into_iter().rev() {
+        manual_samples.clear();
         let direction = engine
             .observation_direction_j2000(*epoch, field as usize)
             .map_err(execution)?;
@@ -627,17 +631,32 @@ fn prepare(
                 let (component, stokes) = solar
                     .component(Some(direction.clone()), &planned)
                     .map_err(execution)?;
-                imager_history.push(solar_history_line(
+                imager_history.push(imager_flux_history(
                     &name,
                     field,
                     spw,
                     planned[0].hz(),
                     stokes,
+                    "JPL-Butler Solar System Object",
                 ));
                 (Some(component), stokes)
             } else {
                 point_model(flux, spectrum.as_ref(), &direction, &planned, &frame)?
             };
+            if let FluxParameters::Standard { catalog, .. } = flux
+                && spectrum.is_some()
+            {
+                imager_history.push(imager_flux_history(
+                    &name,
+                    field,
+                    spw,
+                    planned[0].hz(),
+                    stokes,
+                    catalog.standard_name(),
+                ));
+            } else if report_manual {
+                manual_samples.push((planned[0].hz(), stokes[0]));
+            }
             first_jy.get_or_insert(stokes[0]);
             if let (Some(rows), Some(component)) = (windows_for_field.get(&spw), component) {
                 let container = ComponentList::from(vec![component])
@@ -699,7 +718,8 @@ fn prepare(
                 FluxParameters::Solar2010(_) => ResolvedFlux::Catalog(None, 1.),
                 _ => ResolvedFlux::Unscaled,
             };
-            model.images = params.prepare(ms, selected, &frame, field, flux)?;
+            model.images =
+                params.prepare(ms, selected, &frame, field, flux, &mut imager_history)?;
             model
                 .entries
                 .extend(model.images.iter().map(|image| image.entry.clone()));
@@ -715,6 +735,7 @@ fn prepare(
             },
         );
     }
+    record_manual_spectrum(&mut imager_history, &manual_samples);
     let entries = returned
         .into_iter()
         .map(|(key, value)| entry(key, value))
@@ -732,12 +753,33 @@ fn prepare(
     })
 }
 
-fn solar_history_line(name: &str, field: i32, spw: i32, hz: f64, stokes: [f64; 4]) -> String {
+fn imager_flux_history(
+    name: &str,
+    field: i32,
+    spw: i32,
+    hz: f64,
+    stokes: [f64; 4],
+    standard: &str,
+) -> String {
     let [i, q, u, v] = stokes.map(|flux| stream_double_precision(flux, 5));
     let frequency = stream_double_precision(hz, 5);
     format!(
-        "{name:>12} (fld ind {field}) spw {spw}  [I={i}, Q={q}, U={u}, V={v}] Jy @ {frequency}Hz, (JPL-Butler Solar System Object)"
+        "{name:>12} (fld ind {field}) spw {spw}  [I={i}, Q={q}, U={u}, V={v}] Jy @ {frequency}Hz, ({standard})"
     )
+}
+
+fn record_manual_spectrum(history: &mut Vec<String>, samples: &[(f64, f64)]) {
+    if samples.is_empty() {
+        return;
+    }
+    history.push(
+        "Flux density as a function of frequency (channel 0 of each spw):\n  Frequency (GHz)    Flux Density (Jy, Stokes I)".into(),
+    );
+    history.extend(samples.iter().map(|&(hz, jy)| {
+        let ghz = stream_double_precision(hz / 1e9, 6);
+        let intensity = stream_double_precision(jy, 6);
+        format!("     {ghz}         {intensity}")
+    }));
 }
 
 fn field_midpoint(

@@ -95,7 +95,7 @@ pub(crate) fn calibrator_images(
     flux: ImageFlux,
     frame: &MeasFrame,
     scratch: bool,
-) -> MsResult<Vec<ImageModel>> {
+) -> MsResult<(Vec<ImageModel>, Option<f64>)> {
     let input = PagedImage::<f32>::open(path).map_err(invalid)?;
     let mut coordinates = input.coordinates().clone();
     let spectral_index = coordinates.find_coordinate(CoordinateType::Spectral);
@@ -255,6 +255,7 @@ pub(crate) fn calibrator_images(
     }
     let sum = f64::from(sum as f32);
     let mut scales = None;
+    let mut scalar_flux = None;
     if !cube {
         match flux {
             ImageFlux::Constant(Some(jy)) => {
@@ -264,6 +265,7 @@ pub(crate) fn calibrator_images(
                     tile,
                     normalization(jy, sum)? as f32,
                 )?;
+                scalar_flux = Some(jy);
             }
             ImageFlux::Constant(None) => {}
             ImageFlux::PerChannel(fluxes) => {
@@ -290,7 +292,7 @@ pub(crate) fn calibrator_images(
             models.push(model);
         }
     }
-    Ok(models)
+    Ok((models, scalar_flux))
 }
 
 fn cube_frame_ratio(

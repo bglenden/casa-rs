@@ -123,6 +123,12 @@ impl ManualFlux {
         self.flux_jy[0]
     }
 
+    pub(crate) fn reports_spectral_index(&self) -> bool {
+        self.spectral_index
+            .first()
+            .is_some_and(|&index| index != 0.0)
+    }
+
     pub(crate) fn intensity_at(&self, frequency: &MFrequency, frame: &MeasFrame) -> MsResult<f64> {
         let i = self.intensity_jy();
         let f = frequency.hz();
