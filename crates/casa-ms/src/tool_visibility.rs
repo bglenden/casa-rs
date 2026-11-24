@@ -84,7 +84,10 @@ pub fn select_tool_data_description(
     if rows.is_empty() {
         return Ok(Vec::new());
     }
-    let column = "DATA_DESC_ID";
+    let column = reference
+        .map(|reference| reference.parent_column("DATA_DESC_ID"))
+        .transpose()?
+        .unwrap_or("DATA_DESC_ID");
     let parts = member_rows(members, main.row_count(), &rows);
     let mut ids = if !parts.is_empty() {
         concatenate_scalars(&parts, &[column])?

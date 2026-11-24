@@ -69,6 +69,52 @@ def test_ms_selectinit_all_rows_freezes_the_selected_view(native_dataset):
         assert reader.done()
 
 
+def add_description(casa, path):
+    table = casa.table()
+    assert table.open(str(path / "DATA_DESCRIPTION"), nomodify=False)
+    columns = ("SPECTRAL_WINDOW_ID", "POLARIZATION_ID", "FLAG_ROW")
+    first = {name: table.getcell(name, 0) for name in columns}
+    assert table.addrows(1)
+    for name, value in first.items():
+        assert table.putcell(name, 1, value)
+    assert table.done()
+
+
+def test_ms_selectinit_reads_the_description_projected_by_a_reference_table(
+    baseline_fixture, native_dataset,
+):
+    casa, make_view, expected = baseline_fixture
+    add_description(casa, native_dataset)
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    alternate = (np.arange(len(expected["time"])) % 2).astype(np.int32)
+    assert table.addcols({"ALTERNATE_DESC": table.getcoldesc("DATA_DESC_ID")})
+    assert table.putcol("ALTERNATE_DESC", alternate)
+    assert table.done()
+
+    rows = np.array([4, 1, 4, 0, 3], dtype=np.int64)
+    path = make_view("rebound-description.ms", rows)
+    assert table.open(path, nomodify=False)
+    assert table.renamecol("DATA_DESC_ID", "PHYSICAL_DESC")
+    assert table.renamecol("ALTERNATE_DESC", "DATA_DESC_ID")
+    assert table.done()
+    ids = alternate[rows].astype(np.int64)
+
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(path)
+        for description in (0, 1):
+            np.testing.assert_array_equal(reader.getdata("data_desc_id")["data_desc_id"], ids, strict=True)
+            assert reader.selectinit(description)
+            selected = ids == description
+            assert reader.nrow(True) == np.count_nonzero(selected)
+            result = reader.getdata(["data_desc_id", "data"])
+            np.testing.assert_array_equal(result["data_desc_id"], ids[selected], strict=True)
+            np.testing.assert_array_equal(result["data"], expected["data"][..., rows[selected]], strict=True)
+            assert reader.reset()
+        assert reader.done()
+
+
 @pytest.mark.parametrize("start,width,increment", [(0, 1, 2), (0, 2, 2), (0, 3, 1)])
 def test_ms_channel_selection_scientific_bins_and_reset(baseline_fixture, native_dataset, start, width, increment):
     casa, _, expected = baseline_fixture
@@ -273,3 +319,54 @@ def test_ms_channel_averaging_recalculates_row_flags(baseline_fixture, native_da
         np.testing.assert_array_equal(reply["weight"], np.full((2, len(row_flags)), 2.0), strict=True)
         np.testing.assert_allclose(reply["sigma"], 1 / np.sqrt(2), rtol=1e-7)
         assert reader.done()
+
+
+@pytest.mark.parametrize("width", [1, 2])
+def test_ms_channel_selection_uses_one_plan_per_shared_spectral_window(
+    baseline_fixture, native_dataset, width,
+):
+    casa, _, expected = baseline_fixture
+    add_description(casa, native_dataset)
+    path = str(native_dataset)
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    descriptions = (np.arange(len(expected["time"])) % 2).astype(np.int32)
+    assert table.putcol("DATA_DESC_ID", descriptions)
+    assert table.done()
+
+    records = []
+    for api, count in ((casa, 4), (tools, 2)):
+        reader = api.ms()
+        assert reader.open(path)
+        assert reader.selectchannel(2, 0, width, 2)
+        result = reader.getdata(["data", "flag", "time", "axis_info"])
+        assert result["data"].shape == result["flag"].shape == (2, count, len(descriptions))
+        assert result["axis_info"]["freq_axis"]["chan_freq"].shape == (2, 2)
+        np.testing.assert_array_equal(result["time"], expected["time"], strict=True)
+        assert reader.done()
+        records.append(result)
+    reference, native = records
+    for name in ("data", "flag"):
+        np.testing.assert_array_equal(reference[name][:, ::2], reference[name][:, 1::2], strict=True)
+        reference[name] = reference[name][:, ::2]
+    same_visibility(native, reference)
+
+
+def test_ms_channel_averaging_preserves_integer_description_ids(baseline_fixture, native_dataset):
+    casa, _, expected = baseline_fixture
+    path = str(native_dataset)
+    reference = casa.ms()
+    assert reference.open(path)
+    assert reference.selectchannel(2, 0, 1, 2)
+    ids = reference.getdata("data_desc_id")["data_desc_id"]
+    np.testing.assert_array_equal(ids, np.zeros(len(expected["time"]), np.int64), strict=True)
+    assert reference.selectchannel(2, 0, 2, 2)
+    with pytest.raises(RuntimeError, match="incorrect data type"):
+        reference.getdata("data_desc_id")
+    assert reference.done()
+
+    reader = tools.ms()
+    assert reader.open(path)
+    assert reader.selectchannel(2, 0, 2, 2)
+    np.testing.assert_array_equal(reader.getdata("data_desc_id")["data_desc_id"], ids, strict=True)
+    assert reader.done()

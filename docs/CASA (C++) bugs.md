@@ -11142,3 +11142,22 @@ A later `getdata` aborts while using the invalid channel. casa-rs
 checks every selected bin against the active spectral windows,
 returns false at selection time and retains the previous channel
 selection (#1030).
+
+## MS channel selection repeats channels when data descriptions share a window
+
+With two active data descriptions for the same spectral window and four input
+channels, CASA 6.7.6.14 returns four DATA and FLAG channels for either
+`selectchannel(2, 0, 1, 2)` or `selectchannel(2, 0, 2, 2)`. It adds each
+range to the iterator once per description. Both frequency and resolution
+metadata still describe two selected channels. casa-rs applies each range
+once per spectral window so DATA, FLAG and the reported frequencies have the
+requested channel count. It preserves the selected rows and their order
+(#1030).
+
+## MS channel averaging mistakes data description IDs for visibilities
+
+After `selectchannel(2, 0, 2, 2)`, CASA 6.7.6.14 raises an incorrect-data-type
+error for `getdata('data_desc_id')`. Its flagged-visibility cleanup treats
+the integer field as complex data because its name contains `data`. casa-rs
+preserves the integer row IDs while averaging the visibility channels
+(#1030).
