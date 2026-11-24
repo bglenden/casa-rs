@@ -11087,6 +11087,36 @@ MS and active transform in both public PlotMS tasks (#1032).
 [Pinned PlotMS iterator setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 [Pinned phase-shifting iterator](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/PhaseShiftingTVI.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 
+## PlotMS SPW averaging can repeat the first window's channel selection
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, select `spw="0:0,1:2"`
+with `avgspw=True` on an MS with two four-channel windows. The second
+window contributes channel 0 to the average. With SPW averaging disabled,
+the same selection correctly exports channel 2 from that window.
+
+casa-rs pairs channels by their position within each selected window. The
+public-task regression checks the original selection against unaveraged
+CASA data, then moves the selected sample to the common index in a separate
+CASA input. The aligned CASA average matches the native coordinates.
+When the selected channel counts differ, CASA can repeat the first count as
+well. casa-rs reports that the selected shapes cannot be averaged together
+before writing the export (#1032).
+[Pinned PlotMS reducer](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/PlotMSVBAverager.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+
+## PlotMS can terminate on disjoint channel ranges in two averaged windows
+
+With CASA 6.7.6.14 and casaplotms 2.9.1, set
+`spw="0:0~2;5~7,1:0~2;5~7"`, `avgspw=True` and `avgchannel="2"` on
+an MS with two eight-channel windows. The transform reports a mismatch
+between the number of widths and the number of windows, then the PlotMS
+backend terminates. Selecting the disjoint ranges in a single window
+exports the two physical bins over channels 0–1 and 5–6.
+
+casa-rs runs the same channel transform for both windows and averages
+their output samples by bin position. The regression checks the shared
+physical grid against the single-window CASA request and verifies the
+two-window output against the weighted complex average (#1032).
+
 ## Empty MS visibility strides can abort or change the attachment
 
 On a nonempty MS, `getdata(increment=4294967297)` can admit a

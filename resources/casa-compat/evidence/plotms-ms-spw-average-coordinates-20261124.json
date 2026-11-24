@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "b5138bb3ba2500859e0e82836f55a63f173d8bd8",
+  "source_revision": "b5138bb3ba2500859e0e82836f55a63f173d8bd8",
+  "baseline_revision": "dfc18a85e7cb31e3f1c3b7343cd81904fddbbd99",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Ordinary scalar and vector MeasurementSet SPW averages for stored visibility columns, including independent channel selection and a preceding complex channel transform.",
+  "result": "passed",
+  "baseline_result": "Main plotted 95.001 GHz where CASA uses 90.001 GHz, and emitted four raw-offset points where the explicitly selected samples form two SPW averages. The first weighted observed channel bin gave 3.4375 where CASA gives 2.7.",
+  "text_exports": 20,
+  "empty_text_exports": 2,
+  "same_input_points": 69,
+  "aligned_control_points": 2,
+  "analytic_points": 4,
+  "shape_refusals": 2,
+  "figures": 2,
+  "rendered_coordinates": 2,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}

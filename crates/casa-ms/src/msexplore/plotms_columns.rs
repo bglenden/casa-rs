@@ -84,6 +84,17 @@ pub(super) fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
         && supports_reduced_visibility_axes(spec)
 }
 
+pub(super) fn uses_spectral_window_average(spec: &MsPlotSpec) -> bool {
+    let averaging = &spec.averaging;
+    averaging.avgspw
+        && averaging.avgtime.is_none()
+        && !averaging.avgbaseline
+        && !averaging.avgantenna
+        && !averaging.avgscan
+        && !averaging.avgfield
+        && supports_reduced_visibility_axes(spec)
+}
+
 fn supports_reduced_visibility_axes(spec: &MsPlotSpec) -> bool {
     spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
         && (spec.x_axis.is_visibility_math()
