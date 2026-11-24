@@ -627,15 +627,23 @@ impl AveragedVisibility {
     }
 
     /// The CASA scalar reducer stores amplitude and phase as separate components.
-    pub(super) fn add_scalar(&mut self, samples: VisibilityBinSamples<'_>, weight: f64) {
+    pub(super) fn add_scalar(
+        &mut self,
+        samples: VisibilityBinSamples<'_>,
+        weight: f64,
+        conjugate: bool,
+    ) {
         let (values, weights) = self.weighted_mut();
-        values.extend(
-            samples
-                .values
-                .iter()
-                .map(|value| Complex64::new(value.norm(), value.arg())),
-        );
-        weights.resize(values.len(), weight);
+        let sample_weights = samples
+            .weights
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(weight));
+        for (value, weight) in samples.values.iter().zip(sample_weights) {
+            let packed = Complex64::new(value.norm(), value.arg());
+            values.push(if conjugate { packed.conj() } else { packed });
+            weights.push(super::plotms_columns::baseline_weight(weight));
+        }
     }
 
     pub(super) fn add_scalar_sample(
