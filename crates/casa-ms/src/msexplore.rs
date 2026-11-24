@@ -7017,7 +7017,7 @@ fn compute_axis_value(
 ) -> Result<Option<f64>, String> {
     if axis.is_visibility_math() {
         if let Some((projection, operands)) = visibility.projection {
-            return Ok(projection.axis_value(axis, operands, bin.averaged));
+            return Ok(projection.axis_value(axis, operands, channel_bin.averaged));
         }
         let axis = if visibility.signed_amplitude && axis == MsAxis::Amplitude {
             MsAxis::Real
