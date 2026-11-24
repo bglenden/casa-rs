@@ -18,7 +18,7 @@ from plotms_ms_columns_oracle import (
 PHASE_CENTER = "J2000 00h00m02.00s -29d59m40.00s"
 
 
-def compare_values(root, native, vis, shifted, name, axes):
+def compare_values(root, native, vis, shifted, name, axes, *, channels=("1", "3")):
     controls = request(vis) | axes | dict(expformat="txt")
     original, expected, actual = (root / f"{name}.{engine}.txt"
                                   for engine in ("original", "casa", "native"))
@@ -26,20 +26,41 @@ def compare_values(root, native, vis, shifted, name, axes):
                      plotfile=str(original)) is None
     assert reference(**(controls | dict(vis=str(shifted))), plotfile=str(expected)) is None
     original_rows, expected_rows = rows(original), rows(expected)
-    assert len(original_rows) == len(expected_rows) == 12
+    count = 6 * len(channels)
+    assert len(original_rows) == len(expected_rows) == count
     assert [point[2:] for point in original_rows] == [point[2:] for point in expected_rows]
-    assert {(point[2], point[12]) for point in expected_rows} == {("1", "XX"), ("3", "XX")}
+    assert {(point[2], point[12]) for point in expected_rows} == {(channel, "XX") for channel in channels}
     before, after = (np.array([point[:2] for point in selected], dtype=float)
                      for selected in (original_rows, expected_rows))
-    assert np.all(np.max(np.abs(after - before), axis=0) > 1e-4), (name, before, after)
+    changed = np.abs(after - before) > 1.2e-5 * np.maximum(np.abs(before), 1) + 1e-7
+    assert np.all(np.any(changed, axis=0)), (name, before, after)
 
     assert native(**controls, transform=True, phasecenter=PHASE_CENTER, plotfile=str(actual)) is None
-    assert compare_text(actual, expected) == 12
+    assert compare_text(actual, expected) == count
     inactive = root / f"{name}.inactive.txt"
     assert native(**controls, transform=False, phasecenter=PHASE_CENTER, plotfile=str(inactive)) is None
-    assert compare_text(inactive, original) == 12
-    print(f"{name}: 12 shifted and 12 unchanged selected coordinates", flush=True)
+    assert compare_text(inactive, original) == count
+    print(f"{name}: {count} shifted and {count} unchanged selected coordinates", flush=True)
     return expected
+
+
+def check_refusals(root, native, vis):
+    from casars.tasks import TaskParameterError
+
+    base = request(vis) | dict(expformat="txt", transform=True, phasecenter=PHASE_CENTER)
+    for name, options, diagnostic in (
+        ("bad-value", dict(phasecenter="J2000 north west"), "Cannot interpret phasecenter"),
+        ("other-frame", dict(phasecenter="GALACTIC 0deg 0deg"), "outside J2000"),
+        ("averaging", dict(averagedata=True, avgchannel="3"), "unaveraged"),
+    ):
+        output = root / f"{name}.native.txt"
+        try:
+            native(**(base | options), plotfile=str(output))
+        except TaskParameterError as error:
+            assert diagnostic in str(error), error
+        else:
+            raise AssertionError(f"PlotMS accepted {name}")
+        assert not output.exists()
 
 
 def main():
@@ -62,7 +83,7 @@ def main():
         vis, original_columns = fixture(root)
         with opened(vis, True) as table:
             row = np.arange(table.nrows())
-            uvw = np.array([-30 - row / 16, 42 + row / 8, 125 - row / 4])
+            uvw = np.array([-30 - row / 16, 42 + row / 8, 4 + row / 32])
             table.putcol("UVW", uvw)
         shifted = root / "shifted.ms"
         # Direct PlotMS text export stalls after its selection header. The
@@ -71,6 +92,9 @@ def main():
         casa.phaseshift(vis=str(vis), outputvis=str(shifted), phasecenter=PHASE_CENTER,
                         datacolumn="all")
         compare_values(root, native, vis, shifted, "independent", dict(xaxis="real", yaxis="imag"))
+        compare_values(root, native, vis, shifted, "flagged",
+                       dict(xaxis="real", yaxis="imag", customflaggedsymbol=True,
+                            flaggedsymbolshape="diamond"), channels=("1", "2", "3"))
         for axis in ("u", "v", "w"):
             controls = dict(xaxis=axis, yaxis="phase", xdatacolumn="", ydatacolumn="data")
             expected = compare_values(root, native, vis, shifted, axis, controls)
@@ -81,6 +105,7 @@ def main():
                                ("Shifted visibility", "U (m)", "Phase (degrees)"))
         compare_values(root, native, vis, shifted, "model",
                        dict(xaxis="real", yaxis="imag", xdatacolumn="model"))
+        check_refusals(root, native, vis)
         with opened(vis) as table:
             for name, values in (original_columns | {"UVW": uvw}).items():
                 np.testing.assert_array_equal(table.getcol(name), values)

@@ -221,6 +221,12 @@ fn run_task(
     if task.surface() == "plotms"
         && let Some(path) = super::calibration::input(task)?
     {
+        if super::plotms_phasecenter::requested(task)?.is_some() {
+            return Err(TaskFailure::validation(
+                "PlotMS phasecenter for calibration tables is pending (#1032)",
+            )
+            .at("phasecenter"));
+        }
         super::plotms_pointing::refuse_nonpointing_controls(task)?;
         if super::plotms_figure::requested_position(task)? != [0, 0] {
             return Err(TaskFailure::validation(
@@ -244,6 +250,11 @@ fn run_task(
         let visibility_document = calibration.is_some() || atmosphere.is_some();
         let (options, visibility_document) =
             plotms_options::options_from_plotms(task, visibility_document)?;
+        let phasecenter = super::plotms_phasecenter::requested(task)?
+            .map(|value| {
+                options.plotms_phasecenter(&value, calibration.is_none() && atmosphere.is_none())
+            })
+            .transpose()?;
         if !options.additional_ordinates.is_empty() {
             if calibration.is_some()
                 || options.plotms_averaging_active()
@@ -309,6 +320,7 @@ fn run_task(
                 calibration,
                 atmosphere,
                 load_models,
+                phasecenter,
             );
         }
         super::plotms_pointing::refuse_nonpointing_controls(task)?;
@@ -343,6 +355,7 @@ fn run_visibility_plot(
     calibration: Option<(PlotMsCalibrationLoader, Vec<String>)>,
     atmosphere: Option<super::calibration::atmosphere::Options>,
     load_models: Option<PlotMsModelLoader>,
+    phasecenter: Option<casa_types::measures::direction::MDirection>,
 ) -> Result<TaskSuccess, TaskFailure> {
     let offset_scan_grid = options.iteraxis == Some(MsIterationAxis::Scan)
         && options.gridrows == 1
@@ -410,6 +423,12 @@ fn run_visibility_plot(
             options.plotms_averaging_active(),
         )?;
         prefer_float_data = use_float;
+        if phasecenter.is_some() && use_float {
+            return Err(TaskFailure::validation(
+                "PlotMS phasecenter with MeasurementSet FLOAT_DATA is pending (#1032)",
+            )
+            .at("phasecenter"));
+        }
         if adjusted != *columns {
             let [x, y, secondary_y] = adjusted;
             options.data_column = y;
@@ -474,6 +493,7 @@ fn run_visibility_plot(
                     weights: options.weight_axis_columns,
                     raw_symbols,
                     pointing,
+                    phasecenter,
                 },
                 prefer_float_data,
                 load_models,
