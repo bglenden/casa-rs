@@ -8,7 +8,7 @@ use ndarray::ArrayView2;
 use super::plotms_ordinates::VisibilityAverageShapes;
 use super::{
     AveragedSeriesAccumulator, AveragingBaselineToken, AveragingPointKey, AveragingTimeKey,
-    ChannelBin, FloatGrid, plotms_columns,
+    ChannelBin, FloatGrid, MsAverageSpec, plotms_columns,
 };
 use crate::transform::{
     PlotTimeGroups, centered_time_and_interval, mean_weight_preferring_unflagged,
@@ -162,8 +162,9 @@ impl TimeBaselineStatistics {
         self,
         time_plan: &PlotTimeGroups,
         rows: &[usize],
-        interval: f64,
+        averaging: &MsAverageSpec,
     ) -> Result<TimeBaselinePlan, String> {
+        let interval = averaging.avgtime.unwrap_or(0.0);
         let mut averages: Vec<BaselineAverage> = Vec::new();
         let mut rows_to_average = HashMap::with_capacity(self.groups.len());
         let mut antenna_shapes = VisibilityAverageShapes::default();
@@ -172,17 +173,26 @@ impl TimeBaselineStatistics {
                 continue;
             };
             let bounds = anchor.integration();
+            let [observation, scan, field, window] = anchor.partition;
+            let partition = [
+                observation,
+                if averaging.avgscan { 0 } else { scan },
+                if averaging.avgfield { 0 } else { field },
+                window,
+            ];
             let (start, end) = (
                 bounds.time - bounds.interval / 2.0,
                 bounds.time + bounds.interval / 2.0,
             );
             let starts_new_average = averages.last().is_none_or(|average| {
                 let elapsed = bounds.time - average.anchor_time;
-                elapsed < 0.0 || elapsed > interval || average.partition != anchor.partition
+                elapsed < 0.0 || elapsed > interval || average.partition != partition
             });
             if starts_new_average {
                 averages.push(BaselineAverage {
-                    partition: anchor.partition,
+                    partition,
+                    scan,
+                    field,
                     anchor_time: bounds.time,
                     row: rows[time_plan.first_row_slot(buffer.start)],
                     start,
@@ -191,6 +201,9 @@ impl TimeBaselineStatistics {
             } else if let Some(average) = averages.last_mut() {
                 average.start = average.start.min(start);
                 average.end = average.end.max(end);
+                if average.scan != scan {
+                    average.scan = -1;
+                }
             }
             let output = averages.len() - 1;
             if let Some((correlations, channels)) = anchor.antenna_shape {
@@ -216,6 +229,8 @@ impl TimeBaselineStatistics {
 
 struct BaselineAverage {
     partition: [i32; 4],
+    scan: i32,
+    field: i32,
     anchor_time: f64,
     row: usize,
     start: f64,
@@ -232,6 +247,12 @@ impl TimeBaselinePlan {
         self.rows_to_average
             .get(&time_group)
             .map(|&(group, _)| group)
+    }
+
+    pub(super) fn scan_and_field(&self, average: usize) -> Option<(i32, i32)> {
+        self.averages
+            .get(average)
+            .map(|average| (average.scan, average.field))
     }
 
     pub(super) fn center(&self, average: usize) -> Option<f64> {
