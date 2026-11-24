@@ -230,6 +230,7 @@ pub mod field;
 pub mod flag_cmd;
 pub mod freq_offset;
 pub mod history;
+pub(crate) mod measured_columns;
 mod metadata_field;
 mod metadata_measure;
 pub use metadata_field::FieldDirectionColumn;
