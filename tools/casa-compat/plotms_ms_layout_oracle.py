@@ -89,18 +89,21 @@ def check_output_controls(root, native, base):
         assert existing.read_bytes() == before
 
 
-def compare_offset_scan_pages(root, native, vis, base):
+def compare_offset_scan_pages(root, native, vis, base, scan_count=4):
     from casars import _plot_document
 
-    source = root / "four-scans.ms"
+    root = root / f"offset-{scan_count}-scans"
+    root.mkdir()
+    source = root / "scans.ms"
     copy_ms(vis, source)
+    samples_per_scan = 12 // scan_count
     with opened(source, True) as table:
         time = table.getcol("TIME")
         integration = np.round((time - time.min()) / 10).astype(int)
-        scans = (integration // 3 + 1).astype(np.int32)
-        assert np.array_equal(np.unique(scans), [1, 2, 3, 4])
+        scans = (integration // samples_per_scan + 1).astype(np.int32)
+        assert np.array_equal(np.unique(scans), np.arange(1, scan_count + 1))
         table.putcol("SCAN_NUMBER", scans)
-        within = integration % 3
+        within = integration % samples_per_scan
         amplitude = np.where(scans % 2 == 1, 1 + within, 10 - within)
         data = table.getcol("DATA")
         table.putcol("DATA", np.broadcast_to(amplitude, data.shape).astype(data.dtype))
@@ -109,11 +112,14 @@ def compare_offset_scan_pages(root, native, vis, base):
                           yaxis="amp", ydatacolumn="data", iteraxis="scan", gridrows=1, gridcols=2,
                           rowindex=0, colindex=1, title="")
     complete = root / "all-scan-coordinates.casa.txt"
-    assert reference(**(controls | dict(gridcols=4, colindex=0)), expformat="txt", plotfile=str(complete)) is None
+    assert reference(**(controls | dict(gridcols=scan_count, colindex=0)),
+                     expformat="txt", plotfile=str(complete)) is None
     points = rows(complete)
     expected_coords = {scan: np.array([point[:2] for point in points if point[3] == str(scan)], dtype=float)
-                       for scan in range(1, 5)}
-    for scan, expected in enumerate(([1, 2, 3], [10, 9, 8], [1, 2, 3], [10, 9, 8]), start=1):
+                       for scan in range(1, scan_count + 1)}
+    for scan in expected_coords:
+        index = np.arange(samples_per_scan)
+        expected = 1 + index if scan % 2 else 10 - index
         np.testing.assert_array_equal(expected_coords[scan][:, 1], expected)
 
     pages = (
@@ -121,6 +127,8 @@ def compare_offset_scan_pages(root, native, vis, base):
         ("_Scan2,3_2", ((2, (0, 0)), (3, (0, 1)))),
         ("_Scan4_3", ((4, (0, 0)),)),
     )
+    if scan_count == 2:
+        pages = (pages[0], ("_2", ((2, (0, 1)),)))
     render = _plot_document.render_document
     rendered = []
 
@@ -137,9 +145,9 @@ def compare_offset_scan_pages(root, native, vis, base):
     for export, plan in (("current", pages[:1]), ("all", pages)):
         expected, actual = (root / f"offset-{export}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, exprange=export, expformat="txt", plotfile=str(expected)) is None
-        assert [point[3] for point in rows(expected)] == ["1"] * 3 + ["2"] * 3
+        assert [point[3] for point in rows(expected)] == ["1"] * samples_per_scan + ["2"] * samples_per_scan
         assert native(**controls, exprange=export, expformat="txt", plotfile=str(actual)) is None
-        assert compare_text(actual, expected) == 6
+        assert compare_text(actual, expected) == 2 * samples_per_scan
 
         rendered.clear()
         image = controls | dict(exprange=export, expformat="png", width=500, height=360, dpi=100)
@@ -157,7 +165,8 @@ def compare_offset_scan_pages(root, native, vis, base):
                 assert slot == expected_slot
                 np.testing.assert_allclose(coordinates[:, 0], expected_coords[scan][:, 0], rtol=0, atol=0.00051)
                 np.testing.assert_array_equal(coordinates[:, 1], expected_coords[scan][:, 1])
-        print(f"offset-{export}: six matching text points and {len(plan)} matching image pages", flush=True)
+        print(f"offset-{scan_count}-{export}: {2 * samples_per_scan} matching text points, "
+              f"{len(plan)} matching image pages", flush=True)
 
 
 def main():
@@ -185,7 +194,8 @@ def main():
             compare_cell(root, native, base, row, column)
         compare_cell(root, native, base | dict(gridcols=3, titlefont=14), 1, 2)
         check_output_controls(root, native, base)
-        compare_offset_scan_pages(root, native, vis, base)
+        for scan_count in (4, 2):
+            compare_offset_scan_pages(root, native, vis, base, scan_count)
 
 
 if __name__ == "__main__":

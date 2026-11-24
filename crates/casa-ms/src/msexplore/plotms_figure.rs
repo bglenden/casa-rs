@@ -456,26 +456,42 @@ fn paginate(
     show: bool,
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
     let [rows, columns] = requested_grid(task)?;
-    document.layout = Some(PlotLayout {
+    let position = requested_position(task)?;
+    let layout = PlotLayout {
         rows,
         columns,
         first_panel: None,
         aspect: None,
         margins: None,
         font_size: None,
-    });
-    let capacity = (rows as usize).saturating_mul(columns as usize);
-    let panels = std::mem::take(&mut document.panels);
-    let pages = if task.text("exprange")?.as_deref() == Some("all") {
-        panels.len().div_ceil(capacity)
-    } else {
-        1
     };
+    let capacity = (rows as usize).saturating_mul(columns as usize);
+    let offset = position[0] as usize * columns as usize + position[1] as usize;
+    let panels = std::mem::take(&mut document.panels);
+    let first_end = panels.len().min(capacity - offset);
+    let (first, remaining) = panels.split_at(first_end);
+    let pages = std::iter::once(first)
+        .chain(remaining.chunks(capacity))
+        .filter(|page| !page.is_empty());
+    let all = task.text("exprange")?.as_deref() == Some("all");
     let mut figures = Vec::new();
-    for (page, page_panels) in panels.chunks(capacity).take(pages).enumerate() {
+    let mut start = 0;
+    for (page, page_panels) in pages.enumerate() {
+        if !all && page > 0 {
+            break;
+        }
+        // CASA advances through the existing pages before resizing its canvas grid.
+        // When the iteration count initially fits on one page, its extra export
+        // still uses the first page's cell and has no iteration labels in the filename.
+        let reuse_first_canvas = offset != 0 && page > 0 && panels.len() <= capacity;
         let mut document = document.clone();
+        document.layout = Some(PlotLayout {
+            first_panel: (offset != 0 && (page == 0 || reuse_first_canvas)).then_some(position),
+            ..layout.clone()
+        });
         document.panels.extend_from_slice(page_panels);
-        let labels = grid.panels[page * capacity..page * capacity + page_panels.len()]
+        let end = start + page_panels.len();
+        let labels = grid.panels[start..end]
             .iter()
             .map(|panel| match grid.iteraxis {
                 super::MsIterationAxis::Scan => {
@@ -486,13 +502,18 @@ fn paginate(
                 }
                 _ => &panel.label,
             });
-        let output_file = output
-            .map(|path| iteration_filename(path, iteration_name(grid.iteraxis), page, labels));
+        let axis = if reuse_first_canvas {
+            ""
+        } else {
+            iteration_name(grid.iteraxis)
+        };
+        let output_file = output.map(|path| iteration_filename(path, axis, page, labels));
         figures.push(PlotFigure {
             output_file,
             show: show && page == 0,
             document,
         });
+        start = end;
     }
     let paths = figures
         .iter()
@@ -530,13 +551,14 @@ pub(super) fn requested_grid(task: &TaskInvocation<'_>) -> Result<[u32; 2], Task
 pub(super) fn static_grid(
     task: &TaskInvocation<'_>,
     iterated: bool,
+    offset_scan_grid: bool,
 ) -> Result<Option<PlotLayout>, TaskFailure> {
     let [rows, columns] = requested_grid(task)?;
     let [row, column] = requested_position(task)?;
     if row >= rows || column >= columns {
         return Err(TaskFailure::validation("row/col index out of range"));
     }
-    if iterated && [row, column] != [0, 0] {
+    if iterated && [row, column] != [0, 0] && !offset_scan_grid {
         return Err(TaskFailure::validation(
             "nondefault grid placement with PlotMS iteration is pending #1032",
         ));
@@ -577,7 +599,10 @@ pub(in crate::msexplore) fn iteration_filename<'a>(
         format!("_{}", page + 1)
     };
     let mut name = destination.file_stem().unwrap_or_default().to_os_string();
-    name.push(format!("_{axis}{labels}{suffix}"));
+    if !axis.is_empty() {
+        name.push(format!("_{axis}{labels}"));
+    }
+    name.push(suffix);
     if let Some(extension) = destination.extension() {
         name.push(".");
         name.push(extension);
