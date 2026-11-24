@@ -9,7 +9,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
 use super::{
-    MsAxis, MsDataColumn, MsPlotPayload, MsScatterGridPayload, MsScatterPlotPayload, plotms_text,
+    MsAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsScatterGridPayload,
+    MsScatterPanelPayload, MsScatterSeries, plotms_text,
 };
 use crate::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
@@ -19,6 +20,7 @@ use crate::plot_document::{
 
 pub(super) struct VisibilityAxisColumns<'a> {
     pub(super) base: [MsDataColumn; 3],
+    pub(super) secondary_axis: Option<MsAxis>,
     pub(super) additional: &'a [(MsAxis, MsDataColumn)],
     pub(super) right_ordinates: &'a [bool],
 }
@@ -34,7 +36,12 @@ pub(super) fn prepare(
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
     let (x, y, second, grid) = match payload {
         MsPlotPayload::Scatter(plot) => (plot.x_axis, plot.y_axis, plot.secondary_y_axis, None),
-        MsPlotPayload::ScatterGrid(grid) => (grid.x_axis, grid.y_axis, None, Some(grid)),
+        MsPlotPayload::ScatterGrid(grid) => (
+            grid.x_axis,
+            grid.y_axis,
+            columns.as_ref().and_then(|columns| columns.secondary_axis),
+            Some(grid),
+        ),
         _ => {
             return Err(TaskFailure::validation(
                 "PlotMS figures require visibility scatter data",
@@ -43,24 +50,7 @@ pub(super) fn prepare(
     };
     let mut document = plotms_visibility_document(payload);
     if let Some(columns) = columns {
-        label_visibility_columns(task, &mut document, [x, y], second, columns.base)?;
-        if let MsPlotPayload::Scatter(plot) = payload
-            && !columns.additional.is_empty()
-            && let Some(second) = second
-        {
-            let choices = [(y, columns.base[1]), (second, columns.base[2])]
-                .into_iter()
-                .chain(columns.additional.iter().copied())
-                .collect::<Vec<_>>();
-            group_ordinate_sides(
-                task,
-                &mut document,
-                plot,
-                &choices,
-                columns.base[0],
-                columns.right_ordinates,
-            )?;
-        }
+        label_and_group_ordinates(task, &mut document, payload, [x, y], second, columns)?;
     }
     document.show_legend = task.flag("showlegend")?;
     let limits = plot_limits(task.value("plotrange"))?;
@@ -117,28 +107,106 @@ pub(super) fn prepare(
     Ok(figures)
 }
 
-fn group_ordinate_sides(
+fn label_and_group_ordinates(
     task: &TaskInvocation<'_>,
     document: &mut PlotDocument,
-    plot: &MsScatterPlotPayload,
-    choices: &[(MsAxis, MsDataColumn)],
-    x_column: MsDataColumn,
-    right_ordinates: &[bool],
+    payload: &MsPlotPayload,
+    [x, y]: [MsAxis; 2],
+    second: Option<MsAxis>,
+    columns: VisibilityAxisColumns<'_>,
 ) -> Result<(), TaskFailure> {
-    let right = |index| right_ordinates.get(index).copied().unwrap_or(false);
-    let axis_id = |right| if right { "y-secondary" } else { "y" };
-    let supplied_label = task.text("ylabel")?.filter(|label| !label.is_empty());
+    label_visibility_columns(task, document, [x, y], second, columns.base)?;
+    let Some(second) = second else {
+        return Ok(());
+    };
+    if columns.additional.is_empty() && !matches!(payload, MsPlotPayload::ScatterGrid(_)) {
+        return Ok(());
+    }
+    let choices = [(y, columns.base[1]), (second, columns.base[2])]
+        .into_iter()
+        .chain(columns.additional.iter().copied())
+        .collect::<Vec<_>>();
     if !task.text("title")?.is_some_and(|title| !title.is_empty()) {
         let ordinates = choices
             .iter()
             .map(|&(axis, column)| column_axis_name(axis, column))
             .collect::<Vec<_>>()
             .join(", ");
-        let x_name = column_axis_name(plot.x_axis, x_column);
+        let x_name = column_axis_name(x, columns.base[0]);
         document.title = format!("{ordinates} vs. {x_name}");
     }
-    document.axes.truncate(1);
-    for (series, layer) in plot.series.iter().zip(&mut document.layers) {
+    let supplied_label = task.text("ylabel")?.filter(|label| !label.is_empty());
+    let group = |axes: &mut Vec<PlotDocumentAxis>,
+                 layers: &mut [PlotDocumentLayer],
+                 series: &[MsScatterSeries]| {
+        group_ordinate_sides(
+            axes,
+            layers,
+            series,
+            &choices,
+            columns.right_ordinates,
+            supplied_label.as_deref(),
+        );
+    };
+    match payload {
+        MsPlotPayload::Scatter(plot) => {
+            group(&mut document.axes, &mut document.layers, &plot.series)
+        }
+        MsPlotPayload::ScatterGrid(grid) => {
+            let title = std::mem::take(&mut document.title);
+            let font = task.integer("titlefont")?;
+            let iteration = iteration_name(grid.iteraxis);
+            for (panel, plot) in document.panels.iter_mut().zip(&grid.panels) {
+                group(&mut panel.axes, &mut panel.layers, &plot.series);
+                let label = iteration_value(grid.iteraxis, plot);
+                panel.title = format!("{title} {iteration}: {label}");
+                panel.title_font_size = (font > 0).then(|| font.to_string());
+            }
+            if task.flag("xsharedaxis")? {
+                unite_panel_bounds(document, "x");
+            }
+            if task.flag("ysharedaxis")? {
+                unite_panel_bounds(document, "y");
+                unite_panel_bounds(document, "y-secondary");
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn unite_panel_bounds(document: &mut PlotDocument, axis_id: &str) {
+    let bounds = document
+        .panels
+        .iter()
+        .flat_map(|panel| &panel.axes)
+        .filter(|axis| axis.id == axis_id)
+        .fold(
+            (f64::INFINITY, f64::NEG_INFINITY),
+            |(lower, upper), axis| (lower.min(axis.lower), upper.max(axis.upper)),
+        );
+    for axis in document
+        .panels
+        .iter_mut()
+        .flat_map(|panel| &mut panel.axes)
+        .filter(|axis| axis.id == axis_id)
+    {
+        (axis.lower, axis.upper) = bounds;
+    }
+}
+
+fn group_ordinate_sides(
+    axes: &mut Vec<PlotDocumentAxis>,
+    layers: &mut [PlotDocumentLayer],
+    series: &[MsScatterSeries],
+    choices: &[(MsAxis, MsDataColumn)],
+    right_ordinates: &[bool],
+    supplied_label: Option<&str>,
+) {
+    let right = |index| right_ordinates.get(index).copied().unwrap_or(false);
+    let axis_id = |right| if right { "y-secondary" } else { "y" };
+    axes.truncate(1);
+    for (series, layer) in series.iter().zip(layers) {
         layer.y_axis_id = axis_id(right(series.y_index)).into();
     }
     for side in [false, true] {
@@ -186,15 +254,15 @@ fn group_ordinate_sides(
             (-180.0, 180.0)
         } else {
             series_y_bounds(
-                plot.series
+                series
                     .iter()
                     .filter(|series| right(series.y_index) == side)
                     .flat_map(|series| series.points.iter().map(|&(_, y)| y)),
             )
         };
-        document.axes.push(PlotDocumentAxis {
+        axes.push(PlotDocumentAxis {
             id: axis_id(side).into(),
-            label: supplied_label.clone().unwrap_or_else(|| labels.join(", ")),
+            label: supplied_label.map_or_else(|| labels.join(", "), str::to_owned),
             unit,
             lower,
             upper,
@@ -203,7 +271,6 @@ fn group_ordinate_sides(
             draws_on_trailing_edge: side,
         });
     }
-    Ok(())
 }
 
 fn label_visibility_columns(
@@ -498,15 +565,7 @@ fn paginate(
         let end = start + page_panels.len();
         let labels = grid.panels[start..end]
             .iter()
-            .map(|panel| match grid.iteraxis {
-                super::MsIterationAxis::Scan => {
-                    panel.label.strip_prefix("Scan ").unwrap_or(&panel.label)
-                }
-                super::MsIterationAxis::SpectralWindow => {
-                    panel.key.strip_prefix("spw-").unwrap_or(&panel.label)
-                }
-                _ => &panel.label,
-            });
+            .map(|panel| iteration_value(grid.iteraxis, panel));
         if offset != 0 {
             for (panel, scan) in document.panels.iter_mut().zip(labels.clone()) {
                 panel.title = format!("{} Scan: {scan}", document.title);
@@ -536,6 +595,14 @@ fn paginate(
     )
     .map_err(TaskFailure::validation)?;
     Ok(figures)
+}
+
+fn iteration_value(axis: MsIterationAxis, panel: &MsScatterPanelPayload) -> &str {
+    match axis {
+        MsIterationAxis::Scan => panel.label.strip_prefix("Scan ").unwrap_or(&panel.label),
+        MsIterationAxis::SpectralWindow => panel.key.strip_prefix("spw-").unwrap_or(&panel.label),
+        _ => &panel.label,
+    }
 }
 
 pub(in crate::msexplore) fn default_overlay_color(index: usize) -> &'static str {

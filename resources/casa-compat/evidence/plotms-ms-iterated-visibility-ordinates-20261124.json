@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "a25d1480fbbb16e763ec58935320102b07830421",
+  "source_revision": "a25d1480fbbb16e763ec58935320102b07830421",
+  "baseline_revision": "28e343361ecc074ebf474daf1e1403b44c5ebf9f",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_iterated_ordinates_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Unaveraged MeasurementSet correlation, scan and field panels with independent visibility columns, axis sides and current/all-page exports.",
+  "result": "passed",
+  "baseline_result": "Main refuses multiple visibility ordinates with iteration. CASA exports 126 points across the two correlation panels on the masked fixture.",
+  "text_exports": 13,
+  "points": 1344,
+  "provider_refusals": 1,
+  "figures": 8,
+  "rendered_coordinates": 678,
+  "figure_size_px": [
+    500,
+    420
+  ]
+}

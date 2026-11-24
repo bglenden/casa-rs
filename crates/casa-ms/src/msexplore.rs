@@ -1717,21 +1717,32 @@ impl MsPlotSpec {
 
     /// Validate the current plot specification against the current engine.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_with_plotms(false, false)
+        self.validate_with_plotms(false, false, false)
     }
 
     fn validate_with_plotms(
         &self,
         independent_ordinates: bool,
         pointing: bool,
+        iterated_ordinates: bool,
     ) -> Result<(), String> {
-        self.validate_common(independent_ordinates, pointing)?;
+        let iterated = self.iteration.iteraxis.is_some();
+        self.validate_common(
+            independent_ordinates,
+            pointing,
+            iterated && self.y_axes.len() > 1 && iterated_ordinates,
+        )?;
         if self.layout.rowindex != 0 || self.layout.colindex != 0 || self.layout.plotindex != 0 {
             return Err(
                 "msexplore per-plot rowindex/colindex/plotindex placement is reserved for multi-plot page composition".to_string(),
             );
         }
-        let iterated = self.iteration.iteraxis.is_some();
+        if iterated && self.y_axes.len() > 1 && !iterated_ordinates {
+            return Err(
+                "msexplore multi-y plots are currently available for non-iterated plots only"
+                    .to_string(),
+            );
+        }
         if !iterated && (self.layout.gridrows != 1 || self.layout.gridcols != 1) {
             return Err(
                 "msexplore gridrows/gridcols require --iteraxis; non-iterated standalone plots still render a single panel".to_string(),
@@ -1741,7 +1752,7 @@ impl MsPlotSpec {
     }
 
     fn validate_for_page_child(&self) -> Result<(), String> {
-        self.validate_common(false, false)?;
+        self.validate_common(false, false, false)?;
         if self.flag_edit.is_some() {
             return Err(
                 "msexplore staged flag editing currently supports standalone scatter plots only"
@@ -1763,7 +1774,12 @@ impl MsPlotSpec {
         Ok(())
     }
 
-    fn validate_common(&self, independent_ordinates: bool, pointing: bool) -> Result<(), String> {
+    fn validate_common(
+        &self,
+        independent_ordinates: bool,
+        pointing: bool,
+        plotms_shared_axes: bool,
+    ) -> Result<(), String> {
         if self.y_axes.is_empty() {
             return Err("msexplore requires at least one y axis per plot".to_string());
         }
@@ -1781,19 +1797,12 @@ impl MsPlotSpec {
         if self.style.symbol_size.is_some_and(|size| size == 0) {
             return Err("msexplore symbolsize must be a positive integer".to_string());
         }
-        let iterated = self.iteration.iteraxis.is_some();
-        if iterated && self.y_axes.len() > 1 {
-            return Err(
-                "msexplore multi-y plots are currently available for non-iterated plots only"
-                    .to_string(),
-            );
-        }
-        if self.iteration.xselfscale && self.iteration.xsharedaxis {
+        if !plotms_shared_axes && self.iteration.xselfscale && self.iteration.xsharedaxis {
             return Err(
                 "msexplore x-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
             );
         }
-        if self.iteration.yselfscale && self.iteration.ysharedaxis {
+        if !plotms_shared_axes && self.iteration.yselfscale && self.iteration.ysharedaxis {
             return Err(
                 "msexplore y-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
             );
@@ -2082,13 +2091,14 @@ pub struct MsExploreSpec {
 impl MsExploreSpec {
     /// Validate the high-level request.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_with_plotms(false, false)
+        self.validate_with_plotms(false, false, false)
     }
 
     fn validate_with_plotms(
         &self,
         independent_ordinates: bool,
         pointing: bool,
+        iterated_ordinates: bool,
     ) -> Result<(), String> {
         if self.plots.is_empty() {
             return Err("msexplore requires at least one plot per invocation".to_string());
@@ -2097,7 +2107,11 @@ impl MsExploreSpec {
             return Err("msexplore max_plot_points must be a positive integer".to_string());
         }
         if self.plots.len() == 1 {
-            self.plots[0].validate_with_plotms(independent_ordinates, pointing)?;
+            self.plots[0].validate_with_plotms(
+                independent_ordinates,
+                pointing,
+                iterated_ordinates,
+            )?;
             return Ok(());
         }
 
@@ -2785,6 +2799,7 @@ fn build_msexplore_payload_internal(
             input.secondary_y_data_column.is_some() || !input.additional_ordinates.is_empty()
         }),
         calibration.is_some_and(|input| input.pointing.is_some()),
+        calibration.is_some_and(|input| input.rows.is_none()),
     )?;
     if calibration.and_then(|input| input.time_bins).is_none()
         && spec.plots.iter().any(|plot| {
@@ -3049,15 +3064,17 @@ fn build_uncalibrated_plotms_payload(
         )?;
     } else if load_models.is_none()
         && plot.is_some_and(|plot| {
-            plot.averaging.avgchannel.is_some_and(|width| width > 1)
-                && !uses_extended_averaging(plot)
-                && uses_model(plot)
+            let channel_average = plot.averaging.avgchannel.is_some_and(|width| width > 1)
+                && !uses_extended_averaging(plot);
+            let iterated_ordinates =
+                plot.iteration.iteraxis.is_some() && plot.secondary_y_axis().is_some();
+            (channel_average || iterated_ordinates) && uses_model(plot)
         })
     {
         plotms_model::refuse_selected_virtual_fields(
             ms,
             &selected.selected_rows,
-            "use casars.tasks.plotms to predict virtual MeasurementSet models before channel averaging",
+            "use casars.tasks.plotms to predict virtual MeasurementSet models",
         )?;
     }
     let models = load_models
@@ -3915,6 +3932,7 @@ fn render_listobs_manifest(payload: &ListObsPlotPayload) -> Result<String, Strin
 #[derive(Debug, Default)]
 struct ScatterPanelAccumulator {
     label: String,
+    iteration_rank: i32,
     series: std::collections::BTreeMap<String, MsScatterSeries>,
     contributing_rows: usize,
     contributing_points: usize,
@@ -4235,12 +4253,16 @@ fn build_generic_visibility_scatter(
         && calibration.is_some_and(|input| input.rows.is_none())
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
+    let iterated_ordinate_list = calibration.is_some_and(|input| input.rows.is_none())
+        && spec.iteration.iteraxis.is_some()
+        && spec.secondary_y_axis().is_some();
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
         || channel_derived
         || channel_only_visibility
+        || iterated_ordinate_list
         || calibration.is_some()
             && (ordered_feed_selection
                 || use_ordinate_masks
@@ -4819,6 +4841,15 @@ fn build_generic_visibility_scatter(
                     panel_key.clone(),
                     ScatterPanelAccumulator {
                         label: panel_label.clone(),
+                        iteration_rank: match iteraxis {
+                            Some(MsIterationAxis::Correlation) => {
+                                corr_types.get(*corr_index).copied().unwrap_or_default()
+                            }
+                            Some(MsIterationAxis::Scan) => scan_number_value,
+                            Some(MsIterationAxis::Field) => field_id_value,
+                            Some(MsIterationAxis::SpectralWindow) => spw_id,
+                            None => 0,
+                        },
                         ..Default::default()
                     },
                 );
@@ -5125,6 +5156,9 @@ fn build_generic_visibility_scatter(
             visibility_columns.column(1).unwrap_or(spec.data_column),
         )
     });
+    if iterated_ordinate_list {
+        panel_order.sort_by_key(|key| panels[key].iteration_rank);
+    }
     let mut panels = panel_order
         .into_iter()
         .filter_map(|panel_key| {
@@ -5144,6 +5178,7 @@ fn build_generic_visibility_scatter(
                     || phase_shift.is_some()
                     || channel_derived
                     || channel_only_visibility
+                    || iterated_ordinate_list
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
                 {
@@ -5176,8 +5211,11 @@ fn build_generic_visibility_scatter(
         );
     }
     if let Some(iteraxis) = iteraxis {
-        let (gridrows, gridcols) =
-            resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?;
+        let (gridrows, gridcols) = if iterated_ordinate_list {
+            (spec.layout.gridrows, spec.layout.gridcols)
+        } else {
+            resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?
+        };
         let share_x_bounds =
             share_axis_bounds(spec.iteration.xselfscale, spec.iteration.xsharedaxis);
         let share_y_bounds =
