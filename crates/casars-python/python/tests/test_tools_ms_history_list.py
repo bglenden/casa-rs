@@ -25,6 +25,10 @@ def test_ms_listhistory_reads_casa_history_and_preserves_attachment(native_datas
             assert writer.writehistory(message, origin="independent-casa-writer")
         assert writer.done()
 
+    # CASA shares its table cache with the writer in this process. Its open
+    # read handle can already report writable by the time the listing starts.
+    assert actual.iswritable() is False
+    before = [tool.iswritable() for tool in (reference, actual)]
     assert reference.listhistory() is True
     with caplog.at_level(logging.INFO, logger="casars.tools.ms"):
         assert actual.listhistory() is True
@@ -36,7 +40,7 @@ def test_ms_listhistory_reads_casa_history_and_preserves_attachment(native_datas
         assert entries[2].endswith("\t::independent-casa-writer\tsecond history entry")
     else:
         assert entries == ["The HISTORY table is empty"]
-    for tool in (reference, actual):
+    for tool, writable in zip((reference, actual), before):
         assert tool.name() == str(native_dataset)
-        assert tool.iswritable() is False
+        assert tool.iswritable() is writable
         assert tool.done()
