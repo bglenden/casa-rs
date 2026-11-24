@@ -25,7 +25,7 @@ use ndarray::{Array1, ArrayD, Axis};
 pub use auto_mask::SingleDishLineFinder;
 use diagnostics::Diagnostics;
 use linear_fit::Fit;
-use polynomial::{Polynomial, PolynomialFit};
+use polynomial::{Polynomial, PolynomialFit, PreparedPolynomial};
 pub use sinusoid::SingleDishSinusoid;
 use table::{AppliedBaseline, BaselineRow, BaselineTable, SpectrumModel, mask_ranges};
 use variable::{StoredLineFinder, VariableParameters};
@@ -417,6 +417,7 @@ impl FitRequest<'_> {
 struct FitOperation<'a> {
     request: FitRequest<'a>,
     bases: BTreeMap<(usize, bool, usize), PolynomialFit>,
+    polynomial_design: Option<PreparedPolynomial>,
     records: Vec<RecordValue>,
     record_models: bool,
     diagnostics: Diagnostics,
@@ -448,6 +449,7 @@ impl<'a> FitOperation<'a> {
         Self {
             request,
             bases: BTreeMap::new(),
+            polynomial_design: None,
             records: Vec::new(),
             record_models,
             diagnostics,
@@ -535,7 +537,13 @@ impl<'a> FitOperation<'a> {
                     }
                 };
                 basis
-                    .fit(values, mask, clip_sigma, max_fits)?
+                    .fit(
+                        values,
+                        mask,
+                        clip_sigma,
+                        max_fits,
+                        &mut self.polynomial_design,
+                    )?
                     .map(|fit| (fit, ModelBasis::Polynomial(family, *order)))
             }
             SingleDishBaselineBasis::CubicSpline { pieces } => {

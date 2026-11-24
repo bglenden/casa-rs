@@ -58,7 +58,7 @@ pub(super) fn fit(
         segment_ends: boundaries[1..].to_vec(),
         failure: "sakura_LSQFitCubicSplineFloat() failed -- NG",
     };
-    let mut fit = linear.solve(spectrum, included, clip_sigma, max_fits)?;
+    let mut fit = linear.solve(spectrum, included, clip_sigma, max_fits, None)?;
     if let Some(fit) = &mut fit {
         fit.coefficients = table_coefficients(&fit.coefficients, &knots, scale);
         fit.boundaries = boundaries;

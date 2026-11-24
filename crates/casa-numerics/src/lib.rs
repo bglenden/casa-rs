@@ -22,7 +22,61 @@ pub use primary_beam::{BeamPattern, DefaultRadial, FrequencyPattern, PrimaryBeam
 pub use simulated_bandpass::SimulatedBandpass;
 pub use vla_beams::{EvlaBand, EvlaPowerPattern, VlaBand};
 
-use nalgebra::{DMatrix, DVector};
+use nalgebra::{DMatrix, DVector, Dyn, linalg::SVD};
+
+/// A factored real least-squares design for repeated observations at the
+/// same basis rows. The solve uses the weighted solver's singular-value cutoff.
+pub struct LeastSquaresDesign {
+    decomposition: SVD<f64, Dyn, Dyn>,
+    rows: usize,
+}
+
+impl LeastSquaresDesign {
+    /// Factor the unweighted design. Each row must contain `coefficients`
+    /// finite basis values, and there must be at least that many rows.
+    #[must_use]
+    pub fn unweighted<'a>(
+        basis: impl Iterator<Item = &'a [f64]>,
+        coefficients: usize,
+    ) -> Option<Self> {
+        if coefficients == 0 {
+            return None;
+        }
+        let mut values = Vec::new();
+        let mut rows = 0;
+        for row in basis {
+            if row.len() != coefficients || row.iter().any(|value| !value.is_finite()) {
+                return None;
+            }
+            values.extend_from_slice(row);
+            rows += 1;
+        }
+        (rows >= coefficients)
+            .then(|| Self::factor(DMatrix::from_row_slice(rows, coefficients, &values)))
+    }
+
+    /// Solve for one finite observation per basis row, in the same order.
+    #[must_use]
+    pub fn solve(&self, observed: &[f64]) -> Option<Vec<f64>> {
+        if observed.len() != self.rows || observed.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
+        self.solve_vector(&DVector::from_row_slice(observed))
+    }
+
+    fn factor(design: DMatrix<f64>) -> Self {
+        let rows = design.nrows();
+        Self {
+            decomposition: design.svd(true, true),
+            rows,
+        }
+    }
+
+    fn solve_vector(&self, observed: &DVector<f64>) -> Option<Vec<f64>> {
+        let solution = self.decomposition.solve(observed, 1.0e-12).ok()?;
+        Some(solution.as_slice().to_vec())
+    }
+}
 
 /// Solve a weighted linear least-squares system with an SVD-backed solver.
 ///
@@ -54,8 +108,7 @@ pub fn solve_weighted_least_squares(
 
     let design = DMatrix::from_row_slice(rows.len(), coefficient_count, &design);
     let observed = DVector::from_row_slice(&observed);
-    let solution = design.svd(true, true).solve(&observed, 1.0e-12).ok()?;
-    Some(solution.as_slice().to_vec())
+    LeastSquaresDesign::factor(design).solve_vector(&observed)
 }
 
 /// Solve an unweighted real least-squares system with the default relative
