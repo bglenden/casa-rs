@@ -9,17 +9,19 @@ import os
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from plotms_ms_columns_oracle import (
-    casa, compare_figure, compare_text, fixture, opened, plotms_launcher, reference, request, rows,
+    casa, compare_figure, compare_text, copy_ms, fixture, opened, plotms_launcher, reference, request, rows,
+    write_model,
 )
-from plotms_ms_layout_oracle import occupied_marker_cells
 
 
 PHASE_CENTER = "J2000 00h00m02.00s -29d59m40.00s"
+UNFLAGGED_XX = {("1", "XX"), ("3", "XX")}
 
 
-def compare_values(root, native, vis, shifted, name, axes, *, channels=("1", "3")):
+def compare_values(root, native, vis, shifted, name, axes, *, samples=UNFLAGGED_XX):
     controls = request(vis) | axes | dict(expformat="txt")
     original, expected, actual = (root / f"{name}.{engine}.txt"
                                   for engine in ("original", "casa", "native"))
@@ -27,10 +29,10 @@ def compare_values(root, native, vis, shifted, name, axes, *, channels=("1", "3"
                      plotfile=str(original)) is None
     assert reference(**(controls | dict(vis=str(shifted))), plotfile=str(expected)) is None
     original_rows, expected_rows = rows(original), rows(expected)
-    count = 6 * len(channels)
+    count = 6 * len(samples)
     assert len(original_rows) == len(expected_rows) == count
     assert [point[2:] for point in original_rows] == [point[2:] for point in expected_rows]
-    assert {(point[2], point[12]) for point in expected_rows} == {(channel, "XX") for channel in channels}
+    assert {(point[2], point[12]) for point in expected_rows} == samples
     before, after = (np.array([point[:2] for point in selected], dtype=float)
                      for selected in (original_rows, expected_rows))
     changed = np.abs(after - before) > 1.2e-5 * np.maximum(np.abs(before), 1) + 1e-7
@@ -43,6 +45,94 @@ def compare_values(root, native, vis, shifted, name, axes, *, channels=("1", "3"
     assert compare_text(inactive, original) == count
     print(f"{name}: {count} shifted and {count} unchanged selected coordinates", flush=True)
     return expected
+
+
+def marker_mask(path):
+    with Image.open(path) as image:
+        assert image.size == (500, 360)
+        return np.all(np.asarray(image.convert("RGB")) == [0xdd, 0x22, 0x55], axis=-1)
+
+
+def compare_shifted_figure(root, native, vis, shifted, controls, expected):
+    image = request(vis) | controls | dict(transform=True, phasecenter=PHASE_CENTER,
+                                           title="Shifted visibility", customsymbol=True,
+                                           symbolshape="circle", symbolcolor="dd2255", symbolsize=5,
+                                           symbolfill="fill", symboloutline=False,
+                                           plotrange=[-45, -25, -180, 180])
+    compare_figure(root, native, image, expected, ("Shifted visibility", "U (m)", "Phase (degrees)"))
+    direct = marker_mask(root / "casa" / "u.png")
+    assert np.any(direct) and np.any(marker_mask(root / "native" / "u.png"))
+    for name, source in (("materialized", shifted), ("inactive", vis)):
+        png = root / f"{name}.casa.png"
+        assert reference(**(image | dict(vis=str(source), transform=False)), plotfile=str(png),
+                         expformat="png", width=500, height=360, dpi=100) is None
+        control_mask = marker_mask(png)
+        assert np.any(control_mask)
+        assert np.array_equal(direct, control_mask) == (name == "materialized"), name
+
+
+def check_unreadable_model(root, native, vis, expected):
+    from casars.tasks import TaskExecutionError
+
+    work = root / "unreadable-model"
+    work.mkdir()
+    source = work / vis.name
+    copy_ms(vis, source)
+    with opened(source / "FIELD") as table:
+        direction = table.getcell("PHASE_DIR", 1)[:, 0]
+    with opened(source / "SPECTRAL_WINDOW") as table:
+        frequency = table.getcell("CHAN_FREQ", 0)[0]
+    image = work / "point.im"
+    write_model(image, direction, frequency, 2.0, cell=5)
+    assert casa.ft(vis=str(source), model=str(image), field="PHASE", usescratch=False) is None
+    with opened(source / "SOURCE", True) as table:
+        model_row = table.getkeyword(table.getkeyword("definedmodel_field_1"))
+        record = table.getcell("SOURCE_MODEL", model_row)
+        record["ft_0"]["container"]["diskimage"] = str(work / "missing.im")
+        table.putcell("SOURCE_MODEL", model_row, record)
+    controls = request(source) | dict(xaxis="real", yaxis="imag", xdatacolumn="model",
+                                      expformat="txt", transform=True, phasecenter=PHASE_CENTER)
+    physical = work / "physical.native.txt"
+    assert native(**controls, plotfile=str(physical)) is None
+    assert compare_text(physical, expected) == 12
+    virtual = work / "virtual.native.txt"
+    try:
+        native(**(controls | dict(field="PHASE")), plotfile=str(virtual))
+    except TaskExecutionError as error:
+        assert "phasecenter with a virtual model is pending (#1032)" in str(error), error
+    else:
+        raise AssertionError("PlotMS evaluated an unsupported virtual visibility model")
+    assert not virtual.exists()
+
+
+def compare_unused_float(root, native, vis):
+    from casars.tasks import TaskParameterError
+
+    work = root / "mixed-data"
+    work.mkdir()
+    source = work / vis.name
+    copy_ms(vis, source)
+    with opened(source, True) as table:
+        descriptor = table.getcoldesc("DATA")
+        descriptor.update(name="FLOAT_DATA", valueType="float",
+                          dataManagerType="StandardStMan", dataManagerGroup="FloatVis")
+        table.addcols({"FLOAT_DATA": descriptor})
+        table.putcol("FLOAT_DATA", table.getcol("DATA").real - 6)
+    shifted = work / "shifted" / vis.name
+    shifted.parent.mkdir()
+    casa.phaseshift(vis=str(source), outputvis=str(shifted), phasecenter=PHASE_CENTER,
+                    datacolumn="all")
+    controls = dict(xaxis="real", yaxis="imag", xdatacolumn="model")
+    compare_values(work, native, source, shifted, "unused-float", controls)
+    output = work / "used-float.native.txt"
+    try:
+        native(**(request(source) | controls | dict(xdatacolumn="data")),
+               transform=True, phasecenter=PHASE_CENTER, plotfile=str(output), expformat="txt")
+    except TaskParameterError as error:
+        assert "phasecenter with MeasurementSet FLOAT_DATA is pending (#1032)" in str(error), error
+    else:
+        raise AssertionError("PlotMS applied a complex rotation to FLOAT_DATA")
+    assert not output.exists()
 
 
 def check_refusals(root, native, vis):
@@ -96,21 +186,20 @@ def main():
         compare_values(root, native, vis, shifted, "independent", dict(xaxis="real", yaxis="imag"))
         compare_values(root, native, vis, shifted, "flagged",
                        dict(xaxis="real", yaxis="imag", customflaggedsymbol=True,
-                            flaggedsymbolshape="diamond"), channels=("1", "2", "3"))
+                            flaggedsymbolshape="diamond"), samples=UNFLAGGED_XX | {("2", "XX")})
         for axis in ("u", "v", "w"):
             controls = dict(xaxis=axis, yaxis="phase", xdatacolumn="", ydatacolumn="data")
-            expected = compare_values(root, native, vis, shifted, axis, controls)
+            samples = UNFLAGGED_XX
             if axis == "u":
-                image = request(vis) | controls | dict(transform=True, phasecenter=PHASE_CENTER,
-                                                       title="Shifted visibility", customsymbol=True,
-                                                       symbolshape="circle", symbolcolor="dd2255",
-                                                       symbolsize=5, symbolfill="fill", symboloutline=False)
-                compare_figure(root, native, image, expected,
-                               ("Shifted visibility", "U (m)", "Phase (degrees)"))
-                for engine in ("casa", "native"):
-                    assert occupied_marker_cells(root / engine / "u.png", (1, 1)) == {(0, 0)}
-        compare_values(root, native, vis, shifted, "model",
-                       dict(xaxis="real", yaxis="imag", xdatacolumn="model"))
+                controls["correlation"] = "XX,YY"
+                samples = samples | {(channel, "YY") for channel in ("1", "2", "3")}
+            expected = compare_values(root, native, vis, shifted, axis, controls, samples=samples)
+            if axis == "u":
+                compare_shifted_figure(root, native, vis, shifted, controls, expected)
+        expected_model = compare_values(root, native, vis, shifted, "model",
+                                        dict(xaxis="real", yaxis="imag", xdatacolumn="model"))
+        check_unreadable_model(root, native, vis, expected_model)
+        compare_unused_float(root, native, vis)
         check_refusals(root, native, vis)
         with opened(vis) as table:
             for name, values in (original_columns | {"UVW": uvw}).items():

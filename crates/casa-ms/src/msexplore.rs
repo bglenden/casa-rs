@@ -2943,14 +2943,35 @@ fn build_uncalibrated_plotms_payload(
 ) -> Result<MsPlotPayload, String> {
     let selected = crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
         .map_err(|error| error.to_string())?;
+    let plot = spec.plots.first();
+    let uses_model = |plot: &MsPlotSpec| {
+        plotms_columns::uses_model(
+            [
+                Some(plot.x_axis),
+                Some(plot.y_axis()),
+                plot.secondary_y_axis(),
+            ],
+            [
+                columns.x.unwrap_or(plot.data_column),
+                plot.data_column,
+                columns.secondary_y.unwrap_or(plot.data_column),
+            ],
+        )
+    };
+    if columns.phasecenter.is_some() && plot.is_some_and(uses_model) {
+        let virtual_fields = crate::scratch_columns::virtual_model_fields(ms);
+        if selected
+            .selected_rows
+            .iter()
+            .any(|row| virtual_fields.contains(&row.field_id))
+        {
+            return Err("PlotMS phasecenter with a virtual model is pending (#1032)".into());
+        }
+    }
     let models = load_models
         .map(|load| load(ms, &selected.selected_rows))
         .transpose()?
         .flatten();
-    if columns.phasecenter.is_some() && models.is_some() {
-        return Err("PlotMS phasecenter with a virtual model is pending (#1032)".into());
-    }
-    let plot = spec.plots.first();
     let scalar_time = plot.is_some_and(plotms_columns::uses_scalar_time_average);
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
@@ -2961,18 +2982,7 @@ fn build_uncalibrated_plotms_payload(
             || scalar_time
             || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
-            && plotms_columns::uses_model(
-                [
-                    Some(plot.x_axis),
-                    Some(plot.y_axis()),
-                    plot.secondary_y_axis(),
-                ],
-                [
-                    columns.x.unwrap_or(plot.data_column),
-                    plot.data_column,
-                    columns.secondary_y.unwrap_or(plot.data_column),
-                ],
-            )
+            && uses_model(plot)
     }) {
         plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
     }
@@ -4984,6 +4994,7 @@ fn build_generic_visibility_scatter(
                 if needs_row_axes
                     || pointing.is_some()
                     || raw_symbols.is_some()
+                    || phase_shift.is_some()
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
                 {

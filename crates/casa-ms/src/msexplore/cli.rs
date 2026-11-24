@@ -423,7 +423,13 @@ fn run_visibility_plot(
             options.plotms_averaging_active(),
         )?;
         prefer_float_data = use_float;
-        if phasecenter.is_some() && use_float {
+        if phasecenter.is_some()
+            && use_float
+            && axes.into_iter().zip(adjusted).any(|(axis, column)| {
+                axis.is_some_and(MsAxis::is_visibility_math)
+                    && matches!(column, MsDataColumn::Data | MsDataColumn::Float)
+            })
+        {
             return Err(TaskFailure::validation(
                 "PlotMS phasecenter with MeasurementSet FLOAT_DATA is pending (#1032)",
             )
