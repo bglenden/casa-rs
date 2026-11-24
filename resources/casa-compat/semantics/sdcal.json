@@ -313,11 +313,18 @@
       ]
     },
     "intent": {
-      "kind": "Installed CASA keyword and selected position-switch output",
-      "state": "recorded",
-      "scope": "The public wrapper forwards the text keyword through its generated schema. A tagged OFF group separates the selected scans from the default result.",
-      "result": "Pinned CASA generated scans 1 and 3 with the default and scan 1 with the selected intent. The baseline native wrapper refused the keyword. Candidate native validation is pending.",
+      "kind": "Paired public CASA intent selection and unchanged upstream tests",
+      "state": "passed",
+      "scope": "Position-switch, OTF and OTF raster intent selection, inactive direct apply and Tsys intent, and the local sky-intent override in Tsys composites.",
+      "result": "All 65 applicable stock cases passed with both implementations. Upstream unconditionally skips serial CASA Multi-MS sky application. The named intent changed position switching from scans 1 and 3 to scan 1, selected the same map spectra as explicit scan selection, and preserved both Tsys composite outputs under an unused intent.",
+      "revision": "b3d09768e9728c85dca2ab73f02874369efd6942",
+      "source_revision": "b3d09768e9728c85dca2ab73f02874369efd6942",
+      "casa_version": "6.7.6.14",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/upstream_calibration_suite.py sdcal --casatestdata <pinned-casatestdata> --out <results>",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/2161",
       "links": [
+        "tools/casa-compat/sdcal_position_switch_oracle.py",
+        "tools/casa-compat/sdcal_edges_oracle.py",
         "https://github.com/bglenden/casa-rs/issues/1530"
       ]
     }
