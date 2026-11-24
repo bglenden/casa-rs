@@ -71,6 +71,49 @@ def test_ms_summary_rejects_invalid_argument_forms():
         ms.summary(cachesize="50")
 
 
+def test_ms_summary_groups_interleaved_fields_within_one_scan(native_dataset, tmp_path):
+    casa = pinned_casa()
+    name = "Second field has more than twenty characters"
+    marked = name[:19] + "*" + name[20:]
+    table = casa.table()
+    assert table.open(str(native_dataset / "FIELD"), nomodify=False)
+    first_field = {
+        column: table.getcell(column, 0)
+        for column in table.colnames()
+        if table.iscelldefined(column, 0)
+    }
+    assert table.addrows(1)
+    first_field["NAME"] = name
+    for column, value in first_field.items():
+        assert table.putcell(column, 1, value)
+    assert table.done()
+    assert table.open(str(native_dataset), nomodify=False)
+    fields = table.getcol("FIELD_ID")
+    assert len(fields) >= 4
+    fields[1::2] = 1
+    assert table.putcol("FIELD_ID", fields)
+    assert table.done()
+
+    for verbose in (False, True):
+        records = []
+        for api in (casa, tools):
+            ms = api.ms()
+            assert ms.open(str(native_dataset))
+            output = tmp_path / f"{api.__name__}-{verbose}.txt"
+            record = ms.summary(verbose=verbose, listfile=str(output))
+            assert record["nfields"] == 2
+            assert record["field_1"]["name"] == marked
+            scans = [scan for key, value in record.items() if key.startswith("scan_")
+                     for scan in value.values()]
+            assert len(scans) == 2
+            assert [scan["FieldId"] for scan in scans] == [0, 1]
+            assert scans[1]["FieldName"] == (marked if verbose else name)
+            assert sum(scan["nRow"] for scan in scans) == len(fields)
+            assert ms.done()
+            records.append(record)
+        compare_summary(records[1], records[0])
+
+
 def test_ms_summary_reports_a_failed_file_write(native_dataset, tmp_path):
     rejected = tmp_path / "absent" / "summary.txt"
     ms = tools.ms()

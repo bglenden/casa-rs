@@ -133,7 +133,7 @@ fn summary_record(ms: &MeasurementSet, summary: &MeasurementSetSummary) -> MsRes
         record.push((
             format!("field_{}", field.field_id),
             CasaValue::record([
-                ("name", CasaValue::Text(field.name.clone())),
+                ("name", CasaValue::Text(mark_long_field_name(&field.name))),
                 ("code", CasaValue::Text(field.code.clone())),
                 ("direction", direction_record(direction)),
             ]),
@@ -150,7 +150,7 @@ fn summary_record(ms: &MeasurementSet, summary: &MeasurementSetSummary) -> MsRes
         scans
             .entry(scan.scan_number)
             .or_default()
-            .insert(subset, scan_record(scan));
+            .insert(subset, scan_record(scan, summary.options.verbose));
     }
     record.extend(scans.into_iter().map(|(scan, fields)| {
         let subs = fields
@@ -161,7 +161,7 @@ fn summary_record(ms: &MeasurementSet, summary: &MeasurementSetSummary) -> MsRes
     Ok(CasaValue::record(record))
 }
 
-fn scan_record(scan: &MeasurementSetScanSummary) -> CasaValue {
+fn scan_record(scan: &MeasurementSetScanSummary, verbose: bool) -> CasaValue {
     CasaValue::record([
         (
             "BeginTime",
@@ -170,7 +170,14 @@ fn scan_record(scan: &MeasurementSetScanSummary) -> CasaValue {
         ("EndTime", CasaValue::Float(scan.end_mjd_seconds / 86_400.0)),
         ("scanId", CasaValue::Int(scan.scan_number.into())),
         ("FieldId", CasaValue::Int(scan.field_id.into())),
-        ("FieldName", CasaValue::Text(scan.field_name.clone())),
+        (
+            "FieldName",
+            CasaValue::Text(if verbose {
+                mark_long_field_name(&scan.field_name)
+            } else {
+                scan.field_name.clone()
+            }),
+        ),
         (
             "StateId",
             CasaValue::Int(i64::from(scan.state_ids.first().copied().unwrap_or(-1))),
@@ -193,6 +200,17 @@ fn scan_record(scan: &MeasurementSetScanSummary) -> CasaValue {
             },
         ),
     ])
+}
+
+fn mark_long_field_name(name: &str) -> String {
+    let Some((suffix, _)) = name.char_indices().nth(20) else {
+        return name.into();
+    };
+    let (marker, _) = name[..suffix]
+        .char_indices()
+        .next_back()
+        .expect("at least twenty characters");
+    format!("{}*{}", &name[..marker], &name[suffix..])
 }
 
 fn listfile_argument(value: &Bound<'_, PyAny>) -> PyResult<Option<PathBuf>> {
