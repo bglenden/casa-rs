@@ -1228,9 +1228,7 @@ def compare_mixed_float_time_normalization(work, source, native, base):
         print(f"{name}: native preserves {count} constant unit visibilities", flush=True)
 
 
-def compare_time_scan_field_columns(root, native):
-    work = root / "scan-field-time-columns"
-    work.mkdir()
+def time_scan_field_fixture(work):
     vis, integration = time_average_fixture(work)
     with opened(vis, True) as table:
         times = np.unique(table.getcol("TIME"))
@@ -1254,6 +1252,13 @@ def compare_time_scan_field_columns(root, native):
                 name = "FIELD_ID" if path == scan else "SCAN_NUMBER"
                 values = table.getcol(name)
                 table.putcol(name, np.full_like(values, values[0]))
+    return vis, times, scan, field, reversed_time
+
+
+def compare_time_scan_field_columns(root, native):
+    work = root / "scan-field-time-columns"
+    work.mkdir()
+    vis, times, scan, field, reversed_time = time_scan_field_fixture(work)
     base = request(vis) | dict(field="", xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
                                ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
                                spw="0:1", avgtime="200")
