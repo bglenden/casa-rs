@@ -12,6 +12,7 @@ use super::{
     cli::PlotMsModelLoader,
     plotms_columns::{
         supports_ordinary_time_axes, uses_channel_derived, uses_ordinary_time_averaging,
+        uses_scalar_visibility_average,
     },
     selected_i32_values, uses_extended_averaging,
 };
@@ -65,6 +66,13 @@ pub(super) fn selected_model_cells(
     let extended = uses_extended_averaging(plot);
     let averaging = extended || plot.averaging.avgchannel.is_some_and(|width| width > 1);
     let ordinary_time = uses_ordinary_time_averaging(plot) && supports_ordinary_time_axes(plot);
+    let scalar_span = columns.implicit_derived_model
+        && plot.averaging.avgtime.is_some()
+        && (plot.averaging.avgscan || plot.averaging.avgfield)
+        && !plot.averaging.avgbaseline
+        && plot.iteration.iteraxis.is_none()
+        && supports_ordinary_time_axes(plot)
+        && uses_scalar_visibility_average(plot);
     let standard_columns = visibility_columns.all(|column| {
         matches!(
             column,
@@ -73,8 +81,9 @@ pub(super) fn selected_model_cells(
     });
     let derived_average = columns.implicit_derived_model
         && (columns.extended_derived || (!extended && uses_channel_derived(plot, columns.x)));
-    let can_predict =
-        !averaging || ((!extended || ordinary_time) && standard_columns) || derived_average;
+    let can_predict = !averaging
+        || ((!extended || ordinary_time || scalar_span) && standard_columns)
+        || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {
         return load(ms, rows);
     }
