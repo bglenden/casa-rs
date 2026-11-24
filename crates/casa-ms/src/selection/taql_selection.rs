@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bind casacore's MSCAL selection functions to the shared MS row grammars.
 
-use casa_tables::taql::ast::{BinaryOp, Expr, Literal, SelectStatement};
+use casa_tables::taql::ast::{BinaryOp, Expr, InSetElement, Literal, SelectStatement};
 use casa_tables::taql::{self, IndexStyle, RecordExpressionType, Statement, TaqlError, TaqlResult};
 use casa_tables::{ColumnType, RequiredScalarColumnValues, TableError};
 use casa_types::PrimitiveType;
@@ -27,7 +27,7 @@ pub(super) fn select_rows(
                 .map(|row| row.into_iter().collect())
                 .map_err(taql_error);
         }
-        if let Some(rows) = select_scalar_integer_rows(ms, select, rows_per_block)? {
+        if let Some(rows) = select_simple_rows(ms, select, rows_per_block)? {
             return Ok(rows);
         }
     }
@@ -39,7 +39,7 @@ pub(super) fn select_rows(
     }
 }
 
-fn select_scalar_integer_rows(
+fn select_simple_rows(
     ms: &MeasurementSet,
     select: &SelectStatement,
     rows_per_block: Option<usize>,
@@ -48,7 +48,7 @@ fn select_scalar_integer_rows(
         columns,
         from: None,
         joins,
-        where_clause: Some(Expr::Binary { left, op, right }),
+        where_clause: Some(predicate),
         group_by,
         having: None,
         order_by,
@@ -66,11 +66,24 @@ fn select_scalar_integer_rows(
     if !(columns.is_empty() && joins.is_empty() && group_by.is_empty() && order_by.is_empty()) {
         return Ok(None);
     }
-    let (column, literal, reverse) = match (left.as_ref(), right.as_ref()) {
-        (Expr::ColumnRef(column), Expr::Literal(Literal::Int(literal))) => {
-            (column, *literal, false)
-        }
-        (Expr::Literal(Literal::Int(literal)), Expr::ColumnRef(column)) => (column, *literal, true),
+    let table = ms.main_table();
+    let row_count = table.row_count();
+    if let Expr::Literal(Literal::Bool(include)) = predicate {
+        return Ok(Some(if *include {
+            (0..row_count).collect()
+        } else {
+            Vec::new()
+        }));
+    }
+    if let Some(rows) = literal_row_id_set(predicate, row_count) {
+        return Ok(Some(rows));
+    }
+    let Expr::Binary { left, op, right } = predicate else {
+        return Ok(None);
+    };
+    let (operand, literal, reverse) = match (left.as_ref(), right.as_ref()) {
+        (operand, Expr::Literal(Literal::Int(literal))) => (operand, *literal, false),
+        (Expr::Literal(Literal::Int(literal)), operand) => (operand, *literal, true),
         _ => return Ok(None),
     };
     let matches: fn(i64, i64) -> bool = match (op, reverse) {
@@ -83,7 +96,16 @@ fn select_scalar_integer_rows(
         _ => return Ok(None),
     };
 
-    let table = ms.main_table();
+    if matches!(operand, Expr::RowNumber) {
+        return Ok(Some(
+            (0..row_count)
+                .filter(|&row| matches(row as i64, literal))
+                .collect(),
+        ));
+    }
+    let Expr::ColumnRef(column) = operand else {
+        return Ok(None);
+    };
     let name = column.column.as_str();
     if column.table.is_some()
         || !table
@@ -99,7 +121,6 @@ fn select_scalar_integer_rows(
     }
 
     // Predicates on IDs need one scalar column, even when the MS has large visibility arrays.
-    let row_count = table.row_count();
     let rows_per_block = match rows_per_block {
         Some(rows) => rows,
         None => rows_per_block_for_budget(default_selection_budget()?)
@@ -122,6 +143,34 @@ fn select_scalar_integer_rows(
         );
     }
     Ok(Some(selected_rows))
+}
+
+fn literal_row_id_set(predicate: &Expr, row_count: usize) -> Option<Vec<usize>> {
+    let Expr::InSet {
+        expr,
+        elements,
+        negated: false,
+    } = predicate
+    else {
+        return None;
+    };
+    if !matches!(expr.as_ref(), Expr::RowNumber) {
+        return None;
+    }
+    let mut rows = Vec::new();
+    for element in elements {
+        let InSetElement::Value(Expr::Literal(Literal::Int(id))) = element else {
+            return None;
+        };
+        if let Ok(row) = usize::try_from(*id)
+            && row < row_count
+        {
+            rows.push(row);
+        }
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
 }
 
 pub(super) fn validate_predicate(

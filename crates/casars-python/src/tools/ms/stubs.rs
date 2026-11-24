@@ -443,12 +443,6 @@ impl PyMsTool {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (msselect = None), text_signature = "($self, msselect='')")]
-    fn selecttaql(&self, msselect: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("selecttaql")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (msselect = None), text_signature = "($self, msselect='')")]
     fn selecttaqlold(&self, msselect: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("selecttaqlold")
     }

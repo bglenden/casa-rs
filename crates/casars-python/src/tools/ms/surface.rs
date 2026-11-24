@@ -529,8 +529,8 @@ const METHODS: &[Method] = &[
     method(
         "selecttaql",
         &[param("msselect", K::Text, Text(""))],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "selecttaqlold",
