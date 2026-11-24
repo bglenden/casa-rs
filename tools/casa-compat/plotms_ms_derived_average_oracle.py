@@ -37,31 +37,52 @@ def weighted_fixture(root):
 
 
 def compare_weighted(root, native, vis):
-    base = request(vis) | dict(xaxis="real", yaxis="imag", ydatacolumn="data",
-                               avgchannel="2", spw="0:0~3", title="Weighted visibility")
+    base = request(vis) | dict(avgchannel="2", spw="0:0~3", title="Weighted visibility")
     # Corrected and model use the calibrated spectrum (1, 9), while the
     # observed ordinate uses inverse sigma squared (1, 4). Channel 2 is
     # flagged, leaving channel 3 alone in the second bin.
     corrected = (7.4 - 0.6j, 12 + 4j)
     model = (1.9 + 1.7j, 5 - 3j)
-    for name, column, expected_x in (
-        ("residual", "corrected-model_vector", [a - b for a, b in zip(corrected, model)]),
-        ("ratio", "corrected/model_vector", [a / b for a, b in zip(corrected, model)]),
+    residual = [(a - b).real for a, b in zip(corrected, model)]
+    ratio = [(a / b).real for a, b in zip(corrected, model)]
+    observed = [5, 1]
+    for name, axes, coordinates in (
+        ("residual", ("real", "corrected-model_vector", "imag", "data"), zip(residual, observed)),
+        ("ratio", ("real", "corrected/model_vector", "imag", "data"), zip(ratio, observed)),
+        ("ratio-ordinate", ("imag", "data", "real", "corrected/model_vector"), zip(observed, ratio)),
     ):
-        controls = base | dict(xdatacolumn=column)
+        controls = base | dict(zip(("xaxis", "xdatacolumn", "yaxis", "ydatacolumn"), axes, strict=True))
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected), expformat="txt") is None
         selected = rows(expected)
         assert len(selected) == 12
         assert [(point[2], point[12]) for point in selected] == [("0", "XX"), ("1", "XX")] * 6
         np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
-                                   [(expected_x[0].real, 5), (expected_x[1].real, 1)] * 6, rtol=1.2e-5)
+                                   list(coordinates) * 6, rtol=1.2e-5)
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching weighted selected coordinates", flush=True)
         if name == "ratio":
             compare_figure(root, native, controls, expected,
                            ("Weighted visibility", "Real:corrected/model (vector)", "Imag"))
+
+
+def check_unimplemented_averaging(root, native, vis):
+    from casars.tasks import TaskParameterError
+
+    base = request(vis) | dict(xaxis="real", yaxis="imag", ydatacolumn="data", expformat="txt")
+    for name, overrides in (
+        ("scalar-ratio", dict(xdatacolumn="corrected/model_scalar", avgchannel="2")),
+        ("time-ratio", dict(xdatacolumn="corrected/model_vector", avgtime="20")),
+    ):
+        output = root / f"{name}.native.txt"
+        try:
+            native(**(base | overrides), plotfile=str(output))
+        except TaskParameterError as error:
+            assert "averaging derived data columns" in str(error) and "#1032" in str(error), error
+        else:
+            raise AssertionError(f"PlotMS accepted the pending {name} plot")
+        assert not output.exists()
 
 
 def main():
@@ -81,7 +102,9 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare_weighted(root, native, weighted_fixture(root))
+        weighted = weighted_fixture(root)
+        compare_weighted(root, native, weighted)
+        check_unimplemented_averaging(root, native, weighted)
         ordinary = root / "ordinary"
         ordinary.mkdir()
         vis, _ = fixture(ordinary)

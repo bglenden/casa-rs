@@ -292,7 +292,7 @@ def compare(root, vis, native):
     compare_figure(root, native, base | cases["scalar-amp-phase-ratio"], root / "scalar-amp-phase-ratio.casa.txt",
                    ("Phase:corrected/model (scalar) vs. Amp:data/model (scalar)",
                     "Amp:data/model (scalar)", "Phase:corrected/model (scalar) (degrees)"))
-        compare_channel_vector_residual(root, native, vis)
+    compare_channel_vector_residual(root, native, vis)
     compare_raw_flag_symbols(root, vis, native)
 
 
