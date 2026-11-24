@@ -59,13 +59,19 @@ impl CliOptions {
         let supported_pair = |derived: MsDataColumn, stored| {
             derived.is_derived() && matches!(stored, MsDataColumn::Data | MsDataColumn::Corrected)
         };
+        let supported_abscissa = self.x_axis.is_some_and(|axis| {
+            if axis.is_visibility_math() {
+                supported_pair(x, y) || supported_pair(y, x)
+            } else {
+                matches!(axis, MsAxis::Channel | MsAxis::Time) && y.is_derived()
+            }
+        });
         self.avgchannel.is_some_and(|width| width > 1)
             && !self.plotms_extended_averaging()
-            && self.x_axis.is_some_and(MsAxis::is_visibility_math)
+            && supported_abscissa
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
-            && (supported_pair(x, y) || supported_pair(y, x))
     }
 
     pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
