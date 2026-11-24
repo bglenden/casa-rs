@@ -4492,11 +4492,12 @@ fn build_generic_visibility_scatter(
                     flag_samples.clear();
                 }
                 if let Some(statistics) = &statistics {
-                    let (weight, sigma) = statistics.spectrum(bin_index);
                     weight_spectrum_samples.clear();
-                    weight_spectrum_samples.push(weight);
                     sigma_spectrum_samples.clear();
-                    sigma_spectrum_samples.push(sigma);
+                    if let Some((weight, sigma)) = statistics.spectrum(bin_index) {
+                        weight_spectrum_samples.push(weight);
+                        sigma_spectrum_samples.push(sigma);
+                    }
                 } else {
                     for (grid, samples) in [
                         (&weight_spectrum_grid, &mut weight_spectrum_samples),

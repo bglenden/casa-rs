@@ -645,6 +645,7 @@ def compare_averaged_columns(root, native):
     statistics = base | dict(xdatacolumn="model", ydatacolumn="", yaxislocation="left")
     statistic_cases = (
         ("model", {}, (10, 9), (5, 4), {0, 1}),
+        ("model-only", dict(ydatacolumn="model"), (2, 1), (2, 1), {0, 1}),
         ("data", dict(xdatacolumn="data", ydatacolumn="data"), (5, 4), (5, 4), {0, 1}),
         ("corrected", dict(xdatacolumn="corrected", ydatacolumn="corrected"), (10, 9), (10, 9), {0, 1}),
         ("without-weight-spectrum", dict(vis=str(without_weight)), (2, 1), (5, 4), {0, 1}),
@@ -675,6 +676,29 @@ def compare_averaged_columns(root, native):
             assert native(**options, plotfile=str(actual)) is None
             assert compare_text(actual, expected) == len(selected)
             print(f"avg-{name}-{axis}: {len(selected)} matching channel statistics", flush=True)
+    for name, source, column, coordinates in (
+        ("masked-model", vis, "model", [700, 1]),
+        ("masked-data", without_weight, "data", [7, 4]),
+    ):
+        masked = work / f"{name}.ms"
+        copy_ms(source, masked)
+        with opened(masked, True) as table:
+            flags_for_case = table.getcol("FLAG")
+            flags_for_case[:, :2, :] = True
+            table.putcol("FLAG", flags_for_case)
+        options = statistics | dict(vis=str(masked), xaxis="channel", xdatacolumn="",
+                                    yaxis=["real", "weightspectrum"], ydatacolumn=[column, column],
+                                    yaxislocation=["left", "right"], expformat="txt")
+        expected, actual = (work / f"avg-{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 12
+        assert {point[2] for point in selected} == {"1"}
+        np.testing.assert_allclose([float(point[1]) for point in selected],
+                                   np.repeat(coordinates, 6), rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"avg-{name}: {len(selected)} matching channel statistics", flush=True)
     compare_figure(work, native, statistics | dict(yaxis="weight"), work / "avg-model-weight.casa.txt",
                    ("Wt vs. Real:model", "Real:model", "Weight"))
 

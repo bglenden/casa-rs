@@ -218,9 +218,9 @@ impl ChannelStatistics {
         }
     }
 
-    pub(super) fn spectrum(&self, bin: usize) -> (f64, f64) {
-        let (_, weight, sigma) = self.spectra[bin];
-        (f64::from(weight), f64::from(sigma))
+    pub(super) fn spectrum(&self, bin: usize) -> Option<(f64, f64)> {
+        let (flagged, weight, sigma) = self.spectra[bin];
+        (!flagged).then_some((f64::from(weight), f64::from(sigma)))
     }
 }
 
