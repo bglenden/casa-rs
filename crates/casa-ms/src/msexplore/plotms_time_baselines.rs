@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use ndarray::ArrayView2;
 
+use super::plotms_ordinates::VisibilityAverageShapes;
 use super::{
     AveragedSeriesAccumulator, AveragingBaselineToken, AveragingPointKey, AveragingTimeKey,
     ChannelBin, FloatGrid, plotms_columns,
@@ -24,6 +25,7 @@ pub(super) struct TimeBaselineRow<'a> {
     pub(super) partition: [i32; 4],
     pub(super) integration: Integration,
     pub(super) first_correlation: Option<usize>,
+    pub(super) antenna_shape: Option<(usize, usize)>,
     pub(super) bins: &'a [ChannelBin],
     pub(super) flags: &'a ArrayView2<'a, bool>,
     pub(super) weights: Option<&'a FloatGrid>,
@@ -42,6 +44,7 @@ struct TimeAverageStatistics {
     last_usable: Option<Integration>,
     weights: Vec<ChannelWeightSum>,
     channel_bin_widths: Vec<usize>,
+    antenna_shape: Option<(usize, usize)>,
 }
 
 struct ChannelWeightSum {
@@ -125,6 +128,7 @@ impl TimeBaselineStatistics {
                 } else {
                     Vec::new()
                 },
+                antenna_shape: row.antenna_shape,
             });
         if row.integration.time < group.first.time {
             group.first = row.integration;
@@ -159,9 +163,10 @@ impl TimeBaselineStatistics {
         time_plan: &PlotTimeGroups,
         rows: &[usize],
         interval: f64,
-    ) -> TimeBaselinePlan {
+    ) -> Result<TimeBaselinePlan, String> {
         let mut averages: Vec<BaselineAverage> = Vec::new();
         let mut rows_to_average = HashMap::with_capacity(self.groups.len());
+        let mut antenna_shapes = VisibilityAverageShapes::default();
         for buffer in time_plan.buffers() {
             let Some(anchor) = self.groups.get(&buffer.start) else {
                 continue;
@@ -188,16 +193,24 @@ impl TimeBaselineStatistics {
                 average.end = average.end.max(end);
             }
             let output = averages.len() - 1;
+            if let Some((correlations, channels)) = anchor.antenna_shape {
+                antenna_shapes.check_shape(
+                    "vector antenna time averaging",
+                    output,
+                    correlations,
+                    channels,
+                )?;
+            }
             for group in buffer.clone() {
                 if let Some(statistics) = self.groups.get(&group) {
                     rows_to_average.insert(group, (output, statistics.baseline_weight()));
                 }
             }
         }
-        TimeBaselinePlan {
+        Ok(TimeBaselinePlan {
             averages,
             rows_to_average,
-        }
+        })
     }
 }
 
@@ -281,7 +294,8 @@ impl TimeBaselinePlan {
             };
             let x = point.x_visibility.time_vector_mean();
             let weight =
-                plotms_columns::baseline_weight(point.combined_primary_weight.unwrap_or(1.0));
+                plotms_columns::baseline_weight(point.combined_primary_weight.unwrap_or(1.0))
+                    as f32;
             for (antenna, x, y) in [
                 (first, x, y),
                 (second, x.map(|value| value.conj()), y.conj()),
@@ -298,9 +312,9 @@ impl TimeBaselinePlan {
                     output.numeric_axis_samples = point.numeric_axis_samples.clone();
                 }
                 if let Some(x) = x {
-                    output.x_visibility.add_weighted_value(x, weight);
+                    output.x_visibility.add_normalized_vector_sample(x, weight);
                 }
-                output.y_visibility.add_weighted_value(y, weight);
+                output.y_visibility.add_normalized_vector_sample(y, weight);
             }
         }
     }

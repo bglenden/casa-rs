@@ -5604,7 +5604,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut averaged_rows = std::collections::BTreeSet::new();
-    let mut scalar_shapes = plotms_ordinates::ScalarAverageShapes::default();
+    let mut scalar_shapes = plotms_ordinates::VisibilityAverageShapes::default();
     let mut time_baseline_stats = (time_baselines || time_antenna)
         .then(plotms_time_baselines::TimeBaselineStatistics::default);
     let mut channel_buffer_first = None;
@@ -5846,7 +5846,12 @@ fn build_generic_visibility_scatter_with_averaging(
             })
         });
         if scalar_intervals && let Some(group) = group {
-            scalar_shapes.check_shape(group, selected_correlations.len(), channel_bins.len())?;
+            scalar_shapes.check_shape(
+                "scalar time averaging",
+                group,
+                selected_correlations.len(),
+                channel_bins.len(),
+            )?;
         }
         let representative_row = row_numbers[representative_slot];
         let span_metadata =
@@ -5902,6 +5907,8 @@ fn build_generic_visibility_scatter_with_averaging(
                         interval: selected_intervals[row_slot],
                     },
                     first_correlation: time_baselines.then_some(selected_correlations[0].0),
+                    antenna_shape: time_antenna
+                        .then_some((selected_correlations.len(), channel_bins.len())),
                     bins: &channel_bins,
                     flags: &flags,
                     weights: weight_grid(kinds.row_weight),
@@ -6138,9 +6145,9 @@ fn build_generic_visibility_scatter_with_averaging(
                             scan_number: scan_number_value,
                             spw_id,
                             baseline: baseline_token.clone(),
-                            // The scalar averager receives the selected cube. The raw
-                            // slot can differ between data descriptions in the same bin.
-                            corr_index: if scalar_intervals {
+                            // The reducer sees the selected cube. Raw slots can
+                            // differ between data descriptions in the same bin.
+                            corr_index: if scalar_intervals || time_antenna {
                                 selected_slot
                             } else {
                                 *corr_index
@@ -6170,7 +6177,12 @@ fn build_generic_visibility_scatter_with_averaging(
                         });
                         let accumulator = series.points.entry(point_key.clone()).or_default();
                         if let Some(weight) = primary_weight {
-                            *accumulator.combined_primary_weight.get_or_insert(0.0) += weight;
+                            let sum = accumulator.combined_primary_weight.get_or_insert(0.0);
+                            if time_antenna {
+                                *sum = f64::from(*sum as f32 + weight as f32);
+                            } else {
+                                *sum += weight;
+                            }
                         }
                         if accumulator.representative.is_none() {
                             accumulator.display_channel = bin.display_channel();
@@ -6435,7 +6447,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_baseline_plan = time_baseline_stats
         .zip(time_bins)
         .zip(spec.averaging.avgtime)
-        .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval));
+        .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval))
+        .transpose()?;
     if let Some(plan) = time_baseline_plan.as_ref().filter(|_| time_antenna) {
         averaged_rows = averaged_rows
             .into_iter()

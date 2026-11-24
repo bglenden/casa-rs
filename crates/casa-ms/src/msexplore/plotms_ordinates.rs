@@ -740,12 +740,19 @@ impl AveragedVisibility {
         }
     }
 
-    pub(super) fn time_vector_mean(&self) -> Option<Complex64> {
+    pub(super) fn time_vector_mean(&self) -> Option<Complex32> {
         let VisibilitySamples::TimeProjection(average) = &self.0 else {
             return None;
         };
-        let value = average.time_mean(0);
-        Some(Complex64::new(f64::from(value.re), f64::from(value.im)))
+        Some(average.time_mean(0))
+    }
+
+    pub(super) fn add_normalized_vector_sample(&mut self, value: Complex32, weight: f32) {
+        self.add_time_projection(TimeProjection {
+            projection: None,
+            weighted_sums: [value * weight, Complex32::default()],
+            total_weights: [weight, 0.0],
+        });
     }
 
     pub(super) fn add(
@@ -893,24 +900,25 @@ impl ScalarSpanPlan {
 }
 
 #[derive(Default)]
-pub(super) struct ScalarAverageShapes {
+pub(super) struct VisibilityAverageShapes {
     previous: Option<(usize, usize, usize)>,
 }
 
-impl ScalarAverageShapes {
+impl VisibilityAverageShapes {
     pub(super) fn check_shape(
         &mut self,
+        average: &str,
         group: usize,
         correlations: usize,
         channels: usize,
     ) -> Result<(), String> {
-        // Rows in one scalar time group are consecutive in iterator order.
+        // Samples in one reduction group are consecutive in iterator order.
         if let Some((previous_group, expected_correlations, expected_channels)) = self.previous
             && previous_group == group
             && (expected_correlations, expected_channels) != (correlations, channels)
         {
             return Err(format!(
-                "PlotMS scalar time averaging requires equal correlation and channel counts within a bin; expected {expected_correlations} correlations and {expected_channels} channels, found {correlations} correlations and {channels} channels",
+                "PlotMS {average} requires equal correlation and channel counts within a bin; expected {expected_correlations} correlations and {expected_channels} channels, found {correlations} correlations and {channels} channels",
             ));
         }
         self.previous = Some((group, correlations, channels));
