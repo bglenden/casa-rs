@@ -1011,6 +1011,7 @@ def compare_baseline_averaged_columns(root, native):
                                       yaxislocation=["left", "right"], spw="0:1", avgbaseline=True)
     cases = (
         ("baseline-independent", "XX", [(2.8, 28)] * 6),
+        ("baseline-axis-order", "XX", [(2.8, 28)] * 6),
         ("baseline-both-correlations", "XX,YY", [(2.8, 28)] * 12),
         ("baseline-selected-yy", "YY", [(1.2, 12)] * 6),
         ("baseline-mixed-flags", "XX", [(1, 10), (2.8, 28)] * 3),
@@ -1042,6 +1043,8 @@ def compare_baseline_averaged_columns(root, native):
                 spectrum = np.where(high, 1, 9).astype(np.float32)
                 table.putcol(column, np.broadcast_to(spectrum, shape).copy())
         options = controls | dict(vis=str(vis), correlation=correlation)
+        if name == "baseline-axis-order":
+            options["yaxis"] = ["real", "amp"]
         expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**options, expformat="txt", plotfile=str(expected)) is None
         selected = rows(expected)

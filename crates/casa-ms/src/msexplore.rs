@@ -2756,14 +2756,10 @@ fn build_uncalibrated_plotms_payload(
         .map(|load| load(ms, &selected.selected_rows))
         .transpose()?
         .flatten();
-    let time_bins = columns
-        .secondary_y
-        .and_then(|_| {
-            let plot = spec.plots.first()?;
-            Some((plot, plot.averaging.avgtime?))
-        })
-        .map(|(plot, seconds)| {
-            if plotms_columns::uses_model(
+    let independent_plot = columns.secondary_y.and_then(|_| spec.plots.first());
+    if independent_plot.is_some_and(|plot| {
+        uses_extended_averaging(plot)
+            && plotms_columns::uses_model(
                 [
                     Some(plot.x_axis),
                     Some(plot.y_axis()),
@@ -2774,9 +2770,13 @@ fn build_uncalibrated_plotms_payload(
                     plot.data_column,
                     columns.secondary_y.unwrap_or(plot.data_column),
                 ],
-            ) {
-                plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
-            }
+            )
+    }) {
+        plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
+    }
+    let time_bins = independent_plot
+        .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
+        .map(|(plot, seconds)| {
             crate::transform::selected_plot_time_groups(
                 ms,
                 &selected.selected_rows,
@@ -4838,6 +4838,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let visibility_columns =
         plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
     let time_bins = calibration.and_then(|input| input.time_bins);
+    let collapse_baselines = spec.averaging.avgbaseline
+        && calibration
+            .is_some_and(|input| input.rows.is_none() && input.secondary_y_data_column.is_some());
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
@@ -4895,7 +4898,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let iteraxis = spec.iteration.iteraxis;
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
-    let use_spectral_weights = calibration.is_some() && needs_visibility_grid;
+    let use_spectral_weights =
+        calibration.is_some() && needs_visibility_grid && !collapse_baselines;
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
             .y_axes
@@ -4992,7 +4996,11 @@ fn build_generic_visibility_scatter_with_averaging(
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
-        if flag_row_value && !include_row_flagged_points && time_bins.is_none() {
+        if flag_row_value
+            && !include_row_flagged_points
+            && time_bins.is_none()
+            && !collapse_baselines
+        {
             continue;
         }
 
@@ -5171,6 +5179,11 @@ fn build_generic_visibility_scatter_with_averaging(
         )?;
 
         let baseline_tokens = averaging_baseline_tokens(antenna1_value, antenna2_value, spec);
+        let shared_baseline_weight = collapse_baselines.then(|| {
+            let weight = weight_values[selected_correlations[0].0];
+            let minimum = f64::from(f32::MIN_POSITIVE);
+            if weight < minimum { minimum } else { weight }
+        });
         let mut row_panels = std::collections::BTreeSet::<String>::new();
         for (corr_index, corr_label) in &selected_correlations {
             let row_weight = weight_values[*corr_index];
@@ -5178,7 +5191,8 @@ fn build_generic_visibility_scatter_with_averaging(
             let mut flag_samples = Vec::<bool>::new();
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
-            let scalar_weight = time_weight_kinds.map_or(row_weight, |_| 1.0);
+            let scalar_weight = shared_baseline_weight
+                .unwrap_or_else(|| time_weight_kinds.map_or(row_weight, |_| 1.0));
             for baseline_token in &baseline_tokens {
                 let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(target)
                     if antenna1_value != antenna2_value && *target == antenna2_value);
@@ -5565,7 +5579,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 series_entries.push(output);
             }
         }
-        if time_weight_kinds.is_some() {
+        if time_weight_kinds.is_some() || collapse_baselines {
             series_entries.sort_by_key(|entry| entry.y_index);
         }
         if series_entries.is_empty() {
