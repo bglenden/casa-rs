@@ -166,7 +166,7 @@ fn selected_windows_after_failure(
     // A successful transform already reports the original window IDs it
     // wrote. Only resolve metadata again when there is no transform report.
     if selection.antenna.as_deref().is_none_or(str::is_empty) {
-        selection.antenna = Some("&&&".into());
+        selection.antenna = Some("*&&&".into());
     }
     MsSelectionIoBudget::from_system_memory(1, std::mem::size_of::<ResolvedMsSelectionRow>(), None)
         .ok()

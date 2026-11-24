@@ -405,6 +405,97 @@ def test_tool(root, source, tasks):
     erase(outputs)
 
 
+
+def diagnostic_records(records):
+    return [
+        (priority, message) for priority, message in records
+        if message.startswith(('Setting numThreads_ to ', 'processspw (input) = '))
+        or message.endswith(' output but not corrected')
+    ]
+
+
+def test_task_diagnostics(root, source, tasks):
+    malformed = root / 'missing-pressure.ms'
+    shutil.copytree(source, malformed)
+    with opened(malformed / 'ASDM_CALATMOSPHERE', True) as table:
+        table.removecols('groundPressure')
+
+    non_science = root / 'non-science-window.ms'
+    shutil.copytree(source, non_science)
+    with opened(source / 'DATA_DESCRIPTION') as description:
+        windows = description.getcol('SPECTRAL_WINDOW_ID')
+    with opened(source / 'STATE') as state:
+        modes = state.getcol('OBS_MODE')
+    calibrator_state = next(index for index, mode in enumerate(modes)
+                            if not mode.startswith('OBSERVE_TARGET'))
+    with opened(non_science, True) as table:
+        states = table.getcol('STATE_ID')
+        states[windows[table.getcol('DATA_DESC_ID')] == 19] = calibrator_state
+        table.putcol('STATE_ID', states)
+
+    threads = ('INFO', 'Setting numThreads_ to 2')
+    requested = ('INFO', 'processspw (input) = [23]')
+    warning = ('WARN', 'SPW 19 is output but not corrected')
+    ddids = ','.join(map(str, np.flatnonzero(windows == 23)))
+    cases = [
+        ('repeated', source, {}, [threads, requested, warning]),
+        ('filtered', source, {'msselect': f'DATA_DESC_ID IN [{ddids}]'},
+         [threads, requested]),
+        ('malformed', malformed, {}, [threads, requested, warning]),
+        ('non-science', non_science, {'spw': '23,19,23'},
+         [threads, ('INFO', 'processspw (input) = [19, 23]'), warning]),
+    ]
+    previous_log = casa.casalog.logfile()
+    env_names = ('OMP_NUM_THREADS', 'CASA_RS_LOG_TABLE', 'CASA_RS_LOG_TABLE_PRIORITY')
+    previous_env = {name: os.environ.get(name) for name in env_names}
+    os.environ['OMP_NUM_THREADS'] = '2'
+    os.environ['CASA_RS_LOG_TABLE_PRIORITY'] = 'INFO'
+    try:
+        for name, task in tasks.items():
+            for label, input_ms, options, expected in cases:
+                logfile = root / f'diagnostics-{name}-{label}.log'
+                output = root / f'diagnostics-{name}-{label}.ms'
+                if name == 'casa':
+                    assert casa.casalog.setlogfile(str(logfile))
+                else:
+                    os.environ['CASA_RS_LOG_TABLE'] = str(logfile)
+                arguments = {'spw': '23,23', 'outputspw': '23,19,19', **options}
+                try:
+                    assert task(str(input_ms), outfile=str(output), **arguments) is None
+                except RuntimeError as error:
+                    assert label == 'malformed' and 'groundPressure' in str(error), str(error)
+                else:
+                    assert label != 'malformed'
+                if name == 'casa':
+                    records = [line.split('\t', 3) for line in logfile.read_text().splitlines()]
+                    actual = diagnostic_records((line[1], line[3]) for line in records if len(line) == 4)
+                else:
+                    with opened(logfile) as table:
+                        actual = diagnostic_records(zip(table.getcol('PRIORITY'), table.getcol('MESSAGE')))
+                assert actual == expected, (name, label, actual, expected)
+                if output.exists():
+                    shutil.rmtree(output)
+        if 'native' in tasks:
+            logfile = root / 'diagnostics-warn-only.log'
+            os.environ['CASA_RS_LOG_TABLE'] = str(logfile)
+            os.environ['CASA_RS_LOG_TABLE_PRIORITY'] = 'WARN'
+            output = root / 'diagnostics-warn-only.ms'
+            assert tasks['native'](str(source), outfile=str(output), spw='23') is None
+            with opened(logfile) as table:
+                assert diagnostic_records(zip(table.getcol('PRIORITY'), table.getcol('MESSAGE'))) == [warning]
+            shutil.rmtree(output)
+    finally:
+        assert casa.casalog.setlogfile(previous_log)
+        for name, value in previous_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    shutil.rmtree(malformed)
+    shutil.rmtree(non_science)
+    print('Atmospheric selection, startup and WARN diagnostics match CASA.', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path, help='Upstream measurementset/almasd/X320b_sel2.ms')
@@ -440,6 +531,7 @@ def main():
         test_cropped_windows(root, source, defaults, tasks)
         test_review_cases(root, source, tasks)
         test_errors(root, source, tasks)
+        test_task_diagnostics(root, source, tasks)
     print('ALMA atmospheric correction, selection and MeasurementSet interchange passed.', flush=True)
 
 
