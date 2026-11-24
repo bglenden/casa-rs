@@ -5,7 +5,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use super::{Table, TableError, TableOptions};
-use crate::storage::table_control::{TableDatResult, read_table_dat_dispatch};
+use crate::storage::table_control::{RefTableDatContents, TableDatResult, read_table_dat_dispatch};
 use crate::table_path::add_directory_for_link;
 
 /// Make a table cache name absolute and remove lexical `.` and `..` without
@@ -106,6 +106,41 @@ pub enum TablePartNames {
     },
 }
 
+/// The persisted row and column projection of a saved reference onto a plain
+/// table. Keep it only while the reference and parent publications are current.
+#[doc(hidden)]
+pub struct PlainReferenceRead {
+    parent: Table,
+    reference: RefTableDatContents,
+}
+
+impl PlainReferenceRead {
+    /// The open physical parent of this view.
+    pub fn parent(&self) -> &Table {
+        &self.parent
+    }
+
+    /// Translate logical rows to parent rows in order, preserving duplicates.
+    pub fn parent_rows(&self, rows: &[usize]) -> Result<Vec<usize>, TableError> {
+        self.reference.parent_rows(rows).map_err(TableError::from)
+    }
+
+    /// Find the physical column when the view exposes the logical column.
+    pub fn parent_column<'a>(&'a self, column: &'a str) -> Result<&'a str, TableError> {
+        if !self
+            .reference
+            .column_names
+            .iter()
+            .any(|name| name == column)
+        {
+            return Err(TableError::SchemaColumnUnknown {
+                column: column.into(),
+            });
+        }
+        Ok(self.reference.parent_column(column))
+    }
+}
+
 impl Table {
     /// Read the direct part names reported by casacore's `Table::getPartNames`.
     ///
@@ -142,6 +177,28 @@ impl Table {
             TableDatResult::Concat(concat) => immediate_names(&path, &concat.table_paths).map(Some),
             _ => Ok(None),
         }
+    }
+
+    /// Open the physical parent and projection of a direct on-disk reference
+    /// whose parent is plain. Other layouts return `None`.
+    ///
+    /// # Errors
+    /// A required descriptor is missing or cannot be decoded.
+    #[doc(hidden)]
+    pub fn open_plain_reference(path: &Path) -> Result<Option<PlainReferenceRead>, TableError> {
+        let control = crate::storage::TABLE_CONTROL_FILE;
+        let TableDatResult::Ref(reference) = read_table_dat_dispatch(&path.join(control))? else {
+            return Ok(None);
+        };
+        let parent_path = add_directory_for_link(&reference.parent_relative_path, path);
+        if !matches!(
+            read_table_dat_dispatch(&parent_path.join(control))?,
+            TableDatResult::Plain(_)
+        ) {
+            return Ok(None);
+        }
+        let parent = Self::open(TableOptions::new(parent_path))?;
+        Ok(Some(PlainReferenceRead { parent, reference }))
     }
 
     /// Return the absolute plain-table cache names held by this table. A
