@@ -2244,6 +2244,8 @@ pub enum MsScatterPlotMsAverageIds {
     ScanAndField(Arc<[(i32, i32)]>),
     /// Output antenna IDs for per-antenna averages.
     Antenna(Arc<[i32]>),
+    /// Shared `(scan, field, antenna)` IDs when antenna averaging spans scans or fields.
+    ScanFieldAndAntenna(Arc<[(i32, i32, i32)]>),
 }
 
 /// Display metadata for one PlotMS export coordinate.
@@ -5452,7 +5454,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
-    let scalar_spans = (scalar_average && (spec.averaging.avgscan || spec.averaging.avgfield))
+    let spans_scan_or_field = spec.averaging.avgscan || spec.averaging.avgfield;
+    let scalar_spans = (scalar_intervals && spans_scan_or_field)
         .then(|| {
             plotms_ordinates::ScalarSpanPlan::new(
                 plotms_ordinates::ScalarSpanColumns {
@@ -5640,22 +5643,27 @@ fn build_generic_visibility_scatter_with_averaging(
         let row_interval_value = selected_intervals[row_slot];
         let starts_buffer = scalar_intervals
             && calibration.is_some_and(|input| input.starts_visibility_buffer[row_slot]);
+        let scalar_span_group = scalar_spans
+            .as_ref()
+            .and_then(|spans| spans.group(row_slot));
         // The iterator counts a flagged integration before applying the plot mask.
         // It can separate two visible buffers that have the same timestamp.
         let antenna_group = selected_observations
             .as_ref()
             .filter(|_| antenna_average && !time_antenna)
             .map(|observations| {
-                baseline_groups.observe(
-                    [
-                        observations[row_slot],
-                        scan_number_value,
-                        field_id_value,
-                        spw_id,
-                    ],
-                    row_time_value,
-                    spec.averaging.avgtime.unwrap_or(0.0),
-                )
+                scalar_span_group.unwrap_or_else(|| {
+                    baseline_groups.observe(
+                        [
+                            observations[row_slot],
+                            scan_number_value,
+                            field_id_value,
+                            spw_id,
+                        ],
+                        row_time_value,
+                        spec.averaging.avgtime.unwrap_or(0.0),
+                    )
+                })
             });
         if scalar_antenna_time
             && starts_buffer
@@ -5828,26 +5836,26 @@ fn build_generic_visibility_scatter_with_averaging(
             let group = bins.group(row_slot);
             (Some(group), bins.first_row_slot(group))
         });
-        let group = time_group.or(antenna_group).or_else(|| {
-            if let Some(spans) = &scalar_spans {
-                return spans.group(row_slot);
-            }
-            selected_observations.as_ref().map(|observations| {
-                baseline_groups.observe(
-                    [
-                        observations[row_slot],
-                        scan_number_value,
-                        field_id_value,
-                        spw_id,
-                    ],
-                    row_time_value,
-                    spec.averaging
-                        .avgtime
-                        .filter(|_| scalar_average)
-                        .unwrap_or(0.0),
-                )
-            })
-        });
+        let group = time_group
+            .or(antenna_group)
+            .or(scalar_span_group)
+            .or_else(|| {
+                selected_observations.as_ref().map(|observations| {
+                    baseline_groups.observe(
+                        [
+                            observations[row_slot],
+                            scan_number_value,
+                            field_id_value,
+                            spw_id,
+                        ],
+                        row_time_value,
+                        spec.averaging
+                            .avgtime
+                            .filter(|_| scalar_average)
+                            .unwrap_or(0.0),
+                    )
+                })
+            });
         if scalar_intervals && let Some(group) = group {
             scalar_shapes.check_shape(
                 "scalar time averaging",
@@ -5901,8 +5909,8 @@ fn build_generic_visibility_scatter_with_averaging(
                     time_group: group,
                     partition: [
                         observations[row_slot],
-                        scan_number_value,
-                        field_id_value,
+                        representative_scan,
+                        representative_field,
                         spw_id,
                     ],
                     integration: plotms_time_baselines::Integration {
@@ -6451,8 +6459,7 @@ fn build_generic_visibility_scatter_with_averaging(
 
     let time_baseline_plan = time_baseline_stats
         .zip(time_bins)
-        .zip(spec.averaging.avgtime)
-        .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval))
+        .map(|(statistics, groups)| statistics.plan(groups, &row_numbers, &spec.averaging))
         .transpose()?;
     if let Some(plan) = time_baseline_plan.as_ref().filter(|_| time_antenna) {
         averaged_rows = averaged_rows
@@ -6479,7 +6486,24 @@ fn build_generic_visibility_scatter_with_averaging(
             .map(|(group, average)| (group, average.mean()))
             .collect::<HashMap<_, _>>()
     });
-    let averaged_ids = if let Some(spans) = &scalar_spans {
+    let averaged_ids = if antenna_average && spans_scan_or_field {
+        let ids = averaged_rows
+            .iter()
+            .map(|&(group, antenna, _)| {
+                let (scan, field) = if let Some(spans) = &scalar_spans {
+                    let metadata = spans.metadata(group);
+                    (metadata.scan, metadata.field)
+                } else {
+                    time_baseline_plan
+                        .as_ref()
+                        .and_then(|plan| plan.scan_and_field(group))
+                        .expect("vector antenna averaging group")
+                };
+                (scan, field, antenna)
+            })
+            .collect();
+        Some(MsScatterPlotMsAverageIds::ScanFieldAndAntenna(ids))
+    } else if let Some(spans) = &scalar_spans {
         let ids = averaged_rows
             .iter()
             .map(|&(group, _, _)| {

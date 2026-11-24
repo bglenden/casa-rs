@@ -1214,20 +1214,28 @@ def compare_vector_antenna_time_channel_observed_spectrum(root, native, source, 
 
 def compare_antenna_scan_field_spans(root, native, source, start, base, amplitudes, turns):
     selections = {}
+    scan_and_field = (("SCAN_NUMBER", 7), ("FIELD_ID", 1))
     for name, columns in (
         ("scan", (("SCAN_NUMBER", 7),)),
         ("field", (("FIELD_ID", 1),)),
-        ("both", (("SCAN_NUMBER", 7), ("FIELD_ID", 1))),
+        ("both", scan_and_field),
+        ("masked", scan_and_field),
+        ("early-boundary", scan_and_field),
     ):
         vis = root / f"antenna-{name}-span.ms"
         copy_ms(source, vis)
         with opened(vis, True) as table:
             times = table.getcol("TIME")
-            late = (times >= start + 29) & (times <= start + 51)
+            boundary = 19 if name == "early-boundary" else 29
+            late = (times >= start + boundary) & (times <= start + 51)
             for column, value in columns:
                 ids = table.getcol(column)
                 ids[late] = value
                 table.putcol(column, ids)
+            if name == "masked":
+                flags = table.getcol("FLAG")
+                flags[:, :, times == np.unique(times)[2]] = True
+                table.putcol("FLAG", flags)
         selections[name] = vis
 
     rotations = amplitudes.astype(float) * np.exp(1j * np.radians(turns.astype(float)))
@@ -1243,33 +1251,47 @@ def compare_antenna_scan_field_spans(root, native, source, start, base, amplitud
             ("field-barrier", "both", dict(avgscan=True), ((0, 3, 1, 0), (3, 6, 7, 1))),
             ("time-axis", "both", dict(avgscan=True, avgfield=True, xaxis="time"),
              ((0, 6, -1 if scalar else 1, 0),)),
+            ("masked-spans", "masked", dict(avgscan=True, avgfield=True), ((0, 6, -1 if scalar else 1, 0),)),
+            ("channel-spans", "both", dict(avgscan=True, avgfield=True, avgchannel="2", spw="0:0~3"),
+             ((0, 6, -1 if scalar else 1, 0),)),
         )
+        if not scalar:
+            cases += (("shorter-spans", "early-boundary", dict(avgscan=True, avgfield=True, avgtime="20"),
+                       ((0, 4, -1, 0), (4, 6, 7, 1))),)
         for name, selection, overrides, groups in cases:
             args = controls | overrides | dict(vis=str(selections[selection]), scalar=scalar)
-            coordinates, metadata, centers = [], [], []
+            channels = ((0, "100.000500000", .25), (1, "100.002500000", 1)) if "avgchannel" in args else (
+                (1, "100.001000000", 1),
+            )
+            coordinates, metadata, centers, spectral_coordinates = [], [], [], []
             for begin, end, scan, field in groups:
                 center = start + 5 * (begin + end - 1)
+                samples = np.arange(begin, end)
+                if selection == "masked":
+                    samples = samples[samples != 2]
                 if scalar:
-                    amplitude = np.hypot(1, 4) * amplitudes[begin:end].mean()
-                    angle = np.angle(10 + 14j, deg=True) + turns[begin:end].mean()
+                    amplitude = np.hypot(1, 4) * amplitudes[samples].mean()
+                    angle = np.angle(10 + 14j, deg=True) + turns[samples].mean()
                     visibilities = ((1.75 * amplitude, angle + 67.5), (amplitude, -angle),
                                     (2 * amplitude, -angle - 90))
                 else:
-                    rotation = rotations[begin:end].mean()
+                    rotation = rotations[samples].mean()
                     visibilities = [
                         (abs((1 + 4j) * rotation * gain),
                          direction * np.angle((10 + 14j) * rotation * gain, deg=True))
                         for gain, direction in (((1 + 6j) / 4, 1), (1, -1), (2j, -1))
                     ]
                 for antenna, (amplitude, angle) in enumerate(visibilities):
-                    coordinates.append((center if args["xaxis"] == "time" else amplitude, angle))
-                    metadata.append([str(scan), str(field), str(antenna), "-1"])
-                    centers.append(center)
+                    for channel, frequency, gain in channels:
+                        coordinates.append((center if args["xaxis"] == "time" else amplitude * gain, angle))
+                        metadata.append([str(scan), str(field), str(antenna), "-1"])
+                        centers.append(center)
+                        spectral_coordinates.append((str(channel), frequency, "XX"))
             expected, actual = (root / f"{mode}-antenna-{name}.{engine}.txt" for engine in ("casa", "native"))
             assert reference(**args, plotfile=str(expected), expformat="txt") is None
             selected = rows(expected)
             assert [point[3:7] for point in selected] == metadata
-            assert {(point[2], point[10], point[12]) for point in selected} == {("1", "100.001000000", "XX")}
+            assert [(point[2], point[10], point[12]) for point in selected] == spectral_coordinates
             np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
                                        coordinates, rtol=1.2e-5)
             np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)

@@ -40,8 +40,8 @@ pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
 pub(super) fn uses_antenna_visibility_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgantenna
         && !spec.averaging.avgbaseline
-        && !spec.averaging.avgscan
-        && !spec.averaging.avgfield
+        && (spec.averaging.avgtime.is_some()
+            || !(spec.averaging.avgscan || spec.averaging.avgfield))
         && !spec.averaging.avgspw
         && supports_reduced_visibility_axes(spec)
 }

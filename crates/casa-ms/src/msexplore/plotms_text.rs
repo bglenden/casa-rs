@@ -305,6 +305,11 @@ fn write_point(
             (ids.get(order).copied(), None)
         }
         Some((MsScatterPlotMsAverageIds::Antenna(ids), order)) => (None, ids.get(order).copied()),
+        Some((MsScatterPlotMsAverageIds::ScanFieldAndAntenna(ids), order)) => ids
+            .get(order)
+            .map_or((None, None), |&(scan, field, antenna)| {
+                (Some((scan, field)), Some(antenna))
+            }),
         None => (None, None),
     };
     let (scan, field) = scan_field.unwrap_or((row.scan, row.field));
