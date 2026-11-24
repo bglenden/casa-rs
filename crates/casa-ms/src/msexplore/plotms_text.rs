@@ -325,11 +325,16 @@ fn write_point(
     };
     let spectral_window = match averaged.zip(order) {
         Some((MsScatterPlotMsAverageIds::SpectralWindow { groups, row_groups }, order)) => {
-            row_groups.get(order).and_then(|&group| groups.get(group))
+            row_groups
+                .get(order)
+                .and_then(|&group| groups.get(group))
+                .and_then(Option::as_ref)
         }
         _ => None,
     };
-    let (scan, field) = scan_field.unwrap_or((row.scan, row.field));
+    let (scan, field) = scan_field
+        .or_else(|| spectral_window.and_then(|window| window.scan_field))
+        .unwrap_or((row.scan, row.field));
     let (ant1, ant2, ant1name, ant2name) = if averaged_baselines {
         (-1, -1, "*", "*")
     } else if let Some(antenna) = antenna {

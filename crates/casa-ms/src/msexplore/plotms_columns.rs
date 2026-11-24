@@ -86,12 +86,12 @@ pub(super) fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
 
 pub(super) fn uses_spectral_window_average(spec: &MsPlotSpec) -> bool {
     let averaging = &spec.averaging;
+    let windows_only = averaging.avgtime.is_none() && !averaging.avgscan && !averaging.avgfield;
+    let scalar_time = averaging.scalar && averaging.avgtime.is_some();
     averaging.avgspw
-        && averaging.avgtime.is_none()
+        && (windows_only || scalar_time)
         && !averaging.avgbaseline
         && !averaging.avgantenna
-        && !averaging.avgscan
-        && !averaging.avgfield
         && supports_reduced_visibility_axes(spec)
 }
 

@@ -893,7 +893,7 @@ impl ScalarSpanPlan {
                     columns.observations[slot],
                     if averaging.avgscan { 0 } else { scan },
                     if averaging.avgfield { 0 } else { field },
-                    spw,
+                    if averaging.avgspw { 0 } else { spw },
                 ],
                 time,
                 interval,

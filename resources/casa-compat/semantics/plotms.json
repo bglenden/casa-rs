@@ -482,7 +482,8 @@
         "ms-vector-time-channel-antenna",
         "ms-antenna-scan-field-spans",
         "ms-direct-stored-vector-time-channel",
-        "ms-spw-average-coordinates"
+        "ms-spw-average-coordinates",
+        "ms-scalar-spw-time-spans"
       ],
       "behaviors": [
         "averaging"
@@ -520,7 +521,8 @@
         "ms-vector-antenna-time",
         "ms-vector-time-channel-antenna",
         "ms-antenna-scan-field-spans",
-        "ms-direct-stored-vector-time-channel"
+        "ms-direct-stored-vector-time-channel",
+        "ms-scalar-spw-time-spans"
       ],
       "behaviors": [
         "averaging"
@@ -537,7 +539,8 @@
         "ms-scalar-scan-field-spans",
         "ms-channel-scalar-scan-field-spans",
         "ms-scalar-baseline-averages",
-        "ms-antenna-scan-field-spans"
+        "ms-antenna-scan-field-spans",
+        "ms-scalar-spw-time-spans"
       ],
       "behaviors": [
         "averaging"
@@ -553,7 +556,8 @@
         "ms-derived-scan-field-spans",
         "ms-scalar-scan-field-spans",
         "ms-channel-scalar-scan-field-spans",
-        "ms-antenna-scan-field-spans"
+        "ms-antenna-scan-field-spans",
+        "ms-scalar-spw-time-spans"
       ],
       "behaviors": [
         "averaging"
@@ -593,10 +597,11 @@
       "status": "Partial"
     },
     "avgspw": {
-      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window.",
+      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer.",
       "evidence": [
         "paired",
-        "ms-spw-average-coordinates"
+        "ms-spw-average-coordinates",
+        "ms-scalar-spw-time-spans"
       ],
       "behaviors": [
         "averaging"
@@ -620,7 +625,8 @@
         "ms-channel-before-antenna-averages",
         "ms-scalar-antenna-time",
         "ms-antenna-scan-field-spans",
-        "ms-spw-average-coordinates"
+        "ms-spw-average-coordinates",
+        "ms-scalar-spw-time-spans"
       ],
       "behaviors": [
         "averaging"
@@ -2411,6 +2417,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-spw-average-coordinates-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2244"
+      ]
+    },
+    "ms-scalar-spw-time-spans": {
+      "kind": "Paired public scalar time and SPW averages",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Scalar time and SPW averaging of stored visibility columns with optional complex channel bins and scan and field spans.",
+      "result": "Eleven TXT pairs match 22 selected coordinates, including the closed endpoint, independent stored visibility columns, the last attached GHz grid, cube and row-only flags, unflagged NaN propagation, noncollinear complex channel bins, and scan and field IDs with retained barriers or either or both spans. One 500 by 360 PNG pair verifies two artist coordinates and the Time and Phase axis labels.",
+      "casa_version": "6.7.6.14",
+      "revision": "450e669850146eb3f7b48894b5da97552736fdcb",
+      "source_revision": "450e669850146eb3f7b48894b5da97552736fdcb",
+      "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate> --only scalar-time",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-scalar-spw-time-spans-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2247"
       ]
     }
   }
