@@ -5937,9 +5937,12 @@ fn build_generic_visibility_scatter_with_averaging(
             let mut sigma_spectrum_samples = Vec::<f64>::new();
             let scalar_weight = shared_baseline_weight
                 .unwrap_or_else(|| time_weight_kinds.map_or(row_weight, |_| 1.0));
-            for baseline_token in &baseline_tokens {
-                let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(target)
-                    if antenna1_value != antenna2_value && *target == antenna2_value);
+            for (endpoint, baseline_token) in baseline_tokens.iter().enumerate() {
+                // For a per-antenna average the second end contributes a
+                // conjugate, including when both ends are the same antenna.
+                let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(_))
+                    && endpoint == 1
+                    && (antenna_average || antenna1_value != antenna2_value);
                 for bin in channel_bins.iter() {
                     let channel_masked = channel_mask_grid.is_some_and(|grid| {
                         if scalar_channels {
