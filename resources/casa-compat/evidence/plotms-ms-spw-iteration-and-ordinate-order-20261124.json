@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "56375fbb922a89e5bdb073081479065e7bbe5670",
+  "source_revision": "56375fbb922a89e5bdb073081479065e7bbe5670",
+  "baseline_revision": "1b43d0c3848a22c2bcc62bf3a724dd15531b5c0d",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only iteration --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Static scan, field and correlation iteration over spectral-window averaged stored or virtual visibility ordinates, and requested order for repeated model ordinates in noniterated SPW plots.",
+  "result": "passed",
+  "baseline_result": "Main refuses selected virtual SPW iteration and writes Imag before Real for the noniterated repeated-MODEL standalone and scalar time examples.",
+  "text_exports": 12,
+  "points": 68,
+  "figures": 6,
+  "rendered_coordinates": 14,
+  "evidence_reuse": "The iteration batch at 84588c11b covers the multi-ordinate requests and the simple two-scan single-MODEL control. The follow-up retains the same layout for those requests and runs the two affected single-ordinate layout regressions with --only iteration-layout."
+}
