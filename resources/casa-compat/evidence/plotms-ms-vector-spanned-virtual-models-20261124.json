@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "8a8226c6af2dd084f87c839fc100d65eb6b86bf9",
+  "source_revision": "8a8226c6af2dd084f87c839fc100d65eb6b86bf9",
+  "baseline_revision": "7d5a35b5be9637009db48080f8085f2ac89cbce1",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_virtual_derived_oracle.py --only vector-field-spans --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Vector time averages over scans and fields with selected virtual visibility model cells, including complex visibility coordinates, residuals and optional channel bins.",
+  "result": "passed",
+  "baseline_result": "Main refuses the same public vector virtual model requests and requires stored MODEL_DATA for field-spanning residuals.",
+  "text_exports": 15,
+  "points": 40,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "scalar_control_points": 9,
+  "prior_scan_residual_control_points": 1,
+  "stored_models_written": 0,
+  "evidence_reuse": "The scan-only addition preserves the field-span and scalar predicates. Reuse the earlier field and masked-channel pairs and recheck the scan-only cases and prior scan residual. The review follow-up changes differing input buffer identities, and tests tied recipes and moving epochs."
+}
