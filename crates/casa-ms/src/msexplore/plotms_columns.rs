@@ -187,12 +187,36 @@ pub(super) struct PlotMsWeightKinds {
     pub(super) primary: WeightKind,
     pub(super) row_weight: WeightKind,
     pub(super) row_sigma: WeightKind,
+    has_observed: bool,
+    has_corrected: bool,
 }
 
 impl PlotMsWeightKinds {
     pub(super) fn uses(self, kind: WeightKind) -> bool {
         self.primary == kind || self.model == Some(kind) || self.axes.contains(&kind)
     }
+
+    pub(super) fn for_column(self, column: MsDataColumn) -> WeightKind {
+        column_weight_kind(column, self.has_observed, self.has_corrected)
+    }
+}
+
+fn column_weight_kind(column: MsDataColumn, has_observed: bool, has_corrected: bool) -> WeightKind {
+    let column = match column {
+        MsDataColumn::Data
+        | MsDataColumn::DataMinusModel
+        | MsDataColumn::DataMinusModelScalar
+        | MsDataColumn::DataDivModel
+        | MsDataColumn::DataDivModelScalar => OptionalMainColumn::Data,
+        MsDataColumn::Corrected
+        | MsDataColumn::CorrectedMinusModel
+        | MsDataColumn::CorrectedMinusModelScalar
+        | MsDataColumn::CorrectedDivModel
+        | MsDataColumn::CorrectedDivModelScalar => OptionalMainColumn::CorrectedData,
+        MsDataColumn::Model => OptionalMainColumn::ModelData,
+        _ => return WeightKind::Unit,
+    };
+    visibility_weight_kind(column, has_observed, has_corrected, false)
 }
 
 pub(super) fn weight_kinds(
@@ -213,7 +237,7 @@ pub(super) fn weight_kinds(
     ];
     let schema = ms.main_table().schema();
     let has = |name| schema.is_some_and(|schema| schema.contains_column(name));
-    let mut active = axes
+    let first_axes = axes
         .into_iter()
         .zip(columns)
         .zip(input.weight_axis_columns)
@@ -227,6 +251,11 @@ pub(super) fn weight_kinds(
                     .then_some(column)
             })
         });
+    let additional = input
+        .additional_ordinates
+        .iter()
+        .filter_map(|&(axis, column)| axis.is_visibility_math().then_some(column));
+    let mut active = first_axes.chain(additional);
     // A derived expression itself loads all columns, as does a mixed-column request.
     // A model uses corrected or observed weighting when present in that iterator.
     let first = active.next();
@@ -240,23 +269,7 @@ pub(super) fn weight_kinds(
     } else {
         first.unwrap_or(primary)
     };
-    let kind = |column| {
-        let column = match column {
-            MsDataColumn::Data
-            | MsDataColumn::DataMinusModel
-            | MsDataColumn::DataMinusModelScalar
-            | MsDataColumn::DataDivModel
-            | MsDataColumn::DataDivModelScalar => OptionalMainColumn::Data,
-            MsDataColumn::Corrected
-            | MsDataColumn::CorrectedMinusModel
-            | MsDataColumn::CorrectedMinusModelScalar
-            | MsDataColumn::CorrectedDivModel
-            | MsDataColumn::CorrectedDivModelScalar => OptionalMainColumn::CorrectedData,
-            MsDataColumn::Model => OptionalMainColumn::ModelData,
-            _ => return WeightKind::Unit,
-        };
-        visibility_weight_kind(column, has_observed, has_corrected, false)
-    };
+    let kind = |column| column_weight_kind(column, has_observed, has_corrected);
     PlotMsWeightKinds {
         axes: columns.map(kind),
         model: (input.extended_derived || uses_channel_derived(spec, input.x_data_column))
@@ -272,6 +285,8 @@ pub(super) fn weight_kinds(
         } else {
             kind(primary)
         },
+        has_observed,
+        has_corrected,
     }
 }
 

@@ -14,9 +14,10 @@ use crate::{MeasurementSet, initial_model_visibility, scratch_columns::virtual_m
 
 /// A selected virtual-model field overrides stored cells, including its
 /// fallback model in windows without a recipe.
-pub(super) fn refuse_averaged_virtual_fields(
+pub(super) fn refuse_selected_virtual_fields(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
+    message: &str,
 ) -> Result<(), String> {
     for field in virtual_model_fields(ms) {
         if rows.iter().any(|row| row.field_id == field)
@@ -24,7 +25,7 @@ pub(super) fn refuse_averaged_virtual_fields(
                 .map_err(|error| error.to_string())?
                 .is_some()
         {
-            return Err("PlotMS virtual MeasurementSet models are pending #1032".into());
+            return Err(message.into());
         }
     }
     Ok(())

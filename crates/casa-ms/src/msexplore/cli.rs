@@ -257,7 +257,8 @@ fn run_task(
             .transpose()?;
         if !options.additional_ordinates.is_empty() {
             if calibration.is_some()
-                || options.plotms_averaging_active()
+                || (options.plotms_averaging_active()
+                    && !options.supports_channel_visibility_ordinates())
                 || options.iteraxis.is_some()
             {
                 return Err(TaskFailure::validation(
@@ -452,17 +453,20 @@ fn run_visibility_plot(
             *columns = adjusted;
         }
     }
+    let averaging = options.plotms_averaging_active();
     for (axis, column) in &mut options.additional_ordinates {
         let ([resolved], _) =
-            plotms_columns::resolve_storage_columns(&ms, [*column], [Some(*axis)], false)?;
+            plotms_columns::resolve_storage_columns(&ms, [*column], [Some(*axis)], averaging)?;
         *column = resolved;
     }
     if !options.selection.selectdata {
         options.selection = MsSelection::default();
     }
     let axes = [options.x_axis, options.y_axis, options.y_axis2];
+    let channel_models = !options.plotms_extended_averaging()
+        && !axis_columns.is_some_and(|columns| options.supports_channel_derived(columns));
     let load_models = load_models.filter(|_| {
-        !options.plotms_averaging_active()
+        (!averaging || channel_models)
             && (axis_columns.is_some_and(|columns| plotms_columns::uses_model(axes, columns))
                 || options
                     .additional_ordinates

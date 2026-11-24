@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "d669b5df89fba40175fb7f98f12d875be6c6d55b",
+  "source_revision": "d669b5df89fba40175fb7f98f12d875be6c6d55b",
+  "baseline_revision": "6393f8546bf7a79cc9d6b90eaa470411491b1f03",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_channel_ordinates_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Channel-only averages of three and four independent MeasurementSet visibility ordinates, including stored or virtual models, independent visibility abscissae and axis sides.",
+  "result": "passed",
+  "baseline_result": "Main refuses channel averaging with more than two ordinates. Pinned CASA produces 36 and 48 points for three and four, respectively.",
+  "text_exports": 13,
+  "points": 444,
+  "provider_refusals": 1,
+  "figures": 1,
+  "rendered_coordinates": 36,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}

@@ -682,8 +682,6 @@ def compare_multiple_ordinates(root, vis, native):
             raise AssertionError(f"{engine} accepted duplicate ordinate and column pairs")
         assert not output.exists()
 
-    from casars.tasks import TaskParameterError
-
     invalid = base | dict(yaxislocation=["left", "right", "left", "top"])
     for engine, task in (("casa", reference), ("native", native)):
         output = root / f"three-ordinate-invalid-location.{engine}.txt"
@@ -698,14 +696,8 @@ def compare_multiple_ordinates(root, vis, native):
     averaged = base | dict(avgchannel="2", expformat="txt")
     expected, actual = (root / f"three-ordinate-averaged.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**averaged, plotfile=str(expected)) is None
-    assert len(rows(expected)) == 18
-    try:
-        native(**averaged, plotfile=str(actual))
-    except TaskParameterError as error:
-        assert "more than two MeasurementSet ordinates with averaging" in str(error), error
-    else:
-        raise AssertionError("PlotMS used the unaveraged ordinate path for an averaged request")
-    assert not actual.exists()
+    assert native(**averaged, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 18
 
 
 def compare_averaged_columns(root, native):
@@ -1667,20 +1659,13 @@ def compare_default_model(root, native):
     assert native(**residual_controls, plotfile=str(actual)) is None
     assert compare_text(actual, expected) == 6
 
-    from casars.tasks import TaskExecutionError
-
     average = controls | dict(avgchannel="3")
     expected, actual = (root / f"selected-virtual-averaged.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**average, plotfile=str(expected)) is None
     assert len(rows(expected)) == 3
     assert {float(point[1]) for point in rows(expected)} == {7.25}
-    try:
-        native(**average, plotfile=str(actual))
-    except TaskExecutionError as error:
-        assert "virtual MeasurementSet models are pending #1032" in str(error), error
-    else:
-        raise AssertionError("PlotMS applied the unaveraged model path to an averaged request")
-    assert not actual.exists()
+    assert native(**average, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 3
     with opened(virtual) as table:
         assert "MODEL_DATA" not in table.colnames()
         np.testing.assert_array_equal(table.getcol("DATA"), observed)
@@ -1711,6 +1696,8 @@ def compare_default_model(root, native):
         assert compare_text(actual, expected) == count
     average = controls | dict(vis=str(stored), xaxis="channel", xdatacolumn="",
                               yaxis=["amp", "amp"], ydatacolumn=["data", "model"], avgtime="20")
+    from casars.tasks import TaskExecutionError
+
     for name, field, spw, amplitude in (
         ("average-virtual-and-stored", "PHASE", "0:1", 7.25),
         ("average-unmodeled-window-and-stored", "PHASE", "1:1", 1),

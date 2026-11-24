@@ -55,6 +55,22 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
+    pub(super) fn supports_channel_visibility_ordinates(&self) -> bool {
+        !self.plotms_extended_averaging()
+            && !self.has_mixed_ordinate_dimensions()
+            && self.plotms_axis_columns().is_some_and(|columns| {
+                columns
+                    .into_iter()
+                    .chain(self.additional_ordinates.iter().map(|&(_, column)| column))
+                    .all(|column| {
+                        matches!(
+                            column,
+                            MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+                        )
+                    })
+            })
+    }
+
     pub(super) fn supports_channel_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
         let supported_pair = |derived: MsDataColumn, stored| {
             derived.is_derived() && matches!(stored, MsDataColumn::Data | MsDataColumn::Corrected)
