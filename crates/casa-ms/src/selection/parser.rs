@@ -17,6 +17,7 @@ use crate::listobs::{ListObsOptions, format_float_compact};
 pub(crate) fn selection_from_options(
     ms: &MeasurementSet,
     options: &ListObsOptions,
+    mut selection: CompiledMsSelection,
     grammar: super::RowGrammar,
     rows_per_block: Option<usize>,
 ) -> MsResult<CompiledMsSelection> {
@@ -25,8 +26,6 @@ pub(crate) fn selection_from_options(
     let full_row_grammar = matches!(grammar, RowGrammar::Casa | RowGrammar::Transform);
     let flagdata = matches!(grammar, RowGrammar::FlagData { .. });
     let casa_time_grammar = full_row_grammar || flagdata;
-    let mut selection = CompiledMsSelection::new();
-
     if let Some(field) = options.field.as_deref() {
         selection = selection.field(resolve_field_predicate(ms, field)?);
     }

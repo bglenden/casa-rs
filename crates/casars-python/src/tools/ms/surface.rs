@@ -287,7 +287,7 @@ const METHODS: &[Method] = &[
         "metadata",
         &[param("cachesize", K::Float, Float(50.0))],
         R::Any,
-        No,
+        Yes,
     ),
     method(
         "msselect",
@@ -298,7 +298,7 @@ const METHODS: &[Method] = &[
         R::Bool,
         Yes,
     ),
-    method("msselectedindices", &[], R::Any, No),
+    method("msselectedindices", &[], R::Any, Yes),
     method(
         "msseltoindex",
         &[
@@ -314,7 +314,7 @@ const METHODS: &[Method] = &[
             param("taql", K::Text, Text("")),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("name", &[], R::Any, Yes),
     method(
@@ -461,7 +461,7 @@ const METHODS: &[Method] = &[
         R::Any,
         No,
     ),
-    method("reset", &[], R::Any, No),
+    method("reset", &[], R::Bool, Yes),
     method(
         "select",
         &[param("items", K::Record, EmptyRecord)],

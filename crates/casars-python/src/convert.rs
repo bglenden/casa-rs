@@ -28,6 +28,7 @@ pub(crate) mod holder;
 pub(crate) mod measures;
 pub(crate) mod quantum;
 pub(crate) mod reply_value;
+pub(crate) mod selector;
 pub(crate) mod value;
 
 use std::cell::Cell;

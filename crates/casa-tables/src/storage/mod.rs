@@ -1418,16 +1418,7 @@ impl CompositeStorage {
                     return Ok(vec![None; selected_rows.len()]);
                 }
                 let parent = add_directory_for_link(&reference.parent_relative_path, table_path);
-                let parents = selected_rows
-                    .iter()
-                    .map(|&row| {
-                        reference.parent_row(row).ok_or_else(|| {
-                            StorageError::FormatMismatch(format!(
-                                "reference row {row} is out of bounds"
-                            ))
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let parents = reference.parent_rows(selected_rows)?;
                 // A full reference-row read retains the on-disk IncrementalStMan
                 // scalar values, including zero when the descriptor default is
                 // a different value. Projected reads keep that contract.
@@ -1824,10 +1815,17 @@ impl CompositeStorage {
                     self.load_array_column_rows_with_row_hint(path, column, local, None)
                 })
             }
-            TableDatResult::Ref(_) => {
-                let snapshot = self.load_with_row_hint(table_path, row_hint)?;
-                let values = array_column_from_snapshot(&snapshot, column)?;
-                Ok(select_array_rows(&values, selected_rows))
+            TableDatResult::Ref(reference) => {
+                if !reference.column_names.iter().any(|name| name == column) {
+                    return Ok(vec![None; selected_rows.len()]);
+                }
+                let parent = add_directory_for_link(&reference.parent_relative_path, table_path);
+                self.load_array_column_rows_with_row_hint(
+                    &parent,
+                    reference.parent_column(column),
+                    &reference.parent_rows(selected_rows)?,
+                    None,
+                )
             }
         }
     }

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-23",
+  "revision": "aa362fcb0cc9517990409ad4403ad7a5c4e64d7e",
+  "source_revision": "aa362fcb0cc9517990409ad4403ad7a5c4e64d7e",
+  "baseline_revision": "55a9278f89dfb5cece09d7edcd82ecf5d1f6564d",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Independent unaveraged MeasurementSet visibility ordinates and two static figure sides.",
+  "result": "passed",
+  "baseline_result": "CASA exported 36 selected points across three visibility ordinates. Native refused more than two.",
+  "text_exports": 5,
+  "points": 246,
+  "figures": 4,
+  "rendered_coordinates": 198,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "paired_refusals": 2,
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}

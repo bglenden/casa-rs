@@ -13,47 +13,6 @@ use super::{PyMsTool, runtime_error, strict_bool};
 
 #[pymethods]
 impl PyMsTool {
-    #[pyo3(signature = (items = None, onlyparse = false), text_signature = "($self, items={}, onlyparse=False)")]
-    fn msselect(
-        &self,
-        py: Python<'_>,
-        items: Option<&Bound<'_, PyDict>>,
-        #[pyo3(from_py_with = strict_bool)] onlyparse: bool,
-    ) -> PyResult<bool> {
-        let Some(request) = items
-            .and_then(|items| selection_request(items).ok())
-            .flatten()
-        else {
-            return Ok(false);
-        };
-        py.detach(|| {
-            let mut attached = self.attached.lock().map_err(runtime_error)?;
-            let Some(attached) = attached.as_mut() else {
-                return Ok(false);
-            };
-            let ms = StatWtMs::open(&attached.path, false).map_err(runtime_error)?;
-            let Ok(resolved) = ms.select(&request) else {
-                return Ok(false);
-            };
-            if resolved.is_empty()
-                && let Some(field) = &request.field
-                && !ms.has_matching_field(field)
-            {
-                return Ok(false);
-            }
-            if onlyparse {
-                return Ok(true);
-            }
-            let mut selected = resolved.iter().map(|row| row.row_index).collect::<Vec<_>>();
-            if let Some(previous) = &attached.selected_rows {
-                selected.retain(|row| previous.binary_search(row).is_ok());
-            }
-            let nonempty = !selected.is_empty();
-            attached.selected_rows = Some(selected);
-            Ok(nonempty)
-        })
-    }
-
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (combine = "", timebin = None, slidetimebin = false, chanbin = None, minsamp = 2,
         statalg = "classic", fence = -1.0, center = "mean", lside = true, zscore = -1.0, maxiter = -1,
@@ -171,30 +130,4 @@ fn read_bin<T>(
     Err(runtime_error(
         "statwt bin requires an integer count or a string quantity",
     ))
-}
-
-fn selection_request(items: &Bound<'_, PyDict>) -> PyResult<Option<MsSelection>> {
-    let mut request = MsSelection::default();
-    let mut named = false;
-    for (key, value) in items {
-        let key = key.extract::<&str>()?;
-        let slot = match key {
-            "spw" => &mut request.spw,
-            "time" => &mut request.timerange,
-            "field" => &mut request.field,
-            "baseline" | "antenna" => &mut request.antenna,
-            "scan" => &mut request.scan,
-            "scanintent" | "state" => &mut request.intent,
-            "polarization" => &mut request.correlation,
-            "uvdist" => &mut request.uvrange,
-            "observation" => &mut request.observation,
-            "array" => &mut request.array,
-            "taql" => &mut request.msselect,
-            _ => continue,
-        };
-        let value = value.extract::<String>()?;
-        *slot = (!value.is_empty()).then_some(value);
-        named |= slot.is_some();
-    }
-    Ok(named.then_some(request))
 }

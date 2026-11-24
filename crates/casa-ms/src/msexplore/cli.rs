@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Schema-backed CLI support for `msexplore`.
 
+mod plotms_options;
+
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,9 +20,10 @@ use super::{
     MsAxis, MsColorAxis, MsDataColumn, MsExploreSpec, MsExportFormat, MsFlagAction,
     MsFlagEditPreview, MsFlagEditSpec, MsFlagRegion, MsFlagRowEdit, MsFlagSampleEdit,
     MsIterationAxis, MsLegendPosition, MsPageExportRange, MsPageHeaderItem, MsPlotPreset,
-    MsPlotSpec, MsPlotStyleSpec, PlotMsCalibration, apply_msexplore_flag_edit_for_request,
-    build_calibrated_plotms_payload, build_msexplore_payload, build_uncalibrated_plotms_payload,
-    export_msexplore_plot, preview_msexplore_flag_edit_for_request,
+    MsPlotSpec, MsPlotStyleSpec, PlotMsCalibration, PlotMsColumnSelection,
+    apply_msexplore_flag_edit_for_request, build_calibrated_plotms_payload,
+    build_msexplore_payload, build_uncalibrated_plotms_payload, export_msexplore_plot,
+    preview_msexplore_flag_edit_for_request,
 };
 use crate::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
@@ -40,6 +43,9 @@ struct CliOptions {
     data_column: MsDataColumn,
     x_data_column: Option<MsDataColumn>,
     secondary_y_data_column: Option<MsDataColumn>,
+    additional_ordinates: Vec<(MsAxis, MsDataColumn)>,
+    right_ordinates: Vec<bool>,
+    weight_axis_columns: [Option<MsDataColumn>; 3],
     color_by: MsColorAxis,
     avgchannel: Option<usize>,
     avgtime: Option<f64>,
@@ -230,7 +236,23 @@ fn run_task(
         };
         let atmosphere = super::calibration::atmosphere::Options::from_task(task)?;
         let visibility_document = calibration.is_some() || atmosphere.is_some();
-        let (options, visibility_document) = options_from_plotms(task, visibility_document)?;
+        let (options, visibility_document) =
+            plotms_options::options_from_plotms(task, visibility_document)?;
+        if !options.additional_ordinates.is_empty() {
+            if calibration.is_some()
+                || options.plotms_averaging_active()
+                || options.iteraxis.is_some()
+            {
+                return Err(TaskFailure::validation(
+                    "more than two MeasurementSet ordinates with averaging, iteration or a callibrary are pending #1032",
+                ));
+            }
+            if options.has_mixed_ordinate_dimensions() {
+                return Err(TaskFailure::validation(
+                    "mixed MeasurementSet visibility and metadata ordinates or geometry abscissae are pending #1032",
+                ));
+            }
+        }
         if calibration.is_some() && options.secondary_y_data_column.is_some() {
             return Err(TaskFailure::validation(
                 "independent ordinate columns with a MeasurementSet callibrary are pending #1032",
@@ -250,11 +272,14 @@ fn run_task(
         {
             plotms_columns::check_averaging(
                 options.plotms_averaging_active(),
-                options.secondary_y_data_column.is_some(),
+                options.plotms_extended_averaging()
+                    && options.secondary_y_data_column.is_some()
+                    && !options.plotms_independent_vector_time_average(),
                 columns,
             )?;
             let symbols = task.value("customflaggedsymbol");
-            let ordinate_count = 1 + usize::from(options.y_axis2.is_some());
+            let ordinate_count =
+                1 + usize::from(options.y_axis2.is_some()) + options.additional_ordinates.len();
             if (0..ordinate_count)
                 .any(|index| super::calibration::figure::shows_flagged(symbols, index))
             {
@@ -291,29 +316,6 @@ fn run_task(
         Some(note) => success.with_note(note),
         None => success,
     })
-}
-
-impl CliOptions {
-    fn plotms_axis_columns(&self) -> Option<[MsDataColumn; 3]> {
-        (self.x_axis.is_some_and(MsAxis::is_visibility_math)
-            || self.y_axis.is_some_and(MsAxis::is_visibility_math)
-            || self.y_axis2.is_some())
-        .then_some([
-            self.x_data_column.unwrap_or(self.data_column),
-            self.data_column,
-            self.secondary_y_data_column.unwrap_or(self.data_column),
-        ])
-    }
-
-    fn plotms_averaging_active(&self) -> bool {
-        self.avgchannel.is_some_and(|width| width > 1)
-            || self.avgtime.is_some()
-            || self.avgscan
-            || self.avgfield
-            || self.avgbaseline
-            || self.avgantenna
-            || self.avgspw
-    }
 }
 
 fn run_visibility_plot(
@@ -360,13 +362,22 @@ fn run_visibility_plot(
             *columns = adjusted;
         }
     }
+    for (axis, column) in &mut options.additional_ordinates {
+        let ([resolved], _) =
+            plotms_columns::resolve_storage_columns(&ms, [*column], [Some(*axis)], false)?;
+        *column = resolved;
+    }
     if !options.selection.selectdata {
         options.selection = MsSelection::default();
     }
     let axes = [options.x_axis, options.y_axis, options.y_axis2];
     let load_models = load_models.filter(|_| {
         !options.plotms_averaging_active()
-            && axis_columns.is_some_and(|columns| plotms_columns::uses_model(axes, columns))
+            && (axis_columns.is_some_and(|columns| plotms_columns::uses_model(axes, columns))
+                || options
+                    .additional_ordinates
+                    .iter()
+                    .any(|(axis, column)| axis.is_visibility_math() && column.needs_model()))
     });
     let library = calibration
         .as_ref()
@@ -397,8 +408,12 @@ fn run_visibility_plot(
             None => build_uncalibrated_plotms_payload(
                 &ms,
                 &spec,
-                options.x_data_column,
-                options.secondary_y_data_column,
+                PlotMsColumnSelection {
+                    x: options.x_data_column,
+                    secondary_y: options.secondary_y_data_column,
+                    additional_y: &options.additional_ordinates,
+                    weights: options.weight_axis_columns,
+                },
                 prefer_float_data,
                 load_models,
             ),
@@ -426,7 +441,13 @@ fn run_visibility_plot(
                 figure_file,
                 show,
                 &overlays,
-                axis_columns.filter(|_| calibrated.is_none()),
+                axis_columns
+                    .filter(|_| calibrated.is_none())
+                    .map(|columns| super::plotms_figure::VisibilityAxisColumns {
+                        base: columns,
+                        additional: &options.additional_ordinates,
+                        right_ordinates: &options.right_ordinates,
+                    }),
             )?;
         }
         if let Some(path) = text_file {
@@ -614,12 +635,12 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
         max_plot_points: options.max_points,
         plots: vec![plot_spec],
     };
-    spec.validate_with_ordinate_columns(options.secondary_y_data_column.is_some())?;
+    spec.validate_with_ordinate_columns(options.has_independent_ordinates())?;
     Ok(spec)
 }
 
 fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
-    let spec = build_plot_spec_from_values(
+    let mut spec = build_plot_spec_from_values(
         options.preset,
         options.x_axis,
         options.y_axis,
@@ -656,7 +677,9 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
         options.showmajorgrid,
         options.showminorgrid,
     )?;
-    spec.validate_with_ordinate_columns(options.secondary_y_data_column.is_some())?;
+    spec.y_axes
+        .extend(options.additional_ordinates.iter().map(|&(axis, _)| axis));
+    spec.validate_with_ordinate_columns(options.has_independent_ordinates())?;
     Ok(spec)
 }
 
@@ -1142,6 +1165,9 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
         data_column: required(task, "datacolumn", MsDataColumn::parse)?,
         x_data_column: None,
         secondary_y_data_column: None,
+        additional_ordinates: Vec::new(),
+        right_ordinates: Vec::new(),
+        weight_axis_columns: [None; 3],
         color_by: required(task, "color_by", MsColorAxis::parse)?,
         avgchannel: parsed(task, "avgchannel", number::<usize>)?,
         avgtime: parsed(task, "avgtime", number::<f64>)?,
@@ -1189,189 +1215,6 @@ fn options_from(task: &TaskInvocation<'_>) -> Result<CliOptions, TaskFailure> {
     let plot_control_used = PLOT_CONTROLS.iter().any(|name| task.is_set(name));
     check_options(&options, plot_control_used).map_err(TaskFailure::validation)?;
     Ok(options)
-}
-
-/// Translate the CASA PlotMS spellings to the existing MS exploration request.
-fn options_from_plotms(
-    task: &TaskInvocation<'_>,
-    visibility_document: bool,
-) -> Result<(CliOptions, bool), TaskFailure> {
-    let text = |name| {
-        task.text(name)
-            .map(|text| text.filter(|value| !value.is_empty()))
-    };
-    let plot_output = text("plotfile")?.map(PathBuf::from);
-    let export_format = text("expformat")?.or_else(|| {
-        plot_output
-            .as_deref()
-            .and_then(std::path::Path::extension)
-            .and_then(std::ffi::OsStr::to_str)
-            .map(str::to_owned)
-    });
-    let x_axis = text("xaxis")?
-        .map_or(Ok(MsAxis::Time), |axis| {
-            MsAxis::parse(&axis.to_ascii_lowercase())
-        })
-        .map_err(TaskFailure::validation)?;
-    let mut ordinates = super::calibration::axis_names(task.value("yaxis"))
-        .map_err(TaskFailure::validation)?
-        .into_iter()
-        .map(|axis| MsAxis::parse(&axis.to_ascii_lowercase()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(TaskFailure::validation)?
-        .into_iter();
-    let y_axis = ordinates.next().unwrap_or(MsAxis::Amplitude);
-    let y_axis2 = ordinates.next();
-    if ordinates.next().is_some() {
-        return Err(TaskFailure::validation(
-            "more than two MeasurementSet ordinates are pending #1032",
-        ));
-    }
-    let averaging = task.flag("averagedata")?;
-    let average = |name| Ok::<_, TaskFailure>(averaging && task.flag(name)?);
-    let average_text = |name| if averaging { text(name) } else { Ok(None) };
-    let data_column = |column: Option<String>| {
-        column
-            .map(|column| MsDataColumn::parse(&column))
-            .transpose()
-            .map_err(TaskFailure::validation)
-    };
-    let x_column = data_column(text("xdatacolumn")?)?.unwrap_or(MsDataColumn::Data);
-    let [y_column, secondary_y] = plotms_columns::ordinate_columns(task, y_axis, y_axis2)?;
-    let secondary_uses_data = y_axis2.is_some_and(MsAxis::is_visibility_math);
-    let data_column = if y_axis.is_visibility_math() {
-        y_column
-    } else if x_axis.is_visibility_math() {
-        x_column
-    } else if secondary_uses_data {
-        secondary_y
-    } else {
-        MsDataColumn::Data
-    };
-    let x_data_column =
-        (x_axis.is_visibility_math() && x_column != data_column).then_some(x_column);
-    let secondary_y = if secondary_uses_data {
-        secondary_y
-    } else {
-        data_column
-    };
-    let secondary_y_data_column =
-        (y_axis2 == Some(y_axis) || secondary_y != data_column).then_some(secondary_y);
-    let visibility_axes =
-        x_axis.is_visibility_math() || y_axis.is_visibility_math() || y_axis2.is_some();
-    let visibility_document = visibility_document || visibility_axes;
-    let plot_format = if visibility_document {
-        MsExportFormat::Txt
-    } else {
-        export_format
-            .as_deref()
-            .map(MsExportFormat::parse)
-            .transpose()
-            .map_err(|_| TaskFailure::validation("MeasurementSet figure export is pending #1032"))?
-            .unwrap_or(MsExportFormat::Txt)
-    };
-    let color_by = text("coloraxis")?
-        .map_or(Ok(MsColorAxis::None), |axis| {
-            MsColorAxis::parse(&axis.to_ascii_lowercase())
-        })
-        .map_err(TaskFailure::validation)?;
-    let correlation = text("correlation")?.or(text("polarization")?);
-    let transform = task.flag("transform")?;
-    let options = CliOptions {
-        ms_path: task.path("vis")?,
-        summary_format: MeasurementSetSummaryOutputFormat::Text,
-        summary_output: None,
-        overwrite: task.flag("overwrite")?,
-        selection: MsSelection {
-            selectdata: task.flag("selectdata")?,
-            field: text("field")?,
-            spw: text("spw")?,
-            timerange: text("timerange")?,
-            uvrange: text("uvrange")?,
-            antenna: text("antenna")?,
-            scan: text("scan")?,
-            correlation,
-            observation: text("observation")?,
-            array: text("array")?,
-            intent: text("intent")?,
-            feed: text("feed")?,
-            msselect: text("msselect")?,
-            ..MsSelection::default()
-        },
-        page_spec: None,
-        preset: None,
-        x_axis: Some(x_axis),
-        y_axis: Some(y_axis),
-        y_axis2,
-        data_column,
-        x_data_column,
-        secondary_y_data_column,
-        color_by,
-        avgchannel: average_text("avgchannel")?
-            .map(|value| number::<usize>(&value))
-            .transpose()
-            .map_err(TaskFailure::validation)?
-            .filter(|&width| !visibility_axes || width != 0),
-        avgtime: average_text("avgtime")?
-            .map(|value| number::<f64>(&value))
-            .transpose()
-            .map_err(TaskFailure::validation)?
-            .filter(|&interval| !visibility_axes || interval != 0.0),
-        avgscan: average("avgscan")?,
-        avgfield: average("avgfield")?,
-        avgbaseline: average("avgbaseline")?,
-        avgantenna: average("avgantenna")?,
-        avgspw: average("avgspw")?,
-        scalar: average("scalar")?,
-        freqframe: if transform { text("freqframe")? } else { None },
-        restfreq: if transform { text("restfreq")? } else { None },
-        veldef: if transform {
-            task.required_text("veldef")?
-        } else {
-            "RADIO".into()
-        },
-        iteraxis: text("iteraxis")?
-            .map(|value| MsIterationAxis::parse(&value.to_ascii_lowercase()))
-            .transpose()
-            .map_err(TaskFailure::validation)?,
-        gridrows: count(task, "gridrows")?.max(1),
-        gridcols: count(task, "gridcols")?.max(1),
-        xselfscale: task.flag("xselfscale")?,
-        yselfscale: task.flag("yselfscale")?,
-        xsharedaxis: task.flag("xsharedaxis")?,
-        ysharedaxis: task.flag("ysharedaxis")?,
-        title: text("title")?,
-        xlabel: text("xlabel")?,
-        ylabel: text("ylabel")?,
-        symbol_size: task
-            .optional_number("symbolsize")?
-            .map(|value| value as u32),
-        showlegend: task.flag("showlegend")?,
-        legendposition: text("legendposition")?
-            .map_or(Ok(MsLegendPosition::UpperRight), |value| {
-                legend_position(&value)
-            })
-            .map_err(TaskFailure::validation)?,
-        showmajorgrid: task.flag("showmajorgrid")?,
-        showminorgrid: task.flag("showminorgrid")?,
-        headeritems: text("headeritems")?,
-        max_points: usize::MAX,
-        flag_action: None,
-        flag_xmin: None,
-        flag_xmax: None,
-        flag_ymin: None,
-        flag_ymax: None,
-        flag_plotindex: None,
-        flag_panel: None,
-        flag_extcorr: false,
-        flag_extchannel: false,
-        flag_selected: false,
-        flag_apply: false,
-        flag_output: None,
-        plot_output,
-        plot_format,
-    };
-    Ok((options, visibility_document))
 }
 
 /// Refuse the combinations a plot or flag edit cannot take.

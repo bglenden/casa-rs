@@ -63,6 +63,7 @@ mod visibility_columns;
 
 pub use baseline::{SpectrumBaseline, SpectrumRow, SpectrumWeights};
 use channel_average::{ChannelAverages, SpectrumCells, unaveraged_spectra};
+pub(crate) use channel_average::{WeightKind, visibility_weight_kind, weight_from_sigma};
 use continuum::ContinuumFit;
 pub use continuum::ContinuumFitOptions;
 use convolution::{SpectralOperation, SpectrumOperator};
@@ -74,6 +75,7 @@ use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
 use subtable_copy::copy_subtables;
 pub use task_history::{TransformTaskHistory, append_task_history};
+pub(crate) use time_average::selected_plot_time_bins;
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
 
