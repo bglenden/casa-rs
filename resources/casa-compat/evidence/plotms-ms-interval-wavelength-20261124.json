@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "b871c5d504d2212a019b3508607cce1be40c3a8d",
+  "source_revision": "b871c5d504d2212a019b3508607cce1be40c3a8d",
+  "baseline_revision": "f0f6a9b3b277b21da1b4d90f35dadd907fa390df",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged MeasurementSet interval and wavelength coordinates plotted against visibility data.",
+  "result": "passed",
+  "baseline_result": "CASA exported 12 selected interval coordinates. Native refused the interval axis.",
+  "text_exports": 11,
+  "points": 156,
+  "figures": 2,
+  "rendered_coordinates": 24,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}

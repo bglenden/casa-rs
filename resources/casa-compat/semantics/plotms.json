@@ -73,9 +73,10 @@
       ]
     },
     "xaxis": {
-      "scope": "Plot x-axis (blank for default/current)",
+      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-interval-wavelength"
       ],
       "behaviors": [
         "coordinates"
@@ -124,10 +125,11 @@
       ]
     },
     "yaxis": {
-      "scope": "Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates.",
+      "scope": "Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths.",
       "evidence": [
         "paired",
-        "ms-multiple-visibility-ordinates"
+        "ms-multiple-visibility-ordinates",
+        "ms-interval-wavelength"
       ],
       "behaviors": [
         "coordinates"
@@ -1102,7 +1104,7 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine. Plot unaveraged visibility axes with integration interval and UVW in wavelengths using the selected visibility buffer and per-channel frequency.",
       "evidence": [
         "paired",
         "selectors",
@@ -1119,9 +1121,10 @@
         "ms-virtual-model",
         "ms-channel-columns",
         "ms-multiple-visibility-ordinates",
-        "ms-time-columns"
+        "ms-time-columns",
+        "ms-interval-wavelength"
       ],
-      "gap": "Pointing-coordinate axes, mixed visibility and metadata ordinate masks, additional averaging modes and additional MS column forms are open."
+      "gap": "Pointing-coordinate axes, mixed visibility and metadata ordinate masks, additional averaging modes and additional MS column forms are open. Averaged interval and wavelength coordinates and reporting-frame transforms for these axes remain open."
     },
     {
       "id": "averaging",
@@ -1608,6 +1611,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-scalar-time-columns-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2175"
+      ]
+    },
+    "ms-interval-wavelength": {
+      "kind": "Same-input selected MeasurementSet intervals and wavelengths",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged MeasurementSet interval and wavelength coordinates plotted against visibility data.",
+      "result": "Eleven paired text exports match 156 selected points and their metadata. The fixture checks the first interval in each visibility buffer, signed U/V/W and UV distance scaled by selected channel frequency, strided channels, flagged-channel exclusion, independent row flags, chronological order with reversed timestamps and two-correlation callibrary export order. Two 500 by 360 pixel PNGs match 24 artist coordinates and use seconds and wavelength labels.",
+      "casa_version": "6.7.6.14",
+      "revision": "b871c5d504d2212a019b3508607cce1be40c3a8d",
+      "source_revision": "b871c5d504d2212a019b3508607cce1be40c3a8d",
+      "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-interval-wavelength-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2179"
       ]
     }
   }
