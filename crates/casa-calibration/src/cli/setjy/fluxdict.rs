@@ -81,7 +81,11 @@ pub(super) fn run(
         }
         field_rows.channel_selections.clear();
         let spws = requested_windows(&opened.measurement_set, field_request.spw.as_deref())?;
-        let (prepared, values, _) = prepare(
+        let super::PreparedModels {
+            models: prepared,
+            fluxes: values,
+            ..
+        } = prepare(
             &opened.measurement_set,
             &field_rows,
             &model,
