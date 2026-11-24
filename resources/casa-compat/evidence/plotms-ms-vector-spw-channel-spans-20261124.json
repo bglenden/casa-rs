@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "c7078f4f6e7103cc7622f0a498386dea039e70f8",
+  "source_revision": "c7078f4f6e7103cc7622f0a498386dea039e70f8",
+  "baseline_revision": "467c76e6a41244a12ec8b3e0cd003b10e02a1146",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate> --only vector-channel-spans",
+  "scope": "Vector time and MeasurementSet SPW averages of stored visibilities with optional complex channel bins and independent scan and field spans.",
+  "result": "passed",
+  "baseline_result": "The first bin in the long case gives observed Real 5.72917 at 4995075648 on main. CASA and the candidate give 3.20516 at 4995075647.",
+  "text_exports": 12,
+  "points": 23,
+  "figures": 1,
+  "rendered_coordinates": 2,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
