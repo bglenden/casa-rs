@@ -261,8 +261,8 @@ fn run_ms(
         calibration_directions,
     )?;
     opened.release().map_err(execution)?;
-    super::history::record_setjy_imager_flux(path, imager_history);
     record_history(task, path, partition);
+    super::history::record_setjy_imager_flux(path, imager_history);
     if partially_written {
         // CASA's cleanup after the later failure raises once an earlier
         // component list has already been applied and retired.
