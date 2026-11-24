@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::selection::parser::{parse_correlation_selector, selection_from_options};
 use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
 use crate::subtables::{SubTable, antenna_observatory_offsets, get_i32, has_column};
+use crate::tool_scan_summary::{take_double, take_integer};
 use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
 
 mod summary;
@@ -1135,6 +1136,19 @@ fn build_scans(
 
     let table = ms.main_table();
     let has_exposure = has_column(table, "EXPOSURE");
+    let mut columns = vec![
+        "OBSERVATION_ID",
+        "ARRAY_ID",
+        "SCAN_NUMBER",
+        "FIELD_ID",
+        "DATA_DESC_ID",
+        "STATE_ID",
+        "TIME",
+        "INTERVAL",
+    ];
+    if has_exposure {
+        columns.push("EXPOSURE");
+    }
     let mut rows = Vec::with_capacity(table.row_count());
     let mut scan_time_ranges = BTreeMap::<(i32, i32, i32), (f64, f64)>::new();
     let row_numbers = selected_rows
@@ -1143,16 +1157,17 @@ fn build_scans(
     let row_chunk_rows = planned_scalar_scan_rows(row_numbers.len(), 6 * 4 + 3 * 8)?;
     let mut row_offset = 0;
     for row_chunk in row_numbers.chunks(row_chunk_rows) {
-        let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
-        let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
-        let scan_values = load_i32_rows(table, "SCAN_NUMBER", row_chunk)?;
-        let field_values = load_i32_rows(table, "FIELD_ID", row_chunk)?;
-        let data_desc_values = load_i32_rows(table, "DATA_DESC_ID", row_chunk)?;
-        let state_values = load_i32_rows(table, "STATE_ID", row_chunk)?;
-        let time_values = load_f64_rows(table, "TIME", row_chunk)?;
-        let interval_values = load_f64_rows(table, "INTERVAL", row_chunk)?;
+        let mut values = table.required_scalar_columns_owned_for_rows(&columns, row_chunk)?;
+        let observation_values = take_integer(&mut values, "OBSERVATION_ID")?;
+        let array_values = take_integer(&mut values, "ARRAY_ID")?;
+        let scan_values = take_integer(&mut values, "SCAN_NUMBER")?;
+        let field_values = take_integer(&mut values, "FIELD_ID")?;
+        let data_desc_values = take_integer(&mut values, "DATA_DESC_ID")?;
+        let state_values = take_integer(&mut values, "STATE_ID")?;
+        let time_values = take_double(&mut values, "TIME")?;
+        let interval_values = take_double(&mut values, "INTERVAL")?;
         let exposure_values = if has_exposure {
-            Some(load_f64_rows(table, "EXPOSURE", row_chunk)?)
+            Some(take_double(&mut values, "EXPOSURE")?)
         } else {
             None
         };
@@ -1531,6 +1546,16 @@ fn analyze_main_table(
     selected_rows: Option<&[usize]>,
     unflagged_context: Option<&UnflaggedRowContext>,
 ) -> MsResult<MainUsage> {
+    const COLUMNS: [&str; 8] = [
+        "FIELD_ID",
+        "OBSERVATION_ID",
+        "ARRAY_ID",
+        "ANTENNA1",
+        "ANTENNA2",
+        "DATA_DESC_ID",
+        "TIME",
+        "INTERVAL",
+    ];
     let table = ms.main_table();
     let mut usage = MainUsage {
         selection_applied: selected_rows.is_some(),
@@ -1546,14 +1571,15 @@ fn analyze_main_table(
     let row_chunk_rows =
         planned_scalar_scan_rows(row_numbers.len(), flag_bytes.saturating_add(6 * 4 + 2 * 8))?;
     for row_chunk in row_numbers.chunks(row_chunk_rows) {
-        let field_values = load_i32_rows(table, "FIELD_ID", row_chunk)?;
-        let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
-        let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
-        let antenna1_values = load_i32_rows(table, "ANTENNA1", row_chunk)?;
-        let antenna2_values = load_i32_rows(table, "ANTENNA2", row_chunk)?;
-        let data_desc_values = load_i32_rows(table, "DATA_DESC_ID", row_chunk)?;
-        let time_values = load_f64_rows(table, "TIME", row_chunk)?;
-        let interval_values = load_f64_rows(table, "INTERVAL", row_chunk)?;
+        let mut values = table.required_scalar_columns_owned_for_rows(&COLUMNS, row_chunk)?;
+        let field_values = take_integer(&mut values, "FIELD_ID")?;
+        let observation_values = take_integer(&mut values, "OBSERVATION_ID")?;
+        let array_values = take_integer(&mut values, "ARRAY_ID")?;
+        let antenna1_values = take_integer(&mut values, "ANTENNA1")?;
+        let antenna2_values = take_integer(&mut values, "ANTENNA2")?;
+        let data_desc_values = take_integer(&mut values, "DATA_DESC_ID")?;
+        let time_values = take_double(&mut values, "TIME")?;
+        let interval_values = take_double(&mut values, "INTERVAL")?;
         let fractions = unflagged_context
             .map(|context| context.fractions(table, row_chunk, &data_desc_values))
             .transpose()?;
