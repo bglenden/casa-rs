@@ -170,6 +170,16 @@ def main():
 
     errors = [
         (dict(addwn=True), ValueError, 'wrong value given for addwn/rejwn'),
+        (dict(addwn=True, rejwn=''), ValueError, 'wrong value given for addwn/rejwn'),
+        (dict(addwn=''), IndexError, 'string index out of range'),
+        (dict(addwn=['3', -1]), ValueError, 'wrong value given for addwn/rejwn'),
+        (dict(addwn=['x', 1]), ValueError, "invalid literal for int() with base 10: 'x'"),
+        (dict(addwn='x'), ValueError, "invalid literal for int() with base 10: 'x'"),
+        (dict(addwn=None, fftthresh=None, rejwn=None), AssertionError, str({
+            'addwn': ['null value not allowed'],
+            'fftthresh': ['null value not allowed'],
+            'rejwn': ['null value not allowed'],
+        })),
         (dict(addwn=[]), RuntimeError, 'addwn must contain at least one element.'),
         (dict(addwn='47', rejwn=[47]), RuntimeError, 'No effective wave number'),
         (dict(fftthresh=True), ValueError, 'fftthresh must be float or integer or string.'),
@@ -194,6 +204,14 @@ def main():
                                         blformat='', **options), error_type, message)
             if name == 'native':
                 assert not output.exists()
+        occupied = root / f'occupied-{name}.ms'
+        occupied.mkdir()
+        sentinel = occupied / 'independent-file'
+        sentinel.write_text('preserve this output')
+        expected_error(lambda: task(str(source), outfile=str(occupied), blfunc='sinusoid',
+                                    addwn='', blformat=''),
+                       ValueError, 'exists, and cannot overwrite it.')
+        assert sentinel.read_text() == 'preserve this output'
     for name, factory in tools.items():
         expected_error(lambda: fit_tool(factory, source, root / f'bad-method-{name}',
                                         applyfft=True, fftthresh='top3', fftmethod='bogus'),
