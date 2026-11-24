@@ -83,9 +83,9 @@ impl CliOptions {
                 )
         };
         let supported_abscissa = self.x_axis.is_some_and(|axis| {
-            if self.avgchannel.is_some_and(|width| width > 1) {
-                matches!(axis, MsAxis::Time | MsAxis::Channel) && y.is_derived()
-            } else if axis == MsAxis::Time {
+            let channel_abscissa =
+                axis == MsAxis::Channel && self.avgchannel.is_some_and(|width| width > 1);
+            if axis == MsAxis::Time || channel_abscissa {
                 y.is_derived()
             } else {
                 axis.is_visibility_math()
