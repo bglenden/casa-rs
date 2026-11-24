@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare corrected visibility residuals and ratios after vector time averaging."""
+"""Compare visibility residuals and ratios after vector time averaging."""
 
 import argparse
 from contextlib import chdir
@@ -117,6 +117,46 @@ def compare_buffer_time(root, native, base, integration, start):
     print("buffer-time: 5 matching points sharing each output buffer's first baseline time", flush=True)
 
 
+def compare_observed_time_derived(root, native):
+    vis, integration, start = prepare_time_fixture(root)
+    with opened(vis, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[0, 1] = np.where(integration % 2 == 0, 1, .5)
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    fallback = root / "without-corrected.ms"
+    copy_ms(vis, fallback)
+    with opened(fallback, True) as table:
+        table.removecols(["CORRECTED_DATA"])
+
+    offset = np.arange(0, 6, 2)
+    observed = 3 + 6j + (1 + 2j) * (offset + .8)
+    calibrated_model = 2 + 2j + (.5 + .25j) * (offset + .75)
+    observed_model = 2 + 2j + (.5 + .25j) * (offset + .8)
+    times = start + 5 + 10 * offset
+    base = request(vis) | dict(xaxis="time", xdatacolumn="", spw="0:1", avgtime="20",
+                               title="Observed time averages")
+    for name, source, column, axis, coordinates in (
+        ("observed-residual", vis, "data-model_vector", "real", (observed - calibrated_model).real),
+        ("observed-ratio", vis, "data/model_vector", "phase", np.angle(observed / calibrated_model, deg=True)),
+        ("without-corrected", fallback, "data-model_vector", "real", (observed - observed_model).real),
+        ("corrected-fallback", fallback, "corrected-model_vector", "real", (observed - observed_model).real),
+    ):
+        controls = base | dict(vis=str(source), yaxis=axis, ydatacolumn=column)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [("1", "XX")] * 3
+        np.testing.assert_allclose([float(point[1]) for point in selected], coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[0]) for point in selected], times, rtol=0, atol=.00051)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 3
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], times, rtol=0, atol=.00051)
+        print(f"{name}: 3 matching coordinates with independently averaged operands", flush=True)
+        if name == "observed-ratio":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Time (MJD seconds)", "Phase:data/model (vector) (degrees)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -134,7 +174,12 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare_time_derived(root, native)
+        corrected = root / "corrected"
+        corrected.mkdir()
+        compare_time_derived(corrected, native)
+        observed = root / "observed"
+        observed.mkdir()
+        compare_observed_time_derived(observed, native)
 
 
 if __name__ == "__main__":
