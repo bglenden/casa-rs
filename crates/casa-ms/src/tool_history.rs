@@ -13,7 +13,7 @@ use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::column_def::build_table_schema;
-use crate::ms::{apply_column_metadata, measurement_set_table_options};
+use crate::ms::{apply_column_metadata, measurement_set_table_options, subtable_path_from_main};
 use crate::transform::open_staged_subtable_for_write;
 use crate::{MeasurementSet, MsError, MsResult, SubtableId, open_measures_runtime, schema};
 
@@ -30,14 +30,18 @@ pub struct ToolHistoryEntry {
 }
 
 /// Read HISTORY in row order through the MAIN table's subtable links.
+/// For a plain MAIN descriptor already known to be current, callers can
+/// pass `main_is_plain` to avoid decoding the descriptor again.
 ///
 /// # Errors
 /// The MAIN descriptor, HISTORY table or any of its required cells is unreadable.
-pub fn read_tool_history(main: &Table) -> MsResult<Vec<ToolHistoryEntry>> {
+pub fn read_tool_history(main: &Table, main_is_plain: bool) -> MsResult<Vec<ToolHistoryEntry>> {
     let mut entries = Vec::new();
-    for path in MeasurementSet::linked_subtable_paths(main, SubtableId::History)? {
-        let table = Table::open(TableOptions::new(path))?;
-        let mut columns = table.scalar_columns_owned(&["TIME", "PRIORITY", "ORIGIN", "MESSAGE"])?;
+    for path in history_paths(main, main_is_plain)? {
+        let mut columns = Table::read_scalar_columns_from_disk(
+            &path,
+            &["TIME", "PRIORITY", "ORIGIN", "MESSAGE"],
+        )?;
         let mut column = |name: &str| {
             columns
                 .remove(name)
@@ -81,6 +85,7 @@ pub fn read_tool_history(main: &Table) -> MsResult<Vec<ToolHistoryEntry>> {
 /// or cannot be locked for the requested update.
 pub fn append_tool_history(
     main: &Table,
+    main_is_plain: bool,
     messages: &[String],
     cli_command: &str,
     origin: &str,
@@ -96,7 +101,7 @@ pub fn append_tool_history(
         .map_err(|error| {
             MsError::InvalidInput(format!("cannot update {}: {error}", path.display()))
         })?;
-    let history = match history_path(main)? {
+    let history = match history_path(main, main_is_plain)? {
         Some(history) => history,
         None => with_history_write_lock(path, held_locks, create_history)?,
     };
@@ -130,19 +135,30 @@ fn with_history_write_lock<T>(
     write(&mut table, None)
 }
 
-fn history_path(main: &Table) -> MsResult<Option<PathBuf>> {
+fn history_paths(main: &Table, main_is_plain: bool) -> MsResult<Vec<PathBuf>> {
+    if main_is_plain && let Some(path) = main.path() {
+        let id = SubtableId::History;
+        return subtable_path_from_main(main, path, id)
+            .map(|path| vec![path])
+            .ok_or_else(|| MsError::MissingSubtable(id.name().into()));
+    }
+    MeasurementSet::linked_subtable_paths(main, SubtableId::History)
+}
+
+fn history_path(main: &Table, main_is_plain: bool) -> MsResult<Option<PathBuf>> {
     let Some(path) = main.path() else {
         return Ok(None);
     };
     if main.keywords().get(SubtableId::History.name()).is_none()
-        && matches!(
-            Table::immediate_part_names(path, path)?,
-            TablePartNames::Plain(_)
-        )
+        && (main_is_plain
+            || matches!(
+                Table::immediate_part_names(path, path)?,
+                TablePartNames::Plain(_)
+            ))
     {
         return Ok(None);
     }
-    match MeasurementSet::linked_subtable_paths(main, SubtableId::History) {
+    match history_paths(main, main_is_plain) {
         Ok(mut parts) if parts.len() == 1 => Ok(parts.pop()),
         Ok(_) => Err(MsError::InvalidInput(
             "rows cannot be appended to a concatenated HISTORY table".into(),
@@ -165,7 +181,7 @@ fn create_history(main: &mut Table, lock: Option<&mut TableWriteLock>) -> MsResu
             "HISTORY is missing from the source of this MeasurementSet view".into(),
         ));
     }
-    if let Some(history) = history_path(main)? {
+    if let Some(history) = history_path(main, true)? {
         // Another writer may have created HISTORY while MAIN was being locked.
         return Ok(history);
     }

@@ -1138,6 +1138,37 @@ impl Table {
             .collect()
     }
 
+    /// Load persisted scalar columns together without opening a table handle.
+    /// Missing cells return `None`. Callers with a handle and pending edits
+    /// should use [`Self::scalar_columns_owned`] to include those edits.
+    ///
+    /// # Errors
+    /// Returns an error if the table, a required manager or a requested
+    /// scalar column is unavailable or unreadable.
+    pub fn read_scalar_columns_from_disk(
+        path: &Path,
+        columns: &[&str],
+    ) -> Result<HashMap<String, Vec<Option<ScalarValue>>>, TableError> {
+        #[cfg(unix)]
+        let row_hint = crate::lock::read_sync_data_from_table_dir(path)
+            .ok()
+            .flatten()
+            .map(|sync| sync.nrrow);
+        #[cfg(not(unix))]
+        let row_hint = None;
+        let names = columns.iter().copied().collect::<HashSet<_>>();
+        let snapshot =
+            CompositeStorage.load_named_scalar_columns_with_row_hint(path, &names, row_hint)?;
+        for &column in columns {
+            if !snapshot.columns.contains_key(column) {
+                return Err(TableError::SchemaColumnUnknown {
+                    column: column.into(),
+                });
+            }
+        }
+        Ok(snapshot.columns)
+    }
+
     /// Returns required scalar values for every row in each requested column.
     ///
     /// This is a typed, column-oriented variant of

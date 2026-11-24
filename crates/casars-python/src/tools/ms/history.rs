@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use casa_ms::tool_history::{append_tool_history, read_tool_history};
-use casa_tables::{Table, TableOptions, table_cache_name};
+use casa_tables::{Table, TableOptions, TablePartNames, table_cache_name};
 use casa_types::quanta::format::{YMD, format_time};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -28,7 +28,8 @@ impl PyMsTool {
             link.verify_directory().map_err(runtime_error)?;
             let refreshed = attachment.refresh_history_main()?;
             let main = refreshed.as_ref().unwrap_or(&attachment.main);
-            let entries = read_tool_history(main).map_err(runtime_error)?;
+            let plain = attachment.known_plain_history_main(refreshed.is_none());
+            let entries = read_tool_history(main, plain).map_err(runtime_error)?;
             link.verify_directory().map_err(runtime_error)?;
             Ok(Some(entries))
         })?;
@@ -130,7 +131,16 @@ impl PyMsTool {
                     .map_err(runtime_error)?;
                 let refreshed = ms.refresh_history_main()?;
                 let main = refreshed.as_ref().unwrap_or(&ms.main);
-                append_tool_history(main, &messages, parms, origin, app, &mut ms.write_locks)
+                let plain = ms.known_plain_history_main(refreshed.is_none());
+                append_tool_history(
+                    main,
+                    plain,
+                    &messages,
+                    parms,
+                    origin,
+                    app,
+                    &mut ms.write_locks,
+                )
             } else {
                 let path = target.as_deref().unwrap_or_else(|| Path::new("none"));
                 let path = table_cache_name(path).map_err(runtime_error)?;
@@ -138,7 +148,7 @@ impl PyMsTool {
                 let locks = attached
                     .as_mut()
                     .map_or(&mut no_locks, |ms| &mut ms.write_locks);
-                append_tool_history(&main, &messages, parms, origin, app, locks)
+                append_tool_history(&main, false, &messages, parms, origin, app, locks)
             };
             result.map_err(runtime_error)?;
             Ok(true)
@@ -147,6 +157,10 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    fn known_plain_history_main(&self, captured: bool) -> bool {
+        captured && matches!(self.part_names, TablePartNames::Plain(_))
+    }
+
     fn refresh_history_main(&self) -> PyResult<Option<Table>> {
         if self.main_stamp.is_some() && self.main_files.same_descriptor(self.main_stamp) {
             return Ok(None);
