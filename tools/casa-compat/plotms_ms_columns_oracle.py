@@ -895,6 +895,66 @@ def compare_mixed_float_time_normalization(work, source, native, base):
         print(f"{name}: native preserves {count} constant unit visibilities", flush=True)
 
 
+def compare_time_scan_field_columns(root, native):
+    work = root / "scan-field-time-columns"
+    work.mkdir()
+    vis, integration = time_average_fixture(work)
+    with opened(vis, True) as table:
+        times = np.unique(table.getcol("TIME"))
+        shape = table.getcol("DATA").shape
+        first_scan = integration < 6
+        amplitude = np.where(first_scan, 1, 3).astype(np.complex64)
+        for factor, name in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            table.putcol(name, np.broadcast_to(amplitude * 10**factor, shape).copy())
+        for name, later in (("WEIGHT", 9), ("SIGMA", 0.5)):
+            values = np.where(first_scan, 1, later).astype(np.float32)
+            table.putcol(name, np.broadcast_to(values, (shape[0], shape[2])).copy())
+    scan, field, reversed_time = (work / f"{name}.ms" for name in ("scans", "fields", "reversed"))
+    for path in (scan, field, reversed_time):
+        copy_ms(vis, path)
+        with opened(path, True) as table:
+            if path == reversed_time:
+                reversed_times = times[-1 - integration]
+                table.putcol("TIME", reversed_times)
+                table.putcol("TIME_CENTROID", reversed_times)
+            else:
+                name = "FIELD_ID" if path == scan else "SCAN_NUMBER"
+                values = table.getcol(name)
+                table.putcol(name, np.full_like(values, values[0]))
+    base = request(vis) | dict(field="", xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
+                               ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
+                               spw="0:1", avgtime="200")
+    separate = [(1, 10), (3, 30), (1, 100), (3, 300)]
+    joined = [(2.6, 28), (2.6, 280)]
+    separate_ids = [("1", "0"), ("2", "1")] * 2
+    joined_ids = [("1", "0")] * 2
+    cases = (
+        ("separate-boundaries", {}, separate, separate_ids),
+        ("cross-scan", dict(vis=str(scan), avgscan=True), joined, joined_ids),
+        ("cross-field", dict(vis=str(field), avgfield=True), joined, joined_ids),
+        ("cross-scan-retains-field", dict(avgscan=True), separate, separate_ids),
+        ("cross-field-retains-scan", dict(avgfield=True), separate, separate_ids),
+        ("cross-both", dict(avgscan=True, avgfield=True), joined, joined_ids),
+        ("cross-both-channel", dict(avgscan=True, avgfield=True, avgchannel="2", spw="0:0~1"), joined, joined_ids),
+        ("cross-both-reversed", dict(vis=str(reversed_time), avgscan=True, avgfield=True), joined, [("2", "1")] * 2),
+    )
+    for name, overrides, coordinates, identifiers in cases:
+        controls = base | overrides
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [tuple(point[3:5]) for point in selected] == identifiers
+        np.testing.assert_allclose(np.array([row[:2] for row in selected], dtype=float), coordinates, rtol=1.2e-5)
+        if len(selected) == 2:
+            midpoint = times[0] + (times[-1] - times[0]) / 2
+            np.testing.assert_allclose([float(row[9]) for row in selected], midpoint, rtol=0, atol=0.00051)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching independently weighted coordinates", flush=True)
+    figure = base | dict(avgscan=True, avgfield=True)
+    compare_ordinate_figure(work, "cross-both", native, figure, "Real", ["Real:corrected", "Real:model"])
+
+
 def compare_float_columns(root, vis, source, native):
     float_only = root / "float-only.ms"
     mixed = root / "float-and-complex.ms"
@@ -1251,6 +1311,7 @@ def main():
         compare_averaged_columns(root, native)
         compare_time_averaged_columns(root, native)
         compare_combined_averaged_columns(root, native)
+        compare_time_scan_field_columns(root, native)
         compare_float_columns(root, vis, source, native)
         compare_default_model(root, native)
         compare_virtual_fourier_model(root, native)
