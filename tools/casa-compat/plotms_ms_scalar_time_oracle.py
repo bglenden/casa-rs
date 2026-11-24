@@ -631,6 +631,58 @@ def compare_combined_scalar_spectrum_availability(root, native, controls):
     print("reversed-spectrum: 4 native coordinates matching the separate CASA row-weight control", flush=True)
 
 
+def compare_combined_scalar_stored_columns(root, native, fixtures, start):
+    source = fixtures / "columns.ms"
+    phase = np.rad2deg(np.arctan2(4., 3.))
+    base = request(source) | dict(xaxis="amp", xdatacolumn="data", yaxis="phase", ydatacolumn="corrected",
+                                  spw="0:0~3", avgtime="20", avgchannel="2", scalar=True,
+                                  title="Stored columns after channel and scalar time averaging")
+    cases = (
+        ("independent-axes", {}, [2., 5.], [0., phase]),
+        ("separate-spectra", dict(vis=str(fixtures / "spectra.ms")), [1.4, 5.], [-90., phase]),
+        ("masked-channel", dict(vis=str(fixtures / "masked.ms")), [1., 5.], [-90., phase]),
+        ("row-weights-from-spectrum", dict(vis=str(fixtures / "varying.ms"), xaxis="time", yaxis="amp"),
+         None, [11 / 3] * 2),
+        ("frequency", dict(xaxis="frequency", xdatacolumn="", yaxis="amp"),
+         [100.0005, 100.0025], [0., 5.]),
+    )
+    centers = np.repeat(start + np.array([10., 40.]), 2)
+    for name, options, x, y in cases:
+        controls = base | options
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [("0", "XX"), ("1", "XX")] * 2
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected], y * 2, rtol=1.2e-5, atol=1e-7)
+        np.testing.assert_allclose([float(point[0]) for point in selected], centers if x is None else x * 2,
+                                   rtol=0, atol=.00051 if x is None else 1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 4
+        if x is None:
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+        print(f"{name}: 4 matching stored visibility coordinates after channel and scalar time averaging", flush=True)
+
+    controls = base | dict(xaxis="time", xdatacolumn="", yaxis=["amp", "real"],
+                           ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"], expformat="txt")
+    expected, actual = (root / f"independent-ordinates.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [(point[2], point[12]) for point in selected] == [("0", "XX"), ("1", "XX")] * 4
+    np.testing.assert_allclose([float(point[0]) for point in selected], np.tile(centers, 2), rtol=0, atol=.00051)
+    np.testing.assert_allclose([float(point[1]) for point in selected], [0., 5., 0., 5., 1., 1., 1., 1.],
+                               rtol=1.2e-5, atol=1e-7)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 8
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)], np.tile(centers, 2), rtol=0, atol=.00051)
+    print("independent-ordinates: 8 matching stored visibility coordinates", flush=True)
+    compare_ordinate_figure(root, "independent-ordinates", native, controls, "Time (MJD seconds)",
+                            ["Amp:corrected", "Real:model"])
+    compare_empty_export(root, native, "all-channel-cube-flags",
+                         base | dict(vis=str(fixtures / "flagged.ms"), xaxis="channel", xdatacolumn="", yaxis="amp"),
+                         ("Channel", "Amp"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -661,6 +713,11 @@ def main():
         combined = root / "time-channel"
         combined.mkdir()
         compare_combined_scalar_time(combined, native)
+        stored = root / "stored-time-channel"
+        stored.mkdir()
+        with opened(combined / "columns.ms") as table:
+            start = table.getcol("TIME").min()
+        compare_combined_scalar_stored_columns(stored, native, combined, start)
 
 
 if __name__ == "__main__":
