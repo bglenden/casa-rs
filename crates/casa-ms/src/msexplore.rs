@@ -3015,6 +3015,7 @@ fn build_uncalibrated_plotms_payload(
         plotms_model::needs_model_references(ms, &selected.selected_rows, plot, &columns)
     });
     let vector_span_models = needs_model_references
+        && !spw_average
         && plot.is_some_and(|plot| plot.averaging.avgscan || plot.averaging.avgfield);
     let direct_time_projection = !extended_derived
         && (vector_span_models
@@ -5536,7 +5537,8 @@ fn build_generic_visibility_scatter_with_averaging(
         && !average_channels;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
-    let vector_span_models = (spec.averaging.avgscan || spec.averaging.avgfield)
+    let vector_span_models = !spw_average
+        && (spec.averaging.avgscan || spec.averaging.avgfield)
         && time_bins.is_some_and(|groups| groups.model_phase_reference_slots().is_some())
         && calibration.is_some_and(|input| input.models.is_some());
     let direct_time_projection = uncalibrated

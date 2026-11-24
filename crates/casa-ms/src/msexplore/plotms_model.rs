@@ -35,8 +35,7 @@ pub(super) fn needs_model_references(
     let vector_time = averaging.avgtime.is_some()
         && !averaging.scalar
         && (time_spans || uses_unspanned_antenna_or_baseline(plot));
-    let spectral_windows =
-        !averaging.avgscan && !averaging.avgfield && uses_spectral_window_average(plot);
+    let spectral_windows = uses_spectral_window_average(plot);
     columns.implicit_derived_model
         && (vector_time || spectral_windows)
         && plot.iteration.iteraxis.is_none()
