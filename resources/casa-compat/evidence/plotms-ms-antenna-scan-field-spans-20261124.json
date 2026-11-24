@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "2d05d515f980e317029284232455dca48f72adcd",
+  "source_revision": "2d05d515f980e317029284232455dca48f72adcd",
+  "baseline_revision": "ebde75f152d0b1f4bec8e5c82dbd34d5264266f0",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Scalar and vector per-antenna time averaging across requested scans and fields, with channel bins, masks, time and display provenance.",
+  "result": "passed",
+  "baseline_result": "Main exported baseline identities and 137.689 degrees for the first scalar scan-span point. CASA exported antenna 0, scan -1 and 133.629 degrees.",
+  "text_exports": 17,
+  "points": 72,
+  "figures": 2,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}
