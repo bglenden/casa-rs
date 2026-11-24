@@ -456,6 +456,29 @@ def compare_combined_observed_expressions(root, native):
             compare_figure(root, native, controls, expected,
                            (controls["title"], "Time (MJD seconds)", "Phase:data/model (scalar) (degrees)"))
 
+    roundtrip = root / "observed-sigma-roundtrip.ms"
+    copy_ms(vis, roundtrip)
+    with opened(roundtrip, True) as table:
+        observed = np.zeros_like(table.getcol("DATA"))
+        observed[:, 0] = 5368709
+        observed[:, 1] = -33554432
+        table.putcol("DATA", observed)
+        table.putcol("MODEL_DATA", np.zeros_like(observed))
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[:, 0] = 1
+        sigma[:, 1] = 2.5
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    controls = base | dict(vis=str(roundtrip), xaxis="channel", yaxis="real",
+                           ydatacolumn="data-model_vector", spw="0:0~1", expformat="txt")
+    expected, actual = (root / f"sigma-roundtrip.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    # Reusing the raw time weights would give an exact zero at Float precision.
+    np.testing.assert_allclose([float(row[1]) for row in rows(expected)],
+                               [0.8620688915] * 3, rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 3
+    print("sigma-roundtrip: 3 matching nonzero Float results after observed reweighting", flush=True)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
