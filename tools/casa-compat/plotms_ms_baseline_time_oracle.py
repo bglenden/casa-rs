@@ -1136,6 +1136,9 @@ def compare_vector_antenna_time_channels(root, native, source, controls, start, 
                          args | dict(vis=str(zero_corrected)), ("Real", "Imag:corrected"))
     compare_vector_antenna_time_channel_model(root, native, source, args, start)
     compare_vector_antenna_time_channel_observed_spectrum(root, native, source, args, start)
+    compare_direct_stored_vector_time_channels(
+        root, native, split, zero_observed, zero_corrected, args, start, rotations,
+    )
 
 
 def compare_vector_antenna_time_channel_model(root, native, source, base, start):
@@ -1172,6 +1175,7 @@ def compare_vector_antenna_time_channel_model(root, native, source, base, start)
         assert native(**args, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(coordinates)
         print(f"vector-time-channel-antenna-{name}: {len(coordinates)} matching model coordinates", flush=True)
+    compare_stored_model_time_channels(root, native, vis, controls, start)
 
 
 def compare_vector_antenna_time_channel_observed_spectrum(root, native, source, base, start):
@@ -1302,6 +1306,89 @@ def compare_antenna_scan_field_spans(root, native, source, start, base, amplitud
                 compare_figure(root, native, args, expected,
                                (controls["title"], "Time (MJD seconds)", "Phase:corrected (degrees)"))
             print(f"{mode}-antenna-{name}: {len(coordinates)} matching span coordinates", flush=True)
+
+
+def compare_direct_stored_vector_time_channels(
+        root, native, split, zero_observed, zero_corrected, controls, start, rotations):
+    masked = root / "direct-vector-time-channel-masked.ms"
+    copy_ms(split, masked)
+    with opened(masked, True) as table:
+        first = table.getcol("TIME") == start
+        far = table.getcol("ANTENNA2") == 2
+        flags = table.getcol("FLAG")
+        flags[0, 0, far & first] = True
+        table.putcol("FLAG", flags)
+    cases = (
+        ("independent", {}, False, False),
+        ("split-spectra", dict(vis=str(split)), True, False),
+        ("masked-spectra", dict(vis=str(masked)), True, True),
+        ("row-only", dict(vis=str(root / "scalar-antenna-row-only-time.ms")), False, False),
+        ("zero-corrected", dict(vis=str(zero_corrected)), False, False),
+        ("time-axis", dict(vis=str(root / "scalar-antenna-row-only-time.ms"), xaxis="time", xdatacolumn=""),
+         False, False),
+    )
+    base = controls | dict(avgantenna=False, title="Stored vector time and channel averages")
+    frequencies = ("100.000500000", "100.002500000")
+    for name, overrides, uses_split, masks_first in cases:
+        args = base | overrides
+        coordinates, centers, identifiers = [], [], []
+        for begin in (0, 2, 4):
+            samples = rotations[begin:begin + 2]
+            center = start + 10 * begin + 5
+            for antenna in (1, 2):
+                gain = 1 if antenna == 1 else 2j
+                for output_channel, offsets in enumerate(((-.5, 1), (1, 1))):
+                    observed = np.ones((2, 2))
+                    corrected = np.ones((2, 2))
+                    if antenna == 2 and output_channel == 0 and uses_split:
+                        observed[0, :] = .25
+                        corrected[0, :] = 5
+                        if begin == 0 and masks_first:
+                            observed[0, 0] = corrected[0, 0] = 0
+                    x = (1 + 4j) * gain * np.average(np.asarray(offsets)[:, None] * samples, weights=observed)
+                    y = (10 + 14j) * gain * np.average(np.broadcast_to(samples, (2, 2)), weights=corrected)
+                    ordinate = 0 if name == "zero-corrected" else y.imag
+                    coordinates.append((center if args["xaxis"] == "time" else x.real, ordinate))
+                    centers.append(center)
+                    identifiers.append(("0", str(antenna), str(output_channel), frequencies[output_channel], "XX"))
+        expected, actual = (root / f"direct-vector-time-channel-{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**args, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[5], point[6], point[2], point[10], point[12]) for point in selected] == identifiers
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        assert native(**args, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        if name == "time-axis":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+            compare_figure(root, native, args, expected, (base["title"], "Time (MJD seconds)", "Imag:corrected"))
+        print(f"direct-vector-time-channel-{name}: {len(coordinates)} matching coordinates", flush=True)
+
+    compare_empty_export(root, native, "direct-vector-time-channel-all-flagged",
+                         base | dict(vis=str(root / "scalar-antenna-all-flagged-time.ms")),
+                         ("Real", "Imag:corrected"))
+    compare_empty_export(root, native, "direct-vector-time-channel-zero-observed",
+                         base | dict(vis=str(zero_observed)), ("Real", "Imag:corrected"))
+
+
+def compare_stored_model_time_channels(root, native, vis, base, start):
+    controls = base | dict(avgantenna=False, vis=str(vis), xdatacolumn="model", ydatacolumn="model")
+    expected, actual = (root / f"stored-model-time-channel.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [(point[5], point[6], point[2], point[12]) for point in selected] == [
+        ("0", str(antenna), str(channel), "XX")
+        for _ in range(3) for antenna in (1, 2) for channel in (0, 1)
+    ]
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(value, value) for value in (3, 9, 9, 27)] * 3, rtol=1.2e-5)
+    assert [point[10] for point in selected] == ["100.000500000", "100.002500000"] * 6
+    np.testing.assert_allclose([float(point[9]) for point in selected],
+                               np.repeat([start + 5, start + 25, start + 45], 4), rtol=0, atol=.00051)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == len(selected)
+    print("stored-model-time-channel: 12 matching arithmetic channel coordinates", flush=True)
 
 
 def main():
