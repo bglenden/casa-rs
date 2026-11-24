@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "b694d468b3b21c5ba3ddd71acbbbc915f7bbd772",
+  "source_revision": "b694d468b3b21c5ba3ddd71acbbbc915f7bbd772",
+  "baseline_revision": "b86b73b7b9e85b708ba41ceea58b282d741ed58d",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_layout_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs noniterated MeasurementSet visibility plots in an explicitly selected grid cell.",
+  "result": "passed",
+  "baseline_result": "Native public task refused nondefault rowindex and colindex before the provider ran.",
+  "text_exports": 5,
+  "points": 60,
+  "figures": 10,
+  "rendered_coordinates": 120,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "paired_refusals": 2
+}
