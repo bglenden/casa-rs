@@ -135,13 +135,14 @@
       ]
     },
     "overwrite": {
-      "scope": "Replace an existing table when requested and keep its contents when no solution reaches the solver.",
+      "scope": "Replace an existing calibration table or separate MeasurementSet when requested and keep its contents when no solution reaches the solver.",
       "status": "Implemented",
       "behaviors": [
         "product"
       ],
       "evidence": [
-        "paired"
+        "paired",
+        "stock"
       ]
     }
   },
@@ -169,11 +170,12 @@
     {
       "id": "preapply",
       "title": "Per-table prior calibration",
-      "scope": "Apply actual time-varying prior corrections and mapped spectral Tsys before solving, with scalar and indexed interpolation and window lists.",
+      "scope": "Apply time-varying priors to complex or real single-dish data. Mapped Tsys uses CASA's station order and Float rounding, with scalar and indexed interpolation and window lists.",
       "status": "Implemented",
       "gap": "Release and dataset-scale benchmarks follow functionality under #979.",
       "evidence": [
-        "paired"
+        "paired",
+        "stock"
       ]
     },
     {
@@ -224,6 +226,21 @@
       "result": "The public oracle matches complex table cells, scalar frequencies, flagged selected rows, and outputs from both table readers. It checks no-output and short-group publication separately and exercises two CASA crash cases in isolated processes.",
       "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdgaincal_oracle.py <new-dir>",
       "links": [
+        "tools/casa-compat/sdgaincal_oracle.py"
+      ]
+    },
+    "stock": {
+      "kind": "Unchanged upstream single-dish gain cases",
+      "state": "passed",
+      "revision": "b3d09768e9728c85dca2ab73f02874369efd6942",
+      "source_revision": "b3d09768e9728c85dca2ab73f02874369efd6942",
+      "casa_version": "6.7.6.14",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/upstream_calibration_suite.py sdgaincal --casatestdata <pinned-casatestdata> --out <results>",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/2161",
+      "scope": "Official double-circle maps, explicit replacement, separate and combined sky and Tsys priors on FLOAT_DATA, SPW mapping and single polarization.",
+      "result": "All 13 cases passed on each Python implementation without skips. The applied gain tables also passed the paired writer-reader comparison.",
+      "links": [
+        "resources/casa-compat/upstream-calibration-tests/6.7.6.14/test_task_sdgaincal.py",
         "tools/casa-compat/sdgaincal_oracle.py"
       ]
     }

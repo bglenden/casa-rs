@@ -11,14 +11,13 @@ use std::path::Path;
 
 use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
 use casa_provider_contracts::CasaValue;
-use casa_tables::TableWriteLock;
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn};
 
 use super::{
     edges::{self, Integration},
-    selector,
+    lock_solve_output, selector,
 };
 use crate::constants::*;
 use crate::execute::SolvePriorApply;
@@ -97,19 +96,13 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         )
         .at("outfile"));
     }
-    let _output_lock = if overwrite && output.join("table.dat").is_file() {
-        Some(
-            TableWriteLock::acquire_to_reread(output, 1)
-                .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"))?,
-        )
-    } else {
-        None
-    };
     let mode = if overwrite {
         CalibrationOutputMode::Replace
     } else {
         CalibrationOutputMode::Create
     };
+    let _output_locks = lock_solve_output(output, mode)
+        .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"))?;
     let (count, _) = generate(
         &ms,
         &selected,
@@ -384,7 +377,9 @@ fn write(
     channels: &BTreeMap<usize, usize>,
 ) -> Result<usize, String> {
     let count = samples.len();
-    let mut writer = CalibrationTableWriter::with_mode(
+    let destination = crate::output::CalibrationOutput::prepare_single_dish_solve(output, mode)
+        .map_err(error_text)?;
+    let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
             output,
@@ -397,9 +392,9 @@ fn write(
             include_polarization_basis: true,
             time_extra_precision_column: None,
         },
+        destination,
         mode,
-    )
-    .map_err(error_text)?;
+    );
     let mut windows = BTreeSet::new();
     for sample in samples {
         windows.insert(sample.integration.window);

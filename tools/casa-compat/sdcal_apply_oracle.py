@@ -79,10 +79,11 @@ def inspect_outputs(ms, sky, interpolation, input_kind):
         return {key: main.getcol(key) for key in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
 
 
-def compare_products(got, expected):
+def compare_products(got, expected, *, corrected_rtol=1e-7):
     np.testing.assert_array_equal(got['FLAG'], expected['FLAG'])
     np.testing.assert_allclose(got['WEIGHT'], expected['WEIGHT'], rtol=5e-6)
-    np.testing.assert_allclose(got['CORRECTED_DATA'], expected['CORRECTED_DATA'], atol=8e-7)
+    np.testing.assert_allclose(got['CORRECTED_DATA'], expected['CORRECTED_DATA'],
+                               rtol=corrected_rtol, atol=8e-7)
 
 
 def attach_mapped_tsys(root, vis):

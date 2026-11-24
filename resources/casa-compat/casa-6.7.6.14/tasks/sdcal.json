@@ -230,6 +230,16 @@
       }
     },
     {
+      "default": "''",
+      "description": "select data by observation intent, e.g. \"OBSERVE_TARGET#ON_SOURCE\" (\"\"=all)",
+      "kind": "KEYWORD_ONLY",
+      "name": "intent",
+      "schema": {
+        "coerce": "to_str",
+        "type": "cStr"
+      }
+    },
+    {
       "default": null,
       "description": null,
       "kind": "VAR_KEYWORD",

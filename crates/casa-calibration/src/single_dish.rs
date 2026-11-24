@@ -12,9 +12,9 @@ pub(crate) mod tool;
 
 use std::path::{Path, PathBuf};
 
-use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
+use casa_ms::{MeasurementSet, MsError, MsSelection, MsSelectionError, ResolvedMsSelection};
 use casa_provider_contracts::{CasaValue, ParameterValue};
-use casa_tables::TableWriteLock;
+use casa_tables::{TableError, TableWriteLock, publication::lock_table_tree_for_replacement};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 
 use crate::CalibrationOutputMode;
@@ -37,6 +37,11 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
         field: selector(task, "field")?,
         spw: selector(task, "spw")?,
         scan: selector(task, "scan")?,
+        intent: if matches!(mode.as_str(), "ps" | "otf" | "otfraster") {
+            selector(task, "intent")?
+        } else {
+            None
+        },
         ..MsSelection::default()
     };
     if mode == "tsys" && (selection.scan.is_some() || selection.spw.is_some()) {
@@ -45,9 +50,7 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
     }
     let ms = MeasurementSet::open(&infile)
         .map_err(|error| TaskFailure::execution(error.to_string()).at("infile"))?;
-    let selected = resolve_casa_calibration_selection(&ms, &selection).map_err(|error| {
-        TaskFailure::execution(format!("Error in data selection specification: {error}"))
-    })?;
+    let selected = resolve_selection(&ms, &selection)?;
     if !outfile.is_empty() && Path::new(&outfile).exists() && !overwrite {
         return Err(TaskFailure::execution(format!(
             "overwrite is False and output file exists: {outfile}"
@@ -79,18 +82,16 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
         )
         .at("outfile"));
     }
-    let _output_lock = if overwrite && generates_table && output_path.join("table.dat").is_file() {
-        Some(
-            TableWriteLock::acquire_to_reread(output_path, 1)
-                .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"))?,
-        )
-    } else {
-        None
-    };
     let output_mode = if overwrite {
         CalibrationOutputMode::Replace
     } else {
         CalibrationOutputMode::Create
+    };
+    let _output_locks = if overwrite && generates_table {
+        lock_solve_output(output_path, output_mode)
+            .map_err(|error| TaskFailure::execution(error.to_string()).at("outfile"))?
+    } else {
+        Vec::new()
     };
     let count = match mode.as_str() {
         "ps" => generate_position_switch(task, &ms, selected, output_path, output_mode)?,
@@ -110,6 +111,38 @@ pub(crate) fn sdcal(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailur
             "row_count": count,
         }),
     )
+}
+
+fn resolve_selection(
+    ms: &MeasurementSet,
+    selection: &MsSelection,
+) -> Result<ResolvedMsSelection, TaskFailure> {
+    resolve_casa_calibration_selection(ms, selection).map_err(|error| {
+        if let MsSelectionError::Domain(MsError::VersionError(reason)) = &error
+            && let Some(intent) = reason
+                .strip_prefix("intent selector ")
+                .and_then(|value| value.strip_suffix(" did not match any STATE rows"))
+        {
+            return TaskFailure::execution(format!(
+                "Error in data selection specification: State Expression: No match found for {intent}\nState Expression: Partial or no match for State ID list []"
+            ));
+        }
+        TaskFailure::execution(format!("Error in data selection specification: {error}"))
+    })
+}
+
+fn lock_solve_output(
+    output: &Path,
+    mode: CalibrationOutputMode,
+) -> Result<Vec<TableWriteLock>, TableError> {
+    if !output.join("table.dat").is_file() {
+        return Ok(Vec::new());
+    }
+    if mode == CalibrationOutputMode::Replace {
+        lock_table_tree_for_replacement(output)
+    } else {
+        TableWriteLock::acquire_to_reread(output, 1).map(|lock| vec![lock])
+    }
 }
 
 fn generate_position_switch(

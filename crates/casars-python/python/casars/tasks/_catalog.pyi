@@ -1583,6 +1583,8 @@ def sdcal(
     field: str = ...,
     spw: str = ...,
     scan: str = ...,
+    *,
+    intent: str = ...,
 ) -> Any:
     ...
 

@@ -60,7 +60,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | rerefant | rerefant | yes | 5 | 5 | 0 | 0 | 0 | 0 |
 | sdatmcor | sdatmcor | yes | 29 | 29 | 0 | 0 | 0 | 0 |
 | sdbaseline | sdbaseline | yes | 38 | 38 | 0 | 0 | 0 | 0 |
-| sdcal | sdcal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
+| sdcal | sdcal | yes | 15 | 15 | 0 | 0 | 0 | 0 |
 | sdfit | sdfit | yes | 21 | 21 | 0 | 0 | 0 | 0 |
 | sdgaincal | sdgaincal | yes | 14 | 14 | 0 | 0 | 0 | 0 |
 | sdsmooth | sdsmooth | yes | 14 | 14 | 0 | 0 | 0 | 0 |
@@ -3069,21 +3069,21 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 ### sdcal
 
-- CASA source: `casatasks/sdcal.py`, 14 parameters
+- CASA source: `casatasks/sdcal.py`, 15 parameters
 - Implementation: `casatasks/private/task_sdcal.py`, `sdcal` (line 23): 1 return statements, 13 raise statements
   - returns at line 30: `None`
 - Called with its defaults in an empty directory, CASA raises `AssertionError`: the infile parameter must be a path that exists ('' does not exist)
 - CASA's named parameters: yes
 - CASA parameters casa-rs lacks: none
 - casa-rs parameters CASA lacks: none
-- Shared parameters: 14, in CASA's order: yes
+- Shared parameters: 15, in CASA's order: yes
 - Defaults that differ: none
 
 #### sdcal parameter implementation
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`. Status counts: Default only: 0, Implemented: 14, Not implemented: 0, Partial: 0, Unassessed: 0.
+Audit baseline: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`. Status counts: Default only: 0, Implemented: 15, Not implemented: 0, Partial: 0, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -3103,6 +3103,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `field` | `''` | `''`; `field` → `field` | Implemented | Select reference and science fields. Tsys uses the whole observation when generating a composite prior. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
 | `spw` | `''` | `''`; `spw` → `spw` | Implemented | Select reference windows and science channels. Direct Tsys generation requires the all-window form. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
 | `scan` | `''` | `''`; `scan` → `scan` | Implemented | Select scan rows for sky generation and application. Direct Tsys generation requires the all-scan form. [ps](#sdcal-behavior-ps) [tsys](#sdcal-behavior-tsys) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [generation](#sdcal-evidence-generation), [application](#sdcal-evidence-application), [edges](#sdcal-evidence-edges) |
+| `intent` | `''` | `''`; `intent` → `intent` | Implemented | Select observing intents for sky-table generation. Direct apply and Tsys generation keep the keyword inactive. The OTF and raster composites with Tsys use the local on-source selection. [ps](#sdcal-behavior-ps) [application](#sdcal-behavior-application) [edges](#sdcal-behavior-edges)<br>Catalog domain: `string` | [intent](#sdcal-evidence-intent) |
 
 #### sdcal interacting modes and task behavior
 
@@ -3198,6 +3199,18 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `1ccab2bfb02cc3b6083b12ce85ec69a9120e3d4a`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdcal_edges_oracle.py <new-dir> --ephemeris <staged-otf_ephem.ms>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1974`.
+
+<a id="sdcal-evidence-intent"></a>
+##### intent
+
+**Paired public CASA intent selection and unchanged upstream tests — passed.** All 65 applicable stock cases passed with both implementations. Upstream unconditionally skips serial CASA Multi-MS sky application. The named intent changed position switching from scans 1 and 3 to scan 1, selected the same map spectra as explicit scan selection, and preserved both Tsys composite outputs under an unused intent. Position-switch, OTF and OTF raster intent selection, inactive direct apply and Tsys intent, and the local sky-intent override in Tsys composites.
+
+- [tools/casa-compat/sdcal_position_switch_oracle.py](https://github.com/bglenden/casa-rs/blob/b3d09768e9728c85dca2ab73f02874369efd6942/tools/casa-compat/sdcal_position_switch_oracle.py)
+- [tools/casa-compat/sdcal_edges_oracle.py](https://github.com/bglenden/casa-rs/blob/b3d09768e9728c85dca2ab73f02874369efd6942/tools/casa-compat/sdcal_edges_oracle.py)
+- [https://github.com/bglenden/casa-rs/issues/1530](https://github.com/bglenden/casa-rs/issues/1530)
+- Revision: `b3d09768e9728c85dca2ab73f02874369efd6942`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/upstream_calibration_suite.py sdcal --casatestdata <pinned-casatestdata> --out <results>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/2161`.
 
 ### sdfit
 
@@ -3384,7 +3397,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `interp` | `''` | `''`; `interp` → `interp` | Implemented | Use one interpolation for all tables or align entries by table index. [preapply](#sdgaincal-behavior-preapply)<br>Catalog domain: `variant` | [paired](#sdgaincal-evidence-paired) |
 | `spwmap` | `[]` | `[]`; `spwmap` → `spwmap` | Implemented | Use the same flat window map for all priors or configure each prior table. [preapply](#sdgaincal-behavior-preapply)<br>Catalog domain: `variant` | [paired](#sdgaincal-evidence-paired) |
 | `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | Write a CASA-readable complex SDGAIN_OTFD calibration table, including a valid empty table when some integrations reach the solver but the group is short. [product](#sdgaincal-behavior-product)<br>Catalog domain: `path` (calibration_table) | [paired](#sdgaincal-evidence-paired) |
-| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Replace an existing table when requested and keep its contents when no solution reaches the solver. [product](#sdgaincal-behavior-product)<br>Catalog domain: `bool` | [paired](#sdgaincal-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Replace an existing calibration table or separate MeasurementSet when requested and keep its contents when no solution reaches the solver. [product](#sdgaincal-behavior-product)<br>Catalog domain: `bool` | [paired](#sdgaincal-evidence-paired), [stock](#sdgaincal-evidence-stock) |
 
 #### sdgaincal interacting modes and task behavior
 
@@ -3409,11 +3422,11 @@ Evidence: [paired](#sdgaincal-evidence-paired).
 <a id="sdgaincal-behavior-preapply"></a>
 ##### Per-table prior calibration
 
-**Implemented** — Apply actual time-varying prior corrections and mapped spectral Tsys before solving, with scalar and indexed interpolation and window lists.
+**Implemented** — Apply time-varying priors to complex or real single-dish data. Mapped Tsys uses CASA's station order and Float rounding, with scalar and indexed interpolation and window lists.
 
 Release and dataset-scale benchmarks follow functionality under #979.
 
-Evidence: [paired](#sdgaincal-evidence-paired).
+Evidence: [paired](#sdgaincal-evidence-paired), [stock](#sdgaincal-evidence-stock).
 
 <a id="sdgaincal-behavior-product"></a>
 ##### Complex calibration table interoperability
@@ -3459,6 +3472,17 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `8407207930378977daae4a812e8f64a5038d99f7`; CASA: `6.7.6.14`.
 - Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/sdgaincal_oracle.py <new-dir>`.
 - Receipt: `https://github.com/bglenden/casa-rs/pull/1975`.
+
+<a id="sdgaincal-evidence-stock"></a>
+##### stock
+
+**Unchanged upstream single-dish gain cases — passed.** All 13 cases passed on each Python implementation without skips. The applied gain tables also passed the paired writer-reader comparison. Official double-circle maps, explicit replacement, separate and combined sky and Tsys priors on FLOAT_DATA, SPW mapping and single polarization.
+
+- [resources/casa-compat/upstream-calibration-tests/6.7.6.14/test_task_sdgaincal.py](https://github.com/bglenden/casa-rs/blob/b3d09768e9728c85dca2ab73f02874369efd6942/resources/casa-compat/upstream-calibration-tests/6.7.6.14/test_task_sdgaincal.py)
+- [tools/casa-compat/sdgaincal_oracle.py](https://github.com/bglenden/casa-rs/blob/b3d09768e9728c85dca2ab73f02874369efd6942/tools/casa-compat/sdgaincal_oracle.py)
+- Revision: `b3d09768e9728c85dca2ab73f02874369efd6942`; CASA: `6.7.6.14`.
+- Command: `CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/upstream_calibration_suite.py sdgaincal --casatestdata <pinned-casatestdata> --out <results>`.
+- Receipt: `https://github.com/bglenden/casa-rs/pull/2161`.
 
 ### sdsmooth
 
