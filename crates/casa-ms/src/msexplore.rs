@@ -5406,9 +5406,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let combined_vector_average = time_weight_kinds.is_some() && average_channels;
     // A model-only request gives each surviving channel equal weight after
     // the iterator has normalized that channel's time samples.
-    let average_model_channels_equally = time_baselines
-        && combined_vector_average
+    let model_channels_equally = combined_vector_average
         && time_weight_kinds.is_some_and(|kinds| kinds.row_weight == WeightKind::Unit);
+    let average_model_channels_equally = time_baselines && model_channels_equally;
     let visibility_weight_kinds = time_weight_kinds.or(channel_first_kinds);
     let needs_weight_kind = |kind| {
         visibility_weight_kinds.is_some_and(|kinds| kinds.uses(kind))
@@ -6231,6 +6231,8 @@ fn build_generic_visibility_scatter_with_averaging(
                                                     time_model_kind == Some(WeightKind::Observed),
                                                 ],
                                                 primary: time_channel_primary,
+                                                equal_channel_means: time_antenna_channels
+                                                    && model_channels_equally,
                                             },
                                             *corr_index,
                                             bin,

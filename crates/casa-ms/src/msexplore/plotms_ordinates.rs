@@ -485,6 +485,7 @@ pub(super) struct VectorTimeWeights<'a> {
     pub(super) spectra: [Option<&'a FloatGrid>; 2],
     pub(super) observed_operands: [bool; 2],
     pub(super) primary: Option<(&'a FloatGrid, WeightKind)>,
+    pub(super) equal_channel_means: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -498,6 +499,7 @@ struct TimeChannelProjection {
     channels: Vec<Option<TimeChannelSample>>,
     observed_operands: [bool; 2],
     primary_is_observed: bool,
+    equal_channel_means: bool,
 }
 
 impl TimeChannelProjection {
@@ -517,10 +519,14 @@ impl TimeChannelProjection {
         for channel in std::iter::once(first).chain(usable) {
             primary += channel_weight_after_time(channel.primary_weight, self.primary_is_observed);
             for (operand, sum) in sums.iter_mut().enumerate() {
-                let weight = channel_weight_after_time(
-                    channel.operands.total_weights[operand],
-                    self.observed_operands[operand],
-                );
+                let weight = if self.equal_channel_means {
+                    1.0
+                } else {
+                    channel_weight_after_time(
+                        channel.operands.total_weights[operand],
+                        self.observed_operands[operand],
+                    )
+                };
                 *sum += channel.operands.time_mean(operand) * weight;
                 totals[operand] += weight;
             }
@@ -603,6 +609,7 @@ impl AveragedVisibility {
                 primary_is_observed: weights
                     .primary
                     .is_some_and(|(_, kind)| kind == WeightKind::Observed),
+                equal_channel_means: weights.equal_channel_means,
             });
         }
         let VisibilitySamples::TimeChannelProjection(projection) = &mut self.0 else {
