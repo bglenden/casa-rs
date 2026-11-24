@@ -337,6 +337,10 @@ pub(super) fn options_from_plotms(
         (y_axis2 == Some(y_axis) || secondary_y != data_column).then_some(secondary_y);
     let document_axes = x_axis.is_visibility_math()
         || y_axis.is_visibility_math()
+        // PlotMS falls back to scalar SIGMA for undefined spectral cells;
+        // the raw explorer deliberately requires the requested stored cell.
+        || x_axis == MsAxis::SigmaSpectrum
+        || y_axis == MsAxis::SigmaSpectrum
         || y_axis2.is_some()
         || x_axis.is_row_identifier()
         || y_axis.is_row_identifier()

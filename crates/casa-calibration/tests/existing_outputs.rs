@@ -431,21 +431,18 @@ fn refused_arguments_change_nothing() {
     let before = snapshot(&ms);
     let out = temp.path().join("out.ms");
 
-    for (binary, args) in [(
-        env!("CARGO_BIN_EXE_mstransform"),
-        vec![
-            "--vis",
-            ms_arg,
-            "--outputvis",
-            out.to_str().unwrap(),
-            "--spw",
-            "9",
-        ],
-    )] {
-        let output = run(binary, &args);
-        assert!(!output.status.success(), "{binary} {args:?} succeeded");
-        assert_eq!(snapshot(&ms), before, "{binary} {args:?}");
-    }
+    let binary = env!("CARGO_BIN_EXE_mstransform");
+    let args = [
+        "--vis",
+        ms_arg,
+        "--outputvis",
+        out.to_str().unwrap(),
+        "--spw",
+        "9",
+    ];
+    let output = run(binary, &args);
+    assert!(!output.status.success(), "{binary} {args:?} succeeded");
+    assert_eq!(snapshot(&ms), before, "{binary} {args:?}");
     assert!(!flag_versions(&ms).exists());
     assert!(!out.exists());
 }

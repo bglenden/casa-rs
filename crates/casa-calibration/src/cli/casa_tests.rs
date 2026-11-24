@@ -599,7 +599,12 @@ fn gencal_reads_casas_values() {
     assert!(refused(caltype(""), "caltype").contains("requires a caltype"));
     assert!(caltype("tsys").is_ok());
     assert!(caltype("antposvla").is_ok());
-    assert!(refused(caltype("eop"), "caltype").contains("#979"));
+    // EOP generation is implemented; retain the parsed task contract check.
+    let CalibrationTaskRequest::Gencal(eop) = caltype("eop").expect("EOP request") else {
+        panic!("expected gencal request");
+    };
+    assert_eq!(eop.prior.caltype, GencalType::Eop);
+    assert_eq!(eop.eop_infile, None);
 }
 
 #[test]

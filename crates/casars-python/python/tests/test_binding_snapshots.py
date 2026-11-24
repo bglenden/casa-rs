@@ -10,6 +10,10 @@ checked rather than asserted.
 Regenerate the fixture only for an intended change, and review its diff:
 
     python crates/casars-python/python/tests/test_binding_snapshots.py
+
+The current fixture includes optional cVariant domains and dictionary
+defaults and #2123's exact WGS84 flattening. The numerical tolerance and
+the generic plot API's refusal of undefined spectra are unchanged.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from typing import Any, Callable, Iterator
 import numpy as np
 import pytest
 
-from casars import data, parameters, tasks
+from casars import data, parameters, tasks, tools
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 FIXTURE = Path(__file__).parent / "data" / "binding_snapshots.json"
@@ -567,6 +571,71 @@ def test_measurement_set_plots_are_unchanged(
     snapshot: dict[str, Any], expected: dict[str, Any], case: str
 ) -> None:
     _assert_matches(snapshot["plots"][case], expected["plots"][case], case)
+
+
+@pytest.mark.parametrize("stored_spectrum", [False, True])
+@pytest.mark.parametrize("calibrated", [False, True])
+@pytest.mark.parametrize("averaging", [{}, {"avgchannel": 2}, {"avgtime": 1.0},
+                                       {"avgtime": 1.0, "avgchannel": 2}])
+def test_sigma_spectrum_raw_requirement_and_plotms_fallback(
+    tmp_path, monkeypatch, stored_spectrum, calibrated, averaging,
+):
+    path = _unpack_small_ms(tmp_path)
+    table = tools.table()
+    assert table.open(str(path), nomodify=False)
+    try:
+        # Row 361 has unflagged XX samples and no SIGMA_SPECTRUM. Distinct
+        # stored values also catch an unconditional scalar fallback.
+        row = 361
+        assert not table.iscelldefined("SIGMA_SPECTRUM", row)
+        shape = table.getcell("DATA", row).shape
+        if stored_spectrum:
+            spectrum = np.arange(1, np.prod(shape) + 1, dtype=np.float32).reshape(shape)
+            assert table.putcell("SIGMA_SPECTRUM", row, spectrum)
+            expected = spectrum[0]
+        else:
+            expected = np.full(shape[1], table.getcell("SIGMA", row)[0])
+    finally:
+        assert table.done()
+    monkeypatch.chdir(tmp_path)
+    calibration = {}
+    if calibrated:
+        gain = tmp_path / "amplitude.cal"
+        assert tasks.gencal(vis=str(path), caltable=str(gain), caltype="amp",
+                            parameter=[2.0]) is None
+        calibration = {"ydatacolumn": "corrected",
+                       "callib": f"caltable='{gain}' calwt=False tinterp='nearest'"}
+    output = tmp_path / "sigma.txt"
+    # With one selected integration time averaging must preserve every
+    # spectral value, including PlotMS's scalar fallback for an empty cell.
+    plot_average = {"avgtime": str(averaging["avgtime"])} if "avgtime" in averaging else {}
+    assert tasks.plotms(
+        vis=str(path), xaxis="channel", yaxis="sigmasp", msselect="ROWID()==361",
+        correlation="XX", showgui=False, plotfile=str(output), expformat="txt",
+        **calibration, **plot_average,
+    ) is None
+    lines = [line for line in output.read_text().splitlines() if not line.startswith("#")]
+    if "\t" not in lines[0]:
+        # The CASA-compatible export writes x/y first, to six significant digits.
+        rows = [line.split() for line in lines]
+        x, y = 0, 1
+        rtol, atol = 5e-6, 0
+    else:
+        # The generic export has a header and twelve decimal places.
+        rows = [line.split("\t") for line in lines[1:]]
+        x, y = 2, 3
+        rtol, atol = 0, 5e-13
+    np.testing.assert_array_equal([float(row[x]) for row in rows], np.arange(shape[1]))
+    np.testing.assert_allclose([float(row[y]) for row in rows], expected, rtol=rtol, atol=atol)
+    options = dict(preset="sigma_spectrum_vs_time", **averaging,
+                   selection={"msselect": "ROWID()==361", "correlation": "XX"})
+    if stored_spectrum:
+        plot = data.measurement_set_plot(path, **options)
+        width = averaging.get("avgchannel", 1)
+        np.testing.assert_array_equal(plot.panels[0].series[0].y, expected.reshape(-1, width).mean(axis=1))
+    else:
+        with pytest.raises(ValueError, match="requires SIGMA_SPECTRUM data"):
+            data.measurement_set_plot(path, **options)
 
 
 def test_a_series_sum_is_compared_at_the_precision_of_its_terms() -> None:

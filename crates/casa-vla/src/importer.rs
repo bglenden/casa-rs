@@ -3882,7 +3882,7 @@ mod tests {
         assert_eq!(reopened.spectral_window().unwrap().row_count(), 2);
         for (row, expected) in [0, 1, 1, 0, 0].into_iter().enumerate() {
             let row = reopened.main_table().row_accessor().row(row).unwrap();
-            assert_eq!(optional_i32_scalar(&row, "DATA_DESC_ID"), Some(expected));
+            assert_eq!(optional_i32_scalar(row, "DATA_DESC_ID"), Some(expected));
         }
     }
 

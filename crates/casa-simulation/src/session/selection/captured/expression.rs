@@ -191,7 +191,11 @@ fn normalize(expr: &mut Expr, columns: &mut Vec<String>, nodes: &mut usize) -> S
     Ok(())
 }
 
-pub(super) fn row_bytes(table: &Table, columns: &[String], nodes: usize) -> SimulatorResult<u64> {
+pub(super) fn row_bytes(
+    table: &Table,
+    columns: &[String],
+    nodes: usize,
+) -> SimulatorResult<(u64, u64)> {
     // Eager evaluation can retain one array per expression node, beside
     // the source cell and conversion/output buffers. Count the expression,
     // rather than assuming a constant number of live DATA arrays.
@@ -200,6 +204,7 @@ pub(super) fn row_bytes(table: &Table, columns: &[String], nodes: usize) -> Simu
         .saturating_mul(size_of::<ExprValue>())
         .saturating_add(16);
     let mut maximum = 0usize;
+    let mut read_buffers = 0usize;
     for name in columns {
         let column = table.column_accessor(name).map_err(error)?;
         let schema = table
@@ -210,6 +215,9 @@ pub(super) fn row_bytes(table: &Table, columns: &[String], nodes: usize) -> Simu
             return Err(super::super::query::unsupported("stored string columns"));
         }
         if matches!(schema.column_type(), casa_tables::ColumnType::Array(_)) {
+            // Cells are read sequentially. I/O scratch is a single peak,
+            // separate from per-row values retained by ORDERBY/GROUPBY.
+            read_buffers = read_buffers.max(column.array_cell_read_buffer_bytes().map_err(error)?);
             let mut elements = 0usize;
             for first in (0..table.row_count()).step_by(1024) {
                 let rows: Vec<_> = (first..table.row_count().min(first + 1024)).collect();
@@ -238,7 +246,7 @@ pub(super) fn row_bytes(table: &Table, columns: &[String], nodes: usize) -> Simu
             maximum = maximum.saturating_add(256);
         }
     }
-    Ok(maximum as u64 + 4096)
+    Ok((maximum as u64 + 4096, read_buffers as u64))
 }
 
 pub(super) fn read_row(

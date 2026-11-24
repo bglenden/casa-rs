@@ -58,7 +58,7 @@ fn attach_test_subtable(input: &std::path::Path, as_reference: bool) -> std::pat
 fn transform_with_auxiliary(
     input_ms: std::path::PathBuf,
     output_ms: std::path::PathBuf,
-) -> Result<casa_ms::MsTransformReport, casa_ms::MsTransformError> {
+) -> Result<casa_ms::MsTransformReport, Box<casa_ms::MsTransformError>> {
     mstransform(&MsTransformRequest {
         input_ms,
         output_ms,
@@ -68,6 +68,7 @@ fn transform_with_auxiliary(
         selection: MsSelection::new(),
         keep_flags: true,
     })
+    .map_err(Box::new)
 }
 
 #[test]

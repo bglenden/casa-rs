@@ -89,7 +89,7 @@ impl CpuBackend {
     pub const fn prediction_sample_bytes(npol: usize, terms: usize) -> u64 {
         (terms * size_of::<f64>()
             + 2 * npol * size_of::<Complex64>()
-            + npol * size_of::<(u8, Complex64)>()) as u64
+            + npol * size_of::<(u8, Complex64, Complex64)>()) as u64
     }
 
     /// Bytes a gridding call holds while it spreads a placement whose

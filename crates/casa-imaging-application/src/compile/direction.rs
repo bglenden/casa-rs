@@ -913,8 +913,8 @@ mod tests {
         assert_eq!(stokes.stokes(), [StokesType::Q]);
     }
 
-    /// A pointing on the far hemisphere adds no beam. The SIN projection
-    /// alone would mirror the antipode onto the reference pixel.
+    /// A pointing on the far hemisphere adds no beam. SIN now refuses that
+    /// projection (#1808); imaging excludes it without requesting a pixel.
     #[test]
     fn a_pointing_beyond_ninety_degrees_has_no_pixel() {
         let cell = 1.0e-5;
@@ -931,8 +931,12 @@ mod tests {
         assert!((near[0] - 22.0).abs() < 1.0e-3, "{near:?}");
         assert!((near[1] - 32.0).abs() < 1.0e-3, "{near:?}");
         let antipode = [1.0 + std::f64::consts::PI, -0.4];
-        let mirrored = coordinate.to_pixel(&antipode).expect("SIN never fails");
-        assert!((mirrored[0] - 32.0).abs() < 1.0e-6, "{mirrored:?}");
+        assert!(matches!(
+            coordinate.to_pixel(&antipode),
+            Err(casa_coordinates::CoordinateError::OutsideProjectionDomain(
+                _
+            ))
+        ));
         assert_eq!(
             pointing_pixel(&coordinate, antipode).expect("projection"),
             None

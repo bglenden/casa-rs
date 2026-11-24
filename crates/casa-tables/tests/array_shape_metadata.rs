@@ -190,6 +190,35 @@ fn pending_array_edits_cannot_be_mistaken_for_persisted_shapes() {
 }
 
 #[test]
+fn compressed_cell_read_buffers_use_physical_headers_without_payloads() {
+    let directory = tempfile::tempdir().unwrap();
+    let bytes = include_bytes!("data/compressed-cell-headers.tar.gz");
+    tar::Archive::new(flate2::read::GzDecoder::new(&bytes[..]))
+        .unpack(directory.path())
+        .unwrap();
+    for manager in ["CompressComplex", "CompressComplexSD"] {
+        let path = directory.path().join(manager);
+        // The C++ fixture deliberately has no numerical payload files.
+        assert!(!path.join("table.f0_TSM0").exists());
+        let reopened = Table::open(TableOptions::new(&path)).unwrap();
+        for name in ["DATA", "PACKED"] {
+            let column = reopened.column_accessor(name).unwrap();
+            // Nine 32-byte Int32 tiles: one decoded tile plus all nine
+            // tiles in the contiguous file buffer, independent of logical dtype.
+            assert_eq!(
+                column.array_cell_read_buffer_bytes().unwrap(),
+                320,
+                "{name}, {manager}"
+            );
+            assert_eq!(
+                column.array_shapes_uncached(&[0]).unwrap(),
+                vec![Some(vec![1, 9])]
+            );
+        }
+    }
+}
+
+#[test]
 fn cpp_incremental_shapes_include_carried_forward_and_undefined_rows() {
     let directory = tempfile::tempdir().unwrap();
     for (name, bytes) in [

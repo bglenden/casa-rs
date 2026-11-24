@@ -10,6 +10,58 @@ from test_image_miriad_input import _sky
 from test_image_removal import _backend
 
 
+@pytest.mark.parametrize("name", ["pa.im", "spectralindex.im", "pa(operand).im", "spectralindex(operand).im"])
+@pytest.mark.parametrize("persistent", [False, True])
+def test_imagecalc_function_names_in_paths_preserve_metadata(tmp_path, name, persistent):
+    api = _backend("casars")
+    path = tmp_path / name
+    pixels = np.arange(12, dtype=np.float32).reshape(3, 4)
+    expected_world = _operand(api, path, pixels)
+    source = api.image()
+    output = None
+    try:
+        output = source.imagecalc(
+            pixels=f'"{path}" + 3',
+            outfile=str(tmp_path / "result.im") if persistent else "",
+        )
+        valid = pixels > 4
+        np.testing.assert_array_equal(output.getchunk()[valid], (pixels + 3)[valid])
+        assert output.brightnessunit() == "Jy/pixel"
+        coordinates = output.coordsys()
+        try:
+            np.testing.assert_allclose(coordinates.toworld([2, 3])["numeric"], expected_world)
+        finally:
+            coordinates.done()
+    finally:
+        if output is not None:
+            output.done()
+        source.done()
+
+
+@pytest.mark.parametrize("function", ["pa", "PA"])
+def test_imagecalc_polarization_angle_call_keeps_its_metadata(tmp_path, function):
+    api = _backend("casars")
+    source = api.image()
+    output = None
+    try:
+        for name, value in [("u", 4.), ("q", 3.)]:
+            assert source.fromarray(str(tmp_path / f"{name}.im"),
+                                    np.full((1, 1, 1, 1), value, dtype=np.float32))
+            assert source.done()
+        output = source.imagecalc(pixels=f'{function} ("{tmp_path}/u.im", "{tmp_path}/q.im")')
+        np.testing.assert_allclose(output.getchunk(), np.degrees(0.5 * np.arctan2(4., 3.)), rtol=1e-6)
+        assert output.brightnessunit() == "deg"
+        coordinates = output.coordsys()
+        try:
+            assert coordinates.stokes() == ["Pangle"]
+        finally:
+            coordinates.done()
+    finally:
+        if output is not None:
+            output.done()
+        source.done()
+
+
 def _operand(api, path, pixels):
     writer = api.image()
     try:

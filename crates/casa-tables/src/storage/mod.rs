@@ -3263,6 +3263,37 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn array_cell_read_buffer_bytes(
+        &self,
+        table_path: &Path,
+        column: &str,
+    ) -> Result<usize, StorageError> {
+        let Some(dm) = self.array_column_tiled_manager(table_path, column)? else {
+            return Ok(0);
+        };
+        let TableDatResult::Plain(table_dat) =
+            read_table_dat_dispatch(&table_path.join(TABLE_CONTROL_FILE))?
+        else {
+            return Ok(0);
+        };
+        let target = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .position(|desc| desc.col_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("missing array column {column}"))
+            })?;
+        let bound: Vec<_> = table_dat
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.dm_seq_nr == dm)
+            .collect();
+        tiled_stman::cell_read_buffer_bytes(table_path, dm, &table_dat.table_desc, &bound, target)
+    }
+
     /// The tile shape of array column `column`'s tiled storage manager, in
     /// casacore's axis order (the cell's axes, then rows), or `None` for a
     /// column without a tiled manager.

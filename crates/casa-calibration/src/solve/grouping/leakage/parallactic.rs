@@ -183,7 +183,7 @@ impl ParallacticAverages {
             }
             return Err(GainSolveError::InsufficientParallacticCoverage { required });
         }
-        for channel in 0..channels {
+        (0..channels).try_for_each(|channel| {
             let word = channel / 64;
             let bit = 1 << (channel % 64);
             self.rows
@@ -201,8 +201,8 @@ impl ParallacticAverages {
                         );
                     }
                 })
-                .map_err(GainSolveError::PolarizationScratch)?;
-        }
+                .map_err(GainSolveError::PolarizationScratch)
+        })?;
         if self.legacy
             && self.gain_phase
             && !samples

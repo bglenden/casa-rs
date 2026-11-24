@@ -303,6 +303,7 @@ mod tests {
                 "msconvert",
                 "msexplore",
                 "mstransform",
+                "predictcomp",
                 "simobserve",
                 "tsdimaging",
                 "simanalyze",

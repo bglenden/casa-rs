@@ -1210,7 +1210,7 @@ impl Table {
     /// rows while preserving storage-manager grouped I/O.
     ///
     /// This disk read refuses pending scalar overrides and cached columns on
-    /// edited handles. Use [`ColumnAccessor::scalar_cells_owned_for_rows`] for
+    /// edited handles. Use [`TableColumn::scalar_cells_owned_for_rows`] for
     /// those columns to observe changes made through the open handle.
     pub fn required_scalar_columns_for_rows_into(
         &self,

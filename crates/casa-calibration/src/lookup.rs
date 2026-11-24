@@ -313,7 +313,7 @@ impl CalibrationTableLookup {
         path: &Path,
         interp: ApplyInterpolationMode,
         fields: FieldSelection,
-        real: bool,
+        simulator: bool,
     ) -> Result<Self, ApplyExecutionError> {
         if matches!(
             interp,
@@ -329,7 +329,7 @@ impl CalibrationTableLookup {
             reason,
         };
         let summary = summarize_table(path).map_err(|error| unsupported(error.to_string()))?;
-        if (summary.parameter_family != CalibrationParameterFamily::Complex && !real)
+        if (summary.parameter_family != CalibrationParameterFamily::Complex && !simulator)
             || summary.table_subtype == "BPOLY"
         {
             return Err(unsupported(format!(
@@ -355,7 +355,7 @@ impl CalibrationTableLookup {
             interp,
             calwt: false,
         };
-        let table = if real {
+        let table = if simulator {
             load_simulator_table(&plan)?
         } else {
             load_calibration_table(&plan, None)?

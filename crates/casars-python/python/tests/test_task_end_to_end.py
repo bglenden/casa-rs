@@ -165,14 +165,18 @@ def test_a_real_refusal_names_its_parameter(
     flagmanager: str, small_ms: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(small_ms.parent)
-    # A refusal is a ValueError (#931).
+    # The generic runner retains the structured refusal. The CASA wrapper
+    # projects version-name errors to CASA's plain ValueError (#2051).
     with pytest.raises(tasks.TaskParameterError) as failure:
-        tasks.flagmanager(vis=small_ms.name, mode="restore")
+        tasks.run("flagmanager", vis=small_ms.name, mode="restore")
     assert isinstance(failure.value, ValueError)
     completion = failure.value.completion
     assert completion.status == "refused", completion.describe()
     assert completion.parameter == "versionname"
     assert completion.returncode == 2
+    with pytest.raises(ValueError, match="^Illegal versionname: ''$") as wrapper_failure:
+        tasks.flagmanager(vis=small_ms.name, mode="restore")
+    assert type(wrapper_failure.value) is ValueError
 
 
 def test_casas_spellings_of_a_default_run_as_casa_runs_them(

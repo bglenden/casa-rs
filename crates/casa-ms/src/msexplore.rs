@@ -4655,9 +4655,12 @@ fn build_generic_visibility_scatter(
                 (needs_weight_spectrum || needs_calibrated_weights)
                     .then(|| scalar_values_to_grid(&weight_values, chan_count))
             });
-        let sigma_spectrum_grid = selected_sigma_spectrum
-            .as_ref()
-            .and_then(|column| column.find(row_slot))
+        let sigma_spectrum_cell = match &selected_sigma_spectrum {
+            Some(column) if calibration.is_none() => Some(column.get(row_slot)?),
+            Some(column) => column.find(row_slot),
+            None => None,
+        };
+        let sigma_spectrum_grid = sigma_spectrum_cell
             .map(|cell| float_grid_from_array(cell, "SIGMA_SPECTRUM"))
             .transpose()?
             .or_else(|| {
@@ -5843,7 +5846,13 @@ fn build_generic_visibility_scatter_with_averaging(
             });
         let sigma_spectrum_grid = selected_sigma_spectrum
             .as_ref()
-            .map(|column| column.spectrum_in_buffer(row_slot, buffer_first))
+            .map(|column| {
+                if calibration.is_none() {
+                    column.get(row_slot).map(Some)
+                } else {
+                    column.spectrum_in_buffer(row_slot, buffer_first)
+                }
+            })
             .transpose()?
             .flatten()
             .map(|cell| float_grid_from_array(cell, "SIGMA_SPECTRUM"))

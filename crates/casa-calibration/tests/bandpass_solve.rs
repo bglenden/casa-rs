@@ -26,7 +26,9 @@ fn run_bandpass_solve(
         CalibrationSolveRequest::Bandpass(request.clone()),
     )? {
         CalibrationSolveResult::Bandpass(report) => Ok(report),
-        CalibrationSolveResult::Gain(_) => unreachable!("bandpass request result"),
+        CalibrationSolveResult::Gain(_) | CalibrationSolveResult::LegacyEp { .. } => {
+            unreachable!("bandpass request result")
+        }
     }
 }
 

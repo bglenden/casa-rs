@@ -656,6 +656,17 @@ fn phase_step(values: &[f64], scratch: &mut [f64], index: usize) -> f64 {
     median(&values[index..index + width]) - median(&values[index - width..index])
 }
 
+fn remove_wrap(samples: &mut [f64], difference: f64, threshold: f64) {
+    let wraps = i32::from(difference < -threshold) - i32::from(difference > threshold);
+    if wraps == 0 {
+        return;
+    }
+    let offset = f64::from(wraps) * TAU;
+    for sample in samples {
+        *sample += offset;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::phase_step;
@@ -667,16 +678,5 @@ mod tests {
             phases[width + width / 2..].fill(2.);
             assert_eq!(phase_step(&phases, &mut vec![0.; width], width), expected);
         }
-    }
-}
-
-fn remove_wrap(samples: &mut [f64], difference: f64, threshold: f64) {
-    let wraps = i32::from(difference < -threshold) - i32::from(difference > threshold);
-    if wraps == 0 {
-        return;
-    }
-    let offset = f64::from(wraps) * TAU;
-    for sample in samples {
-        *sample += offset;
     }
 }

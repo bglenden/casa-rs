@@ -76,7 +76,7 @@ CASA behaviours casa-rs does not follow:
 [a cube's beam for a plane without one](#a-cubes-beam-for-a-plane-without-one-depends-on-how-memory-splits-the-cube),
 [`tb.getcol` of an `int64` column](#tbgetcol-refuses-a-column-of-int64),
 [`tb.putkeyword` of an int beyond 32 bits](#tbputkeyword-stores-an-int-beyond-32-bits-as-0),
-[`tb` slices that abort the process](#tb-slices-with-a-wrong-rank-or-a-start-outside-the-array-abort-the-process),
+[`tb` slices that abort the process](#some-tb-slice-calls-with-invalid-coordinates-abort-the-process),
 [`tb.putcell` of an int beyond 32 bits](#tbputcell-and-putcol-wrap-an-int-beyond-32-bits-in-an-int-cell),
 [`tb.putcell` with several rows](#tbputcell-with-several-rows-writes-those-before-a-missing-one),
 [`tb.addrows` with a negative count](#tbaddrows-with-a-negative-count-removes-rows),
@@ -1901,7 +1901,7 @@ casa-rs publishes both products and closes the tool normally. The
 common-beam oracle verifies that CASA finished prediction before the
 cleanup failure and checks live and reopened output against their own
 references.
-[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[`imager_common_mosaic_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_common_mosaic_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
 ## Legacy MosaicFT cannot reopen a DEFAULT telescope beam
@@ -1915,7 +1915,7 @@ recipe with “Failed to recovermosaic FTmachine” when the lookup is unknown.
 casa-rs uses the first dish's numeric beam when reopening the record.
 The paired oracle uses the pinned live prediction as that beam's reference
 and checks the documented failure from the CASA reader.
-[`imager_common_mosaic_oracle.py`](../tools/casa-compat/imager_common_mosaic_oracle.py) ·
+[`imager_common_mosaic_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_common_mosaic_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
 ## Legacy nift can abort while preparing a virtual model
@@ -1930,7 +1930,7 @@ casa-rs uses the shared interferometric prediction and publishes a
 `GridFT` virtual recipe. CASA reads that recipe through `uvsub`. The
 paired oracle checks the scratch prediction against pinned `nift` and
 the virtual prediction against a readable pinned GridFT reference.
-[`imager_nift_oracle.py`](../tools/casa-compat/imager_nift_oracle.py) ·
+[`imager_nift_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_nift_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
 ## Mosaic multi-image prediction depends on image order
@@ -2004,7 +2004,7 @@ compares a native bulk scratch prediction with independent CASA calls
 selecting one integration each. It also compares both virtual writers
 and readers against a CASA virtual prediction over both fields.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
-[`imager_facets_oracle.py`](../tools/casa-compat/imager_facets_oracle.py)
+[`imager_facets_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_facets_oracle.py)
 
 ## The simulator's mosaic machine is not tclean's
 
@@ -3968,7 +3968,7 @@ The same iterator substitution affects TFCrop's `DATA` and `RESIDUAL_DATA`
 fits. A fixture with distinct spikes in the complex and float columns shows
 that CASA flags the float source. Native TFCrop keeps the complex source and
 matches the CASA masks for a control containing only complex observations.
-[TFCrop source oracle](../tools/casa-compat/flagdata_tfcrop_sources_oracle.py)
+[TFCrop source oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_tfcrop_sources_oracle.py)
 
 With `datacolumn="FLOAT_DATA", clipzeros=True`, CASA also flags finite
 negative values outside the zero tolerance. casa-rs applies the zero
@@ -3990,7 +3990,7 @@ TFCrop also matches the I in `IMAG_Q`. Its paired control adds the same
 imaginary spike to XX and YY. The derived Q remains flat, while CASA fits
 I and flags both planes. Native TFCrop evaluates Q and returns the usual
 unknown-polarization error for a bare `IMAG` operator. It uses the same
-native Stokes equations as clip. [TFCrop correlation oracle](../tools/casa-compat/flagdata_tfcrop_correlations_oracle.py)
+native Stokes equations as clip. [TFCrop correlation oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_tfcrop_correlations_oracle.py)
 
 With `correlation="REAL_XX", clipzeros=True`, CASA compares the signed
 real value to the zero tolerance. A finite value of −3 is flagged.
@@ -4012,7 +4012,7 @@ for these three products and flags their contributing planes when the
 result meets the clipping criterion. MeasurementSet RFlag uses the same
 corrected linear Stokes U equation `(XY + YX) / 2`, verified with an
 equal-cross-hand (`XY = YX`) control in [MS RFlag
-oracle](../tools/casa-compat/flagdata_rflag_ms_oracle.py). The paired Stokes
+oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_rflag_ms_oracle.py). The paired Stokes
 clip oracle reproduces the CASA flags and compares the native flags with
 independently calculated values. [Standing owner decision](https://github.com/bglenden/casa-rs/issues/978#issuecomment-7020003055)
 
@@ -4028,7 +4028,7 @@ With XX channel 3 already flagged, `mode='extend'`, `flagnearfreq=True`,
 and `spw='0:1~7^2'`, CASA flags the unselected channels 2 and 4. The native
 task grows to the neighboring selected channels 1 and 5, as CASA does with
 the explicit channel list `0:1;3;5;7`.
-[Extension oracle](../tools/casa-compat/flagdata_extend_oracle.py)
+[Extension oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_extend_oracle.py)
 
 ## Clip and TFCrop channel averaging can abort on a strided selection
 
@@ -4047,8 +4047,8 @@ window. The independently injected broadband impulse flags just channels
 `ArraySlicerError` abort with `channelavg=True`, `chanbin=2` and
 `spw="0:0~30^2"`, while its native strided selection and CASA's explicit
 `0:0;2;...;30` selection produce the same physical mask.
-[TFCrop channel averaging oracle](../tools/casa-compat/flagdata_tfcrop_channelavg_oracle.py)
-· [MS RFlag oracle](../tools/casa-compat/flagdata_rflag_ms_oracle.py)
+[TFCrop channel averaging oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_tfcrop_channelavg_oracle.py)
+· [MS RFlag oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_rflag_ms_oracle.py)
 
 ## Clip channel averaging can flag nonzero data as zero
 
@@ -4138,9 +4138,9 @@ uses the same weights for the model when deriving an observed residual,
 and accumulates each weight spectrum over its actual contributing
 integrations. The test calculates the expected masks from the stored values,
 then compares flags and data using both CASA and casacore readback.
-[Time clip oracle](../tools/casa-compat/flagdata_clip_timeavg_oracle.py)
-· [TFCrop time averaging oracle](../tools/casa-compat/flagdata_tfcrop_timeavg_oracle.py)
-· [MS RFlag oracle](../tools/casa-compat/flagdata_rflag_ms_oracle.py)
+[Time clip oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_clip_timeavg_oracle.py)
+· [TFCrop time averaging oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_tfcrop_timeavg_oracle.py)
+· [MS RFlag oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_rflag_ms_oracle.py)
 
 ## Decorated flag selections can alter unnamed correlations
 
@@ -4158,19 +4158,19 @@ comparison starts with four flagged XX channels. With `growfreq=50`,
 `growtime=0`, and `extendpols=True`, CASA fills both XX and YY for
 `ABS_XX`. Native extension fills all eight XX channels and preserves
 YY, matching the explicit CASA `XX` product.
-[Elevation oracle](../tools/casa-compat/flagdata_elevation_oracle.py)
-· [Extension oracle](../tools/casa-compat/flagdata_extend_oracle.py)
+[Elevation oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_elevation_oracle.py)
+· [Extension oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_extend_oracle.py)
 
 The shadow oracle also reproduces CASA's widening of decorated correlation
 selections. `ABS_YY` and `ABS_UNKNOWN` change both stored planes in CASA.
 Native shadow flagging matches explicit `YY` for the first expression and
 leaves the flags unchanged when the expression names no stored product.
-[Shadow oracle](../tools/casa-compat/flagdata_shadow_oracle.py)
+[Shadow oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_shadow_oracle.py)
 
 The reference-antenna integration oracle verifies the same protection for
 `mode='antint'` with `ABS_XX`. Native changes match explicit `XX` and
 preserve the other correlation's stored flags.
-[Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
+[Antenna integration oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_antint_oracle.py)
 
 ## Time-averaged clipping and TFCrop can derive row flags from a subset of channels
 
@@ -4186,8 +4186,8 @@ Native time-averaged clipping and TFCrop preserve pre-existing row flags and
 set new row flags only when all original cells in the changed row are flagged.
 The paired oracles verify both the selected sample flags and the original-axis
 row status, including whole-window controls where CASA writes the same row flags.
-[Time clip oracle](../tools/casa-compat/flagdata_clip_timeavg_oracle.py)
-· [TFCrop time averaging oracle](../tools/casa-compat/flagdata_tfcrop_timeavg_oracle.py)
+[Time clip oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_clip_timeavg_oracle.py)
+· [TFCrop time averaging oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_tfcrop_timeavg_oracle.py)
 
 ## Shadow flagging can drop the last digit of an antenna's Z coordinate
 
@@ -4201,7 +4201,7 @@ The padded file and dictionary with the supplied coordinates agree on
 
 casa-rs reads the complete coordinate and reproduces the mask verified
 by the padded file, dictionary, and independent Measures projection.
-[Shadow oracle](../tools/casa-compat/flagdata_shadow_oracle.py)
+[Shadow oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_shadow_oracle.py)
 
 ## Reference-antenna integration flagging can crash on an autocorrelation
 
@@ -4214,7 +4214,7 @@ Native antint uses the cross-baselines to decide whether the integration
 meets the threshold and applies that decision to all selected rows, including
 the autocorrelation. The pinned oracle probes the intermittent crash in
 subprocesses and independently verifies the complete native sample and row masks.
-[Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
+[Antenna integration oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_antint_oracle.py)
 
 ## Reference-antenna flag decisions can leak to later spectral windows
 
@@ -4226,7 +4226,7 @@ alone. The agent retains its decision by timestamp across windows.
 Native antint evaluates each visibility-iterator integration separately.
 Its stored sample masks match explicit CASA selection of each spectral
 window and preserve the other window's flags in the combined operation.
-[Antenna integration oracle](../tools/casa-compat/flagdata_antint_oracle.py)
+[Antenna integration oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_antint_oracle.py)
 
 ## TFCrop can fit frequency during a time-only pass
 
@@ -4238,7 +4238,7 @@ leaves the same stationary signal clear.
 
 Native TFCrop uses the named time axis regardless of the buffer shape.
 Both fixture sizes yield the same empty flag mask for this signal.
-[TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
+[TFCrop fitting oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
 
 ## TFCrop post-extension can flag channels outside an explicit selection
 
@@ -4250,13 +4250,13 @@ Native TFCrop uses the full-window counts and writes the extension results
 within the selected range. The paired fixture also verifies that seven
 existing flags in an eight-channel selection do not meet the 80 percent
 frequency threshold for the 32-channel window.
-[TFCrop fitting oracle](../tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
+[TFCrop fitting oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_tfcrop_fit_oracle.py)
 
 The same extension can copy an XX flag to YY when the caller selects only
 XX. Native TFCrop grows flags into the requested physical planes. An input
 flag on YY still contributes to extension in selected XX. A derived Stokes
 fit writes its contributing planes as requested.
-[TFCrop correlation oracle](../tools/casa-compat/flagdata_tfcrop_correlations_oracle.py)
+[TFCrop correlation oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_tfcrop_correlations_oracle.py)
 
 ## An invalid flagdata interval can yield inconsistent time-averaged flags
 
@@ -4267,7 +4267,7 @@ The same inconsistency occurs with `ntime=float("nan")`. The handler
 warns and leaves its interval uninitialized. casa-rs uses the default
 scan interval, which consistently flags the same 324 samples as explicit
 `ntime="scan"`. The original parameter is recorded in HISTORY.
-[`flagdata_routine_controls_oracle.py`](../tools/casa-compat/flagdata_routine_controls_oracle.py)
+[`flagdata_routine_controls_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_routine_controls_oracle.py)
 
 ## Flagdata report display can stall in headless CASA
 
@@ -4277,7 +4277,7 @@ reports the missing module and fails to return within ten seconds. The
 casa-rs headless provider returns the ordinary summary record and preserves
 the input flags and metadata. The oracle checks the returned record against
 pinned CASA's summary with display disabled.
-[`flagdata_routine_controls_oracle.py`](../tools/casa-compat/flagdata_routine_controls_oracle.py)
+[`flagdata_routine_controls_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/flagdata_routine_controls_oracle.py)
 
 ## Weight clipping can ignore defined channel weights
 
@@ -7381,7 +7381,7 @@ correcting it. With an unflagged nonfinite gain in a fitted antenna, the task
 raises `Spurious fractional polarization!` and leaves the copied table behind.
 Casa-rs stages the correction and publishes the result only after it succeeds.
 The paired regression checks the exception and the native destination state.
-[Paired oracle](../tools/casa-compat/polfromgain_oracle.py)
+[Paired oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/polfromgain_oracle.py)
 
 ## Leakage application can correct the wrong correlations or abort on a malformed table
 
@@ -7394,7 +7394,7 @@ the correction and flag dependencies to the corresponding cells.
 A `D Jones` table with one receptor in each `CPARAM` and `FLAG` cell causes
 CASA to abort with `ArrayShapeError`. Casa-rs returns a catchable error with
 the offending calibration row and shape.
-[Paired oracle](../tools/casa-compat/calibration_leakage_apply_oracle.py)
+[Paired oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibration_leakage_apply_oracle.py)
 
 ## `polcal` can change the measured cross-hands when referencing a singular leakage fit
 
@@ -7412,7 +7412,7 @@ preserve the requested zero first receptor on the reference antenna.
 CASA also shifts the numeric values of flagged cells when changing
 reference antennas. Casa-rs writes zero to flagged cells. The paired
 test compares flags and valid coefficients and applies both products.
-[Paired oracle](../tools/casa-compat/polcal_leakage_solve_oracle.py)
+[Paired oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/polcal_leakage_solve_oracle.py)
 
 ## The last cross-hand model can suppress a `polcal` position angle solution
 
@@ -7426,8 +7426,8 @@ angle again.
 
 Casa-rs applies the phase from the constrained fit in both orders. An empty
 fit retains the identity angle correction.
-[Paired oracle](../tools/casa-compat/polcal_joint_leakage_oracle.py)
-· [Full Jones oracle](../tools/casa-compat/polcal_general_leakage_oracle.py)
+[Paired oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/polcal_joint_leakage_oracle.py)
+· [Full Jones oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/polcal_general_leakage_oracle.py)
 
 ## A flagged channel shifts Stokes-I normalization to other channels
 
@@ -7442,7 +7442,7 @@ angles on channels 1 and 2.
 Casa-rs computes Stokes I from each channel's own model and scales only that
 channel's data and weights. Changing the flag on channel 0 leaves the
 solutions in the other channels unchanged in this fixture.
-[Paired oracle](../tools/casa-compat/polcal_position_angle_oracle.py)
+[Paired oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/polcal_position_angle_oracle.py)
 
 ## Linear polarization fitting can report a solution without angle coverage
 
@@ -7473,7 +7473,7 @@ flags its unconstrained channels. In the VI2 amplitude-only circular-feed
 case with constant cross-hand magnitudes, CASA's fitted phase depends on
 roundoff in the complex division used to remove the input phase. Casa-rs
 reports a neutral phase. The amplitude-only comparison with varying
-magnitudes agrees with CASA. [Direct tool oracle](../tools/casa-compat/calibrater_xy_tool_oracle.py)
+magnitudes agrees with CASA. [Direct tool oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_xy_tool_oracle.py)
 
 With broad angle coverage and a real polarized input, the shallow or steep
 line fit can also receive an exactly constant imaginary or real component.
@@ -7486,7 +7486,7 @@ In the circular basis, a single channel with both cross hands set to zero
 can produce an unflagged NaN phase in CASA. The same NaN propagates into the
 spectral window's fitted and returned Q and U. Casa-rs flags the
 unconstrained channel and estimates Q and U from the remaining channels.
-[Paired oracle](../tools/casa-compat/polcal_parallactic_oracle.py)
+[Paired oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/polcal_parallactic_oracle.py)
 
 ## Direct position angle calibration aborts with an open MeasurementSet
 
@@ -7499,7 +7499,7 @@ Casa-rs returns `False` while unattached and raises a catchable
 `RuntimeError` while attached, before modifying or creating a calibration
 table. The public `polcal(poltype='PosAng')` task is available for solving
 and applying a position angle correction.
-[Paired oracle](../tools/casa-compat/calibration_polarization_workflow_oracle.py)
+[Paired oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibration_polarization_workflow_oracle.py)
 
 ## Fitting through the legacy calibrater can crash without CORRECTED_DATA
 
@@ -9026,7 +9026,7 @@ field for native prediction. For virtual interoperation, the Fourier grid
 owns a copy of the voltage-pattern table with the alias. A real-only
 pattern uses a zero-valued imaginary image owned by the same grid.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
-[`imager_custom_mosaic_oracle.py`](../tools/casa-compat/imager_custom_mosaic_oracle.py)
+[`imager_custom_mosaic_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_custom_mosaic_oracle.py)
 
 ## Image collapse can abort or shift a wrapped longitude by 180 degrees
 
@@ -9124,10 +9124,10 @@ conversion-order test, pinned CASA measures convert each AZEL control
 point at its recorded epoch. A second pinned run samples that converted
 track in the image frame.
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520) ·
-[`imager_single_dish_oracle.py`](../tools/casa-compat/imager_single_dish_oracle.py) ·
-[`imager_single_dish_options_oracle.py`](../tools/casa-compat/imager_single_dish_options_oracle.py) ·
-[`imager_single_dish_spectral_oracle.py`](../tools/casa-compat/imager_single_dish_spectral_oracle.py) ·
-[`imager_single_dish_beam_oracle.py`](../tools/casa-compat/imager_single_dish_beam_oracle.py)
+[`imager_single_dish_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_single_dish_oracle.py) ·
+[`imager_single_dish_options_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_single_dish_options_oracle.py) ·
+[`imager_single_dish_spectral_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_single_dish_spectral_oracle.py) ·
+[`imager_single_dish_beam_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_single_dish_beam_oracle.py)
 
 ## Legacy `pbwproject` virtual recipes lack a machine name
 
@@ -9144,7 +9144,7 @@ retains the Fourier image and its convolution in a native recipe.
 The CASA image tool opens both images. Native `ms.uvsub` reopens the model
 after the original cache is removed from its path. Both readers refuse
 the incomplete pinned recipe before subtracting a visibility model.
-[`imager_legacy_pbw_oracle.py`](../tools/casa-compat/imager_legacy_pbw_oracle.py) ·
+[`imager_legacy_pbw_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_legacy_pbw_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
 ## FITS export can change axis lengths or abort while removing axes
@@ -9360,7 +9360,7 @@ FTMachine`. Casa-rs retains the kernel images with the model. CASA can
 open the backing images, and native `ms.uvsub` uses them after the source
 cache has moved. The native reader reports an error if the saved recipe
 has no retained kernel images.
-[`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py) ·
+[`imager_legacy_aw_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_legacy_aw_oracle.py) ·
 [Calibration model outcome](https://github.com/bglenden/casa-rs/issues/1520)
 
 ## Legacy A/W can read beyond its channel-to-kernel map
@@ -9376,7 +9376,7 @@ Casa-rs follows the last range for indices within the map and looks up
 the cell nearest the physical channel frequency for later indices.
 Perturbing the two cache frequencies independently confirms that both
 engines use the last range's kernel at index zero in either range order.
-[`imager_legacy_aw_oracle.py`](../tools/casa-compat/imager_legacy_aw_oracle.py)
+[`imager_legacy_aw_oracle.py`](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/imager_legacy_aw_oracle.py)
 
 ## `image.insert` aborts for a source that misses along one axis
 
@@ -10606,7 +10606,7 @@ updated table to the original field loses its corrections.
 casa-rs publishes rows for selected fields and updates only those fields on
 append. Added fits can have different knot counts. The stored arrays share
 a shape so CASA can read them, and each row keeps its actual count. The
-[paired oracle](../tools/casa-compat/gspline_oracle.py) compares the original
+[paired oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/gspline_oracle.py) compares the original
 rows to a saved copy of the initial solve and the new rows to CASA. It then
 applies the combined table through both implementations.
 
@@ -10708,7 +10708,7 @@ assuming the first antenna ID is at most the second. For five antennas,
 This can select or update the wrong baseline response. Exchanging antennas
 also conjugates the parallel-hand visibilities. Casa-rs stores the response
 for the ordered pair and conjugates it when solving or applying a reversed
-row. The [paired BLCAL oracle](../tools/casa-compat/blcal_oracle.py) checks
+row. The [paired BLCAL oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/blcal_oracle.py) checks
 the reversed-input solve and apply against the known sky model.
 
 When cross-hands carry weight and both parallel hands have zero weight,
@@ -10724,7 +10724,7 @@ CASA 6.7.6.14 collects field, observation and scan IDs throughout the
 after iteration, from the last buffer. With antennas 0 and 1 in the first
 selected scan and 2 and 3 in the second, the record lists both scans and
 only antennas 2 and 3. Casa-rs reports the four antennas in the selected
-rows. The [paired calibrater oracle](../tools/casa-compat/calibrater_apply_tool_oracle.py)
+rows. The [paired calibrater oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_apply_tool_oracle.py)
 checks both records on the disjoint baselines.
 
 ## Calibrater can reuse inverse Jones terms when corrupting a model
@@ -10734,7 +10734,7 @@ fresh `calibrater.corrupt()`, multiplying the physical model by 1.44.
 After `correct('trial')` on the same tool and selection, it divides the
 model by 1.44 on each `corrupt()` call. `VisCal::corrupt2` requests forward
 application even in this sequence. Casa-rs evaluates the forward Jones
-terms on every model corruption. The [paired tool oracle](../tools/casa-compat/calibrater_apply_tool_oracle.py)
+terms on every model corruption. The [paired tool oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_apply_tool_oracle.py)
 checks both sequences against the constant-gain product law. Both engines
 retain the previous single-term activity counts across the corruption.
 
@@ -10742,7 +10742,7 @@ retain the previous single-term activity counts across the corruption.
 
 With CASA 6.7.6.14, `setvi(True, True)` followed by a selected G Jones
 solution can terminate Python with a segmentation fault in `solve()`.
-The [direct solve oracle](../tools/casa-compat/calibrater_solve_tool_oracle.py)
+The [direct solve oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_solve_tool_oracle.py)
 reproduces the crash with the legacy gain case. The same legacy fixture
 returns normally when `minblperant=99` blocks the fit. Casa-rs completes the
 fit using its shared solver and checks the resulting table and activity
@@ -10751,11 +10751,11 @@ retain their original layout without `solvestats`.
 
 ## Direct FRINGE can terminate Python with an empty mask and default windows
 
-In CASA 6.7.6.14, use the [direct FRINGE fixture](../tools/casa-compat/calibrater_fringe_tool_oracle.py), set a valid reference antenna, and call `setsolve(type='FRINGE')` with the default empty `paramactive`, `delaywindow`, and `ratewindow` lists. On unflagged selected data, `solve()` can terminate Python. The same empty mask with explicit search bounds raises `Error in Calibrater::solve.`. Casa-rs reports that error for a nonempty gather that requires global refinement with no active parameters. An empty gather still completes and reports zero attempts. [#2012](https://github.com/bglenden/casa-rs/pull/2012)
+In CASA 6.7.6.14, use the [direct FRINGE fixture](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_fringe_tool_oracle.py), set a valid reference antenna, and call `setsolve(type='FRINGE')` with the default empty `paramactive`, `delaywindow`, and `ratewindow` lists. On unflagged selected data, `solve()` can terminate Python. The same empty mask with explicit search bounds raises `Error in Calibrater::solve.`. Casa-rs reports that error for a nonempty gather that requires global refinement with no active parameters. An empty gather still completes and reports zero attempts. [#2012](https://github.com/bglenden/casa-rs/pull/2012)
 
 ## Direct specifycal aborts for literal wildcard selectors
 
-With CASA 6.7.6.14, call `calibrater.specifycal(caltable='gain.cal', caltype='amp', parameter=[1.5], antenna='*')` on the [direct fixture](../tools/casa-compat/calibrater_specifycal_tool_oracle.py). CASA passes antenna index `-1` into a parameter-array slice and aborts. A literal `spw='*'` likewise reaches an invalid spectral-window index. Casa-rs broadcasts over the requested wildcard axes and verifies the resulting table against CASA's empty-selector form, which expresses the same prescription. [#2015](https://github.com/bglenden/casa-rs/pull/2015)
+With CASA 6.7.6.14, call `calibrater.specifycal(caltable='gain.cal', caltype='amp', parameter=[1.5], antenna='*')` on the [direct fixture](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_specifycal_tool_oracle.py). CASA passes antenna index `-1` into a parameter-array slice and aborts. A literal `spw='*'` likewise reaches an invalid spectral-window index. Casa-rs broadcasts over the requested wildcard axes and verifies the resulting table against CASA's empty-selector form, which expresses the same prescription. [#2015](https://github.com/bglenden/casa-rs/pull/2015)
 
 ## `mstransform` silently skips requested continuum fitting
 
@@ -10798,71 +10798,71 @@ computes the intersection on the selected grid in one transform.
 
 ## Direct fluxscale can terminate Python with an empty window map
 
-In CASA 6.7.6.14, use the [direct fluxscale fixture](../tools/casa-compat/calibrater_fluxscale_tool_oracle.py), attach the MS, and transfer from `FLUX` to `PHASE` with `refspwmap=[]`. The reference process can terminate with SIGSEGV. Casa-rs treats an empty map as no remapping and compares its returned record, caltable and HISTORY against CASA's default `refspwmap=[-1]`. [#2017](https://github.com/bglenden/casa-rs/pull/2017)
+In CASA 6.7.6.14, use the [direct fluxscale fixture](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_fluxscale_tool_oracle.py), attach the MS, and transfer from `FLUX` to `PHASE` with `refspwmap=[]`. The reference process can terminate with SIGSEGV. Casa-rs treats an empty map as no remapping and compares its returned record, caltable and HISTORY against CASA's default `refspwmap=[-1]`. [#2017](https://github.com/bglenden/casa-rs/pull/2017)
 
 ## Direct opacity solves can terminate Python
 
 CASA 6.7.6.14 accepts `calibrater.setsolve` for `TOpac` and `TfOpac`. With usable data, the first fit in either visibility iterator terminates the process with SIGSEGV and leaves no calibration table. An otherwise equivalent VI2 `T` solve completes. If every selected sample is flagged, both opacity families return success and preserve the configured solver. They record zero attempted and successful intervals and publish no table.
 
-Casa-rs preserves the setup, state and no-result behavior. When the selected data would reach a fit, it raises a recoverable solve error and clears the equation. The oracle runs the reference fits in child processes. [Direct opacity solve oracle](../tools/casa-compat/calibrater_opacity_solve_oracle.py)
+Casa-rs preserves the setup, state and no-result behavior. When the selected data would reach a fit, it raises a recoverable solve error and clears the equation. The oracle runs the reference fits in child processes. [Direct opacity solve oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_opacity_solve_oracle.py)
 
 ## An additive polynomial window can keep a degenerate frequency basis
 
-With a one-channel selection in each of two combined spectral windows, flagging one window throughout the first scan makes CASA 6.7.6.14 record the remaining channel's frequency as both domain endpoints. A later scan can have usable samples at both frequencies, but the saved basis still has coincident endpoints. Casa-rs derives the domain from both selected frequencies and retains a solvable linear fit in the later scan. [Additive Mueller polynomial oracle](../tools/casa-compat/calibrater_additive_polynomial_oracle.py)
+With a one-channel selection in each of two combined spectral windows, flagging one window throughout the first scan makes CASA 6.7.6.14 record the remaining channel's frequency as both domain endpoints. A later scan can have usable samples at both frequencies, but the saved basis still has coincident endpoints. Casa-rs derives the domain from both selected frequencies and retains a solvable linear fit in the later scan. [Additive Mueller polynomial oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_additive_polynomial_oracle.py)
 
 ## Generic BPOLY setup can terminate Python
 
-CASA 6.7.6.14 can terminate with SIGSEGV during `calibrater.setsolve(type='BPOLY')` on an attached MeasurementSet in either visibility iterator. Casa-rs raises a recoverable setup error. The dedicated `setsolvebandpoly` entry point supplies the polynomial controls and supports the legacy fit. [Generic polynomial oracle](../tools/casa-compat/calibrater_generic_polynomial_oracle.py)
+CASA 6.7.6.14 can terminate with SIGSEGV during `calibrater.setsolve(type='BPOLY')` on an attached MeasurementSet in either visibility iterator. Casa-rs raises a recoverable setup error. The dedicated `setsolvebandpoly` entry point supplies the polynomial controls and supports the legacy fit. [Generic polynomial oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_generic_polynomial_oracle.py)
 
 ## Generic GSPLINE phase wrapping can vary between CASA processes
 
-With the same data and generic `calibrater.setsolve(type='GSPLINE')` arguments, CASA 6.7.6.14 produced different phase coefficients in separate processes. One process was terminated during phase fitting under the local memory limit. The dedicated `setsolvegainspline` call uses explicit wrapping controls. Casa-rs uses 7,200-second spacing, two phase points, and a zero wrap threshold for the generic path. These controls reproduced the pinned phase coefficients in the dedicated reference and in three isolated generic preaveraged fits. [Generic polynomial oracle](../tools/casa-compat/calibrater_generic_polynomial_oracle.py)
+With the same data and generic `calibrater.setsolve(type='GSPLINE')` arguments, CASA 6.7.6.14 produced different phase coefficients in separate processes. One process was terminated during phase fitting under the local memory limit. The dedicated `setsolvegainspline` call uses explicit wrapping controls. Casa-rs uses 7,200-second spacing, two phase points, and a zero wrap threshold for the generic path. These controls reproduced the pinned phase coefficients in the dedicated reference and in three isolated generic preaveraged fits. [Generic polynomial oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_generic_polynomial_oracle.py)
 
 ## Competing VI1 callibrary slices can mix antenna gains in one buffer
 
-In CASA 6.7.6.14, `calibrater.corrupt()` with the old iterator looks up a callibrary buffer with wildcard scan and intent. Competing scan-specific entries for one table can therefore resolve to the earlier selected scan for both scans of a field. On a fixture with two scan-specific mappings and an additional explicitly scoped field, CASA combined unity and calibrated antenna gains within the same scan. This produced distinct baseline factors of 1, 1.2, and 1.44 from a single intended antenna gain of 1.2. Casa-rs selects one slice consistently for both antennas in each legacy buffer. Scan-filtered input, other fields, correction, and modern corruption retain their applicable mappings. [Paired calibration-library oracle](../tools/casa-compat/calibrater_legacy_callibrary_priority_oracle.py)
+In CASA 6.7.6.14, `calibrater.corrupt()` with the old iterator looks up a callibrary buffer with wildcard scan and intent. Competing scan-specific entries for one table can therefore resolve to the earlier selected scan for both scans of a field. On a fixture with two scan-specific mappings and an additional explicitly scoped field, CASA combined unity and calibrated antenna gains within the same scan. This produced distinct baseline factors of 1, 1.2, and 1.44 from a single intended antenna gain of 1.2. Casa-rs selects one slice consistently for both antennas in each legacy buffer. Scan-filtered input, other fields, correction, and modern corruption retain their applicable mappings. [Paired calibration-library oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_legacy_callibrary_priority_oracle.py)
 
 The selected slice uses its registered calibration scan even when the current visibility belongs to a different scan. Mixed scan and intent wildcards can also give the CASA ordered index a cyclic comparison. The one-antenna probe with three distinct gains found an insertion-order-dependent result. The native lookup uses one ordered context throughout a buffer. The oracle records the two registration orders where the pinned CASA result differs.
 
 ## Some direct calibration factories gather data without a usable fitting stage
 
-CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones, B TSYS, gain curve, and legacy power curve. With all input flagged, the tool reports the expected intervals and does not produce a table. When four-correlation usable data reaches the fitting stage, the pinned legacy J/Jf and both B TSYS iterators terminate. The tested modern J/Jf, A Noise, F Jones and curve configurations return a solve error. Modern power curve returns a setup error. Casa-rs retains the available gather stage and uses a recoverable error for the unavailable fit. These limits concern solving. Existing table application and specification are separate operations. [Paired factory oracle](../tools/casa-compat/calibrater_gather_only_oracle.py)
+CASA 6.7.6.14 accepts generic `calibrater.setsolve` for J, Jf, A Noise, F Jones, B TSYS, gain curve, and legacy power curve. With all input flagged, the tool reports the expected intervals and does not produce a table. When four-correlation usable data reaches the fitting stage, the pinned legacy J/Jf and both B TSYS iterators terminate. The tested modern J/Jf, A Noise, F Jones and curve configurations return a solve error. Modern power curve returns a setup error. Casa-rs retains the available gather stage and uses a recoverable error for the unavailable fit. These limits concern solving. Existing table application and specification are separate operations. [Paired factory oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_gather_only_oracle.py)
 
 ## Direct KAntPos can abort when a solution combines multiple buffers
 
-CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. Both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. Two overlapping windows with `combine='spw'` or two fields with `combine='field'` terminated in both iterators when the multi-buffer fitter assigned two terms to a three-term array. Casa-rs reports a recoverable error when this fit is reached. Windows separated into single-buffer scan or integration intervals produce tables. [Paired antenna-position oracle](../tools/casa-compat/calibrater_antenna_position_oracle.py)
+CASA 6.7.6.14 uses its antenna delay fitter for direct `calibrater.setsolve(type='KAntPos')`. Both iterators write the two fitted terms in a three-term `KAntPos Jones` table. The unused third term is zero, valid for the reference antenna and flagged for the others. Two overlapping windows with `combine='spw'` or two fields with `combine='field'` terminated in both iterators when the multi-buffer fitter assigned two terms to a three-term array. Casa-rs reports a recoverable error when this fit is reached. Windows separated into single-buffer scan or integration intervals produce tables. [Paired antenna-position oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_antenna_position_oracle.py)
 
 ## A Noise baseline indexing assumes ordered antenna columns
 
-With eight antennas, both CASA 6.7.6.14 calibrater iterators applied the `A Noise` coefficients of `(0, 7)` to a deliberately reversed `(1, 0)` visibility. Casa-rs uses the coefficients of `(0, 1)`, conjugates them, and exchanges the cross hands to preserve the visibility's orientation. The ordinary ordered-baseline inputs agree with CASA. [Paired A Noise oracle](../tools/casa-compat/calibrater_anoise_oracle.py)
+With eight antennas, both CASA 6.7.6.14 calibrater iterators applied the `A Noise` coefficients of `(0, 7)` to a deliberately reversed `(1, 0)` visibility. Casa-rs uses the coefficients of `(0, 1)`, conjugates them, and exchanges the cross hands to preserve the visibility's orientation. The ordinary ordered-baseline inputs agree with CASA. [Paired A Noise oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_anoise_oracle.py)
 
 ## Direct EVLASWP can gather data and fail at fitting
 
-CASA 6.7.6.14 accepts direct `calibrater.setsolve(type='EVLASWP')` when the MeasurementSet links readable `SYSPOWER` and `CALDEVICE` tables. Both iterators record expected intervals and write no table for fully flagged input. Both terminate on the isolated usable visibility fit. Casa-rs retains the gather stage and returns a recoverable solve error for usable data. [Paired switched-power and KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+CASA 6.7.6.14 accepts direct `calibrater.setsolve(type='EVLASWP')` when the MeasurementSet links readable `SYSPOWER` and `CALDEVICE` tables. Both iterators record expected intervals and write no table for fully flagged input. Both terminate on the isolated usable visibility fit. Casa-rs retains the gather stage and returns a recoverable solve error for usable data. [Paired switched-power and KMBD oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_kmbd_oracle.py)
 
 ## Joint KMBD fitting can abort with single-correlation buffers
 
-When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 iterators refuse a mix of single- and dual-hand buffers. Two single-hand buffers instead terminate when the one-hand answer is assigned to the two-hand table array. Casa-rs reports a recoverable solve error in each case. [Paired KMBD oracle](../tools/casa-compat/calibrater_kmbd_oracle.py)
+When `calibrater` combines spectral windows for a KMBD fit, both CASA 6.7.6.14 iterators refuse a mix of single- and dual-hand buffers. Two single-hand buffers instead terminate when the one-hand answer is assigned to the two-hand table array. Casa-rs reports a recoverable solve error in each case. [Paired KMBD oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_kmbd_oracle.py)
 
 ## A calibrater gain matrix can keep its correction direction during corruption
 
-In CASA 6.7.6.14, a VI2 session that calls `correct` and then `corrupt` with the same single-slot gain table can apply the inverse gain to both visibility columns. Casa-rs applies the inverse gain to `CORRECTED_DATA` and the forward gain to `MODEL_DATA`. The same planted session with VI1 terminates during its direct amplitude G fit in an isolated CASA process. The native VI1 session completes the fit and both visibility operations. [Paired session oracle](../tools/casa-compat/calibrater_session_oracle.py)
+In CASA 6.7.6.14, a VI2 session that calls `correct` and then `corrupt` with the same single-slot gain table can apply the inverse gain to both visibility columns. Casa-rs applies the inverse gain to `CORRECTED_DATA` and the forward gain to `MODEL_DATA`. The same planted session with VI1 terminates during its direct amplitude G fit in an isolated CASA process. The native VI1 session completes the fit and both visibility operations. [Paired session oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calibrater_session_oracle.py)
 
 ## `calanalysis.get` can terminate on a restricted feed
 
-In CASA 6.7.6.14, open one of the two-feed, multi-window tables in the [selected-series oracle](../tools/casa-compat/calanalysis_get_oracle.py) and call `get(feed='1')`. On both complex and real tables, the reference process terminates with SIGSEGV after opening the table successfully. Casa-rs filters the selected feed by its table index and verifies that the returned records equal the same feed's series from the unrestricted query.
+In CASA 6.7.6.14, open one of the two-feed, multi-window tables in the [selected-series oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calanalysis_get_oracle.py) and call `get(feed='1')`. On both complex and real tables, the reference process terminates with SIGSEGV after opening the table successfully. Casa-rs filters the selected feed by its table index and verifies that the returned records equal the same feed's series from the unrestricted query.
 
 ## `calanalysis.fit` can terminate on an empty or singleton fit input
 
-In CASA 6.7.6.14, use the [fit oracle](../tools/casa-compat/calanalysis_fit_oracle.py) to fit a fully flagged channel with `type='ROBUST'`. Both AVERAGE and LINEAR terminate when the robust estimator asks for a median of an empty array. With one timestamp and `axis='F'`, a successful AVERAGE fit can also terminate while calculating the variance of one residual. Casa-rs returns the input series with an invalid fit when every sample is flagged and reports zero residual variance for a successful singleton fit.
+In CASA 6.7.6.14, use the [fit oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calanalysis_fit_oracle.py) to fit a fully flagged channel with `type='ROBUST'`. Both AVERAGE and LINEAR terminate when the robust estimator asks for a median of an empty array. With one timestamp and `axis='F'`, a successful AVERAGE fit can also terminate while calculating the variance of one residual. Casa-rs returns the input series with an invalid fit when every sample is flagged and reports zero residual variance for a successful singleton fit.
 
 ## `calanalysis.get` can invent phase wraps on descending frequencies
 
-In CASA 6.7.6.14, the [group-delay oracle](../tools/casa-compat/calanalysis_get_oracle.py) supplies eight descending channels with constant complex gains. Default group-delay unwrapping searches a signed interval away from zero and inserts wraps into a zero-delay solution. Casa-rs searches a symmetric interval using positive spacing between distinct frequencies. It removes the common carrier from the power calculation and refines peaks at the bandwidth scale, preserving the original channel order. The oracle checks ascending and descending zero-delay and planted-delay series, including 1 kHz channels at 100 GHz.
+In CASA 6.7.6.14, the [group-delay oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calanalysis_get_oracle.py) supplies eight descending channels with constant complex gains. Default group-delay unwrapping searches a signed interval away from zero and inserts wraps into a zero-delay solution. Casa-rs searches a symmetric interval using positive spacing between distinct frequencies. It removes the common carrier from the power calculation and refines peaks at the bandwidth scale, preserving the original channel order. The oracle checks ascending and descending zero-delay and planted-delay series, including 1 kHz channels at 100 GHz.
 
 ## `calanalysis.fit` can overestimate a nearly exact fit's reduced chi-square
 
-In CASA 6.7.6.14, the [fit oracle](../tools/casa-compat/calanalysis_fit_oracle.py) supplies an almost exact linear series over eight channels near 100 GHz with uncertainty 0.001. CASA reports a reduced chi-square of about 0.0365. Its returned residuals and uncertainties imply about `2.33e-8`. The normal-equation calculation subtracts much larger quadratic terms. Casa-rs sums the squared, weighted residuals directly, after the existing flags and uncertainty exclusion, and uses that metric for reduced chi-square and unweighted covariance.
+In CASA 6.7.6.14, the [fit oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/calanalysis_fit_oracle.py) supplies an almost exact linear series over eight channels near 100 GHz with uncertainty 0.001. CASA reports a reduced chi-square of about 0.0365. Its returned residuals and uncertainties imply about `2.33e-8`. The normal-equation calculation subtracts much larger quadratic terms. Casa-rs sums the squared, weighted residuals directly, after the existing flags and uncertainty exclusion, and uses that metric for reduced chi-square and unweighted covariance.
 
 ## Layer absorption queries can terminate Python on an invalid layer
 
@@ -10886,7 +10886,7 @@ intent selectors (#1029).
 
 ## MSCAL predicates can crash or hang in `applycal`
 
-On the synthetic MeasurementSet in the [applycal oracle](../tools/casa-compat/applycal_oracle.py),
+On the synthetic MeasurementSet in the [applycal oracle](https://github.com/bglenden/casa-rs/blob/main/tools/casa-compat/applycal_oracle.py),
 CASA 6.7.6.14 terminates with SIGSEGV when `msselect` calls `mscal.scan("2")`
 or `mscal.time(">2019/12/31/21:53:15")`. An `mscal.uvdist("<40m")` predicate
 returns rows in a direct table query but times out with the MeasurementSet

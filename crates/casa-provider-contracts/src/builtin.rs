@@ -296,14 +296,18 @@ mod tests {
                     .provider
                     .as_ref()
                     .map(|projection| &projection.adapter);
-                // These transform selectors still omit the absent value
+                // These transform and single-dish selectors still omit the absent value
                 // after their domains widened to accept CASA variants.
                 let transform_variant = matches!(surface.id(), "mstransform" | "split")
                     && matches!(
                         binding.name.as_str(),
                         "field" | "spw" | "scan" | "antenna" | "timerange"
                     );
-                if transform_variant {
+                let single_dish_timerange = matches!(
+                    surface.id(),
+                    "sdsmooth" | "sdbaseline" | "sdfit" | "sdatmcor"
+                ) && binding.name == "timerange";
+                if transform_variant || single_dish_timerange {
                     assert_eq!(default, absence, "{}.{}", surface.id(), binding.name);
                     assert_eq!(
                         adapter,
@@ -345,9 +349,12 @@ mod tests {
         // CASA 6.7.6 output replacement defaults. Feather replaces without
         // exposing an overwrite parameter.
         let casa = BTreeMap::from([
+            ("appendantab", false),
             ("exportfits", false),
             ("feather", true),
             ("getantposalma", false),
+            ("getcalmodvla", false),
+            ("getephemtable", false),
             ("importfits", false),
             ("impbcor", false),
             ("impv", false),
@@ -367,12 +374,16 @@ mod tests {
         // casa-rs's own `overwrite` on CASA tasks that have none, and on the
         // casa-rs tasks that require explicit permission to replace outputs.
         let extras = BTreeSet::from([
+            "accor",
             "applycal",
             "bandpass",
+            "blcal",
             "calibrate",
             "fluxscale",
+            "fringefit",
             "gaincal",
             "gencal",
+            "getjyperkalma",
             "immath",
             "immoments",
             "msconvert",
@@ -763,6 +774,7 @@ mod tests {
                 "ms.transform.width",
                 "plotms.width",
                 "regridms.width",
+                "single_dish.sky.width",
                 "single_dish.width"
             ]
             .into_iter()

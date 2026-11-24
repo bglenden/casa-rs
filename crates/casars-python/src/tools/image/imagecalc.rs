@@ -121,10 +121,39 @@ impl Metadata {
     }
 }
 
+fn calls_function(expression: &str, function: &str) -> bool {
+    let mut chars = expression.char_indices().peekable();
+    while let Some((start, ch)) = chars.next() {
+        if matches!(ch, '\'' | '"') {
+            // Quoted paths are single image-reference tokens. The expression
+            // parser treats the opposite quote literally and has no escapes.
+            for (_, next) in chars.by_ref() {
+                if next == ch {
+                    break;
+                }
+            }
+        } else if ch.is_ascii_alphabetic() || ch == '_' {
+            while chars
+                .peek()
+                .is_some_and(|(_, ch)| ch.is_alphanumeric() || matches!(ch, '_' | '.' | '/' | '~'))
+            {
+                chars.next();
+            }
+            let end = chars.peek().map_or(expression.len(), |(index, _)| *index);
+            if expression[start..end].eq_ignore_ascii_case(function)
+                && expression[end..].trim_start().starts_with('(')
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn apply_expression_metadata(image: &mut ImageHandle, expression: &str) -> PyResult<()> {
-    let units = if expression.contains("spectralindex") {
+    let units = if calls_function(expression, "spectralindex") {
         ""
-    } else if expression.contains("pa") {
+    } else if calls_function(expression, "pa") {
         let mut system =
             CoordinateSystem::from_record(&image.coordinate_record()).map_err(raised)?;
         let index = system.find_coordinate(CoordinateType::Stokes).ok_or_else(|| raised(

@@ -66,25 +66,6 @@ fn returned(workspace: &Path, surface: &str, values: Value) -> CasaValue {
     }
 }
 
-/// `values` on `surface` are refused naming `parameter` and #979.
-fn refused_naming_979(workspace: &Path, surface: &str, values: Value, parameter: &str) {
-    let (output, reply) = json_run(workspace, surface, values);
-    match reply {
-        Some(TaskReply::Failed {
-            parameter: Some(name),
-            message,
-            ..
-        }) => {
-            assert_eq!(name, parameter, "{message}");
-            assert!(message.contains("#979"), "{message}");
-        }
-        other => panic!(
-            "{surface} {parameter}: {other:?}\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        ),
-    }
-}
-
 /// `value`'s structure as the CASA recording describes Python values, an
 /// array by its dtype and number of axes.
 fn describe(value: &CasaValue) -> Value {
@@ -700,18 +681,29 @@ fn applycal_and_gencal_return_none() {
 }
 
 #[test]
-fn casa_parameters_not_implemented_yet_are_refused_naming_979() {
+fn gencal_refuses_a_missing_tec_image_without_publishing_a_table() {
     let dir = TempDir::new().unwrap();
     let ms = common::create_gain_solve_fixture_ms(dir.path(), common::SyntheticGainFixtureKind::G);
-    let ms = ms.to_str().unwrap();
-    // The paired antenna-position oracle now covers ALMA files for antpos.
-    // TEC images still need the advanced-prior implementation in #1535.
-    refused_naming_979(
+    // TEC calibration is implemented; an absent input is still a refusal,
+    // naming the input parameter before any calibration table is published.
+    let (output, reply) = json_run(
         dir.path(),
         "gencal",
         json!({"vis": ms, "caltable": "tec.cal", "caltype": "tecim", "infile": "iono.im"}),
-        "infile",
     );
+    assert!(!output.status.success());
+    match reply {
+        Some(TaskReply::Failed {
+            parameter: Some(name),
+            message,
+            ..
+        }) => {
+            assert_eq!(name, "infile");
+            assert_eq!(message, "An existing tec map must be specified in infile");
+        }
+        other => panic!("expected missing TEC input refusal: {other:?}"),
+    }
+    assert!(!dir.path().join("tec.cal").exists());
 }
 
 /// A sub-parameter CASA reads only under another parameter's value takes

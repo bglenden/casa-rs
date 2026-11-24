@@ -193,6 +193,7 @@ def test_data_schema_bundle_reports_object_surface() -> None:
     assert set(objects) == {
         "simulator", "measures", "quanta", "componentlist",
         "image", "coordsys", "table", "msmetadata", "ms", "calibrater", "imager",
+        "agentflagger", "wvr", "singledishms", "calanalysis", "atmosphere",
     }
     assert "Image" not in bundle["annotations"]["python"]["objects"]
     assert all(obj["name"] != "Image" for obj in bundle["projections"]["python"]["objects"])
