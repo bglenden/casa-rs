@@ -773,10 +773,10 @@ pub(super) struct ScalarSpanColumns<'a> {
     pub(super) times: &'a [f64],
 }
 
-#[derive(Clone, Copy)]
 pub(super) struct ScalarSpanMetadata {
     pub(super) scan: i32,
     pub(super) field: i32,
+    shape: Option<(usize, usize)>,
 }
 
 pub(super) struct ScalarSpanPlan {
@@ -823,7 +823,11 @@ impl ScalarSpanPlan {
                 interval,
             );
             if group == metadata.len() {
-                metadata.push(ScalarSpanMetadata { scan, field });
+                metadata.push(ScalarSpanMetadata {
+                    scan,
+                    field,
+                    shape: None,
+                });
             } else if metadata[group].scan != scan {
                 // PlotMS marks a scalar buffer spanning scans with scan -1.
                 metadata[group].scan = -1;
@@ -840,8 +844,26 @@ impl ScalarSpanPlan {
         self.row_groups[row_slot]
     }
 
-    pub(super) fn metadata(&self, group: usize) -> ScalarSpanMetadata {
-        self.metadata[group]
+    pub(super) fn metadata(&self, group: usize) -> &ScalarSpanMetadata {
+        &self.metadata[group]
+    }
+
+    pub(super) fn check_shape(
+        &mut self,
+        group: usize,
+        correlations: usize,
+        channels: usize,
+    ) -> Result<(), String> {
+        let shape = (correlations, channels);
+        let expected = self.metadata[group].shape.get_or_insert(shape);
+        if *expected == shape {
+            Ok(())
+        } else {
+            Err(format!(
+                "PlotMS scalar time averaging requires equal correlation and channel counts within a bin; expected {} correlations and {} channels, found {correlations} correlations and {channels} channels",
+                expected.0, expected.1,
+            ))
+        }
     }
 }
 

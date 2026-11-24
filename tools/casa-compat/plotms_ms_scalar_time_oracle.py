@@ -341,6 +341,70 @@ def compare_scalar_time_spans(root, native):
     assert compare_text(actual, expected) == 2
     np.testing.assert_allclose([float(point[0]) for point in rows(actual)], start + 55., rtol=0, atol=.00051)
     print("cross-both-stored-ordinates: 2 matching scalar scan and field span coordinates", flush=True)
+    compare_scalar_span_shapes(root, native, source, base | cross, start + 55.)
+
+
+def compare_scalar_span_shapes(root, native, source, controls, center):
+    from casars.tasks import TaskExecutionError
+    from grpc import RpcError, StatusCode
+
+    vis = root / "mixed-polarization.ms"
+    copy_ms(source, vis)
+    with opened(vis / "POLARIZATION", True) as pol:
+        polarization = pol.nrows()
+        pol.addrows(1)
+        pol.putcell("NUM_CORR", polarization, 1)
+        pol.putcell("CORR_TYPE", polarization, pol.getcell("CORR_TYPE", 0)[:1])
+        pol.putcell("CORR_PRODUCT", polarization, pol.getcell("CORR_PRODUCT", 0)[:, :1])
+        pol.putcell("FLAG_ROW", polarization, False)
+    with opened(vis / "DATA_DESCRIPTION", True) as dd:
+        description = dd.nrows()
+        dd.addrows(1)
+        dd.putcell("SPECTRAL_WINDOW_ID", description, 0)
+        dd.putcell("POLARIZATION_ID", description, polarization)
+        dd.putcell("FLAG_ROW", description, False)
+    with opened(vis, True) as table:
+        descriptions = table.getcol("DATA_DESC_ID")
+        reduced = (descriptions == 0) & (table.getcol("SCAN_NUMBER") == 2)
+        for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_CATEGORY", "WEIGHT", "SIGMA"):
+            descriptor = table.getcoldesc(column)
+            descriptor.pop("shape", None)
+            descriptor.update(option=0, dataManagerType="StandardStMan", dataManagerGroup=column)
+            original = "ORIGINAL_" + column
+            table.renamecol(column, original)
+            table.addcols({column: descriptor})
+            for row in range(table.nrows()):
+                if table.iscelldefined(original, row):
+                    values = table.getcell(original, row)
+                    table.putcell(column, row, values[:1] if reduced[row] else values)
+            table.removecols(original)
+        descriptions[reduced] = description
+        table.putcol("DATA_DESC_ID", descriptions)
+
+    controls |= dict(vis=str(vis), expformat="txt")
+    expected, actual = (root / f"selected-polarization.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 1
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)], center, rtol=0, atol=.00051)
+    assert [(point[1], point[3], point[12]) for point in rows(expected)] == [("-252", "-1", "XX")]
+
+    controls |= dict(correlation="")
+    expected, actual = (root / f"mixed-polarization.{engine}.txt" for engine in ("casa", "native"))
+    try:
+        reference(**controls, plotfile=str(expected))
+    except RpcError as error:
+        assert error.code() == StatusCode.INVALID_ARGUMENT, error
+    else:
+        raise AssertionError("CASA admitted unequal selected shapes into a scalar time bin")
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "equal correlation and channel counts within a bin" in str(error), error
+    else:
+        raise AssertionError("native PlotMS admitted unequal selected shapes into a scalar time bin")
+    assert not expected.exists() and not actual.exists()
+    print("selected-polarization: 1 matching point and matching incompatible-shape refusals", flush=True)
 
 
 def main():

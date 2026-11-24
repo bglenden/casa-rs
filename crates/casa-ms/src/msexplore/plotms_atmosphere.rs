@@ -102,8 +102,6 @@ pub(super) fn build(
                         channel: grid.display_channels[bin],
                         average_time: sample.average_time,
                         averaging_group: None,
-                        averaged_scan: None,
-                        averaged_field: None,
                     };
                     let result = |y| CurveSample {
                         x: sample.x,
