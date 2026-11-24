@@ -26,10 +26,22 @@ def compare_summary(actual, expected):
         assert actual == expected
 
 
+def antenna_offsets(report):
+    _, rows = report.split("ITRF Geocentric coordinates", 1)
+    result = {}
+    for line in rows.splitlines():
+        parts = line.split()
+        if len(parts) == 13 and parts[0].isdigit():
+            result[int(parts[0])] = [float(value) for value in parts[7:10]]
+    assert result
+    return result
+
+
 @pytest.mark.parametrize("selected", [False, True])
 def test_ms_summary_matches_pinned_record_and_reports(native_dataset, tmp_path, caplog, selected):
     casa = pinned_casa()
     outputs = []
+    offsets = []
     for api in (casa, tools):
         ms = api.ms()
         assert ms.summary() == {}
@@ -49,6 +61,7 @@ def test_ms_summary_matches_pinned_record_and_reports(native_dataset, tmp_path, 
         assert str(native_dataset) in report
         assert "nUnflRows" in report
         assert "ScanIntent" in report
+        offsets.append(antenna_offsets(report))
         with pytest.raises(RuntimeError, match="already exists"):
             ms.summary(listfile=str(filename))
         assert filename.read_text() == report
@@ -58,6 +71,7 @@ def test_ms_summary_matches_pinned_record_and_reports(native_dataset, tmp_path, 
         assert ms.done()
         outputs.append(record)
     compare_summary(outputs[1], outputs[0])
+    assert offsets[1] == offsets[0]
 
 
 def test_ms_summary_rejects_invalid_argument_forms():

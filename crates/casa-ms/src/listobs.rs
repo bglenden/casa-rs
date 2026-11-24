@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use crate::selection::parser::{parse_correlation_selector, selection_from_options};
 use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
-use crate::subtables::{SubTable, get_i32, has_column};
+use crate::subtables::{SubTable, antenna_observatory_offsets, get_i32, has_column};
 use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
 
 mod summary;
@@ -484,6 +484,7 @@ pub struct AntennaSummary {
 struct MainUsage {
     field_row_counts: HashMap<i32, usize>,
     field_unflagged_row_counts: HashMap<i32, f64>,
+    unflagged_row_fractions: Option<Vec<f64>>,
     used_field_ids: BTreeSet<usize>,
     used_observation_ids: BTreeSet<usize>,
     used_array_ids: BTreeSet<i32>,
@@ -498,6 +499,7 @@ struct MainUsage {
 struct UnflaggedRowContext {
     ddid_to_bandwidth_hz: HashMap<i32, f64>,
     ddid_to_channel_widths_hz: HashMap<i32, Vec<f64>>,
+    flag_bytes_per_row: usize,
 }
 
 impl ListObsUvCoverage {
@@ -949,6 +951,7 @@ fn build_antennas(
     ms: &MeasurementSet,
     observations: &[ObservationSummary],
     main_usage: &MainUsage,
+    tool_view: bool,
 ) -> MsResult<Vec<AntennaSummary>> {
     let antenna = ms.antenna()?;
     let observatory = observatory_position(observations, main_usage, &antenna)?;
@@ -962,6 +965,10 @@ fn build_antennas(
         let position_m = antenna.position(row)?;
         let position = MPosition::new_itrf(position_m[0], position_m[1], position_m[2]);
         let (longitude_radians, latitude_radians, _) = position.as_spherical();
+        let offsets = match observatory.as_ref() {
+            Some(center) if tool_view => antenna_observatory_offsets(position_m, center.as_itrf()),
+            center => observatory_offset(position_m, center),
+        };
         summaries.push(AntennaSummary {
             antenna_id: row,
             name: antenna.name(row)?,
@@ -971,7 +978,7 @@ fn build_antennas(
             dish_diameter_m: antenna.dish_diameter(row)?,
             longitude_radians,
             latitude_radians,
-            offset_from_observatory_m: observatory_offset(position_m, observatory.as_ref()),
+            offset_from_observatory_m: offsets,
             position_m,
         });
     }
@@ -988,7 +995,7 @@ fn build_scans(
     field_name_lookup: &HashMap<i32, String>,
     dd_to_spw: &HashMap<i32, i32>,
     state_intent_lookup: &HashMap<i32, String>,
-    unflagged_context: Option<&UnflaggedRowContext>,
+    unflagged_fractions: Option<&[f64]>,
     group_scan_by_field: bool,
 ) -> MsResult<Vec<ScanSummary>> {
     #[derive(Debug, Clone)]
@@ -1134,6 +1141,7 @@ fn build_scans(
         .map(|rows| rows.to_vec())
         .unwrap_or_else(|| (0..table.row_count()).collect());
     let row_chunk_rows = planned_scalar_scan_rows(row_numbers.len(), 6 * 4 + 3 * 8)?;
+    let mut row_offset = 0;
     for row_chunk in row_numbers.chunks(row_chunk_rows) {
         let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
         let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
@@ -1148,7 +1156,7 @@ fn build_scans(
         } else {
             None
         };
-        for (row_slot, row) in row_chunk.iter().copied().enumerate() {
+        for row_slot in 0..row_chunk.len() {
             let observation_id = observation_values[row_slot];
             let array_id = array_values[row_slot];
             let scan_number = scan_values[row_slot];
@@ -1161,9 +1169,8 @@ fn build_scans(
                 .as_ref()
                 .map(|values| values[row_slot])
                 .unwrap_or(interval);
-            let unflagged_row_fraction = unflagged_context
-                .map(|context| compute_unflagged_row_fraction(ms, row, context))
-                .transpose()?;
+            let unflagged_row_fraction =
+                unflagged_fractions.map(|fractions| fractions[row_offset + row_slot]);
             rows.push(MainRowInfo {
                 observation_id,
                 array_id,
@@ -1183,6 +1190,7 @@ fn build_scans(
             entry.0 = entry.0.min(begin);
             entry.1 = entry.1.max(end);
         }
+        row_offset += row_chunk.len();
     }
 
     rows.sort_by(|left, right| {
@@ -1276,7 +1284,7 @@ fn build_scans(
                         .unwrap_or(0.0)
                 })
                 .collect(),
-            unflagged_row_count: unflagged_context.map(|_| scan.unflagged_row_sum),
+            unflagged_row_count: unflagged_fractions.map(|_| scan.unflagged_row_sum),
         }
     };
 
@@ -1331,21 +1339,58 @@ impl UnflaggedRowContext {
             ddid_to_bandwidth_hz.insert(row as i32, bandwidth_hz);
             ddid_to_channel_widths_hz.insert(row as i32, channel_widths);
         }
+        let polarization = ms.polarization()?;
+        let mut max_correlations = 0;
+        for row in 0..polarization.row_count() {
+            max_correlations = max_correlations.max(polarization.num_corr(row)?.max(0) as usize);
+        }
+        let max_channels = ddid_to_channel_widths_hz
+            .values()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
+        let flag_bytes_per_row = std::mem::size_of::<Option<ArrayValue>>()
+            .saturating_add(max_correlations.saturating_mul(max_channels));
         Ok(Self {
             ddid_to_bandwidth_hz,
             ddid_to_channel_widths_hz,
+            flag_bytes_per_row,
         })
+    }
+
+    fn fractions(
+        &self,
+        table: &Table,
+        rows: &[usize],
+        data_desc_ids: &[i32],
+    ) -> MsResult<Vec<f64>> {
+        let flags = table.column_accessor("FLAG")?.array_cells_owned(rows)?;
+        let row_flags = table
+            .column_accessor("FLAG_ROW")
+            .and_then(|column| column.scalar_cells_owned_for_rows(rows))
+            .unwrap_or_default();
+        flags
+            .into_iter()
+            .enumerate()
+            .map(|(slot, value)| {
+                let flags = value.ok_or_else(|| MsError::MissingColumn {
+                    column: format!("FLAG[row={}]", rows[slot]),
+                    table: "MAIN".into(),
+                })?;
+                let row_flagged =
+                    matches!(row_flags.get(slot), Some(Some(ScalarValue::Bool(true))));
+                compute_unflagged_row_fraction(flags, row_flagged, data_desc_ids[slot], self)
+            })
+            .collect()
     }
 }
 
 fn compute_unflagged_row_fraction(
-    ms: &MeasurementSet,
-    row: usize,
+    flags: ArrayValue,
+    row_flagged: bool,
+    data_desc_id: i32,
     context: &UnflaggedRowContext,
 ) -> MsResult<f64> {
-    let flag_column = ms.flag_column();
-    let flags = flag_column.get(row)?;
-    let data_desc_id = get_i32(ms.main_table(), row, "DATA_DESC_ID")?;
     let bandwidth_hz = context
         .ddid_to_bandwidth_hz
         .get(&data_desc_id)
@@ -1354,12 +1399,11 @@ fn compute_unflagged_row_fraction(
     let channel_widths = context
         .ddid_to_channel_widths_hz
         .get(&data_desc_id)
-        .cloned()
+        .map(Vec::as_slice)
         .unwrap_or_default();
     if bandwidth_hz <= 0.0 {
         return Ok(0.0);
     }
-    let row_flagged = ms.flag_row_column().get(row).unwrap_or(false);
     if row_flagged {
         return Ok(0.0);
     }
@@ -1490,6 +1534,7 @@ fn analyze_main_table(
     let table = ms.main_table();
     let mut usage = MainUsage {
         selection_applied: selected_rows.is_some(),
+        unflagged_row_fractions: unflagged_context.map(|_| Vec::new()),
         ..MainUsage::default()
     };
     let mut start = f64::INFINITY;
@@ -1497,7 +1542,9 @@ fn analyze_main_table(
     let row_numbers = selected_rows
         .map(|rows| rows.to_vec())
         .unwrap_or_else(|| (0..table.row_count()).collect());
-    let row_chunk_rows = planned_scalar_scan_rows(row_numbers.len(), 6 * 4 + 2 * 8)?;
+    let flag_bytes = unflagged_context.map_or(0, |context| context.flag_bytes_per_row);
+    let row_chunk_rows =
+        planned_scalar_scan_rows(row_numbers.len(), flag_bytes.saturating_add(6 * 4 + 2 * 8))?;
     for row_chunk in row_numbers.chunks(row_chunk_rows) {
         let field_values = load_i32_rows(table, "FIELD_ID", row_chunk)?;
         let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
@@ -1507,16 +1554,19 @@ fn analyze_main_table(
         let data_desc_values = load_i32_rows(table, "DATA_DESC_ID", row_chunk)?;
         let time_values = load_f64_rows(table, "TIME", row_chunk)?;
         let interval_values = load_f64_rows(table, "INTERVAL", row_chunk)?;
-        for (row_slot, row) in row_chunk.iter().copied().enumerate() {
+        let fractions = unflagged_context
+            .map(|context| context.fractions(table, row_chunk, &data_desc_values))
+            .transpose()?;
+        for row_slot in 0..row_chunk.len() {
             let field_id = field_values[row_slot];
             if field_id >= 0 {
                 usage.used_field_ids.insert(field_id as usize);
                 *usage.field_row_counts.entry(field_id).or_insert(0) += 1;
-                if let Some(context) = unflagged_context {
+                if let Some(fractions) = fractions.as_ref() {
                     *usage
                         .field_unflagged_row_counts
                         .entry(field_id)
-                        .or_insert(0.0) += compute_unflagged_row_fraction(ms, row, context)?;
+                        .or_insert(0.0) += fractions[row_slot];
                 }
             }
             let observation_id = observation_values[row_slot];
@@ -1547,6 +1597,9 @@ fn analyze_main_table(
             start = start.min(time - interval / 2.0);
             end = end.max(time + interval / 2.0);
             usage.selected_row_count += 1;
+        }
+        if let (Some(all), Some(fractions)) = (&mut usage.unflagged_row_fractions, fractions) {
+            all.extend(fractions);
         }
     }
 

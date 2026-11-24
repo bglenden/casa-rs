@@ -17,6 +17,27 @@ use crate::subtables::{
     SubTable, get_array, get_bool, get_f64, get_string, has_column, set_array, set_scalar,
 };
 
+/// Return CASA's observatory-relative longitude, latitude and radius offsets
+/// in metres from two ITRF positions.
+pub fn antenna_observatory_offsets(antenna: [f64; 3], observatory: [f64; 3]) -> [f64; 3] {
+    let spherical = |[x, y, z]: [f64; 3]| {
+        let radius = (x * x + y * y + z * z).sqrt();
+        let latitude = if radius == 0.0 {
+            0.0
+        } else {
+            (z / radius).asin()
+        };
+        (y.atan2(x), latitude, radius)
+    };
+    let (longitude, latitude, radius) = spherical(antenna);
+    let (obs_longitude, obs_latitude, obs_radius) = spherical(observatory);
+    [
+        (longitude - obs_longitude) * obs_radius * obs_latitude.cos(),
+        (latitude - obs_latitude) * obs_radius,
+        radius - obs_radius,
+    ]
+}
+
 /// Read-only typed wrapper for the ANTENNA subtable.
 ///
 /// Cf. C++ `MSAntennaColumns`.

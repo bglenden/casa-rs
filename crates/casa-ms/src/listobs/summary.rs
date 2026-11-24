@@ -46,7 +46,7 @@ impl ListObsSummary {
         ms: &MeasurementSet,
         options: &ListObsOptions,
         selected_rows: Option<&[usize]>,
-        group_scan_by_field: bool,
+        tool_view: bool,
     ) -> MsResult<Self> {
         let unflagged_context = if options.listunfl {
             Some(UnflaggedRowContext::new(ms)?)
@@ -65,7 +65,7 @@ impl ListObsSummary {
             .map(|summary| summary.spectral_window_id as i32)
             .collect::<BTreeSet<_>>();
         let sources = build_sources(ms, &used_spw_ids)?;
-        let antennas = build_antennas(ms, &observations, &main_usage)?;
+        let antennas = build_antennas(ms, &observations, &main_usage, tool_view)?;
 
         let field_name_lookup: HashMap<i32, String> = fields
             .iter()
@@ -82,8 +82,8 @@ impl ListObsSummary {
             &field_name_lookup,
             &dd_to_spw,
             &state_intent_lookup,
-            unflagged_context.as_ref(),
-            group_scan_by_field,
+            main_usage.unflagged_row_fractions.as_deref(),
+            tool_view,
         )?;
 
         let displayed_polarizations = unique_count(
