@@ -1841,6 +1841,17 @@ impl MsPlotSpec {
             ));
         }
         for y_axis in self.y_axes.iter().copied() {
+            if y_axis == MsAxis::UvDistance {
+                if self.x_axis.is_visibility_math()
+                    && (!uses_extended_averaging(self)
+                        || plotms_columns::uses_weighted_time_uvw(self))
+                {
+                    continue;
+                }
+                return Err(
+                    "This PlotMS UV distance ordinate combination is pending (#1032)".into(),
+                );
+            }
             let supported_y = matches!(
                 y_axis,
                 MsAxis::Amplitude
@@ -1848,7 +1859,6 @@ impl MsPlotSpec {
                     | MsAxis::Real
                     | MsAxis::Imaginary
                     | MsAxis::Channel
-                    | MsAxis::UvDistance
                     | MsAxis::U
                     | MsAxis::V
                     | MsAxis::W

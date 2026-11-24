@@ -881,13 +881,25 @@ def compare_time_averaged_columns(root, native):
     distance_ordinate = uvw_controls | single_ordinate | dict(
         xaxis="real", xdatacolumn="corrected", yaxis="uvdist", ydatacolumn="", avgtime="", expformat="txt",
     )
-    expected, actual = (work / f"raw-distance-ordinate.{engine}.txt" for engine in ("casa", "native"))
-    assert reference(**distance_ordinate, plotfile=str(expected)) is None
-    np.testing.assert_allclose([float(point[1]) for point in rows(expected)],
-                               np.tile([1, np.hypot(10, 21)], 3), rtol=1.2e-5)
-    assert native(**distance_ordinate, plotfile=str(actual)) is None
-    assert compare_text(actual, expected) == 6
-    print("raw-distance-ordinate: 6 matching UV distance coordinates", flush=True)
+    for name, overrides in (("raw", {}), ("channel", dict(spw="0:0~1", avgchannel="2"))):
+        options = distance_ordinate | overrides
+        expected, actual = (work / f"{name}-distance-ordinate.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        np.testing.assert_allclose([float(point[1]) for point in rows(expected)],
+                                   np.tile([1, np.hypot(10, 21)], 3), rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 6
+        print(f"{name}-distance-ordinate: 6 matching UV distance coordinates", flush=True)
+    from casars.tasks import TaskParameterError
+
+    output = work / "metadata-distance-ordinate.native.txt"
+    try:
+        native(**(distance_ordinate | dict(xaxis="time", xdatacolumn="")), plotfile=str(output))
+    except TaskParameterError as error:
+        assert "UV distance ordinate combination is pending (#1032)" in str(error)
+    else:
+        raise AssertionError("PlotMS admitted a pending UV distance and metadata pair")
+    assert not output.exists()
     compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
 
 
