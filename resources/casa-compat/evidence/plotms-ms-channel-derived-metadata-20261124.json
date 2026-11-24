@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "b551dcacb18b0f65c7425fdd5f0e91c741dfe4aa",
+  "source_revision": "b551dcacb18b0f65c7425fdd5f0e91c741dfe4aa",
+  "baseline_revision": "99a8e1158b35eec014d7269303be0fe10eb944ee",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Lone channel-averaged stored model expressions with Channel and Time abscissae.",
+  "result": "passed",
+  "baseline_result": "Native refused a channel-averaged derived visibility ordinate against either metadata abscissa.",
+  "text_exports": 3,
+  "points": 30,
+  "figures": 1,
+  "rendered_coordinates": 12,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}
