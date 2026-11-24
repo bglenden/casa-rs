@@ -178,13 +178,8 @@ pub(super) fn uvw_coordinates(uvw: Option<&ArrayValue>) -> Option<[f64; 3]> {
 pub(crate) struct PlotTimeGroups {
     group_by_row_slot: Vec<usize>,
     first_row_slots: Vec<usize>,
-    buffers: Vec<PlotTimeBuffer>,
-}
-
-/// A subchunk of finalized rows emitted by the averaging visibility iterator.
-pub(crate) struct PlotTimeBuffer {
-    pub(crate) groups: Range<usize>,
-    pub(crate) first_group: usize,
+    buffers: Vec<Range<usize>>,
+    input_buffer_first_slots: Vec<usize>,
 }
 
 impl PlotTimeGroups {
@@ -199,8 +194,13 @@ impl PlotTimeGroups {
     }
 
     /// The emitted subchunks needed by the downstream PlotMS baseline reducer.
-    pub(crate) fn buffers(&self) -> &[PlotTimeBuffer] {
+    pub(crate) fn buffers(&self) -> &[Range<usize>] {
         &self.buffers
+    }
+
+    /// Identify the input row that determines optional spectrum availability.
+    pub(crate) fn input_buffer_first_slot(&self, row_slot: usize) -> Option<usize> {
+        self.input_buffer_first_slots.get(row_slot).copied()
     }
 }
 
@@ -217,32 +217,33 @@ pub(crate) fn selected_plot_time_groups(
     } else {
         Vec::new()
     };
-    let mut group_by_row = HashMap::with_capacity(rows.len());
-    let mut first_rows = Vec::with_capacity(groups.len());
-    for (index, group) in groups.into_iter().enumerate() {
-        first_rows.push(group.first.row);
-        group_by_row.extend(group.rows.into_iter().map(|row| (row.physical, index)));
-    }
-    let mut first_row_slots = vec![0; first_rows.len()];
-    let group_by_row_slot = rows
+    let row_slots = rows
         .iter()
         .enumerate()
-        .map(|(row_slot, row)| {
-            let group = group_by_row[&row.row_index];
-            if first_rows[group] == row.row_index {
-                first_row_slots[group] = row_slot;
+        .map(|(slot, row)| (row.row_index, slot))
+        .collect::<HashMap<_, _>>();
+    let mut group_by_row_slot = vec![0; rows.len()];
+    let mut first_row_slots = Vec::with_capacity(groups.len());
+    let mut input_buffer_first_slots = vec![0; if collect_buffers { rows.len() } else { 0 }];
+    for (index, group) in groups.into_iter().enumerate() {
+        first_row_slots.push(row_slots[&group.first.row]);
+        for row in group.rows {
+            let slot = row_slots[&row.physical];
+            group_by_row_slot[slot] = index;
+            if collect_buffers {
+                input_buffer_first_slots[slot] = row_slots[&row.buffer_first];
             }
-            group
-        })
-        .collect();
+        }
+    }
     Ok(PlotTimeGroups {
         group_by_row_slot,
         first_row_slots,
         buffers,
+        input_buffer_first_slots,
     })
 }
 
-fn plot_time_buffers(groups: &[TimeGroup]) -> Vec<PlotTimeBuffer> {
+fn plot_time_buffers(groups: &[TimeGroup]) -> Vec<Range<usize>> {
     let mut offset = 0;
     groups
         .chunk_by(|left, right| {
@@ -251,23 +252,7 @@ fn plot_time_buffers(groups: &[TimeGroup]) -> Vec<PlotTimeBuffer> {
         .map(|buffer| {
             let start = offset;
             offset += buffer.len();
-            let anchor = if buffer[0].completed_before.is_none() {
-                // The iterator flushes the remaining averages in antenna-pair order.
-                buffer
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, group)| {
-                        let [first, second] = group.first.antenna_pair;
-                        (first.max(second), first.min(second))
-                    })
-                    .map_or(0, |(index, _)| index)
-            } else {
-                0
-            };
-            PlotTimeBuffer {
-                groups: start..offset,
-                first_group: start + anchor,
-            }
+            start..offset
         })
         .collect()
 }

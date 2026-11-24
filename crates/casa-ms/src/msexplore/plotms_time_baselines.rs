@@ -130,7 +130,7 @@ impl TimeBaselineStatistics {
         let mut averages: Vec<BaselineAverage> = Vec::new();
         let mut rows_to_average = HashMap::with_capacity(self.groups.len());
         for buffer in time_plan.buffers() {
-            let Some(anchor) = self.groups.get(&buffer.first_group) else {
+            let Some(anchor) = self.groups.get(&buffer.start) else {
                 continue;
             };
             let bounds = anchor.integration();
@@ -146,7 +146,7 @@ impl TimeBaselineStatistics {
                 averages.push(BaselineAverage {
                     partition: anchor.partition,
                     anchor_time: bounds.time,
-                    row: rows[time_plan.first_row_slot(buffer.first_group)],
+                    row: rows[time_plan.first_row_slot(buffer.start)],
                     start,
                     end,
                 });
@@ -155,7 +155,7 @@ impl TimeBaselineStatistics {
                 average.end = average.end.max(end);
             }
             let output = averages.len() - 1;
-            for group in buffer.groups.clone() {
+            for group in buffer.clone() {
                 if let Some(statistics) = self.groups.get(&group) {
                     rows_to_average.insert(group, (output, statistics.baseline_weight()));
                 }

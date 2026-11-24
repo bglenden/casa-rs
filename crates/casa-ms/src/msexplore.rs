@@ -5089,9 +5089,12 @@ fn build_generic_visibility_scatter_with_averaging(
         let weight_values =
             float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
         let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
+        let buffer_first = time_bins.and_then(|plan| plan.input_buffer_first_slot(row_slot));
         let weight_spectrum_grid = selected_weight_spectrum
             .as_ref()
-            .and_then(|column| column.find(row_slot))
+            .map(|column| column.spectrum_in_buffer(row_slot, buffer_first))
+            .transpose()?
+            .flatten()
             .map(|cell| float_grid_from_array(cell, "WEIGHT_SPECTRUM"))
             .transpose()?
             .or_else(|| {
@@ -5100,7 +5103,9 @@ fn build_generic_visibility_scatter_with_averaging(
             });
         let sigma_spectrum_grid = selected_sigma_spectrum
             .as_ref()
-            .and_then(|column| column.find(row_slot))
+            .map(|column| column.spectrum_in_buffer(row_slot, buffer_first))
+            .transpose()?
+            .flatten()
             .map(|cell| float_grid_from_array(cell, "SIGMA_SPECTRUM"))
             .transpose()?
             .or_else(|| {
@@ -7151,6 +7156,18 @@ impl<'a> SelectedArrayColumn<'a> {
                 self.column
             )
         })
+    }
+
+    fn spectrum_in_buffer(
+        &self,
+        row_slot: usize,
+        buffer_first: Option<usize>,
+    ) -> Result<Option<&ArrayValue>, String> {
+        match buffer_first {
+            Some(first) if self.find(first).is_some() => self.get(row_slot).map(Some),
+            Some(_) => Ok(None),
+            None => Ok(self.find(row_slot)),
+        }
     }
 
     fn visibility_grid(&self, row_slot: usize) -> Result<ComplexGrid, String> {

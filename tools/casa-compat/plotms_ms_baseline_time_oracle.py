@@ -11,6 +11,8 @@ from pathlib import Path
 import casatasks as casa
 import numpy as np
 
+from plotms_ms_baseline_channels_oracle import make_fixture as make_channel_baseline_fixture
+from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
 from plotms_ms_columns_oracle import (
     compare_ordinate_figure,
     compare_text,
@@ -56,6 +58,7 @@ def compare(root, native):
         yaxislocation=["left", "right"], spw="0:1", avgbaseline=True, avgtime="20",
     )
     late_baseline = dict(msselect=f"ANTENNA1 != 0 || ANTENNA2 != 2 || TIME > {start + 0.5:.3f}")
+    late_low_antenna = f"ANTENNA1 != 0 || ANTENNA2 != 1 || TIME > {start + 0.5:.3f}"
     cases = (
         ("equal-endpoint", {}, [(3.75, 33), (9, 1470 / 17)], [15, 45]),
         ("row-flags", dict(vis=str(flagged)), [(100 / 26, 920 / 26), (10.4, 1220 / 12)], [10, 45]),
@@ -68,6 +71,8 @@ def compare(root, native):
         ("late-baseline", late_baseline, [(123.2 / 38, 1200 / 38), (8.6, 1560 / 18)], [15, 40]),
         ("flagged-late-baseline", late_baseline | dict(vis=str(flagged)),
          [(3.05, 800 / 24), (126.6 / 13, 1310 / 13)], [10, 40]),
+        ("final-buffer-order", dict(xaxis="time", avgtime="120", msselect=late_low_antenna),
+         [(start + 25, 56.25)], [25]),
     )
     for name, options, corrected, offsets in cases:
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
@@ -93,6 +98,24 @@ def compare(root, native):
     assert reference(**options, plotfile=str(expected)) is None
     assert native(**options, plotfile=str(actual)) is None
     assert compare_text(actual, expected) == 2
+    compare_partial_spectrum(root, native, controls)
+
+
+def compare_partial_spectrum(root, native, controls):
+    work = root / "partial-spectrum"
+    work.mkdir()
+    source, *_ = make_channel_baseline_fixture(work)
+    vis = make_reversed_partial_spectrum(source, work / "reversed-partial-spectrum.ms")
+    expected, actual = (root / f"spectrum-availability.{engine}.txt" for engine in ("casa", "native"))
+    options = controls | dict(vis=str(vis), expformat="txt")
+    assert reference(**options, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert len(selected) == 4
+    np.testing.assert_array_equal(np.array([point[:2] for point in selected], dtype=float),
+                                  [(10, 45), (10, 55), (10, 450), (10, 550)])
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == len(selected)
+    print(f"spectrum-availability: {len(selected)} matching time-and-baseline coordinates", flush=True)
 
 
 def main():
