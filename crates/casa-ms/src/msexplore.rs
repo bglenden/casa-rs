@@ -3011,23 +3011,25 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
+    let vector_field_models = plot.is_some_and(|plot| {
+        plotms_model::needs_vector_field_phase_references(
+            ms,
+            &selected.selected_rows,
+            plot,
+            &columns,
+        )
+    });
     let direct_time_projection = !extended_derived
-        && plot.is_some_and(|plot| {
-            plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
-        });
+        && (vector_field_models
+            || plot.is_some_and(|plot| {
+                plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
+            }));
     if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_projection {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
             .sort_by(|left, right| left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds));
     }
-    let models = plotms_model::selected_model_cells(
-        ms,
-        &selected.selected_rows,
-        plot,
-        &columns,
-        load_models,
-    )?;
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
@@ -3062,10 +3064,21 @@ fn build_uncalibrated_plotms_payload(
                     || extended_derived
                     || direct_time_projection,
                 time_spw,
+                vector_field_models,
             )
             .map_err(|error| error.to_string())
         })
         .transpose()?;
+    let models = plotms_model::selected_model_cells(
+        ms,
+        &selected.selected_rows,
+        plot,
+        &columns,
+        time_bins
+            .as_ref()
+            .and_then(crate::transform::PlotTimeGroups::model_phase_reference_slots),
+        load_models,
+    )?;
     let (row_order, starts_visibility_buffer) = if (vector_baselines && !time_baselines)
         || scalar_average
         || (spw_average && !time_spw)
@@ -5482,13 +5495,17 @@ fn build_generic_visibility_scatter_with_averaging(
         && !average_channels;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
+    let vector_field_models = spec.averaging.avgfield
+        && !spec.averaging.scalar
+        && calibration.is_some_and(|input| input.models.is_some());
     let direct_time_projection = uncalibrated
         && time_bins.is_some()
         && !extended_derived
-        && plotms_columns::uses_direct_vector_time_projection(
-            spec,
-            calibration.and_then(|input| input.x_data_column),
-        );
+        && (vector_field_models
+            || plotms_columns::uses_direct_vector_time_projection(
+                spec,
+                calibration.and_then(|input| input.x_data_column),
+            ));
     let average_operands = extended_derived
         || scalar_channels
         || scalar_spw_time

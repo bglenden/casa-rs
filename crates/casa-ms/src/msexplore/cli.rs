@@ -188,11 +188,13 @@ pub fn task_front_end_with_plot_payload(
 pub type PlotMsCalibrationLoader =
     fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
 
-/// Compute MODEL_DATA on the exact selected MAIN rows. Return None when the
-/// ordinary physical or default model supplies all selected cells.
+/// Compute MODEL_DATA on the exact selected MAIN rows. An optional slice maps
+/// each selected row to the selection slot supplying its chunk phase reference.
+/// Return None when the physical or default model supplies all selected cells.
 pub type PlotMsModelLoader = fn(
     &MeasurementSet,
     &[ResolvedMsSelectionRow],
+    Option<&[usize]>,
 ) -> Result<Option<HashMap<usize, ArrayValue>>, String>;
 
 /// Use the existing PlotMS front end with caller-provided calibration and model sources.
@@ -418,9 +420,10 @@ fn run_visibility_plot(
     let mut axis_columns = options.plotms_axis_columns();
     let extended_derived = calibration.is_none()
         && axis_columns.is_some_and(|columns| options.supports_extended_derived(columns));
-    let scalar_field_average = options.scalar && options.avgtime.is_some() && !options.avgbaseline;
+    let ordinary_time_average =
+        options.avgtime.is_some() && !options.avgbaseline && !options.avgantenna && !options.avgspw;
     let implicit_derived_model =
-        atmosphere.is_none() && (!options.avgfield || scalar_field_average);
+        atmosphere.is_none() && (!options.avgfield || ordinary_time_average);
     let raw_symbols = (pointing.is_some()
         || axis_columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
     .then(|| plotms_options::raw_symbol_visibility(task));

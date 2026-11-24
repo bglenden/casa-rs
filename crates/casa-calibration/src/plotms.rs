@@ -17,16 +17,19 @@ use crate::{ApplyMode, ApplyPlanRequest, plan_apply};
 /// Predict model visibilities for the exact PlotMS row selection without
 /// writing MODEL_DATA. Return None when no selected field has a virtual model
 /// pointer, so PlotMS can use its physical or default model reader.
+/// When supplied, `phase_reference_slots` identifies the selected row whose
+/// FIELD direction and time supply each row's iterator chunk phase reference.
 pub fn load_models(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
+    phase_reference_slots: Option<&[usize]>,
 ) -> Result<Option<HashMap<usize, ArrayValue>>, String> {
     let fields = casa_ms::scratch_columns::virtual_model_fields(ms);
     if !rows.iter().any(|row| fields.contains(&row.field_id)) {
         return Ok(None);
     }
     let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
-    let prepared = plotms_model_input()
+    let prepared = plotms_model_input(phase_reference_slots)
         .prepare(ms, rows, &BTreeMap::new())
         .map_err(|error| error.to_string())?;
     let mut columns = prepared

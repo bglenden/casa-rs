@@ -112,6 +112,31 @@ impl VisibilityModels {
         self
     }
 
+    pub(crate) fn set_plot_phase_references(
+        &mut self,
+        rows: &[ResolvedMsSelectionRow],
+        slots: &[usize],
+    ) -> Result<(), GainSolveError> {
+        if slots.len() != rows.len() {
+            return Err(GainSolveError::VirtualModel(
+                "PlotMS phase reference slots do not match the selected rows".into(),
+            ));
+        }
+        for (row, &slot) in rows.iter().zip(slots) {
+            if !self.rows.contains_key(&row.row_index) {
+                continue;
+            }
+            let reference = rows.get(slot).ok_or_else(|| {
+                GainSolveError::VirtualModel(format!("invalid PlotMS phase reference slot {slot}"))
+            })?;
+            self.models.plot_phase_references.insert(
+                row.row_index,
+                (reference.field_id, reference.time_mjd_seconds),
+            );
+        }
+        Ok(())
+    }
+
     fn with_models(
         ms: &MeasurementSet,
         rows: Vec<SelectedSolveRow>,

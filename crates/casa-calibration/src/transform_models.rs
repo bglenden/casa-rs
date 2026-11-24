@@ -23,6 +23,7 @@ pub fn transform_model_input(
 ) -> Arc<dyn TransformInputView> {
     Arc::new(ModelView {
         calibration,
+        plot_phase_reference_slots: None,
         materialize: if materialize {
             ModelMaterialization::SourceColumn
         } else {
@@ -31,9 +32,10 @@ pub fn transform_model_input(
     })
 }
 
-pub(crate) fn plotms_model_input() -> impl TransformInputView {
+pub(crate) fn plotms_model_input(slots: Option<&[usize]>) -> impl TransformInputView + '_ {
     ModelView {
         calibration: None,
+        plot_phase_reference_slots: slots,
         materialize: ModelMaterialization::SelectedPlot,
     }
 }
@@ -46,12 +48,13 @@ enum ModelMaterialization {
 }
 
 #[derive(Debug)]
-struct ModelView {
+struct ModelView<'a> {
     calibration: Option<Arc<dyn TransformInputView>>,
+    plot_phase_reference_slots: Option<&'a [usize]>,
     materialize: ModelMaterialization,
 }
 
-impl ModelView {
+impl ModelView<'_> {
     fn materializes(&self, input: &MeasurementSet) -> bool {
         match self.materialize {
             ModelMaterialization::Disabled => false,
@@ -64,7 +67,7 @@ impl ModelView {
     }
 }
 
-impl TransformInputView for ModelView {
+impl TransformInputView for ModelView<'_> {
     fn prepare<'a>(
         &self,
         input: &'a MeasurementSet,
@@ -80,7 +83,13 @@ impl TransformInputView for ModelView {
         let available = stored || self.materializes(input);
         let fields = scratch_columns::virtual_model_fields(input);
         let models = if available && rows.iter().any(|row| fields.contains(&row.field_id)) {
-            Some(VisibilityModels::for_transform(input, rows).map_err(model_error)?)
+            let mut models = VisibilityModels::for_transform(input, rows).map_err(model_error)?;
+            if let Some(slots) = self.plot_phase_reference_slots {
+                models
+                    .set_plot_phase_references(rows, slots)
+                    .map_err(model_error)?;
+            }
+            Some(models)
         } else {
             None
         };

@@ -20,17 +20,34 @@ use crate::selection::ResolvedMsSelectionRow;
 use crate::virtual_model::{VirtualModelEntry, selected_model_combinations, virtual_model};
 use crate::{MeasurementSet, initial_model_visibility, scratch_columns::virtual_model_fields};
 
-/// Supply read-only predicted cells before a supported averaging transform.
-pub(super) fn selected_model_cells(
+pub(super) fn needs_vector_field_phase_references(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
-    plot: Option<&MsPlotSpec>,
+    plot: &MsPlotSpec,
     columns: &PlotMsColumnSelection<'_>,
-    load_models: Option<PlotMsModelLoader>,
-) -> Result<Option<HashMap<usize, ArrayValue>>, String> {
-    let Some(plot) = plot else {
-        return Ok(None);
-    };
+) -> bool {
+    let averaging = &plot.averaging;
+    columns.implicit_derived_model
+        && averaging.avgtime.is_some()
+        && averaging.avgfield
+        && !averaging.scalar
+        && !averaging.avgbaseline
+        && !averaging.avgantenna
+        && !averaging.avgspw
+        && plot.iteration.iteraxis.is_none()
+        && supports_ordinary_time_axes(plot)
+        && plot.y_axes.iter().all(|axis| axis.is_visibility_math())
+        && visibility_columns(plot, columns).any(MsDataColumn::needs_model)
+        && {
+            let fields = virtual_model_fields(ms);
+            rows.iter().any(|row| fields.contains(&row.field_id))
+        }
+}
+
+fn visibility_columns<'a>(
+    plot: &MsPlotSpec,
+    columns: &'a PlotMsColumnSelection<'_>,
+) -> impl Iterator<Item = MsDataColumn> + Clone + 'a {
     let axes = [
         Some(plot.x_axis),
         Some(plot.y_axis()),
@@ -41,8 +58,7 @@ pub(super) fn selected_model_cells(
         plot.data_column,
         columns.secondary_y.unwrap_or(plot.data_column),
     ];
-    let mut visibility_columns = axes
-        .into_iter()
+    axes.into_iter()
         .zip(picks)
         .filter_map(|(axis, column)| {
             axis.is_some_and(MsAxis::is_visibility_math)
@@ -53,7 +69,22 @@ pub(super) fn selected_model_cells(
                 .additional_y
                 .iter()
                 .filter_map(|&(axis, column)| axis.is_visibility_math().then_some(column)),
-        );
+        )
+}
+
+/// Supply read-only predicted cells before a supported averaging transform.
+pub(super) fn selected_model_cells(
+    ms: &MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+    plot: Option<&MsPlotSpec>,
+    columns: &PlotMsColumnSelection<'_>,
+    model_phase_reference_slots: Option<&[usize]>,
+    load_models: Option<PlotMsModelLoader>,
+) -> Result<Option<HashMap<usize, ArrayValue>>, String> {
+    let Some(plot) = plot else {
+        return Ok(None);
+    };
+    let mut visibility_columns = visibility_columns(plot, columns);
     if !visibility_columns.clone().any(MsDataColumn::needs_model) {
         return Ok(None);
     }
@@ -79,13 +110,17 @@ pub(super) fn selected_model_cells(
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
         )
     });
+    let vector_field_span = model_phase_reference_slots.is_some();
+    let field_models_supported =
+        !plot.averaging.avgfield || plot.averaging.scalar || vector_field_span;
     let derived_average = columns.implicit_derived_model
+        && field_models_supported
         && (columns.extended_derived || (!extended && uses_channel_derived(plot, columns.x)));
     let can_predict = !averaging
-        || ((!extended || ordinary_time || scalar_span) && standard_columns)
+        || ((!extended || ordinary_time || scalar_span || vector_field_span) && standard_columns)
         || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {
-        return load(ms, rows);
+        return load(ms, rows, model_phase_reference_slots);
     }
     if averaging || (plot.iteration.iteraxis.is_some() && plot.secondary_y_axis().is_some()) {
         let message = if can_predict {
