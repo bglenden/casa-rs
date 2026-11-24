@@ -962,7 +962,9 @@ def compare_virtual_spw_model_spans(root, native):
             actual = export(root, f"{label}.native", native, controls)
             assert compare_text(actual, expected) == len(values[scalar])
             print(f"{label}: {len(selected)} matching selected time/SPW coordinates", flush=True)
-    for scalar, value, band, scan in ((False, 4.625, 90, "1"), (True, 3.75, 100, "-1")):
+    # Channel averaging gives these model-only buffers equal weights in both modes.
+    channel_model = (7.25 + 3.25 + 5.5 + 2.5) / 4
+    for scalar, band, scan in ((False, 90, "1"), (True, 100, "-1")):
         label = f"{'scalar' if scalar else 'vector'}-virtual-window-channel-spans"
         controls = base | dict(vis=str(both), avgscan=True, avgfield=True, scalar=scalar,
                                avgchannel="2", spw="0:0~3,1:0~3")
@@ -971,7 +973,7 @@ def compare_virtual_spw_model_spans(root, native):
         assert [(p[0], p[3], p[4], p[11]) for p in selected] == [
             (f"{band}.000500000", scan, "0", "0"), (f"{band}.002500000", scan, "0", "0"),
         ]
-        np.testing.assert_allclose([float(p[1]) for p in selected], [value] * 2, rtol=1.2e-5)
+        np.testing.assert_allclose([float(p[1]) for p in selected], [channel_model] * 2, rtol=1.2e-5)
         assert compare_text(export(root, f"{label}.native", native, controls), expected) == 2
         print(f"{label}: 2 matching selected time/channel/SPW coordinates", flush=True)
         if not scalar:
