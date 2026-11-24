@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Metadata and visibility ranges over the public MS tool's selected rows.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Deref;
-
 use casa_coordinates::StokesType;
-use casa_tables::{PlainReferenceRead, RequiredScalarColumnValues, Table};
+use casa_tables::{PlainReferenceRead, RequiredScalarColumnValues, Table, TableOptions};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{Array1, ArrayD, IxDyn, ShapeBuilder};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::subtables::{
     FieldDirectionColumn, MsAntenna, MsDataDescription, MsField, MsPolarization, MsSpectralWindow,
     linked_subtable_row,
 };
-use crate::tool_visibility::{VisibilityReadOptions, read_reference_scalars, read_tool_visibility};
-use crate::{MsError, MsResult, SubtableId};
+use crate::tool_visibility::{
+    VisibilityReadOptions, concatenate_scalars, member_rows, read_reference_scalars,
+    read_tool_visibility,
+};
+use crate::{MeasurementSet, MsError, MsResult, SubtableId};
 
 mod samples;
 use samples::RangeSamples;
@@ -67,22 +68,53 @@ impl ToolRangeRequest {
     ///
     /// # Errors
     /// A requested column, descriptor, or subtable cannot be read.
-    pub fn read<T: Deref<Target = [Table]>>(
+    pub fn read(
         &self,
         main: &Table,
         members: &[Table],
         reference: Option<&PlainReferenceRead>,
         rows: &[usize],
-        mut linked_subtable: impl FnMut(SubtableId) -> MsResult<T>,
     ) -> MsResult<RecordValue> {
         if rows.is_empty() {
             return Ok(RecordValue::new(Vec::new()));
         }
         let mut result = BTreeMap::new();
         scalar_ranges(main, members, reference, rows, &self.names, &mut result)?;
-        name_ranges(&mut linked_subtable, &self.names, &mut result)?;
-        if self.has_spectral_items() || self.wants_samples {
-            let descriptions = selected_descriptions(main, reference, rows)?;
+        let spectral = self.has_spectral_items() || self.wants_samples;
+        let mut ids = Vec::new();
+        if self.names.contains("antennas") {
+            ids.push(SubtableId::Antenna);
+        }
+        if self.names.contains("fields") || self.names.contains("phase_dir") {
+            ids.push(SubtableId::Field);
+        }
+        if spectral {
+            ids.extend([
+                SubtableId::DataDescription,
+                SubtableId::SpectralWindow,
+                SubtableId::Polarization,
+            ]);
+        }
+        let links = if ids.is_empty() {
+            Default::default()
+        } else {
+            let owner = reference.map_or(main, PlainReferenceRead::parent);
+            MeasurementSet::linked_subtables(owner, &ids)?
+        };
+        let linked_subtable = |id: SubtableId| -> MsResult<Vec<Table>> {
+            let paths = links
+                .get(&id)
+                .ok_or_else(|| MsError::MissingSubtable(id.name().into()))?;
+            // C++ can publish in-place storage changes without touching the
+            // control or lock files. Open each required subtable for this read.
+            paths
+                .iter()
+                .map(|path| Table::open(TableOptions::new(path)).map_err(MsError::from))
+                .collect()
+        };
+        name_ranges(&linked_subtable, &self.names, &mut result)?;
+        if spectral {
+            let descriptions = selected_descriptions(main, members, reference, rows)?;
             let description = linked_subtable(SubtableId::DataDescription)?;
             let windows = linked_subtable(SubtableId::SpectralWindow)?;
             let polarization = linked_subtable(SubtableId::Polarization)?;
@@ -127,11 +159,15 @@ fn is_sample_item(name: &str) -> bool {
 
 fn selected_descriptions(
     main: &Table,
+    members: &[Table],
     reference: Option<&PlainReferenceRead>,
     rows: &[usize],
 ) -> MsResult<BTreeSet<i32>> {
     let column = "DATA_DESC_ID";
-    let mut values = if let Some(reference) = reference {
+    let member_rows = member_rows(members, main.row_count(), rows);
+    let mut values = if !member_rows.is_empty() {
+        concatenate_scalars(&member_rows, &[column])?
+    } else if let Some(reference) = reference {
         read_reference_scalars(reference, &[column], &reference.parent_rows(rows)?)?
     } else {
         main.required_scalar_columns_owned_for_rows(&[column], rows)?
@@ -267,8 +303,8 @@ fn project_scalar_ranges(
     }
 }
 
-fn name_ranges<T: Deref<Target = [Table]>>(
-    linked_subtable: &mut impl FnMut(SubtableId) -> MsResult<T>,
+fn name_ranges(
+    linked_subtable: &impl Fn(SubtableId) -> MsResult<Vec<Table>>,
     want: &BTreeSet<String>,
     result: &mut BTreeMap<String, Value>,
 ) -> MsResult<()> {

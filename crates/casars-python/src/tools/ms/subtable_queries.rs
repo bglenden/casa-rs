@@ -21,25 +21,10 @@ use crate::tools::{LogLine, emit};
 
 #[derive(Default)]
 pub(super) struct Subtables {
-    antenna: Subtable,
     field: Subtable,
     data_description: Subtable,
     spectral_window: Subtable,
     polarization: Subtable,
-}
-
-impl Subtables {
-    pub(super) fn read(&self, main: &Table, id: SubtableId) -> MsResult<Ref<'_, [Table]>> {
-        let subtable = match id {
-            SubtableId::Antenna => &self.antenna,
-            SubtableId::DataDescription => &self.data_description,
-            SubtableId::Field => &self.field,
-            SubtableId::Polarization => &self.polarization,
-            SubtableId::SpectralWindow => &self.spectral_window,
-            _ => return Err(MsError::MissingSubtable(id.name().into())),
-        };
-        subtable.read(main, id)
-    }
 }
 
 #[derive(Default)]

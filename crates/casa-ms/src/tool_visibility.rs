@@ -27,7 +27,8 @@ use averaging::RowAverage;
 use baseline_axis::BaselineGrid;
 pub use channel_axis::VisibilityChannels;
 use channel_axis::{ChannelWeightKind, ChannelWeights};
-use concatenation::{MemberRows, concatenate_arrays, concatenate_scalars, member_rows};
+use concatenation::{MemberRows, concatenate_arrays};
+pub(crate) use concatenation::{concatenate_scalars, member_rows};
 pub use polarization_axis::VisibilityPolarization;
 pub(crate) use projection::read_reference_scalars;
 
