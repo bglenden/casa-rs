@@ -346,28 +346,38 @@ def check_intent(root, seed, temperatures, tasks):
 
 
 def check_measurement_set_replacement(root, seed, tasks):
+    from sdcal_apply_oracle import compare_products
+
+    source = root / 'replacement-input.ms'
+    copy_ms(seed, source)
+    with opened(source, True) as main:
+        flags = main.getcol('FLAG')
+        flags[..., -2:] = False
+        assert main.putcol('FLAG', flags)
     products = {}
     for writer, task in tasks.items():
         product = root / f'{writer}-replaced.ms'
-        copy_ms(seed, product)
-        assert task(str(seed), 'ps', outfile=str(product), overwrite=True) is None
+        baseline = root / f'{writer}-replacement-baseline.cal'
+        copy_ms(source, product)
+        assert task(str(source), 'ps', outfile=str(baseline)) is None
+        assert task(str(source), 'ps', outfile=str(product), overwrite=True) is None
         with opened(product) as replaced:
             assert replaced.getkeyword('VisCal') == 'SDSKY_PS'
             assert replaced.nrows() == 2
-        compare_mapping(columns(product), columns(root / f'{writer}-data.cal'), False)
+        compare_mapping(columns(product), columns(baseline), False)
         products[writer] = product
     expected = None
     for writer, product in products.items():
         for reader, task in tasks.items():
             vis = root / f'{writer}-replaced-applied-{reader}.ms'
-            copy_ms(seed, vis)
+            copy_ms(source, vis)
             assert task(str(vis), 'apply', applytable=str(product)) is None
             with opened(vis) as main:
                 result = {key: main.getcol(key) for key in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
             if expected is None:
                 expected = result
             else:
-                compare_mapping(result, expected, False)
+                compare_products(result, expected)
     print(f'Separate MeasurementSet replacement passed {len(tasks)} sky-table writers '
           f'and {len(tasks)} application readers', flush=True)
 
