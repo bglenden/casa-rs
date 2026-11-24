@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare unaveraged PlotMS visibility ordinates across iterated MS panels."""
+"""Compare raw and averaged PlotMS visibility ordinates across iterated MS panels."""
 
 import argparse
 from contextlib import chdir
@@ -74,7 +74,7 @@ def compare_figures(root, native, name, controls, pages, file_tags, sides, *, sh
     for rendered, page in zip(captured, pages, strict=True):
         for (title, xlabel, axes), (label, coordinates) in zip(rendered, page, strict=True):
             assert title == f"{controls['title']} {iteration}: {label}"
-            assert xlabel == "Channel"
+            assert xlabel == controls.get("xlabel", "Channel")
             assert [(side, label) for _, side, label, _ in axes] == [(side, label) for side, label, _ in sides]
             layers = np.split(coordinates, len(controls["yaxis"]))
             for (axis, side, _, lines), (_, _, order) in zip(axes, sides, strict=True):
@@ -183,6 +183,58 @@ def compare_review_cases(root, native, vis, base, polarizations, sides):
                     shared_right=right_bounds)
 
 
+def compare_averaged_ordinates(root, native):
+    root.mkdir()
+    vis = make_fixture(root)
+    with opened(vis, True) as table:
+        flags = table.getcol("FLAG")
+        flags[1, 2:4, ::2] = True
+        table.putcol("FLAG", flags)
+        table.putcell("FLAG_ROW", 0, True)
+    base = request(vis) | dict(xaxis="channel", xdatacolumn="", spw="0:0~3", correlation="",
+                               iteraxis="corr", gridrows=2, exprange="all", title="Visibility",
+                               yaxis=["real"] * 3, ydatacolumn=["data", "corrected", "model"],
+                               yaxislocation=["left", "right", "left"])
+    channel = base | dict(avgchannel="2", xlabel="Channel bin")
+    corr = ((12, "XX", 12), (12, "YY", 6))
+    reference_values = ((2.6, 6.6), (28, 68), (280, 680))
+    points = compare_text_pages(root, native, "channel-correlation", channel, corr)
+    for panel, allowed in zip(points, ((0, 1), (0,)), strict=True):
+        for layer, values in zip(np.split(panel, 3), reference_values, strict=True):
+            assert set(layer[:, 0]) == set(allowed)
+            np.testing.assert_allclose(layer[:, 1], np.asarray(values)[layer[:, 0].astype(int)], rtol=1.2e-5)
+    for axis, metadata, labels in (("scan", 3, ("1", "2")), ("field", 4, ("0", "1"))):
+        controls = channel | dict(iteraxis=axis, field="", correlation="XX")
+        panels = compare_text_pages(root, native, f"channel-{axis}", controls,
+                                   tuple((metadata, label, 12) for label in labels))
+        for panel in panels:
+            for layer, values in zip(np.split(panel, 3), reference_values, strict=True):
+                np.testing.assert_allclose(layer[:, 1], np.asarray(values)[layer[:, 0].astype(int)], rtol=1.2e-5)
+    sides = (("left", "Real, Real:model", (0, 2)), ("right", "Real:corrected", (1,)))
+    panels = list(zip(("XX", "YY"), points, strict=True))
+    compare_figures(root, native, "channel-correlation-grid", channel, [panels], ["CorrXX,YY"], sides)
+    compare_figures(root, native, "channel-correlation-pages", channel | dict(gridrows=1),
+                    [[panel] for panel in panels], ["CorrXX", "CorrYY_2"], sides)
+
+    virtual, mixed, stored = virtual_fixtures(root, vis)
+    for name, source in (("virtual-channel", virtual), ("virtual-precedes-stored-channel", mixed)):
+        controls = channel | dict(vis=str(source))
+        predicted = compare_text_pages(root, native, name, controls, corr)
+        for panel in predicted:
+            np.testing.assert_array_equal(np.split(panel, 3)[2][:, 1], 7.25)
+    with opened(virtual) as table:
+        assert "MODEL_DATA" not in table.colnames()
+    with opened(mixed) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), stored)
+
+    # Both time averaging modes use the same iterated page contract. The
+    # scalar mode keeps its own closed visibility-buffer bins.
+    time = base | dict(xaxis="time", avgtime="20")
+    compare_text_pages(root, native, "ordinary-vector-time-correlation", time, corr)
+    compare_text_pages(root, native, "ordinary-scalar-time-correlation", time | dict(scalar=True),
+                       ((12, "XX", 8), (12, "YY", 4)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -201,6 +253,7 @@ def main():
 
     with chdir(root), plotms_launcher(args.app_run):
         compare(root, native)
+        compare_averaged_ordinates(root / "averaged", native)
 
 
 if __name__ == "__main__":
