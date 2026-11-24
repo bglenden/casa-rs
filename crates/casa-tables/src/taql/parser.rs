@@ -950,12 +950,16 @@ impl<'src> Parser<'src> {
                 Ok(Expr::Star)
             }
             Some(Token::Rowid) => {
-                self.lexer.next_token();
-                // Optional parentheses: ROWID or ROWID()
+                let (_, span) = self.lexer.next_token().unwrap();
                 if self.lexer.eat_if(&Token::LParen).is_some() {
                     self.lexer.expect(&Token::RParen)?;
+                    Ok(Expr::RowNumber)
+                } else {
+                    Ok(Expr::ColumnRef(ColumnRef {
+                        table: None,
+                        column: self.lexer.slice(&span).to_owned(),
+                    }))
                 }
-                Ok(Expr::RowNumber)
             }
             // Unary minus
             Some(Token::Minus) => {

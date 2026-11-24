@@ -2,7 +2,10 @@
 //! Auxiliary index records from CASA MeasurementSet selection expressions.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use casa_ms::selection::{MsSelectionIndices, ParsedMsToolSelection};
 use casa_ms::{MeasurementSet, MsResult, MsSelection};
@@ -73,10 +76,7 @@ impl PyMsTool {
                 return Ok(false);
             };
             let request = request.unwrap_or_default();
-            let snapshot = attached
-                .metadata_link()
-                .snapshot(None)
-                .map_err(runtime_error)?;
+            let snapshot = attached.selection_snapshot()?;
             let ms = &snapshot.ms;
             let Ok(parsed) = attached.selection_state.parse(ms, &request) else {
                 return Ok(false);
@@ -85,6 +85,21 @@ impl PyMsTool {
                 Ok(parsed.has_row_expression())
             } else {
                 attached.apply_parsed_selection(ms, &parsed)
+            }
+        })
+    }
+
+    #[pyo3(signature = (msselect = None), text_signature = "($self, msselect='')")]
+    fn selecttaql(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = direct_taql)] msselect: Option<String>,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            match attached.as_mut() {
+                Some(ms) => ms.apply_direct_taql(msselect.unwrap_or_default()),
+                None => Ok(false),
             }
         })
     }
@@ -175,6 +190,57 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    fn selection_snapshot(&self) -> PyResult<Arc<MetadataSnapshot>> {
+        let link = self.metadata_link();
+        if self.plain_rows.is_some()
+            && let Some(rows) = self.selected_rows.as_deref()
+            && rows.iter().copied().eq(0..rows.len())
+        {
+            // `selectinit` commonly selects every row. Use the current MAIN
+            // directly when that saved selection is still its identity view.
+            link.verify_directory().map_err(runtime_error)?;
+            let snapshot = MetadataSnapshot::open(&self.path).map_err(runtime_error)?;
+            if snapshot.ms.row_count() == rows.len() {
+                link.verify_directory().map_err(runtime_error)?;
+                return Ok(Arc::new(snapshot));
+            }
+        }
+        link.snapshot(None).map_err(runtime_error)
+    }
+
+    fn apply_direct_taql(&mut self, text: String) -> PyResult<bool> {
+        let snapshot = self.selection_snapshot()?;
+        let ms = &snapshot.ms;
+        let parsed = if !text.is_empty() && text.trim().is_empty() {
+            Err(format!(
+                "Parse error at or near ''\nScanned so far: {text}\n"
+            ))
+        } else {
+            let request = MsSelection {
+                msselect: Some(text),
+                ..MsSelection::default()
+            };
+            self.selection_state
+                .parse(ms, &request)
+                .map_err(|error| error.to_string())
+        };
+        let parsed = parsed.map_err(|error| {
+            let message = format!("Error in select expression: {error}");
+            self.selection_state.error = Some(message.clone());
+            runtime_error(message)
+        })?;
+        if !parsed.has_row_expression() {
+            return Ok(false);
+        }
+        if parsed.preserves_current_view() {
+            return Ok(ms.row_count() != 0);
+        }
+        let rows = parsed
+            .select_rows(ms)
+            .map_err(|error| runtime_error(format!("Error in select expression: {error}")))?;
+        self.apply_tool_rows(rows)
+    }
+
     pub(super) fn apply_parsed_selection(
         &mut self,
         ms: &MeasurementSet,
@@ -183,9 +249,16 @@ impl AttachedMs {
         if !parsed.has_row_expression() {
             return Ok(false);
         }
-        let Ok(mut rows) = parsed.select_rows(ms) else {
+        if parsed.preserves_current_view() {
+            return Ok(ms.row_count() != 0);
+        }
+        let Ok(rows) = parsed.select_rows(ms) else {
             return Ok(false);
         };
+        self.apply_tool_rows(rows)
+    }
+
+    fn apply_tool_rows(&mut self, mut rows: Vec<usize>) -> PyResult<bool> {
         if let Some(previous) = &self.selected_rows {
             for row in &mut rows {
                 *row = previous[*row];
@@ -230,6 +303,10 @@ fn selection_visibility(value: &Bound<'_, PyAny>) -> PyResult<Option<PathBuf>> {
 
 fn selection_taql(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
     selection_text(value, "taql").map(Some)
+}
+
+fn direct_taql(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    selection_text(value, "msselect").map(Some)
 }
 
 fn selection_text(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<String> {

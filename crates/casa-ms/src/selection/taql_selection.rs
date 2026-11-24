@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bind casacore's MSCAL selection functions to the shared MS row grammars.
 
-use casa_tables::taql::ast::{BinaryOp, Expr, Literal, SelectStatement};
+use casa_tables::taql::ast::{BinaryOp, Expr, InSetElement, Literal, SelectStatement};
 use casa_tables::taql::{self, IndexStyle, RecordExpressionType, Statement, TaqlError, TaqlResult};
 use casa_tables::{ColumnType, RequiredScalarColumnValues, TableError};
 use casa_types::PrimitiveType;
@@ -27,7 +27,7 @@ pub(super) fn select_rows(
                 .map(|row| row.into_iter().collect())
                 .map_err(taql_error);
         }
-        if let Some(rows) = select_scalar_integer_rows(ms, select, rows_per_block)? {
+        if let Some(rows) = select_simple_rows(ms, select, rows_per_block)? {
             return Ok(rows);
         }
     }
@@ -39,7 +39,51 @@ pub(super) fn select_rows(
     }
 }
 
-fn select_scalar_integer_rows(
+#[derive(Clone, Copy)]
+enum ScalarComparison {
+    Integer {
+        literal: i64,
+        compare: fn(i64, i64) -> bool,
+    },
+    Boolean(bool),
+}
+
+impl ScalarComparison {
+    fn new(literal: &Literal, op: BinaryOp, reverse: bool) -> Option<Self> {
+        match literal {
+            Literal::Bool(value) => match op {
+                BinaryOp::Eq => Some(Self::Boolean(*value)),
+                BinaryOp::Ne => Some(Self::Boolean(!*value)),
+                _ => None,
+            },
+            Literal::Int(literal) => {
+                let compare: fn(i64, i64) -> bool = match (op, reverse) {
+                    (BinaryOp::Eq, _) => |cell, other| cell == other,
+                    (BinaryOp::Ne, _) => |cell, other| cell != other,
+                    (BinaryOp::Lt, false) | (BinaryOp::Gt, true) => |cell, other| cell < other,
+                    (BinaryOp::Le, false) | (BinaryOp::Ge, true) => |cell, other| cell <= other,
+                    (BinaryOp::Gt, false) | (BinaryOp::Lt, true) => |cell, other| cell > other,
+                    (BinaryOp::Ge, false) | (BinaryOp::Le, true) => |cell, other| cell >= other,
+                    _ => return None,
+                };
+                Some(Self::Integer {
+                    literal: *literal,
+                    compare,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn primitive(self) -> PrimitiveType {
+        match self {
+            Self::Integer { .. } => PrimitiveType::Int32,
+            Self::Boolean(_) => PrimitiveType::Bool,
+        }
+    }
+}
+
+fn select_simple_rows(
     ms: &MeasurementSet,
     select: &SelectStatement,
     rows_per_block: Option<usize>,
@@ -48,7 +92,7 @@ fn select_scalar_integer_rows(
         columns,
         from: None,
         joins,
-        where_clause: Some(Expr::Binary { left, op, right }),
+        where_clause: Some(predicate),
         group_by,
         having: None,
         order_by,
@@ -66,24 +110,41 @@ fn select_scalar_integer_rows(
     if !(columns.is_empty() && joins.is_empty() && group_by.is_empty() && order_by.is_empty()) {
         return Ok(None);
     }
-    let (column, literal, reverse) = match (left.as_ref(), right.as_ref()) {
-        (Expr::ColumnRef(column), Expr::Literal(Literal::Int(literal))) => {
-            (column, *literal, false)
-        }
-        (Expr::Literal(Literal::Int(literal)), Expr::ColumnRef(column)) => (column, *literal, true),
-        _ => return Ok(None),
-    };
-    let matches: fn(i64, i64) -> bool = match (op, reverse) {
-        (BinaryOp::Eq, _) => |cell, other| cell == other,
-        (BinaryOp::Ne, _) => |cell, other| cell != other,
-        (BinaryOp::Lt, false) | (BinaryOp::Gt, true) => |cell, other| cell < other,
-        (BinaryOp::Le, false) | (BinaryOp::Ge, true) => |cell, other| cell <= other,
-        (BinaryOp::Gt, false) | (BinaryOp::Lt, true) => |cell, other| cell > other,
-        (BinaryOp::Ge, false) | (BinaryOp::Le, true) => |cell, other| cell >= other,
-        _ => return Ok(None),
-    };
-
     let table = ms.main_table();
+    let row_count = table.row_count();
+    if let Expr::Literal(Literal::Bool(include)) = predicate {
+        return Ok(Some(if *include {
+            (0..row_count).collect()
+        } else {
+            Vec::new()
+        }));
+    }
+    if let Some(rows) = literal_row_id_set(predicate, row_count) {
+        return Ok(Some(rows));
+    }
+    let Expr::Binary { left, op, right } = predicate else {
+        return Ok(None);
+    };
+    let (operand, literal, reverse) = match (left.as_ref(), right.as_ref()) {
+        (operand, Expr::Literal(literal)) => (operand, literal, false),
+        (Expr::Literal(literal), operand) => (operand, literal, true),
+        _ => return Ok(None),
+    };
+    let Some(comparison) = ScalarComparison::new(literal, *op, reverse) else {
+        return Ok(None);
+    };
+    if matches!(operand, Expr::RowNumber)
+        && let ScalarComparison::Integer { literal, compare } = comparison
+    {
+        return Ok(Some(
+            (0..row_count)
+                .filter(|&row| compare(row as i64, literal))
+                .collect(),
+        ));
+    }
+    let Expr::ColumnRef(column) = operand else {
+        return Ok(None);
+    };
     let name = column.column.as_str();
     if column.table.is_some()
         || !table
@@ -91,15 +152,14 @@ fn select_scalar_integer_rows(
             .and_then(|schema| schema.column(name))
             .is_some_and(|schema| {
                 schema.column_type() == &ColumnType::Scalar
-                    && schema.data_type() == Some(PrimitiveType::Int32)
+                    && schema.data_type() == Some(comparison.primitive())
                     && !schema.options().undefined
             })
     {
         return Ok(None);
     }
 
-    // Predicates on IDs need one scalar column, even when the MS has large visibility arrays.
-    let row_count = table.row_count();
+    // These predicates need only one scalar column, even when the MS has large visibility arrays.
     let rows_per_block = match rows_per_block {
         Some(rows) => rows,
         None => rows_per_block_for_budget(default_selection_budget()?)
@@ -110,31 +170,82 @@ fn select_scalar_integer_rows(
         let end = start.saturating_add(rows_per_block).min(row_count);
         let rows = (start..end).collect::<Vec<_>>();
         let mut columns = table.required_scalar_columns_owned_for_rows(&[name], &rows)?;
-        let Some(RequiredScalarColumnValues::Int32(values)) = columns.remove(name) else {
-            return Err(MsError::InvalidInput(format!(
-                "expected a scalar integer column {name}"
-            )));
-        };
-        selected_rows.extend(
-            rows.into_iter()
-                .zip(values)
-                .filter_map(|(row, value)| matches(i64::from(value), literal).then_some(row)),
-        );
+        match (comparison, columns.remove(name)) {
+            (
+                ScalarComparison::Integer { literal, compare },
+                Some(RequiredScalarColumnValues::Int32(values)),
+            ) => {
+                selected_rows.extend(
+                    rows.into_iter().zip(values).filter_map(|(row, value)| {
+                        compare(i64::from(value), literal).then_some(row)
+                    }),
+                );
+            }
+            (
+                ScalarComparison::Boolean(expected),
+                Some(RequiredScalarColumnValues::Bool(values)),
+            ) => {
+                selected_rows.extend(
+                    rows.into_iter()
+                        .zip(values)
+                        .filter_map(|(row, value)| (value == expected).then_some(row)),
+                );
+            }
+            _ => {
+                return Err(MsError::InvalidInput(format!(
+                    "unexpected scalar values in column {name}"
+                )));
+            }
+        }
     }
     Ok(Some(selected_rows))
+}
+
+fn literal_row_id_set(predicate: &Expr, row_count: usize) -> Option<Vec<usize>> {
+    let Expr::InSet {
+        expr,
+        elements,
+        negated: false,
+    } = predicate
+    else {
+        return None;
+    };
+    if !matches!(expr.as_ref(), Expr::RowNumber) {
+        return None;
+    }
+    let mut rows = Vec::new();
+    for element in elements {
+        let InSetElement::Value(Expr::Literal(Literal::Int(id))) = element else {
+            return None;
+        };
+        if let Ok(row) = usize::try_from(*id)
+            && row < row_count
+        {
+            rows.push(row);
+        }
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
 }
 
 pub(super) fn validate_predicate(
     ms: &MeasurementSet,
     query: &str,
     rows_per_block: Option<usize>,
-) -> MsResult<RecordExpressionType> {
+) -> MsResult<(RecordExpressionType, Option<bool>)> {
     if let Statement::Select(select) = selection_query(ms, query, rows_per_block)?
         && let Some(predicate) = &select.where_clause
     {
-        return taql::validate_record_expression(predicate, ms.main_table()).map_err(taql_error);
+        let kind =
+            taql::validate_record_expression(predicate, ms.main_table()).map_err(taql_error)?;
+        let constant = match taql::eval::eval_constant(predicate, "TaQL", select.style) {
+            Ok(taql::eval::ExprValue::Bool(value)) => Some(value),
+            _ => None,
+        };
+        return Ok((kind, constant));
     }
-    Ok(RecordExpressionType::PossibleRowPredicate)
+    Ok((RecordExpressionType::PossibleRowPredicate, None))
 }
 
 fn selection_query(
