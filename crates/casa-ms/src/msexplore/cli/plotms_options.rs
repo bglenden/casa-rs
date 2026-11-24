@@ -55,8 +55,16 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
-    pub(super) fn supports_channel_visibility_ordinates(&self) -> bool {
-        !self.plotms_extended_averaging()
+    pub(super) fn supports_visibility_ordinate_averaging(&self) -> bool {
+        let ordinary_time = self.avgtime.is_some()
+            && !self.avgscan
+            && !self.avgfield
+            && !self.avgbaseline
+            && !self.avgantenna
+            && !self.avgspw
+            && self.freqframe.is_none()
+            && self.plotms_independent_average();
+        (!self.plotms_extended_averaging() || ordinary_time)
             && !self.has_mixed_ordinate_dimensions()
             && self.plotms_axis_columns().is_some_and(|columns| {
                 columns

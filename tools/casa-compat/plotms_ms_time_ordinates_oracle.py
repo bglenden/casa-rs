@@ -20,13 +20,17 @@ from plotms_ms_columns_oracle import (
 def compare(root, native):
     vis, integration = time_average_fixture(root)
     masked = root / "masked-time.ms"
+    row_flagged = root / "row-flagged-time.ms"
     copy_ms(vis, masked)
+    copy_ms(vis, row_flagged)
     with opened(masked, True) as table:
         flags = table.getcol("FLAG")
         flags[:, :, integration % 2 == 0] = True
         table.putcol("FLAG", flags)
         table.putcol("FLAG_ROW", integration % 2 == 0)
         start = np.min(table.getcol("TIME"))
+    with opened(row_flagged, True) as table:
+        table.putcol("FLAG_ROW", integration % 2 == 1)
 
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", spw="0:1", avgtime="20",
                                yaxis=["real", "real", "real"], ydatacolumn=["data", "corrected", "model"],
@@ -48,6 +52,7 @@ def compare(root, native):
          times, [(28,) * 3, (280,) * 3, vector]),
         ("cube-masked-integrations", dict(vis=str(masked)),
          (3,) * 3, [(3,) * 3, (30,) * 3, (300,) * 3]),
+        ("row-only-flags", dict(vis=str(row_flagged)), vector, [vector, (28,) * 3, (280,) * 3]),
         ("time-and-channel", dict(avgchannel="2", spw="0:0~3"),
          vector * 2, [vector * 2, (28,) * 6, (280,) * 6]),
         ("scalar-time", dict(xaxis="time", xdatacolumn="", scalar=True),

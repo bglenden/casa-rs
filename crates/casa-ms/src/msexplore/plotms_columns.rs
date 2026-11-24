@@ -199,6 +199,17 @@ impl PlotMsWeightKinds {
     pub(super) fn for_column(self, column: MsDataColumn) -> WeightKind {
         column_weight_kind(column, self.has_observed, self.has_corrected)
     }
+
+    pub(super) fn uses_for_ordinates(
+        self,
+        kind: WeightKind,
+        additional: &[(MsAxis, MsDataColumn)],
+    ) -> bool {
+        self.uses(kind)
+            || additional
+                .iter()
+                .any(|&(axis, column)| axis.is_visibility_math() && self.for_column(column) == kind)
+    }
 }
 
 fn column_weight_kind(column: MsDataColumn, has_observed: bool, has_corrected: bool) -> WeightKind {
