@@ -28,7 +28,8 @@
     "gridrows": {
       "scope": "Number of subplot rows",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-grid-placement"
       ],
       "behaviors": [
         "pages"
@@ -38,7 +39,8 @@
     "gridcols": {
       "scope": "Number of subplot columns",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-grid-placement"
       ],
       "behaviors": [
         "pages"
@@ -46,22 +48,26 @@
       "status": "Implemented"
     },
     "rowindex": {
-      "scope": "Row location of the plot (0-based)",
+      "scope": "Choose the zero-based row of a single noniterated MeasurementSet visibility plot.",
       "evidence": [
+        "ms-static-grid-placement",
         "remaining"
       ],
       "behaviors": [
         "pages"
-      ]
+      ],
+      "status": "Partial"
     },
     "colindex": {
-      "scope": "Column location of the plot (0-based)",
+      "scope": "Choose the zero-based column of a single noniterated MeasurementSet visibility plot.",
       "evidence": [
+        "ms-static-grid-placement",
         "remaining"
       ],
       "behaviors": [
         "pages"
-      ]
+      ],
+      "status": "Partial"
     },
     "plotindex": {
       "scope": "Index to address a subplot (0-based)",
@@ -785,7 +791,8 @@
     "titlefont": {
       "scope": "Font size for plot title",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-grid-placement"
       ],
       "behaviors": [
         "presentation"
@@ -947,7 +954,8 @@
       "evidence": [
         "paired",
         "ms-empty-combined-averages",
-        "ms-pointing-directions"
+        "ms-pointing-directions",
+        "ms-static-grid-placement"
       ],
       "behaviors": [
         "export"
@@ -969,7 +977,8 @@
     "exprange": {
       "scope": "Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-grid-placement"
       ],
       "behaviors": [
         "pages"
@@ -1019,7 +1028,8 @@
     "overwrite": {
       "scope": "Overwrite plot file if it already exists",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-grid-placement"
       ],
       "behaviors": [
         "export"
@@ -1191,13 +1201,14 @@
     },
     {
       "id": "pages",
-      "title": "Lay out and export calibration pages",
+      "title": "Lay out and export plot pages",
       "status": "Partial",
-      "scope": "Partition selected series across a grid. Text reports the current page. Image export provides current and all-page ranges and names the physical outputs in successful completions.",
+      "scope": "Partition selected series across a grid. Text reports the current page. Image export provides current and all-page ranges and names the physical outputs in successful completions. A noniterated MeasurementSet visibility plot occupies the requested grid cell.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-grid-placement"
       ],
-      "gap": "Explicit plot placement, persistent pages and additional presentation modes are open."
+      "gap": "Offset starts for iterated MeasurementSet pages, calibration-table placement, persistent pages and additional presentation modes remain open."
     },
     {
       "id": "presentation",
@@ -1797,6 +1808,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-pointing-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2200"
+      ]
+    },
+    "ms-static-grid-placement": {
+      "kind": "Same-input MeasurementSet static grid-cell placement",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs noniterated MeasurementSet visibility plots in an explicitly selected grid cell.",
+      "result": "Five paired texts match 60 selected coordinates and sample identifiers. Ten paired 500 by 360 PNGs cover current and all-page exports from every 2 by 2 cell and a nonzero cell in a 2 by 3 grid. The native renderer draws 120 matching coordinates and the requested markers occupy the selected cell in both engines. The configured Matplotlib figure keeps the title in its cell and uses the requested font size. The tasks refuse out-of-range cells and preserve existing destinations when overwrite is disabled.",
+      "casa_version": "6.7.6.14",
+      "revision": "b694d468b3b21c5ba3ddd71acbbbc915f7bbd772",
+      "source_revision": "b694d468b3b21c5ba3ddd71acbbbc915f7bbd772",
+      "command": "casa-python tools/casa-compat/plotms_ms_layout_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-grid-placement-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2204"
       ]
     }
   }

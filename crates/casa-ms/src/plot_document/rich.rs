@@ -210,6 +210,9 @@ pub struct PlotLayout {
     pub rows: u32,
     /// Number of columns in the panel grid.
     pub columns: u32,
+    /// Explicit zero-based [row, column] for the first panel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_panel: Option<[u32; 2]>,
     /// Aspect for the top-level single panel; individual panels have their own.
     pub aspect: Option<PlotAspect>,
     /// left, right, bottom, top, horizontal gap, vertical gap.

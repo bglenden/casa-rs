@@ -66,14 +66,20 @@ def configure(figure, panel_axes, document, options):
     """Set figure formatting after the shared renderer draws the native layers."""
 
     headers = document["header_lines"]
+    positioned = (document.get("layout") or {}).get("first_panel") is not None
     title_y = None
     if headers:
         title_y = _layout_page_headers(figure, headers)
-        if document["title"]:
+        if document["title"] and not positioned:
             figure.suptitle(document["title"], y=title_y)
     font = options.get("titlefont")
     if font > 0 and document["title"]:
-        figure.suptitle(document["title"], fontsize=font, y=title_y)
+        if positioned:
+            axes = panel_axes if isinstance(panel_axes, list) else [panel_axes]
+            for axis in axes:
+                axis.title.set_fontsize(font)
+        else:
+            figure.suptitle(document["title"], fontsize=font, y=title_y)
     if isinstance(panel_axes, list) and len(panel_axes) > 1:
         if document.get("layout"):
             _share_axes(panel_axes, document["layout"], options)

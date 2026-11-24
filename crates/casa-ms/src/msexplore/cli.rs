@@ -222,6 +222,11 @@ fn run_task(
         && let Some(path) = super::calibration::input(task)?
     {
         super::plotms_pointing::refuse_nonpointing_controls(task)?;
+        if super::plotms_figure::requested_position(task)? != [0, 0] {
+            return Err(TaskFailure::validation(
+                "nondefault grid placement for PlotMS calibration tables is pending #1032",
+            ));
+        }
         return super::calibration::run(task, &path, payload);
     }
     let options = if task.surface() == "plotms" {
@@ -307,6 +312,11 @@ fn run_task(
             );
         }
         super::plotms_pointing::refuse_nonpointing_controls(task)?;
+        if super::plotms_figure::requested_position(task)? != [0, 0] {
+            return Err(TaskFailure::validation(
+                "grid placement for this PlotMS axis pair is pending #1032",
+            ));
+        }
         options
     } else {
         options_from(task)?
@@ -334,6 +344,12 @@ fn run_visibility_plot(
     atmosphere: Option<super::calibration::atmosphere::Options>,
     load_models: Option<PlotMsModelLoader>,
 ) -> Result<TaskSuccess, TaskFailure> {
+    let static_grid = super::plotms_figure::static_grid(task, options.iteraxis.is_some())?;
+    if static_grid.is_some() {
+        // The scatter computation receives a single plot. The grid places it on the page.
+        options.gridrows = 1;
+        options.gridcols = 1;
+    }
     let pointing =
         super::plotms_pointing::PointingAxes::from_task(task, [options.x_axis, options.y_axis])?;
     if pointing.is_some() {
@@ -483,6 +499,9 @@ fn run_visibility_plot(
                         right_ordinates: &options.right_ordinates,
                     }),
             )?;
+            if let Some(layout) = static_grid {
+                plots[0].document.layout = Some(layout);
+            }
         }
         if let Some(path) = text_file {
             super::plotms_text::write_export(task, &ms, &payload, path, library, &overlays)?;

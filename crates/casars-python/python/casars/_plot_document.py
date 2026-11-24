@@ -48,9 +48,12 @@ def _render_document(document, payload, figure, use_native_limits, axes, preserv
     panels = document["panels"] or [document]
     layout = document.get("layout") or {}
     rows, columns = layout.get("rows", len(panels)), layout.get("columns", 1)
+    first_panel = layout.get("first_panel")
     supplied_axes = axes is not None
     if axes is None:
-        axes = [figure.add_subplot(rows, columns, index + 1) for index in range(len(panels))]
+        row, column = first_panel or (0, 0)
+        start = row * columns + column + 1
+        axes = [figure.add_subplot(rows, columns, start + index) for index in range(len(panels))]
     for panel, axis in zip(panels, axes, strict=True):
         ordinates = panel.get("axes", ())[1:]
         targets, ordinate_axes = {}, []
@@ -106,7 +109,7 @@ def _render_document(document, payload, figure, use_native_limits, axes, preserv
             axis.set_aspect(aspect)
         if document["show_legend"] and len(panel["layers"]) > 1:
             axis.legend()
-    if not supplied_axes:
+    if not supplied_axes and first_panel is None:
         figure.suptitle(document.get("title", ""))
     if layout.get("margins"):
         left, right, bottom, top, wspace, hspace = layout["margins"]

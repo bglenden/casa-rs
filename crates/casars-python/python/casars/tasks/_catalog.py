@@ -1076,8 +1076,8 @@ def plotms(
 
     CASA's ``plotms``: its parameters, defaults and return value.
     Accepted only at CASA's default, where CASA reads them, until #1032:
-    ``rowindex``, ``colindex``, ``plotindex``, ``phasecenter``,
-    ``extendflag``, ``extcorr``, ``extchannel``, ``clearplots``.
+    ``plotindex``, ``phasecenter``, ``extendflag``, ``extcorr``,
+    ``extchannel``, ``clearplots``.
     """
     return _call_casa(plotms, locals())
 

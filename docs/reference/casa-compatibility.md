@@ -53,7 +53,7 @@ For direct `cBool`, `cFloat`, `cInt`, `cPath` and `cStr` schemas with the record
 | mstransform | mstransform | yes | 55 | 55 | 0 | 0 | 0 | 0 |
 | pccor | pccor | yes | 9 | 9 | 0 | 0 | 0 | 0 |
 | plotbandpass | plotbandpass | yes | 49 | 49 | 0 | 0 | 0 | 0 |
-| plotms | plotms | yes | 102 | 102 | 0 | 8 | 0 | 0 |
+| plotms | plotms | yes | 102 | 102 | 0 | 6 | 0 | 0 |
 | plotweather | plotweather | yes | 4 | 4 | 0 | 0 | 0 | 0 |
 | polcal | polcal | yes | 27 | 27 | 0 | 0 | 0 | 0 |
 | polfromgain | polfromgain | yes | 5 | 5 | 0 | 0 | 0 | 0 |
@@ -1931,7 +1931,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Called with its defaults in an empty directory, CASA raises `RuntimeError`: ERROR: DISPLAY environment variable is not set! Cannot run plotms.
 - CASA's signature: yes
 - CASA parameters casa-rs lacks: none
-- Accepted only at CASA's default until #1032: `rowindex`, `colindex`, `plotindex`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
+- Accepted only at CASA's default until #1032: `plotindex`, `phasecenter`, `extendflag`, `extcorr`, `extchannel`, `clearplots`
 - casa-rs parameters CASA lacks: none
 - Shared parameters: 102, in CASA's order: yes
 - Defaults that differ: none
@@ -1940,7 +1940,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 
 Implementation status is **not behavioral verification**. Implemented means the stated scope has a native code path; Partial has known missing forms or combinations; Default only is derived from the runtime refusal contract; Not implemented has no implementation; Unassessed has not been reviewed. Evidence states are listed separately below. No signature or return-structure result establishes scientific equivalence.
 
-Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 8, Implemented: 22, Not implemented: 1, Partial: 71, Unassessed: 0.
+Audit baseline: `b60d8a6a140bd6f0a29177584db5ff91244f5d12`. Status counts: Default only: 6, Implemented: 22, Not implemented: 1, Partial: 73, Unassessed: 0.
 
 Mappings, defaults, catalog domains, constraints and conditional default-only refusals are generated from the existing task contract. The catalog may admit values that the native reader then refuses: the reviewed scope and linked combinations describe those restrictions.
 
@@ -1948,10 +1948,10 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 |---|---|---|---|---|---|
 | `vis` | `''` | `''`; `vis` → `vis` | Partial | Input MS or CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (table) | [paired](#plotms-evidence-paired) |
 | `caltable` | `''` | `''`; `caltable` → `caltable` | Partial | Input CalTable (blank for none) [table](#plotms-behavior-table)<br>Catalog domain: `path` (calibration_table) | [paired](#plotms-evidence-paired), [legacy-calibration](#plotms-evidence-legacy-calibration) |
-| `gridrows` | `1` | `1`; `gridrows` → `gridrows` | Implemented | Number of subplot rows [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
-| `gridcols` | `1` | `1`; `gridcols` → `gridcols` | Implemented | Number of subplot columns [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
-| `rowindex` | `0` | `0`; `rowindex` → `rowindex` | Default only | Row location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
-| `colindex` | `0` | `0`; `colindex` → `colindex` | Default only | Column location of the plot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
+| `gridrows` | `1` | `1`; `gridrows` → `gridrows` | Implemented | Number of subplot rows [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired), [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement) |
+| `gridcols` | `1` | `1`; `gridcols` → `gridcols` | Implemented | Number of subplot columns [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired), [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement) |
+| `rowindex` | `0` | `0`; `rowindex` → `rowindex` | Partial | Choose the zero-based row of a single noniterated MeasurementSet visibility plot. [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement), [remaining](#plotms-evidence-remaining) |
+| `colindex` | `0` | `0`; `colindex` → `colindex` | Partial | Choose the zero-based column of a single noniterated MeasurementSet visibility plot. [pages](#plotms-behavior-pages)<br>Catalog domain: `integer` | [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement), [remaining](#plotms-evidence-remaining) |
 | `plotindex` | `0` | `0`; `plotindex` → `plotindex` | Default only | Index to address a subplot (0-based) [pages](#plotms-behavior-pages)<br>Catalog domain: `integer`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `xaxis` | `''` | `''`; `xaxis` → `xaxis` | Partial | Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `parangle`, `baseline`, `delay`, `antenna position`, `swp`, `u`, `tec`, `ant-parang`, `gamp`, `Antenna1`, `UVdist`, `WeightSpectrum`, `Baseline`, `flag`, `Real`, `switchedpower`, `timeint`, `WtSp`, `Ant-Elevation`, `GainReal`, `time_interval`, `uvdist_l`, `GainAmp`, `ant1`, `flagrow`, `Wt`, `Velocity`, `opac`, `Feed2`, `corr`, `imaginary`, `gainamp`, `Vwave`, `wwave`, `Frequency`, `observation`, `feed1`, `ant-azimuth`, `rate`, `Elevation`, `Intent`, `Row`, `swpower`, `antpos`, `ant-elevation`, `antenna`, `v`, `V`, `interval`, `sigmaspectrum`, `DelayRate`, `tsys`, `gainphase`, `Ant-Parangle`, `imag`, `Radial Velocity`, `UVwave`, `Observation`, `Poln`, `W`, `timeinterval`, `Channel`, `snr`, `SNR`, `frequency`, `Interval`, `uvdistl`, `disp`, `Imag`, `dispdelay`, `Feed1`, `rho`, `Ant-RA`, `delayrate`, `spgain`, `Antenna`, `Uwave`, `SigmaSpectrum`, `Azimuth`, `Scan`, `Tsys`, `polarization`, `intent`, `phase`, `amp`, `ant-parangle`, `SigmaSp`, `freq`, `wt*amp`, `channel`, `uwave`, `Flag`, `correlation`, `FlagRow`, `TEC`, `SwPower`, `GainPhase`, `GainImag`, `ant-parallacticangle`, `real`, `Time`, `weight`, `antenna2`, `gainimag`, `gimag`, `Antenna2`, `spw`, `gphase`, `Opac`, `parang`, `Amp`, `ant-ra`, `Sigma`, `amplitude`, `Ant-DEC`, `HourAngle`, `U`, `row`, `Wt*Amp`, `gainreal`, `chan`, `Field`, `DispDelay`, `hourang`, `vwave`, `radialvelocity`, `sigma`, `Antenna Position`, `Delay`, `uvwave`, `vel`, `uvdist`, `velocity`, `hourangle`, `poln`, `ant2`, `Phase`, `azimuth`, `Corr`, `parallacticangle`, `weightspectrum`, `Ant-Azimuth`, `wtsp`, ``, `Distance`, `opacity`, `antenna1`, `feed2`, `sigmasp`, `time`, `w`, `wt`, `field`, `greal`, `elevation`, `del`, `ant`, `ant-dec`, `Spw`, `scan`, `Wwave`, `ParAngle` | [paired](#plotms-evidence-paired), [ms-interval-wavelength](#plotms-evidence-ms-interval-wavelength), [ms-vector-time-uvw](#plotms-evidence-ms-vector-time-uvw), [ms-channel-ordinate-masks](#plotms-evidence-ms-channel-ordinate-masks), [ms-row-axes](#plotms-evidence-ms-row-axes), [ms-metadata-pair-masks](#plotms-evidence-ms-metadata-pair-masks), [ms-pointing-directions](#plotms-evidence-ms-pointing-directions) |
 | `xdatacolumn` | `''` | `''`; `xdatacolumn` → `xdatacolumn` | Partial | Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: `model`, `corrected`, `data-model_vector`, `data-model`, `corrected/model_vector`, `residual`, `corrected-model`, `data/model`, `data/model_scalar`, `float`, `corrected/model_scalar`, `corrected/model`, ``, `corrected-model_vector`, `data-model_scalar`, `corrected-model_scalar`, `data`, `data/model_vector` | [paired](#plotms-evidence-paired), [ms-columns](#plotms-evidence-ms-columns), [ms-residual-columns](#plotms-evidence-ms-residual-columns), [ms-scalar-residual-columns](#plotms-evidence-ms-scalar-residual-columns), [ms-model-ratios](#plotms-evidence-ms-model-ratios), [ms-float-data](#plotms-evidence-ms-float-data), [ms-corrected-fallback](#plotms-evidence-ms-corrected-fallback), [callibrary](#plotms-evidence-callibrary), [ms-default-model](#plotms-evidence-ms-default-model), [ms-virtual-model](#plotms-evidence-ms-virtual-model), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-multiple-visibility-ordinates](#plotms-evidence-ms-multiple-visibility-ordinates), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns) |
@@ -2016,7 +2016,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `timeconnector` | `False` | `False`; `timeconnector` → `timeconnector` | Partial | Connect points by time rather than x-axis [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `plotrange` | `[]` | `[]`; `plotrange` → `plotrange` | Partial | Plot limits in `xmin`, `xmax`, `ymin`, `ymax` order. [coordinates](#plotms-behavior-coordinates)<br>Catalog domain: list[`float`], length 0..many; scalar allowed | [paired](#plotms-evidence-paired) |
 | `title` | `''` | `''`; `title` → `title` | Partial | Title at top of plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
-| `titlefont` | `0` | `0`; `titlefont` → `titlefont` | Partial | Font size for plot title [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
+| `titlefont` | `0` | `0`; `titlefont` → `titlefont` | Partial | Font size for plot title [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired), [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement) |
 | `xlabel` | `''` | `''`; `xlabel` → `xlabel` | Partial | Text for horizontal x-axis. Blank for default. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
 | `xaxisfont` | `0` | `0`; `xaxisfont` → `xaxisfont` | Partial | Font size for x-axis label [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
 | `ylabel` | `''` | `''`; `ylabel` → `ylabel` | Partial | Text for vertical y-axis. Blank for default. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `string` | [paired](#plotms-evidence-paired) |
@@ -2032,14 +2032,14 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | `showlegend` | `False` | `False`; `showlegend` → `showlegend` | Partial | Show a legend on the plot. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `legendposition` | `''` | `''`; `legendposition` → `legendposition` | Partial | Legend position, default upperRight. [presentation](#plotms-behavior-presentation)<br>Catalog domain: `exteriorRight`, `lowerRight`, `exteriorTop`, `exteriorLeft`, `lowerLeft`, `upperRight`, `upperLeft`, `exteriorBottom`, `` | [paired](#plotms-evidence-paired) |
 | `plotfile` | `''` | `''`; `plotfile` → `plotfile` | Partial | Name of plot file to save automatically [export](#plotms-behavior-export)<br>Catalog domain: `path` (file) | [paired](#plotms-evidence-paired) |
-| `expformat` | `''` | `''`; `expformat` → `expformat` | Partial | Export format type. If not provided, plotfile extension will be used to determine type. [export](#plotms-behavior-export)<br>Catalog domain: `pdf`, `jpg`, `png`, `txt`, `ps`, `` | [paired](#plotms-evidence-paired), [ms-empty-combined-averages](#plotms-evidence-ms-empty-combined-averages), [ms-pointing-directions](#plotms-evidence-ms-pointing-directions) |
+| `expformat` | `''` | `''`; `expformat` → `expformat` | Partial | Export format type. If not provided, plotfile extension will be used to determine type. [export](#plotms-behavior-export)<br>Catalog domain: `pdf`, `jpg`, `png`, `txt`, `ps`, `` | [paired](#plotms-evidence-paired), [ms-empty-combined-averages](#plotms-evidence-ms-empty-combined-averages), [ms-pointing-directions](#plotms-evidence-ms-pointing-directions), [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement) |
 | `verbose` | `True` | `True`; `verbose` → `verbose` | Implemented | Include metadata in text export [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-raw-flag-symbols](#plotms-evidence-ms-raw-flag-symbols), [ms-empty-combined-averages](#plotms-evidence-ms-empty-combined-averages) |
-| `exprange` | `''` | `''`; `exprange` → `exprange` | Implemented | Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. [pages](#plotms-behavior-pages)<br>Catalog domain: ``, `current`, `all` | [paired](#plotms-evidence-paired) |
+| `exprange` | `''` | `''`; `exprange` → `exprange` | Implemented | Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. [pages](#plotms-behavior-pages)<br>Catalog domain: ``, `current`, `all` | [paired](#plotms-evidence-paired), [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement) |
 | `highres` | `False` | `False`; `highres` → `highres` | Partial | Use high resolution [presentation](#plotms-behavior-presentation)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `dpi` | `-1` | `-1`; `dpi` → `dpi` | Partial | DPI of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
 | `width` | `-1` | `-1`; `width` → `width` | Partial | Width in pixels of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
 | `height` | `-1` | `-1`; `height` → `height` | Partial | Height in pixels of exported plot [presentation](#plotms-behavior-presentation)<br>Catalog domain: `integer` | [paired](#plotms-evidence-paired) |
-| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Overwrite plot file if it already exists [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
+| `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | Overwrite plot file if it already exists [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired), [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement) |
 | `showgui` | `True` | `True`; `showgui` → `showgui` | Partial | Show GUI [export](#plotms-behavior-export)<br>Catalog domain: `bool` | [paired](#plotms-evidence-paired) |
 | `clearplots` | `True` | `True`; `clearplots` → `clearplots` | Default only | Remove any existing plots so new ones can replace them. [pages](#plotms-behavior-pages)<br>Catalog domain: `bool`; Non-default refused when always (#1032) | [remaining](#plotms-evidence-remaining) |
 | `callib` | `[]` | `[]`; `callib` → `callib` | Partial | Apply ordered file or inline callibraries while reading selected MeasurementSet rows. Export text or a single figure with transient corrected data, flags and recalculated scalar or spectral weights. Iterated figures and additional calibration plotting controls remain open. [advanced](#plotms-behavior-advanced)<br>Catalog domain: list[`string`], length 0..many; scalar allowed | [callibrary](#plotms-evidence-callibrary), [remaining](#plotms-evidence-remaining) |
@@ -2088,13 +2088,13 @@ Scalar combinations with other averaging controls, antenna and spectral-window a
 Evidence: [paired](#plotms-evidence-paired), [ms-channel-columns](#plotms-evidence-ms-channel-columns), [ms-time-columns](#plotms-evidence-ms-time-columns), [ms-channel-time-columns](#plotms-evidence-ms-channel-time-columns), [ms-scan-field-time-columns](#plotms-evidence-ms-scan-field-time-columns), [ms-baseline-columns](#plotms-evidence-ms-baseline-columns), [ms-baseline-channel-columns](#plotms-evidence-ms-baseline-channel-columns), [ms-baseline-time-columns](#plotms-evidence-ms-baseline-time-columns), [ms-baseline-time-channel-columns](#plotms-evidence-ms-baseline-time-channel-columns), [ms-scalar-time-columns](#plotms-evidence-ms-scalar-time-columns), [ms-channel-statistics](#plotms-evidence-ms-channel-statistics), [ms-vector-time-uvw](#plotms-evidence-ms-vector-time-uvw).
 
 <a id="plotms-behavior-pages"></a>
-##### Lay out and export calibration pages
+##### Lay out and export plot pages
 
-**Partial** — Partition selected series across a grid. Text reports the current page. Image export provides current and all-page ranges and names the physical outputs in successful completions.
+**Partial** — Partition selected series across a grid. Text reports the current page. Image export provides current and all-page ranges and names the physical outputs in successful completions. A noniterated MeasurementSet visibility plot occupies the requested grid cell.
 
-Explicit plot placement, persistent pages and additional presentation modes are open.
+Offset starts for iterated MeasurementSet pages, calibration-table placement, persistent pages and additional presentation modes remain open.
 
-Evidence: [paired](#plotms-evidence-paired).
+Evidence: [paired](#plotms-evidence-paired), [ms-static-grid-placement](#plotms-evidence-ms-static-grid-placement).
 
 <a id="plotms-behavior-presentation"></a>
 ##### Render the shared plot document
@@ -2537,6 +2537,16 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 - Revision: `faef935783ce4dca92aa8dab05f614ee66d866e3`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-pointing-20261124.json`.
+
+<a id="plotms-evidence-ms-static-grid-placement"></a>
+##### ms-static-grid-placement
+
+**Same-input MeasurementSet static grid-cell placement — passed.** Five paired texts match 60 selected coordinates and sample identifiers. Ten paired 500 by 360 PNGs cover current and all-page exports from every 2 by 2 cell and a nonzero cell in a 2 by 3 grid. The native renderer draws 120 matching coordinates and the requested markers occupy the selected cell in both engines. The configured Matplotlib figure keeps the title in its cell and uses the requested font size. The tasks refuse out-of-range cells and preserve existing destinations when overwrite is disabled. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs noniterated MeasurementSet visibility plots in an explicitly selected grid cell.
+
+- [https://github.com/bglenden/casa-rs/pull/2204](https://github.com/bglenden/casa-rs/pull/2204)
+- Revision: `b694d468b3b21c5ba3ddd71acbbbc915f7bbd772`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_layout_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
+- Receipt: `resources/casa-compat/evidence/plotms-ms-grid-placement-20261124.json`.
 
 ### plotweather
 
