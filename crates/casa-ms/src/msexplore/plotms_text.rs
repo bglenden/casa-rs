@@ -196,7 +196,8 @@ fn write_series(
                 verbose,
             )
         };
-        if channel_major {
+        if channel_major || x_axis.is_interval_or_wavelength() || y_axis.is_interval_or_wavelength()
+        {
             let mut ordered = points.collect::<Vec<_>>();
             ordered.sort_unstable_by_key(|&(_, point, display)| {
                 let (row, channel, correlation) = point.plotms_order();
@@ -314,6 +315,7 @@ pub(super) fn name(axis: MsAxis) -> &'static str {
         MsAxis::Real => "Real",
         MsAxis::Imaginary => "Imag",
         MsAxis::Time => "Time",
+        MsAxis::Interval => "Interval",
         MsAxis::Channel => "Channel",
         MsAxis::Frequency => "Frequency",
         MsAxis::Velocity => "Velocity",
@@ -327,6 +329,10 @@ pub(super) fn name(axis: MsAxis) -> &'static str {
         MsAxis::U => "U",
         MsAxis::V => "V",
         MsAxis::W => "W",
+        MsAxis::UvWave => "UVwave",
+        MsAxis::UWave => "Uwave",
+        MsAxis::VWave => "Vwave",
+        MsAxis::WWave => "Wwave",
         MsAxis::Azimuth => "Azimuth",
         MsAxis::Elevation => "Elevation",
         MsAxis::HourAngle => "HourAngle",

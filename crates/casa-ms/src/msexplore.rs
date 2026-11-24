@@ -365,6 +365,8 @@ pub enum MsAxis {
     Imaginary,
     /// MAIN.TIME in MJD seconds.
     Time,
+    /// Integration interval in seconds.
+    Interval,
     /// Zero-based channel index.
     Channel,
     /// Channel center frequency in Hz.
@@ -379,6 +381,18 @@ pub enum MsAxis {
     V,
     /// W coordinate in meters.
     W,
+    /// UV distance in wavelengths at the selected channel frequency.
+    #[serde(rename = "uvwave")]
+    UvWave,
+    /// U coordinate in wavelengths at the selected channel frequency.
+    #[serde(rename = "uwave")]
+    UWave,
+    /// V coordinate in wavelengths at the selected channel frequency.
+    #[serde(rename = "vwave")]
+    VWave,
+    /// W coordinate in wavelengths at the selected channel frequency.
+    #[serde(rename = "wwave")]
+    WWave,
     /// Scan number metadata axis.
     Scan,
     /// Field identifier metadata axis.
@@ -428,6 +442,7 @@ impl MsAxis {
             Self::Real => "real",
             Self::Imaginary => "imaginary",
             Self::Time => "time",
+            Self::Interval => "interval",
             Self::Channel => "channel",
             Self::Frequency => "frequency",
             Self::Velocity => "velocity",
@@ -435,6 +450,10 @@ impl MsAxis {
             Self::U => "u",
             Self::V => "v",
             Self::W => "w",
+            Self::UvWave => "uvwave",
+            Self::UWave => "uwave",
+            Self::VWave => "vwave",
+            Self::WWave => "wwave",
             Self::Scan => "scan",
             Self::Field => "field",
             Self::SpectralWindow => "spectral_window",
@@ -464,6 +483,7 @@ impl MsAxis {
             Self::Real => "Real",
             Self::Imaginary => "Imaginary",
             Self::Time => "Time",
+            Self::Interval => "Interval",
             Self::Channel => "Channel",
             Self::Frequency => "Frequency",
             Self::Velocity => "Velocity",
@@ -471,6 +491,10 @@ impl MsAxis {
             Self::U => "U",
             Self::V => "V",
             Self::W => "W",
+            Self::UvWave => "UVwave",
+            Self::UWave => "Uwave",
+            Self::VWave => "Vwave",
+            Self::WWave => "Wwave",
             Self::Scan => "Scan",
             Self::Field => "Field",
             Self::SpectralWindow => "Spectral Window",
@@ -500,6 +524,7 @@ impl MsAxis {
             "real" => Ok(Self::Real),
             "imag" | "imaginary" => Ok(Self::Imaginary),
             "time" => Ok(Self::Time),
+            "interval" | "time_interval" | "timeinterval" | "timeint" => Ok(Self::Interval),
             "chan" | "channel" => Ok(Self::Channel),
             "freq" | "frequency" => Ok(Self::Frequency),
             "velocity" | "vel" => Ok(Self::Velocity),
@@ -507,6 +532,10 @@ impl MsAxis {
             "u" => Ok(Self::U),
             "v" => Ok(Self::V),
             "w" => Ok(Self::W),
+            "uvwave" | "uvdist_l" | "uvdistl" => Ok(Self::UvWave),
+            "uwave" => Ok(Self::UWave),
+            "vwave" => Ok(Self::VWave),
+            "wwave" => Ok(Self::WWave),
             "scan" => Ok(Self::Scan),
             "field" => Ok(Self::Field),
             "spw" | "spectral_window" | "spectral-window" => Ok(Self::SpectralWindow),
@@ -549,6 +578,7 @@ impl MsAxis {
 
     fn uses_channel_bins(self) -> bool {
         self.is_visibility_math()
+            || self.uses_wavelengths()
             || matches!(
                 self,
                 Self::Channel
@@ -577,7 +607,19 @@ impl MsAxis {
     }
 
     fn uses_spectral_coordinates(self) -> bool {
-        matches!(self, Self::Frequency | Self::Velocity)
+        matches!(self, Self::Frequency | Self::Velocity) || self.uses_wavelengths()
+    }
+
+    fn uses_wavelengths(self) -> bool {
+        matches!(self, Self::UvWave | Self::UWave | Self::VWave | Self::WWave)
+    }
+
+    fn is_interval_or_wavelength(self) -> bool {
+        self == Self::Interval || self.uses_wavelengths()
+    }
+
+    fn uses_uvw(self) -> bool {
+        matches!(self, Self::UvDistance | Self::U | Self::V | Self::W) || self.uses_wavelengths()
     }
 }
 
@@ -1743,6 +1785,32 @@ impl MsPlotSpec {
                     .to_string(),
             );
         }
+        let has_interval_or_wavelength = self.x_axis.is_interval_or_wavelength()
+            || self
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::is_interval_or_wavelength);
+        if has_interval_or_wavelength
+            && (uses_extended_averaging(self)
+                || self.averaging.avgchannel.is_some_and(|width| width > 1))
+        {
+            return Err(
+                "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
+            );
+        }
+        if has_interval_or_wavelength && self.transforms.freqframe.is_some() {
+            return Err(
+                "PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)"
+                    .into(),
+            );
+        }
+        if self.y_axes.iter().copied().any(|y| {
+            (self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
+                || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math())
+        }) {
+            return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
+        }
         let supported_x = matches!(
             self.x_axis,
             MsAxis::Time
@@ -1762,7 +1830,7 @@ impl MsPlotSpec {
                 | MsAxis::HourAngle
                 | MsAxis::ParallacticAngle
         );
-        if !supported_x {
+        if !supported_x && !self.x_axis.is_interval_or_wavelength() {
             return Err(format!(
                 "msexplore x axis {} is modeled but not implemented yet",
                 self.x_axis
@@ -1790,7 +1858,7 @@ impl MsPlotSpec {
                     | MsAxis::HourAngle
                     | MsAxis::ParallacticAngle
             );
-            if !supported_y {
+            if !supported_y && !y_axis.is_interval_or_wavelength() {
                 return Err(format!(
                     "msexplore y axis {} is modeled but not implemented yet",
                     y_axis
@@ -2073,7 +2141,7 @@ pub struct MsScatterPlotMsMetadata {
     pub channel: usize,
     /// Timestamp after time averaging, when enabled.
     pub average_time: Option<f64>,
-    /// Position of the time-averaged buffer in the selected visibility iterator.
+    /// Position in the selected visibility iterator, when export needs its order.
     pub averaging_group: Option<usize>,
 }
 
@@ -2804,7 +2872,11 @@ fn build_uncalibrated_plotms_payload(
         .transpose()?;
     let (row_order, starts_visibility_buffer) =
         if (vector_baselines && !time_baselines) || scalar_time {
-            crate::transform::selected_plotms_integration_order(ms, &selected.selected_rows)
+            let rows = selected
+                .selected_rows
+                .iter()
+                .map(|row| (row.row_index, row.data_desc_id));
+            crate::transform::selected_plotms_integration_order(ms, rows)
                 .map_err(|error| error.to_string())?
         } else {
             (
@@ -3869,6 +3941,24 @@ fn build_generic_visibility_scatter(
         Some(calibration) => calibration.row_order.to_vec(),
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
+    let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
+    let use_iterator_order = calibration.is_some()
+        && (spec.x_axis.is_interval_or_wavelength()
+            || spec
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::is_interval_or_wavelength));
+    let (row_numbers, buffer_starts) = if use_iterator_order {
+        let descriptions = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
+        crate::transform::selected_plotms_integration_order(
+            ms,
+            row_numbers.into_iter().zip(descriptions),
+        )
+        .map_err(|error| error.to_string())?
+    } else {
+        (row_numbers, Vec::new())
+    };
     let selected_row_count = row_numbers.len();
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("resolve_selected_rows", &mut checkpoint_started);
@@ -3902,14 +3992,8 @@ fn build_generic_visibility_scatter(
             .iter()
             .copied()
             .any(|axis| matches!(axis, MsAxis::Sigma | MsAxis::SigmaSpectrum));
-    let needs_uvw_values = matches!(
-        spec.x_axis,
-        MsAxis::UvDistance | MsAxis::U | MsAxis::V | MsAxis::W
-    ) || spec
-        .y_axes
-        .iter()
-        .copied()
-        .any(|axis| matches!(axis, MsAxis::UvDistance | MsAxis::U | MsAxis::V | MsAxis::W));
+    let needs_uvw_values =
+        spec.x_axis.uses_uvw() || spec.y_axes.iter().copied().any(MsAxis::uses_uvw);
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let field = ms.field().map_err(|error| error.to_string())?;
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
@@ -3927,18 +4011,23 @@ fn build_generic_visibility_scatter(
         .transpose()
         .map_err(|error| error.to_string())?;
 
-    let row_numbers = predecimate_visibility_rows(
-        ms,
-        row_numbers,
-        spec,
-        point_budget,
-        VisibilityPredecimationContext {
-            data_description: &data_description,
-            spectral_window: &spectral_window,
-            polarization: &polarization,
-            requested_corr_codes: requested_corr_codes.as_deref(),
-        },
-    )?;
+    let row_numbers = if use_iterator_order {
+        // PlotMS exports the full selected iterator with its original buffer starts.
+        row_numbers
+    } else {
+        predecimate_visibility_rows(
+            ms,
+            row_numbers,
+            spec,
+            point_budget,
+            VisibilityPredecimationContext {
+                data_description: &data_description,
+                spectral_window: &spectral_window,
+                polarization: &polarization,
+                requested_corr_codes: requested_corr_codes.as_deref(),
+            },
+        )?
+    };
     let sampled_row_count = row_numbers.len();
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("predecimate_rows", &mut checkpoint_started);
@@ -3972,6 +4061,19 @@ fn build_generic_visibility_scatter(
     let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
     let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
+    let selected_intervals = if needs_interval {
+        let mut intervals = selected_f64_values(ms.main_table(), "INTERVAL", &row_numbers)?;
+        let mut first_interval = 0.0;
+        for (interval, start) in intervals.iter_mut().zip(buffer_starts) {
+            if start {
+                first_interval = *interval;
+            }
+            *interval = first_interval;
+        }
+        intervals
+    } else {
+        Vec::new()
+    };
     let selected_uvw = if needs_uvw_values {
         selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?
     } else {
@@ -4089,7 +4191,8 @@ fn build_generic_visibility_scatter(
     let mut bin_buffers = visibility_columns.buffers();
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
-        if flag_row_value && !include_row_flagged_points {
+        // Unaveraged PlotMS draws selected samples from the cube flag mask.
+        if flag_row_value && !include_row_flagged_points && !use_iterator_order {
             continue;
         }
 
@@ -4260,6 +4363,11 @@ fn build_generic_visibility_scatter(
         } else {
             [0.0, 0.0, 0.0]
         };
+        let row_coordinates = RowCoordinates {
+            time: row_time_value,
+            interval: selected_intervals.get(row_slot).copied(),
+            uvw: row_uvw_value,
+        };
         let spectral_context = resolve_spectral_context(
             spec,
             spw_id,
@@ -4404,8 +4512,7 @@ fn build_generic_visibility_scatter(
                     scalar_average,
                     bin,
                     spectral_context.as_ref(),
-                    row_time_value,
-                    row_uvw_value,
+                    row_coordinates,
                     derived_engine.as_ref(),
                 )?
                 else {
@@ -4429,8 +4536,7 @@ fn build_generic_visibility_scatter(
                         scalar_average,
                         bin,
                         spectral_context.as_ref(),
-                        row_time_value,
-                        row_uvw_value,
+                        row_coordinates,
                         derived_engine.as_ref(),
                     )?
                     else {
@@ -4468,11 +4574,13 @@ fn build_generic_visibility_scatter(
                         chan_start: bin.start,
                         chan_end: bin.end,
                     });
-                    if calibration.is_some() && spec.averaging.avgchannel.is_some() {
+                    if use_iterator_order
+                        || (calibration.is_some() && spec.averaging.avgchannel.is_some())
+                    {
                         series.plotms_metadata.push(MsScatterPlotMsMetadata {
                             channel: bin.display_channel(),
                             average_time: None,
-                            averaging_group: None,
+                            averaging_group: use_iterator_order.then_some(row_slot),
                         });
                     }
                     if let Some(started) = push_started {
@@ -5551,8 +5659,11 @@ fn build_generic_visibility_scatter_with_averaging(
                                     spec.averaging.scalar,
                                     bin,
                                     spectral_context.as_ref(),
-                                    row_time_value,
-                                    row_uvw_value,
+                                    RowCoordinates {
+                                        time: row_time_value,
+                                        interval: None,
+                                        uvw: row_uvw_value,
+                                    },
                                     derived_engine.as_ref(),
                                 )? {
                                     let value = if axis == MsAxis::Time {
@@ -5601,8 +5712,11 @@ fn build_generic_visibility_scatter_with_averaging(
                                     spec.averaging.scalar,
                                     bin,
                                     spectral_context.as_ref(),
-                                    row_time_value,
-                                    row_uvw_value,
+                                    RowCoordinates {
+                                        time: row_time_value,
+                                        interval: None,
+                                        uvw: row_uvw_value,
+                                    },
                                     derived_engine.as_ref(),
                                 )? {
                                     let value = if axis == MsAxis::Time {
@@ -6213,10 +6327,12 @@ fn fixed_bounds(axis: MsAxis) -> Option<(f64, f64)> {
 fn axis_label(axis: MsAxis) -> String {
     match axis {
         MsAxis::Time => "Time (MJD seconds)".to_string(),
+        MsAxis::Interval => "Interval (s)".to_string(),
         MsAxis::UvDistance => "UV Distance (m)".to_string(),
         MsAxis::U => "U (m)".to_string(),
         MsAxis::V => "V (m)".to_string(),
         MsAxis::W => "W (m)".to_string(),
+        axis if axis.uses_wavelengths() => format!("{} (λ)", axis.display_name()),
         MsAxis::Channel => "Channel".to_string(),
         MsAxis::Frequency => "Frequency (Hz)".to_string(),
         MsAxis::Velocity => "Velocity (km/s)".to_string(),
@@ -6491,6 +6607,36 @@ impl VisibilityColumnProjection {
     }
 }
 
+#[derive(Clone, Copy)]
+struct RowCoordinates {
+    time: f64,
+    interval: Option<f64>,
+    uvw: [f64; 3],
+}
+
+fn uvw_coordinate(
+    axis: MsAxis,
+    [u, v, w]: [f64; 3],
+    bin: &ChannelBin,
+    spectrum: Option<&SpectralContext>,
+) -> Option<f64> {
+    const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
+
+    let metres = match axis {
+        MsAxis::UvDistance | MsAxis::UvWave => (u * u + v * v).sqrt(),
+        MsAxis::U | MsAxis::UWave => u,
+        MsAxis::V | MsAxis::VWave => v,
+        MsAxis::W | MsAxis::WWave => w,
+        _ => unreachable!("UVW coordinates require a UVW axis"),
+    };
+    if axis.uses_wavelengths() {
+        let frequency_hz = spectrum?.channel_frequencies_hz.get(bin.start)?;
+        Some(metres / SPEED_OF_LIGHT_M_S * frequency_hz)
+    } else {
+        Some(metres)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn compute_axis_value(
     axis: MsAxis,
@@ -6506,8 +6652,7 @@ fn compute_axis_value(
     scalar_average: bool,
     channel_bin: &ChannelBin,
     spectral_context: Option<&SpectralContext>,
-    row_time_value: f64,
-    row_uvw_value: [f64; 3],
+    row: RowCoordinates,
     geometry_engine: Option<&MsCalEngine>,
 ) -> Result<Option<f64>, String> {
     if axis.is_visibility_math() {
@@ -6528,23 +6673,9 @@ fn compute_axis_value(
         ));
     }
     match axis {
-        MsAxis::Time => Ok(Some(row_time_value)),
-        MsAxis::UvDistance => {
-            let [u, v, _w] = row_uvw_value;
-            Ok(Some((u * u + v * v).sqrt()))
-        }
-        MsAxis::U => {
-            let [u, _v, _w] = row_uvw_value;
-            Ok(Some(u))
-        }
-        MsAxis::V => {
-            let [_u, v, _w] = row_uvw_value;
-            Ok(Some(v))
-        }
-        MsAxis::W => {
-            let [_u, _v, w] = row_uvw_value;
-            Ok(Some(w))
-        }
+        MsAxis::Time => Ok(Some(row.time)),
+        MsAxis::Interval => Ok(row.interval),
+        axis if axis.uses_uvw() => Ok(uvw_coordinate(axis, row.uvw, channel_bin, spectral_context)),
         MsAxis::Channel => Ok(Some(channel_bin.display_channel() as f64)),
         MsAxis::Frequency => {
             let Some(spectral_context) = spectral_context else {
@@ -6594,7 +6725,7 @@ fn compute_axis_value(
             let antenna_id = usize::try_from(antenna1_value)
                 .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for azimuth axis"))?;
             geometry_engine
-                .azel(row_time_value, field_id, antenna_id)
+                .azel(row.time, field_id, antenna_id)
                 .map(|(azimuth, _elevation)| Some(normalize_signed_degrees(azimuth.to_degrees())))
                 .map_err(|error| error.to_string())
         }
@@ -6607,7 +6738,7 @@ fn compute_axis_value(
             let antenna_id = usize::try_from(antenna1_value)
                 .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for elevation axis"))?;
             geometry_engine
-                .azel(row_time_value, field_id, antenna_id)
+                .azel(row.time, field_id, antenna_id)
                 .map(|(_azimuth, elevation)| Some(elevation.to_degrees()))
                 .map_err(|error| error.to_string())
         }
@@ -6620,7 +6751,7 @@ fn compute_axis_value(
             let antenna_id = usize::try_from(antenna1_value)
                 .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for hour angle axis"))?;
             geometry_engine
-                .hour_angle(row_time_value, field_id, antenna_id)
+                .hour_angle(row.time, field_id, antenna_id)
                 .map(|hour_angle| Some(hour_angle * 12.0 / std::f64::consts::PI))
                 .map_err(|error| error.to_string())
         }
@@ -6635,7 +6766,7 @@ fn compute_axis_value(
                 format!("invalid ANTENNA1 {antenna1_value} for parallactic angle axis")
             })?;
             geometry_engine
-                .parallactic_angle(row_time_value, field_id, antenna_id)
+                .parallactic_angle(row.time, field_id, antenna_id)
                 .map(|parallactic_angle| Some(parallactic_angle.to_degrees()))
                 .map_err(|error| error.to_string())
         }
@@ -8132,6 +8263,12 @@ mod tests {
             }
         }
         assert!(MsAxis::parse("bogus").unwrap_err().contains("unsupported"));
+
+        for axis in [MsAxis::UvWave, MsAxis::UWave, MsAxis::VWave, MsAxis::WWave] {
+            let token = serde_json::to_value(axis).unwrap();
+            assert_eq!(token.as_str(), Some(axis.as_str()));
+            assert_eq!(serde_json::from_value::<MsAxis>(token).unwrap(), axis);
+        }
 
         let data_columns = [
             (MsDataColumn::Data, &["data"][..]),
