@@ -253,10 +253,12 @@ mod tests {
             .iter()
             .map(|&name| ColumnSchema::scalar(name, PrimitiveType::Int32))
             .chain([
-                ColumnSchema::scalar("FLAG_ROW", PrimitiveType::Bool).with_options(ColumnOptions {
-                    undefined: true,
-                    ..ColumnOptions::default()
-                }),
+                ColumnSchema::scalar("FLAG_ROW", PrimitiveType::Bool)
+                    .with_options(ColumnOptions {
+                        undefined: true,
+                        ..ColumnOptions::default()
+                    })
+                    .unwrap(),
                 ColumnSchema::scalar("TIME", PrimitiveType::Float64),
             ])
             .collect();
