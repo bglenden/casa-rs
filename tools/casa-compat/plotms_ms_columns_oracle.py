@@ -638,6 +638,10 @@ def compare_averaged_columns(root, native):
     compare_ordinate_figure(work, "avg-independent-weighted", native, base, "Real",
                             ["Real:corrected", "Real:model"])
 
+    row_flag = work / "statistics-row-flag-only.ms"
+    copy_ms(vis, row_flag)
+    with opened(row_flag, True) as table:
+        table.putcell("FLAG_ROW", 0, True)
     statistics = base | dict(xdatacolumn="model", ydatacolumn="", yaxislocation="left")
     statistic_cases = (
         ("model", {}, (10, 9), (5, 4), {0, 1}),
@@ -647,13 +651,15 @@ def compare_averaged_columns(root, native):
         ("without-sigma-spectrum", dict(vis=str(without_sigma)), (10, 9), (2, 1), {0, 1}),
         ("without-corrected", dict(vis=str(without_corrected)), (5, 4), (5, 4), {0, 1}),
         ("zero-observed", dict(vis=str(zero_observed)), (10, 9), (0, 4), {1}),
+        ("row-flag-only", dict(vis=str(row_flag)), (10, 9), (5, 4), {0, 1}),
+        ("single-channel", dict(spw="0:3"), (9,), (4,), {0}),
     )
     for name, overrides, weights, inverse_variances, bins in statistic_cases:
         sigmas = [1 / np.sqrt(value) if value > 0 else -1 for value in inverse_variances]
         coordinates = dict(
-            weight=[np.mean(weights)] * 2,
+            weight=[np.mean(weights)] * len(weights),
             weightspectrum=weights,
-            sigma=[np.mean(sigmas)] * 2,
+            sigma=[np.mean(sigmas)] * len(sigmas),
             sigmaspectrum=sigmas,
         )
         for axis, values in coordinates.items():

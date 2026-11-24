@@ -4205,8 +4205,12 @@ fn build_generic_visibility_scatter(
     let mut bin_buffers = visibility_columns.buffers();
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         let flag_row_value = selected_flag_rows[row_slot];
-        // Unaveraged PlotMS draws selected samples from the cube flag mask.
-        if flag_row_value && !include_row_flagged_points && !use_iterator_order {
+        // PlotMS interval, wavelength, and channel statistics use the cube mask.
+        if flag_row_value
+            && !include_row_flagged_points
+            && !use_iterator_order
+            && statistics_kinds.is_none()
+        {
             continue;
         }
 
