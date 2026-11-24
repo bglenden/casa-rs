@@ -14,7 +14,8 @@ use super::calibration::{
 };
 use super::plotms_atmosphere::Curve;
 use super::{
-    MsAxis, MsPlotPayload, MsScatterPlotMsMetadata, MsScatterPointRef, MsScatterSeries, listobs,
+    MsAxis, MsPlotPayload, MsScatterPlotMsAverageIds, MsScatterPlotMsMetadata, MsScatterPointRef,
+    MsScatterSeries, listobs,
 };
 use crate::MeasurementSet;
 use crate::columns::main_ids;
@@ -185,7 +186,7 @@ fn write_series(
     {
         let y_axis = section[0].y_axis;
         write_section(output, name(x_axis), name(y_axis), verbose)?;
-        let scalar_scan_fields = section[0].plotms_averaged_scan_fields.as_deref();
+        let averaged_ids = section[0].plotms_averaged_ids.as_deref();
         let mut points = section.iter().flat_map(|series| {
             series
                 .points
@@ -196,14 +197,13 @@ fn write_series(
         });
         let write = |(&(x, y), point, display)| {
             let display: Option<MsScatterPlotMsMetadata> = display;
-            let scan_field =
-                scalar_scan_fields.and_then(|ids| ids.get(display?.averaging_group?).copied());
+            let averaged = averaged_ids.and_then(|ids| ids.get(display?.averaging_group?).copied());
             write_point(
                 output,
                 metadata,
                 (coordinate(x_axis, x), coordinate(y_axis, y)),
                 point,
-                (display, scan_field),
+                (display, averaged),
                 None,
                 verbose,
             )
@@ -289,7 +289,10 @@ fn write_point(
     metadata: &mut Metadata<'_>,
     (x, y): (String, String),
     point: &MsScatterPointRef,
-    (display, scan_field): (Option<MsScatterPlotMsMetadata>, Option<(i32, i32)>),
+    (display, averaged): (
+        Option<MsScatterPlotMsMetadata>,
+        Option<MsScatterPlotMsAverageIds>,
+    ),
     frequency: Option<f64>,
     verbose: bool,
 ) -> std::io::Result<()> {
@@ -298,9 +301,18 @@ fn write_point(
     }
     let averaged_baselines = metadata.averaged_baselines;
     let row = metadata.row(point.row)?;
-    let (scan, field) = scan_field.unwrap_or((row.scan, row.field));
+    let (scan, field) = averaged
+        .and_then(|ids| ids.scan_field)
+        .unwrap_or((row.scan, row.field));
     let (ant1, ant2, ant1name, ant2name) = if averaged_baselines {
         (-1, -1, "*", "*")
+    } else if let Some(antenna) = averaged.and_then(|ids| ids.antenna) {
+        let name = if antenna == row.ant1 {
+            &row.ant1name
+        } else {
+            &row.ant2name
+        };
+        (antenna, -1, name.as_str(), "*")
     } else {
         (
             row.ant1,

@@ -34,10 +34,18 @@ pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
         && !spec.averaging.avgantenna
         && !spec.averaging.avgspw
         && !spec.averaging.scalar
-        && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
-        && (spec.x_axis.is_visibility_math()
-            || matches!(spec.x_axis, MsAxis::Time | MsAxis::Channel)
-            || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
+        && supports_reduced_visibility_axes(spec)
+}
+
+pub(super) fn uses_antenna_visibility_average(spec: &MsPlotSpec) -> bool {
+    spec.averaging.avgantenna
+        && spec.averaging.avgtime.is_none()
+        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
+        && !spec.averaging.avgbaseline
+        && !spec.averaging.avgscan
+        && !spec.averaging.avgfield
+        && !spec.averaging.avgspw
+        && supports_reduced_visibility_axes(spec)
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
@@ -61,7 +69,11 @@ pub(super) fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
         && (spec.averaging.avgtime.is_some() || spec.averaging.avgbaseline)
         && !spec.averaging.avgantenna
         && !spec.averaging.avgspw
-        && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
+        && supports_reduced_visibility_axes(spec)
+}
+
+fn supports_reduced_visibility_axes(spec: &MsPlotSpec) -> bool {
+    spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
         && (spec.x_axis.is_visibility_math()
             || matches!(spec.x_axis, MsAxis::Time | MsAxis::Channel)
             || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
