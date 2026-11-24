@@ -37,6 +37,7 @@ def test_ms_select_record_field_order_and_integer_forms(baseline_fixture, native
         ({"antenna1": [True, 1]}, np.flatnonzero(first == 1)),
         ({"antenna1": np.array([2**32 + 1], dtype=np.int64)}, np.flatnonzero(first == 1)),
         ({"rows": [2, 0, -1, 1, 2, 200]}, np.array([0, 1, 2])),
+        ({b"rows": [1]}, np.array([1])),
         ({"rows": [2, 4, 6], "antenna1": [0]}, antenna_zero[[2, 4, 6]]),
         ({"ROWS": [2, 4, 6], "antenna1": [0]}, np.array([2])),
         ({"ifr_number": [1002, 0]}, np.flatnonzero((first == 1) & (raw["antenna2"] == 2))),
@@ -109,7 +110,15 @@ def test_ms_select_record_return_and_error_state(baseline_fixture, native_datase
         selector = api.ms()
         assert selector.select()
         assert selector.open(str(native_dataset))
-        for empty in ({}, {"unknown": 1}, {"antenna1": None}, {"antenna1": np.array([1], dtype=object)}):
+        for empty in (
+            {},
+            {1: [1]},
+            {"unknown": [b"a"]},
+            {"antenna1": None},
+            {"antenna1": np.array([1], dtype=object)},
+            {"antenna1": np.array([b"1"], dtype="S1")},
+            {"u": np.array([-5, 5], dtype=np.float16)},
+        ):
             assert selector.select(empty)
             check_rows(selector, raw, all_rows)
         for invalid in (None, []):
@@ -133,6 +142,39 @@ def test_ms_select_record_return_and_error_state(baseline_fixture, native_datase
         assert selector.select({"u": [0.0], "antenna1": [1]}) is False
         check_rows(selector, raw, np.flatnonzero(raw["antenna1"] == 1))
         assert selector.done()
+
+
+@pytest.mark.parametrize("record", [
+    {"ifr_number": [0]},
+    {"time": [5.2e9, 5.3e9]},
+    {"uvdist": [1e7, 1e8], "w": "wrong type"},
+])
+def test_ms_select_record_structured_zero_rows_installs_empty_view(baseline_fixture, native_dataset, record):
+    casa, _, raw = baseline_fixture
+    for api in (casa, tools):
+        selector = api.ms()
+        assert selector.open(str(native_dataset))
+        with pytest.raises(RuntimeError, match="MSSelectionNullSelection"):
+            selector.select(record)
+        check_rows(selector, raw, [])
+        assert selector.nrow(False) == raw["time"].size
+        assert selector.reset()
+        check_rows(selector, raw, np.arange(raw["time"].size))
+        assert selector.done()
+
+
+def test_ms_select_record_rejects_nonvector_arrays(baseline_fixture, native_dataset):
+    _, _, raw = baseline_fixture
+    selector = tools.ms()
+    assert selector.open(str(native_dataset))
+    with pytest.raises(RuntimeError, match="requires a vector"):
+        selector.select({"antenna1": [1], "rows": np.array([[1, 2], [3, 4]])})
+    check_rows(selector, raw, np.flatnonzero(raw["antenna1"] == 1))
+    assert selector.reset()
+    with pytest.raises(RuntimeError, match="requires a vector"):
+        selector.select({"u": np.array([[-500.0, 500.0], [-200.0, 200.0]])})
+    check_rows(selector, raw, np.arange(raw["time"].size))
+    assert selector.done()
 
 
 def test_ms_select_record_reads_non_native_byte_order(baseline_fixture, native_dataset):
@@ -168,4 +210,52 @@ def test_ms_select_record_exact_times_keeps_auxiliary_indices(baseline_fixture, 
             selector.select({"time": [float(times[1]), float(times[0])]})
         with pytest.raises(RuntimeError):
             selector.msselectedindices()
+        assert selector.done()
+
+
+def test_ms_select_record_exact_times_preserves_working_metadata(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    time = raw["time"][0]
+    rows = np.flatnonzero(raw["time"] == time)
+    for api in (casa, tools):
+        selector = api.ms()
+        assert selector.open(str(native_dataset))
+        assert selector.selectinit()
+        earlier = selector.metadata()
+        assert selector.select({"times": [float(time)]})
+        later = selector.metadata()
+        for metadata in (earlier, later):
+            assert metadata.nrows(autoc=True) == raw["time"].size
+        check_rows(selector, raw, rows)
+        assert selector.select({"times": [float(time)]})
+        assert selector.select({"rows": [0]})
+        check_rows(selector, raw, rows[:1])
+        for metadata in (earlier, later):
+            assert metadata.nrows(autoc=True) == 1
+            assert metadata.done()
+        assert selector.done()
+
+
+def test_ms_select_record_exact_times_then_row_independent_selection(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    time = float(raw["time"][0])
+    expected = int(np.count_nonzero(raw["time"] == time))
+    for api in (casa, tools):
+        selector = api.ms()
+        assert selector.open(str(native_dataset))
+        for method, value, status in (
+            ("selecttaql", "T", True),
+            ("selecttaql", "", False),
+            ("msselect", {"taql": "T"}, True),
+            ("msselect", {}, False),
+        ):
+            assert selector.reset()
+            assert selector.selectinit()
+            assert selector.select({"times": time})
+            metadata = selector.metadata()
+            assert metadata.nrows(autoc=True) == raw["time"].size
+            assert getattr(selector, method)(value) is status
+            assert selector.nrow(True) == expected
+            assert metadata.nrows(autoc=True) == expected
+            assert metadata.done()
         assert selector.done()

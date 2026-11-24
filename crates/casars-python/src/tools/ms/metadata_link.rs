@@ -65,7 +65,7 @@ impl MetadataSnapshot {
 }
 
 impl MetadataLink {
-    fn new(attached: &AttachedMs) -> Self {
+    fn new(attached: &AttachedMs, selected: Option<Arc<[usize]>>) -> Self {
         Self {
             path: attached.path.clone(),
             name: attached.name.clone(),
@@ -73,7 +73,7 @@ impl MetadataLink {
             original_rows: attached.original_rows,
             live_concatenation: matches!(attached.part_names, TablePartNames::Concatenation { .. }),
             state: Mutex::new(State {
-                selected: attached.selected_rows.clone(),
+                selected,
                 plain_rows: attached
                     .plain_rows
                     .as_ref()
@@ -279,18 +279,45 @@ impl AttachedMs {
     }
 
     pub(super) fn set_selected_rows(&mut self, rows: Option<Vec<usize>>) -> PyResult<()> {
-        let rows = rows.map(Arc::from);
+        self.publish_selected_rows(rows.map(Arc::from))
+    }
+
+    fn publish_selected_rows(&mut self, rows: Option<Arc<[usize]>>) -> PyResult<()> {
         if let Some(metadata) = self.metadata.get() {
             metadata.set_selected(rows.clone()).map_err(runtime_error)?;
         }
         self.selected_rows = rows;
+        self.exact_time_metadata = None;
         Ok(())
     }
 
+    pub(super) fn synchronize_metadata_selection(&mut self) -> PyResult<()> {
+        if self.exact_time_metadata.is_some() {
+            self.publish_selected_rows(self.selected_rows.clone())?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn set_exact_time_rows(&mut self, rows: Vec<usize>) {
+        // CASA updates its selected view for TIMES while leaving the working
+        // view used by metadata() at the previous selection.
+        drop(self.working_metadata_link());
+        let rows = Some(Arc::from(rows));
+        self.exact_time_metadata = Some(Arc::new(MetadataLink::new(self, rows.clone())));
+        self.selected_rows = rows;
+    }
+
     pub(super) fn metadata_link(&self) -> Arc<MetadataLink> {
+        if let Some(link) = &self.exact_time_metadata {
+            return Arc::clone(link);
+        }
+        self.working_metadata_link()
+    }
+
+    fn working_metadata_link(&self) -> Arc<MetadataLink> {
         Arc::clone(
             self.metadata
-                .get_or_init(|| Arc::new(MetadataLink::new(self))),
+                .get_or_init(|| Arc::new(MetadataLink::new(self, self.selected_rows.clone()))),
         )
     }
 }
@@ -308,8 +335,9 @@ impl PyMsTool {
         let megabytes = cachesize
             .and_then(|value| value.extract::<f32>().ok())
             .unwrap_or(50.0);
-        let link =
-            self.attachment_info(py, |attached| Ok(attached.map(AttachedMs::metadata_link)))?;
+        let link = self.attachment_info(py, |attached| {
+            Ok(attached.map(AttachedMs::working_metadata_link))
+        })?;
         Py::new(py, PyMsMetadata::from_ms(link, megabytes.into()))
     }
 

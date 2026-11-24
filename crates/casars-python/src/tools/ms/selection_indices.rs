@@ -230,9 +230,11 @@ impl AttachedMs {
             runtime_error(message)
         })?;
         if !parsed.has_row_expression() {
+            self.synchronize_metadata_selection()?;
             return Ok(false);
         }
         if parsed.preserves_current_view() {
+            self.synchronize_metadata_selection()?;
             return Ok(ms.row_count() != 0);
         }
         let rows = parsed
@@ -247,9 +249,11 @@ impl AttachedMs {
         parsed: &ParsedMsToolSelection,
     ) -> PyResult<bool> {
         if !parsed.has_row_expression() {
+            self.synchronize_metadata_selection()?;
             return Ok(false);
         }
         if parsed.preserves_current_view() {
+            self.synchronize_metadata_selection()?;
             return Ok(ms.row_count() != 0);
         }
         let Ok(rows) = parsed.select_rows(ms) else {
@@ -259,14 +263,18 @@ impl AttachedMs {
     }
 
     pub(super) fn apply_tool_rows(&mut self, mut rows: Vec<usize>) -> PyResult<bool> {
-        if let Some(previous) = &self.selected_rows {
-            for row in &mut rows {
-                *row = previous[*row];
-            }
-        }
+        self.map_tool_rows(&mut rows);
         let nonempty = !rows.is_empty();
         self.set_selected_rows(Some(rows))?;
         Ok(nonempty)
+    }
+
+    pub(super) fn map_tool_rows(&self, rows: &mut [usize]) {
+        if let Some(previous) = &self.selected_rows {
+            for row in rows {
+                *row = previous[*row];
+            }
+        }
     }
 }
 

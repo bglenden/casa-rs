@@ -38,9 +38,26 @@ fn selection_record(py: Python<'_>, items: Option<&Bound<'_, PyDict>>) -> PyResu
     };
     let converted = PyDict::new(py);
     for (key, item) in items.iter() {
+        let name = if let Ok(bytes) = key.cast::<PyBytes>() {
+            String::from_utf8_lossy(bytes.as_bytes()).into_owned()
+        } else if let Ok(name) = key.cast::<PyString>() {
+            name.extract::<String>()?
+        } else {
+            continue;
+        };
+        if RecordSelector::from_label(&name.to_ascii_uppercase()).is_none() {
+            continue;
+        }
         let item = if let Ok(array) = item.cast::<PyUntypedArray>() {
             let dtype = array.dtype();
-            if !matches!(dtype.kind(), b'b' | b'i' | b'u' | b'f' | b'c' | b'S' | b'U') {
+            if !matches!(
+                (dtype.kind(), dtype.itemsize()),
+                (b'b', 1)
+                    | (b'i' | b'u', 1 | 2 | 4 | 8)
+                    | (b'f', 4 | 8)
+                    | (b'c', 8 | 16)
+                    | (b'U', _)
+            ) {
                 continue;
             }
             let array = if array.ndim() == 0 {
@@ -54,8 +71,6 @@ fn selection_record(py: Python<'_>, items: Option<&Bound<'_, PyDict>>) -> PyResu
                 // The selectors consume Int32 IDs. Preserve the low bits of
                 // UInt64 input even when its value exceeds the signed range.
                 array.call_method1("astype", ("int64",))?
-            } else if dtype.kind() == b'S' {
-                array.call_method1("astype", ("str",))?
             } else {
                 array
             }
@@ -75,9 +90,37 @@ fn selection_record(py: Python<'_>, items: Option<&Bound<'_, PyDict>>) -> PyResu
             // scalars and None, are omitted by the CASA binding.
             continue;
         };
-        converted.set_item(key, item)?;
+        converted.set_item(name, item)?;
     }
     casa_record(py, Some(&converted))
+}
+
+enum RecordSelector {
+    ScalarIds,
+    Rows,
+    IfrNumber,
+    Time,
+    Times,
+    Uvw(usize),
+    UvDistance,
+}
+
+impl RecordSelector {
+    fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "ANTENNA1" | "ANTENNA2" | "ARRAY_ID" | "FEED1" | "FEED2" | "FIELD_ID"
+            | "SCAN_NUMBER" | "DATA_DESC_ID" => Self::ScalarIds,
+            "ROWS" => Self::Rows,
+            "IFR_NUMBER" => Self::IfrNumber,
+            "TIME" => Self::Time,
+            "TIMES" => Self::Times,
+            "U" => Self::Uvw(1),
+            "V" => Self::Uvw(2),
+            "W" => Self::Uvw(3),
+            "UVDIST" => Self::UvDistance,
+            _ => return None,
+        })
+    }
 }
 
 impl AttachedMs {
@@ -98,9 +141,9 @@ impl AttachedMs {
 
     fn apply_record_field(&mut self, field: RecordField) -> PyResult<bool> {
         let label = field.name.to_ascii_uppercase();
-        match label.as_str() {
-            "ANTENNA1" | "ANTENNA2" | "ARRAY_ID" | "FEED1" | "FEED2" | "FIELD_ID"
-            | "SCAN_NUMBER" | "DATA_DESC_ID" | "ROWS" => {
+        let selector = RecordSelector::from_label(&label).expect("converted selection field");
+        match selector {
+            RecordSelector::ScalarIds | RecordSelector::Rows => {
                 let values = integer_items(&field)?;
                 let name = if label == "ROWS" { "ROWID()" } else { &label };
                 let ids = values
@@ -110,7 +153,7 @@ impl AttachedMs {
                     .join(",");
                 self.apply_direct_taql(format!("{name} IN [{ids}]"))
             }
-            "IFR_NUMBER" => {
+            RecordSelector::IfrNumber => {
                 let baselines = integer_items(&field)?
                     .into_iter()
                     .map(|number| format!("{}&{}", number / 1000, number % 1000))
@@ -121,27 +164,27 @@ impl AttachedMs {
                     ..MsSelection::default()
                 })
             }
-            "TIMES" => {
+            RecordSelector::Times => {
                 let snapshot = self.selection_snapshot()?;
-                let rows = snapshot
+                let mut rows = snapshot
                     .ms
                     .select_ms_tool_times(real_items(&field)?)
                     .map_err(runtime_error)?;
-                self.apply_tool_rows(rows)?;
+                self.map_tool_rows(&mut rows);
+                self.set_exact_time_rows(rows);
                 Ok(true)
             }
-            "TIME" | "U" | "V" | "W" | "UVDIST" => self.apply_record_range(&label, &field),
-            _ => Ok(true),
+            range => self.apply_record_range(range, &field),
         }
     }
 
-    fn apply_record_range(&mut self, name: &str, field: &RecordField) -> PyResult<bool> {
+    fn apply_record_range(&mut self, range: RecordSelector, field: &RecordField) -> PyResult<bool> {
         let values = real_items(field)?;
         let &[lower, upper] = values.as_slice() else {
             return Ok(false);
         };
-        match name {
-            "TIME" => {
+        match range {
+            RecordSelector::Time => {
                 if !lower.is_finite() || !upper.is_finite() {
                     return Err(runtime_error("time range requires finite MJD seconds"));
                 }
@@ -152,7 +195,7 @@ impl AttachedMs {
                     ..MsSelection::default()
                 })
             }
-            "UVDIST" => self.apply_structured_record_selector(MsSelection {
+            RecordSelector::UvDistance => self.apply_structured_record_selector(MsSelection {
                 uvrange: Some(format!(
                     "{}~{}",
                     format_stream_value(lower),
@@ -160,8 +203,7 @@ impl AttachedMs {
                 )),
                 ..MsSelection::default()
             }),
-            "U" | "V" | "W" => {
-                let axis = usize::from(name.as_bytes()[0] - b'U') + 1;
+            RecordSelector::Uvw(axis) => {
                 let lower = format_stream_value(lower);
                 let upper = format_stream_value(upper);
                 self.apply_direct_taql(format!("UVW[{axis}] >= {lower} && UVW[{axis}] <= {upper}"))
@@ -177,10 +219,16 @@ impl AttachedMs {
             .parse(&snapshot.ms, &selection)
             .map_err(runtime_error)?;
         if !parsed.has_row_expression() {
+            self.synchronize_metadata_selection()?;
             return Ok(false);
         }
         let rows = parsed.select_rows(&snapshot.ms).map_err(runtime_error)?;
-        self.apply_tool_rows(rows)
+        if !self.apply_tool_rows(rows)? {
+            return Err(runtime_error(
+                "MSSelectionNullSelection : The selected table has zero rows.",
+            ));
+        }
+        Ok(true)
     }
 }
 
@@ -191,16 +239,27 @@ fn incorrect_type(field: &RecordField) -> PyErr {
     ))
 }
 
+fn ensure_vector(shape: &[usize], field: &RecordField) -> PyResult<()> {
+    if shape.iter().filter(|&&size| size > 1).count() > 1 {
+        return Err(runtime_error(format!(
+            "ms.select field {} requires a vector, got array shape {shape:?}",
+            field.name
+        )));
+    }
+    Ok(())
+}
+
 fn integer_items(field: &RecordField) -> PyResult<Vec<i32>> {
     macro_rules! integers {
-        ($values:expr) => {
+        ($values:expr) => {{
+            ensure_vector($values.shape(), field)?;
             $values
                 .view()
                 .reversed_axes()
                 .iter()
                 .map(|&value| value as i32)
                 .collect()
-        };
+        }};
     }
     Ok(match &field.value {
         Value::Scalar(ScalarValue::UInt8(value)) => vec![i32::from(*value)],
@@ -223,14 +282,18 @@ fn real_items(field: &RecordField) -> PyResult<Vec<f64>> {
     Ok(match &field.value {
         Value::Scalar(ScalarValue::Float32(value)) => vec![f64::from(*value)],
         Value::Scalar(ScalarValue::Float64(value)) => vec![*value],
-        Value::Array(ArrayValue::Float32(values)) => values
-            .view()
-            .reversed_axes()
-            .iter()
-            .copied()
-            .map(f64::from)
-            .collect(),
+        Value::Array(ArrayValue::Float32(values)) => {
+            ensure_vector(values.shape(), field)?;
+            values
+                .view()
+                .reversed_axes()
+                .iter()
+                .copied()
+                .map(f64::from)
+                .collect()
+        }
         Value::Array(ArrayValue::Float64(values)) => {
+            ensure_vector(values.shape(), field)?;
             values.view().reversed_axes().iter().copied().collect()
         }
         _ => return Err(incorrect_type(field)),
