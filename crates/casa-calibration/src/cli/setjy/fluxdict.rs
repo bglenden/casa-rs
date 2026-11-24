@@ -10,7 +10,7 @@ use casa_types::measures::frequency::{FrequencyRef, MFrequency};
 
 use super::{
     FluxParameters, add_time_selection, execution, flux_dictionary, model_files, prepare,
-    publish_models, requested_windows,
+    publish_models, record_manual_spectrum, requested_windows,
 };
 use crate::attachment::OpenedMs;
 use crate::ft::setjy::ManualFlux;
@@ -28,6 +28,7 @@ pub(super) fn run(
     selection: MsSelection,
     selected: &ResolvedMsSelection,
     scratch: bool,
+    imager_history: &mut Vec<String>,
 ) -> Result<CasaValue, TaskFailure> {
     let image = model_files::task_image(task)?;
     let dictionary = FluxDictionary::new(task.value("fluxdict"))?;
@@ -84,6 +85,7 @@ pub(super) fn run(
         let super::PreparedModels {
             models: prepared,
             fluxes: values,
+            manual_samples,
             ..
         } = prepare(
             &opened.measurement_set,
@@ -92,6 +94,7 @@ pub(super) fn run(
             &spws,
             by_channel,
             image.as_deref().map(|path| (path, scratch)),
+            imager_history,
         )?;
         if !scratch_ready {
             opened = opened
@@ -108,6 +111,7 @@ pub(super) fn run(
             scratch,
             false,
         )?;
+        record_manual_spectrum(imager_history, &manual_samples);
         append_values(&mut combined, values);
     }
     opened.release().map_err(execution)?;

@@ -146,6 +146,24 @@ impl FluxCatalog {
         })
     }
 
+    pub(crate) fn standard_name(&self) -> &'static str {
+        match &self.coefficients {
+            Coefficients::Table(table) => match table.scale {
+                CatalogScale::PerleyButler2017 => "Perley-Butler 2017",
+                CatalogScale::PerleyButler2013 => "Perley-Butler 2013",
+                CatalogScale::ScaifeHeald2012 => "Scaife-Heald 2012",
+            },
+            Coefficients::Fixed(scale) => match scale {
+                FixedScale::Baars => "Baars",
+                FixedScale::Perley90 => "Perley 90",
+                FixedScale::PerleyTaylor95 => "Perley-Taylor 95",
+                FixedScale::PerleyTaylor99 => "Perley-Taylor 99",
+                FixedScale::PerleyButler2010 => "Perley-Butler 2010",
+                FixedScale::StevensReynolds2016 => "Stevens-Reynolds 2016",
+            },
+        }
+    }
+
     pub(crate) fn missing_coefficients(&self, source: &str) -> casa_ms::MsError {
         let table = match &self.coefficients {
             Coefficients::Table(coefficients) => coefficients.table.path().map_or_else(
