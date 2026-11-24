@@ -25,6 +25,7 @@ from plotms_ms_columns_oracle import (
     request,
     rows,
 )
+from record_casa_returns import make_cal_ms
 
 SPEED_OF_LIGHT = 299_792_458.0
 
@@ -411,6 +412,71 @@ def check_metadata_flagged_symbols(work, native, base):
     assert not actual.exists()
 
 
+def compare_pointing_axes(root, native):
+    work = root / "pointing-axes"
+    work.mkdir()
+    vis = work / "pointing.ms"
+    make_cal_ms(str(vis), autocorrelation_weight=1.0)
+    with opened(vis, True) as table:
+        auto = np.flatnonzero((table.getcol("ANTENNA1") == 0) & (table.getcol("ANTENNA2") == 0))
+        assert len(auto) == 12
+        epoch = table.getcell("TIME", int(auto[0]))
+        flags = table.getcol("FLAG")
+        flags[1, [1, 3], auto[2]] = True
+        flags[1, 1, auto[3]] = True
+        table.putcol("FLAG", flags)
+        table.putcell("FLAG_ROW", int(auto[4]), True)
+    with opened(vis / "POINTING", True) as table:
+        a0 = np.flatnonzero(table.getcol("ANTENNA_ID") == 0)
+        table.removerows(a0[4:])
+        # Store four distinct pointing epochs out of order. MAIN spans both
+        # endpoints and queries after the midpoint of two different segments.
+        samples = [(85, 99, -39), (5, -10, -28), (65, 47, -32), (25, 12, -25)]
+        for row, (offset, lon, lat) in zip(a0[:4], samples, strict=True):
+            table.putcell("TIME", int(row), epoch + offset)
+            table.putcell("DIRECTION", int(row), np.deg2rad([[lon], [lat]]))
+
+    base = dict(vis=str(vis), xaxis="time", yaxis="ant-ra", antenna="A0&&&", yframe="j2000",
+                yinterp="nearest", showgui=False, overwrite=True)
+    lon = [350] * 3 + [12] * 4 + [47] * 5
+    lat = [-28] * 3 + [-25] * 4 + [-32] * 5
+    cases = (
+        ("nearest-ra", {}, 12),
+        ("nearest-dec", dict(xaxis="ant-dec", xframe="j2000", xinterp="nearest",
+                             yaxis="time", yframe="", yinterp=""), 12),
+        ("nearest-ra-dec", dict(xaxis="ant-ra", xframe="j2000", xinterp="nearest", yaxis="ant-dec"), 12),
+        ("nearest-selected", dict(field="FLUX", spw="0:1~3^2", correlation="YY"), 5),
+        ("nearest-galactic", dict(yframe="galactic"), 12),
+        ("nearest-azelgeo", dict(yaxis="ant-dec", yframe="azelgeo"), 12),
+        ("default-pointing", dict(yframe="", yinterp=""), 12),
+        ("spline-pointing", dict(yinterp="spline"), 12),
+    )
+    for name, overrides, count in cases:
+        controls = base | overrides
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        points = rows(expected)
+        assert len(points) == count
+        assert {(p[5], p[6], p[7], p[8]) for p in points} == {("0", "0", "A0@P0", "A0@P0")}
+        if name == "nearest-ra":
+            np.testing.assert_allclose([float(p[1]) for p in points], lon)
+        if name == "nearest-dec":
+            np.testing.assert_allclose([float(p[0]) for p in points], lat)
+        if name == "nearest-selected":
+            assert {(p[2], p[12]) for p in points} == {("1", "YY")}
+            np.testing.assert_allclose([float(p[1]) for p in points], [350, 350, 12, 12, 12])
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        np.testing.assert_allclose(np.array([p[:2] for p in rows(actual)], dtype=float),
+                                   np.array([p[:2] for p in points], dtype=float), rtol=0, atol=2.1e-5)
+        print(f"{name}: {count} matching pointing coordinates and identifiers", flush=True)
+
+    figure = base | dict(xaxis="ant-ra", xframe="j2000", xinterp="nearest", yaxis="ant-dec",
+                         title="Antenna pointing")
+    compare_figure(work, native, figure, work / "nearest-ra-dec.casa.txt",
+                   ("Antenna pointing", "J2000 Right Ascension (degrees)", "J2000 Declination (degrees)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -429,6 +495,7 @@ def main():
 
     with chdir(root), plotms_launcher(args.app_run):
         compare(root, native)
+        compare_pointing_axes(root, native)
 
 
 if __name__ == "__main__":
