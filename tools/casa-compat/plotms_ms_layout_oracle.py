@@ -15,20 +15,21 @@ from PIL import Image
 from plotms_ms_columns_oracle import casa, compare_text, fixture, plotms_launcher, reference, request, rows
 
 
-def check_markers_in_cell(path, row, column):
+def check_markers_in_cell(path, row, column, grid):
     with Image.open(path) as image:
         assert image.size == (500, 360), (path, image.size)
         pixels = np.asarray(image.convert("RGB"))
     y, x = np.nonzero(np.all(pixels == [0xdd, 0x22, 0x55], axis=-1))
     assert len(x) > 0, path
-    assert np.all(x // 250 == column) and np.all(y // 180 == row), (path, x, y)
+    assert np.all(x * grid[1] // 500 == column) and np.all(y * grid[0] // 360 == row), (path, x, y)
 
 
 def compare_cell(root, native, base, row, column):
-    from casars import _plot_document
+    from casars.tasks import _plotms_plot
 
     name = f"grid-{row}-{column}"
     controls = base | dict(rowindex=row, colindex=column)
+    grid = (controls["gridrows"], controls["gridcols"])
     expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, expformat="txt", plotfile=str(expected)) is None
     selected = rows(expected)
@@ -38,27 +39,29 @@ def compare_cell(root, native, base, row, column):
     assert compare_text(actual, expected) == len(selected)
     coordinates = np.array([point[:2] for point in selected], dtype=float)
 
-    render = _plot_document.render_document
+    configure = _plotms_plot.configure
 
-    def record(*args, **kwargs):
-        figure, axis = render(*args, **kwargs)
+    def record(figure, axis, document, options):
+        configure(figure, axis, document, options)
         assert figure.axes == [axis]
         cell = axis.get_subplotspec()
-        assert cell.get_gridspec().get_geometry() == (2, 2)
+        assert cell.get_gridspec().get_geometry() == grid
         assert (cell.rowspan.start, cell.colspan.start) == (row, column)
-        assert axis.get_title() == "Selected visibility grid"
+        assert axis.get_title() == controls["title"]
+        assert not any(text.get_text() == controls["title"] for text in figure.texts)
+        if "titlefont" in controls:
+            assert axis.title.get_fontsize() == controls["titlefont"]
         np.testing.assert_allclose(axis.lines[0].get_xydata(), coordinates, rtol=1.2e-5, atol=1e-7)
-        return figure, axis
 
     for page in ("current", "all"):
         expected, actual = (root / f"{name}-{page}.{engine}.png" for engine in ("casa", "native"))
         image = controls | dict(exprange=page, expformat="png", width=500, height=360, dpi=100)
         assert reference(**image, plotfile=str(expected)) is None
-        with patch.object(_plot_document, "render_document", side_effect=record) as renderer:
+        with patch.object(_plotms_plot, "configure", side_effect=record) as presentation:
             assert native(**image, plotfile=str(actual)) is None
-        renderer.assert_called_once()
+        presentation.assert_called_once()
         for path in (expected, actual):
-            check_markers_in_cell(path, row, column)
+            check_markers_in_cell(path, row, column, grid)
     print(f"{name}: 12 matching points in both page exports", flush=True)
 
 
@@ -107,6 +110,7 @@ def main():
                                    symbolsize=5, symbolfill="fill", symboloutline=False)
         for row, column in ((1, 1), (0, 0), (0, 1), (1, 0)):
             compare_cell(root, native, base, row, column)
+        compare_cell(root, native, base | dict(gridcols=3, titlefont=14), 1, 2)
         check_output_controls(root, native, base)
 
 
