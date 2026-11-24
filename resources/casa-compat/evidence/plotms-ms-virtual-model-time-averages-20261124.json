@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "a7d0a74fd34de9728ee26290dfd2a05f22e1a95c",
+  "source_revision": "a7d0a74fd34de9728ee26290dfd2a05f22e1a95c",
+  "baseline_revision": "5499465bab9c998944da73bf4297a5249a659541",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_virtual_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Read-only virtual MODEL coordinates before ordinary vector or scalar time and optional channel averages, including virtual precedence over stored cells and independent axes.",
+  "result": "passed",
+  "baseline_result": "Main refuses two-ordinate virtual model time averages and plots stored 280 instead of the selected virtual 7.25 on a MODEL abscissa.",
+  "review_regressions": "Model-only vector averages require unit sample counts with unequal row weights. Scalar MODEL on X with Channel on Y produces two 20 s bins.",
+  "text_exports": 7,
+  "points": 42,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "additional_fourier_command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "additional_fourier_exports": 3,
+  "additional_fourier_averages": 9
+}

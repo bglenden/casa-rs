@@ -119,7 +119,7 @@
       "status": "Partial"
     },
     "xdatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply ordinary unaveraged and channel-only averaged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply unaveraged, channel-only and ordinary vector or scalar time-averaged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -158,7 +158,8 @@
         "ms-vector-spw-time",
         "ms-vector-spw-channel-spans",
         "ms-channel-visibility-ordinate-lists",
-        "ms-time-visibility-ordinate-lists"
+        "ms-time-visibility-ordinate-lists",
+        "ms-virtual-model-time-averages"
       ],
       "behaviors": [
         "coordinates"
@@ -214,7 +215,7 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged and channel-only averaged visibility ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply ordinary unaveraged and channel-only averaged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and other mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA. A single stored corrected/model or observed/model expression can be plotted after channel averaging against Channel or Time. With Time as X, ordinary vector time averaging projects one observed or corrected residual or ratio after separately averaging the stored visibility and model operands. Float scalar projections retain signed amplitude differences and the full phase difference. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged and channel-only averaged visibility ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged, channel-only and ordinary vector or scalar time-averaged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and other mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA. A single stored corrected/model or observed/model expression can be plotted after channel averaging against Channel or Time. With Time as X, ordinary vector time averaging projects one observed or corrected residual or ratio after separately averaging the stored visibility and model operands. Float scalar projections retain signed amplitude differences and the full phase difference. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -263,7 +264,8 @@
         "ms-vector-spw-channel-spans",
         "ms-channel-visibility-ordinate-lists",
         "ms-iterated-visibility-ordinates",
-        "ms-time-visibility-ordinate-lists"
+        "ms-time-visibility-ordinate-lists",
+        "ms-virtual-model-time-averages"
       ],
       "behaviors": [
         "coordinates"
@@ -503,7 +505,8 @@
         "ms-scalar-spw-time-spans",
         "ms-vector-spw-channel-spans",
         "ms-channel-visibility-ordinate-lists",
-        "ms-time-visibility-ordinate-lists"
+        "ms-time-visibility-ordinate-lists",
+        "ms-virtual-model-time-averages"
       ],
       "behaviors": [
         "averaging"
@@ -511,7 +514,7 @@
       "status": "Partial"
     },
     "avgtime": {
-      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. A selected fully masked combined vector average exports an empty product. Ordinary vector time averaging can pair Time with one stored observed or corrected vector or scalar residual or ratio, using separate operand weights and the selected cube mask before projection. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Ordinary vector time averages can feed per-antenna reduction using the transformed weight spectrum and closed second-stage time intervals. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Ordinary vector and scalar time averaging also accepts lists of three or more independent stored visibility ordinates, with optional complex channel bins.",
+      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. A selected fully masked combined vector average exports an empty product. Ordinary vector time averaging can pair Time with one stored observed or corrected vector or scalar residual or ratio, using separate operand weights and the selected cube mask before projection. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Ordinary vector time averages can feed per-antenna reduction using the transformed weight spectrum and closed second-stage time intervals. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Ordinary vector and scalar time averaging also accepts lists of three or more independent stored visibility ordinates, with optional complex channel bins. Selected virtual models can be predicted before ordinary vector and scalar time averages, including optional channel bins and independent observed or corrected axes.",
       "evidence": [
         "paired",
         "ms-time-columns",
@@ -545,7 +548,8 @@
         "ms-scalar-spw-time-spans",
         "ms-vector-spw-time",
         "ms-vector-spw-channel-spans",
-        "ms-time-visibility-ordinate-lists"
+        "ms-time-visibility-ordinate-lists",
+        "ms-virtual-model-time-averages"
       ],
       "behaviors": [
         "averaging"
@@ -654,7 +658,8 @@
         "ms-antenna-scan-field-spans",
         "ms-spw-average-coordinates",
         "ms-scalar-spw-time-spans",
-        "ms-time-visibility-ordinate-lists"
+        "ms-time-visibility-ordinate-lists",
+        "ms-virtual-model-time-averages"
       ],
       "behaviors": [
         "averaging"
@@ -2532,6 +2537,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-time-visibility-ordinate-lists-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2256"
+      ]
+    },
+    "ms-virtual-model-time-averages": {
+      "kind": "Paired virtual models in ordinary MeasurementSet time averages",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Read-only virtual MODEL coordinates before ordinary vector or scalar time and optional channel averages, including virtual precedence over stored cells and independent axes.",
+      "result": "Seven TXT pairs match 42 points using MODEL on either axis, alone or beside observed and corrected data. One 500 by 360 PNG pair verifies six drawn coordinates. Nine further time averages match a virtual Fourier model evaluated at distinct row UVWs and unequal row weights. MODEL_DATA stays absent or unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "a7d0a74fd34de9728ee26290dfd2a05f22e1a95c",
+      "source_revision": "a7d0a74fd34de9728ee26290dfd2a05f22e1a95c",
+      "command": "casa-python tools/casa-compat/plotms_ms_virtual_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-virtual-model-time-averages-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2258"
       ]
     }
   }
