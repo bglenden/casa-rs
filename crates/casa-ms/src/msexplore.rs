@@ -2972,7 +2972,10 @@ fn build_uncalibrated_plotms_payload(
     let plot = spec.plots.first();
     let extended_derived = columns.extended_derived;
     let scalar_average = plot.is_some_and(plotms_columns::uses_scalar_visibility_average);
-    if extended_derived && !scalar_average {
+    let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
+    let time_antenna = antenna_average
+        && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
+    if (extended_derived && !scalar_average) || time_antenna {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
@@ -3007,7 +3010,6 @@ fn build_uncalibrated_plotms_payload(
         .transpose()?
         .flatten();
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
-    let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
@@ -3026,11 +3028,10 @@ fn build_uncalibrated_plotms_payload(
     let time_bins = plot
         .filter(|_| {
             !scalar_average
-                && !antenna_average
-                && (columns.secondary_y.is_some()
+                && (time_antenna
                     || time_baselines
                     || weighted_time_uvw
-                    || extended_derived)
+                    || (!antenna_average && (columns.secondary_y.is_some() || extended_derived)))
         })
         .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
         .map(|(plot, seconds)| {
@@ -3044,29 +3045,31 @@ fn build_uncalibrated_plotms_payload(
                     span_fields: plot.averaging.avgfield,
                     max_uvw_distance: 0.0,
                 },
-                time_baselines || weighted_time_uvw || extended_derived,
+                time_baselines || time_antenna || weighted_time_uvw || extended_derived,
             )
             .map_err(|error| error.to_string())
         })
         .transpose()?;
-    let (row_order, starts_visibility_buffer) =
-        if (vector_baselines && !time_baselines) || scalar_average || antenna_average {
-            let rows = selected
+    let (row_order, starts_visibility_buffer) = if (vector_baselines && !time_baselines)
+        || scalar_average
+        || (antenna_average && !time_antenna)
+    {
+        let rows = selected
+            .selected_rows
+            .iter()
+            .map(|row| (row.row_index, row.data_desc_id));
+        crate::transform::selected_plotms_integration_order(ms, rows)
+            .map_err(|error| error.to_string())?
+    } else {
+        (
+            selected
                 .selected_rows
-                .iter()
-                .map(|row| (row.row_index, row.data_desc_id));
-            crate::transform::selected_plotms_integration_order(ms, rows)
-                .map_err(|error| error.to_string())?
-        } else {
-            (
-                selected
-                    .selected_rows
-                    .into_iter()
-                    .map(|row| row.row_index)
-                    .collect(),
-                Vec::new(),
-            )
-        };
+                .into_iter()
+                .map(|row| row.row_index)
+                .collect(),
+            Vec::new(),
+        )
+    };
     let spw = spec
         .selection
         .spw
@@ -5378,8 +5381,10 @@ fn build_generic_visibility_scatter_with_averaging(
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
     let scalar_average = uncalibrated && plotms_columns::uses_scalar_visibility_average(spec);
     let antenna_average = uncalibrated && plotms_columns::uses_antenna_visibility_average(spec);
-    let antenna_time = antenna_average && spec.averaging.avgtime.is_some();
-    let scalar_intervals = scalar_average || antenna_time;
+    let time_antenna = antenna_average && time_bins.is_some();
+    let scalar_antenna_time =
+        antenna_average && spec.averaging.scalar && spec.averaging.avgtime.is_some();
+    let scalar_intervals = scalar_average || scalar_antenna_time;
     let scalar_visibility = scalar_average || (antenna_average && spec.averaging.scalar);
     let collapse_baselines = (plotms_columns::uses_vector_baseline_average(spec)
         || (scalar_average && spec.averaging.avgbaseline))
@@ -5389,7 +5394,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let scalar_channels = scalar_average && average_channels;
     let antenna_channels = antenna_average && average_channels;
-    let average_operands = extended_derived || scalar_channels;
+    let average_operands = extended_derived || scalar_channels || time_antenna;
     let channel_first = channel_baselines || scalar_channels || antenna_channels;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
@@ -5407,7 +5412,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let needs_weight_kind = |kind| {
         visibility_weight_kinds.is_some_and(|kinds| kinds.uses(kind))
             || channel_first_kinds.is_some_and(|kinds| kinds.row_weight == kind)
-            || (time_baselines && time_weight_kinds.is_some_and(|kinds| kinds.row_weight == kind))
+            || ((time_baselines || time_antenna)
+                && time_weight_kinds.is_some_and(|kinds| kinds.row_weight == kind))
     };
     let needs_observed_weights = needs_weight_kind(WeightKind::Observed);
     let needs_calibrated_weights = needs_weight_kind(WeightKind::Calibrated);
@@ -5598,9 +5604,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut averaged_rows = std::collections::BTreeSet::new();
-    let mut scalar_shapes = plotms_ordinates::ScalarAverageShapes::default();
-    let mut time_baseline_stats =
-        time_baselines.then(plotms_time_baselines::TimeBaselineStatistics::default);
+    let mut scalar_shapes = plotms_ordinates::VisibilityAverageShapes::default();
+    let mut time_baseline_stats = (time_baselines || time_antenna)
+        .then(plotms_time_baselines::TimeBaselineStatistics::default);
     let mut channel_buffer_first = None;
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
@@ -5637,7 +5643,7 @@ fn build_generic_visibility_scatter_with_averaging(
         // It can separate two visible buffers that have the same timestamp.
         let antenna_group = selected_observations
             .as_ref()
-            .filter(|_| antenna_average)
+            .filter(|_| antenna_average && !time_antenna)
             .map(|observations| {
                 baseline_groups.observe(
                     [
@@ -5650,7 +5656,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     spec.averaging.avgtime.unwrap_or(0.0),
                 )
             });
-        if antenna_time
+        if scalar_antenna_time
             && starts_buffer
             && let Some(group) = antenna_group
         {
@@ -5773,6 +5779,9 @@ fn build_generic_visibility_scatter_with_averaging(
         let time_channel_primary = primary_weight_grid
             .zip(time_weight_kinds.map(|kinds| kinds.primary))
             .filter(|_| extended_derived);
+        let time_antenna_spectrum = time_weight_kinds
+            .filter(|_| time_antenna)
+            .map(|kinds| weight_grid(kinds.row_weight));
         // The baseline reducer sees the mask after the last visibility cube
         // transform. Mixed stored columns use the calibrated mask here.
         let channel_mask_grid = channel_first_kinds
@@ -5837,7 +5846,12 @@ fn build_generic_visibility_scatter_with_averaging(
             })
         });
         if scalar_intervals && let Some(group) = group {
-            scalar_shapes.check_shape(group, selected_correlations.len(), channel_bins.len())?;
+            scalar_shapes.check_shape(
+                "scalar time averaging",
+                group,
+                selected_correlations.len(),
+                channel_bins.len(),
+            )?;
         }
         let representative_row = row_numbers[representative_slot];
         let span_metadata =
@@ -5892,7 +5906,9 @@ fn build_generic_visibility_scatter_with_averaging(
                         time: row_time_value,
                         interval: selected_intervals[row_slot],
                     },
-                    first_correlation: selected_correlations[0].0,
+                    first_correlation: time_baselines.then_some(selected_correlations[0].0),
+                    antenna_shape: time_antenna
+                        .then_some((selected_correlations.len(), channel_bins.len())),
                     bins: &channel_bins,
                     flags: &flags,
                     weights: weight_grid(kinds.row_weight),
@@ -5948,7 +5964,14 @@ fn build_generic_visibility_scatter_with_averaging(
             derived_engine.as_ref(),
         )?;
 
-        let baseline_tokens = averaging_baseline_tokens(antenna1_value, antenna2_value, spec);
+        let baseline_tokens = if time_antenna {
+            vec![AveragingBaselineToken::Baseline(
+                antenna1_value,
+                antenna2_value,
+            )]
+        } else {
+            averaging_baseline_tokens(antenna1_value, antenna2_value, spec)
+        };
         let shared_baseline_weight = ((collapse_baselines && !time_baselines) || scalar_average)
             .then(|| {
                 let correlation = selected_correlations[0].0;
@@ -6041,11 +6064,21 @@ fn build_generic_visibility_scatter_with_averaging(
                     let scalar_weight = antenna_weight.map_or(scalar_weight, |(_, weight)| {
                         plotms_columns::baseline_weight(f64::from(weight))
                     });
-                    // The time stage sums each column's weights. The channel
-                    // stage uses those sums and propagates the primary mask.
+                    // Later channel and antenna reductions use the sums of
+                    // weights from the vector time transform.
                     let primary_weight = primary_weight_grid
                         .filter(|_| !extended_derived)
-                        .map(|grid| plotms_columns::bin_weight(grid, *corr_index, bin, &flags));
+                        .map(|grid| plotms_columns::bin_weight(grid, *corr_index, bin, &flags))
+                        .or_else(|| {
+                            let (flagged, weight) = plotms_columns::channel_bin_weight(
+                                time_antenna_spectrum?,
+                                *corr_index,
+                                bin,
+                                &flags,
+                                plotms_columns::ChannelWeightMask::FlagsOnly,
+                            );
+                            Some(if flagged { 0.0 } else { f64::from(weight) })
+                        });
                     for (index, (grid, buffer)) in visibility_grids
                         .iter()
                         .zip(&mut bin_buffers)
@@ -6112,9 +6145,9 @@ fn build_generic_visibility_scatter_with_averaging(
                             scan_number: scan_number_value,
                             spw_id,
                             baseline: baseline_token.clone(),
-                            // The scalar averager receives the selected cube. The raw
-                            // slot can differ between data descriptions in the same bin.
-                            corr_index: if scalar_intervals {
+                            // The reducer sees the selected cube. Raw slots can
+                            // differ between data descriptions in the same bin.
+                            corr_index: if scalar_intervals || time_antenna {
                                 selected_slot
                             } else {
                                 *corr_index
@@ -6144,7 +6177,12 @@ fn build_generic_visibility_scatter_with_averaging(
                         });
                         let accumulator = series.points.entry(point_key.clone()).or_default();
                         if let Some(weight) = primary_weight {
-                            *accumulator.combined_primary_weight.get_or_insert(0.0) += weight;
+                            let sum = accumulator.combined_primary_weight.get_or_insert(0.0);
+                            if time_antenna {
+                                *sum = f64::from(*sum as f32 + weight as f32);
+                            } else {
+                                *sum += weight;
+                            }
                         }
                         if accumulator.representative.is_none() {
                             accumulator.display_channel = bin.display_channel();
@@ -6409,7 +6447,14 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_baseline_plan = time_baseline_stats
         .zip(time_bins)
         .zip(spec.averaging.avgtime)
-        .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval));
+        .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval))
+        .transpose()?;
+    if let Some(plan) = time_baseline_plan.as_ref().filter(|_| time_antenna) {
+        averaged_rows = averaged_rows
+            .into_iter()
+            .filter_map(|(group, antenna, other)| Some((plan.output_group(group)?, antenna, other)))
+            .collect();
+    }
     let derived_buffer_times = time_bins.filter(|_| extended_derived).map(|groups| {
         // PlotMS caches the first averaged baseline's time for the whole buffer.
         groups
@@ -6454,7 +6499,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .collect::<HashMap<_, _>>();
     let retain_empty_panel = average_operands
         || antenna_channels
-        || antenna_time
+        || scalar_antenna_time
         || (scalar_average && collapse_baselines)
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
@@ -6466,7 +6511,11 @@ fn build_generic_visibility_scatter_with_averaging(
         let mut series_entries = Vec::new();
         for mut series in panel.series.into_values() {
             if let Some(plan) = &time_baseline_plan {
-                plan.combine_series(&mut series);
+                if time_antenna {
+                    plan.combine_antenna_series(&mut series);
+                } else {
+                    plan.combine_series(&mut series);
+                }
             }
             let mut output = MsScatterSeries {
                 label: series.label,

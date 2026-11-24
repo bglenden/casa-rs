@@ -402,11 +402,11 @@ def compare_scalar_span_shapes(root, native, source, controls, center):
     assert compare_text(actual, expected) == 1
     np.testing.assert_allclose([float(point[0]) for point in rows(actual)], center, rtol=0, atol=.00051)
     assert [(point[1], point[3], point[12]) for point in rows(expected)] == [("-252", "-1", "XX")]
-    compare_scalar_shape_refusal(root, native, controls)
+    compare_average_shape_refusal(root, native, controls)
     print("selected-polarization: 1 matching point and matching incompatible-shape refusals", flush=True)
 
 
-def compare_scalar_shape_refusal(root, native, controls):
+def compare_average_shape_refusal(root, native, controls):
     from casars.tasks import TaskExecutionError
     from grpc import RpcError, StatusCode
 
@@ -417,13 +417,13 @@ def compare_scalar_shape_refusal(root, native, controls):
     except RpcError as error:
         assert error.code() == StatusCode.INVALID_ARGUMENT, error
     else:
-        raise AssertionError("CASA admitted unequal selected shapes into a scalar time bin")
+        raise AssertionError("CASA admitted unequal selected shapes into an averaging bin")
     try:
         native(**controls, plotfile=str(actual))
     except TaskExecutionError as error:
         assert "equal correlation and channel counts within a bin" in str(error), error
     else:
-        raise AssertionError("native PlotMS admitted unequal selected shapes into a scalar time bin")
+        raise AssertionError("native PlotMS admitted unequal selected shapes into an averaging bin")
     assert not expected.exists() and not actual.exists()
 
 
@@ -728,7 +728,7 @@ def compare_combined_scalar_stored_columns(root, native, fixtures, start):
     assert native(**controls, plotfile=str(actual)) is None
     assert compare_text(actual, expected) == 4
     np.testing.assert_allclose([float(point[0]) for point in rows(actual)], start, rtol=0, atol=.00051)
-    compare_scalar_shape_refusal(root, native, controls)
+    compare_average_shape_refusal(root, native, controls)
     print("selected-polarization: 4 matching points and matching incompatible-shape refusals", flush=True)
 
 

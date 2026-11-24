@@ -27,7 +27,7 @@ from plotms_ms_columns_oracle import (
     rows,
     time_average_fixture,
 )
-from plotms_ms_scalar_time_oracle import compare_scalar_shape_refusal, make_mixed_polarization
+from plotms_ms_scalar_time_oracle import compare_average_shape_refusal, make_mixed_polarization
 
 
 def make_fixture(root):
@@ -340,16 +340,7 @@ def compare_scalar_baseline_polarizations(root, native, source, base, start):
 
     # Reorder the full setup to give CASA a control with YY in slot zero in both setups.
     normalized = root / "matching-slots" / reduced.name
-    normalized.parent.mkdir()
-    copy_ms(reduced, normalized)
-    with opened(normalized / "POLARIZATION", True) as pol:
-        pol.putcell("CORR_TYPE", 0, pol.getcell("CORR_TYPE", 0)[::-1].copy())
-        pol.putcell("CORR_PRODUCT", 0, pol.getcell("CORR_PRODUCT", 0)[:, ::-1].copy())
-    with opened(normalized, True) as table:
-        for row in map(int, np.flatnonzero(table.getcol("DATA_DESC_ID") == 0)):
-            for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_CATEGORY", "WEIGHT", "SIGMA"):
-                if table.iscelldefined(column, row):
-                    table.putcell(column, row, table.getcell(column, row)[::-1].copy())
+    reverse_first_polarization(reduced, normalized)
     expected, actual = (root / f"selected-yy.{engine}.txt" for engine in ("casa", "native"))
     casa_controls = controls | dict(vis=str(normalized))
     assert reference(**casa_controls, plotfile=str(expected), expformat="txt") is None
@@ -359,6 +350,19 @@ def compare_scalar_baseline_polarizations(root, native, source, base, start):
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == 1
     print("selected-yy: 1 point matching the CASA control with aligned physical correlation slots", flush=True)
+
+
+def reverse_first_polarization(source, output):
+    output.parent.mkdir()
+    copy_ms(source, output)
+    with opened(output / "POLARIZATION", True) as pol:
+        pol.putcell("CORR_TYPE", 0, pol.getcell("CORR_TYPE", 0)[::-1].copy())
+        pol.putcell("CORR_PRODUCT", 0, pol.getcell("CORR_PRODUCT", 0)[:, ::-1].copy())
+    with opened(output, True) as table:
+        for row in map(int, np.flatnonzero(table.getcol("DATA_DESC_ID") == 0)):
+            for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_CATEGORY", "WEIGHT", "SIGMA"):
+                if table.iscelldefined(column, row):
+                    table.putcell(column, row, table.getcell(column, row)[::-1].copy())
 
 
 def compare_empty_scalar_baselines(root, native, source, controls):
@@ -832,9 +836,10 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
         table.removecols(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
     mixed = make_mixed_polarization(variable, root / "scalar-antenna-mixed-polarization.ms",
                                     lambda table: table.getcol("FLAG_ROW"))
-    compare_scalar_shape_refusal(root, native, controls | dict(vis=str(mixed), expformat="txt"))
+    compare_average_shape_refusal(root, native, controls | dict(vis=str(mixed), expformat="txt"))
     print("scalar-antenna-time: matching unequal-shape refusal in a row-flagged buffer", flush=True)
     compare_scalar_antenna_time_virtual_guard(root, native, source, controls)
+    compare_vector_antenna_time_averages(root, native, source, start, controls, amplitudes, turns)
 
 
 def compare_scalar_antenna_time_virtual_guard(root, native, source, base):
@@ -863,6 +868,199 @@ def compare_scalar_antenna_time_virtual_guard(root, native, source, base):
     with opened(virtual) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical)
     print("scalar-antenna-time: refusing the pending averaged virtual model", flush=True)
+
+
+def compare_vector_antenna_time_averages(root, native, source, start, base, amplitudes, turns):
+    controls = base | dict(vis=str(source), xaxis="real", yaxis="imag", scalar=False,
+                           title="Vector antenna time averages")
+    rotations = amplitudes.astype(float) * np.exp(1j * np.radians(turns.astype(float)))
+    split = root / "vector-antenna-time-split-spectra.ms"
+    copy_ms(source, split)
+    with opened(split, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        distant = table.getcol("ANTENNA2") == 2
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        sigmas = table.getcol("SIGMA_SPECTRUM")
+        weights[0, 1, distant & (integration == 1)] = 9
+        sigmas[0, 1, distant & (integration == 0)] = 2
+        table.putcol("WEIGHT_SPECTRUM", weights)
+        table.putcol("SIGMA_SPECTRUM", sigmas)
+    cases = (
+        ("vector-antenna-time", {}, ((0, 4), (4, 6))),
+        ("vector-antenna-time-axis", dict(xaxis="time"), ((0, 4), (4, 6))),
+        ("vector-antenna-shorter-time", dict(avgtime="15"), ((0, 2), (2, 4), (4, 6))),
+        ("vector-antenna-row-only", dict(vis=str(root / "scalar-antenna-row-only-time.ms")),
+         ((0, 4), (4, 6))),
+        ("vector-antenna-split-spectra", dict(vis=str(split)), ((0, 4), (4, 6))),
+        ("vector-antenna-cube-flags", dict(vis=str(root / "scalar-antenna-flagged-time.ms")),
+         ((0, 4), (4, 6))),
+    )
+    for name, overrides, groups in cases:
+        request_args = controls | overrides
+        coordinates, centers, identifiers = [], [], []
+        for begin, end in groups:
+            center = start + (begin + end - 1) * 5
+            selected_rotations = rotations[begin:end]
+            if name == "vector-antenna-cube-flags" and begin == 0:
+                selected_rotations = selected_rotations[[0, 1, 3]]
+            averaged_rotation = selected_rotations.mean()
+            observed = (1 + 4j) * averaged_rotation
+            corrected = (10 + 14j) * averaged_rotation
+            antenna_visibility = [(observed * factor, corrected * factor) for factor in ((1 + 6j) / 4, 1, 2j)]
+            if name == "vector-antenna-split-spectra" and begin == 0:
+                # The distant baseline uses distinct per-column time weights.
+                # The antenna stage weights both columns by the transformed 12 and 6.
+                observed_rotation = np.average(
+                    (np.average(rotations[:2], weights=(.25, 1)), rotations[2:4].mean()),
+                    weights=(12, 6),
+                )
+                corrected_rotation = np.average(rotations[:4], weights=(3, 9, 3, 3))
+                distant = ((1 + 4j) * 2j * observed_rotation, (10 + 14j) * 2j * corrected_rotation)
+                antenna_visibility[0] = tuple(
+                    (4 * near + 18 * far) / 22
+                    for near, far in zip((observed, corrected), distant, strict=True)
+                )
+                antenna_visibility[2] = distant
+            for antenna, (antenna_observed, antenna_corrected) in enumerate(antenna_visibility):
+                x = center if request_args["xaxis"] == "time" else antenna_observed.real
+                y = antenna_corrected.imag
+                coordinates.append((x, y if antenna == 0 else -y))
+                centers.append(center)
+                identifiers.append((str(antenna), "-1", "XX"))
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**request_args, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[5], point[6], point[12]) for point in selected] == identifiers
+        assert {(point[2], point[10]) for point in selected} == {("1", "100.001000000")}
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        assert native(**request_args, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        if request_args["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+            compare_figure(root, native, request_args, expected,
+                           (controls["title"], "Time (MJD seconds)", "Imag:corrected"))
+        print(f"{name}: {len(coordinates)} matching vector antenna time coordinates", flush=True)
+    compare_empty_export(root, native, "all-flagged-vector-antenna-time",
+                         controls | dict(vis=str(root / "scalar-antenna-all-flagged-time.ms")),
+                         ("Real", "Imag:corrected"))
+    compare_vector_antenna_time_order(root, native, source, controls, start)
+    compare_vector_antenna_time_polarizations(root, native, source, controls, start)
+    compare_vector_antenna_time_cancellation(root, native, source, controls, start)
+
+
+def compare_vector_antenna_time_order(root, native, source, controls, start):
+    reordered = root / "vector-antenna-time-reordered.ms"
+    copy_ms(source, reordered)
+    with opened(reordered, True) as table:
+        times = table.getcol("TIME")
+        first, second, third = np.unique(times)[:3]
+        first_rows, second_rows, third_rows = (times == time for time in (first, second, third))
+        times[second_rows] = third
+        times[third_rows] = second
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+        for column, unit in (("DATA", 1), ("CORRECTED_DATA", 1j)):
+            values = table.getcol(column)
+            values[0, 1, first_rows] = 1e8 * unit
+            values[0, 1, second_rows] = -1e8 * unit
+            values[0, 1, third_rows] = unit
+            table.putcol(column, values)
+    args = controls | dict(vis=str(reordered), antenna="A0&A1", avgtime="40",
+                           msselect=f"TIME < {start + 21:.3f}", expformat="txt")
+    expected, actual = (root / f"vector-antenna-time-order.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**args, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [point[5:7] for point in selected] == [["0", "-1"], ["1", "-1"]]
+    # The chronological Float sums cancel. Physical row order would retain 1/3.
+    np.testing.assert_array_equal(np.array([point[:2] for point in selected], dtype=float), 0)
+    np.testing.assert_allclose([float(point[9]) for point in selected], start + 10, rtol=0, atol=.00051)
+    assert native(**args, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+    print("vector-antenna-time-order: 2 matching chronological cancellation coordinates", flush=True)
+
+
+def compare_vector_antenna_time_polarizations(root, native, source, controls, start):
+    from grpc import RpcError, StatusCode
+
+    selected = root / "vector-antenna-time-polarizations"
+    selected.mkdir()
+    fixture = selected / "mixed-source.ms"
+    copy_ms(source, fixture)
+    with opened(fixture, True) as table:
+        table.removecols(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
+        for column in ("WEIGHT", "SIGMA"):
+            table.putcol(column, np.ones_like(table.getcol(column)))
+        distant = table.getcol("ANTENNA2") == 2
+        for column, hand in (("DATA", 1), ("CORRECTED_DATA", 2j)):
+            cube = table.getcol(column)
+            cube[1, 1, :], cube[2, 1, :] = hand, 3 * hand
+            cube[3, 1, :] = np.where(distant, 3 * hand, hand)
+            table.putcol(column, cube)
+
+    args = controls | dict(vis=str(fixture), antenna="A0&A1", msselect=f"TIME < {start + 1:.3f}")
+    for name, correlation, hands in (("crosshands", "XY,YX", ("XY", "YX")), ("one-crosshand", "XY", ("XY",))):
+        request_args = args | dict(correlation=correlation, expformat="txt")
+        expected, actual = (selected / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**request_args, plotfile=str(expected)) is None
+        points = rows(expected)
+        assert [(point[5], point[6], point[12]) for point in points] == [
+            (str(antenna), "-1", hand) for antenna in (0, 1) for hand in hands
+        ]
+        coordinates = [(value, sign * value * 2) for sign in (1, -1) for value in (1, 3)[:len(hands)]]
+        np.testing.assert_allclose(np.array([point[:2] for point in points], dtype=float), coordinates)
+        assert native(**request_args, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(points)
+        print(f"{name}: {len(points)} matching vector antenna time coordinates", flush=True)
+
+    mixed = make_mixed_polarization(fixture, selected / "mixed.ms",
+                                    lambda table: table.getcol("ANTENNA2") == 2, correlation_slot=3)
+    args |= dict(vis=str(mixed), antenna="A0&A1;A0&A2", expformat="txt")
+    compare_average_shape_refusal(selected, native, args)
+    print("vector-antenna-time: matching within-bin shape refusal", flush=True)
+    rejected = selected / "different-physical-slots.casa.txt"
+    try:
+        reference(**(args | dict(correlation="YY")), plotfile=str(rejected))
+    except RpcError as error:
+        assert error.code() == StatusCode.INVALID_ARGUMENT, error
+    else:
+        raise AssertionError("CASA accepted YY at different physical correlation slots")
+    assert not rejected.exists()
+    normalized = selected / "matching-slots" / mixed.name
+    reverse_first_polarization(mixed, normalized)
+    expected, actual = (selected / f"selected-yy.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**(args | dict(vis=str(normalized), correlation="YY")), plotfile=str(expected)) is None
+    points = rows(expected)
+    assert [(point[5], point[6], point[12]) for point in points] == [(str(a), "-1", "YY") for a in range(3)]
+    np.testing.assert_allclose(np.array([point[:2] for point in points], dtype=float), [(2, 4), (1, -2), (3, -6)])
+    assert native(**(args | dict(correlation="YY")), plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 3
+    print("vector-antenna-time: 3 YY coordinates match the aligned-slot CASA control", flush=True)
+
+
+def compare_vector_antenna_time_cancellation(root, native, source, controls, start):
+    cancelled = root / "vector-antenna-cancellation.ms"
+    copy_ms(source, cancelled)
+    with opened(cancelled, True) as table:
+        antenna2 = table.getcol("ANTENNA2")
+        for column in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(column)
+            for antenna, value in ((1, 1e8 + 1j), (2, 1), (3, -1e8)):
+                values[0, 1, antenna2 == antenna] = value
+            table.putcol(column, values)
+        table.putcol("WEIGHT_SPECTRUM", np.ones_like(table.getcol("WEIGHT_SPECTRUM")))
+    args = controls | dict(vis=str(cancelled), antenna="A0&A1;A0&A2;A0&A3", yaxis="phase",
+                           msselect=f"TIME < {start + 1:.3f}", expformat="txt")
+    expected, actual = (root / f"vector-antenna-cancellation.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**args, plotfile=str(expected)) is None
+    points = rows(expected)
+    assert [point[5:7] for point in points] == [[str(a), "-1"] for a in range(4)]
+    # Summing the three baselines in Float cancels the real component at antenna 0.
+    assert np.array_equal(np.array(points[0][:2], dtype=float), [0, 90])
+    assert native(**args, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 4
+    print("vector-antenna-cancellation: 4 matching second-stage Float coordinates", flush=True)
 
 
 def main():
