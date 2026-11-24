@@ -73,10 +73,11 @@
       ]
     },
     "xaxis": {
-      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths.",
+      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights.",
       "evidence": [
         "paired",
-        "ms-interval-wavelength"
+        "ms-interval-wavelength",
+        "ms-vector-time-uvw"
       ],
       "behaviors": [
         "coordinates"
@@ -125,12 +126,13 @@
       ]
     },
     "yaxis": {
-      "scope": "Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates.",
+      "scope": "Plot a single ordinate or a list. Unaveraged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights.",
       "evidence": [
         "paired",
         "ms-multiple-visibility-ordinates",
         "ms-interval-wavelength",
-        "ms-channel-statistics"
+        "ms-channel-statistics",
+        "ms-vector-time-uvw"
       ],
       "behaviors": [
         "coordinates"
@@ -370,14 +372,15 @@
       "status": "Partial"
     },
     "avgtime": {
-      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries.",
+      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights.",
       "evidence": [
         "paired",
         "ms-time-columns",
         "ms-channel-time-columns",
         "ms-baseline-time-columns",
         "ms-baseline-time-channel-columns",
-        "ms-scalar-time-columns"
+        "ms-scalar-time-columns",
+        "ms-vector-time-uvw"
       ],
       "behaviors": [
         "averaging"
@@ -1132,7 +1135,7 @@
       "id": "averaging",
       "title": "Average selected plot samples",
       "status": "Partial",
-      "scope": "Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags. Ordinary vector time averaging uses the selected integrations, per-column weights and the MeasurementSet transform time groups. Channel averaging can follow ordinary vector time averaging. The primary channel weights determine which averaged bins render. Vector time bins can span the requested scan and field boundaries. Vector baseline averages use the visibility iterator order and preserve separate observations. Text exports use synthetic antenna IDs. For combined channel and baseline averages, each visibility column is averaged across channels before the baseline reducer applies the transformed scalar weight. Combined vector time and baseline averages follow the subchunks emitted by the time-averaging iterator and use their interval bounds. With all three vector controls, baseline weights come from the time-accumulated and channel-binned spectra. Ordinary scalar time averaging uses the raw visibility buffer windows and separate amplitude and phase means. Channel-averaged statistical coordinates use transformed spectra, the selected cube mask and the observed or calibrated column role.",
+      "scope": "Average calibration solutions in weighted channel and time bins with scan, field, antenna, baseline and spectral-window controls. Keep flagged channel frequency coordinates consistent with the CASA cache. For MeasurementSets, independently channel-average stored visibility columns while applying each column's spectral weights and the selected channel flags. Ordinary vector time averaging uses the selected integrations, per-column weights and the MeasurementSet transform time groups. Channel averaging can follow ordinary vector time averaging. The primary channel weights determine which averaged bins render. Vector time bins can span the requested scan and field boundaries. Vector baseline averages use the visibility iterator order and preserve separate observations. Text exports use synthetic antenna IDs. For combined channel and baseline averages, each visibility column is averaged across channels before the baseline reducer applies the transformed scalar weight. Combined vector time and baseline averages follow the subchunks emitted by the time-averaging iterator and use their interval bounds. With all three vector controls, baseline weights come from the time-accumulated and channel-binned spectra. Ordinary scalar time averaging uses the raw visibility buffer windows and separate amplitude and phase means. Channel-averaged statistical coordinates use transformed spectra, the selected cube mask and the observed or calibrated column role. Baseline coordinates for ordinary vector time averaging use the transform row weights and the selected cube mask.",
       "evidence": [
         "paired",
         "ms-channel-columns",
@@ -1144,7 +1147,8 @@
         "ms-baseline-time-columns",
         "ms-baseline-time-channel-columns",
         "ms-scalar-time-columns",
-        "ms-channel-statistics"
+        "ms-channel-statistics",
+        "ms-vector-time-uvw"
       ],
       "gap": "Scalar combinations with other averaging controls, antenna and spectral-window averaging, fully masked exports, effective FLOAT_DATA and derived visibility averages, and additional flagged and weight coordinates remain under #1032."
     },
@@ -1642,6 +1646,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-channel-statistics-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2181"
+      ]
+    },
+    "ms-vector-time-uvw": {
+      "kind": "Same-input vector-time weighted MeasurementSet UVW",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs ordinary vector-time MeasurementSet U, V, W and UV distance axes in metres with stored visibilities.",
+      "result": "Sixteen paired text exports match 90 selected points and their metadata. The cases check visibility-column-specific row weights, both correlation slots, the selected cube flags and channels, the length of the averaged UV vector, per-buffer optional spectra and UV distance as a raw, channel-averaged or time-averaged ordinate. A 500 by 360 pixel PNG matches six coordinates for independently selected visibility layers.",
+      "casa_version": "6.7.6.14",
+      "revision": "82265bc45d0148717c963a0c7a55e1a2d5a99115",
+      "source_revision": "82265bc45d0148717c963a0c7a55e1a2d5a99115",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <columns-dir> --native-bin <msexplore> --calibrate-bin <calibrate> && casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <baseline-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-vector-time-uvw-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2184"
       ]
     }
   }
