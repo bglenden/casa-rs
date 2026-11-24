@@ -136,6 +136,16 @@ const SCALARS: [(&str, &str); 10] = [
     ("time", "TIME"),
 ];
 
+const COMPLEX_PRODUCTS: [(&str, &str, bool); 6] = [
+    ("", "DATA", false),
+    ("corrected_", "CORRECTED_DATA", false),
+    ("model_", "MODEL_DATA", false),
+    ("ratio_", "CORRECTED_DATA", true),
+    ("residual_", "CORRECTED_DATA", true),
+    ("obs_residual_", "DATA", true),
+];
+const PRODUCT_NAMES: [&str; 5] = ["data", "amplitude", "phase", "real", "imaginary"];
+
 impl<'a> VisibilityRead<'a> {
     fn new(
         main: &'a Table,
@@ -426,44 +436,13 @@ impl<'a> VisibilityRead<'a> {
                     ArrayValue::Float32(vector(Vec::new()))
                 };
                 fields.insert(name.clone(), Value::Array(empty));
-            } else if let Some(derived) = name.strip_prefix("avg_") {
-                if average
-                    && ["data", "amplitude", "phase", "real", "imaginary"]
-                        .iter()
-                        .any(|&part| name.contains(part))
-                {
-                    // CASA adds another averaging prefix and does not recognize it.
-                    continue;
-                }
-                if average
-                    && matches!(
-                        derived,
-                        "antenna1" | "antenna2" | "feed1" | "feed2" | "sigma" | "time"
-                    )
-                    && !names.contains(derived)
-                {
-                    return Err(input(format!(
-                        "RecordInterface: field {derived} is unknown"
-                    )));
-                }
-                // The ordinary CASA reader accepts this prefix and returns its
-                // underlying visibility column without applying a projection.
-                let base = derived
-                    .rsplit_once('_')
-                    .map_or_else(|| "data".to_owned(), |(prefix, _)| format!("{prefix}_data"));
-                aliases.entry(base).or_default().push(name.clone());
+            } else if let Some((base, alias)) = raw_visibility_alias(name, names, average)? {
+                aliases.entry(base).or_default().push(alias);
             }
         }
         let mut reduction = None;
-        for (prefix, source, uses_model) in [
-            ("", "DATA", false),
-            ("corrected_", "CORRECTED_DATA", false),
-            ("model_", "MODEL_DATA", false),
-            ("ratio_", "CORRECTED_DATA", true),
-            ("residual_", "CORRECTED_DATA", true),
-            ("obs_residual_", "DATA", true),
-        ] {
-            let requested = ["data", "amplitude", "phase", "real", "imaginary"].map(|name| {
+        for (prefix, source, uses_model) in COMPLEX_PRODUCTS {
+            let requested = PRODUCT_NAMES.map(|name| {
                 let key = format!("{prefix}{name}");
                 (names.contains(&key) && !fields.contains_key(&key)).then_some(key)
             });
@@ -588,6 +567,45 @@ impl<'a> VisibilityRead<'a> {
             .expect("averaging input exists")
             .reduce(values)
     }
+}
+
+fn raw_visibility_alias(
+    name: &str,
+    names: &BTreeSet<String>,
+    average: bool,
+) -> MsResult<Option<(String, String)>> {
+    let (alias, derived) = if average && PRODUCT_NAMES.iter().any(|&part| name.contains(part)) {
+        let supported = name == "float_data"
+            || COMPLEX_PRODUCTS.iter().any(|&(prefix, _, _)| {
+                name.strip_prefix(prefix)
+                    .is_some_and(|part| PRODUCT_NAMES.contains(&part))
+            });
+        if supported {
+            return Ok(None);
+        }
+        // CASA adds the prefix before recognizing the item. An unrecognized
+        // item can still resolve to a raw visibility column under that name.
+        (format!("avg_{name}"), name)
+    } else if let Some(derived) = name.strip_prefix("avg_") {
+        if average
+            && matches!(
+                derived,
+                "antenna1" | "antenna2" | "feed1" | "feed2" | "sigma" | "time"
+            )
+            && !names.contains(derived)
+        {
+            return Err(input(format!(
+                "RecordInterface: field {derived} is unknown"
+            )));
+        }
+        (name.to_owned(), derived)
+    } else {
+        return Ok(None);
+    };
+    let base = derived
+        .rsplit_once('_')
+        .map_or_else(|| "data".to_owned(), |(prefix, _)| format!("{prefix}_data"));
+    Ok(Some((base, alias)))
 }
 
 fn require_single_average(items: &[String], name: &str) -> MsResult<()> {

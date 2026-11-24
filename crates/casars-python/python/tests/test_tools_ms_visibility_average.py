@@ -16,7 +16,8 @@ def test_ms_getdata_average_uses_weights_for_each_row_and_correlation(native_dat
     rows = np.arange(6, dtype=np.int64)
     shape = writer.getcell("DATA", 0).shape + (len(rows),)
     real = np.arange(1, 1 + np.prod(shape), dtype=np.float32).reshape(shape, order="F")
-    data = (real + 0.1j * real).astype(np.complex64)
+    imaginary = real * np.where(rows % 2 == 0, 1.25, -0.75)
+    data = (real + 1j * imaginary).astype(np.complex64)
     flags = np.zeros(shape, dtype=bool)
     flags[0, 0, 1] = True
     flags[1, 0, -1] = True
@@ -35,6 +36,8 @@ def test_ms_getdata_average_uses_weights_for_each_row_and_correlation(native_dat
     expected = np.divide(numerator, total, out=np.zeros_like(numerator), where=total != 0)
     expected = expected.astype(np.complex64).astype(np.complex128)
     assert expected[0, 0].real == pytest.approx(30.575758, rel=1e-6)
+    mean_amplitude = (np.abs(data[0, 0]) * sample_weights[0, 0]).sum() / total[0, 0]
+    assert mean_amplitude - abs(expected[0, 0]) > 1
 
     reference_reader = casa.ms()
     assert reference_reader.open(reference)
@@ -125,6 +128,15 @@ def test_ms_getdata_average_item_aliases_errors_and_repeated_sigma(native_datase
         assert reader.nrow(True) == row_count
         record = reader.getdata(["avg_time", "time", "avg_foo", "avg_amplitude"], average=True)
         assert set(record) == {"avg_time", "time", "avg_foo"}
+        raw = reader.getdata("data")["data"]
+        aliases = reader.getdata(["metadata", "realpart", "amplitudes"], average=True)
+        assert set(aliases) == {"avg_metadata", "avg_realpart", "avg_amplitudes"}
+        for alias in aliases.values():
+            np.testing.assert_array_equal(alias, raw, strict=True)
+        mixed = reader.getdata(["data", "metadata"], average=True)
+        assert set(mixed) == {"data", "avgweight", "avg_metadata"}
+        assert mixed["data"].shape == raw.shape[:2]
+        np.testing.assert_array_equal(mixed["avg_metadata"], raw, strict=True)
         records.append(record)
         assert reader.done()
     same_visibility(*records[::-1])
