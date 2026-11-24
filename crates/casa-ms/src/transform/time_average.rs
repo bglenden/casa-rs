@@ -94,6 +94,21 @@ pub(super) fn plan(
     let rows = selected.iter().map(|row| row.row_index).collect::<Vec<_>>();
     let baseline = matches!(order, MainRowOrder::Baseline);
     let beam_order = matches!(order, MainRowOrder::SingleDish | MainRowOrder::Atmosphere);
+    let combine_spectral_windows = matches!(order, MainRowOrder::SpectralWindowAverage);
+    let spectral_windows = if combine_spectral_windows {
+        let descriptions = input
+            .data_description()
+            .map_err(|error| MsTransformError::Spectrum(error.to_string()))?;
+        (0..descriptions.row_count())
+            .map(|row| {
+                descriptions
+                    .spectral_window_id(row)
+                    .map_err(|error| MsTransformError::Spectrum(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     let mut samples = selected
         .iter()
         .map(|row| TimeSample {
@@ -107,7 +122,11 @@ pub(super) fn plan(
                 0,
                 0,
                 if options.span_fields { 0 } else { row.field_id },
-                row.data_desc_id,
+                if combine_spectral_windows {
+                    0
+                } else {
+                    row.data_desc_id
+                },
             ]),
             time: row.time_mjd_seconds,
             antenna_pair: [row.antenna1_id, row.antenna2_id],
@@ -161,6 +180,7 @@ pub(super) fn plan(
         samples,
         options.interval_seconds,
         options.max_uvw_distance,
+        &spectral_windows,
     ))
 }
 
@@ -210,8 +230,14 @@ pub(crate) fn selected_plot_time_groups(
     rows: &[ResolvedMsSelectionRow],
     options: TimeAverageOptions,
     collect_buffers: bool,
+    combine_spectral_windows: bool,
 ) -> Result<PlotTimeGroups, MsTransformError> {
-    let groups = plan(ms, rows, options, MainRowOrder::Transform)?;
+    let order = if combine_spectral_windows {
+        MainRowOrder::SpectralWindowAverage
+    } else {
+        MainRowOrder::Transform
+    };
+    let groups = plan(ms, rows, options, order)?;
     let buffers = if collect_buffers {
         plot_time_buffers(&groups)
     } else {
@@ -261,6 +287,7 @@ pub(super) fn group_baselines(
     mut samples: Vec<TimeSample>,
     timebin: f64,
     max_uvw_distance: f64,
+    spectral_windows: &[i32],
 ) -> Vec<TimeGroup> {
     samples.sort_unstable_by(|left, right| {
         left.chunk
@@ -275,7 +302,7 @@ pub(super) fn group_baselines(
         f64::INFINITY
     };
     let mut finished = Vec::new();
-    let mut baselines = BTreeMap::<[i32; 2], usize>::new();
+    let mut baselines = BTreeMap::<([i32; 2], i32), usize>::new();
     let mut active: Vec<TimeGroup> = Vec::new();
     let mut chunk = None;
     let mut buffer_start: Option<TimeSample> = None;
@@ -293,7 +320,15 @@ pub(super) fn group_baselines(
             physical: sample.row,
             buffer_first: first.row,
         };
-        let slot = *baselines.entry(sample.antenna_pair).or_insert(active.len());
+        // A combined iterator chunk can contain several windows, but vector
+        // time averaging still maintains a separate baseline in each window.
+        let spw = spectral_windows
+            .get(sample.description as usize)
+            .copied()
+            .unwrap_or(0);
+        let slot = *baselines
+            .entry((sample.antenna_pair, spw))
+            .or_insert(active.len());
         if slot == active.len() {
             active.push(TimeGroup::new(sample, row));
         } else if active[slot].exceeds(&sample, max_time, max_uvw_squared) {

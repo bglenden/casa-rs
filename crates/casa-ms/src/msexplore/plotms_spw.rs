@@ -8,6 +8,7 @@ use casa_types::measures::frequency::MFrequency;
 
 use super::ChannelBin;
 use super::plotms_ordinates::ScalarSpanPlan;
+use super::plotms_time_baselines::TimeBaselinePlan;
 use crate::columns::frequency_columns::ChanFreqColumn;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +107,20 @@ impl SpectralAverageGroups {
     pub(super) fn into_averages(
         mut self,
         spans: Option<&ScalarSpanPlan>,
+        time_plan: Option<&TimeBaselinePlan>,
     ) -> Arc<[Option<MsScatterPlotMsAverageSpw>]> {
+        if let Some(plan) = time_plan {
+            return plan
+                .spectral_window_buffers()
+                .map(|(first, last, scan_field)| {
+                    let mut average = self.averages.get(first)?.as_ref()?.clone();
+                    let last = self.averages.get(last)?.as_ref()?;
+                    average.channels.clone_from(&last.channels);
+                    average.scan_field = Some(scan_field);
+                    Some(average)
+                })
+                .collect();
+        }
         if let Some(spans) = spans {
             for (group, average) in self.averages.iter_mut().enumerate() {
                 if let Some(average) = average {

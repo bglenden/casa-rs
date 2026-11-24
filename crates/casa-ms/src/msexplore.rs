@@ -2985,12 +2985,15 @@ fn build_uncalibrated_plotms_payload(
     let extended_derived = columns.extended_derived;
     let scalar_average = plot.is_some_and(plotms_columns::uses_scalar_visibility_average);
     let spw_average = plot.is_some_and(plotms_columns::uses_spectral_window_average);
+    let scalar_spw = spw_average && plot.is_some_and(|plot| plot.averaging.scalar);
+    let time_spw = spw_average
+        && plot.is_some_and(|plot| !plot.averaging.scalar && plot.averaging.avgtime.is_some());
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
     let direct_time_channels =
         !extended_derived && plot.is_some_and(plotms_columns::uses_direct_vector_time_channels);
-    if (extended_derived && !scalar_average) || time_antenna || direct_time_channels {
+    if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_channels {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
@@ -3044,9 +3047,10 @@ fn build_uncalibrated_plotms_payload(
     }
     let time_bins = plot
         .filter(|_| {
-            !scalar_average
+            !(scalar_average || scalar_spw)
                 && (time_antenna
                     || time_baselines
+                    || time_spw
                     || weighted_time_uvw
                     || direct_time_channels
                     || (!antenna_average && (columns.secondary_y.is_some() || extended_derived)))
@@ -3065,16 +3069,18 @@ fn build_uncalibrated_plotms_payload(
                 },
                 time_baselines
                     || time_antenna
+                    || time_spw
                     || weighted_time_uvw
                     || extended_derived
                     || direct_time_channels,
+                time_spw,
             )
             .map_err(|error| error.to_string())
         })
         .transpose()?;
     let (row_order, starts_visibility_buffer) = if (vector_baselines && !time_baselines)
         || scalar_average
-        || spw_average
+        || (spw_average && !time_spw)
         || (antenna_average && !time_antenna)
     {
         let rows = selected
@@ -5425,12 +5431,13 @@ fn build_generic_visibility_scatter_with_averaging(
     let weighted_time_uvw = time_bins.is_some() && plotms_columns::uses_weighted_time_uvw(spec);
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
     let spw_average = uncalibrated && plotms_columns::uses_spectral_window_average(spec);
+    let time_spw = spw_average && time_bins.is_some();
     let scalar_average = uncalibrated && plotms_columns::uses_scalar_visibility_average(spec);
     let antenna_average = uncalibrated && plotms_columns::uses_antenna_visibility_average(spec);
     let time_antenna = antenna_average && time_bins.is_some();
     let scalar_antenna_time =
         antenna_average && spec.averaging.scalar && spec.averaging.avgtime.is_some();
-    let scalar_spw_time = spw_average && spec.averaging.avgtime.is_some();
+    let scalar_spw_time = spw_average && spec.averaging.scalar && spec.averaging.avgtime.is_some();
     let scalar_intervals = scalar_average || scalar_antenna_time || scalar_spw_time;
     let scalar_visibility =
         scalar_average || ((antenna_average || spw_average) && spec.averaging.scalar);
@@ -5470,7 +5477,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let needs_weight_kind = |kind| {
         visibility_weight_kinds.is_some_and(|kinds| kinds.uses(kind))
             || channel_first_kinds.is_some_and(|kinds| kinds.row_weight == kind)
-            || ((time_baselines || time_antenna)
+            || ((time_baselines || time_antenna || time_spw)
                 && time_weight_kinds.is_some_and(|kinds| kinds.row_weight == kind))
     };
     let needs_observed_weights = needs_weight_kind(WeightKind::Observed);
@@ -5548,7 +5555,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let use_spectral_weights = calibration.is_some()
         && needs_visibility_grid
         && (!scalar_average || scalar_channels)
-        && (!spw_average || spw_channels)
+        && (!spw_average || spw_channels || time_spw)
         && (!collapse_baselines || channel_baselines || time_baselines);
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
@@ -5667,7 +5674,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut averaged_rows = std::collections::BTreeSet::new();
     let mut scalar_shapes = plotms_ordinates::VisibilityAverageShapes::default();
     let mut spw_groups = spw_average.then(plotms_spw::SpectralAverageGroups::default);
-    let mut time_baseline_stats = (time_baselines || time_antenna)
+    let mut time_baseline_stats = (time_baselines || time_antenna || time_spw)
         .then(plotms_time_baselines::TimeBaselineStatistics::default);
     let mut channel_buffer_first = None;
 
@@ -5992,8 +5999,9 @@ fn build_generic_visibility_scatter_with_averaging(
                         time: row_time_value,
                         interval: selected_intervals[row_slot],
                     },
-                    first_correlation: time_baselines.then_some(selected_correlations[0].0),
-                    antenna_shape: time_antenna
+                    first_correlation: (time_baselines || time_spw)
+                        .then_some(selected_correlations[0].0),
+                    visibility_shape: (time_antenna || time_spw)
                         .then_some((selected_correlations.len(), channel_bins.len())),
                     bins: &channel_bins,
                     flags: &flags,
@@ -6062,8 +6070,10 @@ fn build_generic_visibility_scatter_with_averaging(
         } else {
             averaging_baseline_tokens(antenna1_value, antenna2_value, spec)
         };
-        let shared_baseline_weight =
-            ((collapse_baselines && !time_baselines) || scalar_average || spw_average).then(|| {
+        let shared_baseline_weight = ((collapse_baselines && !time_baselines)
+            || scalar_average
+            || (spw_average && !time_spw))
+            .then(|| {
                 let correlation = selected_correlations[0].0;
                 let weight = channel_first_kinds.map_or(weight_values[correlation], |kinds| {
                     plotms_columns::channel_averaged_row_weight(
@@ -6545,7 +6555,10 @@ fn build_generic_visibility_scatter_with_averaging(
         .zip(time_bins)
         .map(|(statistics, groups)| statistics.plan(groups, &row_numbers, &spec.averaging))
         .transpose()?;
-    if let Some(plan) = time_baseline_plan.as_ref().filter(|_| time_antenna) {
+    if let Some(plan) = time_baseline_plan
+        .as_ref()
+        .filter(|_| time_antenna || time_spw)
+    {
         averaged_rows = averaged_rows
             .into_iter()
             .filter_map(|(group, antenna, other)| Some((plan.output_group(group)?, antenna, other)))
@@ -6572,7 +6585,12 @@ fn build_generic_visibility_scatter_with_averaging(
             .map(|(group, average)| (group, average.mean()))
             .collect::<HashMap<_, _>>()
     });
-    let spw_groups = spw_groups.map(|groups| groups.into_averages(scalar_spans.as_ref()));
+    let spw_groups = spw_groups.map(|groups| {
+        groups.into_averages(
+            scalar_spans.as_ref(),
+            time_baseline_plan.as_ref().filter(|_| time_spw),
+        )
+    });
     let averaged_ids = if let Some(groups) = &spw_groups {
         let row_groups = averaged_rows.iter().map(|&(group, _, _)| group).collect();
         Some(MsScatterPlotMsAverageIds::SpectralWindow {
@@ -6637,7 +6655,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 if time_antenna {
                     plan.combine_antenna_series(&mut series);
                 } else {
-                    plan.combine_series(&mut series);
+                    plan.combine_series(&mut series, time_spw);
                 }
             }
             let mut output = MsScatterSeries {
