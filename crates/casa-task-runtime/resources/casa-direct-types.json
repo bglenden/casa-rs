@@ -749,7 +749,8 @@
     "overwrite": "cBool",
     "field": "cStr",
     "spw": "cStr",
-    "scan": "cStr"
+    "scan": "cStr",
+    "intent": "cStr"
   },
   "sdfit": {
     "datacolumn": "cStr",

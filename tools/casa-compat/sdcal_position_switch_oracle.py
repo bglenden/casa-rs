@@ -271,12 +271,19 @@ tool.lock(write=True, nattempts=1)
 assert tool.haslock(write=True)
 print('locked', flush=True)
 sys.stdin.readline()
+assert tool.haslock(write=True)
 tool.close()
 """
-    for mode, vis, product in [('ps', seed, root / 'native-data.cal'),
-                               ('tsys', temperatures, root / 'native-tsys.cal')]:
+    separate = root / 'busy-output.ms'
+    copy_ms(seed, separate)
+    sky = root / 'native-data.cal'
+    tsys = root / 'native-tsys.cal'
+    for mode, vis, product, locked in (
+        ('ps', seed, sky, sky), ('tsys', temperatures, tsys, tsys),
+        ('ps', seed, separate, separate / 'FIELD'),
+    ):
         before = columns(product)
-        with subprocess.Popen([sys.executable, '-c', hold, str(product)], text=True,
+        with subprocess.Popen([sys.executable, '-c', hold, str(locked)], text=True,
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE) as peer:
             try:
                 assert select.select([peer.stdout], [], [], 15.)[0]
@@ -286,7 +293,7 @@ tool.close()
                 except RuntimeError as error:
                     assert 'lock' in str(error).lower()
                 else:
-                    raise AssertionError('Overwriting a busy calibration table must fail')
+                    raise AssertionError('Overwriting a busy table tree must fail')
             finally:
                 peer.communicate('\n', timeout=15)
             assert peer.returncode == 0
@@ -299,7 +306,134 @@ tool.close()
     else:
         raise AssertionError('A calibration table cannot replace input MS storage')
     assert not into_ms.exists()
-    print('CASA-held output locks protect both native calibration products', flush=True)
+    print('CASA-held root and subtable locks protect existing outputs', flush=True)
+
+
+def check_intent(root, seed, temperatures, tasks):
+    vis = root / 'selected-intent.ms'
+    copy_ms(seed, vis)
+    with opened(vis / 'STATE', True) as state:
+        tagged = state.nrows()
+        state.addrows(1)
+        state.putcell('OBS_MODE', tagged, 'OBSERVE_TARGET#OFF_SOURCE,CALIBRATE_FOCUS#ON_SOURCE')
+        state.putcell('SIG', tagged, False)
+        state.putcell('REF', tagged, True)
+    with opened(vis, True) as main:
+        states = main.getcol('STATE_ID')
+        states[main.getcol('SCAN_NUMBER') == 1] = tagged
+        assert main.putcol('STATE_ID', states)
+
+    selected = {}
+    for engine, task in tasks.items():
+        default = root / f'{engine}-all-intents.cal'
+        subset = root / f'{engine}-selected-intent.cal'
+        task(str(vis), calmode='ps', outfile=str(default))
+        task(str(vis), calmode='ps', outfile=str(subset), intent='CALIBRATE_FOCUS#ON_SOURCE')
+        np.testing.assert_array_equal(columns(default)['SCAN_NUMBER'], [1, 3])
+        selected[engine] = columns(subset)
+        np.testing.assert_array_equal(selected[engine]['SCAN_NUMBER'], [1])
+
+        default_tsys = root / f'{engine}-tsys-default-intent.cal'
+        inactive_tsys = root / f'{engine}-tsys-unused-intent.cal'
+        task(str(temperatures), calmode='tsys', outfile=str(default_tsys))
+        task(str(temperatures), calmode='tsys', outfile=str(inactive_tsys), intent='UNUSED_INTENT')
+        compare_mapping(columns(inactive_tsys), columns(default_tsys), False)
+
+        applications = []
+        for name, extra in (('default', {}), ('unused', {'intent': 'UNUSED_INTENT'})):
+            apply_vis = root / f'{engine}-apply-{name}-intent.ms'
+            copy_ms(vis, apply_vis)
+            task(str(apply_vis), calmode='apply', applytable=str(default), **extra)
+            with opened(apply_vis) as main:
+                applications.append({key: main.getcol(key) for key in ('CORRECTED_DATA', 'FLAG')})
+        compare_mapping(applications[1], applications[0], False)
+    if 'native' in selected:
+        compare_mapping(selected['native'], selected['casa'], False)
+    print('Position-switch intent selection and inactive apply/Tsys intent matched', flush=True)
+    check_composite_intent(root, vis, temperatures, tasks)
+
+
+def check_composite_intent(root, vis, temperatures, tasks):
+    from sdcal_apply_oracle import compare_products
+
+    with_tsys = root / 'composite-intent-with-tsys.ms'
+    copy_ms(vis, with_tsys)
+    copy_ms(temperatures / 'SYSCAL', with_tsys / 'SYSCAL')
+    with opened(with_tsys, True) as main:
+        assert main.putkeyword('SYSCAL', f'Table: {with_tsys / "SYSCAL"}')
+    intent = 'CALIBRATE_FOCUS#ON_SOURCE'
+    for label, source in (('ps,apply', vis), ('ps,tsys,apply', with_tsys)):
+        expected = None
+        for engine, task in tasks.items():
+            priors = [str(root / f'{engine}-selected-intent.cal')]
+            if source == with_tsys:
+                tsys = root / f'{engine}-composite-intent-tsys.cal'
+                assert task(str(source), 'tsys', outfile=str(tsys)) is None
+                priors.append(str(tsys))
+            for implementation in ('direct', 'composite'):
+                work = root / f'{label}-{implementation}-{engine}.ms'
+                copy_ms(source, work)
+                if implementation == 'direct':
+                    assert task(str(work), 'apply', applytable=priors, interp='linear') is None
+                else:
+                    assert task(str(work), label, intent=intent, interp='linear') is None
+                with opened(work) as output:
+                    got = {column: output.getcol(column) for column in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
+                if expected is None:
+                    expected = got
+                else:
+                    compare_products(got, expected, corrected_rtol=4e-6 if source == with_tsys else 1e-7)
+        print(f'{label} with active intent agrees with explicit sky selection', flush=True)
+
+    for task in tasks.values():
+        for mode in ('ps', 'ps,apply'):
+            try:
+                task(str(vis), mode, outfile=str(root / 'invalid-intent.cal'), intent='UNKNOWN_INTENT')
+            except RuntimeError as error:
+                assert type(error) is RuntimeError
+                assert str(error) == (
+                    'Error in data selection specification: State Expression: No match found for "UNKNOWN_INTENT"\n'
+                    'State Expression: Partial or no match for State ID list []'
+                )
+            else:
+                raise AssertionError(f'{mode} accepted an unmatched intent')
+
+
+def check_measurement_set_replacement(root, seed, tasks):
+    from sdcal_apply_oracle import compare_products
+
+    source = root / 'replacement-input.ms'
+    copy_ms(seed, source)
+    with opened(source, True) as main:
+        flags = main.getcol('FLAG')
+        flags[..., -2:] = False
+        assert main.putcol('FLAG', flags)
+    products = {}
+    for writer, task in tasks.items():
+        product = root / f'{writer}-replaced.ms'
+        baseline = root / f'{writer}-replacement-baseline.cal'
+        copy_ms(source, product)
+        assert task(str(source), 'ps', outfile=str(baseline)) is None
+        assert task(str(source), 'ps', outfile=str(product), overwrite=True) is None
+        with opened(product) as replaced:
+            assert replaced.getkeyword('VisCal') == 'SDSKY_PS'
+            assert replaced.nrows() == 2
+        compare_mapping(columns(product), columns(baseline), False)
+        products[writer] = product
+    expected = None
+    for writer, product in products.items():
+        for reader, task in tasks.items():
+            vis = root / f'{writer}-replaced-applied-{reader}.ms'
+            copy_ms(source, vis)
+            assert task(str(vis), 'apply', applytable=str(product)) is None
+            with opened(vis) as main:
+                result = {key: main.getcol(key) for key in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
+            if expected is None:
+                expected = result
+            else:
+                compare_products(result, expected)
+    print(f'Separate MeasurementSet replacement passed {len(tasks)} sky-table writers '
+          f'and {len(tasks)} application readers', flush=True)
 
 
 def main():
@@ -318,6 +452,8 @@ def main():
     temperatures = compare_tsys(root, seed, tasks)
     check_selectors_and_errors(root, seed, temperatures, tasks)
     check_parameter_planes(root, seed, tasks)
+    check_intent(root, seed, temperatures, tasks)
+    check_measurement_set_replacement(root, seed, tasks)
     if 'native' in tasks:
         check_busy_replacement(root, seed, temperatures, tasks['native'])
 

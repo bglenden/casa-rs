@@ -172,19 +172,21 @@ def compare_application(root, engines, vis, mode, products, options):
     copy_ms(vis, with_tsys)
     attach_mapped_tsys(root, with_tsys)
     reference = None
-    for reader, task in engines.items():
-        work = root / f'{mode}-composite-tsys-{reader}.ms'
-        copy_ms(with_tsys, work)
-        assert task(str(work), mode + ',tsys,apply', spwmap={1: [0]}, interp='linear', **options) is None
-        with opened(work) as output:
-            got = {column: output.getcol(column) for column in expected}
-        if reference is None:
-            reference = got
-        else:
-            np.testing.assert_allclose(got['CORRECTED_DATA'], reference['CORRECTED_DATA'],
-                                       rtol=4e-6, atol=2e-4)
-            np.testing.assert_array_equal(got['FLAG'], reference['FLAG'])
-            np.testing.assert_allclose(got['WEIGHT'], reference['WEIGHT'], rtol=5e-6)
+    for label, extra in (('default', {}), ('unused-intent', {'intent': 'UNUSED_INTENT'})):
+        for reader, task in engines.items():
+            work = root / f'{mode}-composite-tsys-{label}-{reader}.ms'
+            copy_ms(with_tsys, work)
+            assert task(str(work), mode + ',tsys,apply', spwmap={1: [0]}, interp='linear',
+                        **options, **extra) is None
+            with opened(work) as output:
+                got = {column: output.getcol(column) for column in expected}
+            if reference is None:
+                reference = got
+            else:
+                np.testing.assert_allclose(got['CORRECTED_DATA'], reference['CORRECTED_DATA'],
+                                           rtol=4e-6, atol=2e-4)
+                np.testing.assert_array_equal(got['FLAG'], reference['FLAG'])
+                np.testing.assert_allclose(got['WEIGHT'], reference['WEIGHT'], rtol=5e-6)
     print(f'{mode} tables interchange and both composite modes match', flush=True)
 
 
@@ -287,6 +289,60 @@ def check_selected_map(root, engines, source):
             assert table.nrows() > 0 and table.getcol('FPARAM').shape[1] == 3
             np.testing.assert_array_equal(table.getcol('SCAN_NUMBER'), 2)
     print('Selected field, channel interval and second scan match CASA', flush=True)
+
+
+def check_map_intent(root, engines, mapping, raster):
+    for mode, source, options in (('otf', mapping, {'fraction': '15%'}),
+                                  ('otfraster', raster, {'noff': 2})):
+        vis = root / f'{mode}-intent.ms'
+        copy_ms(source, vis)
+        intent = 'CALIBRATE_FOCUS#ON_SOURCE'
+        with opened(vis / 'STATE', True) as state:
+            tagged = state.nrows()
+            state.addrows(1)
+            state.putcell('OBS_MODE', tagged, f'OBSERVE_TARGET#ON_SOURCE,{intent}')
+            state.putcell('SIG', tagged, True)
+            state.putcell('REF', tagged, False)
+        with opened(vis, True) as main:
+            scan = main.getcol('SCAN_NUMBER')
+            states = main.getcol('STATE_ID')
+            # Split after two complete raster lines of 11 integrations each.
+            selected = np.argsort(main.getcol('TIME'), kind='stable')[22:]
+            scan[selected] = 2
+            states[selected] = tagged
+            assert main.putcol('SCAN_NUMBER', scan) and main.putcol('STATE_ID', states)
+
+        intent_products = {}
+        for engine, task in engines.items():
+            by_scan = root / f'{mode}-intent-{engine}-scan.cal'
+            by_intent = root / f'{mode}-intent-{engine}.cal'
+            assert task(str(vis), mode, outfile=str(by_scan), scan='2', **options) is None
+            assert task(str(vis), mode, outfile=str(by_intent), intent=intent, **options) is None
+            with opened(by_intent) as product:
+                assert product.nrows() > 0
+                np.testing.assert_array_equal(product.getcol('SCAN_NUMBER'), 2)
+            compare_tables(by_scan, by_intent)
+            intent_products[engine] = by_intent
+        if 'native' in intent_products:
+            compare_tables(intent_products['casa'], intent_products['native'])
+        print(f'{mode} intent selects the expected scan in both implementations', flush=True)
+
+        expected = None
+        for engine, task in engines.items():
+            for method in ('direct', 'composite'):
+                work = root / f'{mode}-intent-{method}-{engine}.ms'
+                copy_ms(vis, work)
+                if method == 'direct':
+                    assert task(str(work), 'apply', applytable=str(intent_products[engine]), interp='linear') is None
+                else:
+                    assert task(str(work), mode + ',apply', intent=intent, interp='linear', **options) is None
+                with opened(work) as output:
+                    got = {column: output.getcol(column) for column in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
+                if expected is None:
+                    expected = got
+                else:
+                    compare_products(got, expected)
+        print(f'{mode} composite intent agrees with explicit sky selection', flush=True)
 
 
 def check_shared_pointings(root, engines, source):
@@ -406,6 +462,7 @@ def main():
     compare_application(root, engines, mapping, 'otf', sky, options)
     check_interpolated_float_map(root, engines, mapping)
     check_selected_map(root, engines, mapping)
+    check_map_intent(root, engines, mapping, raster)
     check_shared_pointings(root, engines, mapping)
     check_fractional_pixel_edge(root, engines, mapping)
     check_large_raster_median(root, engines, mapping)

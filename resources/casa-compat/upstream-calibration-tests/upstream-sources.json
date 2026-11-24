@@ -76,6 +76,16 @@
       "sha256": "838a433cf606a3fd1ceec72ea4866cb718f6e4eeaafff3c77528a3e8434f7c7e",
       "size": 7007
     },
+    "test_task_sdcal.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_sdcal.py",
+      "sha256": "eabbf27bb99d10c8b05f1248465abc4e40ef08beae18790b5411b341ae029fca",
+      "size": 96883
+    },
+    "test_task_sdgaincal.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_sdgaincal.py",
+      "sha256": "0188941e9f3e25fcc27517843fe2c1b8ef17846347e95120bedc30aeea6ad351",
+      "size": 21538
+    },
     "test_task_smoothcal.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_smoothcal.py",
       "sha256": "8b81cd8a37836145534d5dc94f6cf990fdf0fdd5f6f1dd81b5dae8f5eeca40d1",

@@ -188,6 +188,18 @@
         "application",
         "edges"
       ]
+    },
+    "intent": {
+      "scope": "Select observing intents for sky-table generation. Direct apply and Tsys generation keep the keyword inactive. The OTF and raster composites with Tsys use the local on-source selection.",
+      "status": "Implemented",
+      "behaviors": [
+        "ps",
+        "application",
+        "edges"
+      ],
+      "evidence": [
+        "intent"
+      ]
     }
   },
   "behaviors": [
@@ -298,6 +310,22 @@
       "links": [
         "tools/casa-compat/sdcal_edges_oracle.py",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casatestdata/browse/measurementset/almasd/otf_ephem.ms?at=5e48637233019176f328ab4552e96395ab967581"
+      ]
+    },
+    "intent": {
+      "kind": "Paired public CASA intent selection and unchanged upstream tests",
+      "state": "passed",
+      "scope": "Position-switch, OTF and OTF raster intent selection, inactive direct apply and Tsys intent, and the local sky-intent override in Tsys composites.",
+      "result": "All 65 applicable stock cases passed with both implementations. Upstream unconditionally skips serial CASA Multi-MS sky application. The named intent changed position switching from scans 1 and 3 to scan 1, selected the same map spectra as explicit scan selection, and preserved both Tsys composite outputs under an unused intent.",
+      "revision": "b3d09768e9728c85dca2ab73f02874369efd6942",
+      "source_revision": "b3d09768e9728c85dca2ab73f02874369efd6942",
+      "casa_version": "6.7.6.14",
+      "command": "CASARS_CALIBRATE_BIN=<calibrate> casa-python tools/casa-compat/upstream_calibration_suite.py sdcal --casatestdata <pinned-casatestdata> --out <results>",
+      "receipt": "https://github.com/bglenden/casa-rs/pull/2161",
+      "links": [
+        "tools/casa-compat/sdcal_position_switch_oracle.py",
+        "tools/casa-compat/sdcal_edges_oracle.py",
+        "https://github.com/bglenden/casa-rs/issues/1530"
       ]
     }
   }

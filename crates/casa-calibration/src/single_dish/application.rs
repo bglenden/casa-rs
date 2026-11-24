@@ -9,7 +9,7 @@ use casa_tables::{Table, TableOptions};
 use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{ScalarValue, Value};
 
-use super::{generate_edges, generate_position_switch, tsys};
+use super::{generate_edges, generate_position_switch, resolve_selection, selector, tsys};
 use crate::{
     ApplyCalibrationTableSpec, ApplyInterpolationMode, ApplyMode, ApplyPlanRequest,
     CalibrationOutputMode, execute::execute_single_dish_apply,
@@ -32,23 +32,30 @@ pub(super) fn run(
         .transpose()
         .map_err(|error| TaskFailure::execution(error.to_string()))?;
     if let Some(staging) = &staging {
-        if mode.starts_with("ps,") {
+        let position_switch = mode.starts_with("ps,");
+        let map = mode.starts_with("otf");
+        if position_switch || map {
             let output = staging.path().join("sky.cal");
-            generate_position_switch(task, &ms, selected, &output, CalibrationOutputMode::Create)?;
-            paths.push(output);
-        } else if mode.starts_with("otf") {
-            let output = staging.path().join("sky.cal");
-            let sky_selection = if mode.contains("tsys,") {
+            let intent = if map && mode.contains("tsys,") {
+                Some("OBSERVE_TARGET#ON_SOURCE".into())
+            } else {
+                selector(task, "intent")?
+            };
+            let sky_selection = if intent.is_some() {
                 let selection = MsSelection {
-                    intent: Some("OBSERVE_TARGET#ON_SOURCE".into()),
+                    intent,
                     ..selection.clone()
                 };
-                crate::session::resolve_casa_calibration_selection(&ms, &selection)
-                    .map_err(|error| TaskFailure::execution(error.to_string()))?
+                resolve_selection(&ms, &selection)?
             } else {
                 selected
             };
-            generate_edges(
+            let generate_sky = if position_switch {
+                generate_position_switch
+            } else {
+                generate_edges
+            };
+            generate_sky(
                 task,
                 &ms,
                 sky_selection,
