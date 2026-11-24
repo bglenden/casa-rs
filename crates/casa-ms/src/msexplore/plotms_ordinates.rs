@@ -485,6 +485,7 @@ pub(super) struct VectorTimeWeights<'a> {
     pub(super) spectra: [Option<&'a FloatGrid>; 2],
     pub(super) observed_operands: [bool; 2],
     pub(super) primary: Option<(&'a FloatGrid, WeightKind)>,
+    pub(super) equal_channel_means: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -498,35 +499,49 @@ struct TimeChannelProjection {
     channels: Vec<Option<TimeChannelSample>>,
     observed_operands: [bool; 2],
     primary_is_observed: bool,
+    equal_channel_means: bool,
 }
 
 impl TimeChannelProjection {
     fn project(&self, axis: MsAxis) -> Option<f64> {
+        let (operands, means, _) = self.means_and_weight()?;
+        operands.project_operands(axis, means)
+    }
+
+    fn means_and_weight(&self) -> Option<(&TimeProjection, [Complex64; 2], f32)> {
         let mut usable = self.channels.iter().flatten();
         let first = usable.next()?;
         let mut sums = [Complex32::default(); 2];
         let mut totals = [0.0_f32; 2];
-        let mut primary = 0.0_f32;
+        let mut visibility_weight = 0.0_f32;
+        let mut spectrum_weight = 0.0_f32;
         // The channel transform receives normalized Float means and the time
         // stage's spectra, including the observed weight-to-sigma round trip.
         for channel in std::iter::once(first).chain(usable) {
-            primary += channel_weight_after_time(channel.primary_weight, self.primary_is_observed);
+            visibility_weight +=
+                channel_weight_after_time(channel.primary_weight, self.primary_is_observed);
+            // The output WEIGHT_SPECTRUM sums the original time weights.
+            spectrum_weight += channel.primary_weight;
             for (operand, sum) in sums.iter_mut().enumerate() {
-                let weight = channel_weight_after_time(
-                    channel.operands.total_weights[operand],
-                    self.observed_operands[operand],
-                );
+                let weight = if self.equal_channel_means {
+                    1.0
+                } else {
+                    channel_weight_after_time(
+                        channel.operands.total_weights[operand],
+                        self.observed_operands[operand],
+                    )
+                };
                 *sum += channel.operands.time_mean(operand) * weight;
                 totals[operand] += weight;
             }
         }
-        if !has_channel_weight(primary) {
+        if !has_channel_weight(visibility_weight) {
             return None;
         }
         let means = std::array::from_fn(|operand| {
             channel_visibility_mean(sums[operand], totals[operand], true)
         });
-        first.operands.project_operands(axis, means)
+        Some((&first.operands, means, spectrum_weight))
     }
 }
 
@@ -598,6 +613,7 @@ impl AveragedVisibility {
                 primary_is_observed: weights
                     .primary
                     .is_some_and(|(_, kind)| kind == WeightKind::Observed),
+                equal_channel_means: weights.equal_channel_means,
             });
         }
         let VisibilitySamples::TimeChannelProjection(projection) = &mut self.0 else {
@@ -740,11 +756,16 @@ impl AveragedVisibility {
         }
     }
 
-    pub(super) fn time_vector_mean(&self) -> Option<Complex32> {
-        let VisibilitySamples::TimeProjection(average) = &self.0 else {
-            return None;
-        };
-        Some(average.time_mean(0))
+    pub(super) fn transformed_vector_sample(&self) -> Option<(Complex32, Option<f32>)> {
+        match &self.0 {
+            VisibilitySamples::TimeProjection(average) => Some((average.time_mean(0), None)),
+            VisibilitySamples::TimeChannelProjection(average) => {
+                let (_, [visibility, _], weight) = average.means_and_weight()?;
+                let value = Complex32::new(visibility.re as f32, visibility.im as f32);
+                Some((value, Some(weight)))
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn add_normalized_vector_sample(&mut self, value: Complex32, weight: f32) {

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "68db6aa82e0f7e3d6d7efedce32bc229980bfa83",
+  "source_revision": "68db6aa82e0f7e3d6d7efedce32bc229980bfa83",
+  "baseline_revision": "7925299324dc3556135378ca1df7603e9b882cc6",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Vector time then complex channel averaging per baseline, followed by antenna reduction with transformed spectra and closed time windows.",
+  "result": "passed",
+  "baseline_result": "Main exported 18 baseline-shaped coordinates. CASA emitted 12 per-antenna coordinates after the same requested time and channel averages.",
+  "text_exports": 8,
+  "points": 66,
+  "figures": 2,
+  "rendered_coordinates": 12,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051,
+  "rescaled_casa_control_points": 3,
+  "casa_time_weight_control_points": 4,
+  "same_input_underflow_empty_in_casa": true
+}

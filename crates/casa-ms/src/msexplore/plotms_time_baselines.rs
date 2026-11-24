@@ -289,13 +289,17 @@ impl TimeBaselinePlan {
             else {
                 continue;
             };
-            let Some(y) = point.y_visibility.time_vector_mean() else {
+            let Some((y, channel_weight)) = point.y_visibility.transformed_vector_sample() else {
                 continue;
             };
-            let x = point.x_visibility.time_vector_mean();
-            let weight =
-                plotms_columns::baseline_weight(point.combined_primary_weight.unwrap_or(1.0))
-                    as f32;
+            let x = point
+                .x_visibility
+                .transformed_vector_sample()
+                .map(|(value, _)| value);
+            let weight = channel_weight
+                .map(f64::from)
+                .or(point.combined_primary_weight);
+            let weight = plotms_columns::baseline_weight(weight.unwrap_or(1.0)) as f32;
             for (antenna, x, y) in [
                 (first, x, y),
                 (second, x.map(|value| value.conj()), y.conj()),
