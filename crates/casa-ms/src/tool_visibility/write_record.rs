@@ -40,7 +40,7 @@ impl Column {
         }
     }
 
-    fn from_name(name: &str) -> Option<Self> {
+    pub(super) fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_uppercase().as_str() {
             "DATA" => Some(Self::Data),
             "CORRECTED_DATA" => Some(Self::CorrectedData),

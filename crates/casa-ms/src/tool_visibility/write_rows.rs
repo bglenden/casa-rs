@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use casa_tables::{
     ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableWriteLock,
 };
-use casa_types::{ArrayValue, RecordValue, ScalarValue};
+use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue};
 use ndarray::{ArrayD, ArrayViewD, Axis, IxDyn};
 
 use super::write_record::{Column, WriteColumn, write_columns};
@@ -26,6 +26,9 @@ pub struct VisibilityWriteOptions<'a> {
     pub baseline_gap: Option<i32>,
     /// Whether the baseline record was read with a stride that omits rows.
     pub sampled_baselines: bool,
+    /// The most recent visibility read used a baseline axis. A grid with
+    /// one integration then omits its trailing time dimension.
+    pub recent_baseline_read: bool,
     /// The declared baselines when a positioned chunk represents a subset.
     pub baseline_pairs: Option<&'a [(i32, i32)]>,
     /// The recorded correlations selected by `selectpolarization`.
@@ -37,6 +40,7 @@ pub struct VisibilityWriteOptions<'a> {
 struct WriteGrid {
     shape: [usize; 2],
     positions: Vec<[usize; 2]>,
+    collapsed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -71,6 +75,7 @@ impl WriteGrid {
         Ok(Self {
             shape: [grid.baseline_count(), grid.time_count()],
             positions: grid.write_positions(&columns)?,
+            collapsed: options.recent_baseline_read && grid.time_count() == 1,
         })
     }
 }
@@ -93,6 +98,11 @@ pub struct VisibilityWritePart<'a> {
 }
 
 impl<'a> VisibilityWriteRecord<'a> {
+    /// Whether this field can be written by `putdata`.
+    pub fn accepts_column(name: &str) -> bool {
+        Column::from_name(name).is_some()
+    }
+
     /// Interpret the input record using the same ordering and grid as `getdata`.
     ///
     /// # Errors
@@ -104,22 +114,29 @@ impl<'a> VisibilityWriteRecord<'a> {
         options: VisibilityWriteOptions<'a>,
     ) -> MsResult<Self> {
         let columns = write_columns(main, items)?;
+        let full_grid = columns
+            .iter()
+            .any(|field| field.values.ndim() == field.column.cell_rank() + 2);
         if !options.iterator && options.polarization.is_some() && !columns.is_empty() {
             let ordered = rows_by_time(main, &rows)?;
             if let std::borrow::Cow::Owned(ordered) = ordered {
                 rows = ordered;
             }
         }
-        let grid = columns
-            .iter()
-            .any(|field| field.values.ndim() == field.column.cell_rank() + 2)
+        let grid = (full_grid || (options.recent_baseline_read && !columns.is_empty()))
             .then(|| WriteGrid::new(main, &rows, options))
             .transpose()?;
         for field in &columns {
             let shape = field.values.shape();
             let axes = shape.get(field.column.cell_rank()..).unwrap_or_default();
             let covers_selection = match axes {
-                [count] => *count >= rows.len(),
+                [count] => {
+                    *count
+                        >= grid
+                            .as_ref()
+                            .filter(|grid| grid.collapsed)
+                            .map_or(rows.len(), |grid| grid.shape[0])
+                }
                 [baseline, time] => grid
                     .as_ref()
                     .is_some_and(|grid| *baseline >= grid.shape[0] && *time >= grid.shape[1]),
@@ -203,6 +220,31 @@ impl<'a> VisibilityWriteRecord<'a> {
             .min(TARGET_BATCH_BYTES.max(bytes_per_row));
         let plan = MeasurementSetWritePlan::selected_row_mutation(rows.clone(), plans, resources)
             .map_err(write_error)?;
+        if layouts.iter().any(|layout| layout.projection.is_some()) {
+            // Test every original cell needed to preserve recorded hands before
+            // publishing any member or batch of the public write.
+            for (field, name) in self.columns.iter().zip(&names) {
+                let rank = field.column.cell_rank();
+                if rank == 0 {
+                    continue;
+                }
+                for (rows, layouts) in rows
+                    .chunks(plan.batch_rows())
+                    .zip(layouts.chunks(plan.batch_rows()))
+                {
+                    if layouts.iter().any(|layout| layout.projection.is_some()) {
+                        read_projected_originals(
+                            ms.main_table(),
+                            name,
+                            rows,
+                            layouts,
+                            rank,
+                            field.values.primitive_type(),
+                        )?;
+                    }
+                }
+            }
+        }
         Ok(VisibilityWritePart {
             rows,
             positions,
@@ -431,7 +473,7 @@ fn row_column_batch(
         _ => unreachable!("putdata arrays have been normalized to storage precision"),
     };
     if let MeasurementSetMutationColumnValues::Arrays(new) = &mut values {
-        patch_recorded_correlations(table, name, rows, layouts, new)?;
+        patch_recorded_correlations(table, name, rows, layouts, field, new)?;
     }
     Ok(MeasurementSetMutationColumnBatch {
         name: name.into(),
@@ -444,30 +486,25 @@ fn patch_recorded_correlations(
     name: &str,
     rows: &[usize],
     layouts: &[RecordedLayout<'_>],
+    field: &WriteColumn,
     values: &mut [ArrayValue],
 ) -> MsResult<()> {
     if layouts.iter().all(|layout| layout.projection.is_none()) {
         return Ok(());
     }
-    let old = table
-        .column_accessor(name)?
-        .array_cells_owned_uncached(rows)?;
+    let old = read_projected_originals(
+        table,
+        name,
+        rows,
+        layouts,
+        field.column.cell_rank(),
+        field.values.primitive_type(),
+    )?;
     for ((mut original, layout), value) in old.into_iter().zip(layouts).zip(values) {
         let Some(indices) = layout.projection else {
             continue;
         };
-        let previous = original.as_mut().ok_or_else(|| {
-            input(format!(
-                "putdata cannot update selected correlations of undefined {name}"
-            ))
-        })?;
-        if previous.shape().first().copied() != Some(layout.shape[0])
-            || previous.shape().get(1..) != value.shape().get(1..)
-        {
-            return Err(input(format!(
-                "putdata recorded {name} cell has an incompatible shape"
-            )));
-        }
+        let previous = original.as_mut().expect("projected original was validated");
         macro_rules! patch {
             ($old:ident, $new:ident) => {
                 for (input, &output) in indices.iter().enumerate() {
@@ -491,6 +528,35 @@ fn patch_recorded_correlations(
     Ok(())
 }
 
+fn read_projected_originals(
+    table: &Table,
+    name: &str,
+    rows: &[usize],
+    layouts: &[RecordedLayout<'_>],
+    rank: usize,
+    primitive: PrimitiveType,
+) -> MsResult<Vec<Option<ArrayValue>>> {
+    let originals = table
+        .column_accessor(name)?
+        .array_cells_owned_uncached(rows)?;
+    for (original, layout) in originals.iter().zip(layouts) {
+        if layout.projection.is_none() {
+            continue;
+        }
+        let original = original.as_ref().ok_or_else(|| {
+            input(format!(
+                "putdata cannot update selected correlations of undefined {name}"
+            ))
+        })?;
+        if original.shape() != &layout.shape[..rank] || original.primitive_type() != primitive {
+            return Err(input(format!(
+                "putdata recorded {name} cell has an incompatible type or shape"
+            )));
+        }
+    }
+    Ok(originals)
+}
+
 fn input_cell<'a, T>(
     values: &'a ArrayD<T>,
     rank: usize,
@@ -498,7 +564,10 @@ fn input_cell<'a, T>(
     grid: Option<&WriteGrid>,
 ) -> ArrayViewD<'a, T> {
     if values.ndim() == rank + 1 {
-        values.index_axis(Axis(rank), row)
+        let position = grid
+            .filter(|grid| grid.collapsed)
+            .map_or(row, |grid| grid.positions[row][0]);
+        values.index_axis(Axis(rank), position)
     } else {
         let [baseline, time] = grid.expect("validated baseline-axis record").positions[row];
         values

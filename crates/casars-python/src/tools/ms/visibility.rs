@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read visibility records from the current MS attachment.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -30,6 +30,7 @@ pub(super) struct VisibilityState {
     initialized: bool,
     averaged: bool,
     baseline_write: Option<(i32, i64)>,
+    recent_baseline_read: bool,
     main: Option<Arc<VisibilityMain>>,
     range_subtables: Subtables,
     time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
@@ -42,8 +43,14 @@ pub(super) struct VisibilityMain {
     table: Table,
     members: Vec<Table>,
     reference: Option<PlainReferenceRead>,
-    publication: Vec<(TableFiles, Option<TableStamp>)>,
+    publication: Vec<VisibilityPublication>,
     plain: bool,
+}
+
+struct VisibilityPublication {
+    path: PathBuf,
+    files: TableFiles,
+    stamp: Option<TableStamp>,
 }
 
 struct VisibilityWriteTarget {
@@ -57,6 +64,7 @@ impl VisibilityState {
         self.initialized = false;
         self.averaged = false;
         self.baseline_write = None;
+        self.recent_baseline_read = false;
         self.channels = None;
         self.polarization = None;
         if let Some(iteration) = &mut self.iteration {
@@ -87,7 +95,7 @@ impl VisibilityState {
         let current = self.main.as_ref().is_some_and(|main| {
             main.publication
                 .iter()
-                .all(|(files, stamp)| stamp.is_some() && files.stamp() == *stamp)
+                .all(|source| source.stamp.is_some() && source.files.stamp() == source.stamp)
         });
         if !current {
             self.main = Some(Arc::new(VisibilityMain::open(path)?));
@@ -105,7 +113,11 @@ impl VisibilityMain {
         let table = Table::open_with_layout_paths(TableOptions::new(path), |path| {
             let files = TableFiles::new(path);
             let stamp = files.stamp();
-            publication.push((files, stamp));
+            publication.push(VisibilityPublication {
+                path: path.to_owned(),
+                files,
+                stamp,
+            });
         })
         .map_err(runtime_error)?;
         let parts = Table::immediate_part_names(path, path).map_err(runtime_error)?;
@@ -137,7 +149,7 @@ impl VisibilityMain {
         };
         if !dependencies
             .iter()
-            .all(|(files, stamp)| files.same_descriptor(*stamp))
+            .all(|source| source.files.same_descriptor(source.stamp))
         {
             return Err(runtime_error(
                 "MeasurementSet iterator row layout changed. Call iterinit again.",
@@ -146,12 +158,15 @@ impl VisibilityMain {
         Ok(())
     }
 
-    fn verify_write_layout(&self) -> PyResult<()> {
-        if self
-            .publication
-            .iter()
-            .all(|(files, stamp)| files.same_descriptor(*stamp))
-        {
+    fn verify_write_layout(&self, written: &BTreeSet<PathBuf>) -> PyResult<()> {
+        if self.publication.iter().all(|source| {
+            source.files.same_descriptor(source.stamp)
+                || (!written.is_empty()
+                    && source
+                        .path
+                        .canonicalize()
+                        .is_ok_and(|path| written.contains(&path)))
+        }) {
             Ok(())
         } else {
             Err(runtime_error(
@@ -303,8 +318,17 @@ impl PyMsTool {
                 return Ok(CasaValue::empty_record());
             };
             let reply = ms.getdata_rows(&items, increment, options)?;
-            if ifraxis && ms.writable {
-                ms.visibility.baseline_write = Some((ifraxisgap as i32, increment));
+            if ms.writable {
+                if ifraxis {
+                    ms.visibility.baseline_write = Some((ifraxisgap as i32, increment));
+                }
+                if let CasaValue::Record(fields) = &reply
+                    && fields.iter().any(|(name, _)| {
+                        tool_visibility::VisibilityWriteRecord::accepts_column(name)
+                    })
+                {
+                    ms.visibility.recent_baseline_read = ifraxis;
+                }
             }
             Ok(reply)
         })?;
@@ -390,13 +414,22 @@ impl AttachedMs {
         if !self.visibility.initialized && self.initialize_visibility(&link)?.is_none() {
             return Ok(false);
         }
-        self.visibility.main(&self.path)?;
-        let main = self
+        let captured = self
             .visibility
-            .main
+            .iteration
             .as_ref()
-            .expect("MAIN table was opened")
-            .clone();
+            .and_then(|iteration| iteration.layout.clone());
+        let main = if let Some(layout) = captured {
+            layout.verify_write_layout(&BTreeSet::new())?;
+            layout
+        } else {
+            self.visibility.main(&self.path)?;
+            self.visibility
+                .main
+                .as_ref()
+                .expect("MAIN table was opened")
+                .clone()
+        };
         let rows = if let Some(iteration) = &self.visibility.iteration {
             iteration.cursor.rows().map_err(runtime_error)?.to_vec()
         } else if let Some(rows) = &self.selected_rows {
@@ -424,6 +457,7 @@ impl AttachedMs {
             sampled_baselines: layout.is_some_and(|(_, increment)| {
                 increment > 1 && (increment as u32 as usize) <= total_rows
             }),
+            recent_baseline_read: self.visibility.recent_baseline_read,
             baseline_pairs: baseline_pairs.as_deref(),
             polarization: self
                 .visibility
@@ -441,8 +475,17 @@ impl AttachedMs {
             return Ok(false);
         }
         let targets = main.write_targets(record.rows(), &names)?;
+        let refresh_cursor = self
+            .visibility
+            .iteration
+            .as_ref()
+            .is_some_and(|iteration| iteration.layout.is_some());
+        let mut written = BTreeSet::new();
         let mut temporary = BTreeMap::new();
         for target in &targets {
+            if refresh_cursor {
+                written.insert(target.path.clone());
+            }
             if !self.write_locks.contains_key(&target.path) {
                 let lock =
                     TableWriteLock::acquire_to_reread(&target.path, 0).map_err(runtime_error)?;
@@ -450,7 +493,7 @@ impl AttachedMs {
             }
         }
         link.verify_directory().map_err(runtime_error)?;
-        main.verify_write_layout()?;
+        main.verify_write_layout(&BTreeSet::new())?;
         let prepared = targets
             .into_iter()
             .map(|target| {
@@ -471,6 +514,19 @@ impl AttachedMs {
             record
                 .write_part(&mut ms, lock, part)
                 .map_err(runtime_error)?;
+        }
+        if let Some(iteration) = self
+            .visibility
+            .iteration
+            .as_mut()
+            .filter(|_| refresh_cursor)
+        {
+            // Refresh data read bindings and the stamps changed by our own
+            // write without accepting a different saved view projection.
+            main.verify_write_layout(&written)?;
+            let refreshed = VisibilityMain::open(&self.path)?;
+            main.verify_write_layout(&written)?;
+            iteration.layout = Some(Arc::new(refreshed));
         }
         for (_, lock) in temporary {
             lock.release().map_err(runtime_error)?;

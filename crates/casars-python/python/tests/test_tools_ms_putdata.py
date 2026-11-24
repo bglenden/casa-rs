@@ -1,6 +1,7 @@
 """CASA controls for persistent writes through the public visibility tool."""
 
 import shutil
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -21,6 +22,13 @@ def assert_main_columns(casa, path, expected):
     for name, values in expected.items():
         np.testing.assert_array_equal(table.getcol(name), values, strict=True, err_msg=name)
     assert table.done()
+
+
+def make_multi_ms(casa, path, members):
+    assembly = casa.ms()
+    assert assembly.createmultims(str(path), list(map(str, members)), ["ANTENNA", "DATA_DESCRIPTION", "FEED"])
+    assert assembly.done()
+    return str(path)
 
 
 def test_ms_visibility_scalar_taql_preserves_physical_order(
@@ -307,6 +315,48 @@ def test_ms_putdata_retains_reordered_reference_rows(baseline_fixture, native_da
     assert_main_columns(casa, native_dataset, {"DATA": expected})
 
 
+def test_ms_putdata_retains_single_integration_grid_order(baseline_fixture, native_dataset):
+    casa, make_view, raw = baseline_fixture
+    rows = [2, 0, 3]
+    writer = tools.ms()
+    assert writer.open(make_view("singleton-write.ms", rows), nomodify=False)
+    grid = writer.getdata(["data", "ifr_number"], ifraxis=True)
+    assert grid["data"].shape == raw["data"].shape[:-1] + (3,)
+    assert writer.getdata("time")
+    assert writer.putdata({"data": grid["data"] * 2})
+    expected = raw["data"].copy()
+    expected[..., rows] *= 2
+    assert_main_columns(casa, native_dataset, {"DATA": expected})
+
+    row_order = writer.getdata("data")["data"]
+    np.testing.assert_array_equal(row_order, expected[..., rows], strict=True)
+    updates = row_order + np.arange(len(rows))
+    assert writer.putdata({"data": updates})
+    assert writer.done()
+    expected[..., rows] = updates
+    assert_main_columns(casa, native_dataset, {"DATA": expected})
+
+
+def test_ms_putdata_refuses_a_rebound_iterator_view(baseline_fixture, native_dataset):
+    casa, make_view, raw = baseline_fixture
+    path = Path(make_view("positioned-write.ms", [0, 1, 2, 3, 4, 5]))
+    replacement = Path(make_view("replacement-write.ms", [10, 11, 12, 13, 14, 15]))
+    writer = tools.ms()
+    assert writer.open(str(path), nomodify=False)
+    assert writer.iterinit(maxrows=3)
+    assert writer.iterorigin()
+    original = writer.getdata("data")["data"]
+    pending = path / "replacement.dat"
+    shutil.copyfile(replacement / "table.dat", pending)
+    pending.replace(path / "table.dat")
+    np.testing.assert_array_equal(writer.getdata("data")["data"], original, strict=True)
+    with pytest.raises(RuntimeError, match="row layout changed"):
+        writer.putdata({"data": original * 2})
+    np.testing.assert_array_equal(writer.getdata("data")["data"], original, strict=True)
+    assert writer.done()
+    assert_main_columns(casa, native_dataset, {"DATA": raw["data"]})
+
+
 def test_ms_putdata_keeps_values_in_the_correct_multi_ms_member(
     baseline_fixture, native_dataset, tmp_path,
 ):
@@ -320,10 +370,7 @@ def test_ms_putdata_keeps_values_in_the_correct_multi_ms_member(
         assert table.open(str(path), nomodify=False)
         assert table.putcol("DATA", raw["data"] + 1000 * index)
         assert table.done()
-    path = str(tmp_path / "ordered-write.mms")
-    assembly = casa.ms()
-    assert assembly.createmultims(path, paths, ["ANTENNA", "DATA_DESCRIPTION", "FEED"])
-    assert assembly.done()
+    path = make_multi_ms(casa, tmp_path / "ordered-write.mms", paths)
 
     writer = tools.ms()
     assert writer.open(path, nomodify=False)
@@ -336,3 +383,56 @@ def test_ms_putdata_keeps_values_in_the_correct_multi_ms_member(
     assert reader.open(path)
     np.testing.assert_array_equal(reader.getdata("data")["data"], updates, strict=True)
     assert reader.done()
+
+
+@pytest.mark.parametrize("layout", ["reference", "multi-ms"])
+def test_ms_putdata_keeps_a_positioned_saved_cursor(
+    baseline_fixture, native_dataset, tmp_path, layout,
+):
+    casa, make_view, raw = baseline_fixture
+    if layout == "reference":
+        path = make_view("cursor-write.ms", [0, 1, 2, 3, 4, 5])
+    else:
+        other = tmp_path / "second.ms"
+        shutil.copytree(native_dataset, other)
+        path = make_multi_ms(casa, tmp_path / "cursor-write.mms", (native_dataset, other))
+    writer = tools.ms()
+    assert writer.open(path, nomodify=False)
+    assert writer.iterinit(maxrows=3)
+    assert writer.iterorigin()
+    first = writer.getdata("data")["data"]
+    assert first.shape[-1] == 3
+    for factor in (2, -0.5j):
+        expected = first * factor
+        assert writer.putdata({"data": expected})
+        np.testing.assert_array_equal(writer.getdata("data")["data"], expected, strict=True)
+    assert writer.iternext()
+    np.testing.assert_array_equal(writer.getdata("data")["data"], raw["data"][..., 3:6], strict=True)
+    assert writer.done()
+
+
+def test_ms_putdata_preflights_projected_cells_in_all_members(
+    baseline_fixture, native_dataset, tmp_path,
+):
+    casa, _, raw = baseline_fixture
+    members = (tmp_path / "part-a.ms", tmp_path / "part-z.ms")
+    for index, member in enumerate(members):
+        shutil.copytree(native_dataset, member)
+        table = casa.table()
+        assert table.open(str(member), nomodify=False)
+        assert table.addcols({"MODEL_DATA": table.getcoldesc("DATA")})
+        if index == 0:
+            assert table.putcol("MODEL_DATA", raw["data"])
+        else:
+            assert not table.iscelldefined("MODEL_DATA", 0)
+        assert table.done()
+    path = make_multi_ms(casa, tmp_path / "preflight.mms", members)
+    writer = tools.ms()
+    assert writer.open(path, nomodify=False)
+    assert writer.selectpolarization("LL")
+    selected = writer.getdata("data")["data"]
+    with pytest.raises(RuntimeError, match="undefined MODEL_DATA"):
+        writer.putdata({"data": selected * 2, "model_data": selected * 3})
+    np.testing.assert_array_equal(writer.getdata("data")["data"], selected, strict=True)
+    assert writer.done()
+    assert_main_columns(casa, path, {"DATA": np.concatenate([raw["data"]] * 2, axis=-1)})

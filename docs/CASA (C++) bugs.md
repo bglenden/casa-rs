@@ -11380,6 +11380,14 @@ different physical rows or members. casa-rs writes each row to its saved
 physical location in view order. Where a reference repeats one physical
 row, its final supplied value wins (#1030).
 
+For a single integration, `getdata(ifraxis=True)` drops the singleton
+time dimension. On the saved row order `[2, 0, 3]`, CASA 6.7.6.14
+returned the three baselines in order `[0, 2, 3]` and swapped physical
+rows 0 and 2 when the array was written back unchanged. casa-rs resolves
+an ambiguous trailing axis using the most recent read of writable
+visibility data. A subsequent ordinary row-axis read restores row
+ordering for such arrays (#1030).
+
 ## An MS write after baseline downsampling can overwrite omitted rows with zeros
 
 On a writable MeasurementSet, read `getdata('data', ifraxis=True,
