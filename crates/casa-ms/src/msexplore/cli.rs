@@ -307,7 +307,9 @@ fn run_task(
                     options.plotms_averaging_active(),
                     options.plotms_extended_averaging()
                         && options.secondary_y_data_column.is_some()
-                        && !options.plotms_independent_average(),
+                        && !options.plotms_independent_average(
+                            atmosphere.is_none() && !options.additional_ordinates.is_empty(),
+                        ),
                     options.supports_channel_derived(columns)
                         || options.supports_extended_derived(columns),
                     columns,
