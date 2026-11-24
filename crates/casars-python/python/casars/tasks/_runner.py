@@ -418,7 +418,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise AssertionError(str({parameter: [message]}))
         null_parameters = {
             parameter: ["null value not allowed"]
-            for parameter in ("fftthresh", "addwn", "rejwn")
+            for parameter in ("addwn", "fftthresh", "rejwn")
             if arguments[parameter] is None
         }
         if null_parameters:
