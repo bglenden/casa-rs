@@ -1134,6 +1134,7 @@ def compare_vector_antenna_time_channels(root, native, source, controls, start, 
     compare_empty_export(root, native, "vector-time-channel-antenna-zero-corrected",
                          args | dict(vis=str(zero_corrected)), ("Real", "Imag:corrected"))
     compare_vector_antenna_time_channel_model(root, native, source, args, start)
+    compare_vector_antenna_time_channel_observed_spectrum(root, native, source, args, start)
 
 
 def compare_vector_antenna_time_channel_model(root, native, source, base, start):
@@ -1170,6 +1171,44 @@ def compare_vector_antenna_time_channel_model(root, native, source, base, start)
         assert native(**args, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(coordinates)
         print(f"vector-time-channel-antenna-{name}: {len(coordinates)} matching model coordinates", flush=True)
+
+
+def compare_vector_antenna_time_channel_observed_spectrum(root, native, source, base, start):
+    tiny = root / "vector-antenna-time-channel-tiny-observed.ms"
+    copy_ms(source, tiny)
+    with opened(tiny, True) as table:
+        far = table.getcol("ANTENNA2") == 2
+        data = table.getcol("DATA")
+        data[:, :2, :] = np.where(far, 3 + 3j, 1 + 1j)
+        table.putcol("DATA", data)
+        sigmas = table.getcol("SIGMA_SPECTRUM")
+        sigmas[:, :2, :] = 2.0**62
+        sigmas[0, 0, ~far] = 2.0**63
+        table.putcol("SIGMA_SPECTRUM", sigmas)
+    args = base | dict(vis=str(tiny), spw="0:0~1", ydatacolumn="data",
+                       msselect=f"TIME < {start + 1:.3f}", expformat="txt")
+    time_only = args | dict(avgantenna=False, avgchannel="", xaxis="wtsp")
+    spectrum = root / "tiny-observed-time-weights.casa.txt"
+    assert reference(**time_only, plotfile=str(spectrum)) is None
+    np.testing.assert_allclose([float(point[0]) for point in rows(spectrum)],
+                               np.finfo(np.float32).tiny * np.array([1, 4, 4, 4]), rtol=1.2e-5, atol=0)
+    hidden = root / "tiny-observed-underflow.casa.txt"
+    assert reference(**args, plotfile=str(hidden)) is None
+    assert not rows(hidden) and "# No data to export" in hidden.read_text()
+
+    # Scale each sigma by the same factor to bypass the CASA channel kernel's underflow.
+    scaled = root / "rescaled-observed-sigmas" / tiny.name
+    scaled.parent.mkdir()
+    copy_ms(tiny, scaled)
+    with opened(scaled, True) as table:
+        table.putcol("SIGMA_SPECTRUM", table.getcol("SIGMA_SPECTRUM") / np.float32(2.0**60))
+    reference_file, actual = (root / f"tiny-observed-{engine}.txt" for engine in ("scaled-casa", "native"))
+    assert reference(**(args | dict(vis=str(scaled))), plotfile=str(reference_file)) is None
+    means = np.array([point[:2] for point in rows(reference_file)], dtype=float)
+    np.testing.assert_allclose(means, [(29 / 13, 29 / 13), (1, -1), (3, -3)], rtol=1.2e-5)
+    assert native(**args, plotfile=str(actual)) is None
+    assert compare_text(actual, reference_file) == 3
+    print("tiny-observed: 3 matching coordinates against the rescaled CASA control", flush=True)
 
 
 def main():
