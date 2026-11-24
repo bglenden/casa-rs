@@ -7,14 +7,90 @@ use std::sync::Arc;
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 use ndarray::Array2;
 
-use super::selected_i32_values;
+use super::{
+    MsAxis, MsDataColumn, MsPlotSpec, PlotMsColumnSelection, cli::PlotMsModelLoader,
+    plotms_columns::uses_ordinary_time_averaging, selected_i32_values, uses_extended_averaging,
+};
 use crate::selection::ResolvedMsSelectionRow;
 use crate::virtual_model::{VirtualModelEntry, selected_model_combinations, virtual_model};
 use crate::{MeasurementSet, initial_model_visibility, scratch_columns::virtual_model_fields};
 
+/// Supply read-only predicted cells before a supported averaging transform.
+pub(super) fn selected_model_cells(
+    ms: &MeasurementSet,
+    rows: &[ResolvedMsSelectionRow],
+    plot: Option<&MsPlotSpec>,
+    columns: &PlotMsColumnSelection<'_>,
+    load_models: Option<PlotMsModelLoader>,
+) -> Result<Option<HashMap<usize, ArrayValue>>, String> {
+    let Some(plot) = plot else {
+        return Ok(None);
+    };
+    let axes = [
+        Some(plot.x_axis),
+        Some(plot.y_axis()),
+        plot.secondary_y_axis(),
+    ];
+    let picks = [
+        columns.x.unwrap_or(plot.data_column),
+        plot.data_column,
+        columns.secondary_y.unwrap_or(plot.data_column),
+    ];
+    let mut visibility_columns = axes
+        .into_iter()
+        .zip(picks)
+        .filter_map(|(axis, column)| {
+            axis.is_some_and(MsAxis::is_visibility_math)
+                .then_some(column)
+        })
+        .chain(
+            columns
+                .additional_y
+                .iter()
+                .filter_map(|&(axis, column)| axis.is_visibility_math().then_some(column)),
+        );
+    if !visibility_columns.clone().any(MsDataColumn::needs_model) {
+        return Ok(None);
+    }
+    if columns.phasecenter.is_some() {
+        let fields = virtual_model_fields(ms);
+        if rows.iter().any(|row| fields.contains(&row.field_id)) {
+            return Err("PlotMS phasecenter with a virtual model is pending (#1032)".into());
+        }
+    }
+    let extended = uses_extended_averaging(plot);
+    let averaging = extended || plot.averaging.avgchannel.is_some_and(|width| width > 1);
+    let ordinary_time = uses_ordinary_time_averaging(plot)
+        && plot.iteration.iteraxis.is_none()
+        && plot.transforms.freqframe.is_none()
+        && axes.into_iter().flatten().all(|axis| {
+            axis.is_visibility_math()
+                || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
+        });
+    let standard_columns = visibility_columns.all(|column| {
+        matches!(
+            column,
+            MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+        )
+    });
+    let can_predict = !averaging || ((!extended || ordinary_time) && standard_columns);
+    if let Some(load) = load_models.filter(|_| can_predict) {
+        return load(ms, rows);
+    }
+    if averaging || (plot.iteration.iteraxis.is_some() && plot.secondary_y_axis().is_some()) {
+        let message = if can_predict {
+            "use casars.tasks.plotms to predict virtual MeasurementSet models"
+        } else {
+            "PlotMS virtual MeasurementSet models are pending #1032"
+        };
+        refuse_selected_virtual_fields(ms, rows, message)?;
+    }
+    Ok(None)
+}
+
 /// A selected virtual-model field overrides stored cells, including its
 /// fallback model in windows without a recipe.
-pub(super) fn refuse_selected_virtual_fields(
+fn refuse_selected_virtual_fields(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
     message: &str,

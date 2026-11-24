@@ -46,7 +46,7 @@ pub(super) fn uses_antenna_visibility_average(spec: &MsPlotSpec) -> bool {
         && supports_reduced_visibility_axes(spec)
 }
 
-pub(super) fn uses_ordinary_time_visibility(spec: &MsPlotSpec) -> bool {
+pub(super) fn uses_ordinary_time_averaging(spec: &MsPlotSpec) -> bool {
     let averaging = &spec.averaging;
     averaging.avgtime.is_some()
         && !averaging.avgbaseline
@@ -54,7 +54,10 @@ pub(super) fn uses_ordinary_time_visibility(spec: &MsPlotSpec) -> bool {
         && !averaging.avgscan
         && !averaging.avgfield
         && !averaging.avgspw
-        && supports_reduced_visibility_axes(spec)
+}
+
+pub(super) fn uses_ordinary_time_visibility(spec: &MsPlotSpec) -> bool {
+    uses_ordinary_time_averaging(spec) && supports_reduced_visibility_axes(spec)
 }
 
 pub(super) fn uses_direct_vector_time_projection(spec: &MsPlotSpec) -> bool {
@@ -108,12 +111,6 @@ fn supports_reduced_visibility_axes(spec: &MsPlotSpec) -> bool {
 pub(super) fn baseline_weight(weight: f64) -> f64 {
     let minimum = f64::from(f32::MIN_POSITIVE);
     if weight < minimum { minimum } else { weight }
-}
-
-pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) -> bool {
-    axes.into_iter()
-        .zip(columns)
-        .any(|(axis, column)| axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model())
 }
 
 pub(super) fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -> bool {

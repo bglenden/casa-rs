@@ -1696,8 +1696,6 @@ def compare_default_model(root, native):
         assert compare_text(actual, expected) == count
     average = controls | dict(vis=str(stored), xaxis="channel", xdatacolumn="",
                               yaxis=["amp", "amp"], ydatacolumn=["data", "model"], avgtime="20")
-    from casars.tasks import TaskExecutionError
-
     for name, field, spw, amplitude in (
         ("average-virtual-and-stored", "PHASE", "0:1", 7.25),
         ("average-unmodeled-window-and-stored", "PHASE", "1:1", 1),
@@ -1709,17 +1707,8 @@ def compare_default_model(root, native):
         coordinates = rows(expected)
         assert coordinates and len(coordinates) % 2 == 0
         assert {float(point[1]) for point in coordinates[len(coordinates) // 2:]} == {amplitude}
-        if field == "FLUX":
-            assert native(**selected, plotfile=str(actual)) is None
-            assert compare_text(actual, expected) == len(coordinates)
-        else:
-            try:
-                native(**selected, plotfile=str(actual))
-            except TaskExecutionError as error:
-                assert "virtual MeasurementSet models are pending #1032" in str(error), error
-            else:
-                raise AssertionError("PlotMS used the stored model for an averaged virtual-model field")
-            assert not actual.exists()
+        assert native(**selected, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(coordinates)
     with opened(stored) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
 
@@ -1747,6 +1736,19 @@ def compare_virtual_fourier_model(root, native):
     assert np.all(np.abs(first) > 0.5)
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == 12
+
+    channel = np.array([point[:2] for point in rows(expected) if point[2] == "1"], dtype=float)
+    integrations = channel.reshape(3, 2, 2)
+    assert np.max(np.abs(integrations[:, 0] - integrations[:, 1])) > 1e-4
+    average = controls | dict(spw="0:1", avgtime="20")
+    expected, actual = (work / f"fourier-time.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**average, plotfile=str(expected), expformat="txt") is None
+    selected = np.array([point[:2] for point in rows(expected)], dtype=float)
+    np.testing.assert_allclose(selected, integrations.mean(axis=1), rtol=1.2e-5)
+    assert native(**average, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 3
+    print("fourier-time: 3 matching complex averages from distinct virtual model samples", flush=True)
+
     with opened(vis) as table:
         for name, values in columns.items():
             np.testing.assert_array_equal(table.getcol(name), values)
