@@ -470,6 +470,7 @@ def compare_pointing_axes(root, native):
                              yaxis="time", yframe="", yinterp=""), 12),
         ("nearest-ra-dec", dict(xaxis="ant-ra", xframe="j2000", xinterp="nearest", yaxis="ant-dec"), 12),
         ("nearest-selected", dict(field="FLUX", spw="0:1~3^2", correlation="YY"), 5),
+        ("nearest-two-baselines", dict(antenna="A0&A1;A1&A2"), 24),
         ("nearest-galactic", dict(yframe="galactic"), 12),
         ("nearest-azelgeo", dict(yaxis="ant-dec", yframe="azelgeo"), 12),
         ("nearest-azelgeo-tai", dict(vis=str(tai), yaxis="ant-dec", yframe="azelgeo"), 12),
@@ -488,7 +489,13 @@ def compare_pointing_axes(root, native):
         assert reference(**controls, plotfile=str(expected), expformat="txt") is None
         points = rows(expected)
         assert len(points) == count
-        assert {(p[5], p[6], p[7], p[8]) for p in points} == {("0", "0", "A0@P0", "A0@P0")}
+        antennas = {(p[5], p[6], p[7], p[8]) for p in points}
+        if name == "nearest-two-baselines":
+            assert antennas == {("0", "1", "A0@P0", "A1@P1"), ("1", "2", "A1@P1", "A2@P2")}
+            np.testing.assert_allclose([float(p[1]) for p in points if p[5] == "0"], lon)
+            np.testing.assert_allclose([float(p[1]) for p in points if p[5] == "1"], [0] * 6 + [15] * 6)
+        else:
+            assert antennas == {("0", "0", "A0@P0", "A0@P0")}
         if name == "nearest-ra":
             np.testing.assert_allclose([float(p[1]) for p in points], lon)
         if name == "nearest-dec":
