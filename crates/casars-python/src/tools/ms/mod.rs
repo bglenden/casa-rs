@@ -12,6 +12,7 @@ mod range;
 mod scan_summary;
 mod selection_indices;
 mod selection_record;
+mod statistics;
 mod statwt;
 mod stubs;
 mod subtable_queries;

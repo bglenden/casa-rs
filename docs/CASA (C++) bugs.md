@@ -11443,6 +11443,23 @@ casa-rs rejects the sampled baseline-axis record before
 mutation. A fresh read with `increment=1` supplies a complete writable
 grid (#1030).
 
+## Observed MS statistics take inverse squares of the stored weights
+
+For `ms.statistics('DATA', 'real', useweights=True)`, CASA 6.7.6.14's
+`Vi2StatsSigmasCubeIterator` computes `1 / sigma²`, but the
+`VisBufferImpl2::getSigmaScaled(correlation, channel, row)` it calls reads
+`WEIGHT_SPECTRUM` or `WEIGHT`. In a fixture with first-row sigma
+`[2, 3]` and weight `[100, 200]`, CASA reports total weight 224.0004
+after filtering channel flags. casa-rs reads `SIGMA_SPECTRUM` or `SIGMA`,
+reports about 225.19444, and weights the moments by those inverse
+variances, as the observed-visibility time-averaging path does (#1030).
+
+## Invalid maximum UVW distance can raise a Python binding SystemError
+
+CASA 6.7.6.14 raises a binding-level `SystemError` for
+`ms.statistics('DATA', 'amp', maxuvwdistance='1')`. casa-rs rejects the
+nonnumeric argument with `TypeError` and retains the attachment (#1030).
+
 ## MS record selection can misread non-native NumPy byte order
 
 In CASA 6.7.6.14 on a little-endian host, `ms.select({'antenna1': v})`
