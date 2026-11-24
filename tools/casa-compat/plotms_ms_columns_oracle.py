@@ -366,16 +366,23 @@ def compare_ordinate_columns(root, vis, native):
                                 shared_limits=name == "ord-equal-coordinates")
 
 
-def compare_ordinate_figure(root, name, native, controls, xlabel, labels, *, shared_limits=False):
+def compare_ordinate_figure(root, name, native, controls, xlabel, labels, *, shared_limits=False,
+                            color_groups=()):
     from casars import _plot_document
 
     capture = []
+    captured_groups = []
     render = _plot_document.render_document
 
     def record(*args, **kwargs):
         figure, primary = render(*args, **kwargs)
-        capture.append((primary.get_xlabel(), [(axis.get_ylabel(), axis.lines[0].get_xydata(), axis.get_ylim())
-                                               for axis in figure.axes]))
+        layers = []
+        for axis in figure.axes:
+            lines = list(axis.lines) if color_groups else [axis.lines[0]]
+            layers.append((axis.get_ylabel(), np.vstack([line.get_xydata() for line in lines]), axis.get_ylim()))
+            if color_groups:
+                captured_groups.append([(line.get_label(), line.get_color(), len(line.get_xydata())) for line in lines])
+        capture.append((primary.get_xlabel(), layers))
         return figure, primary
 
     figure = controls | dict(expformat="png", width=500, height=360, dpi=100)
@@ -391,6 +398,12 @@ def compare_ordinate_figure(root, name, native, controls, xlabel, labels, *, sha
         np.testing.assert_allclose(layer, section, rtol=1.2e-5, atol=1e-7)
     if shared_limits:
         assert layers[0][2] == layers[1][2], (layers[0][2], layers[1][2])
+    if color_groups:
+        for label, grouped in zip(labels, captured_groups, strict=True):
+            assert [name for name, _, _ in grouped] == [f"{label} · {name}" for name in color_groups], grouped
+            assert len({color for _, color, _ in grouped}) == len(color_groups), grouped
+            assert all(size == 1 for _, _, size in grouped), grouped
+        assert [color for _, color, _ in captured_groups[0]] == [color for _, color, _ in captured_groups[1]]
     for output in (expected, actual):
         with Image.open(output) as image:
             assert image.size == (500, 360), (output, image.size)
@@ -928,6 +941,8 @@ def compare_time_scan_field_columns(root, native):
     joined = [(2.6, 28), (2.6, 280)]
     separate_ids = [("1", "0"), ("2", "1")] * 2
     joined_ids = [("1", "0")] * 2
+    split = [(15 / 7, 25), (3, 30), (15 / 7, 250), (3, 300)]
+    color_controls = dict(avgscan=True, avgfield=True, avgtime="75")
     cases = (
         ("separate-boundaries", {}, separate, separate_ids),
         ("cross-scan", dict(vis=str(scan), avgscan=True), joined, joined_ids),
@@ -939,6 +954,8 @@ def compare_time_scan_field_columns(root, native):
         ("cross-both", dict(avgscan=True, avgfield=True), joined, joined_ids),
         ("cross-both-channel", dict(avgscan=True, avgfield=True, avgchannel="2", spw="0:0~1"), joined, joined_ids),
         ("cross-both-reversed", dict(vis=str(reversed_time), avgscan=True, avgfield=True), joined, [("2", "1")] * 2),
+        ("two-scan-colors", color_controls | dict(coloraxis="scan"), split, separate_ids),
+        ("two-field-colors", color_controls | dict(coloraxis="field"), split, separate_ids),
     )
     for name, overrides, coordinates, identifiers in cases:
         controls = base | overrides
@@ -955,6 +972,25 @@ def compare_time_scan_field_columns(root, native):
         print(f"{name}: {len(selected)} matching independently weighted coordinates", flush=True)
     figure = base | dict(avgscan=True, avgfield=True)
     compare_ordinate_figure(work, "cross-both", native, figure, "Real", ["Real:corrected", "Real:model"])
+    for axis, groups in (("scan", ("Scan 1", "Scan 2")), ("field", ("FLUX", "PHASE"))):
+        figure = base | color_controls | dict(coloraxis=axis)
+        compare_ordinate_figure(work, f"two-{axis}-colors", native, figure, "Real",
+                                ["Real:corrected", "Real:model"], color_groups=groups)
+    from casars.tasks import TaskParameterError
+
+    transformed = base | dict(vis=str(field), xaxis="frequency", xdatacolumn="",
+                              transform=True, freqframe="BARY", expformat="txt")
+    ordinary = work / "ordinary-frequency-transform.native.txt"
+    assert native(**transformed, plotfile=str(ordinary)) is None
+    assert len(rows(ordinary)) == 4
+    actual = work / "cross-field-frequency-transform.native.txt"
+    try:
+        native(**transformed, avgfield=True, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS admitted spectral frame conversion across averaged fields")
+    assert not actual.exists()
 
 
 def compare_float_columns(root, vis, source, native):
