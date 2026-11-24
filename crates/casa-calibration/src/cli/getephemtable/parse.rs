@@ -239,13 +239,13 @@ fn metadata(
                 _ => {}
             }
         }
-        if keys.get("orb_per").is_none() {
-            if let Some((value, unit)) = period(
+        if keys.get("orb_per").is_none()
+            && let Some((value, unit)) = period(
                 line,
                 &["orbital period", "orb. per.,", "orb per", "orbit period"],
-            ) {
-                keys.upsert("orb_per", quantity(&unit, number(value)));
-            }
+            )
+        {
+            keys.upsert("orb_per", quantity(&unit, number(value)));
         }
         if line.contains("Rotational period") && line.contains("Synchronous") {
             synchronous = true;
