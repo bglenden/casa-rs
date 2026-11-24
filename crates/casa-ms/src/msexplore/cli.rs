@@ -368,9 +368,9 @@ fn run_visibility_plot(
         ))
     })?;
     let mut axis_columns = options.plotms_axis_columns();
-    let raw_symbols = axis_columns
-        .is_some_and(|columns| options.supports_raw_visibility_symbols(columns))
-        .then(|| plotms_options::raw_symbol_visibility(task));
+    let raw_symbols = (pointing.is_some()
+        || axis_columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
+    .then(|| plotms_options::raw_symbol_visibility(task));
     let mut prefer_float_data = false;
     if calibration.is_none()
         && let Some(columns) = &mut axis_columns

@@ -6,10 +6,11 @@ use std::collections::BTreeMap;
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use casa_types::measures::epoch::{EpochRef, MEpoch};
 
 use super::MsAxis;
 use crate::MeasurementSet;
-use crate::derived::engine::MsCalEngine;
+use crate::derived::engine::{MsCalEngine, resolve_direction_reference_selected};
 
 const CONTROLS: [&str; 4] = ["xframe", "xinterp", "yframe", "yinterp"];
 
@@ -136,6 +137,9 @@ impl PointingCoordinates {
             return Err("PlotMS antenna directions require a nonempty POINTING table".into());
         }
         let observation = ms.observation().map_err(|error| error.to_string())?;
+        if observation.row_count() == 0 {
+            return Err("PlotMS antenna directions require an observatory".into());
+        }
         for row in 0..observation.row_count() {
             let name = observation
                 .string(row, "TELESCOPE_NAME")
@@ -152,9 +156,9 @@ impl PointingCoordinates {
         let samples = pointing
             .plotms_samples(&antennas)
             .map_err(|error| error.to_string())?;
-        let frame = samples
-            .first()
-            .map_or(DirectionRef::J2000, |sample| sample.2.refer());
+        let frame =
+            resolve_direction_reference_selected(pointing.table(), "POINTING", "DIRECTION", 0)
+                .map_err(|error| error.to_string())?;
         if samples.iter().any(|sample| sample.2.refer() != frame) {
             return Err("PlotMS POINTING directions in multiple frames are pending #1032".into());
         }
@@ -166,8 +170,8 @@ impl PointingCoordinates {
                 .iter()
                 .map(|sample| {
                     let direction = &sample.2;
-                    let (longitude, latitude) = direction.as_angles();
-                    [longitude.sin().atan2(longitude.cos()), latitude]
+                    let [x, y, _] = direction.cosines();
+                    [y.atan2(x), direction.latitude_rad()]
                 })
                 .collect::<Vec<_>>();
             let second_derivatives = if spline && times.len() >= 4 {
@@ -225,7 +229,8 @@ impl PointingCoordinates {
                     .as_ref()
                     .expect("pointing conversion prepared geometry")
                     .antenna_frame(epoch, antenna as usize)
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|error| error.to_string())?
+                    .with_epoch(MEpoch::from_mjd_seconds(epoch, EpochRef::UTC));
                 direction
                     .convert_to(axis.frame, &frame)
                     .map_err(|error| error.to_string())?

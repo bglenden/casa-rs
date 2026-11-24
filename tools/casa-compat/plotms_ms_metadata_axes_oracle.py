@@ -16,6 +16,7 @@ from plotms_atmosphere_oracle import atmosphere_inputs
 from plotms_callibrary_oracle import library_entry
 from plotms_ms_atmosphere_oracle import paired_text
 from plotms_ms_columns_oracle import (
+    compare_empty_export,
     compare_figure,
     compare_text,
     fixture,
@@ -443,6 +444,24 @@ def compare_pointing_axes(root, native):
     with opened(sparse / "POINTING", True) as table:
         a0 = np.flatnonzero(table.getcol("ANTENNA_ID") == 0)
         table.removerows(a0[-1:])
+    missing = work / "missing-galactic-pointing.ms"
+    copy_ms(vis, missing)
+    with opened(missing / "POINTING", True) as table:
+        table.removerows(np.flatnonzero(table.getcol("ANTENNA_ID") == 0))
+        keyword = table.getcolkeyword("DIRECTION", "MEASINFO")
+        table.putcolkeyword("DIRECTION", "MEASINFO", keyword | {"Ref": "GALACTIC"})
+    meridian = work / "meridian-pointing.ms"
+    copy_ms(vis, meridian)
+    with opened(meridian / "POINTING", True) as table:
+        a0 = np.flatnonzero(table.getcol("ANTENNA_ID") == 0)
+        order = a0[np.argsort(table.getcol("TIME")[a0])]
+        for row, longitude in zip(order, range(-180, -176), strict=True):
+            table.putcell("DIRECTION", int(row), np.deg2rad([[longitude], [-30]]))
+    tai = work / "tai-pointing.ms"
+    copy_ms(vis, tai)
+    with opened(tai, True) as table:
+        keyword = table.getcolkeyword("TIME", "MEASINFO")
+        table.putcolkeyword("TIME", "MEASINFO", keyword | {"Ref": "TAI"})
     lon = [350] * 3 + [12] * 4 + [47] * 5
     lat = [-28] * 3 + [-25] * 4 + [-32] * 5
     cases = (
@@ -453,12 +472,15 @@ def compare_pointing_axes(root, native):
         ("nearest-selected", dict(field="FLUX", spw="0:1~3^2", correlation="YY"), 5),
         ("nearest-galactic", dict(yframe="galactic"), 12),
         ("nearest-azelgeo", dict(yaxis="ant-dec", yframe="azelgeo"), 12),
+        ("nearest-azelgeo-tai", dict(vis=str(tai), yaxis="ant-dec", yframe="azelgeo"), 12),
         ("nearest-b1950", dict(yframe="b1950"), 12),
         ("independent-pointing-axes", dict(xaxis="ant-ra", xframe="j2000", xinterp="nearest",
                                          yaxis="ant-dec", yframe="galactic", yinterp="spline"), 12),
         ("default-pointing", dict(yframe="", yinterp=""), 12),
         ("spline-pointing", dict(yinterp="spline"), 12),
         ("sparse-pointing", dict(vis=str(sparse)), 12),
+        ("missing-galactic-pointing", dict(vis=str(missing), yinterp="spline"), 12),
+        ("signed-meridian", dict(vis=str(meridian), yinterp="spline"), 12),
     )
     for name, overrides, count in cases:
         controls = base | overrides
@@ -475,6 +497,10 @@ def compare_pointing_axes(root, native):
             np.testing.assert_allclose([float(p[0]) for p in points], lon)
         if name == "sparse-pointing":
             assert all(float(p[1]) == 0 for p in points)
+        if name == "missing-galactic-pointing":
+            np.testing.assert_allclose([float(p[1]) for p in points], 266.405, atol=0.001, rtol=0)
+        if name == "signed-meridian":
+            assert all(179 < float(p[1]) < 186 for p in points)
         if name == "nearest-selected":
             assert {(p[2], p[12]) for p in points} == {("1", "YY")}
             np.testing.assert_allclose([float(p[1]) for p in points], [350, 350, 12, 12, 12])
@@ -488,6 +514,32 @@ def compare_pointing_axes(root, native):
                          title="Antenna pointing")
     compare_figure(work, native, figure, work / "nearest-ra-dec.casa.txt",
                    ("Antenna pointing", "J2000 Right Ascension (degrees)", "J2000 Declination (degrees)"))
+    masked = work / "all-pointings-flagged.ms"
+    copy_ms(vis, masked)
+    with opened(masked, True) as table:
+        table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
+    labels = ("Time (MJD seconds)", "J2000 Right Ascension (degrees)")
+    compare_empty_export(work, native, "flagged-pointing", base | dict(vis=str(masked)), labels)
+    compare_empty_export(work, native, "hidden-pointing", base | dict(customsymbol=True, symbolshape="nosymbol"),
+                         labels)
+    check_pointing_observatory(work, native, base, vis)
+
+
+def check_pointing_observatory(work, native, controls, vis):
+    from casars.tasks import TaskExecutionError
+
+    missing = work / "no-observatory.ms"
+    copy_ms(vis, missing)
+    with opened(missing / "OBSERVATION", True) as table:
+        table.removerows(list(range(table.nrows())))
+    actual = work / "no-observatory.native.txt"
+    try:
+        native(**(controls | dict(vis=str(missing))), plotfile=str(actual), expformat="txt")
+    except TaskExecutionError as error:
+        assert "antenna directions require an observatory" in str(error), error
+    else:
+        raise AssertionError("A pointing plot was exported without an observatory")
+    assert not actual.exists()
 
 
 def main():
