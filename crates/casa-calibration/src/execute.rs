@@ -2768,9 +2768,11 @@ fn apply_row_all_channels(
             bounded_frequency_cache && ant1.interpolated,
             bounded_frequency_cache && ant2.interpolated,
         );
-        let ordered_gains = !forward_model
-            && table_plan.spec.callibrary.is_some()
-            && matches!(subtype, "B Jones" | "G Jones" | "T Jones");
+        let ordered_tsys = is_tsys && chain.single_dish_solve;
+        let ordered_gains = ordered_tsys
+            || (!forward_model
+                && table_plan.spec.callibrary.is_some()
+                && matches!(subtype, "B Jones" | "G Jones" | "T Jones"));
         let raw_jones = ordered_gains.then_some([
             (Arc::as_ptr(&ant1.grid), !ant1.interpolated),
             (Arc::as_ptr(&ant2.grid), !ant2.interpolated),
@@ -2814,7 +2816,13 @@ fn apply_row_all_channels(
             (ant1, ant2)
         };
         let bandpass_weights = if is_tsys && calibrate_weights && !has_weight_spectrum {
-            bandpass::temperature_weight_factors(&ant1, &ant2, correlation_types, data_channels)
+            bandpass::temperature_weight_factors(
+                &ant1,
+                &ant2,
+                correlation_types,
+                data_channels,
+                ordered_tsys,
+            )
         } else {
             bandpass_weights
         };
@@ -2968,16 +2976,21 @@ fn apply_row_all_channels(
             let cache = geometry_cache
                 .as_deref_mut()
                 .map_or(&mut scratch, |cache| &mut cache.ordered_gains);
+            let form = |reconstruct| match (ordered_tsys, reconstruct) {
+                (true, _) => ordered_gain::JonesForm::Correction,
+                (false, true) => ordered_gain::JonesForm::ReconstructPolar,
+                (false, false) => ordered_gain::JonesForm::Divisor,
+            };
             let antennas = [
                 ordered_gain::Antenna {
                     id: row.antenna1,
                     grid: &ant1,
-                    round_trip: raw_first.1 && raw_first.0 == Arc::as_ptr(&ant1),
+                    form: form(raw_first.1 && raw_first.0 == Arc::as_ptr(&ant1)),
                 },
                 ordered_gain::Antenna {
                     id: row.antenna2,
                     grid: &ant2,
-                    round_trip: raw_second.1 && raw_second.0 == Arc::as_ptr(&ant2),
+                    form: form(raw_second.1 && raw_second.0 == Arc::as_ptr(&ant2)),
                 },
             ];
             if ordered_gain::apply(

@@ -103,7 +103,9 @@ impl SolvePriorApply {
         ms: &MeasurementSet,
         plan: ApplyPlan,
     ) -> Result<Self, ApplyExecutionError> {
-        Self::new(ms, plan, false, false, 1)
+        let mut priors = Self::new(ms, plan, false, false, 1)?;
+        priors.chain.single_dish_solve = true;
+        Ok(priors)
     }
 
     pub(crate) fn correct_single_dish(

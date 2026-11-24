@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Float diagonal Jones application for the calibration library.
+//! Float diagonal Jones application in CASA station order.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,8 +22,8 @@ struct Sample {
 }
 
 impl Sample {
-    fn new(value: Complex32, flag: bool, round_trip: bool) -> Self {
-        let value = if round_trip && !flag {
+    fn new(value: Complex32, flag: bool, form: JonesForm) -> Self {
+        let value = if form == JonesForm::ReconstructPolar && !flag {
             let phase = value.im.atan2(value.re);
             let amplitude = value.re.hypot(value.im);
             complex_from_casa_polar(amplitude, phase)
@@ -37,7 +37,7 @@ impl Sample {
             value.re * value.re + value.im * value.im
         };
         let (value, flagged) = correcting_gain(value, flag);
-        let inverse = if flagged {
+        let inverse = if flagged || form == JonesForm::Correction {
             value
         } else if power.is_normal() {
             Complex32::new(value.re / power, -value.im / power)
@@ -51,10 +51,21 @@ impl Sample {
         };
         Self {
             inverse,
-            power,
+            power: if form == JonesForm::Correction {
+                power.recip()
+            } else {
+                power
+            },
             flagged,
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum JonesForm {
+    Divisor,
+    ReconstructPolar,
+    Correction,
 }
 
 struct OrderedGrid {
@@ -64,14 +75,14 @@ struct OrderedGrid {
 }
 
 impl OrderedGrid {
-    fn from_solution(grid: &GainGrid, round_trip: bool) -> Self {
+    fn from_solution(grid: &GainGrid, form: JonesForm) -> Self {
         let samples = (0..grid.receptor_count)
             .flat_map(|receptor| {
                 (0..grid.channel_count).map(move |channel| {
                     Sample::new(
                         grid.value_at(receptor, channel),
                         grid.flag_at(receptor, channel),
-                        round_trip,
+                        form,
                     )
                 })
             })
@@ -99,7 +110,7 @@ impl OrderedGrid {
 
 struct CachedGrid {
     solution: Arc<CalibrationGrid>,
-    round_trip: bool,
+    form: JonesForm,
     ordered: Arc<OrderedGrid>,
 }
 
@@ -112,7 +123,7 @@ pub(super) struct Cache {
 pub(super) struct Antenna<'a> {
     pub(super) id: i32,
     pub(super) grid: &'a Arc<CalibrationGrid>,
-    pub(super) round_trip: bool,
+    pub(super) form: JonesForm,
 }
 
 impl Cache {
@@ -122,11 +133,11 @@ impl Cache {
         };
         let make = || CachedGrid {
             solution: Arc::clone(sample.grid),
-            round_trip: sample.round_trip,
-            ordered: Arc::new(OrderedGrid::from_solution(solution, sample.round_trip)),
+            form: sample.form,
+            ordered: Arc::new(OrderedGrid::from_solution(solution, sample.form)),
         };
         let entry = self.recent.entry((table, sample.id)).or_insert_with(make);
-        if entry.round_trip != sample.round_trip || !Arc::ptr_eq(&entry.solution, sample.grid) {
+        if entry.form != sample.form || !Arc::ptr_eq(&entry.solution, sample.grid) {
             *entry = make();
         }
         Some(Arc::clone(&entry.ordered))
