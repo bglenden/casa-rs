@@ -42,6 +42,14 @@ pub(super) fn record_setjy_flux(vis: &Path, messages: Vec<String>) {
     }
 }
 
+pub(super) fn record_setjy_imager_flux(vis: &Path, messages: Vec<String>) {
+    if !messages.is_empty()
+        && let Err(error) = append(vis, "imager", "imager::setjy()", messages)
+    {
+        tracing::warn!("updating setjy imager flux HISTORY: {error}");
+    }
+}
+
 fn append(
     vis: &Path,
     application: &str,

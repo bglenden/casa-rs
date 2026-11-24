@@ -11,7 +11,8 @@ use casa_ms::virtual_model::{
     VirtualModelPublication, selected_model_combinations, virtual_model_clear_ids,
 };
 use casa_ms::{
-    MeasurementSet, MsSelection, ResolvedMsSelection, VirtualModelEntry, VirtualModelKind,
+    MeasurementSet, MsSelection, MsSpectralWindow, ResolvedMsSelection, VirtualModelEntry,
+    VirtualModelKind,
 };
 use casa_provider_contracts::{
     CasaEntry, CasaFloat, CasaKey, CasaValue, FloatDtype, ParameterValue,
@@ -23,6 +24,7 @@ use casa_types::measures::direction::MDirection;
 use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{CasaFrequencyFrame, FrequencyRef, MFrequency};
+use casa_types::quanta::casacore::stream_double_precision;
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::attachment::OpenedMs;
@@ -58,6 +60,13 @@ struct FieldModel {
 }
 
 type FieldModels = BTreeMap<i32, FieldModel>;
+
+struct PreparedModels {
+    models: FieldModels,
+    fluxes: CasaValue,
+    completed: bool,
+    imager_history: Vec<String>,
+}
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if task.flag("listmodels")? {
@@ -208,7 +217,12 @@ fn run_ms(
     let spws = requested_windows(&opened.measurement_set, selection.spw.as_deref())?;
     let image = model_files::task_image(task)?;
     let calibration_directions = matches!(flux, FluxParameters::Solar2010(_)) && image.is_none();
-    let (models, fluxes, completed) = prepare(
+    let PreparedModels {
+        models,
+        fluxes,
+        completed,
+        imager_history,
+    } = prepare(
         &opened.measurement_set,
         &selected,
         &flux,
@@ -248,6 +262,7 @@ fn run_ms(
     )?;
     opened.release().map_err(execution)?;
     record_history(task, path, partition);
+    super::history::record_setjy_imager_flux(path, imager_history);
     if partially_written {
         // CASA's cleanup after the later failure raises once an earlier
         // component list has already been applied and retired.
@@ -514,7 +529,7 @@ fn prepare(
     spws: &[i32],
     by_channel: bool,
     image: Option<(&Path, bool)>,
-) -> Result<(FieldModels, CasaValue, bool), TaskFailure> {
+) -> Result<PreparedModels, TaskFailure> {
     let mut groups = BTreeMap::<i32, BTreeMap<i32, Vec<usize>>>::new();
     for row in &selected.selected_rows {
         groups
@@ -543,6 +558,7 @@ fn prepare(
     let mut models = FieldModels::new();
     let mut returned = BTreeMap::new();
     let mut completed = true;
+    let mut imager_history = Vec::new();
     for (field, windows_for_field) in groups.into_iter().rev() {
         let direction = engine
             .observation_direction_j2000(*epoch, field as usize)
@@ -594,19 +610,7 @@ fn prepare(
         let mut field_flux = BTreeMap::new();
         let mut first_jy = None;
         for &spw in spws {
-            let all_hz = windows.chan_freq(spw as usize).map_err(execution)?;
-            let frequency_frame = windows
-                .frequency_reference(spw as usize)
-                .map_err(execution)?;
-            let num_channels = i32::try_from(all_hz.len()).map_err(execution)?;
-            // CASA assigns the scalar median through Vector::set, which
-            // constructs an MFrequency in the default LSRK frame.
-            let frame_ref = if by_channel {
-                frequency_frame
-            } else {
-                FrequencyRef::LSRK
-            };
-            let planned = selected_frequencies(all_hz, frame_ref, by_channel)?;
+            let (planned, num_channels) = model_frequencies(&windows, spw as usize, by_channel)?;
             let (component, stokes) = if image.is_some() {
                 (
                     None,
@@ -623,6 +627,13 @@ fn prepare(
                 let (component, stokes) = solar
                     .component(Some(direction.clone()), &planned)
                     .map_err(execution)?;
+                imager_history.push(solar_history_line(
+                    &name,
+                    field,
+                    spw,
+                    planned[0].hz(),
+                    stokes,
+                ));
                 (Some(component), stokes)
             } else {
                 point_model(flux, spectrum.as_ref(), &direction, &planned, &frame)?
@@ -713,7 +724,20 @@ fn prepare(
     } else {
         CasaValue::Dict { entries }
     };
-    Ok((models, returned, completed))
+    Ok(PreparedModels {
+        models,
+        fluxes: returned,
+        completed,
+        imager_history,
+    })
+}
+
+fn solar_history_line(name: &str, field: i32, spw: i32, hz: f64, stokes: [f64; 4]) -> String {
+    let [i, q, u, v] = stokes.map(|flux| stream_double_precision(flux, 5));
+    let frequency = stream_double_precision(hz, 5);
+    format!(
+        "{name:>12} (fld ind {field}) spw {spw}  [I={i}, Q={q}, U={u}, V={v}] Jy @ {frequency}Hz, (JPL-Butler Solar System Object)"
+    )
 }
 
 fn field_midpoint(
@@ -776,11 +800,21 @@ fn flux_dictionary(mut entries: Vec<CasaEntry>) -> CasaValue {
     CasaValue::Dict { entries }
 }
 
-fn selected_frequencies(
-    mut frequencies: Vec<f64>,
-    frame: FrequencyRef,
+fn model_frequencies(
+    windows: &MsSpectralWindow<'_>,
+    spw: usize,
     by_channel: bool,
-) -> Result<Vec<MFrequency>, TaskFailure> {
+) -> Result<(Vec<MFrequency>, i32), TaskFailure> {
+    let mut frequencies = windows.chan_freq(spw).map_err(execution)?;
+    let frequency_frame = windows.frequency_reference(spw).map_err(execution)?;
+    let num_channels = i32::try_from(frequencies.len()).map_err(execution)?;
+    // CASA assigns the scalar median through Vector::set, which constructs
+    // an MFrequency in the default LSRK frame.
+    let frame = if by_channel {
+        frequency_frame
+    } else {
+        FrequencyRef::LSRK
+    };
     if frequencies.is_empty() || frequencies.iter().any(|f| !f.is_finite() || *f <= 0.) {
         return Err(execution("setjy needs positive finite channel frequencies"));
     }
@@ -796,10 +830,11 @@ fn selected_frequencies(
         };
         frequencies = vec![median];
     }
-    Ok(frequencies
+    let planned = frequencies
         .into_iter()
         .map(|hz| MFrequency::new(hz, frame))
-        .collect())
+        .collect();
+    Ok((planned, num_channels))
 }
 
 fn entry(key: impl Into<String>, value: CasaValue) -> CasaEntry {

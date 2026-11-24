@@ -8,7 +8,7 @@ use casa_provider_contracts::CasaValue;
 use casa_tables::TableWriteLock;
 use casa_types::measures::frequency::MFrequency;
 
-use super::{FluxParameters, ManualFlux, prepare, requested_windows};
+use super::{FluxParameters, ManualFlux, PreparedModels, prepare, requested_windows};
 use crate::attachment::{AttachmentError, ImagerAttachments};
 use crate::ft::setjy::standards::{FluxCatalog, FluxScale, canonical_tool_standard};
 use crate::interpolation::Curve;
@@ -63,6 +63,7 @@ pub fn imager_setjy(
     let outcome = input.with_write(|ms, _, lock| {
         setjy_holding(ms, lock, input.options().use_scratch, request, &flux)
     })?;
+    super::super::history::record_setjy_imager_flux(input.path(), outcome.imager_history);
     if let Some(selection) = outcome.next {
         attachments.retain_setjy_selection(selection)?;
     }
@@ -78,6 +79,7 @@ struct SetJyOutcome {
     reply: CasaValue,
     next: Option<MsSelection>,
     partial: bool,
+    imager_history: Vec<String>,
 }
 
 fn setjy_holding(
@@ -97,6 +99,7 @@ fn setjy_holding(
                 },
                 next: None,
                 partial: false,
+                imager_history: Vec::new(),
             });
         }
     };
@@ -105,6 +108,7 @@ fn setjy_holding(
             reply: super::flux_dictionary(Vec::new()),
             next: None,
             partial: false,
+            imager_history: Vec::new(),
         });
     }
     selected.channel_selections.clear();
@@ -116,11 +120,17 @@ fn setjy_holding(
             },
             next: first.map(|field| focus(&request.selection, field, None)),
             partial: false,
+            imager_history: Vec::new(),
         });
     }
     let windows = requested_windows(ms, request.selection.spw.as_deref())
         .map_err(|error| preparation(error.message))?;
-    let (models, reply, completed) = prepare(
+    let PreparedModels {
+        models,
+        fluxes: reply,
+        completed,
+        imager_history,
+    } = prepare(
         ms,
         &selected,
         flux,
@@ -169,6 +179,7 @@ fn setjy_holding(
         reply,
         next,
         partial,
+        imager_history,
     })
 }
 
