@@ -17,31 +17,31 @@ use super::{MsTransformError, TimeAverageOptions, scalar_i32};
 /// The columns used by the visibility iterator to establish a chunk.
 /// A dimension selected by `timespan` is zeroed before building this key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct TimeChunk([i32; 8]);
+pub(crate) struct TimeChunk(pub(crate) [i32; 8]);
 
 /// Row metadata needed to decide the averaging group before reading visibility arrays.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct TimeSample {
-    pub(super) row: usize,
-    pub(super) description: i32,
-    pub(super) chunk: TimeChunk,
-    pub(super) time: f64,
-    pub(super) antenna_pair: [i32; 2],
-    pub(super) uvw: [f64; 3],
+pub(crate) struct TimeSample {
+    pub(crate) row: usize,
+    pub(crate) description: i32,
+    pub(crate) chunk: TimeChunk,
+    pub(crate) time: f64,
+    pub(crate) antenna_pair: [i32; 2],
+    pub(crate) uvw: [f64; 3],
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct TimeInputRow {
-    pub(super) physical: usize,
-    pub(super) buffer_first: usize,
+pub(crate) struct TimeInputRow {
+    pub(crate) physical: usize,
+    pub(crate) buffer_first: usize,
 }
 
 /// A baseline accumulation, anchored on the first selected physical row.
 #[derive(Debug)]
-pub(super) struct TimeGroup {
-    pub(super) first: TimeSample,
-    pub(super) rows: Vec<TimeInputRow>,
-    pub(super) row_in_chunk: usize,
+pub(crate) struct TimeGroup {
+    pub(crate) first: TimeSample,
+    pub(crate) rows: Vec<TimeInputRow>,
+    pub(crate) row_in_chunk: usize,
     completed_before: Option<usize>,
 }
 
@@ -331,7 +331,7 @@ fn plot_time_buffers(groups: &[TimeGroup]) -> Vec<Range<usize>> {
         .collect()
 }
 
-pub(super) fn group_baselines(
+pub(crate) fn group_baselines(
     mut samples: Vec<TimeSample>,
     timebin: f64,
     max_uvw_distance: f64,

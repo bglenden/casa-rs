@@ -11450,6 +11450,54 @@ casa-rs rejects the sampled baseline-axis record before
 mutation. A fresh read with `increment=1` supplies a complete writable
 grid (#1030).
 
+## Observed MS statistics take inverse squares of the stored weights
+
+For weighted observed `DATA` and `FLOAT_DATA` statistics, CASA 6.7.6.14's
+`Vi2StatsSigmasCubeIterator` computes `1 / sigma²`, but the
+`VisBufferImpl2::getSigmaScaled(correlation, channel, row)` it calls reads
+`WEIGHT_SPECTRUM` or `WEIGHT`. In a fixture with first-row sigma
+`[2, 3]` and weight `[100, 200]`, CASA reports total weight 224.0004
+after filtering channel flags. casa-rs reads `SIGMA_SPECTRUM` or `SIGMA`,
+reports about 225.19444, and weights the moments by those inverse
+variances, as the observed-visibility time-averaging path does (#1030).
+
+## Observed MS statistics time averaging can ignore the flag and weight switches
+
+With `timeaverage=True` in CASA 6.7.6.14, the observed-data accumulator
+always reads the FLAG cube and weights data by inverse sigma squared,
+regardless of the four `useflags` and `useweights` combinations selected
+by the caller. In the controlled three-integration fixture all four
+CASA results have mean 126.68421. casa-rs applies both switches before
+reducing the averaged samples. With both enabled, it matches CASA.
+With both disabled, it reports the analytic unweighted, unmasked
+mean 119.5 (#1030).
+
+## MS statistics time averaging can ignore the requested UVW displacement
+
+In CASA 6.7.6.14, `ms.statistics('DATA', 'real', timeaverage=True,
+timebin='30s', maxuvwdistance=1.0)` averages integrations whose UVW
+positions move by 10 km. The call passes the numeric displacement, but
+does not enable the averaging option that uses it. In the three
+integration control, CASA reports 80 averaged samples with or without
+the limit. casa-rs applies the stated metre limit and returns statistics
+for all 240 separate samples (#1030).
+
+## Legacy MS statistics can pad ID columns with invented zero samples
+
+In CASA 6.7.6.14, `ms.statisticsold('FIELD_ID', useflags=False)` appends
+one scalar per iterator buffer to an array sized for all selected rows.
+The unused elements are zeros. On NGC 5921 the reported mean is about
+0.00362 because only 60 buffer IDs contributed to 22,653 array elements.
+The same append logic handles `ARRAY_ID` and `DATA_DESC_ID`. casa-rs reads
+the physical ID for each selected row and applies the requested row
+mask before reducing it (#1030).
+
+## Invalid maximum UVW distance can raise a Python binding SystemError
+
+CASA 6.7.6.14 raises a binding-level `SystemError` for
+`ms.statistics('DATA', 'amp', maxuvwdistance='1')`. casa-rs rejects the
+nonnumeric argument with `TypeError` and retains the attachment (#1030).
+
 ## MS record selection can misread non-native NumPy byte order
 
 In CASA 6.7.6.14 on a little-endian host, `ms.select({'antenna1': v})`

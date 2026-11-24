@@ -595,8 +595,8 @@ const METHODS: &[Method] = &[
             param("maxuvwdistance", K::Float, Float(0.0)),
             param("doquantiles", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Yes,
     ),
     method(
         "statisticsold",
@@ -614,8 +614,8 @@ const METHODS: &[Method] = &[
             param("array", K::Text, Text("")),
             param("obs", K::Text, Text("")),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Yes,
     ),
     method(
         "statwt",

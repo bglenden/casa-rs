@@ -34,6 +34,11 @@ pub fn transform_model_input(
     })
 }
 
+/// Read stored, virtual or default model visibilities without publishing a column.
+pub fn visibility_model_input() -> impl TransformInputView {
+    plotms_model_input(None)
+}
+
 pub(crate) fn plotms_model_input(
     references: Option<PlotMsModelReferences<'_>>,
 ) -> impl TransformInputView + '_ {
