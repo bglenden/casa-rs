@@ -323,6 +323,15 @@ def stagger_windows(root, vis, name):
     return staggered, start
 
 
+def add_second_field(vis):
+    with opened(vis / "FIELD", True) as table:
+        table.addrows(1)
+        for column in table.colnames():
+            if table.iscelldefined(column, 0):
+                table.putcell(column, 1, table.getcell(column, 0))
+        table.putcell("NAME", 1, "SECOND")
+
+
 def compare_scalar_time(root, native, base, vis):
     staggered, start = stagger_windows(root, vis, "staggered-windows")
     scans, fields, spans, flagged, nonfinite, varied = (root / f"{name}.ms" for name in (
@@ -332,12 +341,7 @@ def compare_scalar_time(root, native, base, vis):
     for source in (scans, fields, spans, flagged, nonfinite, varied):
         copy_ms(staggered, source)
     for source in (fields, spans):
-        with opened(source / "FIELD", True) as table:
-            table.addrows(1)
-            for column in table.colnames():
-                if table.iscelldefined(column, 0):
-                    table.putcell(column, 1, table.getcell(column, 0))
-            table.putcell("NAME", 1, "SECOND")
+        add_second_field(source)
     for source in (scans, fields, spans):
         with opened(source, True) as table:
             second = (table.getcol("TIME") >= start + 10).astype(np.int32)
@@ -539,6 +543,81 @@ def compare_vector_optional_weights(root, native, base):
             print(f"{name}: 3 matching coordinates with a sparse unused {spectrum}", flush=True)
 
 
+def compare_vector_channel_spans(root, native, base, vis):
+    source, start = stagger_windows(root, vis, "vector-layered-windows")
+    with opened(source, True) as table:
+        low = table.getcol("DATA_DESC_ID") == 0
+        late = table.getcol("TIME") >= start + 10
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        for name, first, second in (
+            ("WEIGHT_SPECTRUM", [1, 3, 5, 7], [8, 4, 2, 1]),
+            ("SIGMA_SPECTRUM", [1, 0.5, 1, 0.5], [0.5, 1, 0.5, 1]),
+        ):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            spectrum = np.where(low, np.asarray(first, dtype=np.float32)[:, None],
+                                np.asarray(second, dtype=np.float32)[:, None])
+            spectrum = spectrum * np.where(late, 2, 1).astype(np.float32)
+            table.putcol(name, np.broadcast_to(spectrum, shape).copy())
+        for name in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(name) * (1 + late)
+            table.putcol(name, values.astype(np.complex64))
+    scans, fields, spans = (root / f"vector-{name}.ms" for name in ("scan-boundary", "field-boundary", "both"))
+    for target in (scans, fields, spans):
+        copy_ms(source, target)
+        if target in (fields, spans):
+            add_second_field(target)
+        with opened(target, True) as table:
+            late = (table.getcol("TIME") >= start + 10).astype(np.int32)
+            if target in (scans, spans):
+                table.putcol("SCAN_NUMBER", 1 + late)
+            if target in (fields, spans):
+                table.putcol("FIELD_ID", late)
+
+    options = base | dict(vis=str(source), xaxis="real", yaxis="imag", avgtime="20",
+                          title="Vector time, channel and SPW")
+    channels = dict(avgchannel="2", spw="0:0~3,1:0~3")
+    # Doubling visibility, sigma and weight at the second integration makes
+    # the time means acquire factors 6/5 (observed) and 5/3 (corrected).
+    left = np.array([(1.8, 10.5), (3.8, 21.5)]) * [6 / 5, 5 / 3]
+    right = np.array([(3.6, 32 / 3), (9.6, 80 / 3)]) * [6 / 5, 5 / 3]
+    long = np.average([left, right], axis=0, weights=[8, 7.5])
+    short = long * [25 / 18, 1]
+    early = np.array([30 / 7, 100 / 7])
+    span = [early * [6 / 5, 5 / 3]]
+    bins = [(5, 1, 0, 0, frequency) for frequency in ("90.000500000", "90.002500000")]
+    single = [(5, 1, 0, 0, "90.001000000")]
+    separate = [(0, 1, 0, 0, "90.001000000"), (10, 2, 1, 0, "90.001000000")]
+    uncombined = bins + [(7, 1, 0, 1, frequency) for frequency in ("100.000500000", "100.002500000")]
+    across_both = dict(vis=str(spans), field="", avgscan=True, avgfield=True)
+    cases = (
+        ("vector-layered-long", channels, bins, long),
+        ("vector-layered-short", channels | dict(avgtime="10"), bins, short),
+        ("vector-layered-control", channels | dict(avgspw=False), uncombined, np.vstack((left, right))),
+        ("vector-retained-boundaries", dict(vis=str(spans), field=""), separate, [early, 2 * early]),
+        ("vector-keeps-field", dict(vis=str(spans), field="", avgscan=True), separate, [early, 2 * early]),
+        ("vector-keeps-scan", dict(vis=str(spans), field="", avgfield=True), separate, [early, 2 * early]),
+        ("vector-scan-span", dict(vis=str(scans), avgscan=True), single, span),
+        ("vector-field-span", dict(vis=str(fields), field="", avgfield=True), single, span),
+        ("vector-time-both-spans", across_both, single, span),
+        ("vector-layered-both-spans", across_both | channels, bins, long),
+    )
+    for name, overrides, anchors, values in cases:
+        controls = options | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        assert [(p[9], p[3], p[4], p[11], p[10]) for p in selected] == [
+            (f"{start + time:.3f}", str(scan), str(field), str(spw), frequency)
+            for time, scan, field, spw, frequency in anchors
+        ]
+        np.testing.assert_allclose(coordinates(selected), values, rtol=1.2e-5)
+        assert compare_text(export(root, f"{name}.native", native, controls), expected) == len(anchors)
+        print(f"{name}: {len(anchors)} matching vector time, channel and SPW coordinates", flush=True)
+    compare_figure(root, native, options | channels, root / "vector-layered-long.casa.txt",
+                   (options["title"], "Real", "Imag:corrected"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -546,7 +625,8 @@ def main():
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
-                                           "malformed", "scalar-time", "vector-time", "vector-optional"))
+                                           "malformed", "scalar-time", "vector-time", "vector-optional",
+                                           "vector-channel-spans"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -579,6 +659,8 @@ def main():
             compare_vector_time(root, native, base, vis)
         if args.only in (None, "vector-optional"):
             compare_vector_optional_weights(root, native, base)
+        if args.only in (None, "vector-channel-spans"):
+            compare_vector_channel_spans(root, native, base, vis)
 
 
 if __name__ == "__main__":
