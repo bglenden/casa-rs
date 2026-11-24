@@ -53,6 +53,9 @@ pub(crate) fn selection_from_options(
     } else if let Some(array) = options.array.as_deref() {
         selection = selection.array(&parse_numeric_id_selector(array, "array")?);
     }
+    if grammar == RowGrammar::Casa {
+        super::row_grammar::apply_feed(ms, &mut selection, options.feed.as_deref())?;
+    }
     if let Some(intent) = options.intent.as_deref() {
         let intent = if flagdata {
             super::row_grammar::flagdata_c_string(intent)

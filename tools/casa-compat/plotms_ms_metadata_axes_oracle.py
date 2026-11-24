@@ -11,7 +11,10 @@ from pathlib import Path
 import casatasks as casa
 import numpy as np
 
+from calibration_smoothcal_oracle import copy_ms
+from plotms_atmosphere_oracle import atmosphere_inputs
 from plotms_callibrary_oracle import library_entry
+from plotms_ms_atmosphere_oracle import paired_text
 from plotms_ms_columns_oracle import (
     compare_figure,
     compare_text,
@@ -216,6 +219,27 @@ def compare_feed_selection(root, native):
         print(f"{name}: {count} matching selected feed coordinates", flush=True)
     compare_figure(work, native, base | dict(feed="1"), work / "single-feed.casa.txt",
                    ("Feed selection", "Channel", "Real"))
+    compare_feed_atmosphere(work, native, vis)
+
+
+def compare_feed_atmosphere(work, native, source):
+    vis = work / "feed-atmosphere.ms"
+    copy_ms(source, vis)
+    atmosphere_inputs(vis)
+    with opened(vis, True) as table:
+        times = table.getcol("TIME")
+        first_field = table.getcol("FIELD_ID") == 0
+        timestamp = times[first_field].max()
+        table.putcol("FEED1", (times >= timestamp).astype(np.int32))
+        table.putcol("FEED2", np.zeros(len(times), dtype=np.int32))
+    with opened(vis / "WEATHER", True) as table:
+        table.putcell("TIME", 1, timestamp)
+        table.putcell("PRESSURE", 1, 70000.0)
+        table.putcell("REL_HUMIDITY", 1, 45.0)
+    controls = request(vis) | dict(xaxis="frequency", yaxis="amp", xdatacolumn="", ydatacolumn="",
+                                  feed="1", spw="0", showatm=True)
+    _, count, _ = paired_text(work, native, "feed-atmosphere", controls)
+    assert count == 14
 
 
 def main():

@@ -63,10 +63,8 @@ use crate::plot::{
     build_listobs_uv_plot_payload,
 };
 use crate::selection::parser::parse_correlation_selector;
+use crate::selection::resolve_row_indices_with_system_budget;
 use crate::selection::spw_expr::ChannelRange;
-use crate::selection::{
-    RowGrammar, resolve_row_indices_with_system_budget, resolve_selection_with_grammar,
-};
 use crate::spectral_selection::{
     convert_frequency_to_frame, parse_rest_frequency_hz, velocity_ms_from_frequency_hz,
 };
@@ -2849,18 +2847,7 @@ fn build_uncalibrated_plotms_payload(
     prefer_float_data: bool,
     load_models: Option<cli::PlotMsModelLoader>,
 ) -> Result<MsPlotPayload, String> {
-    let grammar = if spec
-        .selection
-        .feed
-        .as_deref()
-        .is_some_and(|feed| !feed.is_empty())
-    {
-        // PlotMS sends the feed expression through MSTransform's MS selection.
-        RowGrammar::Transform
-    } else {
-        RowGrammar::Casa
-    };
-    let selected = resolve_selection_with_grammar(ms, &spec.selection, grammar)
+    let selected = crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
         .map_err(|error| error.to_string())?;
     let models = load_models
         .map(|load| load(ms, &selected.selected_rows))
