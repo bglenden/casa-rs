@@ -84,9 +84,12 @@ pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) 
 
 pub(super) fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -> bool {
     spec.averaging.avgchannel.is_some_and(|width| width > 1)
-        && [x.unwrap_or(spec.data_column), spec.data_column]
-            .into_iter()
-            .any(MsDataColumn::is_derived)
+        && [
+            (spec.x_axis, x.unwrap_or(spec.data_column)),
+            (spec.y_axis(), spec.data_column),
+        ]
+        .into_iter()
+        .any(|(axis, column)| axis.is_visibility_math() && column.is_derived())
 }
 
 pub(super) fn check_channel_derived_storage(
@@ -193,10 +196,10 @@ pub(super) fn weight_kinds(
                     .then_some(column)
             })
         });
-    // PlotMS configures the transform to load all columns for a mixed-column
-    // request, so a model uses the corrected or observed weighting when present.
+    // A derived expression itself loads all columns, as does a mixed-column request.
+    // A model uses corrected or observed weighting when present in that iterator.
     let first = active.next();
-    let all = first.is_some_and(|first| active.any(|column| column != first));
+    let all = first.is_some_and(|first| first.is_derived() || active.any(|column| column != first));
     let has_observed = all && has("DATA");
     let has_corrected = all && has("CORRECTED_DATA");
     let primary = if has_observed {
