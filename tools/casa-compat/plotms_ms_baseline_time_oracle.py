@@ -427,6 +427,7 @@ def compare_antenna_averaged_export(root, native):
     compare_antenna_ordinate_order(root, native, base)
     weighted = compare_weighted_antenna_exports(root, native, source, start, base)
     compare_weighted_scalar_antenna(root, native, weighted, start, base)
+    compare_channel_antenna_averages(root, native, weighted, start, base)
     compare_antenna_flagged_integration(root, native, source, start, base)
     compare_antenna_autocorrelation(root, native)
 
@@ -632,6 +633,75 @@ def compare_antenna_autocorrelation(root, native):
         compare_antenna_average_case(root, native, name, controls,
                                              [(x, 0)] * len(correlations),
                                              [("0", label) for label in correlations], start)
+
+
+def compare_channel_antenna_averages(root, native, weighted, start, base):
+    source = root / "per-antenna-channel-averages.ms"
+    copy_ms(weighted, source)
+    with opened(source, True) as table:
+        data = table.getcol("DATA")
+        data[:, 0, :] *= -0.5
+        table.putcol("DATA", data)
+        table.putcol("SIGMA_SPECTRUM", np.ones_like(table.getcol("SIGMA_SPECTRUM")))
+    row_weights = root / "per-antenna-channel-row-weights.ms"
+    copy_ms(source, row_weights)
+    with opened(row_weights, True) as table:
+        table.removecols(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
+        weights = np.where(table.getcol("ANTENNA2") == 2, 3, 1).astype(np.float32)
+        table.putcol("WEIGHT", np.broadcast_to(weights, table.getcol("WEIGHT").shape).copy())
+        table.putcol("SIGMA", np.ones_like(table.getcol("SIGMA")))
+    controls = base | dict(vis=str(source), antenna="A0&A1;A0&A2", correlation="XX", spw="0:0~3",
+                           avgchannel="2", xaxis="amp", yaxis="phase", scalar=True,
+                           title="Channel and per-antenna averages")
+    amplitude = np.hypot(1, 4)
+    phase = np.degrees(np.arctan2(14, 10))
+    parallel = (
+        ((amplitude * 7 / 16, phase + 67.5), (amplitude * 7 / 4, phase + 67.5)),
+        ((amplitude / 4, -phase), (amplitude, -phase)),
+        ((amplitude / 2, -phase - 90), (amplitude * 2, -phase - 90)),
+    )
+    amplitude_xy = np.hypot(3, 5)
+    phase_xy = np.degrees(np.arctan2(16, 13))
+    cross = (
+        ((amplitude_xy * .7, phase_xy + 54), (amplitude_xy * 7 / 4, phase_xy + 67.5)),
+        ((amplitude_xy / 4, -phase_xy), (amplitude_xy, -phase_xy)),
+        ((amplitude_xy, -phase_xy - 90), (amplitude_xy * 2, -phase_xy - 90)),
+    )
+    ids = [(str(antenna), str(channel), "XX") for antenna in range(3) for channel in range(2)]
+    values = [pair for antenna in parallel for pair in antenna]
+    spectrum = (100.0005, 100.0025)
+    masked_values = [pair for antenna in range(3) for channel in range(2)
+                     for pair in (parallel[antenna][channel], cross[antenna][channel])]
+    masked_ids = [(ant, channel, hand) for ant, channel, _ in ids for hand in ("XX", "XY")]
+    cases = (
+        ("scalar-channel-antenna", {}, values, ids),
+        ("masked-channel-antenna", dict(correlation="XX,XY"), masked_values, masked_ids),
+        ("row-weight-channel-antenna", dict(vis=str(row_weights), correlation="XX,XY"), masked_values, masked_ids),
+        ("vector-channel-antenna", dict(xaxis="real", yaxis="imag", scalar=False),
+         [(-1.4375, 18.5), (-5.75, 18.5), (.25, -14), (1, -14), (-2, -20), (-8, -20)], ids),
+        ("frequency-channel-antenna", dict(xaxis="frequency"),
+         [(spectrum[int(channel)], y) for (_, channel, _), (_, y) in zip(ids, values, strict=True)], ids),
+    )
+    for name, overrides, coordinates, identifiers in cases:
+        request_args = controls | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**request_args, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[5], point[2], point[12]) for point in selected] == identifiers
+        assert {point[6] for point in selected} == {"-1"}
+        assert [point[10] for point in selected] == [f"{spectrum[int(channel)]:.9f}" for _, channel, _ in identifiers]
+        np.testing.assert_allclose([float(point[9]) for point in selected], start, rtol=0, atol=.00051)
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        assert native(**request_args, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        if request_args["xaxis"] == "frequency":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                                       [x for x, _ in coordinates], rtol=0, atol=1e-7)
+        print(f"{name}: {len(coordinates)} matching channel and per-antenna visibility coordinates", flush=True)
+        if name == "scalar-channel-antenna":
+            compare_figure(root, native, request_args, expected,
+                           (controls["title"], "Amp", "Phase:corrected (degrees)"))
 
 
 def main():
