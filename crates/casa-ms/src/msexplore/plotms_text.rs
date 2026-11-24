@@ -187,6 +187,10 @@ fn write_series(
         let y_axis = section[0].y_axis;
         write_section(output, name(x_axis), name(y_axis), verbose)?;
         let averaged_ids = section[0].plotms_averaged_ids.as_ref();
+        let spw_average = matches!(
+            averaged_ids,
+            Some(MsScatterPlotMsAverageIds::SpectralWindow { .. })
+        );
         let mut points = section.iter().flat_map(|series| {
             series
                 .points
@@ -213,6 +217,13 @@ fn write_series(
         {
             let mut ordered = points.collect::<Vec<_>>();
             ordered.sort_unstable_by_key(|&(_, point, display)| {
+                if spw_average && let Some(display) = display {
+                    return (
+                        display.averaging_group.unwrap_or(point.row),
+                        display.channel,
+                        point.corr,
+                    );
+                }
                 point.plotms_order(display.and_then(|metadata| metadata.averaging_group))
             });
             ordered.into_iter().try_for_each(write)?;
@@ -310,10 +321,12 @@ fn write_point(
             .map_or((None, None), |&(scan, field, antenna)| {
                 (Some((scan, field)), Some(antenna))
             }),
-        Some((MsScatterPlotMsAverageIds::SpectralWindow(_), _)) | None => (None, None),
+        Some((MsScatterPlotMsAverageIds::SpectralWindow { .. }, _)) | None => (None, None),
     };
     let spectral_window = match averaged.zip(order) {
-        Some((MsScatterPlotMsAverageIds::SpectralWindow(groups), order)) => groups.get(order),
+        Some((MsScatterPlotMsAverageIds::SpectralWindow { groups, row_groups }, order)) => {
+            row_groups.get(order).and_then(|&group| groups.get(group))
+        }
         _ => None,
     };
     let (scan, field) = scan_field.unwrap_or((row.scan, row.field));

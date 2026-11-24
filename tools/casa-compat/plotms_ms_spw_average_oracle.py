@@ -13,6 +13,7 @@ from casatools import measures, simulator
 import numpy as np
 
 from plotms_ms_columns_oracle import (
+    compare_empty_export,
     compare_figure,
     compare_text,
     copy_ms,
@@ -24,7 +25,7 @@ from plotms_ms_columns_oracle import (
 )
 
 
-def make_fixture(root, name="two-windows", *, antenna_count=2):
+def make_fixture(root, name="two-windows", *, antenna_count=2, channel_count=4):
     vis = root / f"{name}.ms"
     ms, me = simulator(), measures()
     ms.open(str(vis))
@@ -36,7 +37,7 @@ def make_fixture(root, name="two-windows", *, antenna_count=2):
                  coordsystem="local", referencelocation=me.observatory("VLA"))
     for name, frequency in (("W0", "90GHz"), ("W1", "100GHz")):
         ms.setspwindow(spwname=name, freq=frequency, deltafreq="1MHz", freqresolution="1MHz",
-                       nchannels=4, stokes="XX YY")
+                       nchannels=channel_count, stokes="XX YY")
     ms.setfeed(mode="perfect X Y")
     ms.setfield(sourcename="FLUX", sourcedirection=me.direction("J2000", "12h00m00s", "40d00m00s"))
     ms.setauto(autocorrwt=0.0)
@@ -95,29 +96,82 @@ def compare_coordinates(root, native, base, vis):
             assert [p[0] for p in selected] == [p[10] for p in selected]
         actual = export(root, f"{name}.native", native, controls)
         assert compare_text(actual, expected) == len(anchors)
+        if controls["xaxis"] == "frequency":
+            assert [p[0] for p in rows(actual)] == [p[0] for p in selected]
         print(f"{name}: {len(anchors)} matching SPW-average coordinates", flush=True)
     compare_figure(root, native, base | frequency, root / "frequency.casa.txt",
                    (base["title"], "Frequency (GHz)", "Amp:corrected"))
 
+
+def compare_sparse_baselines(root, native, base):
     sparse = make_fixture(root, "sparse-baselines", antenna_count=3)
     with opened(sparse, True) as table:
         w0 = table.getcol("DATA_DESC_ID") == 0
         times = table.getcol("TIME") + 100 * (w0 & (table.getcol("ANTENNA2") == 2))
         table.putcol("TIME", times)
         table.putcol("TIME_CENTROID", times)
-    controls = base | frequency | dict(vis=str(sparse), antenna="")
+    controls = base | dict(vis=str(sparse), antenna="", xaxis="frequency", xdatacolumn="",
+                           yaxis="amp", spw="0:0~1,1:0~1")
     expected = export(root, "sparse-baselines.casa", reference, controls)
     selected = rows(expected)
-    assert len(selected) == 10
-    assert {(p[0], p[10], p[11]) for p in selected} == {("90.001000000", "90.001000000", "0")}
-    assert [(p[5], p[6]) for p in selected] == [("0", "1"), ("0", "2"), ("1", "2")] * 2 + [
+    assert len(selected) == 20
+    steps = ["90.000000000", "90.001000000"] * 10
+    assert [p[0] for p in selected] == [p[10] for p in selected] == steps
+    assert {p[11] for p in selected} == {"0"}
+    baselines = [("0", "1"), ("0", "2"), ("1", "2")] * 2 + [
         ("0", "2"), ("1", "2")
     ] * 2
+    assert [(p[5], p[6]) for p in selected] == [baseline for baseline in baselines for _ in range(2)]
+    amplitudes = [abs(6.5 + 7.5j), abs(7 + 8j), abs(7 + 8j)] * 2 + [abs(5 + 6j)] * 4
     np.testing.assert_allclose(coordinates(selected)[:, 1],
-                               [abs(13 + 15j), abs(14 + 16j), abs(14 + 16j)] * 2 + [abs(10 + 12j)] * 4,
+                               [value * scale for value in amplitudes for scale in (1, 2)],
                                rtol=1.2e-5)
-    assert compare_text(export(root, "sparse-baselines.native", native, controls), expected) == 10
-    print("sparse-baselines: all 10 points use their buffer's first spectral window", flush=True)
+    actual = export(root, "sparse-baselines.native", native, controls)
+    assert compare_text(actual, expected) == 20
+    assert [p[0] for p in rows(actual)] == steps
+    print("sparse-baselines: 20 points use first-window channels in baseline-major order", flush=True)
+
+
+def compare_disjoint_channels(root, native, base):
+    disjoint = make_fixture(root, "disjoint-channels", channel_count=8)
+    controls = base | dict(vis=str(disjoint), xaxis="frequency", xdatacolumn="",
+                           yaxis="amp", spw="0:0~2;5~7,1:0~2;5~7", avgchannel="2")
+    expected = export(root, "disjoint-channels.casa", reference, controls)
+    selected = rows(expected)
+    frequencies = ["90.000500000", "90.005500000"] * 2
+    assert [p[0] for p in selected] == [p[10] for p in selected] == frequencies
+    np.testing.assert_allclose(coordinates(selected)[:, 1],
+                               [abs(6.5 + 7.5j) * scale for scale in (1.5, 4.5)] * 2, rtol=1.2e-5)
+    actual = export(root, "disjoint-channels.native", native, controls)
+    assert compare_text(actual, expected) == 4
+    assert [p[0] for p in rows(actual)] == frequencies
+    print("disjoint-channels: 4 paired compressed samples at the physical frequency-bin centers", flush=True)
+
+
+def compare_malformed_shape(root, native, base, vis):
+    short = root / "short-channel-cell.ms"
+    copy_ms(vis, short)
+    with opened(short, True) as table:
+        for name in ("DATA", "CORRECTED_DATA", "FLAG"):
+            descriptor = table.getcoldesc(name)
+            descriptor.pop("shape", None)
+            descriptor.update(option=0, dataManagerType="StandardStMan", dataManagerGroup=name)
+            values = table.getcol(name)
+            table.removecols(name)
+            table.addcols({name: descriptor})
+            for row in range(table.nrows()):
+                cell = values[:, :, row]
+                table.putcell(name, row, cell[:, :2] if row == 0 else cell)
+    options = base | dict(vis=str(short), spw="0", xaxis="frequency", xdatacolumn="", yaxis="amp")
+    output = root / "short-channel-cell.native.txt"
+    try:
+        native(**options, plotfile=str(output), expformat="txt")
+    except RuntimeError as error:
+        assert "reported 4 channel frequencies for 2 data channels" in str(error), error
+    else:
+        raise AssertionError("Data cells must match their spectral-window channel count")
+    assert not output.exists()
+    print("short-channel-cell: descriptive shape error before export", flush=True)
 
 
 def compare_flags(root, native, base, vis):
@@ -185,6 +239,12 @@ def compare_channel_weights(root, native, base, vis):
         np.testing.assert_allclose(coordinates(selected), np.tile(np.column_stack((x, y)), (2, 1)), rtol=1.2e-5)
         assert compare_text(export(root, f"{name}.native", native, controls), expected) == 4
         print(f"{name}: 4 matching coordinates with transformed spectra and row weights", flush=True)
+    fully_flagged = root / "flagged-channel-spectra.ms"
+    copy_ms(spectral, fully_flagged)
+    with opened(fully_flagged, True) as table:
+        table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
+    compare_empty_export(root, native, "all-flagged-spectra", options | dict(vis=str(fully_flagged)),
+                         ("Real", "Imag:corrected"))
 
 
 def compare_selection(root, native, base, vis):
@@ -240,7 +300,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("coordinates", "selection", "weights"))
+    parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint", "malformed"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -261,6 +321,12 @@ def main():
             compare_selection(root, native, base, vis)
         if args.only in (None, "weights"):
             compare_channel_weights(root, native, base, vis)
+        if args.only in (None, "sparse"):
+            compare_sparse_baselines(root, native, base)
+        if args.only in (None, "disjoint"):
+            compare_disjoint_channels(root, native, base)
+        if args.only in (None, "malformed"):
+            compare_malformed_shape(root, native, base, vis)
 
 
 if __name__ == "__main__":

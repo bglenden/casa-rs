@@ -41,7 +41,12 @@ impl MsScatterPlotMsAverageSpw {
 #[derive(Default)]
 pub(super) struct SpectralAverageGroups {
     averages: Vec<MsScatterPlotMsAverageSpw>,
-    channels: HashMap<i32, Arc<[SpectralChannel]>>,
+    windows: HashMap<i32, SpectralWindowChannels>,
+}
+
+struct SpectralWindowChannels {
+    input_channels: usize,
+    display_channels: Arc<[SpectralChannel]>,
 }
 
 impl SpectralAverageGroups {
@@ -49,40 +54,41 @@ impl SpectralAverageGroups {
         &mut self,
         group: usize,
         spw: i32,
+        input_channels: usize,
         bins: &[ChannelBin],
         frequencies: &ChanFreqColumn<'_>,
     ) -> Result<(), String> {
+        let window = match self.windows.entry(spw) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let frequencies = frequencies
+                    .get_frequencies(spw as usize)
+                    .map_err(|error| error.to_string())?;
+                check_input_channels(spw, frequencies.len(), input_channels)?;
+                let display_channels = bins
+                    .iter()
+                    .map(|bin| {
+                        // The iterator averages visibility samples from the
+                        // compressed selection but advertises physical bins.
+                        let physical_bin = &frequencies[bin.start..bin.end];
+                        SpectralChannel {
+                            number: bin.display_channel(),
+                            frequency_hz: physical_bin.iter().map(MFrequency::hz).sum::<f64>()
+                                / physical_bin.len() as f64,
+                        }
+                    })
+                    .collect();
+                entry.insert(SpectralWindowChannels {
+                    input_channels,
+                    display_channels,
+                })
+            }
+        };
+        check_input_channels(spw, window.input_channels, input_channels)?;
         if group == self.averages.len() {
-            let channels = match self.channels.entry(spw) {
-                std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    let frequencies = frequencies
-                        .get_frequencies(spw as usize)
-                        .map_err(|error| error.to_string())?;
-                    let channels = bins
-                        .iter()
-                        .map(|bin| {
-                            let mut sum = 0.0;
-                            let mut count = 0;
-                            for channel in bin.channels() {
-                                let frequency = frequencies.get(channel).ok_or_else(|| {
-                                    format!("missing channel {channel} frequency for window {spw}")
-                                })?;
-                                sum += MFrequency::hz(frequency);
-                                count += 1;
-                            }
-                            Ok(SpectralChannel {
-                                number: bin.display_channel(),
-                                frequency_hz: sum / f64::from(count),
-                            })
-                        })
-                        .collect::<Result<Arc<[_]>, String>>()?;
-                    entry.insert(channels)
-                }
-            };
             self.averages.push(MsScatterPlotMsAverageSpw {
                 spectral_window: spw,
-                channels: channels.clone(),
+                channels: window.display_channels.clone(),
             });
         }
         Ok(())
@@ -91,4 +97,13 @@ impl SpectralAverageGroups {
     pub(super) fn into_averages(self) -> Arc<[MsScatterPlotMsAverageSpw]> {
         self.averages.into()
     }
+}
+
+fn check_input_channels(spw: i32, frequencies: usize, input_channels: usize) -> Result<(), String> {
+    if frequencies != input_channels {
+        return Err(format!(
+            "SPECTRAL_WINDOW row {spw} reported {frequencies} channel frequencies for {input_channels} data channels"
+        ));
+    }
+    Ok(())
 }

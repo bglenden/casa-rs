@@ -2249,8 +2249,13 @@ pub enum MsScatterPlotMsAverageIds {
     Antenna(Arc<[i32]>),
     /// Shared `(scan, field, antenna)` IDs when antenna averaging spans scans or fields.
     ScanFieldAndAntenna(Arc<[(i32, i32, i32)]>),
-    /// Shared spectral coordinates for each SPW averaging group.
-    SpectralWindow(Arc<[MsScatterPlotMsAverageSpw]>),
+    /// Shared spectral coordinates and their group index for each output baseline.
+    SpectralWindow {
+        /// Spectral coordinates for each averaged visibility buffer.
+        groups: Arc<[MsScatterPlotMsAverageSpw]>,
+        /// Buffer index for each output row in PlotMS export order.
+        row_groups: Arc<[usize]>,
+    },
 }
 
 /// Display metadata for one PlotMS export coordinate.
@@ -5924,6 +5929,7 @@ fn build_generic_visibility_scatter_with_averaging(
             spw_groups.observe(
                 group,
                 spw_id,
+                chan_count,
                 &channel_bins,
                 chan_freq.as_ref().expect("SPW averaging frequencies"),
             )?;
@@ -5996,7 +6002,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     .observe(row_time_value, unflagged);
             }
         }
-        if let Some(group) = group.filter(|_| scalar_average) {
+        if let Some(group) = group.filter(|_| scalar_average || spw_average) {
             let (antenna1, antenna2) = if collapse_baselines {
                 (-1, -1)
             } else {
@@ -6113,7 +6119,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         },
                         |(masked, _)| masked,
                     );
-                    if channel_masked && !(scalar_channels || antenna_channels) {
+                    if channel_masked && !(scalar_channels || antenna_channels || spw_channels) {
                         continue;
                     }
                     let (panel_key, panel_label) = iteration_group(
@@ -6563,7 +6569,11 @@ fn build_generic_visibility_scatter_with_averaging(
     });
     let spw_groups = spw_groups.map(plotms_spw::SpectralAverageGroups::into_averages);
     let averaged_ids = if let Some(groups) = &spw_groups {
-        Some(MsScatterPlotMsAverageIds::SpectralWindow(groups.clone()))
+        let row_groups = averaged_rows.iter().map(|&(group, _, _)| group).collect();
+        Some(MsScatterPlotMsAverageIds::SpectralWindow {
+            groups: groups.clone(),
+            row_groups,
+        })
     } else if antenna_average && spans_scan_or_field {
         let ids = averaged_rows
             .iter()
@@ -6638,7 +6648,9 @@ fn build_generic_visibility_scatter_with_averaging(
             let mut points = series.points.into_iter().map(|(key, point)| {
                 let group = key.time_key.group();
                 let order = group.map(|group| match key.baseline {
-                    AveragingBaselineToken::Baseline(antenna1, antenna2) if scalar_average => {
+                    AveragingBaselineToken::Baseline(antenna1, antenna2)
+                        if scalar_average || spw_average =>
+                    {
                         averaged_order[&(group, antenna1, antenna2)]
                     }
                     AveragingBaselineToken::Antenna(antenna) if antenna_average => {
