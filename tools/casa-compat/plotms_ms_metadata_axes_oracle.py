@@ -362,23 +362,26 @@ def compare_metadata_pairs(root, native, source):
     base = request(vis) | dict(xdatacolumn="", ydatacolumn="", antenna="A0&A1;A0&A2",
                                spw="0:0~4^2", correlation="XX,YY", title="Selected metadata")
     cases = (
-        ("channel", "row", 32, ("Channel", "Row")),
-        ("time", "row", 11, None),
-        ("channel", "observation", 26, None),
-        ("time", "observation", 9, ("Time (MJD seconds)", "Observation")),
+        ("channel-row", dict(xaxis="channel", yaxis="row"), 32, ("Channel", "Row")),
+        ("time-row", dict(xaxis="time", yaxis="row"), 11, None),
+        ("channel-observation", dict(xaxis="channel", yaxis="observation"), 26, None),
+        ("time-observation", dict(xaxis="time", yaxis="observation"), 9,
+         ("Time (MJD seconds)", "Observation")),
+        ("default-window-time-row", dict(xaxis="time", yaxis="row", spw="", correlation="YY"), 11, None),
     )
-    for x, y, count, labels in cases:
-        controls = base | dict(xaxis=x, yaxis=y)
-        name = f"{x}-{y}"
+    for name, options, count, labels in cases:
+        controls = base | options
         expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected), expformat="txt") is None
         points = rows(expected)
         assert len(points) == count, (name, len(points), count)
-        if y == "row":
+        if controls["yaxis"] == "row":
             assert {point[1] for point in points} == {str(row) for row in range(1, 12)}
         if name == "channel-row":
             assert not any(point[2] == "2" and point[1] == "1" for point in points)
             assert any((point[2], point[1], point[12]) == ("2", "3", "XX") for point in points)
+        if name == "default-window-time-row":
+            assert {(point[2], point[12]) for point in points} == {("0", "YY"), ("1", "YY")}
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == count
         print(f"{name}: {count} matching collapsed metadata coordinates", flush=True)
