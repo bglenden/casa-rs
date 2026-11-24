@@ -3,9 +3,37 @@
 
 use std::collections::HashMap;
 
-use super::{MsAxis, MsPlotSpec, selected_i32_values};
+use super::{MsAxis, MsPlotSpec, selected_i32_values, uses_extended_averaging};
 use crate::subtables::get_string;
 use crate::{MeasurementSet, SubtableId};
+
+pub(super) fn requested(spec: &MsPlotSpec) -> bool {
+    spec.x_axis.is_row_identifier() || spec.y_axes.iter().copied().any(MsAxis::is_row_identifier)
+}
+
+pub(super) fn validate(spec: &MsPlotSpec) -> Result<(), String> {
+    if !requested(spec) {
+        return Ok(());
+    }
+    if uses_extended_averaging(spec) || spec.averaging.avgchannel.is_some_and(|width| width > 1) {
+        return Err("averaged PlotMS row identifiers are pending (#1032)".into());
+    }
+    if spec.y_axes.iter().copied().any(|y| {
+        (spec.x_axis.is_row_identifier() && !y.is_visibility_math())
+            || (y.is_row_identifier() && !spec.x_axis.is_visibility_math())
+    }) {
+        return Err("PlotMS row identifiers without a visibility axis are pending (#1032)".into());
+    }
+    if spec
+        .y_axes
+        .iter()
+        .copied()
+        .any(MsAxis::uses_derived_geometry)
+    {
+        return Err("PlotMS row identifiers with geometry ordinates are pending (#1032)".into());
+    }
+    Ok(())
+}
 
 pub(super) struct RowAxes(Vec<(MsAxis, Vec<f64>)>);
 
@@ -109,4 +137,39 @@ fn assign_intents(ms: &MeasurementSet, states: &mut [i32]) -> Result<(), String>
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        MsFlagAction, MsFlagEditSpec, MsFlagRegion, MsPlotPreset, preview_msexplore_flag_edit,
+    };
+    use super::*;
+    use crate::{MeasurementSetBuilder, MsSelection};
+
+    #[test]
+    fn direct_row_identifier_flag_preview_is_refused() {
+        let ms = MeasurementSet::create_memory(MeasurementSetBuilder::new()).unwrap();
+        let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+        spec.preset = None;
+        spec.x_axis = MsAxis::Row;
+        spec.flag_edit = Some(MsFlagEditSpec {
+            action: MsFlagAction::Flag,
+            region: MsFlagRegion {
+                x_min: 1.5,
+                x_max: 2.5,
+                y_min: 0.0,
+                y_max: 10.0,
+            },
+            plot_index: None,
+            panel_key: None,
+            extcorr: false,
+            extchannel: false,
+        });
+        let error = preview_msexplore_flag_edit(&ms, &MsSelection::new(), &spec).unwrap_err();
+        assert_eq!(
+            error,
+            "MeasurementSet row identifier axes require the public plotms task"
+        );
+    }
 }

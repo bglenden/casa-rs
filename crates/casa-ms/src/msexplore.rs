@@ -1864,23 +1864,7 @@ impl MsPlotSpec {
         }) {
             return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
         }
-        if self.x_axis.is_row_identifier()
-            || self.y_axes.iter().copied().any(MsAxis::is_row_identifier)
-        {
-            if uses_extended_averaging(self)
-                || self.averaging.avgchannel.is_some_and(|width| width > 1)
-            {
-                return Err("averaged PlotMS row identifiers are pending (#1032)".into());
-            }
-            if self.y_axes.iter().copied().any(|y| {
-                (self.x_axis.is_row_identifier() && !y.is_visibility_math())
-                    || (y.is_row_identifier() && !self.x_axis.is_visibility_math())
-            }) {
-                return Err(
-                    "PlotMS row identifiers without a visibility axis are pending (#1032)".into(),
-                );
-            }
-        }
+        plotms_row_axes::validate(self)?;
         let supported_x = matches!(
             self.x_axis,
             MsAxis::Time
@@ -4021,6 +4005,10 @@ fn build_generic_visibility_scatter(
     point_budget: &mut PointBudget,
     calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
+    let needs_row_axes = plotms_row_axes::requested(spec);
+    if needs_row_axes && calibration.is_none() {
+        return Err("MeasurementSet row identifier axes require the public plotms task".into());
+    }
     let timing_enabled = VisibilityScatterTiming::enabled();
     let scatter_started = Instant::now();
     let mut checkpoint_started = Instant::now();
@@ -4042,8 +4030,6 @@ fn build_generic_visibility_scatter(
     };
     let uses_row_numbers = spec.x_axis == MsAxis::Row || spec.y_axes.contains(&MsAxis::Row);
     let selection_order = uses_row_numbers.then(|| row_numbers.clone());
-    let needs_row_axes = spec.x_axis.is_row_identifier()
-        || spec.y_axes.iter().copied().any(MsAxis::is_row_identifier);
     let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
     let use_ordinate_masks = spec.y_axes.len() > 2
         && calibration.is_some_and(|input| input.rows.is_none())

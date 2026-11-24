@@ -286,7 +286,7 @@ def compare_row_axes(root, native, source):
                          for value in bounds)
     cases = (
         ("row", {}, 72, set(range(12))),
-        ("antenna1", dict(xaxis="ant1"), 72, {0}),
+        ("antenna1", dict(xaxis="ant1", antenna="A0&A1;A0&A2;A1&A2", spw="0:0~4^2"), 90, {0, 1}),
         ("antenna2", dict(xaxis="antenna2"), 72, {1, 2}),
         ("observation", dict(xaxis="observation"), 72, {0, next_observation}),
         ("intent", dict(xaxis="intent"), 72, {1, 2}),
@@ -310,14 +310,38 @@ def compare_row_axes(root, native, source):
         axis_slot = int(name == "row-ordinate")
         assert len(points) == count, (name, len(points), count)
         assert {int(point[axis_slot]) for point in points} == identifiers, name
-        assert {point[2] for point in points} == {"1", "3", "5"}
-        assert {point[12] for point in points} == {"XX", "YY"}
+        channel_correlations = {(point[2], point[12]) for point in points}
+        if name == "antenna1":
+            assert channel_correlations == {
+                ("0", "XX"), ("0", "YY"), ("2", "YY"), ("4", "XX"), ("4", "YY"),
+            }
+        else:
+            assert channel_correlations == {(chan, corr) for chan in ("1", "3", "5") for corr in ("XX", "YY")}
         if name == "row":
             assert [int(point[0]) for point in points[::6]] == [0, 1, 5, 4, 2, 3, 8, 9, 6, 7, 11, 10]
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == count
         print(f"{name}: {count} matching row axis coordinates", flush=True)
     compare_figure(work, native, base, work / "row.casa.txt", ("Selected visibility rows", "Row", "Real"))
+    check_mixed_row_geometry(work, native, base)
+
+
+def check_mixed_row_geometry(work, native, base):
+    from casars.tasks import TaskParameterError
+
+    controls = base | dict(xaxis="real", yaxis=["row", "elevation"], xdatacolumn="data", ydatacolumn="")
+    expected = work / "row-and-elevation.casa.txt"
+    actual = work / "row-and-elevation.native.txt"
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    row_points = rows(work / "row-ordinate.casa.txt")
+    assert rows(expected)[:len(row_points)] == row_points
+    try:
+        native(**controls, plotfile=str(actual), expformat="txt")
+    except TaskParameterError as error:
+        assert "PlotMS row identifiers with geometry ordinates are pending (#1032)" in str(error)
+    else:
+        raise AssertionError("Row and Elevation were exported with a shared geometry mask")
+    assert not actual.exists()
 
 
 def main():
