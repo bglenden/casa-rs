@@ -229,7 +229,8 @@ pub(super) fn weight_kinds(
     };
     PlotMsWeightKinds {
         axes: columns.map(kind),
-        model: uses_channel_derived(spec, input.x_data_column).then(|| kind(MsDataColumn::Model)),
+        model: (input.time_derived || uses_channel_derived(spec, input.x_data_column))
+            .then(|| kind(MsDataColumn::Model)),
         primary: kind(primary),
         row_weight: if has_corrected {
             WeightKind::Calibrated

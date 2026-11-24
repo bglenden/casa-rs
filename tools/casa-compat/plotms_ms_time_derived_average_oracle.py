@@ -127,6 +127,12 @@ def compare_observed_time_derived(root, native):
     copy_ms(vis, fallback)
     with opened(fallback, True) as table:
         table.removecols(["CORRECTED_DATA"])
+    row_weights = root / "without-spectra.ms"
+    copy_ms(vis, row_weights)
+    with opened(row_weights, True) as table:
+        for row_column, spectrum in (("WEIGHT", "WEIGHT_SPECTRUM"), ("SIGMA", "SIGMA_SPECTRUM")):
+            table.putcol(row_column, table.getcol(spectrum)[:, 1, :])
+            table.removecols([spectrum])
 
     offset = np.arange(0, 6, 2)
     observed = 3 + 6j + (1 + 2j) * (offset + .8)
@@ -138,6 +144,7 @@ def compare_observed_time_derived(root, native):
     for name, source, column, axis, coordinates in (
         ("observed-residual", vis, "data-model_vector", "real", (observed - calibrated_model).real),
         ("observed-ratio", vis, "data/model_vector", "phase", np.angle(observed / calibrated_model, deg=True)),
+        ("without-spectra", row_weights, "data-model_vector", "real", (observed - calibrated_model).real),
         ("without-corrected", fallback, "data-model_vector", "real", (observed - observed_model).real),
         ("corrected-fallback", fallback, "corrected-model_vector", "real", (observed - observed_model).real),
     ):

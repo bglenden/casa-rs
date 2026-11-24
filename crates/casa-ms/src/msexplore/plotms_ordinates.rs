@@ -66,7 +66,7 @@ impl<'a> VisibilityColumns<'a> {
             sources,
             axes,
             project_after_average: spec.averaging.avgchannel.is_some_and(|width| width > 1)
-                || input.is_some_and(|input| input.time_corrected_derived),
+                || input.is_some_and(|input| input.time_derived),
         })
     }
 
@@ -352,18 +352,16 @@ struct ChannelVisibilityMean {
 struct TimeProjection {
     projection: VisibilityColumnProjection,
     weighted_sums: [Complex32; 2],
-    total_weight: f32,
+    total_weights: [f32; 2],
 }
 
 impl TimeProjection {
     fn project(&self, axis: MsAxis) -> Option<f64> {
-        let means = self.weighted_sums.map(|sum| {
+        let means = std::array::from_fn(|index| {
+            let sum = self.weighted_sums[index];
+            let weight = self.total_weights[index];
             // AveragingTvi2 keeps the accumulated value for a nonpositive weight.
-            let mean = if self.total_weight > 0.0 {
-                sum / self.total_weight
-            } else {
-                sum
-            };
+            let mean = if weight > 0.0 { sum / weight } else { sum };
             Complex64::new(f64::from(mean.re), f64::from(mean.im))
         });
         self.projection.axis_value(axis, means, false)
@@ -388,7 +386,7 @@ impl AveragedVisibility {
         &mut self,
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
-        spectrum: Option<&FloatGrid>,
+        spectra: [Option<&FloatGrid>; 2],
         corr: usize,
         bin: &ChannelBin,
     ) {
@@ -401,21 +399,25 @@ impl AveragedVisibility {
             .as_ref()
             .expect("time projection requires a model");
         let index = corr * grid.chan_count + bin.start;
-        let weight = spectrum.map_or(1.0, |weights| weights.values[index] as f32);
-        // Both cubes use calibrated weights. Keep their Float sums separate
-        // until the cache projects the normalized operands.
-        let weighted_values = [grid.values[index], model[index]]
-            .map(|value| Complex32::new(value.re as f32, value.im as f32) * weight);
+        let weights =
+            spectra.map(|spectrum| spectrum.map_or(1.0, |grid| grid.values[index] as f32));
+        let values = [grid.values[index], model[index]];
+        // DATA uses inverse variance. MODEL_DATA uses calibrated weights if the
+        // iterator reads CORRECTED_DATA, and observed weights otherwise.
+        let weighted_values = std::array::from_fn(|operand| {
+            let value = values[operand];
+            Complex32::new(value.re as f32, value.im as f32) * weights[operand]
+        });
         if let VisibilitySamples::TimeProjection(average) = &mut self.0 {
-            for (sum, value) in average.weighted_sums.iter_mut().zip(weighted_values) {
-                *sum += value;
+            for (operand, value) in weighted_values.into_iter().enumerate() {
+                average.weighted_sums[operand] += value;
+                average.total_weights[operand] += weights[operand];
             }
-            average.total_weight += weight;
         } else {
             self.0 = VisibilitySamples::TimeProjection(TimeProjection {
                 projection: *projection,
                 weighted_sums: weighted_values,
-                total_weight: weight,
+                total_weights: weights,
             });
         }
     }

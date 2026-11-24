@@ -2688,7 +2688,7 @@ struct PlotMsInput<'a> {
     row_order: &'a [usize],
     starts_visibility_buffer: &'a [bool],
     time_bins: Option<&'a PlotTimeGroups>,
-    time_corrected_derived: bool,
+    time_derived: bool,
     channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
     rows: Option<&'a HashMap<usize, PlotMsCalibratedRow>>,
     models: Option<&'a HashMap<usize, ArrayValue>>,
@@ -2710,7 +2710,7 @@ struct PlotMsColumnSelection<'a> {
     raw_symbols: Option<RawSymbolVisibility>,
     pointing: Option<plotms_pointing::PointingAxes>,
     phasecenter: Option<MDirection>,
-    time_corrected_derived: bool,
+    time_derived: bool,
 }
 
 fn build_msexplore_plot_payload_validated(
@@ -2930,7 +2930,7 @@ pub(crate) fn build_calibrated_plotms_payload(
     let input = PlotMsInput {
         row_order: &calibration.row_order,
         starts_visibility_buffer: &[],
-        time_corrected_derived: false,
+        time_derived: false,
         time_bins: None,
         channels: &calibration.channels,
         rows: Some(&calibration.rows),
@@ -2957,8 +2957,8 @@ fn build_uncalibrated_plotms_payload(
     let mut selected =
         crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
             .map_err(|error| error.to_string())?;
-    let time_corrected_derived = columns.time_corrected_derived;
-    if time_corrected_derived {
+    let time_derived = columns.time_derived;
+    if time_derived {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
@@ -3002,7 +3002,7 @@ fn build_uncalibrated_plotms_payload(
         (plotms_columns::uses_channel_derived(plot, columns.x)
             || vector_baselines
             || scalar_time
-            || time_corrected_derived
+            || time_derived
             || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
             && uses_model(plot)
@@ -3015,7 +3015,7 @@ fn build_uncalibrated_plotms_payload(
                 && (columns.secondary_y.is_some()
                     || time_baselines
                     || weighted_time_uvw
-                    || time_corrected_derived)
+                    || time_derived)
         })
         .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
         .map(|(plot, seconds)| {
@@ -3029,7 +3029,7 @@ fn build_uncalibrated_plotms_payload(
                     span_fields: plot.averaging.avgfield,
                     max_uvw_distance: 0.0,
                 },
-                time_baselines || weighted_time_uvw || time_corrected_derived,
+                time_baselines || weighted_time_uvw || time_derived,
             )
             .map_err(|error| error.to_string())
         })
@@ -3069,7 +3069,7 @@ fn build_uncalibrated_plotms_payload(
         row_order: &row_order,
         starts_visibility_buffer: &starts_visibility_buffer,
         time_bins: time_bins.as_ref(),
-        time_corrected_derived,
+        time_derived,
         channels: &channels,
         rows: None,
         models: models.as_ref(),
@@ -5340,7 +5340,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let visibility_columns =
         plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
     let time_bins = calibration.and_then(|input| input.time_bins);
-    let time_corrected_derived = calibration.is_some_and(|input| input.time_corrected_derived);
+    let time_derived = calibration.is_some_and(|input| input.time_derived);
     let weighted_time_uvw = time_bins.is_some() && plotms_columns::uses_weighted_time_uvw(spec);
     let collapse_baselines = plotms_columns::uses_vector_baseline_average(spec)
         && calibration.is_some_and(|input| input.rows.is_none());
@@ -5578,7 +5578,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 ));
             }
         };
-        visibility_columns.read_row(row_slot, time_corrected_derived, &mut visibility_grids)?;
+        visibility_columns.read_row(row_slot, time_derived, &mut visibility_grids)?;
         let (corr_count, chan_count) = visibility_grids
             .first()
             .map(|grid| (grid.corr_count, grid.chan_count))
@@ -5647,6 +5647,9 @@ fn build_generic_visibility_scatter_with_averaging(
                 .map(weight_grid)
         };
         let column_weights = visibility_columns.column_weights(axis_weights);
+        let time_model_weight = time_weight_kinds
+            .and_then(|kinds| kinds.model)
+            .and_then(weight_grid);
         let primary_weight_grid = time_weight_kinds
             .filter(|_| combined_vector_average)
             .and_then(|kinds| {
@@ -5854,7 +5857,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         .iter()
                         .zip(&mut bin_buffers)
                         .enumerate()
-                        .filter(|_| !time_corrected_derived)
+                        .filter(|_| !time_derived)
                     {
                         buffer.collect(
                             grid,
@@ -5972,14 +5975,14 @@ fn build_generic_visibility_scatter_with_averaging(
                         let y_samples = samples(y_index + 1);
                         let mut series_used =
                             !x_samples.values.is_empty() || !y_samples.values.is_empty();
-                        if time_corrected_derived {
+                        if time_derived {
                             let grid = visibility_columns
                                 .grid(y_index + 1, &visibility_grids)
-                                .expect("a corrected model expression has a visibility grid");
+                                .expect("a model expression has a visibility grid");
                             accumulator.y_visibility.add_time_projection(
                                 grid,
                                 &flags,
-                                weight_spectrum_grid.as_ref(),
+                                [axis_weights[y_index + 1], time_model_weight],
                                 *corr_index,
                                 bin,
                             );
@@ -6184,7 +6187,7 @@ fn build_generic_visibility_scatter_with_averaging(
         .zip(time_bins)
         .zip(spec.averaging.avgtime)
         .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval));
-    let derived_buffer_times = time_bins.filter(|_| time_corrected_derived).map(|groups| {
+    let derived_buffer_times = time_bins.filter(|_| time_derived).map(|groups| {
         // PlotMS caches the first averaged baseline's time for the whole buffer.
         groups
             .buffers()
@@ -6208,8 +6211,8 @@ fn build_generic_visibility_scatter_with_averaging(
         .enumerate()
         .map(|(order, row)| (row, order))
         .collect::<HashMap<_, _>>();
-    let retain_empty_panel = time_corrected_derived
-        || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
+    let retain_empty_panel =
+        time_derived || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
     for panel_key in panel_order {

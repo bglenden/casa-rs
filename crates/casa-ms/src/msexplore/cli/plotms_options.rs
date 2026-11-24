@@ -74,12 +74,15 @@ impl CliOptions {
             && self.iteraxis.is_none()
     }
 
-    pub(super) fn supports_time_corrected_derived(&self, [_, y, _]: [MsDataColumn; 3]) -> bool {
+    pub(super) fn supports_time_derived(&self, [_, y, _]: [MsDataColumn; 3]) -> bool {
         self.x_axis == Some(MsAxis::Time)
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
             && matches!(
                 y,
-                MsDataColumn::CorrectedMinusModel | MsDataColumn::CorrectedDivModel
+                MsDataColumn::DataMinusModel
+                    | MsDataColumn::DataDivModel
+                    | MsDataColumn::CorrectedMinusModel
+                    | MsDataColumn::CorrectedDivModel
             )
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()

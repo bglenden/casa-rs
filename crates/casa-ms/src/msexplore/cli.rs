@@ -297,7 +297,7 @@ fn run_task(
                         && options.secondary_y_data_column.is_some()
                         && !options.plotms_independent_average(),
                     options.supports_channel_derived(columns)
-                        || options.supports_time_corrected_derived(columns),
+                        || options.supports_time_derived(columns),
                     columns,
                 )?;
             }
@@ -410,8 +410,8 @@ fn run_visibility_plot(
         ))
     })?;
     let mut axis_columns = options.plotms_axis_columns();
-    let time_corrected_derived = calibration.is_none()
-        && axis_columns.is_some_and(|columns| options.supports_time_corrected_derived(columns));
+    let time_derived = calibration.is_none()
+        && axis_columns.is_some_and(|columns| options.supports_time_derived(columns));
     let raw_symbols = (pointing.is_some()
         || axis_columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
     .then(|| plotms_options::raw_symbol_visibility(task));
@@ -428,8 +428,8 @@ fn run_visibility_plot(
         )?;
         if options.supports_channel_derived(*columns) {
             plotms_columns::check_averaged_derived_storage(&ms, adjusted, "channel")?;
-        } else if time_corrected_derived {
-            plotms_columns::check_averaged_derived_storage(&ms, *columns, "time")?;
+        } else if time_derived {
+            plotms_columns::check_averaged_derived_storage(&ms, adjusted, "time")?;
         }
         prefer_float_data = use_float;
         if phasecenter.is_some()
@@ -509,7 +509,7 @@ fn run_visibility_plot(
                     raw_symbols,
                     pointing,
                     phasecenter,
-                    time_corrected_derived,
+                    time_derived,
                 },
                 prefer_float_data,
                 load_models,
