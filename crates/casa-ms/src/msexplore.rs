@@ -3011,14 +3011,11 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
-    let vector_span_models = plot.is_some_and(|plot| {
-        plotms_model::needs_vector_span_phase_references(
-            ms,
-            &selected.selected_rows,
-            plot,
-            &columns,
-        )
+    let vector_model_references = plot.is_some_and(|plot| {
+        plotms_model::needs_vector_model_references(ms, &selected.selected_rows, plot, &columns)
     });
+    let vector_span_models = vector_model_references
+        && plot.is_some_and(|plot| plot.averaging.avgscan || plot.averaging.avgfield);
     let direct_time_projection = !extended_derived
         && (vector_span_models
             || plot.is_some_and(|plot| {
@@ -3064,7 +3061,7 @@ fn build_uncalibrated_plotms_payload(
                     || extended_derived
                     || direct_time_projection,
                 time_spw,
-                vector_span_models,
+                vector_model_references,
             )
             .map_err(|error| error.to_string())
         })
@@ -5498,8 +5495,8 @@ fn build_generic_visibility_scatter_with_averaging(
         && !average_channels;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
-    let vector_span_models = time_bins
-        .is_some_and(|groups| groups.model_phase_reference_slots().is_some())
+    let vector_span_models = (spec.averaging.avgscan || spec.averaging.avgfield)
+        && time_bins.is_some_and(|groups| groups.model_phase_reference_slots().is_some())
         && calibration.is_some_and(|input| input.models.is_some());
     let direct_time_projection = uncalibrated
         && time_bins.is_some()

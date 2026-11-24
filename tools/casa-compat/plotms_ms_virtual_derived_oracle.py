@@ -376,10 +376,10 @@ def compare_vector_buffer_references(root, native, field, scan, start):
         print(f"{name}: {len(values)} matching virtual coordinates and visibility-buffer references", flush=True)
 
 
-def compare_virtual_baseline_antenna_models(root, native):
+def compare_virtual_baseline_antenna_models(root, native, *, state_only=False):
     root.mkdir()
     source, _, _, masked = baseline_average_fixture(root)
-    for vis in (source, masked):
+    for vis in ((source,) if state_only else (source, masked)):
         with opened(vis, True) as table:
             shape = table.getcol("MODEL_DATA").shape
             table.putcol("MODEL_DATA", np.full(shape, 19, dtype=np.complex64))
@@ -387,6 +387,9 @@ def compare_virtual_baseline_antenna_models(root, native):
                           fluxdensity=[7.25, 0, 0, 0])
     base = request(source) | dict(antenna="A0&A1;A0&A2", spw="0:1", xaxis="time", xdatacolumn="",
                                   yaxis="amp", ydatacolumn="model", expformat="txt")
+    if state_only:
+        compare_virtual_reduced_states(root, native, base, source)
+        return
     for name, overrides, count, antennas in (
         ("standalone-antenna", dict(avgantenna=True), 18, {("0", "-1"), ("1", "-1"), ("2", "-1")}),
         ("time-antenna", dict(avgantenna=True, avgtime="20"), 6, {("0", "-1"), ("1", "-1"), ("2", "-1")}),
@@ -409,6 +412,7 @@ def compare_virtual_baseline_antenna_models(root, native):
                                        [float(point[0]) for point in selected], rtol=0, atol=.00051)
             print(f"{case}: {count} matching averaged virtual model points", flush=True)
     compare_virtual_antenna_ordinate_list(root, native, base, masked)
+    compare_virtual_reduced_states(root, native, base, source)
     for vis in (source, masked):
         with opened(vis) as table:
             np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
@@ -432,6 +436,38 @@ def compare_virtual_antenna_ordinate_list(root, native, base, vis):
     print(f"{name}: {len(selected)} matching masked ordinate coordinates", flush=True)
 
 
+def compare_virtual_reduced_states(root, native, base, source):
+    vis = root / "time-reducer-states.ms"
+    copy_ms(source, vis)
+    with opened(vis / "STATE", True) as table:
+        state = table.nrows()
+        table.addrows(1)
+        for column in table.colnames():
+            if state and table.iscelldefined(column, 0):
+                table.putcell(column, state, table.getcell(column, 0))
+        table.putcell("OBS_MODE", state, "UNMODELED")
+    with opened(vis, True) as table:
+        start = table.getcol("TIME").min()
+        states = table.getcol("STATE_ID")
+        states[table.getcol("ANTENNA2") == 2] = state
+        table.putcol("STATE_ID", states)
+    tied = base | dict(vis=str(vis), avgtime="20", msselect=f"TIME < {start + 1:.3f}")
+    for name, overrides, count, value in (
+        ("virtual-state-antenna", dict(avgantenna=True), 3, 7.25),
+        ("virtual-state-baseline", dict(avgbaseline=True), 1, 7.25),
+        ("virtual-state-single-baseline", dict(antenna="A0&A2"), 1, 1),
+    ):
+        options = tied | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        assert len(rows(expected)) == count
+        np.testing.assert_allclose([float(point[1]) for point in rows(expected)], value, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], start, rtol=0, atol=.00051)
+        print(f"{name}: {count} matching coordinates from the selected model recipe", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -440,7 +476,7 @@ def main():
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("scalar-field-spans", "vector-field-spans", "vector-field-channels",
                                            "vector-scan-spans", "vector-buffer-references",
-                                           "virtual-baseline-antenna"))
+                                           "virtual-baseline-antenna", "virtual-reduced-state"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -458,10 +494,11 @@ def main():
             compare_varying_fourier_expression(root / "fourier-model", native)
         if args.only in (None, "scalar-field-spans"):
             compare_scalar_field_spans(root / "scalar-field-spans", native)
-        if args.only not in ("scalar-field-spans", "virtual-baseline-antenna"):
+        if args.only not in ("scalar-field-spans", "virtual-baseline-antenna", "virtual-reduced-state"):
             compare_vector_field_spans(root / "vector-field-spans", native, only=args.only)
-        if args.only in (None, "virtual-baseline-antenna"):
-            compare_virtual_baseline_antenna_models(root / "virtual-baseline-antenna", native)
+        if args.only in (None, "virtual-baseline-antenna", "virtual-reduced-state"):
+            compare_virtual_baseline_antenna_models(root / "virtual-baseline-antenna", native,
+                                                    state_only=args.only == "virtual-reduced-state")
 
 
 if __name__ == "__main__":
