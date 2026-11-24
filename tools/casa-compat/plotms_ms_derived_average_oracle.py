@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from plotms_ms_columns_oracle import (
-    casa, compare_channel_vector_residual, compare_figure, compare_text, fixture, opened,
+    casa, compare_channel_vector_residual, compare_figure, compare_text, copy_ms, fixture, opened,
     plotms_launcher, reference, request, rows,
 )
 
@@ -85,6 +85,65 @@ def check_unimplemented_averaging(root, native, vis):
         assert not output.exists()
 
 
+def compare_iterator_order(root, native, vis):
+    source = root / "reversed-times.ms"
+    copy_ms(vis, source)
+    with opened(source, True) as table:
+        times = table.getcol("TIME")
+        reversed_times = times.min() + times.max() - times
+        table.putcol("TIME", reversed_times)
+        table.putcol("TIME_CENTROID", reversed_times)
+        selected = np.flatnonzero((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+                                  & (table.getcol("ANTENNA2") == 1))
+        row = int(selected[0])
+        table.putcell("FLAG_ROW", row, True)
+        observed = table.getcol("DATA")
+        observed[1] += 10j
+        table.putcol("DATA", observed)
+
+    controls = request(source) | dict(xaxis="real", xdatacolumn="corrected/model_vector",
+                                      yaxis="imag", ydatacolumn="data", avgchannel="2", spw="0:0~3",
+                                      correlation="XX,YY", title="Selected channel averages")
+    expected, actual = (root / f"iterator-order.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert len(selected) == 24
+    assert f"{reversed_times[row]:.3f}" in {point[9] for point in selected}
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 24
+    compare_figure(root, native, controls, expected,
+                   ("Selected channel averages", "Real:corrected/model (vector)", "Imag"))
+
+
+def compare_operand_edges(root, native, vis):
+    for name, model, column, check in (
+        ("nonfinite-model", [np.nan, 2, 3], "corrected-model_vector", np.isnan),
+        ("all-nonfinite-model", [np.nan] * 3, "corrected-model_vector", np.isnan),
+        ("cancelling-model", [1, 2**-24, -1], "corrected/model_vector", np.isinf),
+    ):
+        source = root / f"{name}.ms"
+        copy_ms(vis, source)
+        with opened(source, True) as table:
+            shape = table.getcol("DATA").shape
+            for spectrum in ("WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"):
+                table.putcol(spectrum, np.ones(shape, dtype=np.float32))
+            table.putcol("FLAG", np.zeros(shape, dtype=bool))
+            table.putcol("CORRECTED_DATA", np.ones(shape, dtype=np.complex64))
+            values = np.resize(np.array(model, dtype=np.complex64), shape[1])[None, :, None]
+            table.putcol("MODEL_DATA", np.broadcast_to(values, shape))
+        controls = request(source) | dict(xaxis="real", xdatacolumn=column, yaxis="imag",
+                                          ydatacolumn="data", avgchannel="3", spw="0:0~2",
+                                          expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 6
+        assert all(check(float(point[0])) for point in selected), selected
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 6
+        print(f"{name}: 6 matching nonfinite coordinates with finite observed ordinates", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -104,6 +163,8 @@ def main():
     with chdir(root), plotms_launcher(args.app_run):
         weighted = weighted_fixture(root)
         compare_weighted(root, native, weighted)
+        compare_iterator_order(root, native, weighted)
+        compare_operand_edges(root, native, weighted)
         check_unimplemented_averaging(root, native, weighted)
         ordinary = root / "ordinary"
         ordinary.mkdir()

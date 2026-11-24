@@ -2982,11 +2982,7 @@ fn build_uncalibrated_plotms_payload(
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
     if plot.is_some_and(|plot| {
-        let channel_derived = plot.averaging.avgchannel.is_some_and(|width| width > 1)
-            && [columns.x.unwrap_or(plot.data_column), plot.data_column]
-                .into_iter()
-                .any(MsDataColumn::is_corrected_vector_projection);
-        (channel_derived
+        (plotms_columns::uses_channel_derived(plot, columns.x)
             || vector_baselines
             || scalar_time
             || weighted_time_uvw
@@ -4128,10 +4124,14 @@ fn build_generic_visibility_scatter(
     let mut phase_shift = calibration
         .and_then(|input| input.phasecenter.as_ref())
         .map(plotms_phasecenter::PhaseCenterShift::new);
+    let channel_derived = calibration.is_some_and(|input| {
+        input.rows.is_none() && plotms_columns::uses_channel_derived(spec, input.x_data_column)
+    });
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
+        || channel_derived
         || calibration.is_some()
             && (ordered_feed_selection
                 || use_ordinate_masks
@@ -5002,6 +5002,7 @@ fn build_generic_visibility_scatter(
                     || pointing.is_some()
                     || raw_symbols.is_some()
                     || phase_shift.is_some()
+                    || channel_derived
                     || ordered_feed_selection
                     || spec.y_axes.len() > 2
                 {
@@ -7263,7 +7264,7 @@ fn weighted_visibility_mean(samples: &[Complex64], weights: &[f64], weight_sum: 
 }
 
 fn collect_bin_samples_into(
-    grid_values: &[Complex64],
+    grid: &ComplexGrid,
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
     bin: &ChannelBin,
@@ -7275,20 +7276,19 @@ fn collect_bin_samples_into(
     if let Some((_, values)) = &mut weights {
         values.clear();
     }
-    let chan_count = flags.ncols();
-    let start = corr_index * chan_count;
-    let Some(correlation) = grid_values.get(start..start + chan_count) else {
+    if corr_index >= grid.corr_count {
         return;
-    };
+    }
     for channel in bin.channels() {
-        if channel >= chan_count || (!show_flagged && flags[(corr_index, channel)]) {
+        if channel >= grid.chan_count || (!show_flagged && flags[(corr_index, channel)]) {
             continue;
         }
-        let value = correlation[channel];
+        let index = corr_index * grid.chan_count + channel;
+        let value = grid.values[index];
         if value.re.is_finite() && value.im.is_finite() {
             samples.push(value);
             if let Some((spectrum, values)) = &mut weights {
-                values.push(spectrum.values[start + channel]);
+                values.push(spectrum.values[index]);
             }
         }
     }
@@ -8149,8 +8149,8 @@ mod tests {
 
         let source = PreparedSelectedDataSource::new(&ms, MsDataColumn::Data, &[2, 0], None)
             .expect("prefetch");
-        let first = source.row(0, false).expect("selected row 0");
-        let second = source.row(1, false).expect("selected row 1");
+        let first = source.row(0, false, false).expect("selected row 0");
+        let second = source.row(1, false, false).expect("selected row 1");
 
         assert_eq!(first.corr_count, 1);
         assert_eq!(first.chan_count, 2);
@@ -9660,7 +9660,7 @@ mod tests {
             PreparedSelectedDataSource::new(&ms, MsDataColumn::CorrectedMinusModel, &[0, 1], None)
                 .unwrap();
         assert_eq!(
-            difference.row(0, false).unwrap().values[0],
+            difference.row(0, false, false).unwrap().values[0],
             Complex64::new(10.0, 0.0)
         );
 
@@ -9671,14 +9671,18 @@ mod tests {
             None,
         )
         .unwrap();
-        let scalar_ratio_row = scalar_ratio.row(0, false).unwrap();
+        let scalar_ratio_row = scalar_ratio.row(0, false, false).unwrap();
         assert_eq!(scalar_ratio_row.values[0], Complex64::new(6.0, 0.0));
-        assert!(scalar_ratio.row(1, false).unwrap().values[1].re.is_nan());
+        assert!(
+            scalar_ratio.row(1, false, false).unwrap().values[1]
+                .re
+                .is_nan()
+        );
 
         let direct_ratio =
             PreparedSelectedDataSource::new(&ms, MsDataColumn::DataDivModel, &[0], None).unwrap();
         assert_eq!(
-            direct_ratio.row(0, false).unwrap().values[1],
+            direct_ratio.row(0, false, false).unwrap().values[1],
             Complex64::new(5.0, 0.0)
         );
 

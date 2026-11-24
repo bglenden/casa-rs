@@ -82,6 +82,13 @@ pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) 
         .any(|(axis, column)| axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model())
 }
 
+pub(super) fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -> bool {
+    spec.averaging.avgchannel.is_some_and(|width| width > 1)
+        && [x.unwrap_or(spec.data_column), spec.data_column]
+            .into_iter()
+            .any(MsDataColumn::is_corrected_vector_projection)
+}
+
 pub(super) fn weight_axis_columns(
     axes: [Option<MsAxis>; 3],
     columns: [MsDataColumn; 3],
