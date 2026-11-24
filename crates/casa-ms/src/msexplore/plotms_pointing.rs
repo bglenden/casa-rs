@@ -287,9 +287,7 @@ fn spline_second_derivatives(times: &[f64], angles: &[[f64; 2]]) -> Vec<[f64; 2]
         });
     }
     for i in (1..n - 1).rev() {
-        for axis in 0..2 {
-            second[i][axis] -= upper[i] * second[i + 1][axis];
-        }
+        second[i] = std::array::from_fn(|axis| second[i][axis] - upper[i] * second[i + 1][axis]);
     }
     second
 }
