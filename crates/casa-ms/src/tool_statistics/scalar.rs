@@ -38,16 +38,7 @@ pub(super) fn reduce(
         }
         _ => {}
     }
-    let mut sample_rows = rows;
-    if legacy
-        && matches!(
-            column,
-            Column::Scalar("ARRAY_ID" | "FIELD_ID" | "DATA_DESC_ID")
-        )
-    {
-        sample_rows = &rows[..1];
-    }
-    for (index, row) in sample_rows.iter().enumerate() {
+    for (index, row) in rows.iter().enumerate() {
         if mask && row.flag {
             continue;
         }

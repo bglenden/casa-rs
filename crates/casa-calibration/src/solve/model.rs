@@ -41,6 +41,7 @@ pub(super) struct ModelInputs {
     geometry: Option<MsCalEngine>,
     dynamic_fields: BTreeSet<i32>,
     pub(super) phase_times: BTreeMap<usize, f64>,
+    pub(super) plot_phase_references: BTreeMap<usize, (i32, f64)>,
     finite_fields: BTreeSet<i32>,
     model_buffers: BTreeMap<usize, Arc<ModelBuffer>>,
     single_dish_pointings: HashMap<PointingQuery, BTreeMap<usize, MDirection>>,
@@ -189,6 +190,7 @@ impl ModelInputs {
             geometry: None,
             dynamic_fields: BTreeSet::new(),
             phase_times: BTreeMap::new(),
+            plot_phase_references: BTreeMap::new(),
             finite_fields: BTreeSet::new(),
             model_buffers: BTreeMap::new(),
             single_dish_pointings: HashMap::new(),
@@ -534,12 +536,21 @@ impl ModelInputs {
             .geometry
             .as_ref()
             .expect("virtual models have geometry");
-        let phase_time = self
-            .phase_times
+        // A vector PlotMS time iterator can span fields within an input chunk.
+        // Keep the row's model recipe and UVW while using the chunk's direction.
+        let (phase_field, phase_time) = self
+            .plot_phase_references
             .get(&row.row_index)
             .copied()
-            .unwrap_or(row.time_seconds);
-        let field = field_direction(ms, engine, row.field_id as usize, phase_time)
+            .unwrap_or_else(|| {
+                let time = self
+                    .phase_times
+                    .get(&row.row_index)
+                    .copied()
+                    .unwrap_or(row.time_seconds);
+                (row.field_id, time)
+            });
+        let field = field_direction(ms, engine, phase_field as usize, phase_time)
             .map_err(|source| read_error(ms, source))?;
         let frame = if self.component_voltage.is_some() {
             engine

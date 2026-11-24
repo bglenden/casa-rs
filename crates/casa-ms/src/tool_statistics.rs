@@ -106,7 +106,11 @@ pub fn tool_statistics(
     if time_average.is_some() {
         TimeAverage::reporting_axes(&mut reporting, &options.time_span);
     }
-    sort_rows(&mut rows, &sort_order(&reporting));
+    if options.legacy {
+        sort_rows(&mut rows, &CHUNK_AXES);
+    } else {
+        sort_rows(&mut rows, &sort_order(&reporting));
+    }
     let mut reducer = Reduction {
         ms,
         selection: selection.as_ref(),
@@ -117,7 +121,6 @@ pub fn tool_statistics(
             legacy: options.legacy,
         },
         column,
-        time_average,
         model,
         packed,
     };
@@ -126,26 +129,30 @@ pub fn tool_statistics(
     }
 
     let mut record = RecordValue::default();
-    let mut remaining = rows.as_mut_slice();
-    while !remaining.is_empty() {
-        let count = match &reducer.time_average {
-            Some(average) => average.report_count(remaining, &reporting),
-            None => remaining
+    let mut remaining = rows.as_slice();
+    while let Some(first) = remaining.first() {
+        let mut moments = Moments::new(options.quantiles);
+        let (count, averaged_start) = if let Some(average) = time_average.as_ref() {
+            let chunks = average.report_chunks(remaining, &reporting);
+            let range = chunks.iter().map(|chunk| chunk.len()).sum();
+            let averaged_start = reducer.reduce_averaged(average, &chunks, &mut moments)?;
+            (range, Some(averaged_start))
+        } else {
+            let range = remaining
                 .iter()
-                .take_while(|row| same_group(&remaining[0], row, &reporting))
-                .count(),
+                .take_while(|row| same_group(first, row, &reporting))
+                .count();
+            reducer.reduce(&remaining[..range], &mut moments)?;
+            (range, None)
         };
-        let (group, rest) = remaining.split_at_mut(count);
         let key = reporting
             .iter()
-            .map(|axis| group[0].group_item(*axis))
+            .map(|axis| match averaged_start {
+                Some(start) if *axis == Axis::Integration => format!("TIME={start:.6}"),
+                _ => first.group_item(*axis),
+            })
             .collect::<Vec<_>>()
             .join(",");
-        if options.time_average {
-            sort_rows(group, &CHUNK_AXES);
-        }
-        let mut moments = Moments::new(options.quantiles);
-        reducer.reduce(group, &mut moments)?;
         // FLOAT keeps reporting the mask and weights after averaging;
         // CASA's complex providers consume those switches in averaging.
         let report_mask_and_weights =
@@ -158,7 +165,7 @@ pub fn tool_statistics(
             column.is_boolean(),
         );
         record.upsert(key, Value::Record(stats));
-        remaining = rest;
+        remaining = &remaining[count..];
     }
     record
         .fields_mut()
@@ -215,8 +222,13 @@ const CHUNK_AXES: [Axis; 4] = [
 
 fn sort_order(reporting: &[Axis]) -> Vec<Axis> {
     let mut axes = reporting.to_vec();
+    // VI sorts by the implicit integration axis before the remaining array,
+    // field or data-description keys, even if TIME is hidden in the record.
+    if !reporting.contains(&Axis::Integration) {
+        axes.push(Axis::Integration);
+    }
     axes.extend(
-        CHUNK_AXES
+        CHUNK_AXES[..3]
             .iter()
             .copied()
             .filter(|axis| !reporting.contains(axis)),
@@ -243,7 +255,6 @@ struct Reduction<'a> {
     grid: BTreeMap<i32, SampleAxes>,
     cube: CubeReduction,
     column: Column,
-    time_average: Option<TimeAverage>,
     model: Option<Box<dyn PreparedTransformInputView + 'a>>,
     packed: bool,
 }
@@ -261,16 +272,8 @@ impl Reduction<'_> {
                 let descriptions = &CHUNK_AXES[..CHUNK_AXES.len() - 1];
                 for window in rows.chunk_by(|left, right| same_group(left, right, descriptions)) {
                     let id = window[0].data_description;
-                    let axes = match self.grid.entry(id) {
-                        std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
-                        std::collections::btree_map::Entry::Vacant(entry) => {
-                            entry.insert(SampleAxes::for_description(self.ms, self.selection, id)?)
-                        }
-                    };
-                    if let Some(average) = self.time_average.as_ref() {
-                        average.reduce(&input, window, axes, self.column, dataset, moments)?;
-                        dataset += 1;
-                    } else if self.packed
+                    let axes = cached_sample_axes(&mut self.grid, self.ms, self.selection, id)?;
+                    if self.packed
                         && let Some(buffers) = packed::reduce(
                             &self.cube,
                             table,
@@ -313,6 +316,28 @@ impl Reduction<'_> {
         Ok(())
     }
 
+    fn reduce_averaged(
+        &mut self,
+        average: &TimeAverage,
+        chunks: &[&[Row]],
+        moments: &mut Moments,
+    ) -> MsResult<f64> {
+        let input = CubeInput {
+            table: self.ms.main_table(),
+            model: self.model.as_deref(),
+        };
+        let mut start = None;
+        for (dataset, chunk) in chunks.iter().enumerate() {
+            let id = chunk[0].data_description;
+            let axes = cached_sample_axes(&mut self.grid, self.ms, self.selection, id)?;
+            let chunk_start = average.reduce(&input, chunk, axes, self.column, dataset, moments)?;
+            start.get_or_insert(chunk_start);
+        }
+        start.ok_or_else(|| {
+            MsError::InvalidInput("time average produced no visibility buffers".into())
+        })
+    }
+
     fn legacy(mut self, rows: Vec<Row>, label: &str) -> MsResult<RecordValue> {
         let mut result = RecordValue::default();
         if let Column::RowVector(column) = self.column {
@@ -333,4 +358,17 @@ impl Reduction<'_> {
         }
         Ok(result)
     }
+}
+
+fn cached_sample_axes<'a>(
+    grid: &'a mut BTreeMap<i32, SampleAxes>,
+    ms: &MeasurementSet,
+    selection: Option<&ResolvedMsSelection>,
+    id: i32,
+) -> MsResult<&'a SampleAxes> {
+    use std::collections::btree_map::Entry;
+    Ok(match grid.entry(id) {
+        Entry::Occupied(entry) => entry.into_mut(),
+        Entry::Vacant(entry) => entry.insert(SampleAxes::for_description(ms, selection, id)?),
+    })
 }

@@ -276,3 +276,63 @@ def test_ms_statistics_reads_default_and_virtual_model_without_materializing(sta
         assert table.open(str(statistics_ms))
         assert "MODEL_DATA" not in table.colnames()
         assert table.done()
+
+
+def test_ms_statistics_keeps_separate_field_visits_and_uses_chronological_buffers(statistics_ms):
+    casa = pinned_casa()
+    tb = casa.table()
+    assert tb.open(str(statistics_ms / "FIELD"), nomodify=False)
+    source = {name: tb.getcell(name, 0) for name in tb.colnames() if tb.iscelldefined(name, 0)}
+    assert tb.addrows(1)
+    for name, value in source.items():
+        assert tb.putcell(name, 1, value)
+    assert tb.done()
+    assert tb.open(str(statistics_ms), nomodify=False)
+    times = tb.getcol("TIME")
+    field_ids = (times == np.unique(times)[1]).astype(np.int32)
+    assert tb.putcol("FIELD_ID", field_ids)
+    assert tb.done()
+
+    reference, actual = casa.ms(), tools.ms()
+    for tool in (reference, actual):
+        assert tool.open(str(statistics_ms))
+    args = dict(useflags=False, doquantiles=False)
+    assert_statistics(actual.statistics("TIME", **args), reference.statistics("TIME", **args))
+    average_args = dict(
+        timeaverage=True, timebin="100000s", timespan="scan,state",
+        useweights=True, useflags=True, doquantiles=False,
+    )
+    expected = reference.statistics("DATA", "real", **average_args)
+    assert next(iter(expected.values()))["npts"] == 240
+    assert_statistics(actual.statistics("DATA", "real", **average_args), expected)
+
+    padded = reference.statisticsold("FIELD_ID", useflags=False)["FIELD_ID"]
+    assert padded["npts"] == len(field_ids)
+    assert padded["sum"] == 1
+    physical = actual.statisticsold("FIELD_ID", useflags=False)["FIELD_ID"]
+    assert physical["npts"] == len(field_ids)
+    assert physical["sum"] == np.sum(field_ids)
+    assert physical["mean"] == pytest.approx(np.mean(field_ids))
+    for tool in (reference, actual):
+        assert tool.done()
+
+
+def test_ms_statistics_averaged_time_key_uses_the_output_interval(native_dataset):
+    casa = pinned_casa()
+    tb = casa.table()
+    assert tb.open(str(native_dataset), nomodify=False)
+    times = tb.getcol("TIME")
+    assert tb.putcol("INTERVAL", np.where(times == times.min(), 2.0, 10.0))
+    assert tb.done()
+    results = []
+    for api in (casa, tools):
+        tool = api.ms()
+        assert tool.open(str(native_dataset))
+        value = tool.statistics(
+            "DATA", "amp", timeaverage=True, timebin="30s", timespan="scan,state",
+            baseline="0&1", useflags=True, useweights=True, doquantiles=False,
+        )
+        assert list(value) == [f"TIME={times.min() - 3.0:.6f}"]
+        results.append(value)
+        assert tool.done()
+    assert_statistics(results[1], results[0])

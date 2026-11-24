@@ -11475,6 +11475,16 @@ integration control, CASA reports 80 averaged samples with or without
 the limit. casa-rs applies the stated metre limit and returns statistics
 for all 240 separate samples (#1030).
 
+## Legacy MS statistics can pad ID columns with invented zero samples
+
+In CASA 6.7.6.14, `ms.statisticsold('FIELD_ID', useflags=False)` appends
+one scalar per iterator buffer to an array sized for all selected rows.
+The unused elements are zeros. On NGC 5921 the reported mean is about
+0.00362 because only 60 buffer IDs contributed to 22,653 array elements.
+The same append logic handles `ARRAY_ID` and `DATA_DESC_ID`. casa-rs reads
+the physical ID for each selected row and applies the requested row
+mask before reducing it (#1030).
+
 ## Invalid maximum UVW distance can raise a Python binding SystemError
 
 CASA 6.7.6.14 raises a binding-level `SystemError` for

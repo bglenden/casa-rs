@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "255dab8b1126002b4fe413a25d663338bcbd99ba",
+  "source_revision": "255dab8b1126002b4fe413a25d663338bcbd99ba",
+  "baseline_revision": "86148ac3f1dbe6b27aa90c349bc31d631bd76959",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_virtual_derived_oracle.py --only virtual-baseline-antenna --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Read-only virtual MeasurementSet models in vector and scalar per-antenna and baseline averages, including supported time and channel compositions and independent visibility ordinates.",
+  "result": "passed",
+  "baseline_result": "Main refuses the paired requests for a virtual MeasurementSet model in the antenna and baseline reducers.",
+  "text_exports": 12,
+  "points": 125,
+  "figures": 1,
+  "rendered_coordinates": 36,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "physical_models_changed": 0,
+  "evidence_reuse": "The follow-up checks the three state-dependent cases. The earlier fixtures share a state per input buffer and retain their paired results."
+}

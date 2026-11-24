@@ -3011,23 +3011,22 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
+    let vector_model_references = plot.is_some_and(|plot| {
+        plotms_model::needs_vector_model_references(ms, &selected.selected_rows, plot, &columns)
+    });
+    let vector_span_models = vector_model_references
+        && plot.is_some_and(|plot| plot.averaging.avgscan || plot.averaging.avgfield);
     let direct_time_projection = !extended_derived
-        && plot.is_some_and(|plot| {
-            plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
-        });
+        && (vector_span_models
+            || plot.is_some_and(|plot| {
+                plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
+            }));
     if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_projection {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
             .sort_by(|left, right| left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds));
     }
-    let models = plotms_model::selected_model_cells(
-        ms,
-        &selected.selected_rows,
-        plot,
-        &columns,
-        load_models,
-    )?;
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
@@ -3062,10 +3061,24 @@ fn build_uncalibrated_plotms_payload(
                     || extended_derived
                     || direct_time_projection,
                 time_spw,
+                vector_model_references,
             )
             .map_err(|error| error.to_string())
         })
         .transpose()?;
+    let models = plotms_model::selected_model_cells(
+        ms,
+        &selected.selected_rows,
+        plot,
+        &columns,
+        time_bins.as_ref().and_then(|groups| {
+            Some(cli::PlotMsModelReferences {
+                phase_slots: groups.model_phase_reference_slots()?,
+                recipe_slots: groups.input_buffer_first_slots(),
+            })
+        }),
+        load_models,
+    )?;
     let (row_order, starts_visibility_buffer) = if (vector_baselines && !time_baselines)
         || scalar_average
         || (spw_average && !time_spw)
@@ -5482,13 +5495,17 @@ fn build_generic_visibility_scatter_with_averaging(
         && !average_channels;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
+    let vector_span_models = (spec.averaging.avgscan || spec.averaging.avgfield)
+        && time_bins.is_some_and(|groups| groups.model_phase_reference_slots().is_some())
+        && calibration.is_some_and(|input| input.models.is_some());
     let direct_time_projection = uncalibrated
         && time_bins.is_some()
         && !extended_derived
-        && plotms_columns::uses_direct_vector_time_projection(
-            spec,
-            calibration.and_then(|input| input.x_data_column),
-        );
+        && (vector_span_models
+            || plotms_columns::uses_direct_vector_time_projection(
+                spec,
+                calibration.and_then(|input| input.x_data_column),
+            ));
     let average_operands = extended_derived
         || scalar_channels
         || scalar_spw_time
@@ -6015,14 +6032,19 @@ fn build_generic_visibility_scatter_with_averaging(
             }
         }
         let representative_row = row_numbers[representative_slot];
+        let metadata_slot = if vector_span_models {
+            time_bins
+                .and_then(|groups| groups.input_buffer_first_slot(representative_slot))
+                .unwrap_or(representative_slot)
+        } else {
+            representative_slot
+        };
         let span_metadata =
             group.and_then(|group| scalar_spans.as_ref().map(|spans| spans.metadata(group)));
-        let representative_field = span_metadata
-            .map_or(selected_field_ids[representative_slot], |metadata| {
-                metadata.field
-            });
+        let representative_field =
+            span_metadata.map_or(selected_field_ids[metadata_slot], |metadata| metadata.field);
         let representative_scan = span_metadata
-            .map_or(selected_scan_numbers[representative_slot], |metadata| {
+            .map_or(selected_scan_numbers[metadata_slot], |metadata| {
                 metadata.scan
             });
         if let Some(group) = time_group {
@@ -6693,6 +6715,12 @@ fn build_generic_visibility_scatter_with_averaging(
             })
             .collect();
         Some(MsScatterPlotMsAverageIds::ScanFieldAndAntenna(ids))
+    } else if vector_span_models && let Some(groups) = time_bins {
+        let ids = groups
+            .model_metadata_slots()
+            .map(|slot| (selected_scan_numbers[slot], selected_field_ids[slot]))
+            .collect();
+        Some(MsScatterPlotMsAverageIds::ScanAndField(ids))
     } else if let Some(spans) = &scalar_spans {
         let ids = averaged_rows
             .iter()

@@ -75,6 +75,11 @@ pub(super) fn read_rows(table: &Table, selected: Option<&[usize]>) -> MsResult<V
     let scans = integer_column(&values, "SCAN_NUMBER")?;
     let states = integer_column(&values, "STATE_ID")?;
     let times = double_column(&values, "TIME")?;
+    if times.iter().any(|time| !time.is_finite()) {
+        return Err(MsError::InvalidInput(
+            "TIME contains a nonfinite value".into(),
+        ));
+    }
     let intervals = double_column(&values, "INTERVAL")?;
     let antenna1 = integer_column(&values, "ANTENNA1")?;
     let antenna2 = integer_column(&values, "ANTENNA2")?;

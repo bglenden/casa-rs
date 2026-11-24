@@ -13,8 +13,10 @@ use super::cube::{CubeInput, SampleAxes, WeightCells, read_cells, required};
 use super::reduction::Moments;
 use super::rows::Row;
 use super::spec::{Axis, Column, Weighting};
-use super::{ToolStatisticsOptions, same_group};
-use crate::transform::time_average::{TimeChunk, TimeGroup, TimeSample, group_baselines};
+use super::{CHUNK_AXES, ToolStatisticsOptions, same_group};
+use crate::transform::time_average::{
+    TimeChunk, TimeGroup, TimeSample, centered_time_and_interval, group_baselines,
+};
 use crate::{MeasurementSet, MsError, MsResult};
 
 pub(super) struct TimeAverage {
@@ -83,21 +85,35 @@ impl TimeAverage {
         axes.push(Axis::Integration);
     }
 
-    pub(super) fn report_count(&self, rows: &[Row], axes: &[Axis]) -> usize {
-        let first = &rows[0];
-        let structural = &axes[..axes.len() - 1];
-        let anchor = first.time - 0.01;
-        let same_time_bin = |other: &Row| {
-            if self.seconds == 0.0 {
-                first.time == other.time
-            } else {
-                ((other.time - anchor) / self.seconds).floor()
-                    == ((first.time - anchor) / self.seconds).floor()
+    pub(super) fn report_chunks<'a>(&self, mut rows: &'a [Row], axes: &[Axis]) -> Vec<&'a [Row]> {
+        let reporting = &axes[..axes.len() - 1];
+        let mut chunks = Vec::new();
+        while let Some(first) = rows.first() {
+            let same_bin = |row: &Row| {
+                let delta = row.time - first.time;
+                if self.seconds == 0.0 {
+                    delta == 0.0
+                } else {
+                    let anchor = first.time - 0.01;
+                    ((row.time - anchor) / self.seconds).floor()
+                        == ((first.time - anchor) / self.seconds).floor()
+                }
+            };
+            let within_report = |row: &Row| same_group(row, first, reporting) && same_bin(row);
+            let size = rows
+                .iter()
+                .take_while(|row| within_report(row) && same_group(row, first, &CHUNK_AXES[..3]))
+                .count();
+            let (chunk, rest) = rows.split_at(size);
+            chunks.push(chunk);
+            // A change only to a hidden array/field/DDID starts a new
+            // averaging chunk but contributes to the same statistics record.
+            if rest.first().is_none_or(|row| !within_report(row)) {
+                break;
             }
-        };
-        rows.iter()
-            .take_while(|row| same_group(first, row, structural) && same_time_bin(row))
-            .count()
+            rows = rest;
+        }
+        chunks
     }
 
     pub(super) fn reduce(
@@ -108,7 +124,7 @@ impl TimeAverage {
         column: Column,
         dataset: usize,
         moments: &mut Moments,
-    ) -> MsResult<()> {
+    ) -> MsResult<f64> {
         let name = match column {
             Column::Complex(name, _) | Column::FloatCube(name) => name,
             _ => unreachable!("only visibility cells are time averaged"),
@@ -123,6 +139,18 @@ impl TimeAverage {
         };
         let weights = WeightCells::read(table, &physical, self.weighting)?;
         let groups = self.groups(table, rows, &physical)?;
+        let first = groups
+            .first()
+            .ok_or_else(|| shape_error("baseline group"))?;
+        let begin = &rows[first.first.row];
+        let end_slot = first
+            .rows
+            .last()
+            .ok_or_else(|| shape_error("baseline group"))?
+            .physical;
+        let end = &rows[end_slot];
+        let (center, interval) =
+            centered_time_and_interval((begin.time, begin.interval), (end.time, end.interval));
         let mut index = 0;
         for group in groups {
             let grids = GroupCells::read(&group, rows, &cells, &flags, name)?;
@@ -172,7 +200,7 @@ impl TimeAverage {
                 }
             }
         }
-        Ok(())
+        Ok(center - interval * 0.5)
     }
 
     fn groups(&self, table: &Table, rows: &[Row], physical: &[usize]) -> MsResult<Vec<TimeGroup>> {
