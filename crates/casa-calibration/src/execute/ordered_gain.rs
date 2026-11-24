@@ -149,6 +149,7 @@ pub(super) struct Options<'a> {
     pub(super) calibrate_weights: bool,
     pub(super) bandpass_weights: Option<&'a [f32]>,
     pub(super) first_receptor_only: bool,
+    pub(super) zero_flagged_weights: bool,
 }
 
 pub(super) fn apply(
@@ -210,15 +211,20 @@ pub(super) fn apply(
             let visibility = &mut data[[corr, chan]];
             *visibility *= left.inverse;
             *visibility *= right.inverse.conj();
+            let flagged = left.flagged || right.flagged;
             if let Some(flags) = &mut flags
-                && (left.flagged || right.flagged)
+                && flagged
                 && !flags[[corr, chan]]
             {
                 flags[[corr, chan]] = true;
                 *output.newly_flagged_samples += 1;
             }
             if options.calibrate_weights {
-                let factor = bandpass_power.unwrap_or(left.power * right.power);
+                let factor = if options.zero_flagged_weights && flagged {
+                    0.0
+                } else {
+                    bandpass_power.unwrap_or(left.power * right.power)
+                };
                 for spectrum in weights.iter_mut().flatten() {
                     spectrum[[corr, chan]] *= factor;
                 }

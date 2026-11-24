@@ -331,6 +331,7 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise Exception(message) from error
             if (message == "Error in Calibrater::setapply."
                 or message.startswith("overwrite is False and output file exists:")
+                or message.startswith("Error in data selection specification: State Expression: ")
                 or (error.completion.parameter == "fraction" and message.startswith("Invalid fraction value ("))
                 or (message.startswith("Applytable '") and message.endswith("' is not a caltable format"))):
                 raise RuntimeError(message) from error

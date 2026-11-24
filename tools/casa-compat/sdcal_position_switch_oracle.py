@@ -271,12 +271,19 @@ tool.lock(write=True, nattempts=1)
 assert tool.haslock(write=True)
 print('locked', flush=True)
 sys.stdin.readline()
+assert tool.haslock(write=True)
 tool.close()
 """
-    for mode, vis, product in [('ps', seed, root / 'native-data.cal'),
-                               ('tsys', temperatures, root / 'native-tsys.cal')]:
+    separate = root / 'busy-output.ms'
+    copy_ms(seed, separate)
+    sky = root / 'native-data.cal'
+    tsys = root / 'native-tsys.cal'
+    for mode, vis, product, locked in (
+        ('ps', seed, sky, sky), ('tsys', temperatures, tsys, tsys),
+        ('ps', seed, separate, separate / 'FIELD'),
+    ):
         before = columns(product)
-        with subprocess.Popen([sys.executable, '-c', hold, str(product)], text=True,
+        with subprocess.Popen([sys.executable, '-c', hold, str(locked)], text=True,
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE) as peer:
             try:
                 assert select.select([peer.stdout], [], [], 15.)[0]
@@ -286,7 +293,7 @@ tool.close()
                 except RuntimeError as error:
                     assert 'lock' in str(error).lower()
                 else:
-                    raise AssertionError('Overwriting a busy calibration table must fail')
+                    raise AssertionError('Overwriting a busy table tree must fail')
             finally:
                 peer.communicate('\n', timeout=15)
             assert peer.returncode == 0
@@ -299,7 +306,7 @@ tool.close()
     else:
         raise AssertionError('A calibration table cannot replace input MS storage')
     assert not into_ms.exists()
-    print('CASA-held output locks protect both native calibration products', flush=True)
+    print('CASA-held root and subtable locks protect existing outputs', flush=True)
 
 
 def check_intent(root, seed, temperatures, tasks):

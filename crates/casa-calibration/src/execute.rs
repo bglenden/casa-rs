@@ -3001,6 +3001,7 @@ fn apply_row_all_channels(
                     calibrate_weights,
                     bandpass_weights: bandpass_weights.as_deref(),
                     first_receptor_only,
+                    zero_flagged_weights: ordered_tsys && has_weight_spectrum,
                 },
                 &mut output,
                 [weight_spectrum.as_mut(), implicit_weight_spectrum.as_mut()],
