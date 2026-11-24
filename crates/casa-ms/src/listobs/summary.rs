@@ -208,10 +208,13 @@ impl ListObsSummary {
                 "Telescope", "Observation Date", "Observer"
             );
             for observation in &self.observations {
-                let date = format!(
-                    "[{}, {}]",
-                    observation.start_mjd_seconds, observation.end_mjd_seconds
-                );
+                let date = match observation
+                    .start_mjd_seconds
+                    .zip(observation.end_mjd_seconds)
+                {
+                    Some((start, end)) => format!("[{start}, {end}]"),
+                    None => "[]".to_string(),
+                };
                 let _ = writeln!(
                     out,
                     "  {:<10}{:<20}{:<15}{}",
