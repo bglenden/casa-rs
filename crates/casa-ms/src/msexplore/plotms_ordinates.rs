@@ -432,6 +432,7 @@ impl TimeProjection {
 #[derive(Clone, Copy)]
 pub(super) struct VectorTimeWeights<'a> {
     pub(super) spectra: [Option<&'a FloatGrid>; 2],
+    pub(super) observed_operands: [bool; 2],
     pub(super) primary: Option<(&'a FloatGrid, WeightKind)>,
 }
 
@@ -444,6 +445,7 @@ struct TimeChannelSample {
 #[derive(Debug)]
 struct TimeChannelProjection {
     channels: Vec<Option<TimeChannelSample>>,
+    observed_operands: [bool; 2],
     primary_is_observed: bool,
 }
 
@@ -457,13 +459,12 @@ impl TimeChannelProjection {
         // The channel transform receives normalized Float means and the time
         // stage's spectra, including the observed weight-to-sigma round trip.
         for channel in std::iter::once(first).chain(usable) {
-            primary += if self.primary_is_observed {
-                weight_from_sigma(sigma_from_weight(channel.primary_weight))
-            } else {
-                channel.primary_weight
-            };
+            primary += channel_weight_after_time(channel.primary_weight, self.primary_is_observed);
             for (operand, sum) in sums.iter_mut().enumerate() {
-                let weight = channel.operands.total_weights[operand];
+                let weight = channel_weight_after_time(
+                    channel.operands.total_weights[operand],
+                    self.observed_operands[operand],
+                );
                 *sum += channel.operands.time_mean(operand) * weight;
                 totals[operand] += weight;
             }
@@ -475,6 +476,14 @@ impl TimeChannelProjection {
             channel_visibility_mean(sums[operand], totals[operand], true)
         });
         first.operands.project_operands(axis, means)
+    }
+}
+
+fn channel_weight_after_time(weight: f32, observed: bool) -> f32 {
+    if observed {
+        weight_from_sigma(sigma_from_weight(weight))
+    } else {
+        weight
     }
 }
 
@@ -526,6 +535,7 @@ impl AveragedVisibility {
         if !matches!(self.0, VisibilitySamples::TimeChannelProjection(_)) {
             self.0 = VisibilitySamples::TimeChannelProjection(TimeChannelProjection {
                 channels: vec![None; bin.channels().count()],
+                observed_operands: weights.observed_operands,
                 primary_is_observed: weights
                     .primary
                     .is_some_and(|(_, kind)| kind == WeightKind::Observed),

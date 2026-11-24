@@ -84,11 +84,7 @@ impl CliOptions {
         };
         let supported_abscissa = self.x_axis.is_some_and(|axis| {
             if self.avgchannel.is_some_and(|width| width > 1) {
-                matches!(axis, MsAxis::Time | MsAxis::Channel)
-                    && matches!(
-                        y,
-                        MsDataColumn::CorrectedMinusModel | MsDataColumn::CorrectedDivModel
-                    )
+                matches!(axis, MsAxis::Time | MsAxis::Channel) && y.is_derived()
             } else if axis == MsAxis::Time {
                 y.is_derived()
             } else {
@@ -119,12 +115,12 @@ impl CliOptions {
         if self.supports_channel_derived(requested) {
             Some((adjusted, "channel"))
         } else if self.supports_time_derived(requested) {
-            if self.avgchannel.is_some_and(|width| width > 1) {
-                // This composition currently requires the physical corrected column.
-                Some((requested, "time- and channel"))
+            let axis = if self.avgchannel.is_some_and(|width| width > 1) {
+                "time- and channel"
             } else {
-                Some((adjusted, "time"))
-            }
+                "time"
+            };
+            Some((adjusted, axis))
         } else {
             None
         }

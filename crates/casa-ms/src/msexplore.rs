@@ -5639,17 +5639,16 @@ fn build_generic_visibility_scatter_with_averaging(
             WeightKind::Calibrated if use_spectral_weights => weight_spectrum_grid.as_ref(),
             _ => None,
         };
+        let axis_weight_kinds =
+            visibility_weight_kinds.map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes);
         let axis_weights = if channel_baselines && !propagate_channel_weights {
             [None; 3]
         } else {
-            visibility_weight_kinds
-                .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
-                .map(weight_grid)
+            axis_weight_kinds.map(weight_grid)
         };
         let column_weights = visibility_columns.column_weights(axis_weights);
-        let time_model_weight = time_weight_kinds
-            .and_then(|kinds| kinds.model)
-            .and_then(weight_grid);
+        let time_model_kind = time_weight_kinds.and_then(|kinds| kinds.model);
+        let time_model_weight = time_model_kind.and_then(weight_grid);
         let primary_weight_grid = time_weight_kinds
             .filter(|_| combined_vector_average)
             .and_then(|kinds| {
@@ -5991,6 +5990,10 @@ fn build_generic_visibility_scatter_with_averaging(
                                         &flags,
                                         plotms_ordinates::VectorTimeWeights {
                                             spectra: [axis_weights[axis], time_model_weight],
+                                            observed_operands: [
+                                                axis_weight_kinds[axis] == WeightKind::Observed,
+                                                time_model_kind == Some(WeightKind::Observed),
+                                            ],
                                             primary: time_channel_primary,
                                         },
                                         *corr_index,
