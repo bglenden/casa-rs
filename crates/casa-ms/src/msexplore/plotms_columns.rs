@@ -92,9 +92,10 @@ pub(super) fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -
         .any(|(axis, column)| axis.is_visibility_math() && column.is_derived())
 }
 
-pub(super) fn check_channel_derived_storage(
+pub(super) fn check_averaged_derived_storage(
     ms: &MeasurementSet,
     columns: [MsDataColumn; 3],
+    averaging_axis: &str,
 ) -> Result<(), TaskFailure> {
     let schema = ms.main_table().schema();
     let operands = columns
@@ -110,7 +111,7 @@ pub(super) fn check_channel_derived_storage(
     for name in std::iter::once("MODEL_DATA").chain(operands) {
         if !schema.is_some_and(|schema| schema.contains_column(name)) {
             return Err(TaskFailure::validation(format!(
-                "channel-averaged residuals and ratios require stored {name} (#1032)"
+                "{averaging_axis}-averaged residuals and ratios require stored {name} (#1032)"
             )));
         }
     }
@@ -133,7 +134,7 @@ pub(super) fn weight_axis_columns(
 pub(super) fn check_averaging(
     averaging: bool,
     extended_averaging_with_independent_ordinates: bool,
-    channel_derived: bool,
+    supports_derived: bool,
     columns: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
     if extended_averaging_with_independent_ordinates {
@@ -141,7 +142,7 @@ pub(super) fn check_averaging(
             "time, baseline, antenna and SPW averaging of independent MeasurementSet ordinate columns is pending #1032",
         ));
     }
-    if averaging && !channel_derived && columns.into_iter().any(MsDataColumn::is_derived) {
+    if averaging && !supports_derived && columns.into_iter().any(MsDataColumn::is_derived) {
         return Err(TaskFailure::validation(
             "averaging derived data columns in this MeasurementSet plot is pending #1032",
         ));

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "3beb707c06ede1b5b52341c69c894773fc7ef6ed",
+  "source_revision": "3beb707c06ede1b5b52341c69c894773fc7ef6ed",
+  "baseline_revision": "38474b8520d345cdba86658f64e0843a41ade894",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Stored vector corrected model expressions against Time after ordinary vector time averaging.",
+  "result": "passed",
+  "baseline_result": "Native refused a selected ordinary vector-time-derived visibility ordinate.",
+  "text_exports": 6,
+  "points": 13,
+  "figures": 2,
+  "rendered_coordinates": 2,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

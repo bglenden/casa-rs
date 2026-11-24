@@ -74,6 +74,25 @@ impl CliOptions {
             && self.iteraxis.is_none()
     }
 
+    pub(super) fn supports_time_corrected_derived(&self, [_, y, _]: [MsDataColumn; 3]) -> bool {
+        self.x_axis == Some(MsAxis::Time)
+            && self.y_axis.is_some_and(MsAxis::is_visibility_math)
+            && matches!(
+                y,
+                MsDataColumn::CorrectedMinusModel | MsDataColumn::CorrectedDivModel
+            )
+            && self.y_axis2.is_none()
+            && self.iteraxis.is_none()
+            && self.avgtime.is_some()
+            && self.avgchannel.is_none_or(|width| width <= 1)
+            && !self.scalar
+            && !self.avgscan
+            && !self.avgfield
+            && !self.avgbaseline
+            && !self.avgantenna
+            && !self.avgspw
+    }
+
     pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
         self.x_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)

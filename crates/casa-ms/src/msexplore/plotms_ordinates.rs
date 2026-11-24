@@ -20,7 +20,7 @@ use crate::selection::ChannelRange;
 pub(super) struct VisibilityColumns<'a> {
     sources: Vec<(MsDataColumn, PreparedSelectedDataSource<'a>)>,
     axes: Vec<Option<usize>>,
-    channel_average: bool,
+    project_after_average: bool,
 }
 
 impl<'a> VisibilityColumns<'a> {
@@ -65,7 +65,8 @@ impl<'a> VisibilityColumns<'a> {
         Ok(Self {
             sources,
             axes,
-            channel_average: spec.averaging.avgchannel.is_some_and(|width| width > 1),
+            project_after_average: spec.averaging.avgchannel.is_some_and(|width| width > 1)
+                || input.is_some_and(|input| input.time_corrected_derived),
         })
     }
 
@@ -116,7 +117,7 @@ impl<'a> VisibilityColumns<'a> {
     ) -> Result<(), String> {
         grids.clear();
         for (_, source) in &self.sources {
-            let grid = source.row(row, project, self.channel_average)?;
+            let grid = source.row(row, project, self.project_after_average)?;
             if let Some(first) = grids.first() {
                 check_grid_shapes(first, &grid)?;
             }
@@ -329,6 +330,7 @@ enum VisibilitySamples {
         weights: Vec<f64>,
     },
     ChannelMeans(Vec<ChannelVisibilityMean>),
+    TimeProjection(TimeProjection),
 }
 
 impl Default for VisibilitySamples {
@@ -346,6 +348,28 @@ struct ChannelVisibilityMean {
     samples: usize,
 }
 
+#[derive(Debug)]
+struct TimeProjection {
+    projection: VisibilityColumnProjection,
+    weighted_sums: [Complex32; 2],
+    total_weight: f32,
+}
+
+impl TimeProjection {
+    fn project(&self, axis: MsAxis) -> Option<f64> {
+        let means = self.weighted_sums.map(|sum| {
+            // AveragingTvi2 keeps the accumulated value for a nonpositive weight.
+            let mean = if self.total_weight > 0.0 {
+                sum / self.total_weight
+            } else {
+                sum
+            };
+            Complex64::new(f64::from(mean.re), f64::from(mean.im))
+        });
+        self.projection.axis_value(axis, means, false)
+    }
+}
+
 impl AveragedVisibility {
     fn weighted_mut(&mut self) -> (&mut Vec<Complex64>, &mut Vec<f64>) {
         let VisibilitySamples::Weighted { values, weights } = &mut self.0 else {
@@ -358,6 +382,42 @@ impl AveragedVisibility {
         let (values, weights) = self.weighted_mut();
         values.push(value);
         weights.push(weight);
+    }
+
+    pub(super) fn add_time_projection(
+        &mut self,
+        grid: &ComplexGrid,
+        flags: &ArrayView2<'_, bool>,
+        spectrum: Option<&FloatGrid>,
+        corr: usize,
+        bin: &ChannelBin,
+    ) {
+        debug_assert_eq!(bin.channels().count(), 1);
+        if flags[(corr, bin.start)] {
+            return;
+        }
+        let (projection, model) = grid
+            .model
+            .as_ref()
+            .expect("time projection requires a model");
+        let index = corr * grid.chan_count + bin.start;
+        let weight = spectrum.map_or(1.0, |weights| weights.values[index] as f32);
+        // Both cubes use calibrated weights. Keep their Float sums separate
+        // until the cache projects the normalized operands.
+        let weighted_values = [grid.values[index], model[index]]
+            .map(|value| Complex32::new(value.re as f32, value.im as f32) * weight);
+        if let VisibilitySamples::TimeProjection(average) = &mut self.0 {
+            for (sum, value) in average.weighted_sums.iter_mut().zip(weighted_values) {
+                *sum += value;
+            }
+            average.total_weight += weight;
+        } else {
+            self.0 = VisibilitySamples::TimeProjection(TimeProjection {
+                projection: *projection,
+                weighted_sums: weighted_values,
+                total_weight: weight,
+            });
+        }
     }
 
     /// The CASA scalar reducer stores amplitude and phase as separate components.
@@ -419,6 +479,7 @@ impl AveragedVisibility {
                 }
                 (usable > 0).then(|| sum / usable as f64)
             }
+            VisibilitySamples::TimeProjection(_) => unreachable!("time operands project together"),
         }
     }
 
@@ -455,12 +516,14 @@ impl AveragedVisibility {
                 let mean = self.vector_mean()?;
                 compute_visibility_math(axis, &[mean], scalar)
             }
+            VisibilitySamples::TimeProjection(average) => average.project(axis),
         }
     }
 }
 
 pub(super) struct VisibilityTimeBounds {
     first: f64,
+    last: f64,
     last_unflagged: Option<f64>,
 }
 
@@ -507,12 +570,14 @@ impl VisibilityTimeBounds {
     pub(super) fn new(time: f64) -> Self {
         Self {
             first: time,
+            last: time,
             last_unflagged: None,
         }
     }
 
     pub(super) fn observe(&mut self, time: f64, unflagged: bool) {
         self.first = self.first.min(time);
+        self.last = self.last.max(time);
         if unflagged {
             self.last_unflagged = Some(self.last_unflagged.map_or(time, |last| last.max(time)));
         }
@@ -522,6 +587,12 @@ impl VisibilityTimeBounds {
         // CASA anchors on the first integration and ends at the last usable one.
         self.last_unflagged
             .map(|last| self.first + (last - self.first) / 2.0)
+    }
+
+    pub(super) fn buffer_midpoint(&self) -> f64 {
+        // A fully flagged first baseline still supplies the cache's buffer time.
+        let last = self.last_unflagged.unwrap_or(self.last);
+        self.first + (last - self.first) / 2.0
     }
 }
 
