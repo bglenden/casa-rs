@@ -443,10 +443,9 @@ fn run_visibility_plot(
     let mut axis_columns = options.plotms_axis_columns();
     let extended_derived = calibration.is_none()
         && axis_columns.is_some_and(|columns| options.supports_extended_derived(columns));
-    let ordinary_time_average =
-        options.avgtime.is_some() && !options.avgbaseline && !options.avgantenna && !options.avgspw;
-    let implicit_derived_model =
-        atmosphere.is_none() && (!options.avgfield || ordinary_time_average);
+    let implicit_derived_model = atmosphere.is_none()
+        && (!options.avgfield
+            || (options.avgtime.is_some() && !options.avgbaseline && !options.avgantenna));
     let raw_symbols = (pointing.is_some()
         || axis_columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
     .then(|| plotms_options::raw_symbol_visibility(task));
