@@ -1133,6 +1133,43 @@ def compare_vector_antenna_time_channels(root, native, source, controls, start, 
         print(f"{name}: {len(coordinates)} matching vector time, channel and antenna coordinates", flush=True)
     compare_empty_export(root, native, "vector-time-channel-antenna-zero-corrected",
                          args | dict(vis=str(zero_corrected)), ("Real", "Imag:corrected"))
+    compare_vector_antenna_time_channel_model(root, native, source, args, start)
+
+
+def compare_vector_antenna_time_channel_model(root, native, source, base, start):
+    vis = root / "vector-antenna-time-channel-model.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        far = table.getcol("ANTENNA2") == 2
+        values = table.getcol("MODEL_DATA")
+        for channel, value in enumerate((2 + 2j, 4 + 4j, 8 + 8j, 10 + 10j)):
+            values[:, channel, :] = value * np.where(far, 3, 1)
+        table.putcol("MODEL_DATA", values)
+        flags = table.getcol("FLAG")
+        flags[0, 0, far & (table.getcol("TIME") == start)] = True
+        table.putcol("FLAG", flags)
+    controls = base | dict(vis=str(vis), xdatacolumn="model", ydatacolumn="model", expformat="txt")
+    for name, overrides, values, frequencies in (
+        ("model", {}, [(5.8, 18), (-3, -9), (-9, -27), (6, 18), (-3, -9), (-9, -27)], (100.0005, 100.0025)),
+        ("model-single-channel", dict(spw="0:1"), [(8,), (-4,), (-12,)] * 2, (100.001,)),
+    ):
+        # The model uses equal channel weights. The antenna reducer uses the
+        # surviving time counts, including 8 and 7 in the first two-channel bin.
+        coordinates = [(abs(value), value) for channels in values for value in channels]
+        expected, actual = (root / f"vector-time-channel-antenna-{name}.{engine}.txt" for engine in ("casa", "native"))
+        args = controls | overrides
+        assert reference(**args, plotfile=str(expected)) is None
+        selected = rows(expected)
+        identifiers = [(str(antenna), "-1", str(channel), "XX")
+                       for _ in range(2) for antenna in range(3) for channel in range(len(frequencies))]
+        assert [(point[5], point[6], point[2], point[12]) for point in selected] == identifiers
+        assert [point[10] for point in selected] == [f"{frequency:.9f}" for frequency in frequencies] * 6
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float), coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected],
+                                   np.repeat([start + 15, start + 45], 3 * len(frequencies)), rtol=0, atol=.00051)
+        assert native(**args, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(coordinates)
+        print(f"vector-time-channel-antenna-{name}: {len(coordinates)} matching model coordinates", flush=True)
 
 
 def main():
