@@ -61,7 +61,9 @@ pub(super) fn uses_ordinary_time_visibility(spec: &MsPlotSpec) -> bool {
 }
 
 pub(super) fn supports_ordinary_time_axes(spec: &MsPlotSpec) -> bool {
-    spec.iteration.iteraxis.is_none()
+    spec.iteration
+        .iteraxis
+        .is_none_or(|axis| spec.secondary_y_axis().is_some() && axis.supports_averaged_ordinates())
         && spec.transforms.freqframe.is_none()
         && std::iter::once(spec.x_axis)
             .chain(spec.y_axes.iter().copied())

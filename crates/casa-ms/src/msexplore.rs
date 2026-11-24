@@ -1144,6 +1144,10 @@ pub enum MsIterationAxis {
 }
 
 impl MsIterationAxis {
+    fn supports_averaged_ordinates(self) -> bool {
+        matches!(self, Self::Correlation | Self::Scan | Self::Field)
+    }
+
     /// All currently implemented iteration axes.
     pub const ALL: [Self; 4] = [
         Self::Field,
@@ -6185,7 +6189,12 @@ fn build_generic_visibility_scatter_with_averaging(
                         },
                         |(masked, _)| masked,
                     );
-                    if channel_masked && !(scalar_channels || antenna_channels || spw_channels) {
+                    if channel_masked
+                        && !(scalar_channels
+                            || antenna_channels
+                            || spw_channels
+                            || iterated_ordinate_list)
+                    {
                         continue;
                     }
                     let (panel_key, panel_label, iteration_rank) = iteration_group(
@@ -6697,6 +6706,7 @@ fn build_generic_visibility_scatter_with_averaging(
         || spw_average
         || antenna_channels
         || scalar_antenna_time
+        || iterated_ordinate_list
         || (scalar_average
             && spec.secondary_y_axis().is_some()
             && iteraxis.is_none()

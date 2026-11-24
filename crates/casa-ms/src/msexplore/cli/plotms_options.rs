@@ -67,10 +67,9 @@ impl CliOptions {
     }
 
     pub(super) fn supports_averaged_ordinate_iteration(&self) -> bool {
-        matches!(
-            self.iteraxis,
-            Some(MsIterationAxis::Correlation | MsIterationAxis::Scan | MsIterationAxis::Field)
-        ) && self.freqframe.is_none()
+        self.iteraxis
+            .is_some_and(MsIterationAxis::supports_averaged_ordinates)
+            && self.freqframe.is_none()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()
                     || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
