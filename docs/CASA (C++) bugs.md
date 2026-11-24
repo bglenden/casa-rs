@@ -10259,6 +10259,20 @@ CASA 6.7.6.14's `wvr.gcal(reverse=True, spw=[1])` uses the position of each sele
 
 casa-rs applies the global reversal to each selected spectral-window ID. The compact ALMA comparison confirms that the corrected gain for window 1 is the complex conjugate of the ordinary gain, while the installed CASA result retains the ordinary sign. [Pinned CASA WVR tool source](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/tools/wvr/wvr_cmpt.cc?at=refs%2Ftags%2F6.7.6.14)
 
+## Seeded WVR proposals vary across CASA C++ standard libraries
+
+CASA 6.7.6.14 uses `std::normal_distribution` for LibAIR's proposal
+sampler. With the same seed, Linux libstdc++ and macOS libc++ return each
+Gaussian pair in opposite order. The projected draws change the accepted
+fits. On the original ALMA `uid___A002_X8ca70c_X5_shortened.ms` fixture with
+`segsource=False, nsol=5, rseed=27, refant='DA41'`, Linux CASA accepts three
+fits and macOS CASA accepts four.
+
+casa-rs uses a fixed draw order on both platforms. The Mac and Linux native
+posterior rows agree, and the seeded fit agrees with the pinned Linux CASA
+reference. This keeps native seeded calibration reproducible across hosts.
+[Pinned CASA proposal sampler](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/bnmin1/src/metro_propose.h?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
+
 ## WVR can move successful atmospheric fits into earlier segments
 
 On the recorded ALMA test MeasurementSet `uid___A002_X8ca70c_X5_shortened.ms`,
