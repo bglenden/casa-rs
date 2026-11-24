@@ -4847,15 +4847,22 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_bins = calibration.and_then(|input| input.time_bins);
     let collapse_baselines = plotms_columns::uses_integration_baseline_average(spec)
         && calibration.is_some_and(|input| input.rows.is_none());
+    let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
+    let channel_baselines = collapse_baselines && average_channels;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
-    let combined_vector_average =
-        time_weight_kinds.is_some() && spec.averaging.avgchannel.is_some_and(|width| width > 1);
-    let needs_observed_weights =
-        time_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Observed));
-    let needs_calibrated_weights =
-        time_weight_kinds.is_some_and(|kinds| kinds.uses(WeightKind::Calibrated));
+    let channel_baseline_kinds = calibration
+        .filter(|_| channel_baselines)
+        .map(|input| plotms_columns::weight_kinds(ms, spec, input));
+    let combined_vector_average = time_weight_kinds.is_some() && average_channels;
+    let visibility_weight_kinds = time_weight_kinds.or(channel_baseline_kinds);
+    let needs_weight_kind = |kind| {
+        visibility_weight_kinds.is_some_and(|kinds| kinds.uses(kind))
+            || channel_baseline_kinds.is_some_and(|kinds| kinds.row_weight == kind)
+    };
+    let needs_observed_weights = needs_weight_kind(WeightKind::Observed);
+    let needs_calibrated_weights = needs_weight_kind(WeightKind::Calibrated);
     let selected_flags =
         SelectedArrayColumn::load_for_plot(ms.main_table(), "FLAG", &row_numbers, calibration)?;
     let selected_weights =
@@ -4907,8 +4914,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let iteraxis = spec.iteration.iteraxis;
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
-    let use_spectral_weights =
-        calibration.is_some() && needs_visibility_grid && !collapse_baselines;
+    let use_spectral_weights = calibration.is_some()
+        && needs_visibility_grid
+        && (!collapse_baselines || channel_baselines);
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
             .y_axes
@@ -4926,6 +4934,17 @@ fn build_generic_visibility_scatter_with_averaging(
     } else {
         None
     };
+    // Without a stored weight spectrum, the transform averages each complex
+    // channel bin uniformly while still forming the output row weight.
+    let propagate_channel_weights = channel_baselines
+        && selected_weight_spectrum
+            .as_ref()
+            .and_then(|column| {
+                // Spectrum availability is established before iterator sorting.
+                let (slot, _) = row_numbers.iter().enumerate().min_by_key(|&(_, row)| row)?;
+                column.find(slot)
+            })
+            .is_some();
     let selected_sigma_spectrum = if needs_sigma_spectrum || needs_observed_weights {
         SigmaSpectrumColumn::new(ms.main_table())
             .ok()
@@ -5102,13 +5121,22 @@ fn build_generic_visibility_scatter_with_averaging(
             WeightKind::Calibrated if use_spectral_weights => weight_spectrum_grid.as_ref(),
             _ => None,
         };
-        let axis_weights = time_weight_kinds
-            .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
-            .map(weight_grid);
+        let axis_weights = if channel_baselines && !propagate_channel_weights {
+            [None; 3]
+        } else {
+            visibility_weight_kinds
+                .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
+                .map(weight_grid)
+        };
         let column_weights = visibility_columns.column_weights(axis_weights);
         let primary_weight_grid = time_weight_kinds
             .filter(|_| combined_vector_average)
             .and_then(|kinds| weight_grid(kinds.primary));
+        // The baseline reducer sees the mask after the last visibility cube
+        // transform. Mixed stored columns use the calibrated mask here.
+        let channel_mask_grid = channel_baseline_kinds
+            .filter(|_| propagate_channel_weights)
+            .and_then(|kinds| weight_grid(kinds.row_weight));
 
         let selected_correlations =
             select_correlation_slots(corr_count, &corr_types, requested_corr_codes.as_deref());
@@ -5203,7 +5231,15 @@ fn build_generic_visibility_scatter_with_averaging(
 
         let baseline_tokens = averaging_baseline_tokens(antenna1_value, antenna2_value, spec);
         let shared_baseline_weight = collapse_baselines.then(|| {
-            let weight = weight_values[selected_correlations[0].0];
+            let correlation = selected_correlations[0].0;
+            let weight = channel_baseline_kinds.map_or(weight_values[correlation], |kinds| {
+                plotms_columns::channel_averaged_row_weight(
+                    weight_grid(kinds.row_weight),
+                    correlation,
+                    &channel_bins,
+                    &flags,
+                )
+            });
             let minimum = f64::from(f32::MIN_POSITIVE);
             if weight < minimum { minimum } else { weight }
         });
@@ -5220,6 +5256,11 @@ fn build_generic_visibility_scatter_with_averaging(
                 let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(target)
                     if antenna1_value != antenna2_value && *target == antenna2_value);
                 for bin in channel_bins.iter() {
+                    if channel_mask_grid.is_some_and(|grid| {
+                        !plotms_columns::bin_has_weight(grid, *corr_index, bin, &flags)
+                    }) {
+                        continue;
+                    }
                     // The time stage sums each column's weights. The channel
                     // stage uses those sums and propagates the primary mask.
                     let primary_weight = primary_weight_grid
@@ -5234,6 +5275,9 @@ fn build_generic_visibility_scatter_with_averaging(
                             *corr_index,
                             bin,
                         );
+                        if channel_baselines {
+                            buffer.normalize_vector_average();
+                        }
                     }
                     let samples = |axis| {
                         visibility_columns.samples(
@@ -6579,12 +6623,7 @@ fn compute_weighted_visibility_math(
             _ => None,
         }
     } else {
-        let average = samples
-            .iter()
-            .zip(weights.iter())
-            .map(|(value, weight)| *value * *weight)
-            .sum::<Complex64>()
-            / weight_sum;
+        let average = weighted_visibility_mean(samples, weights, weight_sum);
         match axis {
             MsAxis::Amplitude => Some(average.norm()),
             MsAxis::Phase => Some(average.arg().to_degrees()),
@@ -6593,6 +6632,15 @@ fn compute_weighted_visibility_math(
             _ => None,
         }
     }
+}
+
+fn weighted_visibility_mean(samples: &[Complex64], weights: &[f64], weight_sum: f64) -> Complex64 {
+    samples
+        .iter()
+        .zip(weights)
+        .map(|(value, weight)| *value * *weight)
+        .sum::<Complex64>()
+        / weight_sum
 }
 
 fn collect_bin_samples_into(

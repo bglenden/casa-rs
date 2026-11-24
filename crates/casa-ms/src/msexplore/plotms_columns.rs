@@ -9,12 +9,13 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use super::{ChannelBin, FloatGrid, MsAxis, MsDataColumn, MsPlotSpec, PlotMsInput};
 use crate::MeasurementSet;
 use crate::schema::main_table::OptionalMainColumn;
-use crate::transform::{WeightKind, visibility_weight_kind, weight_from_sigma};
+use crate::transform::{
+    WeightKind, mean_weight_preferring_unflagged, visibility_weight_kind, weight_from_sigma,
+};
 
 pub(super) fn uses_integration_baseline_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgbaseline
         && spec.averaging.avgtime.is_none()
-        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
         && !spec.averaging.avgscan
         && !spec.averaging.avgfield
         && !spec.averaging.avgantenna
@@ -67,6 +68,7 @@ pub(super) fn check_averaging(
 pub(super) struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
     pub(super) primary: WeightKind,
+    pub(super) row_weight: WeightKind,
 }
 
 impl PlotMsWeightKinds {
@@ -132,7 +134,34 @@ pub(super) fn weight_kinds(
     PlotMsWeightKinds {
         axes: columns.map(kind),
         primary: kind(primary),
+        row_weight: if has_corrected {
+            WeightKind::Calibrated
+        } else {
+            kind(primary)
+        },
     }
+}
+
+/// The baseline reducer receives the transform's scalar weight, averaged
+/// across the output channels of the first selected correlation.
+pub(super) fn channel_averaged_row_weight(
+    weights: Option<&FloatGrid>,
+    correlation: usize,
+    bins: &[ChannelBin],
+    flags: &ndarray::ArrayView2<'_, bool>,
+) -> f64 {
+    f64::from(mean_weight_preferring_unflagged(bins.iter().map(|bin| {
+        let mut sums = [0.0, 0.0];
+        let mut all_flagged = true;
+        for channel in bin.channels() {
+            let flagged = flags[(correlation, channel)];
+            all_flagged &= flagged;
+            sums[usize::from(flagged)] += weights.map_or(1.0, |grid| {
+                grid.values[correlation * grid.chan_count + channel] as f32
+            });
+        }
+        (all_flagged, sums[usize::from(all_flagged)])
+    })))
 }
 
 pub(super) fn bin_has_weight(

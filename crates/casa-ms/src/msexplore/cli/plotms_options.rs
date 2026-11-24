@@ -51,7 +51,6 @@ impl CliOptions {
             && !(transforms_frequency && crosses_boundary);
         let baseline_average = self.avgbaseline
             && self.avgtime.is_none()
-            && self.avgchannel.is_none_or(|width| width <= 1)
             && !crosses_boundary
             && !transforms_frequency;
         (time_average || baseline_average)
