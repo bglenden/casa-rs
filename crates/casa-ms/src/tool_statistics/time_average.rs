@@ -4,7 +4,8 @@ use std::ops::{AddAssign, Div, Mul};
 
 use casa_tables::Table;
 use casa_types::ArrayValue;
-use casa_types::quanta::{Quantity, Unit};
+use casa_types::quanta::Quantity;
+use casa_types::quanta::casacore::{casacore_unit, get_value};
 use ndarray::ArrayD;
 
 use super::cube::{SampleAxes, WeightCells, read_cells, required};
@@ -37,18 +38,19 @@ impl TimeAverage {
                 options.column.to_ascii_uppercase()
             )));
         }
-        let seconds = Quantity::read(&options.time_bin)
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?
-            .get_value_in(
-                &Unit::new("s").map_err(|error| MsError::InvalidInput(error.to_string()))?,
-            )
+        let time_bin = Quantity::read(&options.time_bin)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        if !seconds.is_finite() || seconds < 0.0 {
+        let seconds_unit =
+            casacore_unit("s").map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        let seconds = get_value(&time_bin, &seconds_unit);
+        if !seconds.is_finite() {
             return Err(MsError::InvalidInput(format!(
                 "invalid time averaging interval {}",
                 options.time_bin
             )));
         }
+        // CASA treats negative and zero width as one buffer per integration.
+        let seconds = seconds.max(0.0);
         let weighting = if options.use_weights && matches!(column, Column::Complex("MODEL_DATA", _))
         {
             let schema = ms.main_table().schema();

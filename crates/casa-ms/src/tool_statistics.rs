@@ -9,6 +9,7 @@ use crate::selection::{ResolvedMsSelection, resolve_casa_selection_with_system_b
 use crate::{MeasurementSet, MsError, MsResult, MsSelection};
 
 mod cube;
+mod packed;
 mod record;
 mod reduction;
 mod rows;
@@ -186,41 +187,58 @@ struct Reduction<'a> {
 
 impl Reduction<'_> {
     fn reduce(&mut self, rows: &[Row], moments: &mut Moments) -> MsResult<()> {
-        let axes = if self.time_average.is_some() {
-            &CHUNK_AXES[..CHUNK_AXES.len() - 1]
-        } else {
-            &CHUNK_AXES[..]
-        };
-        for (dataset, chunk) in rows
-            .chunk_by(|left, right| same_group(left, right, axes))
-            .enumerate()
-        {
-            match self.column {
-                Column::Complex(_, _) | Column::FloatCube(_) | Column::Flag => {
-                    let id = chunk[0].data_description;
+        let table = self.ms.main_table();
+        let mut dataset = 0;
+        match self.column {
+            Column::Complex(_, _) | Column::FloatCube(_) | Column::Flag => {
+                let descriptions = &CHUNK_AXES[..CHUNK_AXES.len() - 1];
+                for window in rows.chunk_by(|left, right| same_group(left, right, descriptions)) {
+                    let id = window[0].data_description;
                     let axes = match self.grid.entry(id) {
                         std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                         std::collections::btree_map::Entry::Vacant(entry) => {
                             entry.insert(SampleAxes::for_description(self.ms, self.selection, id)?)
                         }
                     };
-                    let table = self.ms.main_table();
                     if let Some(average) = self.time_average.as_ref() {
-                        average.reduce(table, chunk, axes, self.column, dataset, moments)?;
+                        average.reduce(table, window, axes, self.column, dataset, moments)?;
+                        dataset += 1;
+                    } else if let Some(buffers) = packed::reduce(
+                        &self.cube,
+                        table,
+                        window,
+                        axes,
+                        self.column,
+                        dataset,
+                        moments,
+                    )? {
+                        dataset += buffers;
                     } else {
-                        self.cube
-                            .reduce(table, chunk, axes, self.column, dataset, moments)?;
+                        for chunk in window
+                            .chunk_by(|left, right| same_group(left, right, &[Axis::Integration]))
+                        {
+                            self.cube
+                                .reduce(table, chunk, axes, self.column, dataset, moments)?;
+                            dataset += 1;
+                        }
                     }
                 }
-                column => scalar::reduce(
-                    self.ms.main_table(),
-                    chunk,
-                    column,
-                    self.cube.use_flags,
-                    self.cube.legacy,
-                    dataset,
-                    moments,
-                )?,
+            }
+            column => {
+                for (dataset, chunk) in rows
+                    .chunk_by(|left, right| same_group(left, right, &CHUNK_AXES))
+                    .enumerate()
+                {
+                    scalar::reduce(
+                        table,
+                        chunk,
+                        column,
+                        self.cube.use_flags,
+                        self.cube.legacy,
+                        dataset,
+                        moments,
+                    )?;
+                }
             }
         }
         Ok(())

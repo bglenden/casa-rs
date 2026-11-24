@@ -11,6 +11,7 @@ use crate::selection::ResolvedMsSelection;
 use crate::{MeasurementSet, MsError, MsResult};
 
 pub(super) struct SampleAxes {
+    pub(super) stored_correlations: usize,
     pub(super) channels: Vec<usize>,
     pub(super) correlations: Vec<usize>,
 }
@@ -41,6 +42,7 @@ impl SampleAxes {
             .corr_type(checked_id(polarization, "POLARIZATION_ID")?)?;
         let requested =
             selection.map_or(&[][..], |selection| selection.correlation_types.as_slice());
+        let stored_correlations = correlation_types.len();
         let correlations = correlation_types
             .into_iter()
             .enumerate()
@@ -49,6 +51,7 @@ impl SampleAxes {
             })
             .collect();
         Ok(Self {
+            stored_correlations,
             channels,
             correlations,
         })

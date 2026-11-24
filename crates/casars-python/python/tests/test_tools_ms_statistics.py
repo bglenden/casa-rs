@@ -88,8 +88,11 @@ def test_ms_statistics_matches_pinned_time_weighting_and_group_keys(statistics_m
         assert tool.open(str(statistics_ms))
     for options in [
         {"timebin": "0s", "useflags": False},
-        {"timebin": "30s", "useflags": True},
-        {"timebin": "30s", "useweights": True, "useflags": False, "timespan": "scan,state",
+        {"timebin": "-1s", "useflags": False},
+        {"timebin": "20", "useflags": True, "useweights": True},
+        {"timebin": "00:00:20", "useflags": True, "useweights": True},
+        {"timebin": "30s", "useflags": True, "useweights": True},
+        {"timebin": "30s", "useweights": True, "useflags": True, "timespan": "scan,state",
          "reportingaxes": "integration", "maxuvwdistance": 1.0},
     ]:
         args = dict(column="DATA", complex_value="real", timeaverage=True, **options)
@@ -141,5 +144,64 @@ def test_ms_statistics_weights_observed_data_by_inverse_variance(statistics_ms):
     assert stats["sumOfWeights"] == pytest.approx(total_weight)
     assert stats["mean"] == pytest.approx(weighted_sum / total_weight)
     assert stats["sum"] == pytest.approx(weighted_sum)
+    for tool in (actual, reference):
+        assert tool.done()
+
+
+def test_ms_statistics_applies_requested_uvw_displacement(statistics_ms):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(statistics_ms), nomodify=False)
+    _, integrations = np.unique(table.getcol("TIME"), return_inverse=True)
+    uvw = table.getcol("UVW")
+    uvw[0] += 10_000.0 * integrations
+    assert table.putcol("UVW", uvw)
+    assert table.done()
+
+    actual, reference = tools.ms(), casa.ms()
+    for tool in (actual, reference):
+        assert tool.open(str(statistics_ms))
+    options = dict(timeaverage=True, timebin="30s", useflags=True, useweights=True)
+    expected = reference.statistics("DATA", "real", **options)
+    assert_statistics(actual.statistics("DATA", "real", **options), expected)
+    pinned = reference.statistics("DATA", "real", maxuvwdistance=1.0, **options)
+    assert_statistics(pinned, expected)
+    actual_limited = actual.statistics("DATA", "real", maxuvwdistance=1.0, **options)
+    assert sum(stats["npts"] for stats in pinned.values()) == 80
+    assert sum(stats["npts"] for stats in actual_limited.values()) == 240
+    for tool in (actual, reference):
+        assert tool.done()
+
+
+def test_ms_statistics_applies_flags_and_weights_requested_for_time_averaging(statistics_ms):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(statistics_ms))
+    data = table.getcol("DATA").real
+    n_corr, n_chan, _ = data.shape
+    times = np.unique(table.getcol("TIME"))
+    data = data.reshape(n_corr, n_chan, len(times), -1)
+    flags = table.getcol("FLAG").reshape(data.shape)
+    sigma = table.getcol("SIGMA").reshape(n_corr, 1, len(times), -1)
+    assert table.done()
+
+    actual, reference = tools.ms(), casa.ms()
+    for tool in (actual, reference):
+        assert tool.open(str(statistics_ms))
+    options = dict(column="DATA", complex_value="real", timeaverage=True, timebin="30s")
+    pinned = reference.statistics(**options, useflags=True, useweights=True)
+    for use_flags in (False, True):
+        for use_weights in (False, True):
+            # A flagged sample is usable only when its entire averaging bin is flagged.
+            mask = (~flags | flags.all(axis=2, keepdims=True)) if use_flags else True
+            weights = (1.0 / np.square(sigma, dtype=np.float64)) if use_weights else 1.0
+            weights = np.broadcast_to(mask * weights, data.shape)
+            averages = np.sum(data * weights, axis=2) / np.sum(weights, axis=2)
+            args = dict(options, useflags=use_flags, useweights=use_weights)
+            assert_statistics(reference.statistics(**args), pinned)
+            samples, = actual.statistics(**args).values()
+            assert samples["npts"] == averages.size
+            assert samples["mean"] == pytest.approx(averages.mean(), rel=2e-7)
+            assert samples["min"] == pytest.approx(averages.min(), rel=2e-7)
     for tool in (actual, reference):
         assert tool.done()

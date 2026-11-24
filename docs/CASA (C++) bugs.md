@@ -11454,6 +11454,27 @@ after filtering channel flags. casa-rs reads `SIGMA_SPECTRUM` or `SIGMA`,
 reports about 225.19444, and weights the moments by those inverse
 variances, as the observed-visibility time-averaging path does (#1030).
 
+## Observed MS statistics time averaging can ignore the flag and weight switches
+
+With `timeaverage=True` in CASA 6.7.6.14, the observed-data accumulator
+always reads the FLAG cube and weights data by inverse sigma squared,
+regardless of the four `useflags` and `useweights` combinations selected
+by the caller. In the controlled three-integration fixture all four
+CASA results have mean 126.68421. casa-rs applies both switches before
+reducing the averaged samples. With both enabled, it matches CASA.
+With both disabled, it reports the analytic unweighted, unmasked
+mean 119.5 (#1030).
+
+## MS statistics time averaging can ignore the requested UVW displacement
+
+In CASA 6.7.6.14, `ms.statistics('DATA', 'real', timeaverage=True,
+timebin='30s', maxuvwdistance=1.0)` averages integrations whose UVW
+positions move by 10 km. The call passes the numeric displacement, but
+does not enable the averaging option that uses it. In the three
+integration control, CASA reports 80 averaged samples with or without
+the limit. casa-rs applies the stated metre limit and returns statistics
+for all 240 separate samples (#1030).
+
 ## Invalid maximum UVW distance can raise a Python binding SystemError
 
 CASA 6.7.6.14 raises a binding-level `SystemError` for
