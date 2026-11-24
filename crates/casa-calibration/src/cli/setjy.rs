@@ -23,6 +23,7 @@ use casa_types::measures::direction::MDirection;
 use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{CasaFrequencyFrame, FrequencyRef, MFrequency};
+use casa_types::quanta::casacore::stream_double_precision;
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::attachment::OpenedMs;
@@ -58,6 +59,13 @@ struct FieldModel {
 }
 
 type FieldModels = BTreeMap<i32, FieldModel>;
+
+struct PreparedModels {
+    models: FieldModels,
+    fluxes: CasaValue,
+    completed: bool,
+    imager_history: Vec<String>,
+}
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
     if task.flag("listmodels")? {
@@ -208,7 +216,12 @@ fn run_ms(
     let spws = requested_windows(&opened.measurement_set, selection.spw.as_deref())?;
     let image = model_files::task_image(task)?;
     let calibration_directions = matches!(flux, FluxParameters::Solar2010(_)) && image.is_none();
-    let (models, fluxes, completed) = prepare(
+    let PreparedModels {
+        models,
+        fluxes,
+        completed,
+        imager_history,
+    } = prepare(
         &opened.measurement_set,
         &selected,
         &flux,
@@ -247,6 +260,7 @@ fn run_ms(
         calibration_directions,
     )?;
     opened.release().map_err(execution)?;
+    super::history::record_setjy_imager_flux(path, imager_history);
     record_history(task, path, partition);
     if partially_written {
         // CASA's cleanup after the later failure raises once an earlier
@@ -514,7 +528,7 @@ fn prepare(
     spws: &[i32],
     by_channel: bool,
     image: Option<(&Path, bool)>,
-) -> Result<(FieldModels, CasaValue, bool), TaskFailure> {
+) -> Result<PreparedModels, TaskFailure> {
     let mut groups = BTreeMap::<i32, BTreeMap<i32, Vec<usize>>>::new();
     for row in &selected.selected_rows {
         groups
@@ -543,6 +557,7 @@ fn prepare(
     let mut models = FieldModels::new();
     let mut returned = BTreeMap::new();
     let mut completed = true;
+    let mut imager_history = Vec::new();
     for (field, windows_for_field) in groups.into_iter().rev() {
         let direction = engine
             .observation_direction_j2000(*epoch, field as usize)
@@ -623,6 +638,13 @@ fn prepare(
                 let (component, stokes) = solar
                     .component(Some(direction.clone()), &planned)
                     .map_err(execution)?;
+                imager_history.push(solar_history_line(
+                    &name,
+                    field,
+                    spw,
+                    planned[0].hz(),
+                    stokes,
+                ));
                 (Some(component), stokes)
             } else {
                 point_model(flux, spectrum.as_ref(), &direction, &planned, &frame)?
@@ -713,7 +735,20 @@ fn prepare(
     } else {
         CasaValue::Dict { entries }
     };
-    Ok((models, returned, completed))
+    Ok(PreparedModels {
+        models,
+        fluxes: returned,
+        completed,
+        imager_history,
+    })
+}
+
+fn solar_history_line(name: &str, field: i32, spw: i32, hz: f64, stokes: [f64; 4]) -> String {
+    let [i, q, u, v] = stokes.map(|flux| stream_double_precision(flux, 5));
+    let frequency = stream_double_precision(hz, 5);
+    format!(
+        "{name:>12} (fld ind {field}) spw {spw}  [I={i}, Q={q}, U={u}, V={v}] Jy @ {frequency}Hz, (JPL-Butler Solar System Object)"
+    )
 }
 
 fn field_midpoint(
