@@ -312,7 +312,7 @@ def malformed_table(root, native):
     try:
         native.applycal(**dict(args, vis=str(native_ms)))
     except RuntimeError as error:
-        assert 'leakage requires two CPARAM receptors' in str(error)
+        assert 'leakage requires 2 CPARAM elements, found shape [1, 1] at row 0' in str(error)
     else:
         raise AssertionError('Native applycal accepted a one-receptor leakage table')
 
