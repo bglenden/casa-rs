@@ -465,6 +465,21 @@ def compare_combined_scalar_time(root, native):
         flags[0, 0, :] = integration % 3 == 2
         table.putcol("FLAG", flags)
 
+    sigma_only, no_corrected, flagged = (
+        root / f"{name}.ms" for name in ("sigma-only", "without-corrected", "flagged")
+    )
+    copy_ms(spectra, sigma_only)
+    copy_ms(spectra, no_corrected)
+    copy_ms(source, flagged)
+    with opened(sigma_only, True) as table:
+        table.removecols("WEIGHT_SPECTRUM")
+    with opened(no_corrected, True) as table:
+        table.removecols("CORRECTED_DATA")
+    with opened(flagged, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, :4, :] = True
+        table.putcol("FLAG", flags)
+
     base = request(source) | dict(xaxis="channel", xdatacolumn="", yaxis="amp",
                                   ydatacolumn="corrected-model_vector", spw="0:0~3",
                                   avgtime="20", avgchannel="2", scalar=True,
@@ -478,14 +493,22 @@ def compare_combined_scalar_time(root, native):
          (0, 1), [2., 5.], [0., phase]),
         ("spectral-weights", dict(vis=str(spectra), xaxis="amp", xdatacolumn="data", yaxis="phase"),
          (0, 1), [1.4, 5.], [-90., phase]),
+        ("sigma-only", dict(vis=str(sigma_only), xaxis="amp", xdatacolumn="data", yaxis="phase"),
+         (0, 1), [2., 5.], [0., phase]),
         ("time-weight-monitor", dict(vis=str(varying), xaxis="time"), (0, 1), None, [8 / 3] * 2),
         ("implicit-weight-spectrum", dict(vis=str(implicit_spectrum)), (0, 1), [0., 1.], [2.4] * 2),
         ("zero-observed", dict(vis=str(zero_observed)), (0, 1), [0., 1.], [0., 4.]),
         ("zero-calibrated", dict(vis=str(zero_calibrated)), (1,), [1.], [4.]),
         ("corrected-vector-ratio", dict(ydatacolumn="corrected/model_vector"),
          (0, 1), [0., 1.], [0., 5.]),
+        ("corrected-ratio-abscissa", dict(xaxis="real", xdatacolumn="corrected/model_vector", ydatacolumn="data"),
+         (0, 1), [0., 5.], [2., 5.]),
         ("observed-scalar-ratio", dict(ydatacolumn="data/model_scalar"),
          (0, 1), [0., 1.], [2., 5.]),
+        ("without-corrected", dict(vis=str(no_corrected), ydatacolumn="data/model_scalar"),
+         (0, 1), [0., 1.], [1.4, 5.]),
+        ("corrected-fallback", dict(vis=str(no_corrected), ydatacolumn="corrected/model_scalar"),
+         (0, 1), [0., 1.], [1.4, 5.]),
     )
     for name, options, channels, x, y in cases:
         controls = base | options
@@ -507,6 +530,9 @@ def compare_combined_scalar_time(root, native):
         if name == "channels-phase":
             compare_figure(root, native, controls, expected, (controls["title"], "Channel",
                                                               "Phase:corrected-model (vector) (degrees)"))
+
+    compare_empty_export(root, native, "all-channel-cube-flags", base | dict(vis=str(flagged)),
+                         ("Channel", "Amp:corrected-model (vector)"))
 
 
 def main():

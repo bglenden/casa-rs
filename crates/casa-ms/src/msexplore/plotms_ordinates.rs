@@ -221,25 +221,13 @@ impl BinBuffer {
         self.values.clear();
         self.weights.clear();
         self.projection = None;
-        if let Some((projection, model)) = grid.model.as_ref() {
-            self.projection = channel_averaged_operands(
-                [grid.values.as_slice(), model.as_slice()],
-                grid.chan_count,
-                flags,
-                spectra,
-                corr,
-                bin,
-            )
-            .map(|operands| (*projection, operands));
-        } else if let Some([value]) = channel_averaged_operands(
-            [grid.values.as_slice()],
-            grid.chan_count,
-            flags,
-            [spectra[0]],
-            corr,
-            bin,
-        ) {
-            self.values.push(value);
+        if let Some((projection, operands)) = channel_averaged_grid(grid, flags, spectra, corr, bin)
+        {
+            if let Some(projection) = projection {
+                self.projection = Some((projection, operands));
+            } else {
+                self.values.push(operands[0]);
+            }
         }
     }
 
@@ -250,6 +238,36 @@ impl BinBuffer {
         self.values[0] = average;
         self.values.truncate(1);
         self.weights.clear();
+    }
+}
+
+fn channel_averaged_grid(
+    grid: &ComplexGrid,
+    flags: &ArrayView2<'_, bool>,
+    spectra: [Option<&FloatGrid>; 2],
+    corr: usize,
+    bin: &ChannelBin,
+) -> Option<(Option<VisibilityColumnProjection>, [Complex64; 2])> {
+    if let Some((projection, model)) = grid.model.as_ref() {
+        let operands = channel_averaged_operands(
+            [grid.values.as_slice(), model.as_slice()],
+            grid.chan_count,
+            flags,
+            spectra,
+            corr,
+            bin,
+        )?;
+        Some((Some(*projection), operands))
+    } else {
+        let [value] = channel_averaged_operands(
+            [grid.values.as_slice()],
+            grid.chan_count,
+            flags,
+            [spectra[0]],
+            corr,
+            bin,
+        )?;
+        Some((None, [value, Complex64::default()]))
     }
 }
 
@@ -625,17 +643,31 @@ impl AveragedVisibility {
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
         row_weight: f64,
+        spectra: [Option<&FloatGrid>; 2],
         corr: usize,
         bin: &ChannelBin,
     ) -> bool {
-        debug_assert_eq!(bin.channels().count(), 1);
-        if flags[(corr, bin.start)] {
-            return false;
-        }
+        let mut sample = if bin.channels().count() == 1 {
+            if flags[(corr, bin.start)] {
+                return false;
+            }
+            TimeProjection::channel_sample(grid, [None; 2], corr, bin.start)
+        } else {
+            let Some((projection, operands)) =
+                channel_averaged_grid(grid, flags, spectra, corr, bin)
+            else {
+                return false;
+            };
+            TimeProjection {
+                projection,
+                weighted_sums: operands
+                    .map(|value| Complex32::new(value.re as f32, value.im as f32)),
+                total_weights: [1.0; 2],
+            }
+        };
         let weight = row_weight as f32;
-        let mut sample = TimeProjection::channel_sample(grid, [None; 2], corr, bin.start);
-        // The scalar reducer packs amplitude and phase into the two Float
-        // components before accumulating either visibility operand.
+        // The scalar reducer packs the channel means' amplitude and phase
+        // into the two Float components before accumulating in time.
         sample.weighted_sums = sample
             .weighted_sums
             .map(|value| Complex32::new(value.norm(), value.arg()) * weight);
