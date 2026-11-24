@@ -337,8 +337,14 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
                 raise Exception(message) from error
             if (message == "Error in Calibrater::setapply."
                 or message.startswith("overwrite is False and output file exists:")
+                or (error.completion.parameter == "fraction" and message.startswith("Invalid fraction value ("))
                 or (message.startswith("Applytable '") and message.endswith("' is not a caltable format"))):
                 raise RuntimeError(message) from error
+            raise
+        except TaskParameterError as error:
+            if (error.completion.parameter == "fraction"
+                and error.completion.message == "Too many edge points. fraction must be < 0.5."):
+                raise ValueError(error.completion.message) from error
             raise
     if name == "sdgaincal":
         mode = arguments["calmode"]
