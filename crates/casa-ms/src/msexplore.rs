@@ -5436,6 +5436,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let scalar_channels = scalar_average && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
+    let spw_channels = spw_average && average_channels;
     let time_antenna_channels = time_antenna && average_channels;
     let direct_time_channels = uncalibrated
         && time_bins.is_some()
@@ -5443,7 +5444,7 @@ fn build_generic_visibility_scatter_with_averaging(
         && plotms_columns::uses_direct_vector_time_channels(spec);
     let average_operands =
         extended_derived || scalar_channels || time_antenna || direct_time_channels;
-    let channel_first = channel_baselines || scalar_channels || antenna_channels;
+    let channel_first = channel_baselines || scalar_channels || antenna_channels || spw_channels;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
@@ -5538,6 +5539,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let use_spectral_weights = calibration.is_some()
         && needs_visibility_grid
         && (!scalar_average || scalar_channels)
+        && (!spw_average || spw_channels)
         && (!collapse_baselines || channel_baselines || time_baselines);
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
         || spec
@@ -6173,7 +6175,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             );
                         } else {
                             buffer.collect(grid, &flags, spectrum, *corr_index, bin, false);
-                            if channel_baselines || spw_average {
+                            if channel_baselines || spw_channels {
                                 buffer.normalize_vector_average();
                             }
                         }

@@ -11094,7 +11094,7 @@ with `avgspw=True` on an MS with two four-channel windows. The second
 window contributes channel 0 to the average. With SPW averaging disabled,
 the same selection correctly exports channel 2 from that window.
 
-casa-rs pairs the explicitly selected channels in selection order. The
+casa-rs pairs channels by their position within each selected window. The
 public-task regression checks the original selection against unaveraged
 CASA data, then moves the selected sample to the common index in a separate
 CASA input. The aligned CASA average matches the native coordinates.

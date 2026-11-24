@@ -146,6 +146,47 @@ def coordinates(points):
     return np.array([point[:2] for point in points], dtype=float)
 
 
+def compare_channel_weights(root, native, base, vis):
+    spectral = root / "channel-spectra.ms"
+    copy_ms(vis, spectral)
+    with opened(spectral, True) as table:
+        descriptions = table.getcol("DATA_DESC_ID")
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        for column, low, high in (
+            ("WEIGHT_SPECTRUM", [1, 3, 5, 7], [8, 4, 2, 1]),
+            ("SIGMA_SPECTRUM", [1, 0.5, 1, 0.5], [0.5, 1, 0.5, 1]),
+        ):
+            table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                        dataManagerGroup=column)})
+            values = np.where(descriptions == 0, np.asarray(low, dtype=np.float32)[:, None],
+                              np.asarray(high, dtype=np.float32)[:, None])
+            table.putcol(column, np.broadcast_to(values, shape).copy())
+    observed = np.array([[1.8 * (1 + 2j), 3.8 * (1 + 2j)], [1.2 * (3 - 4j), 3.2 * (3 - 4j)]])
+    corrected = np.array([[1.75 * (5 + 6j), (43 / 12) * (5 + 6j)],
+                          [(4 / 3) * (7 + 8j), (10 / 3) * (7 + 8j)]])
+    transform_weights = [8, 7.5]  # Mean transformed WEIGHT across the two bins.
+    corrected_mean = np.average(corrected, axis=0, weights=transform_weights)
+    mixed_observed_mean = np.average(observed, axis=0, weights=transform_weights)
+    options = base | dict(vis=str(spectral), avgchannel="2", spw="0:0~3,1:0~3", xaxis="real", yaxis="imag")
+    cases = (
+        ("bin-observed", dict(ydatacolumn="data"), observed.mean(axis=0).real, observed.mean(axis=0).imag),
+        ("bin-corrected", dict(xdatacolumn="corrected"), corrected_mean.real, corrected_mean.imag),
+        ("bin-mixed", {}, mixed_observed_mean.real, corrected_mean.imag),
+        ("bin-scalar", dict(scalar=True, xaxis="amp", yaxis="phase"),
+         np.average(abs(observed), axis=0, weights=transform_weights),
+         np.average(np.angle(corrected, deg=True), axis=0, weights=transform_weights)),
+    )
+    for name, overrides, x, y in cases:
+        controls = options | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        assert [p[2] for p in selected] == ["0", "1"] * 2
+        np.testing.assert_allclose(coordinates(selected), np.tile(np.column_stack((x, y)), (2, 1)), rtol=1.2e-5)
+        assert compare_text(export(root, f"{name}.native", native, controls), expected) == 4
+        print(f"{name}: 4 matching coordinates with transformed spectra and row weights", flush=True)
+
+
 def compare_selection(root, native, base, vis):
     separate = base | dict(spw="0:0,1:2", avgspw=False)
     raw = export(root, "raw.casa", reference, separate)
@@ -199,7 +240,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("coordinates", "selection"))
+    parser.add_argument("--only", choices=("coordinates", "selection", "weights"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -218,6 +259,8 @@ def main():
             compare_flags(root, native, base, vis)
         if args.only in (None, "selection"):
             compare_selection(root, native, base, vis)
+        if args.only in (None, "weights"):
+            compare_channel_weights(root, native, base, vis)
 
 
 if __name__ == "__main__":
