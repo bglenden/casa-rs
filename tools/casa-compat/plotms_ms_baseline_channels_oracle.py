@@ -249,6 +249,61 @@ def compare_baseline_ordinate_lists(root, native):
         if name == "channel-baseline-with-masks":
             figure = controls | overrides | dict(xlabel="Channel bin")
             compare_sides(root, native, figure, expected_x="Channel bin", name=name)
+    compare_baseline_ordinate_edges(root, native, vis, spectra_flags, controls)
+
+
+def compare_baseline_ordinate_edges(root, native, vis, spectra_flags, controls):
+    from casars.tasks import TaskParameterError
+
+    cancellation, flagged = (root / f"{name}.ms" for name in ("opposite-phases", "all-cube-flagged"))
+    copy_ms(vis, cancellation)
+    copy_ms(vis, flagged)
+    with opened(cancellation, True) as table:
+        high = table.getcol("ANTENNA2") == 2
+        amplitude = np.where(high, -1., 3.).astype(np.complex64)
+        weight = table.getcol("WEIGHT")
+        weight[:] = np.where(high, 3., 1.)
+        table.putcol("WEIGHT", weight)
+        for factor, column in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            shape = table.getcol(column).shape
+            table.putcol(column, np.broadcast_to(amplitude * 10**factor, shape))
+    with opened(flagged, True) as table:
+        flags = table.getcol("FLAG")
+        flags[:] = True
+        table.putcol("FLAG", flags)
+    for mode, scalar, amplitudes in (("vector", False, (0, 0, 0)), ("scalar", True, (1.5, 15, 150))):
+        for case, overrides, count in (
+            ("opposite-phases", dict(vis=str(cancellation), yaxis=["amp"] * 3), 54),
+            ("time-and-channel", dict(vis=str(spectra_flags), avgtime="20", avgchannel="2"), 12),
+            ("all-cube-flagged", dict(vis=str(flagged)), 0),
+        ):
+            name = f"{mode}-{case}"
+            options = controls | overrides | dict(scalar=scalar, expformat="txt")
+            expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**options, plotfile=str(expected)) is None
+            selected = rows(expected)
+            assert len(selected) == count
+            if case == "opposite-phases":
+                np.testing.assert_allclose([float(point[1]) for point in selected],
+                                           np.repeat(amplitudes, 18), rtol=1.2e-5)
+            assert native(**options, plotfile=str(actual)) is None
+            if count:
+                assert compare_text(actual, expected) == count
+            else:
+                assert expected.read_text().count("# No data to export") == 3
+                assert actual.read_bytes() == expected.read_bytes()
+            print(f"{name}: {count if count else 'three empty sections'} matched", flush=True)
+    for name, overrides in (("overlay", dict(showatm=True)), ("iteration", dict(iteraxis="corr"))):
+        output = root / f"baseline-list-{name}.txt"
+        options = controls | overrides | dict(plotfile=str(output), expformat="txt")
+        try:
+            native(**options)
+        except TaskParameterError as error:
+            assert "#1032" in str(error), error
+        else:
+            raise AssertionError(f"PlotMS accepted the pending baseline-averaged list with {name}")
+        assert not output.exists()
+        print(f"baseline-list-{name}: existing refusal preserved", flush=True)
 
 
 def main():
