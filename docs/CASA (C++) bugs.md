@@ -11477,3 +11477,12 @@ tool raises a Python `SystemError` because the binding returns with a
 conversion exception pending. casa-rs reports the invalid argument
 with `TypeError`. Numeric arguments, including NumPy floating-point
 scalars, remain accepted (#1030).
+
+## A failed visibility listing can leave an output file
+
+In CASA 6.7.6.14, `ms.lister(datacolumn='model', listfile=...)` on a
+MeasurementSet without a stored `MODEL_DATA` opens the requested output
+before reporting the missing visibility product. The file remains after
+the error. casa-rs writes the report to a temporary file beside the
+destination and publishes it only after successful rendering, without
+replacing an existing output (#1030).

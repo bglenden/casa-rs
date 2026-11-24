@@ -227,31 +227,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (options = None, datacolumn = None, field = None, spw = None, antenna = None, timerange = None, correlation = None, scan = None, feed = None, array = None, observation = None, uvrange = None, average = None, showflags = None, msselect = None, pagerows = None, listfile = None), text_signature = "($self, options='', datacolumn='data', field='', spw='', antenna='', timerange='', correlation='', scan='', feed='', array='', observation='', uvrange='', average='', showflags=False, msselect='', pagerows=50, listfile='')")]
-    fn lister(
-        &self,
-        options: Option<&Bound<'_, PyAny>>,
-        datacolumn: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        antenna: Option<&Bound<'_, PyAny>>,
-        timerange: Option<&Bound<'_, PyAny>>,
-        correlation: Option<&Bound<'_, PyAny>>,
-        scan: Option<&Bound<'_, PyAny>>,
-        feed: Option<&Bound<'_, PyAny>>,
-        array: Option<&Bound<'_, PyAny>>,
-        observation: Option<&Bound<'_, PyAny>>,
-        uvrange: Option<&Bound<'_, PyAny>>,
-        average: Option<&Bound<'_, PyAny>>,
-        showflags: Option<&Bound<'_, PyAny>>,
-        msselect: Option<&Bound<'_, PyAny>>,
-        pagerows: Option<&Bound<'_, PyAny>>,
-        listfile: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("lister")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (fitsfile), text_signature = "($self, fitsfile)")]
     fn listfits(&self, fitsfile: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("listfits")
