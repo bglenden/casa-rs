@@ -643,16 +643,11 @@ impl AveragedVisibility {
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
         row_weight: f64,
-        spectra: [Option<&FloatGrid>; 2],
+        channel_spectra: Option<[Option<&FloatGrid>; 2]>,
         corr: usize,
         bin: &ChannelBin,
     ) -> bool {
-        let mut sample = if bin.channels().count() == 1 {
-            if flags[(corr, bin.start)] {
-                return false;
-            }
-            TimeProjection::channel_sample(grid, [None; 2], corr, bin.start)
-        } else {
+        let mut sample = if let Some(spectra) = channel_spectra {
             let Some((projection, operands)) =
                 channel_averaged_grid(grid, flags, spectra, corr, bin)
             else {
@@ -664,6 +659,11 @@ impl AveragedVisibility {
                     .map(|value| Complex32::new(value.re as f32, value.im as f32)),
                 total_weights: [1.0; 2],
             }
+        } else {
+            if flags[(corr, bin.start)] {
+                return false;
+            }
+            TimeProjection::channel_sample(grid, [None; 2], corr, bin.start)
         };
         let weight = row_weight as f32;
         // The scalar reducer packs the channel means' amplitude and phase

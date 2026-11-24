@@ -5476,6 +5476,13 @@ fn build_generic_visibility_scatter_with_averaging(
                 column.find(slot)
             })
             .is_some();
+    let channel_weight_mask = if !propagate_channel_weights {
+        plotms_columns::ChannelWeightMask::FlagsOnly
+    } else if scalar_time_channels {
+        plotms_columns::ChannelWeightMask::Nonzero
+    } else {
+        plotms_columns::ChannelWeightMask::Positive
+    };
     let selected_sigma_spectrum = if needs_sigma_spectrum || needs_observed_weights {
         SigmaSpectrumColumn::new(ms.main_table())
             .ok()
@@ -5558,8 +5565,14 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut scalar_time_rows = std::collections::BTreeSet::new();
     let mut time_baseline_stats =
         time_baselines.then(plotms_time_baselines::TimeBaselineStatistics::default);
+    let mut scalar_channel_buffer_first = None;
 
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
+        if scalar_time_channels
+            && calibration.is_some_and(|input| input.starts_visibility_buffer[row_slot])
+        {
+            scalar_channel_buffer_first = Some(row_slot);
+        }
         let flag_row_value = selected_flag_rows[row_slot];
         if flag_row_value
             && !include_row_flagged_points
@@ -5618,7 +5631,9 @@ fn build_generic_visibility_scatter_with_averaging(
         let weight_values =
             float_axis_values(selected_weights.get(row_slot)?, corr_count, "WEIGHT")?;
         let sigma_values = float_axis_values(selected_sigmas.get(row_slot)?, corr_count, "SIGMA")?;
-        let buffer_first = time_bins.and_then(|plan| plan.input_buffer_first_slot(row_slot));
+        let buffer_first = time_bins
+            .and_then(|plan| plan.input_buffer_first_slot(row_slot))
+            .or(scalar_channel_buffer_first);
         let weight_spectrum_grid = selected_weight_spectrum
             .as_ref()
             .map(|column| column.spectrum_in_buffer(row_slot, buffer_first))
@@ -5866,7 +5881,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         correlation,
                         &channel_bins,
                         &flags,
-                        propagate_channel_weights,
+                        channel_weight_mask,
                     )
                 });
                 plotms_columns::baseline_weight(weight)
@@ -5885,7 +5900,18 @@ fn build_generic_visibility_scatter_with_averaging(
                     if antenna1_value != antenna2_value && *target == antenna2_value);
                 for bin in channel_bins.iter() {
                     if channel_mask_grid.is_some_and(|grid| {
-                        !plotms_columns::bin_has_weight(grid, *corr_index, bin, &flags)
+                        if scalar_time_channels {
+                            plotms_columns::channel_bin_weight(
+                                Some(grid),
+                                *corr_index,
+                                bin,
+                                &flags,
+                                channel_weight_mask,
+                            )
+                            .0
+                        } else {
+                            !plotms_columns::bin_has_weight(grid, *corr_index, bin, &flags)
+                        }
                     }) {
                         continue;
                     }
@@ -6028,11 +6054,11 @@ fn build_generic_visibility_scatter_with_averaging(
                                             grid,
                                             &flags,
                                             scalar_weight,
-                                            [
+                                            scalar_time_channels.then_some([
                                                 axis_weights[axis],
                                                 time_model_weight
                                                     .filter(|_| propagate_channel_weights),
-                                            ],
+                                            ]),
                                             *corr_index,
                                             bin,
                                         )

@@ -258,15 +258,7 @@ impl ChannelStatistics {
         inverse_variance: Option<&FloatGrid>,
     ) -> Self {
         let sum = |grid: Option<&FloatGrid>, bin: &ChannelBin| {
-            sum_channel_weights(
-                bin.channels().map(|channel| {
-                    let value = grid.map_or(1.0, |grid| {
-                        grid.values[correlation * grid.chan_count + channel] as f32
-                    });
-                    (flags[(correlation, channel)], value)
-                }),
-                false,
-            )
+            channel_bin_weight(grid, correlation, bin, flags, ChannelWeightMask::FlagsOnly)
         };
         let spectra: Vec<_> = bins
             .iter()
@@ -299,31 +291,48 @@ impl ChannelStatistics {
     }
 }
 
-/// The baseline reducer receives the transform's scalar weight, averaged
+/// The next reducer receives the transform's scalar weight, averaged
 /// across the output channels of the first selected correlation.
 pub(super) fn channel_averaged_row_weight(
     weights: Option<&FloatGrid>,
     correlation: usize,
     bins: &[ChannelBin],
     flags: &ndarray::ArrayView2<'_, bool>,
-    propagate_weights: bool,
+    mask: ChannelWeightMask,
 ) -> f64 {
     f64::from(mean_weight_preferring_unflagged(bins.iter().map(|bin| {
-        sum_channel_weights(
-            bin.channels().map(|channel| {
-                let weight = weights.map_or(1.0, |grid| {
-                    grid.values[correlation * grid.chan_count + channel] as f32
-                });
-                (flags[(correlation, channel)], weight)
-            }),
-            propagate_weights,
-        )
+        channel_bin_weight(weights, correlation, bin, flags, mask)
     })))
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum ChannelWeightMask {
+    FlagsOnly,
+    Positive,
+    Nonzero,
+}
+
+pub(super) fn channel_bin_weight(
+    weights: Option<&FloatGrid>,
+    correlation: usize,
+    bin: &ChannelBin,
+    flags: &ndarray::ArrayView2<'_, bool>,
+    mask: ChannelWeightMask,
+) -> (bool, f32) {
+    sum_channel_weights(
+        bin.channels().map(|channel| {
+            let weight = weights.map_or(1.0, |grid| {
+                grid.values[correlation * grid.chan_count + channel] as f32
+            });
+            (flags[(correlation, channel)], weight)
+        }),
+        mask,
+    )
 }
 
 pub(super) fn sum_channel_weights(
     samples: impl Iterator<Item = (bool, f32)>,
-    propagate_weights: bool,
+    mask: ChannelWeightMask,
 ) -> (bool, f32) {
     let mut sums = [0.0, 0.0];
     let mut all_flagged = true;
@@ -332,7 +341,12 @@ pub(super) fn sum_channel_weights(
         sums[usize::from(flagged)] += weight;
     }
     let sum = sums[usize::from(all_flagged)];
-    let usable = !all_flagged && (!propagate_weights || sum > 0.0);
+    let usable = !all_flagged
+        && match mask {
+            ChannelWeightMask::FlagsOnly => true,
+            ChannelWeightMask::Positive => sum > 0.0,
+            ChannelWeightMask::Nonzero => sum != 0.0 && !sum.is_nan(),
+        };
     (!usable, sum)
 }
 
