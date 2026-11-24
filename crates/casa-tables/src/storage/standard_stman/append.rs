@@ -34,11 +34,12 @@ pub(crate) fn stage_records(
     let malformed = || StorageError::FormatMismatch("invalid StandardStMan append layout".into());
     if indices.is_empty()
         || indices.iter().any(|index| index.rows_per_bucket == 0)
-        || layout.col_index_map.len() != columns.len()
-        || layout.column_offsets.len() != columns.len()
+        || layout.col_index_map.len() < columns.len()
+        || layout.column_offsets.len() < columns.len()
         || layout
             .col_index_map
             .iter()
+            .take(columns.len())
             .any(|&index| index as usize >= indices.len())
     {
         return Err(malformed());

@@ -7,13 +7,16 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
+use casa_tables::table_quantum::TableQuantumDesc;
 use casa_tables::{Table, TableOptions, TablePartNames, TableWriteLock};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
+use casa_types::quanta::{Quantity, Unit};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::column_def::build_table_schema;
-use crate::ms::{apply_column_metadata, measurement_set_table_options, subtable_path_from_main};
+use crate::ms::linked_subtables::strict_subtable_path;
+use crate::ms::{apply_column_metadata, measurement_set_table_options};
 use crate::{MeasurementSet, MsError, MsResult, SubtableId, open_measures_runtime, schema};
 
 /// One entry displayed by `ms.listhistory()`.
@@ -91,6 +94,7 @@ pub fn append_tool_history(
     application: &str,
     held_locks: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> MsResult<()> {
+    require_measurement_set(main)?;
     let path = main.path().ok_or_else(|| {
         MsError::InvalidInput("HISTORY requires a persisted MeasurementSet".into())
     })?;
@@ -124,6 +128,12 @@ fn with_history_write_lock<T>(
             .canonicalize()
             .map_err(|error| MsError::InvalidInput(format!("{}: {error}", path.display())))?;
         if let Some(lock) = held_locks.get_mut(&canonical) {
+            if !lock.matches_table_path(&canonical) {
+                return Err(MsError::InvalidInput(format!(
+                    "Original table or its retained write lock was replaced at {}",
+                    canonical.display()
+                )));
+            }
             let table = Table::open(TableOptions::new(&canonical))?;
             return write(table, lock);
         }
@@ -140,26 +150,14 @@ fn with_history_write_lock<T>(
 fn history_paths(main: &Table, main_is_plain: bool) -> MsResult<Vec<PathBuf>> {
     if main_is_plain && let Some(path) = main.path() {
         let id = SubtableId::History;
-        return subtable_path_from_main(main, path, id)
+        return strict_subtable_path(main, path, id)?
             .map(|path| vec![path])
             .ok_or_else(|| MsError::MissingSubtable(id.name().into()));
     }
-    MeasurementSet::linked_subtable_paths(main, SubtableId::History)
+    MeasurementSet::linked_subtable_paths_strict(main, SubtableId::History)
 }
 
 fn history_path(main: &Table, main_is_plain: bool) -> MsResult<Option<PathBuf>> {
-    let Some(path) = main.path() else {
-        return Ok(None);
-    };
-    if main.keywords().get(SubtableId::History.name()).is_none()
-        && (main_is_plain
-            || matches!(
-                Table::immediate_part_names(path, path)?,
-                TablePartNames::Plain(_)
-            ))
-    {
-        return Ok(None);
-    }
     match history_paths(main, main_is_plain) {
         Ok(mut parts) if parts.len() == 1 => Ok(parts.pop()),
         Ok(_) => Err(MsError::InvalidInput(
@@ -171,6 +169,7 @@ fn history_path(main: &Table, main_is_plain: bool) -> MsResult<Option<PathBuf>> 
 }
 
 fn create_history(mut main: Table, lock: &mut TableWriteLock) -> MsResult<PathBuf> {
+    require_measurement_set(&main)?;
     let path = main
         .path()
         .ok_or_else(|| MsError::InvalidInput("HISTORY requires a persisted MeasurementSet".into()))?
@@ -230,6 +229,27 @@ fn create_history(mut main: Table, lock: &mut TableWriteLock) -> MsResult<PathBu
     Ok(history_path)
 }
 
+fn require_measurement_set(main: &Table) -> MsResult<()> {
+    let compatible = match main.keywords().get("MS_VERSION") {
+        Some(Value::Scalar(ScalarValue::Float32(version))) => *version == 2.0,
+        Some(Value::Scalar(ScalarValue::Float64(version))) => *version == 2.0,
+        _ => false,
+    };
+    if !compatible || main.schema().is_none() {
+        return Err(MsError::InvalidInput(
+            "HISTORY requires a MeasurementSet v2 MAIN".into(),
+        ));
+    }
+    if let Some(issue) =
+        crate::validate::validate_columns(main, "MAIN", schema::main_table::REQUIRED_COLUMNS)
+            .into_iter()
+            .next()
+    {
+        return Err(MsError::InvalidInput(issue.to_string()));
+    }
+    Ok(())
+}
+
 fn history_rows(
     table: &Table,
     messages: &[String],
@@ -255,6 +275,18 @@ fn history_rows(
     if reference != EpochRef::UTC {
         frame = frame.with_measures(open_measures_runtime()?);
     }
+    let unit_descriptor = TableQuantumDesc::reconstruct(table, "TIME");
+    let unit = unit_descriptor
+        .as_ref()
+        .and_then(|descriptor| descriptor.units().first())
+        .map_or("s", String::as_str);
+    let days_to_units = if unit == "s" {
+        86_400.0
+    } else {
+        Unit::new(unit)
+            .and_then(|units| Quantity::new(1.0, "d")?.get_value_in(&units))
+            .map_err(|error| MsError::InvalidInput(format!("HISTORY.TIME units: {error}")))?
+    };
     let origin = if origin.is_empty() {
         "MSHistoryHandler::addMessage()"
     } else {
@@ -276,13 +308,12 @@ fn history_rows(
                 RecordField::new("APP_PARAMS", vector("")),
                 RecordField::new("CLI_COMMAND", vector(cli_command)),
                 RecordField::new("MESSAGE", text(message)),
-                RecordField::new("OBJECT_ID", Value::Scalar(ScalarValue::Int32(0))),
                 RecordField::new("OBSERVATION_ID", Value::Scalar(ScalarValue::Int32(-1))),
                 RecordField::new("ORIGIN", text(origin)),
                 RecordField::new("PRIORITY", text("INFO")),
                 RecordField::new(
                     "TIME",
-                    Value::Scalar(ScalarValue::Float64(epoch.value().as_mjd() * 86_400.0)),
+                    Value::Scalar(ScalarValue::Float64(epoch.value().as_mjd() * days_to_units)),
                 ),
             ]))
         })

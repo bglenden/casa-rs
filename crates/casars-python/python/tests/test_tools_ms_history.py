@@ -1,6 +1,7 @@
 """Persist and replay MS history with independent casacore table readers."""
 
 import logging
+import shutil
 import time
 
 import numpy as np
@@ -11,7 +12,7 @@ from test_tools_ms import pinned_casa
 from test_tools_msmetadata import measures, native_dataset
 
 
-def check_history(api, dataset, expected, start, end, epoch_offset=0):
+def check_history(api, dataset, expected, start, end, epoch_offset=0, time_unit="s"):
     table = api.table()
     assert table.open(str(dataset / "HISTORY"))
     assert table.nrows() == len(expected)
@@ -28,6 +29,8 @@ def check_history(api, dataset, expected, start, end, epoch_offset=0):
     times = table.getcol("TIME")
     assert times.dtype == np.float64
     assert times.shape == (len(expected),)
+    if time_unit == "d":
+        times = times * 86_400
     assert np.all((epoch + start - 1 <= times) & (times <= epoch + end + 1))
     assert np.all(np.diff(times) >= 0)
     assert table.done()
@@ -112,13 +115,17 @@ def test_ms_first_write_creates_and_links_missing_history(native_dataset):
 
 
 @pytest.mark.parametrize(("reference", "offset"), [("UTC", 0), ("TAI", 37)])
-def test_ms_write_history_converts_clock_with_retained_write_lock(native_dataset, reference, offset):
+@pytest.mark.parametrize("time_unit", ["s", "d"])
+def test_ms_write_history_converts_clock_with_retained_write_lock(
+    native_dataset, reference, offset, time_unit
+):
     casa = pinned_casa()
     t = casa.table()
     assert t.open(str(native_dataset / "HISTORY"), nomodify=False)
     measure = t.getcolkeyword("TIME", "MEASINFO")
     measure["Ref"] = reference
     assert t.putcolkeyword("TIME", "MEASINFO", measure)
+    assert t.putcolkeyword("TIME", "QuantumUnits", np.array([time_unit]))
     assert t.done()
 
     start = time.time()
@@ -138,4 +145,96 @@ def test_ms_write_history_converts_clock_with_retained_write_lock(native_dataset
         for message in messages
     ]
     for api in (casa, tools):
-        check_history(api, native_dataset, expected, start, end, epoch_offset=offset)
+        check_history(api, native_dataset, expected, start, end, offset, time_unit)
+
+
+def test_ms_history_refuses_non_measurement_set_without_mutation(native_dataset, tmp_path):
+    casa = pinned_casa()
+    for api in (casa, tools):
+        target = tmp_path / f"{api.__name__}.table"
+        shutil.copytree(native_dataset / "ANTENNA", target)
+        original = (target / "table.dat").read_bytes()
+        with pytest.raises(RuntimeError):
+            api.ms().writehistory("must not be recorded", msname=str(target))
+        assert (target / "table.dat").read_bytes() == original
+        assert not (target / "HISTORY").exists()
+
+
+def test_ms_history_refuses_replaced_locked_subtable(native_dataset):
+    casa = pinned_casa()
+    ms = tools.ms()
+    assert ms.open(str(native_dataset), nomodify=False, lock=True)
+    history = native_dataset / "HISTORY"
+    original = history.rename(native_dataset / "previous-history")
+    shutil.copytree(original, history)
+    with pytest.raises(RuntimeError, match="retained write lock was replaced"):
+        ms.writehistory("must not be recorded")
+    assert ms.done()
+    for path in (original, history):
+        table = casa.table()
+        assert table.open(str(path))
+        assert table.nrows() == 0
+        assert table.done()
+
+
+def test_ms_history_refuses_dangling_explicit_link(native_dataset):
+    casa = pinned_casa()
+    history = native_dataset / "HISTORY"
+    linked = native_dataset / "LINKED_HISTORY"
+    shutil.copytree(history, linked)
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    assert table.putkeyword("HISTORY", f"Table: {linked}")
+    assert table.done()
+    moved = linked.rename(native_dataset / "previous-linked-history")
+    for api in (casa, tools):
+        with pytest.raises(RuntimeError):
+            api.ms().writehistory("must not be redirected", msname=str(native_dataset))
+    for path in (history, moved):
+        assert table.open(str(path))
+        assert table.nrows() == 0
+        assert table.done()
+
+
+def test_ms_history_appends_after_rebinding_object_id(native_dataset):
+    casa = pinned_casa()
+    path = str(native_dataset)
+    history = str(native_dataset / "HISTORY")
+    assert casa.ms().writehistory("seed", msname=path)
+    table = casa.table()
+    assert table.open(history, nomodify=False)
+    desc = table.getcoldesc("OBJECT_ID")
+    assert table.removecols("OBJECT_ID")
+    manager = {"TYPE": "IncrementalStMan", "NAME": "ObjectIDs", "SPEC": {}}
+    assert table.addcols({"OBJECT_ID": desc}, manager)
+    assert table.putcell("OBJECT_ID", 0, 42)
+    assert table.done()
+    assert casa.ms().writehistory("reference append", msname=path)
+    assert tools.ms().writehistory_batch(["native one", "native two"], msname=path)
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(history)
+        assert table.getcol("OBJECT_ID").tolist() == [42, 42, 42, 42]
+        assert table.getcol("MESSAGE").tolist() == [
+            "seed", "reference append", "native one", "native two",
+        ]
+        assert table.done()
+
+
+def test_ms_history_append_preserves_live_casa_reader(native_dataset):
+    casa = pinned_casa()
+    path = str(native_dataset)
+    history = str(native_dataset / "HISTORY")
+    assert casa.ms().writehistory("seed", msname=path)
+    reader = casa.table()
+    assert reader.open(history, lockoptions={"option": "user"})
+    assert reader.lock(write=False, nattempts=1)
+    assert reader.getcell("MESSAGE", 0) == "seed"
+    reader.unlock()
+
+    assert tools.ms().writehistory("native append", msname=path)
+
+    assert reader.lock(write=False, nattempts=1)
+    assert reader.getcol("MESSAGE").tolist() == ["seed", "native append"]
+    reader.unlock()
+    assert reader.done()
