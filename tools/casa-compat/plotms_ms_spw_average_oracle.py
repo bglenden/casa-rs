@@ -575,6 +575,25 @@ def compare_vector_channel_spans(root, native, base, vis):
             if target in (fields, spans):
                 table.putcol("FIELD_ID", late)
 
+    zero, model = (root / f"vector-layered-{name}.ms" for name in ("zero", "model"))
+    for target in (zero, model):
+        copy_ms(source, target)
+    with opened(zero, True) as table:
+        high = table.getcol("DATA_DESC_ID") == 1
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        weights[:, :2, high] = 0.0
+        table.putcol("WEIGHT_SPECTRUM", weights)
+    with opened(model, True) as table:
+        late = table.getcol("TIME") >= start + 10
+        low = table.getcol("DATA_DESC_ID") == 0
+        shape = table.getcol("MODEL_DATA").shape
+        model_channels = np.arange(1, shape[1] + 1, dtype=np.float32)[None, :, None]
+        values = model_channels * (1 + late) * np.where(low, 1, 5)
+        table.putcol("MODEL_DATA", np.broadcast_to(values.astype(np.complex64), shape).copy())
+        flags = table.getcol("FLAG")
+        flags[0, 0, low & late] = True
+        table.putcol("FLAG", flags)
+
     options = base | dict(vis=str(source), xaxis="real", yaxis="imag", avgtime="20",
                           title="Vector time, channel and SPW")
     channels = dict(avgchannel="2", spw="0:0~3,1:0~3")
@@ -584,6 +603,8 @@ def compare_vector_channel_spans(root, native, base, vis):
     right = np.array([(3.6, 32 / 3), (9.6, 80 / 3)]) * [6 / 5, 5 / 3]
     long = np.average([left, right], axis=0, weights=[8, 7.5])
     short = long * [25 / 18, 1]
+    zero_weight = [left[0], np.average([left[1], right[1]], axis=0, weights=[24, 9])]
+    model_only = np.average([[2, 5.25], [11.25, 26.25]], axis=0, weights=[3.5, 4])
     early = np.array([30 / 7, 100 / 7])
     span = [early * [6 / 5, 5 / 3]]
     bins = [(5, 1, 0, 0, frequency) for frequency in ("90.000500000", "90.002500000")]
@@ -595,6 +616,9 @@ def compare_vector_channel_spans(root, native, base, vis):
         ("vector-layered-long", channels, bins, long),
         ("vector-layered-short", channels | dict(avgtime="10"), bins, short),
         ("vector-layered-control", channels | dict(avgspw=False), uncombined, np.vstack((left, right))),
+        ("vector-layered-zero", channels | dict(vis=str(zero)), bins, zero_weight),
+        ("vector-layered-model", channels | dict(vis=str(model), xdatacolumn="model", ydatacolumn="model"),
+         bins, np.column_stack((model_only, np.zeros_like(model_only)))),
         ("vector-retained-boundaries", dict(vis=str(spans), field=""), separate, [early, 2 * early]),
         ("vector-keeps-field", dict(vis=str(spans), field="", avgscan=True), separate, [early, 2 * early]),
         ("vector-keeps-scan", dict(vis=str(spans), field="", avgfield=True), separate, [early, 2 * early]),
