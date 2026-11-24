@@ -216,6 +216,112 @@ def compare_spectrum_availability(root, native, controls, source):
     print(f"spectrum-availability: {len(selected)} matching channel-and-baseline coordinates", flush=True)
 
 
+def compare_baseline_ordinate_lists(root, native):
+    from plotms_ms_channel_ordinates_oracle import compare_sides
+
+    root.mkdir()
+    vis, _, _, spectra_flags = make_fixture(root)
+    controls = request(vis) | dict(antenna="A0&A1;A0&A2", xaxis="channel", xdatacolumn="", spw="0:0~3",
+                                    avgbaseline=True, yaxis=["real"] * 3,
+                                    ydatacolumn=["data", "corrected", "model"],
+                                    yaxislocation=["left", "right", "left"])
+    for name, overrides, channels, first in (
+        ("vector-baseline", {}, (0, 1, 3) * 6, (3.7, 37, 370)),
+        ("scalar-baseline", dict(scalar=True), (0, 1, 3) * 6, (3.7, 37, 370)),
+        ("channel-baseline-with-masks", dict(vis=str(spectra_flags), avgchannel="2"),
+         (0, 1) * 6, (1, 10, 100)),
+        ("time-before-baseline", dict(avgtime="20"), (0, 1, 3) * 2, (3.7, 37, 370)),
+    ):
+        options = controls | overrides | dict(expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        count = 3 * len(channels)
+        assert len(selected) == count
+        assert tuple(int(point[0]) for point in selected) == channels * 3
+        assert {tuple(point[5:9]) for point in selected} == {("-1", "-1", "*", "*")}
+        assert {point[12] for point in selected} == {"XX"}
+        np.testing.assert_allclose([float(selected[index * len(channels)][1]) for index in range(3)],
+                                   first, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching baseline-averaged ordinate coordinates", flush=True)
+        if name == "channel-baseline-with-masks":
+            figure = controls | overrides | dict(xlabel="Channel bin")
+            compare_sides(root, native, figure, expected_x="Channel bin", name=name)
+    compare_baseline_ordinate_edges(root, native, vis, spectra_flags, controls)
+    compare_empty_baseline_channel_bins(root, native, spectra_flags, controls)
+
+
+def compare_empty_baseline_channel_bins(root, native, spectra_flags, controls):
+    masked = root / "zero-weight-spectrum.ms"
+    copy_ms(spectra_flags, masked)
+    with opened(masked, True) as table:
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        table.putcol("WEIGHT_SPECTRUM", np.zeros_like(weights))
+    options = controls | dict(vis=str(masked), avgchannel="2", expformat="txt")
+    expected, actual = (root / f"empty-baseline-channel-bins.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    assert not rows(expected) and expected.read_text().count("# No data to export") == 3
+    assert native(**options, plotfile=str(actual)) is None
+    assert actual.read_bytes() == expected.read_bytes()
+    print("empty-baseline-channel-bins: three empty sections matched", flush=True)
+
+
+def compare_baseline_ordinate_edges(root, native, vis, spectra_flags, controls):
+    from casars.tasks import TaskParameterError
+
+    cancellation, flagged = (root / f"{name}.ms" for name in ("opposite-phases", "all-cube-flagged"))
+    copy_ms(vis, cancellation)
+    copy_ms(vis, flagged)
+    with opened(cancellation, True) as table:
+        high = table.getcol("ANTENNA2") == 2
+        amplitude = np.where(high, -1., 3.).astype(np.complex64)
+        weight = table.getcol("WEIGHT")
+        weight[:] = np.where(high, 3., 1.)
+        table.putcol("WEIGHT", weight)
+        for factor, column in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            shape = table.getcol(column).shape
+            table.putcol(column, np.broadcast_to(amplitude * 10**factor, shape))
+    with opened(flagged, True) as table:
+        flags = table.getcol("FLAG")
+        flags[:] = True
+        table.putcol("FLAG", flags)
+    for mode, scalar, amplitudes in (("vector", False, (0, 0, 0)), ("scalar", True, (1.5, 15, 150))):
+        for case, overrides, count in (
+            ("opposite-phases", dict(vis=str(cancellation), yaxis=["amp"] * 3), 54),
+            ("time-and-channel", dict(vis=str(spectra_flags), avgtime="20", avgchannel="2"), 12),
+            ("all-cube-flagged", dict(vis=str(flagged)), 0),
+        ):
+            name = f"{mode}-{case}"
+            options = controls | overrides | dict(scalar=scalar, expformat="txt")
+            expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**options, plotfile=str(expected)) is None
+            selected = rows(expected)
+            assert len(selected) == count
+            if case == "opposite-phases":
+                np.testing.assert_allclose([float(point[1]) for point in selected],
+                                           np.repeat(amplitudes, 18), rtol=1.2e-5)
+            assert native(**options, plotfile=str(actual)) is None
+            if count:
+                assert compare_text(actual, expected) == count
+            else:
+                assert expected.read_text().count("# No data to export") == 3
+                assert actual.read_bytes() == expected.read_bytes()
+            print(f"{name}: {count if count else 'three empty sections'} matched", flush=True)
+    for name, overrides in (("overlay", dict(showatm=True)), ("iteration", dict(iteraxis="corr"))):
+        output = root / f"baseline-list-{name}.txt"
+        options = controls | overrides | dict(plotfile=str(output), expformat="txt")
+        try:
+            native(**options)
+        except TaskParameterError as error:
+            assert "#1032" in str(error), error
+        else:
+            raise AssertionError(f"PlotMS accepted the pending baseline-averaged list with {name}")
+        assert not output.exists()
+        print(f"baseline-list-{name}: existing refusal preserved", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -234,6 +340,7 @@ def main():
 
     with chdir(root), plotms_launcher(args.app_run):
         compare(root, native)
+        compare_baseline_ordinate_lists(root / "ordinate-lists", native)
 
 
 if __name__ == "__main__":

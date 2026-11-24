@@ -74,18 +74,20 @@ impl CliOptions {
                 axis.is_visibility_math()
                     || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
             })
-            && self.supports_visibility_ordinate_averaging(false)
+            && self.supports_visibility_ordinate_averaging(true)
     }
 
-    pub(super) fn supports_visibility_ordinate_averaging(&self, allow_spans: bool) -> bool {
-        let time_average = self.avgtime.is_some()
-            && (allow_spans || !(self.avgscan || self.avgfield))
-            && !self.avgbaseline
+    pub(super) fn supports_visibility_ordinate_averaging(&self, ordinary_only: bool) -> bool {
+        let spans = self.avgscan || self.avgfield;
+        let time_average =
+            self.avgtime.is_some() && (!ordinary_only || !spans) && !self.avgbaseline;
+        let baseline_average = self.avgbaseline && !ordinary_only && !spans;
+        let supported_reduction = (time_average || baseline_average)
             && !self.avgantenna
             && !self.avgspw
             && self.freqframe.is_none()
             && self.plotms_independent_average();
-        (!self.plotms_extended_averaging() || time_average)
+        (!self.plotms_extended_averaging() || supported_reduction)
             && !self.has_mixed_ordinate_dimensions()
             && self.plotms_axis_columns().is_some_and(|columns| {
                 columns
