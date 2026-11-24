@@ -3968,8 +3968,13 @@ fn build_generic_visibility_scatter(
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
     let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
+    let use_ordinate_masks = calibration.is_some_and(|input| input.rows.is_none())
+        && spec.iteration.iteraxis.is_none()
+        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
+        && plotms_columns::uses_channel_ordinate_masks(spec.x_axis, spec.y_axes.iter().copied());
     let use_iterator_order = calibration.is_some()
-        && (spec.x_axis.is_interval_or_wavelength()
+        && (use_ordinate_masks
+            || spec.x_axis.is_interval_or_wavelength()
             || spec.y_axes.contains(&MsAxis::UvDistance)
             || spec
                 .y_axes
@@ -4091,7 +4096,7 @@ fn build_generic_visibility_scatter(
     let selected_intervals = if needs_interval {
         let mut intervals = selected_f64_values(ms.main_table(), "INTERVAL", &row_numbers)?;
         let mut first_interval = 0.0;
-        for (interval, start) in intervals.iter_mut().zip(buffer_starts) {
+        for (interval, &start) in intervals.iter_mut().zip(&buffer_starts) {
             if start {
                 first_interval = *interval;
             }
@@ -4121,12 +4126,13 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
-    let geometry_dedup_required = spec.x_axis.uses_derived_geometry()
-        || spec
-            .y_axes
-            .iter()
-            .copied()
-            .any(MsAxis::uses_derived_geometry);
+    let geometry_dedup_required = !use_ordinate_masks
+        && (spec.x_axis.uses_derived_geometry()
+            || spec
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::uses_derived_geometry));
     let mut geometry_samples_seen =
         std::collections::BTreeSet::<(String, String, String, u64, i32)>::new();
     let chan_freq = if needs_spectral_coordinates {
@@ -4230,7 +4236,19 @@ fn build_generic_visibility_scatter(
 
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
+    let mut ordinate_points = use_ordinate_masks.then(|| {
+        (
+            std::collections::HashSet::<(usize, usize)>::new(),
+            std::collections::HashSet::<(usize, usize)>::new(),
+        )
+    });
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
+        if let Some((row_points, buffer_points)) = &mut ordinate_points {
+            row_points.clear();
+            if buffer_starts[row_slot] {
+                buffer_points.clear();
+            }
+        }
         let flag_row_value = selected_flag_rows[row_slot];
         // PlotMS iterator coordinates and channel statistics use the cube mask.
         if flag_row_value
@@ -4416,6 +4434,7 @@ fn build_generic_visibility_scatter(
             time: row_time_value,
             interval: selected_intervals.get(row_slot).copied(),
             uvw: row_uvw_value,
+            observatory_geometry: use_ordinate_masks,
         };
         let spectral_context = resolve_spectral_context(
             spec,
@@ -4576,6 +4595,22 @@ fn build_generic_visibility_scatter(
                     .get_mut(&panel_key)
                     .expect("panel inserted before mutation");
                 for (y_index, y_axis, series_key, series_label, color_group) in &series_identity {
+                    if !y_axis.is_visibility_math()
+                        && let Some((row_points, buffer_points)) = &mut ordinate_points
+                    {
+                        // Channel pairs retain the first clear correlation on each
+                        // baseline, or in the buffer for observatory coordinates.
+                        let seen = if y_axis.uses_derived_geometry() {
+                            buffer_points
+                        } else {
+                            row_points
+                        };
+                        if flag_samples.iter().all(|flag| *flag)
+                            || !seen.insert((*y_index, bin.ordinal))
+                        {
+                            continue;
+                        }
+                    }
                     let Some(y_value) = compute_axis_value(
                         *y_axis,
                         axis_samples(*y_index + 1),
@@ -5738,6 +5773,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                         time: row_time_value,
                                         interval: None,
                                         uvw: row_uvw_value,
+                                        observatory_geometry: false,
                                     },
                                     derived_engine.as_ref(),
                                 )? {
@@ -5794,6 +5830,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                         time: row_time_value,
                                         interval: None,
                                         uvw: row_uvw_value,
+                                        observatory_geometry: false,
                                     },
                                     derived_engine.as_ref(),
                                 )? {
@@ -6700,6 +6737,7 @@ struct RowCoordinates {
     time: f64,
     interval: Option<f64>,
     uvw: [f64; 3],
+    observatory_geometry: bool,
 }
 
 fn uvw_coordinate(
@@ -6827,11 +6865,14 @@ fn compute_axis_value(
             })?;
             let field_id = usize::try_from(field_id_value)
                 .map_err(|_| format!("invalid FIELD_ID {field_id_value} for elevation axis"))?;
-            let antenna_id = usize::try_from(antenna1_value)
-                .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for elevation axis"))?;
-            geometry_engine
-                .azel(row.time, field_id, antenna_id)
-                .map(|(_azimuth, elevation)| Some(elevation.to_degrees()))
+            let azel = if row.observatory_geometry {
+                geometry_engine.azel_observatory(row.time, field_id)
+            } else {
+                let antenna_id = usize::try_from(antenna1_value)
+                    .map_err(|_| format!("invalid ANTENNA1 {antenna1_value} for elevation axis"))?;
+                geometry_engine.azel(row.time, field_id, antenna_id)
+            };
+            azel.map(|(_azimuth, elevation)| Some(elevation.to_degrees()))
                 .map_err(|error| error.to_string())
         }
         MsAxis::HourAngle => {
