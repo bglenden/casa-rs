@@ -191,11 +191,11 @@ def compare_corrected_residuals(root, native):
 
 def compare_expressions(root, native):
     source, integration, start = make_fixture(root)
-    fallback, spectra, zero, unbounded, cube_flags = (
+    fallback, spectra, zero, overflow, unbounded, cube_flags = (
         root / f"{name}.ms"
-        for name in ("without-corrected", "spectra", "zero-model", "unbounded", "cube-flags")
+        for name in ("without-corrected", "spectra", "zero-model", "overflow-model", "unbounded", "cube-flags")
     )
-    for path in (fallback, spectra, zero, unbounded, cube_flags):
+    for path in (fallback, spectra, zero, overflow, unbounded, cube_flags):
         copy_ms(source, path)
     attach_spectra(spectra, integration)
     with opened(fallback, True) as table:
@@ -203,6 +203,8 @@ def compare_expressions(root, native):
         table.putcol("SIGMA", np.full_like(table.getcol("SIGMA"), .5))
     with opened(zero, True) as table:
         table.putcol("MODEL_DATA", np.zeros_like(table.getcol("MODEL_DATA")))
+    with opened(overflow, True) as table:
+        table.putcol("MODEL_DATA", np.full_like(table.getcol("MODEL_DATA"), 1e38))
     with opened(unbounded, True) as table:
         unit = np.ones_like(table.getcol("MODEL_DATA"))
         table.putcol("MODEL_DATA", unit * np.exp(1j * np.deg2rad(10)))
@@ -227,6 +229,7 @@ def compare_expressions(root, native):
          np.deg2rad(29.5)),
         ("vector-zero-model", zero, "time", "", "amp", "corrected/model_vector", None, np.inf),
         ("scalar-zero-phase", zero, "time", "", "phase", "corrected/model_scalar", None, np.inf),
+        ("vector-overflow-model", overflow, "time", "", "real", "corrected/model_vector", None, 0),
         ("observed-residual", source, "time", "", "amp", "data-model_vector", None, -1.5),
         ("observed-ratio", source, "time", "", "phase", "data/model_scalar", None,
          np.rad2deg((50 / 3) / 45)),
