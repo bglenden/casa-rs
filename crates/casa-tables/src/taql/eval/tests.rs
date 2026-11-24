@@ -804,6 +804,7 @@ fn glish_1based_single_index() {
     let arr = make_1d_array(vec![10, 20, 30]);
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Single(Expr::Literal(Literal::Int(1)))],
         &ctx,
     )
@@ -823,6 +824,7 @@ fn python_0based_single_index() {
     let arr = make_1d_array(vec![10, 20, 30]);
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Single(Expr::Literal(Literal::Int(0)))],
         &ctx,
     )
@@ -842,6 +844,7 @@ fn python_negative_index() {
     let arr = make_1d_array(vec![10, 20, 30]);
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Single(Expr::Literal(Literal::Int(-1)))],
         &ctx,
     )
@@ -862,6 +865,7 @@ fn glish_slice_inclusive() {
     // Glish: 2:4 → indices 2,3,4 (1-based) → elements 1,2,3 (0-based)
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(2))),
             end: Some(Expr::Literal(Literal::Int(4))),
@@ -895,6 +899,7 @@ fn python_slice_exclusive() {
     // Python: 1:4 → indices 1,2,3 (0-based, end exclusive)
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(1))),
             end: Some(Expr::Literal(Literal::Int(4))),
@@ -928,6 +933,7 @@ fn glish_slice_with_step() {
     // Glish: 1:5:2 → indices 1,3,5 (1-based) → elements 0,2,4
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(1))),
             end: Some(Expr::Literal(Literal::Int(5))),
@@ -961,6 +967,7 @@ fn python_slice_with_step() {
     // Python: 0:5:2 → indices 0,2,4
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(0))),
             end: Some(Expr::Literal(Literal::Int(5))),
@@ -995,6 +1002,7 @@ fn multidim_single_element() {
     // Glish: arr[2,3] → row=2 (0-based 1), col=3 (0-based 2) → flat index 1*3+2=5 → value 6
     let result = eval_array_index(
         &arr,
+        None,
         &[
             ast::IndexElement::Single(Expr::Literal(Literal::Int(2))),
             ast::IndexElement::Single(Expr::Literal(Literal::Int(3))),
@@ -1019,6 +1027,7 @@ fn multidim_row_slice() {
     let arr = make_2d_array(2, 3, vec![1, 4, 2, 5, 3, 6]);
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Single(Expr::Literal(Literal::Int(1)))],
         &ctx_fortran,
     )
@@ -1044,6 +1053,7 @@ fn multidim_row_slice() {
     };
     match eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Single(Expr::Literal(Literal::Int(1)))],
         &ctx_python,
     )
@@ -1058,6 +1068,7 @@ fn multidim_row_slice() {
     assert_eq!(
         eval_array_index(
             &arr,
+            None,
             &[
                 ast::IndexElement::Single(Expr::Literal(Literal::Int(0))),
                 ast::IndexElement::Single(Expr::Literal(Literal::Int(1))),
@@ -1081,6 +1092,7 @@ fn out_of_bounds_error() {
     let arr = make_1d_array(vec![10, 20, 30]);
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Single(Expr::Literal(Literal::Int(5)))],
         &ctx,
     );
@@ -1099,6 +1111,7 @@ fn slice_step_zero_error() {
     let arr = make_1d_array(vec![10, 20, 30]);
     let result = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(0))),
             end: Some(Expr::Literal(Literal::Int(3))),
@@ -1124,6 +1137,7 @@ fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
     let arr = make_1d_array(vec![10, 20, 30]);
     let sliced = eval_array_index(
         &arr,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(0))),
             end: Some(Expr::Literal(Literal::Int(0))),
@@ -1155,6 +1169,7 @@ fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
     assert_eq!(
         eval_array_index(
             &expr_arr,
+            None,
             &[
                 ast::IndexElement::Single(Expr::Literal(Literal::Int(0))),
                 ast::IndexElement::Single(Expr::Literal(Literal::Int(1))),
@@ -1169,6 +1184,7 @@ fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
     let one_d = make_1d_array(vec![10, 20, 30]);
     let extra = eval_array_index(
         &one_d,
+        None,
         &[
             ast::IndexElement::Single(Expr::Literal(Literal::Int(0))),
             ast::IndexElement::Single(Expr::Literal(Literal::Int(1))),
@@ -1186,6 +1202,7 @@ fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
     };
     match eval_array_index(
         &one_d,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(2))),
             end: Some(Expr::Literal(Literal::Int(1))),
@@ -1206,6 +1223,7 @@ fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
     let five = make_1d_array(vec![10, 20, 30, 40, 50]);
     match eval_array_index(
         &five,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(10))),
             end: None,
@@ -1229,6 +1247,7 @@ fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
     }
     match eval_array_index(
         &five,
+        None,
         &[ast::IndexElement::Slice {
             start: Some(Expr::Literal(Literal::Int(-10))),
             end: None,
