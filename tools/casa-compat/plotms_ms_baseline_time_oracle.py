@@ -424,7 +424,24 @@ def compare_antenna_averaged_export(root, native):
             compare_figure(root, native, controls, expected,
                            (base["title"], "Amp", "Phase:corrected (degrees)"))
 
+    compare_antenna_ordinate_order(root, native, base)
     compare_weighted_antenna_exports(root, native, source, start, base)
+    compare_antenna_flagged_integration(root, native, source, start, base)
+
+
+def compare_antenna_ordinate_order(root, native, base):
+    controls = base | dict(correlation="XY", yaxis=["phase", "amp"], ydatacolumn=["data", "data"])
+    expected, actual = (root / f"ordinate-order.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert [(point[5], point[6], point[12]) for point in selected] == [("0", "-1", "XY"), ("1", "-1", "XY")] * 2
+    phase = np.degrees(np.arctan2(5, 3))
+    amplitude = np.hypot(3, 5)
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(3, phase), (3, -phase), (3, amplitude), (3, amplitude)], rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 4
+    print("ordinate-order: 4 matching points in requested phase and amplitude order", flush=True)
 
 
 def compare_weighted_antenna_exports(root, native, source, start, base):
@@ -469,6 +486,41 @@ def compare_weighted_antenna_exports(root, native, source, start, base):
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == 2 * len(samples)
     print("weighted-ordered: 22 matching points in integration, antenna, channel and correlation order", flush=True)
+
+
+def compare_antenna_flagged_integration(root, native, source, start, base):
+    separated = root / "flagged-integration.ms"
+    copy_ms(source, separated)
+    with opened(separated, True) as table:
+        times = table.getcol("TIME")
+        _, integration = np.unique(times, return_inverse=True)
+        flagged = integration == 1
+        late_array = integration == 2
+        times[late_array] = start
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+        arrays = table.getcol("ARRAY_ID")
+        arrays[late_array] = 1
+        table.putcol("ARRAY_ID", arrays)
+        flags = table.getcol("FLAG")
+        flags[:, :, flagged] = True
+        table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", flagged)
+        for column in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(column)
+            values[:, :, late_array] *= 3
+            table.putcol(column, values)
+    controls = base | dict(vis=str(separated), correlation="XX", msselect=f"TIME < {start + 11:.3f}")
+    expected, actual = (root / f"flagged-integration.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert [(point[5], point[6], point[12]) for point in selected] == [("0", "-1", "XX"), ("1", "-1", "XX")] * 2
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(1, 14), (1, -14), (3, 42), (3, -42)], rtol=1.2e-5)
+    np.testing.assert_allclose([float(point[9]) for point in selected], start, rtol=0, atol=.00051)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 4
+    print("flagged-integration: 4 matching points in the separate visible integrations", flush=True)
 
 
 def main():
