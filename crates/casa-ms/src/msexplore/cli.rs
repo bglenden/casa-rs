@@ -287,7 +287,7 @@ fn run_task(
                 1 + usize::from(options.y_axis2.is_some()) + options.additional_ordinates.len();
             if (0..ordinate_count)
                 .any(|index| super::calibration::figure::shows_flagged(symbols, index))
-                && !columns.is_some_and(|columns| options.supports_raw_flagged_symbols(columns))
+                && !columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns))
             {
                 return Err(TaskFailure::validation(
                     "displaying flagged points for this MeasurementSet column plot is pending #1032",
@@ -346,9 +346,9 @@ fn run_visibility_plot(
         ))
     })?;
     let mut axis_columns = options.plotms_axis_columns();
-    let show_flagged = axis_columns
-        .is_some_and(|columns| options.supports_raw_flagged_symbols(columns))
-        && plotms_options::shows_raw_flagged_symbols(task);
+    let raw_symbols = axis_columns
+        .is_some_and(|columns| options.supports_raw_visibility_symbols(columns))
+        .then(|| plotms_options::raw_symbol_visibility(task));
     let mut prefer_float_data = false;
     if calibration.is_none()
         && let Some(columns) = &mut axis_columns
@@ -422,7 +422,7 @@ fn run_visibility_plot(
                     secondary_y: options.secondary_y_data_column,
                     additional_y: &options.additional_ordinates,
                     weights: options.weight_axis_columns,
-                    show_flagged,
+                    raw_symbols,
                 },
                 prefer_float_data,
                 load_models,

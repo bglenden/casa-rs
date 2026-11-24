@@ -45,15 +45,22 @@ pub(super) fn write_export(
     match payload {
         MsPlotPayload::Scatter(plot) => {
             writeln!(writer, "# From plot {index}").map_err(io)?;
-            write_series(
-                &mut writer,
-                &mut metadata,
-                plot.x_axis,
-                &plot.series,
-                verbose,
-                library.is_empty(),
-            )
-            .map_err(io)?;
+            if plot.series.is_empty() {
+                for y in std::iter::once(plot.y_axis).chain(plot.secondary_y_axis) {
+                    write_empty_section(&mut writer, name(plot.x_axis), name(y), verbose)
+                        .map_err(io)?;
+                }
+            } else {
+                write_series(
+                    &mut writer,
+                    &mut metadata,
+                    plot.x_axis,
+                    &plot.series,
+                    verbose,
+                    library.is_empty(),
+                )
+                .map_err(io)?;
+            }
             if let Some(curves) = overlays.first() {
                 write_curves(&mut writer, &mut metadata, plot.x_axis, curves, verbose)
                     .map_err(io)?;
@@ -251,6 +258,25 @@ fn write_section(output: &mut dyn Write, x: &str, y: &str, verbose: bool) -> std
         writeln!(output, "# x y ")?;
         writeln!(output, "# {x} {y}")
     }
+}
+
+fn write_empty_section(
+    output: &mut dyn Write,
+    x: &str,
+    y: &str,
+    verbose: bool,
+) -> std::io::Result<()> {
+    if verbose {
+        writeln!(output, "# x y scan field ant1 ant1name time spw obs")?;
+        writeln!(
+            output,
+            "# {x} {y} None None None None MJD(seconds) None None None"
+        )?;
+    } else {
+        writeln!(output, "# x y ")?;
+        writeln!(output, "# {x} {y}")?;
+    }
+    writeln!(output, "# No data to export")
 }
 
 fn write_point(

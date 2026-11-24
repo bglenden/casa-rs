@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
-use super::super::{calibration, plotms_columns};
+use super::super::{RawSymbolVisibility, calibration, plotms_columns};
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
     MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count, legend_position, number,
@@ -54,7 +54,7 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
-    pub(super) fn supports_raw_flagged_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
+    pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
         self.x_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis2.is_none()
@@ -100,13 +100,19 @@ impl CliOptions {
     }
 }
 
-pub(super) fn shows_raw_flagged_symbols(task: &TaskInvocation<'_>) -> bool {
-    let shape = match task.value("flaggedsymbolshape") {
-        Some(ParameterValue::Array(values)) => values.first(),
-        other => other,
+pub(super) fn raw_symbol_visibility(task: &TaskInvocation<'_>) -> RawSymbolVisibility {
+    let is_custom = |name| calibration::figure::shows_flagged(task.value(name), 0);
+    let has_symbol = |name| {
+        let shape = match task.value(name) {
+            Some(ParameterValue::Array(values)) => values.first(),
+            other => other,
+        };
+        !matches!(shape, Some(ParameterValue::String(value)) if value == "nosymbol")
     };
-    calibration::figure::shows_flagged(task.value("customflaggedsymbol"), 0)
-        && !matches!(shape, Some(ParameterValue::String(value)) if value == "nosymbol")
+    RawSymbolVisibility {
+        unflagged: !is_custom("customsymbol") || has_symbol("symbolshape"),
+        flagged: is_custom("customflaggedsymbol") && has_symbol("flaggedsymbolshape"),
+    }
 }
 
 fn right_ordinates(task: &TaskInvocation<'_>) -> Result<Vec<bool>, TaskFailure> {
