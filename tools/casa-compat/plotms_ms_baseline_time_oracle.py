@@ -825,8 +825,10 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
                          controls | dict(vis=str(all_flagged)), ("Amp", "Phase:corrected (degrees)"))
 
     variable = root / "scalar-antenna-variable-rows.ms"
-    copy_ms(row_only, variable)
+    copy_ms(source, variable)
     with opened(variable, True) as table:
+        times = table.getcol("TIME")
+        table.putcol("FLAG_ROW", times == np.unique(times)[4])
         table.removecols(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
     mixed = make_mixed_polarization(variable, root / "scalar-antenna-mixed-polarization.ms",
                                     lambda table: table.getcol("FLAG_ROW"))
