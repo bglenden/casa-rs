@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "dc870b7ec1f974e9e8811e765561647ecee6ba7c",
+  "source_revision": "dc870b7ec1f974e9e8811e765561647ecee6ba7c",
+  "baseline_revision": "532ccf0aa942adae1c9626b9023a96df813d4611",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Stored corrected vector residual or ratio against Time or Channel after ordinary time then channel averaging.",
+  "result": "passed",
+  "baseline_result": "Native refused the selected corrected vector expression with time and channel averaging.",
+  "text_exports": 8,
+  "points": 42,
+  "documented_deviation_text_exports": 2,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}
