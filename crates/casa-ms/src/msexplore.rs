@@ -5466,9 +5466,10 @@ fn build_generic_visibility_scatter_with_averaging(
     let retain_empty_ordinate_list = uncalibrated
         && spec.y_axes.len() > 2
         && (collapse_baselines
+            || antenna_average
             || ((spec.averaging.avgscan || spec.averaging.avgfield)
                 && (time_bins.is_some() || scalar_average)
-                && !(antenna_average || spw_average)));
+                && !spw_average));
     let time_baselines = collapse_baselines && time_bins.is_some();
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;

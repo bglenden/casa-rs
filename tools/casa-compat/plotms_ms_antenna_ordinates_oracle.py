@@ -13,7 +13,7 @@ import numpy as np
 
 from plotms_ms_baseline_channels_oracle import make_fixture
 from plotms_ms_channel_ordinates_oracle import compare_sides
-from plotms_ms_columns_oracle import compare_text, plotms_launcher, reference, request, rows
+from plotms_ms_columns_oracle import compare_text, copy_ms, opened, plotms_launcher, reference, request, rows
 
 
 def compare_antenna_ordinate_lists(root, native):
@@ -47,6 +47,59 @@ def compare_antenna_ordinate_lists(root, native):
         if name == "vector-time-channel-antenna":
             figure = controls | overrides | dict(xlabel="Channel bin")
             compare_sides(root, native, figure, expected_x="Channel bin", name=name)
+    compare_antenna_ordinate_edges(root, native, vis, controls)
+
+
+def compare_antenna_ordinate_edges(root, native, vis, controls):
+    from casars.tasks import TaskParameterError
+
+    complex_data, flagged = (root / f"{name}.ms" for name in ("complex-ordinates", "all-cube-flagged"))
+    copy_ms(vis, complex_data)
+    copy_ms(vis, flagged)
+    with opened(complex_data, True) as table:
+        high = table.getcol("ANTENNA2") == 2
+        for column, low, upper in (
+            ("DATA", 1 + 2j, 4 + 3j),
+            ("CORRECTED_DATA", 2 - 3j, -5 + 7j),
+            ("MODEL_DATA", 6 - 2j, -7 - 6j),
+        ):
+            values = np.where(high, upper, low).astype(np.complex64)
+            table.putcol(column, np.broadcast_to(values, table.getcol(column).shape))
+    with opened(flagged, True) as table:
+        flags = table.getcol("FLAG")
+        flags[:] = True
+        table.putcol("FLAG", flags)
+
+    four = dict(vis=str(complex_data), xaxis="real", xdatacolumn="corrected",
+                yaxis=["real", "imag", "amp", "phase"],
+                ydatacolumn=["data", "model", "corrected", "data"],
+                yaxislocation=["left", "right", "left", "right"])
+    for mode, scalar in (("vector", False), ("scalar", True)):
+        for case, overrides, count in (("complex", four, 216), ("empty", dict(vis=str(flagged)), 0)):
+            name = f"{mode}-{case}"
+            options = controls | overrides | dict(scalar=scalar, expformat="txt")
+            expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**options, plotfile=str(expected)) is None
+            assert len(rows(expected)) == count
+            assert native(**options, plotfile=str(actual)) is None
+            if count:
+                assert compare_text(actual, expected) == count
+            else:
+                assert expected.read_text().count("# No data to export") == 3
+                assert actual.read_bytes() == expected.read_bytes()
+            print(f"{name}: {count if count else 'three empty sections'} matched", flush=True)
+
+    for name, overrides in (("overlay", dict(showatm=True)), ("iteration", dict(iteraxis="corr"))):
+        output = root / f"antenna-list-{name}.txt"
+        options = controls | overrides | dict(plotfile=str(output), expformat="txt")
+        try:
+            native(**options)
+        except TaskParameterError as error:
+            assert "#1032" in str(error), error
+        else:
+            raise AssertionError(f"PlotMS accepted the pending antenna-averaged list with {name}")
+        assert not output.exists()
+        print(f"antenna-list-{name}: existing refusal preserved", flush=True)
 
 
 def main():
