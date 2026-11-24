@@ -428,6 +428,7 @@ def compare_antenna_averaged_export(root, native):
     weighted = compare_weighted_antenna_exports(root, native, source, start, base)
     compare_weighted_scalar_antenna(root, native, weighted, start, base)
     compare_channel_antenna_averages(root, native, weighted, start, base)
+    compare_scalar_antenna_time_averages(root, native, weighted, start, base)
     compare_antenna_flagged_integration(root, native, source, start, base)
     compare_antenna_autocorrelation(root, native)
 
@@ -733,6 +734,76 @@ def compare_channel_antenna_averages(root, native, weighted, start, base):
                          ("row-flagged-channel-antenna", flagged_rows)):
         compare_empty_export(root, native, name, controls | dict(vis=str(source)),
                              ("Amp", "Phase:corrected (degrees)"))
+
+
+def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
+    source = root / "scalar-antenna-times.ms"
+    copy_ms(weighted, source)
+    amplitudes = np.asarray([1, 2, 4, 1, 3, 7], dtype=np.float32)
+    turns = np.asarray([0, 10, 20, -5, 15, 30], dtype=np.float32)
+    with opened(source, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        index = integration % len(amplitudes)
+        rotations = amplitudes[index] * np.exp(1j * np.radians(turns[index]))
+        for column in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(column) * rotations
+            if column == "DATA":
+                values[:, 0, :] *= -.5
+            table.putcol(column, values.astype(np.complex64))
+        table.putcol("SIGMA_SPECTRUM", np.ones_like(table.getcol("SIGMA_SPECTRUM")))
+    masked = root / "scalar-antenna-flagged-time.ms"
+    copy_ms(source, masked)
+    with opened(masked, True) as table:
+        times = table.getcol("TIME")
+        flags = table.getcol("FLAG")
+        flags[:, :, times == np.unique(times)[2]] = True
+        table.putcol("FLAG", flags)
+    controls = base | dict(vis=str(source), antenna="A0&A1;A0&A2", correlation="XX", spw="0:1",
+                           avgtime="20", msselect="", xaxis="amp", yaxis="phase", scalar=True,
+                           title="Scalar antenna time averages")
+    phase = np.degrees(np.arctan2(14, 10))
+    amplitude = np.hypot(1, 4)
+    for name, overrides, width in (
+        ("scalar-antenna-time", {}, 3),
+        ("scalar-antenna-time-axis", dict(xaxis="time"), 3),
+        ("scalar-antenna-time-channels", dict(avgchannel="2", spw="0:0~3"), 3),
+        ("scalar-antenna-shorter-time", dict(avgtime="15"), 2),
+        ("scalar-antenna-masked-time", dict(vis=str(masked)), 3),
+    ):
+        request_args = controls | overrides
+        channels = (0, 1) if "avgchannel" in overrides else (1,)
+        frequencies = (100.0005, 100.0025) if len(channels) == 2 else (100.001, 100.001)
+        coordinates, identifiers, centers = [], [], []
+        for begin in range(0, len(amplitudes), width):
+            end = begin + width
+            center = start + (begin + end - 1) * 5
+            visible_end = end - 1 if name == "scalar-antenna-masked-time" and begin == 0 else end
+            mean_amplitude = amplitude * amplitudes[begin:visible_end].mean()
+            mean_phase = phase + turns[begin:visible_end].mean()
+            for antenna, (gain, angle) in enumerate(((7 / 4, mean_phase + 67.5),
+                                                     (1, -mean_phase), (2, -mean_phase - 90))):
+                for channel in channels:
+                    x = center if request_args["xaxis"] == "time" else gain * mean_amplitude
+                    if channel == 0:
+                        x /= 4
+                    coordinates.append((x, angle))
+                    identifiers.append((str(antenna), str(channel), f"{frequencies[channel]:.9f}"))
+                    centers.append(center)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**request_args, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[5], point[2], point[10]) for point in selected] == identifiers
+        assert {(point[6], point[12]) for point in selected} == {("-1", "XX")}
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        assert native(**request_args, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        if request_args["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+            compare_figure(root, native, request_args, expected,
+                           (controls["title"], "Time (MJD seconds)", "Phase:corrected (degrees)"))
+        print(f"{name}: {len(coordinates)} matching scalar antenna time coordinates", flush=True)
 
 
 def main():
