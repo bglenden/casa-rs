@@ -369,12 +369,6 @@ impl PyMsTool {
 
     /// Not yet implemented in casa-rs.
     #[pyo3(signature = (items = None), text_signature = "($self, items={})")]
-    fn putdata(&self, items: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("putdata")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (items = None), text_signature = "($self, items={})")]
     fn putdataold(&self, items: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("putdataold")
     }

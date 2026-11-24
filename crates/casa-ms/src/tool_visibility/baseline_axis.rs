@@ -123,6 +123,23 @@ impl BaselineGrid {
         self.baseline_count
     }
 
+    pub(super) fn time_count(&self) -> usize {
+        self.times.len()
+    }
+
+    pub(super) fn write_positions(&self) -> MsResult<Vec<[usize; 2]>> {
+        if self.occupied.len() != self.row_count {
+            return Err(input(
+                "putdata requires a distinct baseline and time slot for every selected row",
+            ));
+        }
+        let mut positions = vec![[0, 0]; self.row_count];
+        for &(slot, row) in &self.occupied {
+            positions[row] = [slot % self.baseline_count, slot / self.baseline_count];
+        }
+        Ok(positions)
+    }
+
     pub(super) fn reduction_rows(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
         self.occupied
             .iter()

@@ -11350,3 +11350,22 @@ aborts with an uncaught `ArrayError` from `MaskedArray::minMax`, which
 requires an unmasked sample. casa-rs uses the same zero extrema as an
 entirely flagged complex visibility range and keeps the tool attached.
 Calling again with `useflags=False` returns the recorded extrema (#1030).
+
+## MS writes can overrun a positioned max-row block
+
+Position an MS cursor with `iterinit(['TIME'], 0.0, 10, False)`, advance
+to the second block, and pass its ten-row `getdata('data')` array back to
+`putdata`. CASA 6.7.6.14 restarts the inner traversal and attempts to
+slice rows 10–19 from the ten-row array. The resulting `ArrayError`
+aborts the Python process. casa-rs uses the rows of the positioned
+block and writes no other rows (#1030).
+
+## An invalid MS write can leave CASA using the previous selection
+
+On a writable MS, pass a Float32 array for `FLAG_ROW` to `putdata`.
+CASA 6.7.6.14 rejects its type after creating an internal iterator.
+Selecting only row zero and writing one Boolean row plus a weight vector
+on the same attachment can then abort. Closing and reopening before the
+second selection succeeds. casa-rs validates the record before starting
+a mutation. The error leaves the attachment usable for a new selection
+and write (#1030).

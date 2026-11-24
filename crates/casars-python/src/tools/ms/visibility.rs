@@ -9,7 +9,8 @@ use casa_ms::tool_iteration::ToolIteration;
 use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
-use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
+use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames, TableWriteLock};
+use casa_types::RecordValue;
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
@@ -26,6 +27,8 @@ use crate::convert::value::CasaValue;
 #[derive(Default)]
 pub(super) struct VisibilityState {
     initialized: bool,
+    averaged: bool,
+    baseline_write: Option<(i32, i64)>,
     main: Option<Arc<VisibilityMain>>,
     range_subtables: Subtables,
     time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
@@ -45,6 +48,8 @@ pub(super) struct VisibilityMain {
 impl VisibilityState {
     pub(super) fn reset_selection(&mut self) {
         self.initialized = false;
+        self.averaged = false;
+        self.baseline_write = None;
         self.channels = None;
         self.polarization = None;
         if let Some(iteration) = &mut self.iteration {
@@ -207,12 +212,16 @@ impl PyMsTool {
             time_measures: None,
             iterator_read: false,
         };
-        let reply = py.detach(|| {
+        let reply = py.detach(|| -> PyResult<CasaValue> {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
-            ms.getdata_rows(&items, increment, options)
+            let reply = ms.getdata_rows(&items, increment, options)?;
+            if ifraxis && ms.writable {
+                ms.visibility.baseline_write = Some((ifraxisgap as i32, increment));
+            }
+            Ok(reply)
         })?;
         reply.into_python(py)
     }
@@ -272,6 +281,99 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    pub(super) fn putdata_rows(&mut self, items: RecordValue) -> PyResult<bool> {
+        if items.fields().is_empty()
+            || self
+                .selected_rows
+                .as_deref()
+                .is_some_and(<[usize]>::is_empty)
+            || self.visibility.averaged
+            || self.visibility.channels.is_some()
+            || self.visibility.iteration.as_ref().is_some_and(|iteration| {
+                iteration.channels.is_some() || iteration.conversion.is_some()
+            })
+            || self
+                .visibility
+                .polarization
+                .as_deref()
+                .is_some_and(VisibilityPolarization::is_conversion)
+        {
+            return Ok(false);
+        }
+        let link = self.metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        if !self.visibility.initialized && self.initialize_visibility(&link)?.is_none() {
+            return Ok(false);
+        }
+        self.visibility.main(&self.path)?;
+        let main = self
+            .visibility
+            .main
+            .as_ref()
+            .expect("MAIN table was opened");
+        if !main.plain {
+            return Err(runtime_error(
+                "putdata projection is not yet supported (#1030)",
+            ));
+        }
+        let rows = if let Some(iteration) = &self.visibility.iteration {
+            iteration.cursor.rows().map_err(runtime_error)?.to_vec()
+        } else if let Some(rows) = &self.selected_rows {
+            rows.to_vec()
+        } else {
+            (0..main.table.row_count()).collect()
+        };
+        if rows.is_empty() {
+            return Ok(false);
+        }
+        let layout = self.visibility.baseline_write;
+        let baseline_pairs = if self.visibility.iteration.is_some() {
+            layout
+                .map(|(_, increment)| self.iteration_baselines(main, increment))
+                .transpose()?
+        } else {
+            None
+        };
+        let options = tool_visibility::VisibilityWriteOptions {
+            baseline_gap: layout.map(|(gap, _)| gap),
+            baseline_pairs: baseline_pairs.as_deref(),
+            polarization: self
+                .visibility
+                .iteration
+                .as_ref()
+                .map_or(self.visibility.polarization.as_deref(), |iteration| {
+                    iteration.polarization.as_deref()
+                }),
+            iterator: self.visibility.iteration.is_some(),
+        };
+        let mut temporary = None;
+        let lock = if let Some(lock) = self.write_locks.get_mut(&self.path) {
+            lock
+        } else {
+            temporary
+                .insert(TableWriteLock::acquire_to_reread(&self.path, 0).map_err(runtime_error)?)
+        };
+        link.verify_directory().map_err(runtime_error)?;
+        main.verify_iterator_layout()?;
+        let mut destination = MeasurementSet::open(&self.path).map_err(runtime_error)?;
+        let result = tool_visibility::put_tool_visibility_rows(
+            &mut destination,
+            lock,
+            &rows,
+            items,
+            options,
+        )
+        .map_err(runtime_error)?;
+        drop(destination);
+        if let Some(lock) = temporary {
+            lock.release().map_err(runtime_error)?;
+        }
+        if result {
+            self.visibility.main = None;
+        }
+        Ok(result)
+    }
+
     pub(super) fn visibility_range(&mut self, request: &ToolRangeRequest) -> PyResult<CasaValue> {
         let link = self.metadata_link();
         link.verify_directory().map_err(runtime_error)?;
@@ -559,6 +661,7 @@ impl AttachedMs {
         increment: i64,
         options: tool_visibility::VisibilityReadOptions<'_>,
     ) -> PyResult<CasaValue> {
+        self.visibility.averaged = options.average;
         let link = self.metadata_link();
         link.verify_directory().map_err(runtime_error)?;
         if self
