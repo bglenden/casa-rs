@@ -43,12 +43,12 @@ def compare_time_derived(root, native):
     base = request(vis) | dict(xaxis="time", xdatacolumn="", yaxis="real", spw="0:1", avgtime="20",
                                title="Time averaged visibility")
     cases = (
-        ("residual", vis, "corrected-model_vector", [0, 1, 2], [.75, 2.75, 4.75]),
-        ("ratio", vis, "corrected/model_vector", [0, 1, 2], [.75, 2.75, 4.75]),
-        ("masked-ratio", masked, "corrected/model_vector", [0, 1], [.75, 2.0]),
+        ("residual", vis, "corrected-model_vector", "real", [0, 1, 2], [.75, 2.75, 4.75]),
+        ("ratio", vis, "corrected/model_vector", "phase", [0, 1, 2], [.75, 2.75, 4.75]),
+        ("masked-ratio", masked, "corrected/model_vector", "real", [0, 1], [.75, 2.0]),
     )
-    for name, source, column, bins, mean_integrations in cases:
-        controls = base | dict(vis=str(source), ydatacolumn=column)
+    for name, source, column, axis, bins, mean_integrations in cases:
+        controls = base | dict(vis=str(source), yaxis=axis, ydatacolumn=column)
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(expected), expformat="txt") is None
         selected = rows(expected)
@@ -62,8 +62,9 @@ def compare_time_derived(root, native):
         offsets = np.asarray(mean_integrations)
         corrected = 8 - 1j + (3 - 1j) * offsets
         model = 2 + 2j + (.5 + .25j) * offsets
-        values = (corrected - model if name == "residual" else corrected / model).real
-        np.testing.assert_allclose([float(point[1]) for point in selected], values, rtol=1.2e-5)
+        visibility = corrected - model if name == "residual" else corrected / model
+        projected = np.angle(visibility, deg=True) if axis == "phase" else visibility.real
+        np.testing.assert_allclose([float(point[1]) for point in selected], projected, rtol=1.2e-5)
         assert native(**controls, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == len(selected)
         np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
@@ -71,7 +72,7 @@ def compare_time_derived(root, native):
         print(f"{name}: {len(selected)} matching time-averaged coordinates", flush=True)
         if name == "masked-ratio":
             compare_figure(root, native, controls, expected,
-                           (controls["title"], "Time", "Real:corrected/model (vector)"))
+                           (controls["title"], "Time (MJD seconds)", "Real:corrected/model (vector)"))
 
 
 def main():
