@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "d97bb8c788a889440a709aaa68bc19113e444169",
+  "source_revision": "d97bb8c788a889440a709aaa68bc19113e444169",
+  "baseline_revision": "ae0d431dca54854daa46317151824cbb01204131",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Independent stored and derived visibility pairs after ordinary vector time and channel averaging.",
+  "result": "passed",
+  "baseline_result": "Native refused the selected independent visibility pair after both averaging stages.",
+  "text_exports": 5,
+  "points": 27,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
