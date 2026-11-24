@@ -42,8 +42,10 @@ def compare_weighted(root, native, vis):
     observed_model = np.array([1.8 + 1.4j, model[1]])
     controls = base | dict(vis=str(without_corrected), xaxis="real", xdatacolumn="data/model_vector",
                            yaxis="imag", ydatacolumn="data")
-    compare_case(root, native, "observed-ratio-without-corrected", controls,
-                 np.column_stack([(observed / observed_model).real, observed.imag]))
+    coordinates = np.column_stack([(observed / observed_model).real, observed.imag])
+    compare_case(root, native, "observed-ratio-without-corrected", controls, coordinates)
+    compare_case(root, native, "corrected-ratio-fallback",
+                 controls | dict(xdatacolumn="corrected/model_vector"), coordinates)
 
 
 def main():

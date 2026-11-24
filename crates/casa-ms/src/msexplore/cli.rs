@@ -416,15 +416,6 @@ fn run_visibility_plot(
     if calibration.is_none()
         && let Some(columns) = &mut axis_columns
     {
-        if options.supports_channel_derived(*columns)
-            && !ms.main_table().schema().is_some_and(|schema| {
-                schema.contains_column("CORRECTED_DATA") && schema.contains_column("MODEL_DATA")
-            })
-        {
-            return Err(TaskFailure::validation(
-                "channel-averaged corrected residuals and ratios require stored CORRECTED_DATA and MODEL_DATA (#1032)",
-            ));
-        }
         let axes = [options.x_axis, options.y_axis, options.y_axis2];
         let (adjusted, use_float) = plotms_columns::resolve_storage_columns(
             &ms,
@@ -432,6 +423,9 @@ fn run_visibility_plot(
             axes,
             options.plotms_averaging_active(),
         )?;
+        if options.supports_channel_derived(*columns) {
+            plotms_columns::check_channel_derived_storage(&ms, adjusted)?;
+        }
         prefer_float_data = use_float;
         if phasecenter.is_some()
             && use_float

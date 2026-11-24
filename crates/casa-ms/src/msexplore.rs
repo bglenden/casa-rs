@@ -4568,6 +4568,9 @@ fn build_generic_visibility_scatter(
             .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
             .map(weight_grid);
         let column_weights = visibility_columns.column_weights(axis_weights);
+        let model_weights = channel_weight_kinds
+            .and_then(|kinds| kinds.model)
+            .and_then(weight_grid);
         let primary_weight_grid = channel_weight_kinds.and_then(|kinds| weight_grid(kinds.primary));
         for (column_name, grid) in [
             ("WEIGHT_SPECTRUM", weight_spectrum_grid.as_ref()),
@@ -4727,7 +4730,13 @@ fn build_generic_visibility_scatter(
                     let flags = flags.as_ref().expect("visibility data loads flags");
                     let weights = column_weights.get(index).copied().flatten();
                     if channel_derived && bin.averaged {
-                        buffer.collect_channel_average(grid, flags, weights, *corr_index, bin);
+                        buffer.collect_channel_average(
+                            grid,
+                            flags,
+                            [weights, model_weights],
+                            *corr_index,
+                            bin,
+                        );
                     } else {
                         buffer.collect(grid, flags, weights, *corr_index, bin, show_flagged);
                     }

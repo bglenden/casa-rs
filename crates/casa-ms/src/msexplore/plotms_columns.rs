@@ -86,7 +86,32 @@ pub(super) fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -
     spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && [x.unwrap_or(spec.data_column), spec.data_column]
             .into_iter()
-            .any(MsDataColumn::is_corrected_model_expression)
+            .any(MsDataColumn::is_derived)
+}
+
+pub(super) fn check_channel_derived_storage(
+    ms: &MeasurementSet,
+    columns: [MsDataColumn; 3],
+) -> Result<(), TaskFailure> {
+    let schema = ms.main_table().schema();
+    let operands = columns
+        .into_iter()
+        .filter(|column| column.is_derived())
+        .map(|column| {
+            if column.is_corrected_model_expression() {
+                "CORRECTED_DATA"
+            } else {
+                "DATA"
+            }
+        });
+    for name in std::iter::once("MODEL_DATA").chain(operands) {
+        if !schema.is_some_and(|schema| schema.contains_column(name)) {
+            return Err(TaskFailure::validation(format!(
+                "channel-averaged residuals and ratios require stored {name} (#1032)"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn weight_axis_columns(
@@ -124,6 +149,7 @@ pub(super) fn check_averaging(
 #[derive(Clone, Copy)]
 pub(super) struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
+    pub(super) model: Option<WeightKind>,
     pub(super) primary: WeightKind,
     pub(super) row_weight: WeightKind,
     pub(super) row_sigma: WeightKind,
@@ -131,7 +157,7 @@ pub(super) struct PlotMsWeightKinds {
 
 impl PlotMsWeightKinds {
     pub(super) fn uses(self, kind: WeightKind) -> bool {
-        self.primary == kind || self.axes.contains(&kind)
+        self.primary == kind || self.model == Some(kind) || self.axes.contains(&kind)
     }
 }
 
@@ -182,7 +208,11 @@ pub(super) fn weight_kinds(
     };
     let kind = |column| {
         let column = match column {
-            MsDataColumn::Data => OptionalMainColumn::Data,
+            MsDataColumn::Data
+            | MsDataColumn::DataMinusModel
+            | MsDataColumn::DataMinusModelScalar
+            | MsDataColumn::DataDivModel
+            | MsDataColumn::DataDivModelScalar => OptionalMainColumn::Data,
             MsDataColumn::Corrected
             | MsDataColumn::CorrectedMinusModel
             | MsDataColumn::CorrectedMinusModelScalar
@@ -195,6 +225,7 @@ pub(super) fn weight_kinds(
     };
     PlotMsWeightKinds {
         axes: columns.map(kind),
+        model: uses_channel_derived(spec, input.x_data_column).then(|| kind(MsDataColumn::Model)),
         primary: kind(primary),
         row_weight: if has_corrected {
             WeightKind::Calibrated
