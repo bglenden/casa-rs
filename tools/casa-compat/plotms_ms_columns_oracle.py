@@ -1058,6 +1058,12 @@ def compare_baseline_averaged_columns(root, native):
         assert native(**options, expformat="txt", plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching baseline-averaged coordinates", flush=True)
+        if name in ("baseline-both-correlations", "baseline-row-flags-only", "baseline-ignores-spectral-weights"):
+            one_ordinate = options | dict(yaxis="real", ydatacolumn="corrected", yaxislocation="left")
+            expected, actual = (work / f"{name}-one-ordinate.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**one_ordinate, expformat="txt", plotfile=str(expected)) is None
+            assert native(**one_ordinate, expformat="txt", plotfile=str(actual)) is None
+            assert compare_text(actual, expected) == len(corrected)
     figure = controls | dict(vis=str(work / "baseline-independent.ms"))
     compare_ordinate_figure(work, "baseline-independent", native, figure, "Real", ["Real:corrected", "Real:model"])
 

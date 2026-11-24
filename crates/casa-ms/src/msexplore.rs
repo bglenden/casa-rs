@@ -2756,9 +2756,10 @@ fn build_uncalibrated_plotms_payload(
         .map(|load| load(ms, &selected.selected_rows))
         .transpose()?
         .flatten();
-    let independent_plot = columns.secondary_y.and_then(|_| spec.plots.first());
-    if independent_plot.is_some_and(|plot| {
-        uses_extended_averaging(plot)
+    let plot = spec.plots.first();
+    if plot.is_some_and(|plot| {
+        (plotms_columns::uses_integration_baseline_average(plot)
+            || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
             && plotms_columns::uses_model(
                 [
                     Some(plot.x_axis),
@@ -2774,7 +2775,8 @@ fn build_uncalibrated_plotms_payload(
     }) {
         plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
     }
-    let time_bins = independent_plot
+    let time_bins = plot
+        .filter(|_| columns.secondary_y.is_some())
         .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
         .map(|(plot, seconds)| {
             crate::transform::selected_plot_time_groups(
@@ -4838,9 +4840,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let visibility_columns =
         plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
     let time_bins = calibration.and_then(|input| input.time_bins);
-    let collapse_baselines = spec.averaging.avgbaseline
-        && calibration
-            .is_some_and(|input| input.rows.is_none() && input.secondary_y_data_column.is_some());
+    let collapse_baselines = plotms_columns::uses_integration_baseline_average(spec)
+        && calibration.is_some_and(|input| input.rows.is_none());
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
