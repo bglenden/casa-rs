@@ -108,7 +108,8 @@
         "ms-scalar-antenna-time",
         "ms-vector-antenna-time",
         "ms-vector-time-channel-antenna",
-        "ms-direct-stored-vector-time-channel"
+        "ms-direct-stored-vector-time-channel",
+        "ms-spw-average-coordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -150,7 +151,8 @@
         "ms-scalar-antenna-time",
         "ms-vector-antenna-time",
         "ms-vector-time-channel-antenna",
-        "ms-direct-stored-vector-time-channel"
+        "ms-direct-stored-vector-time-channel",
+        "ms-spw-average-coordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -246,7 +248,8 @@
         "ms-scalar-antenna-time",
         "ms-vector-antenna-time",
         "ms-vector-time-channel-antenna",
-        "ms-direct-stored-vector-time-channel"
+        "ms-direct-stored-vector-time-channel",
+        "ms-spw-average-coordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -478,7 +481,8 @@
         "ms-scalar-antenna-time",
         "ms-vector-time-channel-antenna",
         "ms-antenna-scan-field-spans",
-        "ms-direct-stored-vector-time-channel"
+        "ms-direct-stored-vector-time-channel",
+        "ms-spw-average-coordinates"
       ],
       "behaviors": [
         "averaging"
@@ -589,14 +593,15 @@
       "status": "Partial"
     },
     "avgspw": {
-      "scope": "Average over all spectral windows",
+      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-spw-average-coordinates"
       ],
       "behaviors": [
         "averaging"
       ],
-      "status": "Implemented"
+      "status": "Partial"
     },
     "scalar": {
       "scope": "Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. Ordinary scalar time averaging uses the first selected correlation’s row weight and reduces amplitude and phase separately for stored visibility axes. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar baseline averages accumulate weighted amplitudes and phases. They also compose with a preceding complex channel average and scalar time bins, including supported independent visibility and stored residual coordinates. Standalone per-antenna scalar averages use the same amplitude and phase components, including Real and Imag projections. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging.",
@@ -614,7 +619,8 @@
         "ms-weighted-scalar-antenna",
         "ms-channel-before-antenna-averages",
         "ms-scalar-antenna-time",
-        "ms-antenna-scan-field-spans"
+        "ms-antenna-scan-field-spans",
+        "ms-spw-average-coordinates"
       ],
       "behaviors": [
         "averaging"
@@ -2391,6 +2397,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-direct-stored-vector-time-channel-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2243"
+      ]
+    },
+    "ms-spw-average-coordinates": {
+      "kind": "Paired public MeasurementSet spectral-window averages",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Ordinary scalar and vector MeasurementSet SPW averages for stored visibility columns, including independent channel selection and a preceding complex channel transform.",
+      "result": "Seventeen nonempty same-input TXT comparisons match 69 selected coordinates in iterator order, including sparse baselines, disjoint and strided physical frequency bins, cube flags, observed and corrected spectra and transformed row weights. Two points match the aligned CASA selection control, and four points match the analytic two-window disjoint-bin average. Two empty TXT pairs and two 500 by 360 PNG pairs verify fully masked spectra, frequency and amplitude labels and two artist coordinates. Selected shape mismatches and malformed raw channel cells fail before export.",
+      "casa_version": "6.7.6.14",
+      "revision": "b5138bb3ba2500859e0e82836f55a63f173d8bd8",
+      "source_revision": "b5138bb3ba2500859e0e82836f55a63f173d8bd8",
+      "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-spw-average-coordinates-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2244"
       ]
     }
   }
