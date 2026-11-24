@@ -26,7 +26,7 @@ from plotms_ms_columns_oracle import (
 )
 
 
-def make_fixture(root, name="two-windows", *, antenna_count=2, channel_count=4):
+def make_fixture(root, name="two-windows", *, antenna_count=2, channel_count=4, integrations=2):
     vis = root / f"{name}.ms"
     ms, me = simulator(), measures()
     ms.open(str(vis))
@@ -45,7 +45,7 @@ def make_fixture(root, name="two-windows", *, antenna_count=2, channel_count=4):
     ms.settimes(integrationtime="10s", usehourangle=False,
                 referencetime=me.epoch("UTC", "2017/03/01/09:00:00"))
     for window in ("W0", "W1"):
-        ms.observe("FLUX", window, starttime="0s", stoptime="20s")
+        ms.observe("FLUX", window, starttime="0s", stoptime=f"{10 * integrations}s")
     ms.close()
     casa.clearcal(str(vis), addmodel=True)
     with opened(vis, True) as table:
@@ -789,8 +789,8 @@ def compare_ordinate_list_uvw(root, native, options, vis):
     print("uvw-spw-ordinates: pending SPW U guard and six ordinary time U coordinates verified", flush=True)
 
 
-def virtual_spw_models(root, name, *, spectral_index=0, stokes_q=0):
-    vis = make_fixture(root, name)
+def virtual_spw_models(root, name, *, spectral_index=0, stokes_q=0, integrations=2):
+    vis = make_fixture(root, name, integrations=integrations)
     with opened(vis, True) as table:
         model = table.getcol("MODEL_DATA")
         table.putcol("MODEL_DATA", np.full_like(model, 19))
@@ -1064,6 +1064,43 @@ def compare_spw_ordinate_order(root, native, source):
         print(f"{name}: {len(values)} matching coordinates in requested ordinate order", flush=True)
 
 
+def compare_single_spw_iteration_layout(root, native):
+    from PIL import Image
+    from plotms_ms_iterated_ordinates_oracle import reverse_correlation_slots
+
+    reversed_slots = virtual_spw_models(root, "single-model-reversed-corrs")
+    reverse_correlation_slots(reversed_slots)
+    base = request(reversed_slots) | dict(field="", xaxis="frequency", xdatacolumn="", spw="0:1,1:1",
+                                          yaxis="real", ydatacolumn="model", avgspw=True, exprange="all")
+    corr = base | dict(iteraxis="corr", correlation="")
+    expected = export(root, "single-model-corr.casa", reference, corr)
+    assert [p[12] for p in rows(expected)] == ["XX"] * 2
+    assert compare_text(export(root, "single-model-corr.native", native, corr), expected) == 2
+    print("single-model-corr: first page follows correlation order", flush=True)
+
+    scans = virtual_spw_models(root, "single-model-five-scans", integrations=5)
+    with opened(scans, True) as table:
+        _, scan = np.unique(table.getcol("TIME"), return_inverse=True)
+        table.putcol("SCAN_NUMBER", (scan + 1).astype(np.int32))
+    grid = base | dict(vis=str(scans), iteraxis="scan", gridrows=2, gridcols=2)
+    expected = export(root, "single-model-five-scans.casa", reference, grid)
+    assert [p[3] for p in rows(expected)] == ["1", "2", "3", "4"]
+    assert compare_text(export(root, "single-model-five-scans.native", native, grid), expected) == 4
+    for engine, task in (("casa", reference), ("native", native)):
+        output = root / engine
+        output.mkdir(exist_ok=True)
+        assert task(**grid, plotfile=str(output / "single-model-five-scans.png"), expformat="png",
+                    width=500, height=420, dpi=100) is None
+        pages = sorted(output.glob("single-model-five-scans*.png"))
+        assert [page.name for page in pages] == [
+            "single-model-five-scans_Scan1,2,3,4.png", "single-model-five-scans_Scan5_2.png",
+        ]
+        for page in pages:
+            with Image.open(page) as image:
+                assert image.size == (500, 420)
+    print("single-model-five-scans: 4 matching first-page coordinates and 2 page names", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -1073,7 +1110,8 @@ def main():
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
                                            "malformed", "scalar-time", "vector-time", "vector-optional",
                                            "vector-channel-spans", "ordinate-lists", "ordinate-list-spans",
-                                           "ordinate-list-uvw", "virtual-models", "virtual-model-spans", "iteration"))
+                                           "ordinate-list-uvw", "virtual-models", "virtual-model-spans", "iteration",
+                                           "iteration-layout"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1095,6 +1133,10 @@ def main():
             original, _, _, both = virtual_spw_span_fixture(root / "iteration")
             compare_spw_iteration(root / "iteration", native, both)
             compare_spw_ordinate_order(root / "iteration", native, original)
+            compare_single_spw_iteration_layout(root / "iteration", native)
+            return
+        if args.only == "iteration-layout":
+            compare_single_spw_iteration_layout(root, native)
             return
         vis = make_fixture(root)
         base = request(vis) | dict(avgspw=True, spw="0:1,1:1", title="Spectral-window average")
@@ -1126,6 +1168,7 @@ def main():
             original, both = compare_virtual_spw_model_spans(root / "virtual-model-spans", native)
             compare_spw_iteration(root / "virtual-model-spans", native, both)
             compare_spw_ordinate_order(root / "virtual-model-spans", native, original)
+            compare_single_spw_iteration_layout(root / "virtual-model-spans", native)
 
 
 if __name__ == "__main__":
