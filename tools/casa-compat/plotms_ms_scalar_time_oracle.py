@@ -23,6 +23,7 @@ from plotms_ms_columns_oracle import (
     request,
     rows,
     time_average_fixture,
+    time_scan_field_fixture,
 )
 
 
@@ -272,6 +273,140 @@ def compare_expressions(root, native):
             compare_figure(root, native, controls, expected, (controls["title"], *titles[name]))
 
 
+def compare_scalar_time_spans(root, native):
+    source, times, scan, field, reversed_time = time_scan_field_fixture(root)
+    start = times[0]
+    masked = root / "masked-spans.ms"
+    copy_ms(source, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, :] = table.getcol("TIME") >= times[6]
+        table.putcol("FLAG", flags)
+    base = request(source) | dict(field="", xaxis="time", xdatacolumn="", yaxis="amp",
+                                  ydatacolumn="corrected-model_vector", spw="0:1", avgtime="200",
+                                  scalar=True, title="Scalar averages across scans and fields")
+    split = [(None, -90., 25., "1", "0"), (None, -270., 85., "2", "1")]
+    joined = [(None, -252., 55., "-1", "0")]
+    cross = dict(avgscan=True, avgfield=True)
+    cases = (
+        ("separate-boundaries", {}, split),
+        ("cross-scan", dict(vis=str(scan), avgscan=True), joined),
+        ("cross-field", dict(vis=str(field), avgfield=True), [(None, -252., 55., "1", "0")]),
+        ("cross-scan-keeps-field", dict(avgscan=True), split),
+        ("cross-field-keeps-scan", dict(avgfield=True), split),
+        ("cross-both", cross, joined),
+        ("cross-both-reversed", cross | dict(vis=str(reversed_time)),
+         [(None, -90., 85., "1", "0"), (None, -270., 25., "2", "1")]),
+        ("cross-both-shorter", cross | dict(avgtime="75"),
+         [(None, -225., 35., "-1", "0"), (None, -270., 95., "2", "1")]),
+        ("cross-both-masked", cross | dict(vis=str(masked)), [(None, -90., 55., "-1", "0")]),
+        ("cross-both-derived-pair",
+         cross | dict(xaxis="amp", xdatacolumn="data-model_vector", ydatacolumn="corrected/model_scalar"),
+         [(-277.2, .1, 55., "-1", "0")]),
+        ("cross-both-stored", cross | dict(ydatacolumn="corrected"), [(None, 28., 55., "-1", "0")]),
+    )
+    for name, overrides, coordinates in cases:
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        centers = [start + point[2] for point in coordinates]
+        assert [(point[3], point[4]) for point in selected] == [(point[3], point[4]) for point in coordinates]
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected],
+                                   [point[1] for point in coordinates], rtol=1.2e-5)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in selected], centers, rtol=0, atol=.00051)
+        else:
+            np.testing.assert_allclose([float(point[0]) for point in selected],
+                                       [point[0] for point in coordinates], rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+        print(f"{name}: {len(coordinates)} matching scalar scan and field span coordinates", flush=True)
+        if name == "cross-both":
+            compare_figure(root, native, controls, expected, (controls["title"], "Time (MJD seconds)",
+                                                              "Amp:corrected-model (vector)"))
+
+    ordinates = base | cross | dict(yaxis=["amp", "real"], ydatacolumn=["corrected", "model"],
+                                    yaxislocation=["left", "right"], coloraxis="scan", expformat="txt")
+    expected, actual = (root / f"cross-both-stored-ordinates.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**ordinates, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [(point[3], point[4]) for point in selected] == [("-1", "0")] * 2
+    np.testing.assert_allclose([float(point[0]) for point in selected], start + 55., rtol=0, atol=.00051)
+    np.testing.assert_allclose([float(point[1]) for point in selected], [28., 280.], rtol=1.2e-5)
+    assert native(**ordinates, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)], start + 55., rtol=0, atol=.00051)
+    print("cross-both-stored-ordinates: 2 matching scalar scan and field span coordinates", flush=True)
+    compare_scalar_span_shapes(root, native, source, base | cross, start + 55.)
+
+
+def compare_scalar_span_shapes(root, native, source, controls, center):
+    from casars.tasks import TaskExecutionError
+    from grpc import RpcError, StatusCode
+
+    vis = root / "mixed-polarization.ms"
+    copy_ms(source, vis)
+    with opened(vis / "POLARIZATION", True) as pol:
+        polarization = pol.nrows()
+        pol.addrows(1)
+        pol.putcell("NUM_CORR", polarization, 1)
+        pol.putcell("CORR_TYPE", polarization, pol.getcell("CORR_TYPE", 0)[:1])
+        pol.putcell("CORR_PRODUCT", polarization, pol.getcell("CORR_PRODUCT", 0)[:, :1])
+        pol.putcell("FLAG_ROW", polarization, False)
+    with opened(vis / "DATA_DESCRIPTION", True) as dd:
+        description = dd.nrows()
+        dd.addrows(1)
+        dd.putcell("SPECTRAL_WINDOW_ID", description, 0)
+        dd.putcell("POLARIZATION_ID", description, polarization)
+        dd.putcell("FLAG_ROW", description, False)
+    with opened(vis, True) as table:
+        descriptions = table.getcol("DATA_DESC_ID")
+        reduced = (descriptions == 0) & (table.getcol("SCAN_NUMBER") == 2)
+        for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_CATEGORY", "WEIGHT", "SIGMA"):
+            descriptor = table.getcoldesc(column)
+            descriptor.pop("shape", None)
+            descriptor.update(option=0, dataManagerType="StandardStMan", dataManagerGroup=column)
+            original = "ORIGINAL_" + column
+            table.renamecol(column, original)
+            table.addcols({column: descriptor})
+            for row in range(table.nrows()):
+                if table.iscelldefined(original, row):
+                    values = table.getcell(original, row)
+                    table.putcell(column, row, values[:1] if reduced[row] else values)
+            table.removecols(original)
+        descriptions[reduced] = description
+        table.putcol("DATA_DESC_ID", descriptions)
+
+    controls |= dict(vis=str(vis), expformat="txt")
+    expected, actual = (root / f"selected-polarization.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 1
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)], center, rtol=0, atol=.00051)
+    assert [(point[1], point[3], point[12]) for point in rows(expected)] == [("-252", "-1", "XX")]
+
+    controls |= dict(correlation="")
+    expected, actual = (root / f"mixed-polarization.{engine}.txt" for engine in ("casa", "native"))
+    try:
+        reference(**controls, plotfile=str(expected))
+    except RpcError as error:
+        assert error.code() == StatusCode.INVALID_ARGUMENT, error
+    else:
+        raise AssertionError("CASA admitted unequal selected shapes into a scalar time bin")
+    try:
+        native(**controls, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "equal correlation and channel counts within a bin" in str(error), error
+    else:
+        raise AssertionError("native PlotMS admitted unequal selected shapes into a scalar time bin")
+    assert not expected.exists() and not actual.exists()
+    print("selected-polarization: 1 matching point and matching incompatible-shape refusals", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -296,6 +431,9 @@ def main():
         expressions = root / "expressions"
         expressions.mkdir()
         compare_expressions(expressions, native)
+        spans = root / "scan-field-spans"
+        spans.mkdir()
+        compare_scalar_time_spans(spans, native)
 
 
 if __name__ == "__main__":

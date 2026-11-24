@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "35bd1dce473ee95f02c5642be4c8a4d8d4a471ca",
+  "source_revision": "35bd1dce473ee95f02c5642be4c8a4d8d4a471ca",
+  "baseline_revision": "a92ea39f76d9a7532209c66602f27561f0f5b4cd",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_scalar_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Ordinary scalar time averaging across scans and fields, including independent stored or derived visibility axes and two stored ordinates.",
+  "result": "passed",
+  "baseline_result": "Current main matches separate scalar time bins and refuses the first derived expression spanning scans.",
+  "text_exports": 13,
+  "points": 19,
+  "paired_refusals": 1,
+  "figures": 1,
+  "rendered_coordinates": 1,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

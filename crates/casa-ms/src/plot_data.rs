@@ -299,6 +299,7 @@ mod tests {
                 y_index: 0,
                 points: vec![(1.0, 3.0), (2.0, 4.0)],
                 plotms_metadata: Vec::new(),
+                plotms_averaged_scan_fields: None,
                 provenance: vec![
                     MsScatterPointRef {
                         row: 4,

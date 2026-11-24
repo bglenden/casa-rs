@@ -2233,6 +2233,8 @@ pub struct MsScatterSeries {
     pub provenance: Vec<MsScatterPointRef>,
     /// Display metadata for PlotMS points, when available.
     pub plotms_metadata: Vec<MsScatterPlotMsMetadata>,
+    /// Shared scalar-span `(scan, field)` IDs indexed by PlotMS averaging order.
+    pub plotms_averaged_scan_fields: Option<Arc<[(i32, i32)]>>,
 }
 
 /// Display metadata for one PlotMS export coordinate.
@@ -2490,6 +2492,7 @@ fn compact_scatter_series(
                 points,
                 provenance,
                 plotms_metadata,
+                plotms_averaged_scan_fields: entry.plotms_averaged_scan_fields,
             })
         })
         .collect();
@@ -4921,6 +4924,7 @@ fn build_generic_visibility_scatter(
                                 points: Vec::new(),
                                 provenance: Vec::new(),
                                 plotms_metadata: Vec::new(),
+                                plotms_averaged_scan_fields: None,
                             });
                     let push_started = timing_enabled.then(Instant::now);
                     series.points.push((x_value, y_value));
@@ -5403,6 +5407,23 @@ fn build_generic_visibility_scatter_with_averaging(
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
+    let mut scalar_spans = (scalar_time && (spec.averaging.avgscan || spec.averaging.avgfield))
+        .then(|| {
+            plotms_ordinates::ScalarSpanPlan::new(
+                plotms_ordinates::ScalarSpanColumns {
+                    observations: selected_observations
+                        .as_deref()
+                        .expect("scalar observations"),
+                    scans: &selected_scan_numbers,
+                    fields: &selected_field_ids,
+                    descriptions: &selected_data_desc_ids,
+                    times: &selected_times,
+                },
+                &data_description,
+                &spec.averaging,
+            )
+        })
+        .transpose()?;
     let chan_freq = if needs_spectral_coordinates {
         Some(ChanFreqColumn::new(spectral_window.table()))
     } else {
@@ -5705,6 +5726,9 @@ fn build_generic_visibility_scatter_with_averaging(
             (Some(group), bins.first_row_slot(group))
         });
         let group = time_group.or_else(|| {
+            if let Some(spans) = &scalar_spans {
+                return spans.group(row_slot);
+            }
             selected_observations.as_ref().map(|observations| {
                 baseline_groups.observe(
                     [
@@ -5721,9 +5745,20 @@ fn build_generic_visibility_scatter_with_averaging(
                 )
             })
         });
+        if let (Some(spans), Some(group)) = (&mut scalar_spans, group) {
+            spans.check_shape(group, selected_correlations.len(), channel_bins.len())?;
+        }
         let representative_row = row_numbers[representative_slot];
-        let representative_field = selected_field_ids[representative_slot];
-        let representative_scan = selected_scan_numbers[representative_slot];
+        let span_metadata =
+            group.and_then(|group| scalar_spans.as_ref().map(|spans| spans.metadata(group)));
+        let representative_field = span_metadata
+            .map_or(selected_field_ids[representative_slot], |metadata| {
+                metadata.field
+            });
+        let representative_scan = span_metadata
+            .map_or(selected_scan_numbers[representative_slot], |metadata| {
+                metadata.scan
+            });
         if let Some(group) = time_group {
             // Time averaging sees selected input channels, including any
             // incomplete bin that channel averaging will subsequently drop.
@@ -6238,6 +6273,15 @@ fn build_generic_visibility_scatter_with_averaging(
             .map(|(group, average)| (group, average.mean()))
             .collect::<HashMap<_, _>>()
     });
+    let scalar_scan_fields = scalar_spans.as_ref().map(|spans| {
+        scalar_time_rows
+            .iter()
+            .map(|&(group, _, _)| {
+                let metadata = spans.metadata(group);
+                (metadata.scan, metadata.field)
+            })
+            .collect::<Arc<[_]>>()
+    });
     let scalar_time_order = scalar_time_rows
         .into_iter()
         .enumerate()
@@ -6264,6 +6308,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 points: Vec::new(),
                 provenance: Vec::new(),
                 plotms_metadata: Vec::new(),
+                plotms_averaged_scan_fields: scalar_scan_fields.clone(),
             };
             let mut points = series.points.into_iter().map(|(key, point)| {
                 let group = key.time_key.group();
@@ -8224,6 +8269,7 @@ mod tests {
             y_index: 0,
             points: points.to_vec(),
             plotms_metadata: Vec::new(),
+            plotms_averaged_scan_fields: None,
             provenance: (0..points.len())
                 .map(|offset| scatter_point_ref(row_base + offset))
                 .collect(),
@@ -9233,6 +9279,14 @@ mod tests {
     }
 
     #[test]
+    fn scalar_spans_do_not_enlarge_plotms_point_metadata() {
+        assert_eq!(
+            std::mem::size_of::<MsScatterPlotMsMetadata>(),
+            std::mem::size_of::<(usize, Option<f64>, Option<usize>)>(),
+        );
+    }
+
+    #[test]
     fn compact_scatter_series_evenly_decimates_points() {
         let series = vec![MsScatterSeries {
             label: "Amplitude".to_string(),
@@ -9241,6 +9295,7 @@ mod tests {
             y_index: 0,
             points: (0..5).map(|index| (index as f64, index as f64)).collect(),
             plotms_metadata: Vec::new(),
+            plotms_averaged_scan_fields: None,
             provenance: (0..5)
                 .map(|index| MsScatterPointRef {
                     row: index,
@@ -9295,6 +9350,7 @@ mod tests {
                     y_index: 0,
                     points: (0..5).map(|index| (index as f64, index as f64)).collect(),
                     plotms_metadata: Vec::new(),
+                    plotms_averaged_scan_fields: None,
                     provenance: (0..5)
                         .map(|index| MsScatterPointRef {
                             row: index,
@@ -9311,6 +9367,7 @@ mod tests {
                     y_index: 0,
                     points: (5..10).map(|index| (index as f64, index as f64)).collect(),
                     plotms_metadata: Vec::new(),
+                    plotms_averaged_scan_fields: None,
                     provenance: (5..10)
                         .map(|index| MsScatterPointRef {
                             row: index,

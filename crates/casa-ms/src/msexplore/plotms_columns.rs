@@ -61,8 +61,6 @@ pub(super) fn uses_scalar_time_average(spec: &MsPlotSpec) -> bool {
         && spec.averaging.avgtime.is_some()
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
         && !spec.averaging.avgbaseline
-        && !spec.averaging.avgscan
-        && !spec.averaging.avgfield
         && !spec.averaging.avgantenna
         && !spec.averaging.avgspw
         && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)

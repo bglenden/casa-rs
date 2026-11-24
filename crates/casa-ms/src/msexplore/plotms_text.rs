@@ -185,6 +185,7 @@ fn write_series(
     {
         let y_axis = section[0].y_axis;
         write_section(output, name(x_axis), name(y_axis), verbose)?;
+        let scalar_scan_fields = section[0].plotms_averaged_scan_fields.as_deref();
         let mut points = section.iter().flat_map(|series| {
             series
                 .points
@@ -194,12 +195,15 @@ fn write_series(
                 .map(|(index, (xy, point))| (xy, point, series.plotms_metadata.get(index).copied()))
         });
         let write = |(&(x, y), point, display)| {
+            let display: Option<MsScatterPlotMsMetadata> = display;
+            let scan_field =
+                scalar_scan_fields.and_then(|ids| ids.get(display?.averaging_group?).copied());
             write_point(
                 output,
                 metadata,
                 (coordinate(x_axis, x), coordinate(y_axis, y)),
                 point,
-                display,
+                (display, scan_field),
                 None,
                 verbose,
             )
@@ -236,7 +240,7 @@ fn write_curves(
                 metadata,
                 (coordinate(x_axis, sample.x), significant(sample.y)),
                 &sample.point,
-                Some(sample.display),
+                (Some(sample.display), None),
                 Some(sample.frequency),
                 verbose,
             )?;
@@ -285,7 +289,7 @@ fn write_point(
     metadata: &mut Metadata<'_>,
     (x, y): (String, String),
     point: &MsScatterPointRef,
-    display: Option<MsScatterPlotMsMetadata>,
+    (display, scan_field): (Option<MsScatterPlotMsMetadata>, Option<(i32, i32)>),
     frequency: Option<f64>,
     verbose: bool,
 ) -> std::io::Result<()> {
@@ -294,6 +298,7 @@ fn write_point(
     }
     let averaged_baselines = metadata.averaged_baselines;
     let row = metadata.row(point.row)?;
+    let (scan, field) = scan_field.unwrap_or((row.scan, row.field));
     let (ant1, ant2, ant1name, ant2name) = if averaged_baselines {
         (-1, -1, "*", "*")
     } else {
@@ -318,10 +323,8 @@ fn write_point(
         .map_or("?", |&code| listobs::stokes_name(code));
     writeln!(
         output,
-        "{x} {y} {} {} {} {} {} {} {} {:.3} {frequency:.9} {} {pol} {}",
+        "{x} {y} {} {scan} {field} {} {} {} {} {:.3} {frequency:.9} {} {pol} {}",
         display.map_or(point.chan_start, |point| point.channel),
-        row.scan,
-        row.field,
         ant1,
         ant2,
         ant1name,
