@@ -4397,7 +4397,9 @@ pub(crate) fn save_empty_tiled_shape_column(
     )
 }
 
-type SparseArrayRowValues = Vec<(usize, Option<ArrayValue>)>;
+mod sparse_write_bytes;
+
+type SparseArrayRowValues<'a> = Vec<(usize, Option<&'a ArrayValue>)>;
 
 #[derive(Clone, Copy, Debug)]
 struct SparseTiledCubeRowPatch {
@@ -4411,7 +4413,7 @@ pub(crate) fn save_tiled_columns_sparse_rows_in_place(
     dm_type_name: &str,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     if changed_rows.is_empty() {
@@ -4469,7 +4471,7 @@ fn save_tiled_column_group_rows_sparse_in_place(
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
@@ -4526,7 +4528,7 @@ fn save_tiled_cell_group_rows_sparse_in_place(
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
@@ -4577,7 +4579,7 @@ fn save_tiled_data_group_rows_sparse_in_place(
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
@@ -4662,7 +4664,7 @@ fn save_tiled_shape_group_rows_sparse_in_place(
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
@@ -5058,7 +5060,7 @@ fn patch_tiled_cube_sparse_rows(
     table_path: &Path,
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     big_endian: bool,
     col_data_types: &[CasacoreDataType],
     tile_index: &[Option<usize>],
@@ -5076,14 +5078,14 @@ fn patch_tiled_cube_sparse_rows(
         ));
     }
 
-    struct SparseColumnPatch {
+    struct SparseColumnPatch<'a> {
         col_data_type: CasacoreDataType,
         elem_size: usize,
         expected_row_bytes: usize,
         row_block_bytes: usize,
         tile_storage_len: usize,
         col_offset: usize,
-        encoded_rows: std::collections::HashMap<usize, Vec<u8>>,
+        encoded_rows: std::collections::HashMap<usize, Cow<'a, [u8]>>,
     }
 
     let cell_shape = &cube.cube_shape[..row_axis];
@@ -5141,7 +5143,7 @@ fn patch_tiled_cube_sparse_rows(
             }
             let encoded = match value {
                 Some(value) => {
-                    let (encoded, dt) = encode_tiled_array(value, big_endian)?;
+                    let (encoded, dt) = sparse_write_bytes::encode_row(value, big_endian)?;
                     if dt != col_data_type {
                         return Err(StorageError::FormatMismatch(format!(
                             "tiled sparse save column {} expected {:?} but encoded {:?}",
@@ -5157,7 +5159,7 @@ fn patch_tiled_cube_sparse_rows(
                     }
                     encoded
                 }
-                None => vec![0u8; expected_row_bytes],
+                None => Cow::Owned(vec![0u8; expected_row_bytes]),
             };
             encoded_rows.insert(*row_idx, encoded);
         }
