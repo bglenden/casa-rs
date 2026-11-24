@@ -15,24 +15,7 @@ use crate::convert::value::CasaValue;
 pub(super) fn observatory_position(ms: &MeasurementSet, which: i64) -> MsResult<MPosition> {
     let observation = ms.observation()?;
     let row = checked_row(which, observation.row_count(), "Observation ID")?;
-    let measures = open_measures_runtime()?;
-    let mut position = None;
-    // CASA validates every OBSERVATION telescope before returning a position.
-    for index in 0..observation.row_count() {
-        let name = observation.string(index, "TELESCOPE_NAME")?;
-        if name.is_empty() {
-            return Err(MsError::InvalidInput(
-                "The name of the telescope is not stored in the measurement set".into(),
-            ));
-        }
-        let current = MPosition::casa_observatory(&name, measures.as_ref()).ok_or_else(|| {
-            MsError::InvalidInput(format!("Telescope {name} is not recognized by CASA"))
-        })?;
-        if index == row {
-            position = Some(current);
-        }
-    }
-    position.ok_or_else(|| MsError::InvalidInput("Observation ID out of range".into()))
+    observation.observatory_position(row, open_measures_runtime()?.as_ref())
 }
 
 fn time_range(observation: &MsObservation<'_>, row: usize) -> MsResult<CasaValue> {

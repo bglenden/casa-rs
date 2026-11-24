@@ -21,11 +21,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
+use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::position::MPosition;
+use casa_types::measures::position::{MPosition, PositionRef};
 use casa_types::quanta::{MvAngle, MvTime};
 use casa_types::{ArrayValue, ScalarValue};
 use ndarray::IxDyn;
@@ -35,8 +37,15 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use crate::selection::parser::{parse_correlation_selector, selection_from_options};
 use crate::selection::{MsSelection, resolve_row_indices_with_system_budget};
-use crate::subtables::{SubTable, get_i32, has_column};
+use crate::subtables::measured_columns::selected_antenna_positions;
+use crate::subtables::{
+    FieldDirectionColumn, MetadataDirection, SubTable, antenna_observatory_offsets, get_i32,
+    has_column,
+};
+use crate::tool_scan_summary::{take_double, take_integer};
 use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
+
+mod summary;
 
 const LISTOBS_SCHEMA_VERSION: u32 = 1;
 const LISTOBS_UV_SCHEMA_VERSION: u32 = 1;
@@ -340,7 +349,7 @@ pub struct ScanSummary {
     pub start_mjd_seconds: f64,
     /// Latest MAIN.TIME in the group, in MJD seconds.
     pub end_mjd_seconds: f64,
-    /// Mean MAIN.INTERVAL across the grouped rows, in seconds.
+    /// Mean MAIN.EXPOSURE for the scan record's integration time, in seconds.
     pub mean_interval_seconds: f64,
     /// Mean MAIN.INTERVAL grouped by spectral window, aligned with `spectral_window_ids`.
     pub mean_interval_seconds_by_spw: Vec<f64>,
@@ -367,7 +376,7 @@ pub struct FieldSummary {
     pub time_mjd_seconds: f64,
     /// Direction reference frame for `PHASE_DIR` when it can be reconstructed from `MEASINFO`.
     pub direction_reference: Option<String>,
-    /// First phase-center direction coefficient as `[longitude, latitude]` in radians.
+    /// Phase-center direction as `[longitude, latitude]` in radians.
     pub phase_direction_radians: [f64; 2],
 }
 
@@ -482,6 +491,7 @@ pub struct AntennaSummary {
 struct MainUsage {
     field_row_counts: HashMap<i32, usize>,
     field_unflagged_row_counts: HashMap<i32, f64>,
+    unflagged_row_fractions: Option<Vec<f64>>,
     used_field_ids: BTreeSet<usize>,
     used_observation_ids: BTreeSet<usize>,
     used_array_ids: BTreeSet<i32>,
@@ -494,432 +504,10 @@ struct MainUsage {
 
 #[derive(Debug, Clone)]
 struct UnflaggedRowContext {
+    use_row_flag: bool,
     ddid_to_bandwidth_hz: HashMap<i32, f64>,
     ddid_to_channel_widths_hz: HashMap<i32, Vec<f64>>,
-}
-
-impl ListObsSummary {
-    /// Build a structured `listobs` summary from an open [`MeasurementSet`].
-    pub fn from_ms(ms: &MeasurementSet) -> MsResult<Self> {
-        Self::from_ms_with_options(ms, &ListObsOptions::default())
-    }
-
-    /// Build a structured `listobs` summary from an open [`MeasurementSet`]
-    /// using explicit task-style options.
-    pub fn from_ms_with_options(ms: &MeasurementSet, options: &ListObsOptions) -> MsResult<Self> {
-        options.validate_supported()?;
-        let selected_rows = if !options.selectdata || !options.has_selection() {
-            None
-        } else {
-            Some(resolve_row_indices_with_system_budget(
-                ms,
-                &MsSelection::from_summary_options(options),
-            )?)
-        };
-        let unflagged_context = if options.listunfl {
-            Some(UnflaggedRowContext::new(ms)?)
-        } else {
-            None
-        };
-        let observations = build_observations(ms, selected_rows.as_deref())?;
-        let main_usage =
-            analyze_main_table(ms, selected_rows.as_deref(), unflagged_context.as_ref())?;
-        let fields = build_fields(ms, &main_usage)?;
-        let polarization_setups = build_polarizations(ms)?;
-        let data_descriptions = build_data_descriptions(ms, &main_usage)?;
-        let spectral_windows =
-            build_spectral_windows(ms, &data_descriptions, &polarization_setups)?;
-        let used_spw_ids = spectral_windows
-            .iter()
-            .map(|summary| summary.spectral_window_id as i32)
-            .collect::<BTreeSet<_>>();
-        let sources = build_sources(ms, &used_spw_ids)?;
-        let antennas = build_antennas(ms, &observations, &main_usage)?;
-
-        let field_name_lookup: HashMap<i32, String> = fields
-            .iter()
-            .map(|field| (field.field_id as i32, field.name.clone()))
-            .collect();
-        let state_intent_lookup = build_state_intent_lookup(ms)?;
-        let dd_to_spw: HashMap<i32, i32> = data_descriptions
-            .iter()
-            .map(|dd| (dd.data_description_id as i32, dd.spectral_window_id))
-            .collect();
-        let scans = build_scans(
-            ms,
-            selected_rows.as_deref(),
-            &field_name_lookup,
-            &dd_to_spw,
-            &state_intent_lookup,
-            unflagged_context.as_ref(),
-        )?;
-
-        let displayed_polarizations = unique_count(
-            spectral_windows
-                .iter()
-                .flat_map(|summary| summary.polarization_ids.iter().copied()),
-        );
-        let time_range = main_usage.time_range;
-        let (start_mjd_seconds, end_mjd_seconds, total_elapsed_seconds) = time_range
-            .map(|(start, end)| (Some(start), Some(end), Some(end - start)))
-            .unwrap_or((None, None, None));
-
-        Ok(Self {
-            schema_version: LISTOBS_SCHEMA_VERSION,
-            options: options.clone(),
-            measurement_set: MeasurementSetInfo {
-                path: ms.path().map(|path| path.display().to_string()),
-                ms_version: ms.ms_version(),
-                row_count: main_usage.selected_row_count,
-                observation_count: observations.len(),
-                field_count: fields.len(),
-                spectral_window_count: spectral_windows.len(),
-                polarization_count: displayed_polarizations,
-                data_description_count: data_descriptions.len(),
-                source_count: sources.len(),
-                antenna_count: antennas.len(),
-                antenna_table_count: ms.antenna().map(|antenna| antenna.row_count()).unwrap_or(0),
-                time_reference: main_time_reference(ms.main_table()),
-                start_mjd_seconds,
-                end_mjd_seconds,
-                total_elapsed_seconds,
-            },
-            observations,
-            scans,
-            fields,
-            polarization_setups,
-            data_descriptions,
-            spectral_windows,
-            sources,
-            antennas,
-        })
-    }
-
-    /// Open an on-disk MeasurementSet and summarize it.
-    pub fn from_path(path: impl AsRef<Path>) -> MsResult<Self> {
-        Self::from_path_with_options(path, &ListObsOptions::default())
-    }
-
-    /// Open an on-disk MeasurementSet and summarize it using explicit
-    /// task-style options.
-    pub fn from_path_with_options(
-        path: impl AsRef<Path>,
-        options: &ListObsOptions,
-    ) -> MsResult<Self> {
-        let ms = MeasurementSet::open(path)?;
-        Self::from_ms_with_options(&ms, options)
-    }
-
-    /// Render the summary as pretty-printed JSON.
-    pub fn render_json_pretty(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string_pretty(self)
-    }
-
-    /// Render the summary as CASA-style text.
-    pub fn render_text(&self) -> String {
-        self.render_text_with_options(&self.options)
-    }
-
-    /// Render the summary as CASA-style text using explicit render options.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "predates the function-length limit; #705"
-    )]
-    pub fn render_text_with_options(&self, options: &ListObsOptions) -> String {
-        let mut out = String::new();
-        let name = self
-            .measurement_set
-            .path
-            .as_deref()
-            .unwrap_or("<memory MeasurementSet>");
-        let ms_version = self
-            .measurement_set
-            .ms_version
-            .map(|value| format!("{value:.0}"))
-            .unwrap_or_else(|| "?".to_string());
-        let observer = first_non_empty(self.observations.iter().map(|obs| obs.observer.as_str()));
-        let project = first_non_empty(self.observations.iter().map(|obs| obs.project.as_str()));
-        let telescope = first_non_empty(
-            self.observations
-                .iter()
-                .map(|obs| obs.telescope_name.as_str()),
-        );
-        let time_ref = self
-            .measurement_set
-            .time_reference
-            .as_deref()
-            .unwrap_or("unknown");
-
-        let _ = writeln!(
-            out,
-            "================================================================================"
-        );
-        let _ = writeln!(
-            out,
-            "MeasurementSet Name:  {name}      MS Version {ms_version}"
-        );
-        let _ = writeln!(
-            out,
-            "================================================================================"
-        );
-        let _ = writeln!(out, "Observer: {observer}     Project: {project}");
-        if options.verbose {
-            let _ = writeln!(out, "Observation: {telescope}");
-        } else {
-            let _ = writeln!(
-                out,
-                "Observation: {telescope}({} antennas)",
-                self.measurement_set.antenna_table_count
-            );
-        }
-        let _ = writeln!(
-            out,
-            "Data records: {}       Total elapsed time = {}",
-            self.measurement_set.row_count,
-            format_elapsed(self.measurement_set.total_elapsed_seconds)
-        );
-        if let Some((start, end)) = self
-            .measurement_set
-            .start_mjd_seconds
-            .zip(self.measurement_set.end_mjd_seconds)
-        {
-            let start = MvTime::from_mjd_seconds(start);
-            let end = MvTime::from_mjd_seconds(end);
-            let _ = writeln!(
-                out,
-                "Observed from   {}   to   {} ({time_ref})",
-                start.format_dmy(1),
-                end.format_dmy(1),
-            );
-        }
-        let _ = writeln!(out);
-
-        if options.verbose && !self.scans.is_empty() {
-            let mut grouped = BTreeMap::<(i32, i32), Vec<&ScanSummary>>::new();
-            for scan in &self.scans {
-                grouped
-                    .entry((scan.observation_id, scan.array_id))
-                    .or_default()
-                    .push(scan);
-            }
-
-            for ((observation_id, array_id), scans) in grouped {
-                let _ = writeln!(
-                    out,
-                    "ObservationID = {observation_id}         ArrayID = {array_id}"
-                );
-                let _ = writeln!(
-                    out,
-                    "{}",
-                    if options.listunfl {
-                        format!(
-                            "Date        Timerange ({time_ref})          Scan  FldId FieldName             nRows     nUnflRows   SpwIds   Average Interval(s)    ScanIntent"
-                        )
-                    } else {
-                        format!(
-                            "Date        Timerange ({time_ref})          Scan  FldId FieldName             nRows     SpwIds   Average Interval(s)    ScanIntent"
-                        )
-                    }
-                );
-                let mut previous_day = None;
-                for scan in scans {
-                    let scan_start = MvTime::from_mjd_seconds(scan.start_mjd_seconds);
-                    let scan_end = MvTime::from_mjd_seconds(scan.end_mjd_seconds);
-                    let day = scan_start.format_dmy_date();
-                    let time_start = if previous_day == Some(day.clone()) {
-                        scan_start.format_time(1)
-                    } else {
-                        scan_start.format_dmy(1)
-                    };
-                    let spw_ids = format_i32_bracket_list(&scan.spectral_window_ids);
-                    let mean_intervals =
-                        format_f64_bracket_list(&scan.mean_interval_seconds_by_spw);
-                    let scan_intents = join_or_blank(&scan.scan_intents);
-                    if options.listunfl {
-                        let _ = writeln!(
-                            out,
-                            "  {:<22} - {:<10} {:>4} {:>6} {:<20} {:>10} {:>13}  {:<8} {:<23} {}",
-                            time_start,
-                            scan_end.format_time(1),
-                            scan.scan_number,
-                            scan.field_id,
-                            truncate_for_column(&scan.field_name, 20),
-                            scan.row_count,
-                            format_float_compact(scan.unflagged_row_count.unwrap_or(0.0), 2),
-                            spw_ids,
-                            mean_intervals,
-                            scan_intents,
-                        );
-                    } else {
-                        let _ = writeln!(
-                            out,
-                            "  {:<22} - {:<10} {:>4} {:>6} {:<20} {:>10}  {:<8} {:<23} {}",
-                            time_start,
-                            scan_end.format_time(1),
-                            scan.scan_number,
-                            scan.field_id,
-                            truncate_for_column(&scan.field_name, 20),
-                            scan.row_count,
-                            spw_ids,
-                            mean_intervals,
-                            scan_intents,
-                        );
-                    }
-                    previous_day = Some(day);
-                }
-                let _ = writeln!(out, "           (nRows = Total number of rows per scan) ");
-                let _ = writeln!(out);
-            }
-        }
-
-        let _ = writeln!(out, "Fields: {}", self.fields.len());
-        let _ = writeln!(
-            out,
-            "{}",
-            if options.listunfl {
-                "  ID   Code Name                RA               Decl           Epoch   SrcId      nRows    nUnflRows"
-            } else {
-                "  ID   Code Name                RA               Decl           Epoch   SrcId      nRows"
-            }
-        );
-        for field in &self.fields {
-            if options.listunfl {
-                let _ = writeln!(
-                    out,
-                    "  {:<5}{:<5}{:<20}{:<16}{:<16}{:<8}{:<6}{:>10}{:>13}",
-                    field.field_id,
-                    truncate_for_column(&field.code, 4),
-                    truncate_for_column(&field.name, 20),
-                    MvAngle::from_radians(field.phase_direction_radians[0])
-                        .normalized(0.0)
-                        .format_time(6),
-                    MvAngle::from_radians(field.phase_direction_radians[1]).format_angle_dig2(5),
-                    field.direction_reference.as_deref().unwrap_or("?"),
-                    field.source_id,
-                    field.row_count,
-                    format_float_compact(field.unflagged_row_count.unwrap_or(0.0), 2),
-                );
-            } else {
-                let _ = writeln!(
-                    out,
-                    "  {:<5}{:<5}{:<20}{:<16}{:<16}{:<8}{:<6}{:>10}",
-                    field.field_id,
-                    truncate_for_column(&field.code, 4),
-                    truncate_for_column(&field.name, 20),
-                    MvAngle::from_radians(field.phase_direction_radians[0])
-                        .normalized(0.0)
-                        .format_time(6),
-                    MvAngle::from_radians(field.phase_direction_radians[1]).format_angle_dig2(5),
-                    field.direction_reference.as_deref().unwrap_or("?"),
-                    field.source_id,
-                    field.row_count,
-                );
-            }
-        }
-        let _ = writeln!(out);
-
-        let _ = writeln!(
-            out,
-            "Spectral Windows: ({} unique spectral windows and {} unique polarization setups)",
-            self.spectral_windows.len(),
-            self.polarization_setups.len(),
-        );
-        let _ = writeln!(
-            out,
-            "  SpwID  Name                           #Chans   Frame   Ch0(MHz)  ChanWid(kHz)  TotBW(kHz) CtrFreq(MHz)  Corrs"
-        );
-        for spw in &self.spectral_windows {
-            let _ = writeln!(
-                out,
-                "  {:<7}{:<30}{:>8}   {:<6}{:>10.3}{:>14.3}{:>12.1}{:>13.4}   {}",
-                spw.spectral_window_id,
-                truncate_for_column(&spw_display_name(spw), 30),
-                spw.num_channels,
-                spw.frame.as_deref().unwrap_or("?"),
-                spw.first_channel_frequency_hz / 1.0e6,
-                spw.channel_width_hz / 1.0e3,
-                spw.total_bandwidth_hz / 1.0e3,
-                spw.center_frequency_hz / 1.0e6,
-                join_with_padding(&spw.correlation_types),
-            );
-        }
-        let _ = writeln!(out);
-
-        if options.verbose {
-            let _ = writeln!(out, "Sources: {}", self.sources.len());
-            let _ = writeln!(
-                out,
-                "  ID   Name                SpwId RestFreq(MHz)  SysVel(km/s) "
-            );
-            for source in &self.sources {
-                let _ = writeln!(
-                    out,
-                    "  {:<5}{:<20}{:<6}{:<15}{:<13}",
-                    source.source_id,
-                    truncate_for_column(&source.name, 20),
-                    if source.spectral_window_id < 0 {
-                        "any".to_string()
-                    } else {
-                        source.spectral_window_id.to_string()
-                    },
-                    source
-                        .rest_frequency_hz
-                        .map(|value| format!("{:.6}", value / 1.0e6))
-                        .unwrap_or_else(|| "-".to_string()),
-                    source
-                        .system_velocity_m_s
-                        .map(|value| format_float_compact(value / 1.0e3, 3))
-                        .unwrap_or_else(|| "-".to_string()),
-                );
-            }
-            let _ = writeln!(out);
-        }
-
-        if options.verbose {
-            let _ = writeln!(out, "Antennas: {}:", self.antennas.len());
-            let _ = writeln!(
-                out,
-                "  ID   Name  Station   Diam.    Long.         Lat.                Offset from array center (m)                ITRF Geocentric coordinates (m)        "
-            );
-            let _ = writeln!(
-                out,
-                "                                                                     East         North     Elevation               x               y               z"
-            );
-            for antenna in &self.antennas {
-                let _ = writeln!(
-                    out,
-                    "  {:<5}{:<6}{:<10}{:>5.1} m   {:<14}{:<13}{:>14.4}{:>14.4}{:>14.4}{:>16.6}{:>16.6}{:>16.6}",
-                    antenna.antenna_id,
-                    truncate_for_column(&antenna.name, 6),
-                    truncate_for_column(&antenna.station, 10),
-                    antenna.dish_diameter_m,
-                    MvAngle::from_radians(antenna.longitude_radians).format_angle(1),
-                    MvAngle::from_radians(antenna.latitude_radians).format_angle_dig2(1),
-                    antenna.offset_from_observatory_m[0],
-                    antenna.offset_from_observatory_m[1],
-                    antenna.offset_from_observatory_m[2],
-                    antenna.position_m[0],
-                    antenna.position_m[1],
-                    antenna.position_m[2],
-                );
-            }
-        } else {
-            let _ = writeln!(out, "Antennas: {} 'name'='station' ", self.antennas.len());
-            for line in format_compact_antenna_lines(&self.antennas) {
-                let _ = writeln!(out, "{line}");
-            }
-        }
-
-        out
-    }
-
-    /// Render the summary using the requested output format.
-    pub fn render(&self, format: ListObsOutputFormat) -> Result<String, serde_json::Error> {
-        match format {
-            ListObsOutputFormat::Text => Ok(self.render_text()),
-            ListObsOutputFormat::Json => self.render_json_pretty(),
-        }
-    }
+    flag_bytes_per_row: usize,
 }
 
 impl ListObsUvCoverage {
@@ -1194,15 +782,34 @@ fn build_observations(
     Ok(summaries)
 }
 
-fn build_fields(ms: &MeasurementSet, main_usage: &MainUsage) -> MsResult<Vec<FieldSummary>> {
+fn build_fields(
+    ms: &MeasurementSet,
+    main_usage: &MainUsage,
+    tool_view: bool,
+) -> MsResult<(Vec<FieldSummary>, Vec<MetadataDirection>)> {
     let field = ms.field()?;
     let mut summaries = Vec::with_capacity(field.row_count());
+    let mut directions = Vec::new();
     for row in 0..field.row_count() {
         if (main_usage.selection_applied || !main_usage.used_field_ids.is_empty())
             && !main_usage.used_field_ids.contains(&row)
         {
             continue;
         }
+        let (direction_reference, phase_direction_radians) = if tool_view {
+            let measured =
+                field.metadata_direction_at_seconds(row, FieldDirectionColumn::Phase, 0.0)?;
+            let direction = &measured.direction;
+            let reference = Some(direction.refer().as_str().to_string());
+            let angles = [direction.longitude_rad(), direction.latitude_rad()];
+            directions.push(measured);
+            (reference, angles)
+        } else {
+            (
+                column_measure_reference_for_row(field.table(), "PHASE_DIR", row)?,
+                extract_direction_pair(field.phase_dir(row)?)?,
+            )
+        };
         summaries.push(FieldSummary {
             field_id: row,
             name: field.name(row)?,
@@ -1214,11 +821,11 @@ fn build_fields(ms: &MeasurementSet, main_usage: &MainUsage) -> MsResult<Vec<Fie
                 .get(&(row as i32))
                 .copied(),
             time_mjd_seconds: field.time(row)?,
-            direction_reference: column_measure_reference_for_row(field.table(), "PHASE_DIR", row)?,
-            phase_direction_radians: extract_direction_pair(field.phase_dir(row)?)?,
+            direction_reference,
+            phase_direction_radians,
         });
     }
-    Ok(summaries)
+    Ok((summaries, directions))
 }
 
 fn build_polarizations(ms: &MeasurementSet) -> MsResult<Vec<PolarizationSummary>> {
@@ -1371,19 +978,51 @@ fn build_antennas(
     ms: &MeasurementSet,
     observations: &[ObservationSummary],
     main_usage: &MainUsage,
+    tool_view: bool,
+    verbose: bool,
+    measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
 ) -> MsResult<Vec<AntennaSummary>> {
     let antenna = ms.antenna()?;
-    let observatory = observatory_position(observations, main_usage, &antenna)?;
-    let mut summaries = Vec::with_capacity(antenna.row_count());
-    for row in 0..antenna.row_count() {
-        if (main_usage.selection_applied || !main_usage.used_antenna_ids.is_empty())
-            && !main_usage.used_antenna_ids.contains(&row)
-        {
-            continue;
-        }
-        let position_m = antenna.position(row)?;
-        let position = MPosition::new_itrf(position_m[0], position_m[1], position_m[2]);
-        let (longitude_radians, latitude_radians, _) = position.as_spherical();
+    let observatory = if !tool_view {
+        observatory_position(observations, main_usage, &antenna)?
+    } else if verbose && antenna.row_count() > 0 {
+        let provider = measures_provider(measures)?;
+        Some(
+            ms.observation()?
+                .observatory_position(0, provider.as_ref())?,
+        )
+    } else {
+        None
+    };
+    let rows: Vec<_> = if main_usage.selection_applied || !main_usage.used_antenna_ids.is_empty() {
+        main_usage
+            .used_antenna_ids
+            .range(..antenna.row_count())
+            .copied()
+            .collect()
+    } else {
+        (0..antenna.row_count()).collect()
+    };
+    let positions = if tool_view {
+        selected_antenna_positions(antenna.table(), &rows)?
+    } else {
+        antenna
+            .positions(&rows)?
+            .into_iter()
+            .map(|[x, y, z]| MPosition::new_itrf(x, y, z))
+            .collect()
+    };
+    let mut summaries = Vec::with_capacity(rows.len());
+    for (row, position) in rows.into_iter().zip(positions) {
+        let position_m = position.as_itrf();
+        let (longitude_radians, latitude_radians, offset_position) =
+            report_position(&position, position_m);
+        let offsets = match observatory.as_ref() {
+            Some(center) if tool_view => {
+                antenna_observatory_offsets(offset_position, center.as_itrf())
+            }
+            center => observatory_offset(position_m, center),
+        };
         summaries.push(AntennaSummary {
             antenna_id: row,
             name: antenna.name(row)?,
@@ -1393,11 +1032,32 @@ fn build_antennas(
             dish_diameter_m: antenna.dish_diameter(row)?,
             longitude_radians,
             latitude_radians,
-            offset_from_observatory_m: observatory_offset(position_m, observatory.as_ref()),
+            offset_from_observatory_m: offsets,
             position_m,
         });
     }
     Ok(summaries)
+}
+
+fn report_position(position: &MPosition, itrf: [f64; 3]) -> (f64, f64, [f64; 3]) {
+    if position.refer() == PositionRef::WGS84 {
+        // CASA displays converted ITRF coordinates, but its angle and offset
+        // formulas use the vector represented in the original reference.
+        let [longitude, latitude, radius] = position.values();
+        let (sin_latitude, cos_latitude) = latitude.sin_cos();
+        let (sin_longitude, cos_longitude) = longitude.sin_cos();
+        return (
+            longitude,
+            latitude,
+            [
+                radius * cos_latitude * cos_longitude,
+                radius * cos_latitude * sin_longitude,
+                radius * sin_latitude,
+            ],
+        );
+    }
+    let (longitude, latitude, _) = position.as_spherical();
+    (longitude, latitude, itrf)
 }
 
 #[expect(
@@ -1410,7 +1070,8 @@ fn build_scans(
     field_name_lookup: &HashMap<i32, String>,
     dd_to_spw: &HashMap<i32, i32>,
     state_intent_lookup: &HashMap<i32, String>,
-    unflagged_context: Option<&UnflaggedRowContext>,
+    unflagged_fractions: Option<&[f64]>,
+    group_scan_by_field: bool,
 ) -> MsResult<Vec<ScanSummary>> {
     #[derive(Debug, Clone)]
     struct MainRowInfo {
@@ -1422,6 +1083,7 @@ fn build_scans(
         state_id: i32,
         time: f64,
         exposure_seconds: f64,
+        report_interval_seconds: f64,
         unflagged_row_fraction: Option<f64>,
     }
 
@@ -1437,7 +1099,7 @@ fn build_scans(
         data_description_ids: BTreeSet<i32>,
         spectral_window_ids: BTreeSet<i32>,
         state_ids: BTreeSet<i32>,
-        exposure_by_spw: BTreeMap<i32, (f64, usize)>,
+        report_interval_by_spw: BTreeMap<i32, (f64, usize)>,
         exposure_sum_seconds: f64,
         unflagged_row_sum: f64,
     }
@@ -1453,7 +1115,7 @@ fn build_scans(
         data_description_ids: BTreeSet<i32>,
         spectral_window_ids: BTreeSet<i32>,
         state_ids: BTreeSet<i32>,
-        exposure_by_spw: BTreeMap<i32, (f64, usize)>,
+        report_interval_by_spw: BTreeMap<i32, (f64, usize)>,
         exposure_sum_seconds: f64,
         unflagged_row_sum: f64,
     }
@@ -1492,8 +1154,11 @@ fn build_scans(
             self.data_description_ids.insert(row.data_desc_id);
             if let Some(spw_id) = dd_to_spw.get(&row.data_desc_id).copied() {
                 self.spectral_window_ids.insert(spw_id);
-                let entry = self.exposure_by_spw.entry(spw_id).or_insert((0.0, 0));
-                entry.0 += row.exposure_seconds;
+                let entry = self
+                    .report_interval_by_spw
+                    .entry(spw_id)
+                    .or_insert((0.0, 0));
+                entry.0 += row.report_interval_seconds;
                 entry.1 += 1;
             }
             self.state_ids.insert(row.state_id);
@@ -1514,7 +1179,7 @@ fn build_scans(
                 data_description_ids: group.data_description_ids.clone(),
                 spectral_window_ids: group.spectral_window_ids.clone(),
                 state_ids: group.state_ids.clone(),
-                exposure_by_spw: group.exposure_by_spw.clone(),
+                report_interval_by_spw: group.report_interval_by_spw.clone(),
                 exposure_sum_seconds: group.exposure_sum_seconds,
                 unflagged_row_sum: group.unflagged_row_sum,
             }
@@ -1530,46 +1195,64 @@ fn build_scans(
             self.spectral_window_ids
                 .extend(group.spectral_window_ids.iter().copied());
             self.state_ids.extend(group.state_ids.iter().copied());
-            for (spw_id, (sum, count)) in &group.exposure_by_spw {
-                let entry = self.exposure_by_spw.entry(*spw_id).or_insert((0.0, 0));
+            for (spw_id, (sum, count)) in &group.report_interval_by_spw {
+                let entry = self
+                    .report_interval_by_spw
+                    .entry(*spw_id)
+                    .or_insert((0.0, 0));
                 entry.0 += *sum;
                 entry.1 += *count;
             }
             self.unflagged_row_sum += group.unflagged_row_sum;
         }
 
-        fn matches_group(&self, group: &TimeGroup) -> bool {
+        fn matches_group(&self, group: &TimeGroup, group_scan_by_field: bool) -> bool {
             self.observation_id == group.observation_id
                 && self.array_id == group.array_id
                 && self.scan_number == group.scan_number
                 && self.field_ids == group.field_ids
-                && self.data_description_ids == group.data_description_ids
+                && (group_scan_by_field || self.data_description_ids == group.data_description_ids)
         }
     }
 
     let table = ms.main_table();
     let has_exposure = has_column(table, "EXPOSURE");
+    let mut columns = vec![
+        "OBSERVATION_ID",
+        "ARRAY_ID",
+        "SCAN_NUMBER",
+        "FIELD_ID",
+        "DATA_DESC_ID",
+        "STATE_ID",
+        "TIME",
+        "INTERVAL",
+    ];
+    if has_exposure {
+        columns.push("EXPOSURE");
+    }
     let mut rows = Vec::with_capacity(table.row_count());
     let mut scan_time_ranges = BTreeMap::<(i32, i32, i32), (f64, f64)>::new();
     let row_numbers = selected_rows
         .map(|rows| rows.to_vec())
         .unwrap_or_else(|| (0..table.row_count()).collect());
     let row_chunk_rows = planned_scalar_scan_rows(row_numbers.len(), 6 * 4 + 3 * 8)?;
+    let mut row_offset = 0;
     for row_chunk in row_numbers.chunks(row_chunk_rows) {
-        let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
-        let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
-        let scan_values = load_i32_rows(table, "SCAN_NUMBER", row_chunk)?;
-        let field_values = load_i32_rows(table, "FIELD_ID", row_chunk)?;
-        let data_desc_values = load_i32_rows(table, "DATA_DESC_ID", row_chunk)?;
-        let state_values = load_i32_rows(table, "STATE_ID", row_chunk)?;
-        let time_values = load_f64_rows(table, "TIME", row_chunk)?;
-        let interval_values = load_f64_rows(table, "INTERVAL", row_chunk)?;
+        let mut values = table.required_scalar_columns_owned_for_rows(&columns, row_chunk)?;
+        let observation_values = take_integer(&mut values, "OBSERVATION_ID")?;
+        let array_values = take_integer(&mut values, "ARRAY_ID")?;
+        let scan_values = take_integer(&mut values, "SCAN_NUMBER")?;
+        let field_values = take_integer(&mut values, "FIELD_ID")?;
+        let data_desc_values = take_integer(&mut values, "DATA_DESC_ID")?;
+        let state_values = take_integer(&mut values, "STATE_ID")?;
+        let time_values = take_double(&mut values, "TIME")?;
+        let interval_values = take_double(&mut values, "INTERVAL")?;
         let exposure_values = if has_exposure {
-            Some(load_f64_rows(table, "EXPOSURE", row_chunk)?)
+            Some(take_double(&mut values, "EXPOSURE")?)
         } else {
             None
         };
-        for (row_slot, row) in row_chunk.iter().copied().enumerate() {
+        for row_slot in 0..row_chunk.len() {
             let observation_id = observation_values[row_slot];
             let array_id = array_values[row_slot];
             let scan_number = scan_values[row_slot];
@@ -1582,9 +1265,8 @@ fn build_scans(
                 .as_ref()
                 .map(|values| values[row_slot])
                 .unwrap_or(interval);
-            let unflagged_row_fraction = unflagged_context
-                .map(|context| compute_unflagged_row_fraction(ms, row, context))
-                .transpose()?;
+            let unflagged_row_fraction =
+                unflagged_fractions.map(|fractions| fractions[row_offset + row_slot]);
             rows.push(MainRowInfo {
                 observation_id,
                 array_id,
@@ -1594,6 +1276,11 @@ fn build_scans(
                 state_id,
                 time,
                 exposure_seconds: exposure,
+                report_interval_seconds: if group_scan_by_field {
+                    interval
+                } else {
+                    exposure
+                },
                 unflagged_row_fraction,
             });
             let begin = time - interval / 2.0;
@@ -1604,6 +1291,7 @@ fn build_scans(
             entry.0 = entry.0.min(begin);
             entry.1 = entry.1.max(end);
         }
+        row_offset += row_chunk.len();
     }
 
     rows.sort_by(|left, right| {
@@ -1611,6 +1299,13 @@ fn build_scans(
             .cmp(&right.observation_id)
             .then_with(|| left.array_id.cmp(&right.array_id))
             .then_with(|| left.scan_number.cmp(&right.scan_number))
+            .then_with(|| {
+                if group_scan_by_field {
+                    left.field_id.cmp(&right.field_id)
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            })
             .then_with(|| left.time.total_cmp(&right.time))
             .then_with(|| left.field_id.cmp(&right.field_id))
             .then_with(|| left.data_desc_id.cmp(&right.data_desc_id))
@@ -1624,6 +1319,7 @@ fn build_scans(
                 && group.array_id == row.array_id
                 && group.scan_number == row.scan_number
                 && group.time == row.time
+                && (!group_scan_by_field || group.field_ids.contains(&row.field_id))
         });
         if should_extend {
             if let Some(group) = time_groups.last_mut() {
@@ -1677,7 +1373,7 @@ fn build_scans(
             mean_interval_seconds_by_spw: spectral_window_ids
                 .iter()
                 .map(|spw_id| {
-                    scan.exposure_by_spw
+                    scan.report_interval_by_spw
                         .get(spw_id)
                         .map(|(sum, count)| {
                             if *count == 0 {
@@ -1689,7 +1385,7 @@ fn build_scans(
                         .unwrap_or(0.0)
                 })
                 .collect(),
-            unflagged_row_count: unflagged_context.map(|_| scan.unflagged_row_sum),
+            unflagged_row_count: unflagged_fractions.map(|_| scan.unflagged_row_sum),
         }
     };
 
@@ -1698,7 +1394,7 @@ fn build_scans(
     for group in &time_groups {
         let same_subscan = current
             .as_ref()
-            .is_some_and(|scan| scan.matches_group(group));
+            .is_some_and(|scan| scan.matches_group(group, group_scan_by_field));
 
         if !same_subscan {
             if let Some(scan) = current.take() {
@@ -1720,7 +1416,7 @@ fn build_scans(
 }
 
 impl UnflaggedRowContext {
-    fn new(ms: &MeasurementSet) -> MsResult<Self> {
+    fn new(ms: &MeasurementSet, use_row_flag: bool) -> MsResult<Self> {
         let dd = ms.data_description()?;
         let spw = ms.spectral_window()?;
         let mut ddid_to_bandwidth_hz = HashMap::new();
@@ -1744,21 +1440,63 @@ impl UnflaggedRowContext {
             ddid_to_bandwidth_hz.insert(row as i32, bandwidth_hz);
             ddid_to_channel_widths_hz.insert(row as i32, channel_widths);
         }
+        let polarization = ms.polarization()?;
+        let mut max_correlations = 0;
+        for row in 0..polarization.row_count() {
+            max_correlations = max_correlations.max(polarization.num_corr(row)?.max(0) as usize);
+        }
+        let max_channels = ddid_to_channel_widths_hz
+            .values()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
+        let flag_bytes_per_row = std::mem::size_of::<Option<ArrayValue>>()
+            .saturating_add(max_correlations.saturating_mul(max_channels));
         Ok(Self {
+            use_row_flag,
             ddid_to_bandwidth_hz,
             ddid_to_channel_widths_hz,
+            flag_bytes_per_row,
         })
+    }
+
+    fn fractions(
+        &self,
+        table: &Table,
+        rows: &[usize],
+        data_desc_ids: &[i32],
+    ) -> MsResult<Vec<f64>> {
+        let flags = table.column_accessor("FLAG")?.array_cells_owned(rows)?;
+        let row_flags = if self.use_row_flag {
+            table
+                .column_accessor("FLAG_ROW")
+                .and_then(|column| column.scalar_cells_owned_for_rows(rows))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        flags
+            .into_iter()
+            .enumerate()
+            .map(|(slot, value)| {
+                let flags = value.ok_or_else(|| MsError::MissingColumn {
+                    column: format!("FLAG[row={}]", rows[slot]),
+                    table: "MAIN".into(),
+                })?;
+                let row_flagged =
+                    matches!(row_flags.get(slot), Some(Some(ScalarValue::Bool(true))));
+                compute_unflagged_row_fraction(flags, row_flagged, data_desc_ids[slot], self)
+            })
+            .collect()
     }
 }
 
 fn compute_unflagged_row_fraction(
-    ms: &MeasurementSet,
-    row: usize,
+    flags: ArrayValue,
+    row_flagged: bool,
+    data_desc_id: i32,
     context: &UnflaggedRowContext,
 ) -> MsResult<f64> {
-    let flag_column = ms.flag_column();
-    let flags = flag_column.get(row)?;
-    let data_desc_id = get_i32(ms.main_table(), row, "DATA_DESC_ID")?;
     let bandwidth_hz = context
         .ddid_to_bandwidth_hz
         .get(&data_desc_id)
@@ -1767,12 +1505,11 @@ fn compute_unflagged_row_fraction(
     let channel_widths = context
         .ddid_to_channel_widths_hz
         .get(&data_desc_id)
-        .cloned()
+        .map(Vec::as_slice)
         .unwrap_or_default();
     if bandwidth_hz <= 0.0 {
         return Ok(0.0);
     }
-    let row_flagged = ms.flag_row_column().get(row).unwrap_or(false);
     if row_flagged {
         return Ok(0.0);
     }
@@ -1900,9 +1637,20 @@ fn analyze_main_table(
     selected_rows: Option<&[usize]>,
     unflagged_context: Option<&UnflaggedRowContext>,
 ) -> MsResult<MainUsage> {
+    const COLUMNS: [&str; 8] = [
+        "FIELD_ID",
+        "OBSERVATION_ID",
+        "ARRAY_ID",
+        "ANTENNA1",
+        "ANTENNA2",
+        "DATA_DESC_ID",
+        "TIME",
+        "INTERVAL",
+    ];
     let table = ms.main_table();
     let mut usage = MainUsage {
         selection_applied: selected_rows.is_some(),
+        unflagged_row_fractions: unflagged_context.map(|_| Vec::new()),
         ..MainUsage::default()
     };
     let mut start = f64::INFINITY;
@@ -1910,26 +1658,32 @@ fn analyze_main_table(
     let row_numbers = selected_rows
         .map(|rows| rows.to_vec())
         .unwrap_or_else(|| (0..table.row_count()).collect());
-    let row_chunk_rows = planned_scalar_scan_rows(row_numbers.len(), 6 * 4 + 2 * 8)?;
+    let flag_bytes = unflagged_context.map_or(0, |context| context.flag_bytes_per_row);
+    let row_chunk_rows =
+        planned_scalar_scan_rows(row_numbers.len(), flag_bytes.saturating_add(6 * 4 + 2 * 8))?;
     for row_chunk in row_numbers.chunks(row_chunk_rows) {
-        let field_values = load_i32_rows(table, "FIELD_ID", row_chunk)?;
-        let observation_values = load_i32_rows(table, "OBSERVATION_ID", row_chunk)?;
-        let array_values = load_i32_rows(table, "ARRAY_ID", row_chunk)?;
-        let antenna1_values = load_i32_rows(table, "ANTENNA1", row_chunk)?;
-        let antenna2_values = load_i32_rows(table, "ANTENNA2", row_chunk)?;
-        let data_desc_values = load_i32_rows(table, "DATA_DESC_ID", row_chunk)?;
-        let time_values = load_f64_rows(table, "TIME", row_chunk)?;
-        let interval_values = load_f64_rows(table, "INTERVAL", row_chunk)?;
-        for (row_slot, row) in row_chunk.iter().copied().enumerate() {
+        let mut values = table.required_scalar_columns_owned_for_rows(&COLUMNS, row_chunk)?;
+        let field_values = take_integer(&mut values, "FIELD_ID")?;
+        let observation_values = take_integer(&mut values, "OBSERVATION_ID")?;
+        let array_values = take_integer(&mut values, "ARRAY_ID")?;
+        let antenna1_values = take_integer(&mut values, "ANTENNA1")?;
+        let antenna2_values = take_integer(&mut values, "ANTENNA2")?;
+        let data_desc_values = take_integer(&mut values, "DATA_DESC_ID")?;
+        let time_values = take_double(&mut values, "TIME")?;
+        let interval_values = take_double(&mut values, "INTERVAL")?;
+        let fractions = unflagged_context
+            .map(|context| context.fractions(table, row_chunk, &data_desc_values))
+            .transpose()?;
+        for row_slot in 0..row_chunk.len() {
             let field_id = field_values[row_slot];
             if field_id >= 0 {
                 usage.used_field_ids.insert(field_id as usize);
                 *usage.field_row_counts.entry(field_id).or_insert(0) += 1;
-                if let Some(context) = unflagged_context {
+                if let Some(fractions) = fractions.as_ref() {
                     *usage
                         .field_unflagged_row_counts
                         .entry(field_id)
-                        .or_insert(0.0) += compute_unflagged_row_fraction(ms, row, context)?;
+                        .or_insert(0.0) += fractions[row_slot];
                 }
             }
             let observation_id = observation_values[row_slot];
@@ -1960,6 +1714,9 @@ fn analyze_main_table(
             start = start.min(time - interval / 2.0);
             end = end.max(time + interval / 2.0);
             usage.selected_row_count += 1;
+        }
+        if let (Some(all), Some(fractions)) = (&mut usage.unflagged_row_fractions, fractions) {
+            all.extend(fractions);
         }
     }
 
@@ -2013,8 +1770,8 @@ fn observatory_position(
         .map(|obs| obs.telescope_name.as_str())
         .find(|name| !name.is_empty());
     if let Some(name) = telescope_name {
-        let measures = crate::open_measures_runtime()?;
-        if let Some(position) = MPosition::from_observatory_name(name, measures.as_ref())? {
+        let provider = crate::open_measures_runtime()?;
+        if let Some(position) = MPosition::from_observatory_name(name, provider.as_ref())? {
             return Ok(Some(position));
         }
     }
@@ -2034,6 +1791,19 @@ fn observatory_position(
         }
     }
     Ok(None)
+}
+
+fn measures_provider(
+    cache: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
+) -> MsResult<Arc<dyn MeasuresProvider>> {
+    if let Some(provider) = cache.and_then(OnceLock::get) {
+        return Ok(Arc::clone(provider));
+    }
+    let provider = crate::open_measures_runtime()?;
+    Ok(match cache {
+        Some(cache) => Arc::clone(cache.get_or_init(|| provider)),
+        None => provider,
+    })
 }
 
 fn observatory_offset(position_m: [f64; 3], observatory: Option<&MPosition>) -> [f64; 3] {

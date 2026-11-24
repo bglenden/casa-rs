@@ -112,6 +112,7 @@ pub use listobs::{
     ListObsOutputFormat as MeasurementSetSummaryOutputFormat,
     ListObsSummary as MeasurementSetSummary, ListObsUvCoverage as MeasurementSetUvCoverage,
     ListObsUvPoint as MeasurementSetUvPoint, ListObsUvTrack as MeasurementSetUvTrack,
+    ScanSummary as MeasurementSetScanSummary,
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 pub use ms::MeasurementSet;

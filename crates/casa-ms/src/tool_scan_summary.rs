@@ -220,7 +220,7 @@ fn read_integrations(
     Ok(scans)
 }
 
-fn take_integer(
+pub(crate) fn take_integer(
     columns: &mut HashMap<String, RequiredScalarColumnValues>,
     name: &str,
 ) -> MsResult<Vec<i32>> {
@@ -232,7 +232,7 @@ fn take_integer(
     }
 }
 
-fn take_double(
+pub(crate) fn take_double(
     columns: &mut HashMap<String, RequiredScalarColumnValues>,
     name: &str,
 ) -> MsResult<Vec<f64>> {

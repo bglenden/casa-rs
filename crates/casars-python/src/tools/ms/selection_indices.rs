@@ -319,7 +319,7 @@ fn direct_taql(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
     selection_text(value, "msselect").map(Some)
 }
 
-fn selection_text(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<String> {
+pub(super) fn selection_text(value: &Bound<'_, PyAny>, parameter: &str) -> PyResult<String> {
     if value.is_instance_of::<PyString>() {
         value.extract()
     } else if value.is_instance_of::<PyBytes>() {

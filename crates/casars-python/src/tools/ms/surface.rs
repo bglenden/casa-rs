@@ -650,8 +650,8 @@ const METHODS: &[Method] = &[
             param("overwrite", K::Bool, Bool(false)),
             param("wantreturn", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Yes,
     ),
     method(
         "testconcatenate",

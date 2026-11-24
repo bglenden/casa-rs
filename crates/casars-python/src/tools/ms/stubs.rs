@@ -519,20 +519,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (verbose = None, listfile = None, listunfl = None, cachesize = None, overwrite = None, wantreturn = None), text_signature = "($self, verbose=False, listfile='', listunfl=False, cachesize=50.0, overwrite=False, wantreturn=True)")]
-    fn summary(
-        &self,
-        verbose: Option<&Bound<'_, PyAny>>,
-        listfile: Option<&Bound<'_, PyAny>>,
-        listunfl: Option<&Bound<'_, PyAny>>,
-        cachesize: Option<&Bound<'_, PyAny>>,
-        overwrite: Option<&Bound<'_, PyAny>>,
-        wantreturn: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("summary")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (msfile = None, freqtol = None, dirtol = None, respectname = None), text_signature = "($self, msfile='', freqtol=[], dirtol=[], respectname=False)")]
     fn testconcatenate(
         &self,
