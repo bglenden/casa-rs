@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "faef935783ce4dca92aa8dab05f614ee66d866e3",
+  "source_revision": "faef935783ce4dca92aa8dab05f614ee66d866e3",
+  "baseline_revision": "9a4d01307f0d6303cf870569f4bdf8ab6c0c0645",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged MeasurementSet antenna pointing coordinates and scalar frame controls.",
+  "result": "passed",
+  "baseline_result": "Native public task refused yframe and yinterp before the provider ran.",
+  "text_exports": 19,
+  "points": 185,
+  "figures": 3,
+  "empty_text_exports": 4,
+  "rendered_coordinates": 12,
+  "pointwise_absolute_tolerance_degrees": 2.1e-05,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
