@@ -197,8 +197,13 @@ fn write_series(
         };
         if channel_major {
             let mut ordered = points.collect::<Vec<_>>();
-            ordered
-                .sort_unstable_by_key(|&(_, point, _)| (point.row, point.chan_start, point.corr));
+            ordered.sort_unstable_by_key(|&(_, point, display)| {
+                let (row, channel, correlation) = point.plotms_order();
+                let order = display
+                    .and_then(|metadata| metadata.averaging_group)
+                    .unwrap_or(row);
+                (order, channel, correlation)
+            });
             ordered.into_iter().try_for_each(write)?;
         } else {
             points.try_for_each(write)?;

@@ -41,6 +41,11 @@
       "sha256": "975972380cb5098f3b1c0a008c84c08554a8ae5233b81c334a71a9fcf3e3bb66",
       "size": 14792
     },
+    "test_task_gaincal.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_gaincal.py",
+      "sha256": "28a3a81ff36f35716c6dcbefe9474b3500a23640344b26e83df0becc72b17c75",
+      "size": 58451
+    },
     "test_task_getantposalma.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_getantposalma.py",
       "sha256": "2a7a6c77e008aab411351e8a49eac96d93205c36d2f4da7a1f9a304719953177",
@@ -51,10 +56,25 @@
       "sha256": "2d5df1c9dbed40cc52825b8f7aac33ddeff2e0eddacfe0decebff2bdbb2eebca",
       "size": 9068
     },
+    "test_task_initweights.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_initweights.py",
+      "sha256": "5d5177a986f96c8711233d6e447b53c2731a98d5e81fe574b76e653ba586fdf0",
+      "size": 27310
+    },
+    "test_task_listcal.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_listcal.py",
+      "sha256": "587372c9ca902570a8a486fae5a45fad40e85120d41304312757b71c1a3a04cd",
+      "size": 11770
+    },
     "test_task_polfromgain.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_polfromgain.py",
       "sha256": "b67b9a25f52a7d0143699943d49c985b25940c4828e96b8717647c73733130fa",
       "size": 5328
+    },
+    "test_task_rerefant.py": {
+      "upstream_path": "casatasks/tests/tasks/test_task_rerefant.py",
+      "sha256": "838a433cf606a3fd1ceec72ea4866cb718f6e4eeaafff3c77528a3e8434f7c7e",
+      "size": 7007
     },
     "test_task_smoothcal.py": {
       "upstream_path": "casatasks/tests/tasks/test_task_smoothcal.py",

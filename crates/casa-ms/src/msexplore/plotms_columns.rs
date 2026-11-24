@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA PlotMS ordinate column selection.
 
+use std::collections::HashSet;
+
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 
@@ -47,22 +49,22 @@ pub(super) fn check_averaging(
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct ChannelWeightKinds {
+pub(super) struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
     pub(super) primary: WeightKind,
 }
 
-impl ChannelWeightKinds {
+impl PlotMsWeightKinds {
     pub(super) fn uses(self, kind: WeightKind) -> bool {
         self.primary == kind || self.axes.contains(&kind)
     }
 }
 
-pub(super) fn channel_weight_kinds(
+pub(super) fn weight_kinds(
     ms: &MeasurementSet,
     spec: &MsPlotSpec,
     input: &PlotMsInput<'_>,
-) -> ChannelWeightKinds {
+) -> PlotMsWeightKinds {
     let primary = spec.data_column;
     let columns = [
         input.x_data_column.unwrap_or(primary),
@@ -112,7 +114,7 @@ pub(super) fn channel_weight_kinds(
         };
         visibility_weight_kind(column, has_observed, has_corrected, false)
     };
-    ChannelWeightKinds {
+    PlotMsWeightKinds {
         axes: columns.map(kind),
         primary: kind(primary),
     }
@@ -124,11 +126,19 @@ pub(super) fn bin_has_weight(
     bin: &ChannelBin,
     flags: &ndarray::ArrayView2<'_, bool>,
 ) -> bool {
+    bin_weight(spectrum, corr, bin, flags) > 0.0
+}
+
+pub(super) fn bin_weight(
+    spectrum: &FloatGrid,
+    corr: usize,
+    bin: &ChannelBin,
+    flags: &ndarray::ArrayView2<'_, bool>,
+) -> f64 {
     bin.channels()
         .filter(|&channel| !flags[(corr, channel)])
         .map(|channel| spectrum.values[corr * spectrum.chan_count + channel])
-        .sum::<f64>()
-        > 0.0
+        .sum()
 }
 
 pub(super) fn inverse_variance(spectrum: &FloatGrid) -> FloatGrid {
@@ -146,9 +156,8 @@ pub(super) fn inverse_variance(spectrum: &FloatGrid) -> FloatGrid {
 
 pub(super) fn ordinate_columns(
     task: &TaskInvocation<'_>,
-    y_axis: MsAxis,
-    secondary_axis: Option<MsAxis>,
-) -> Result<[MsDataColumn; 2], TaskFailure> {
+    ordinates: &[MsAxis],
+) -> Result<Vec<MsDataColumn>, TaskFailure> {
     let supplied = task.value("ydatacolumn");
     let names = super::calibration::axis_names(supplied)
         .map_err(TaskFailure::validation)?
@@ -163,12 +172,19 @@ pub(super) fn ordinate_columns(
     } else {
         &[]
     };
-    let name = |index| names.get(index).copied().unwrap_or("data");
-    if secondary_axis == Some(y_axis) && name(0) == name(1) {
-        return Err(TaskFailure::validation("Remove duplicate y-axes."));
-    }
-    let column = |index| MsDataColumn::parse(name(index)).map_err(TaskFailure::validation);
-    Ok([column(0)?, column(1)?])
+    let mut seen = HashSet::with_capacity(ordinates.len());
+    ordinates
+        .iter()
+        .enumerate()
+        .map(|(index, &axis)| {
+            let name = names.get(index).copied().unwrap_or("data");
+            let column = MsDataColumn::parse(name).map_err(TaskFailure::validation)?;
+            if !seen.insert((axis, column)) {
+                return Err(TaskFailure::validation("Remove duplicate y-axes."));
+            }
+            Ok(column)
+        })
+        .collect()
 }
 
 fn canonical_column(name: &str) -> Result<&str, TaskFailure> {
@@ -195,12 +211,12 @@ fn canonical_column(name: &str) -> Result<&str, TaskFailure> {
     }
 }
 
-pub(super) fn resolve_storage_columns(
+pub(super) fn resolve_storage_columns<const N: usize>(
     ms: &MeasurementSet,
-    requested: [MsDataColumn; 3],
-    axes: [Option<MsAxis>; 3],
+    requested: [MsDataColumn; N],
+    axes: [Option<MsAxis>; N],
     averaging: bool,
-) -> Result<([MsDataColumn; 3], bool), TaskFailure> {
+) -> Result<([MsDataColumn; N], bool), TaskFailure> {
     use MsDataColumn::*;
 
     let schema = ms.main_table().schema();

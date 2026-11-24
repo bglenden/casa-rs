@@ -449,6 +449,7 @@ pub(crate) fn solve_bandpass(
                 observations: request.combine.observations,
                 spectral_windows: request.combine.spectral_windows,
             },
+            legacy_g_receptors: false,
             channelized: true,
             polynomial_bandpass,
             preaverage_max_span: crate::solve::preaverage_span(
@@ -499,7 +500,7 @@ pub(crate) fn solve_bandpass(
                 .cuts
                 .map_or(0, |cuts| cuts.min_baselines_per_antenna),
         );
-        if group.scalar_bandpass && request.band_type == BandpassType::B {
+        if group.single_parallel_hand && request.band_type == BandpassType::B {
             stages.with_data[1] = stages.with_data[0].clone();
         }
         solve_stats.interval(&stages);
@@ -766,7 +767,7 @@ fn solve_bandpass_group(
                     .map_or(SolveStart::Guess, SolveStart::LegacyChannel)
             } else if channel + 1 == channel_count {
                 SolveStart::BandpassGuess {
-                    scalar: group.scalar_bandpass,
+                    scalar: group.single_parallel_hand,
                     independent_input_flags,
                 }
             } else {

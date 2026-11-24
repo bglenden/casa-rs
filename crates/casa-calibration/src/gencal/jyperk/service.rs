@@ -208,9 +208,12 @@ fn fetch(
                     ))
                 })?;
                 if value["success"] != true {
+                    let error = &value["error"];
+                    let message = error
+                        .as_str()
+                        .map_or_else(|| error.to_string(), str::to_owned);
                     return Err(service_error(format!(
-                        "Failed to get Jy/K factors from DB: {}",
-                        value["error"]
+                        "Failed to get Jy/K factors from DB: {message}"
                     )));
                 }
                 return Ok(value);

@@ -10982,3 +10982,19 @@ casa-rs yields automatic locks on the input MeasurementSet before its
 clearcal provider starts and keeps the caller's table attached. An explicit
 or active lock still held by the caller produces a `RuntimeError` before
 the task writes. The caller retains ownership of that lock (#1520).
+
+## PlotMS time averaging can dilute complex visibilities when FLOAT_DATA is present
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, plot two Real ordinates from
+`CORRECTED_DATA` and `MODEL_DATA` against channel on a MeasurementSet that
+also stores `DATA` and `FLOAT_DATA`. With unit visibilities and unit
+weights, averaging pairs of integrations produces 0.666667 for both
+ordinates. Adding a two-channel average gives the same values.
+
+The mixed-column transform enables time averaging for the float column.
+Its accumulator adds observed float weights to the weight spectrum used
+to normalize the corrected and model columns. casa-rs accumulates weights
+for the requested complex columns and preserves the constant value 1. The
+paired fixture checks the selected bins and metadata in both modes (#1032).
+[Pinned transform setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/mstransform/MSTransform/MSTransformManager.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
+[Pinned time averager](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/AveragingTvi2.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
