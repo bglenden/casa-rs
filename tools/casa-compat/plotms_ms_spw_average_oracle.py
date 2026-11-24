@@ -852,13 +852,18 @@ def compare_virtual_spw_models(root, native):
     compare_virtual_spw_model_references(root, native, base, vis, sloped)
 
 
-def compare_virtual_spw_model_references(root, native, base, vis, sloped):
+def moving_virtual_spw_models(root, vis):
     moving, start = stagger_windows(root, vis, "moving-virtual-windows")
     with opened(moving / "FIELD", True) as table:
         table.putcell("NUM_POLY", 0, 1)
         table.putcell("TIME", 0, start)
         for column in ("PHASE_DIR", "REFERENCE_DIR", "DELAY_DIR"):
             table.putcell(column, 0, np.column_stack((table.getcell(column, 0), [3e-6, 0.])))
+    return moving
+
+
+def compare_virtual_spw_model_references(root, native, base, vis, sloped):
+    moving = moving_virtual_spw_models(root, vis)
     phase_controls = base | dict(vis=str(moving), yaxis="imag")
     for name, overrides, values, windows in (
         ("moving-field-spw", {}, [0] * 4, ["0", "1"] * 2),
@@ -986,7 +991,7 @@ def compare_virtual_spw_model_spans(root, native):
     for source in (scans, fields, both):
         with opened(source) as table:
             np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
-    return both
+    return original, both
 
 
 def compare_spw_iteration(root, native, vis):
@@ -1039,6 +1044,26 @@ def compare_spw_iteration(root, native, vis):
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
 
 
+def compare_spw_ordinate_order(root, native, source):
+    from plotms_ms_columns_oracle import compare_ordinate_figure
+
+    vis = moving_virtual_spw_models(root, source)
+    base = request(vis) | dict(xaxis="frequency", xdatacolumn="", spw="0:1,1:1",
+                               yaxis=["real", "imag"], ydatacolumn=["model", "model"],
+                               yaxislocation=["left", "right"], avgspw=True)
+    for name, changes, values in (
+        ("standalone-model-ordinate-order", {}, [7.25, 3.25] * 2 + [0] * 4),
+        ("scalar-time-model-ordinate-order", dict(avgtime="20", scalar=True), [4.25, 0]),
+    ):
+        controls = base | changes
+        expected = export(root, f"{name}.casa", reference, controls)
+        np.testing.assert_allclose(coordinates(rows(expected))[:, 1], values, rtol=1.2e-5, atol=1e-7)
+        actual = export(root, f"{name}.native", native, controls)
+        assert compare_text(actual, expected) == len(values)
+        compare_ordinate_figure(root, name, native, controls, "Frequency (GHz)", ["Real:model", "Imag:model"])
+        print(f"{name}: {len(values)} matching coordinates in requested ordinate order", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -1067,8 +1092,9 @@ def main():
             compare_virtual_spw_model_spans(root / "virtual-model-spans", native)
             return
         if args.only == "iteration":
-            _, _, _, both = virtual_spw_span_fixture(root / "iteration")
+            original, _, _, both = virtual_spw_span_fixture(root / "iteration")
             compare_spw_iteration(root / "iteration", native, both)
+            compare_spw_ordinate_order(root / "iteration", native, original)
             return
         vis = make_fixture(root)
         base = request(vis) | dict(avgspw=True, spw="0:1,1:1", title="Spectral-window average")
@@ -1097,8 +1123,9 @@ def main():
             compare_ordinate_lists(root / "ordinate-lists", native, base, vis, only=args.only)
         if args.only is None:
             compare_virtual_spw_models(root / "virtual-models", native)
-            both = compare_virtual_spw_model_spans(root / "virtual-model-spans", native)
+            original, both = compare_virtual_spw_model_spans(root / "virtual-model-spans", native)
             compare_spw_iteration(root / "virtual-model-spans", native, both)
+            compare_spw_ordinate_order(root / "virtual-model-spans", native, original)
 
 
 if __name__ == "__main__":

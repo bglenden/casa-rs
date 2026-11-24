@@ -6954,7 +6954,12 @@ fn build_generic_visibility_scatter_with_averaging(
                 series_entries.push(output);
             }
         }
-        if time_weight_kinds.is_some() || collapse_baselines || scalar_average || antenna_average {
+        if time_weight_kinds.is_some()
+            || collapse_baselines
+            || scalar_average
+            || antenna_average
+            || spw_average
+        {
             series_entries.sort_by_key(|entry| entry.y_index);
         }
         if series_entries.is_empty() && !retain_empty_panel {
