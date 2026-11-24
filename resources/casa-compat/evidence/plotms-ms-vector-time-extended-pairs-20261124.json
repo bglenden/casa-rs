@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "b72689948ae0de9ea981a0fe7dc011da864da18d",
+  "source_revision": "b72689948ae0de9ea981a0fe7dc011da864da18d",
+  "baseline_revision": "a751d7380910590875fb68932dc26579edc55271",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Two model expressions, scalar expressions and stored MODEL_DATA companions on independent visibility axes after ordinary vector time averaging.",
+  "result": "passed",
+  "baseline_result": "Native refused two selected time-averaged model expressions on independent visibility axes.",
+  "text_exports": 4,
+  "points": 12,
+  "figures": 1,
+  "rendered_coordinates": 3,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "2f8b232c878f3c5dfcfac41c7b0ef24a1f7fef5a",
+  "source_revision": "2f8b232c878f3c5dfcfac41c7b0ef24a1f7fef5a",
+  "baseline_revision": "ccb07262a599314b0a1dd4593de32e02baa391a4",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_layout_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs unaveraged Time versus observed amplitude with scan iteration in a one-row two-column grid starting in column one.",
+  "result": "passed",
+  "baseline_result": "Native refused offset iteration and separately exceeded the requested text capacity on an unshifted four-scan selection.",
+  "text_exports": 6,
+  "points": 54,
+  "figures": 7,
+  "rendered_coordinates": 33,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}

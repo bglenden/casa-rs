@@ -65,7 +65,7 @@ struct PreparedModels {
     models: FieldModels,
     fluxes: CasaValue,
     completed: bool,
-    imager_history: Vec<String>,
+    manual_samples: Vec<(f64, f64)>,
 }
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -143,10 +143,33 @@ fn run_multi(
 fn run_ms(
     task: &TaskInvocation<'_>,
     path: &Path,
+    opened: OpenedMs,
+    parts: &mut [OpenedMs],
+    scratch: bool,
+    partition: bool,
+) -> Result<CasaValue, TaskFailure> {
+    let mut imager_history = Vec::new();
+    let result = run_ms_holding(
+        task,
+        path,
+        opened,
+        parts,
+        scratch,
+        partition,
+        &mut imager_history,
+    );
+    super::history::record_setjy_imager_flux(path, imager_history);
+    result
+}
+
+fn run_ms_holding(
+    task: &TaskInvocation<'_>,
+    path: &Path,
     mut opened: OpenedMs,
     parts: &mut [OpenedMs],
     scratch: bool,
     partition: bool,
+    imager_history: &mut Vec<String>,
 ) -> Result<CasaValue, TaskFailure> {
     let standard = task.text("standard")?;
     let solar_2012 = standard.as_deref() == Some("Butler-JPL-Horizons 2012");
@@ -170,7 +193,15 @@ fn run_ms(
         if selected.selected_rows.is_empty() {
             return empty_selection(task, partition);
         }
-        let result = fluxdict::run(task, opened, parts, selection, &selected, scratch)?;
+        let result = fluxdict::run(
+            task,
+            opened,
+            parts,
+            selection,
+            &selected,
+            scratch,
+            imager_history,
+        )?;
         record_history(task, path, partition);
         return Ok(result);
     }
@@ -221,7 +252,7 @@ fn run_ms(
         models,
         fluxes,
         completed,
-        imager_history,
+        manual_samples,
     } = prepare(
         &opened.measurement_set,
         &selected,
@@ -229,6 +260,7 @@ fn run_ms(
         &spws,
         task.flag("scalebychan")?,
         image.as_deref().map(|path| (path, scratch)),
+        imager_history,
     )?;
     let has_models = models.values().any(|model| !model.entries.is_empty());
     let partially_written = !completed && has_models;
@@ -262,7 +294,7 @@ fn run_ms(
     )?;
     opened.release().map_err(execution)?;
     record_history(task, path, partition);
-    super::history::record_setjy_imager_flux(path, imager_history);
+    record_manual_spectrum(imager_history, &manual_samples);
     if partially_written {
         // CASA's cleanup after the later failure raises once an earlier
         // component list has already been applied and retired.
@@ -529,6 +561,7 @@ fn prepare(
     spws: &[i32],
     by_channel: bool,
     image: Option<(&Path, bool)>,
+    imager_history: &mut Vec<String>,
 ) -> Result<PreparedModels, TaskFailure> {
     let mut groups = BTreeMap::<i32, BTreeMap<i32, Vec<usize>>>::new();
     for row in &selected.selected_rows {
@@ -558,8 +591,11 @@ fn prepare(
     let mut models = FieldModels::new();
     let mut returned = BTreeMap::new();
     let mut completed = true;
-    let mut imager_history = Vec::new();
+    let mut manual_samples = Vec::new();
+    let report_manual =
+        matches!(flux, FluxParameters::Manual(manual) if manual.reports_spectral_index());
     for (field, windows_for_field) in groups.into_iter().rev() {
+        manual_samples.clear();
         let direction = engine
             .observation_direction_j2000(*epoch, field as usize)
             .map_err(execution)?;
@@ -627,17 +663,32 @@ fn prepare(
                 let (component, stokes) = solar
                     .component(Some(direction.clone()), &planned)
                     .map_err(execution)?;
-                imager_history.push(solar_history_line(
+                imager_history.push(imager_flux_history(
                     &name,
                     field,
                     spw,
                     planned[0].hz(),
                     stokes,
+                    "JPL-Butler Solar System Object",
                 ));
                 (Some(component), stokes)
             } else {
                 point_model(flux, spectrum.as_ref(), &direction, &planned, &frame)?
             };
+            if let FluxParameters::Standard { catalog, .. } = flux
+                && spectrum.is_some()
+            {
+                imager_history.push(imager_flux_history(
+                    &name,
+                    field,
+                    spw,
+                    planned[0].hz(),
+                    stokes,
+                    catalog.standard_name(),
+                ));
+            } else if report_manual {
+                manual_samples.push((planned[0].hz(), stokes[0]));
+            }
             first_jy.get_or_insert(stokes[0]);
             if let (Some(rows), Some(component)) = (windows_for_field.get(&spw), component) {
                 let container = ComponentList::from(vec![component])
@@ -652,19 +703,7 @@ fn prepare(
                     container,
                 });
             }
-            field_flux.insert(
-                spw.to_string(),
-                CasaValue::Dict {
-                    entries: vec![entry(
-                        "fluxd",
-                        CasaValue::FloatArray {
-                            dtype: FloatDtype::Float64,
-                            shape: vec![4],
-                            data: stokes.map(CasaFloat).to_vec(),
-                        },
-                    )],
-                },
-            );
+            field_flux.insert(spw.to_string(), window_flux_reply(stokes));
         }
         if let Some((path, scratch)) = image {
             let params = resolved::ImageParameters {
@@ -674,21 +713,8 @@ fn prepare(
                 windows: spws,
             };
             use resolved::ResolvedFlux;
-            let image_spectrum = match flux {
-                FluxParameters::Standard {
-                    catalog,
-                    interpolation,
-                } if by_channel => {
-                    match catalog
-                        .spectrum(&name, &direction, *epoch / 86_400., *interpolation)
-                        .map_err(execution)?
-                    {
-                        CatalogMatch::Spectrum(spectrum) => Some(spectrum),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
+            let image_spectrum =
+                image_catalog_spectrum(flux, by_channel, &name, &direction, *epoch)?;
             let flux = match flux {
                 FluxParameters::Manual(manual) if manual.intensity_jy() != 0. => {
                     ResolvedFlux::Manual(manual)
@@ -699,7 +725,7 @@ fn prepare(
                 FluxParameters::Solar2010(_) => ResolvedFlux::Catalog(None, 1.),
                 _ => ResolvedFlux::Unscaled,
             };
-            model.images = params.prepare(ms, selected, &frame, field, flux)?;
+            model.images = params.prepare(ms, selected, &frame, field, flux, imager_history)?;
             model
                 .entries
                 .extend(model.images.iter().map(|image| image.entry.clone()));
@@ -728,16 +754,76 @@ fn prepare(
         models,
         fluxes: returned,
         completed,
-        imager_history,
+        manual_samples,
     })
 }
 
-fn solar_history_line(name: &str, field: i32, spw: i32, hz: f64, stokes: [f64; 4]) -> String {
+fn window_flux_reply(stokes: [f64; 4]) -> CasaValue {
+    CasaValue::Dict {
+        entries: vec![entry(
+            "fluxd",
+            CasaValue::FloatArray {
+                dtype: FloatDtype::Float64,
+                shape: vec![4],
+                data: stokes.map(CasaFloat).to_vec(),
+            },
+        )],
+    }
+}
+
+fn image_catalog_spectrum<'a>(
+    flux: &'a FluxParameters,
+    by_channel: bool,
+    name: &str,
+    direction: &MDirection,
+    epoch: f64,
+) -> Result<Option<CalibratorSpectrum<'a>>, TaskFailure> {
+    let FluxParameters::Standard {
+        catalog,
+        interpolation,
+    } = flux
+    else {
+        return Ok(None);
+    };
+    if !by_channel {
+        return Ok(None);
+    }
+    match catalog
+        .spectrum(name, direction, epoch / 86_400., *interpolation)
+        .map_err(execution)?
+    {
+        CatalogMatch::Spectrum(spectrum) => Ok(Some(spectrum)),
+        _ => Ok(None),
+    }
+}
+
+fn imager_flux_history(
+    name: &str,
+    field: i32,
+    spw: i32,
+    hz: f64,
+    stokes: [f64; 4],
+    standard: &str,
+) -> String {
     let [i, q, u, v] = stokes.map(|flux| stream_double_precision(flux, 5));
     let frequency = stream_double_precision(hz, 5);
     format!(
-        "{name:>12} (fld ind {field}) spw {spw}  [I={i}, Q={q}, U={u}, V={v}] Jy @ {frequency}Hz, (JPL-Butler Solar System Object)"
+        "{name:>12} (fld ind {field}) spw {spw}  [I={i}, Q={q}, U={u}, V={v}] Jy @ {frequency}Hz, ({standard})"
     )
+}
+
+fn record_manual_spectrum(history: &mut Vec<String>, samples: &[(f64, f64)]) {
+    if samples.is_empty() {
+        return;
+    }
+    history.push(
+        "Flux density as a function of frequency (channel 0 of each spw):\n  Frequency (GHz)    Flux Density (Jy, Stokes I)".into(),
+    );
+    history.extend(samples.iter().map(|&(hz, jy)| {
+        let ghz = stream_double_precision(hz / 1e9, 6);
+        let intensity = stream_double_precision(jy, 6);
+        format!("     {ghz}         {intensity}")
+    }));
 }
 
 fn field_midpoint(

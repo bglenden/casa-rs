@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "ef46b99f84d1db8511d7374ab0eb58f121b7cfb4",
+  "source_revision": "ef46b99f84d1db8511d7374ab0eb58f121b7cfb4",
+  "baseline_revision": "f7254e5b2fe728f263373af3f8469c934e110260",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_phasecenter_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public fixed J2000 phase-center shifts for unaveraged complex visibility and UVW plots on a MeasurementSet.",
+  "result": "passed",
+  "baseline_result": "Native refused the nondefault phasecenter before creating the plot.",
+  "reference_text": "CASA phaseshift materializes the same visibility iterator into a separate MeasurementSet for pinned PlotMS text export. Direct pinned PlotMS text stalls after the selection header.",
+  "shifted_text_exports": 7,
+  "shifted_points": 108,
+  "inactive_text_exports": 7,
+  "inactive_points": 108,
+  "direct_paired_png_exports": 1,
+  "rendered_coordinates": 30,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "scope_refusals": 5,
+  "stored_only_control_points": 12,
+  "casa_png_controls": 2
+}

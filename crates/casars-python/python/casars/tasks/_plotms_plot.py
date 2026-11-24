@@ -66,14 +66,20 @@ def configure(figure, panel_axes, document, options):
     """Set figure formatting after the shared renderer draws the native layers."""
 
     headers = document["header_lines"]
+    positioned = (document.get("layout") or {}).get("first_panel") is not None
     title_y = None
     if headers:
         title_y = _layout_page_headers(figure, headers)
-        if document["title"]:
+        if document["title"] and not positioned:
             figure.suptitle(document["title"], y=title_y)
     font = options.get("titlefont")
     if font > 0 and document["title"]:
-        figure.suptitle(document["title"], fontsize=font, y=title_y)
+        if positioned:
+            axes = panel_axes if isinstance(panel_axes, list) else [panel_axes]
+            for axis in axes:
+                axis.title.set_fontsize(font)
+        else:
+            figure.suptitle(document["title"], fontsize=font, y=title_y)
     if isinstance(panel_axes, list) and len(panel_axes) > 1:
         if document.get("layout"):
             _share_axes(panel_axes, document["layout"], options)
@@ -162,6 +168,8 @@ def _line(line, layer, options):
         fill = _per_series(options.get(f"{prefix}fill"), series, "fill")
         outline = _per_series(options.get(f"{prefix}outline"), series, False)
         size = _per_series(options.get(f"{prefix}size"), series, 2)
+        # Explicit PlotMS marker colors carry their own opacity.
+        line.set_alpha(None)
         line.set_marker(_MARKERS[shape.lower()])
         line.set_markersize(size)
         line.set_markeredgecolor("black" if outline else _color(color))

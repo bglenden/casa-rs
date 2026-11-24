@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "bc315e2b4ff5cf943e8776633d01bedf05bd8a4e",
+  "source_revision": "bc315e2b4ff5cf943e8776633d01bedf05bd8a4e",
+  "baseline_revision": "027997dc830c66a0e816a03e95b85dffe01176a0",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_scalar_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Complex channel averaging followed by ordinary scalar time averaging with stored columns, independent visibility coordinates and ordinates, and Time or frequency metadata.",
+  "result": "passed",
+  "baseline_result": "Main produced six stored visibility points in three time bins where CASA produced four in two bins.",
+  "text_exports": 13,
+  "points": 32,
+  "figures": 4,
+  "rendered_coordinates": 8,
+  "paired_refusals": 1,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

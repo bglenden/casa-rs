@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "971e13556d58da3958cd3db3d7c6f94d43667a3e",
+  "source_revision": "971e13556d58da3958cd3db3d7c6f94d43667a3e",
+  "baseline_revision": "5a71f60e24c6a0ede3121ec00b619461b11dc588",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Ordinary vector time averaging of selected visibility columns per baseline, followed by per-antenna reduction with transformed spectra, closed time bins and cube flags.",
+  "result": "passed",
+  "baseline_result": "Main exported nine baseline-shaped points over three time buffers. CASA emitted six points over two second-stage buffers.",
+  "text_exports": 12,
+  "points": 51,
+  "figures": 2,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "paired_shape_refusals": 1,
+  "aligned_slot_control_points": 3,
+  "time_coordinate_tolerance_seconds": 0.00051
+}

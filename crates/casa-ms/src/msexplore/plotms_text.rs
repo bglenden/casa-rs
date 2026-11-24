@@ -14,7 +14,8 @@ use super::calibration::{
 };
 use super::plotms_atmosphere::Curve;
 use super::{
-    MsAxis, MsPlotPayload, MsScatterPlotMsMetadata, MsScatterPointRef, MsScatterSeries, listobs,
+    MsAxis, MsPlotPayload, MsScatterPlotMsAverageIds, MsScatterPlotMsMetadata, MsScatterPointRef,
+    MsScatterSeries, listobs,
 };
 use crate::MeasurementSet;
 use crate::columns::main_ids;
@@ -45,15 +46,22 @@ pub(super) fn write_export(
     match payload {
         MsPlotPayload::Scatter(plot) => {
             writeln!(writer, "# From plot {index}").map_err(io)?;
-            write_series(
-                &mut writer,
-                &mut metadata,
-                plot.x_axis,
-                &plot.series,
-                verbose,
-                library.is_empty(),
-            )
-            .map_err(io)?;
+            if plot.series.is_empty() {
+                for y in std::iter::once(plot.y_axis).chain(plot.secondary_y_axis) {
+                    write_empty_section(&mut writer, name(plot.x_axis), name(y), verbose)
+                        .map_err(io)?;
+                }
+            } else {
+                write_series(
+                    &mut writer,
+                    &mut metadata,
+                    plot.x_axis,
+                    &plot.series,
+                    verbose,
+                    library.is_empty(),
+                )
+                .map_err(io)?;
+            }
             if let Some(curves) = overlays.first() {
                 write_curves(&mut writer, &mut metadata, plot.x_axis, curves, verbose)
                     .map_err(io)?;
@@ -62,7 +70,8 @@ pub(super) fn write_export(
         MsPlotPayload::ScatterGrid(grid) => {
             let axis = super::plotms_figure::iteration_name(grid.iteraxis);
             writeln!(writer, "# iteraxis: {axis}").map_err(io)?;
-            let capacity = grid.gridrows.saturating_mul(grid.gridcols);
+            let [rows, columns] = super::plotms_figure::requested_grid(task)?;
+            let capacity = (rows as usize).saturating_mul(columns as usize);
             for (panel, plot) in grid.panels.iter().take(capacity).enumerate() {
                 if panel == 0 {
                     writeln!(writer, "# From plot {index}").map_err(io)?;
@@ -177,6 +186,7 @@ fn write_series(
     {
         let y_axis = section[0].y_axis;
         write_section(output, name(x_axis), name(y_axis), verbose)?;
+        let averaged_ids = section[0].plotms_averaged_ids.as_ref();
         let mut points = section.iter().flat_map(|series| {
             series
                 .points
@@ -191,7 +201,7 @@ fn write_series(
                 metadata,
                 (coordinate(x_axis, x), coordinate(y_axis, y)),
                 point,
-                display,
+                (display, averaged_ids),
                 None,
                 verbose,
             )
@@ -228,7 +238,7 @@ fn write_curves(
                 metadata,
                 (coordinate(x_axis, sample.x), significant(sample.y)),
                 &sample.point,
-                Some(sample.display),
+                (Some(sample.display), None),
                 Some(sample.frequency),
                 verbose,
             )?;
@@ -253,12 +263,34 @@ fn write_section(output: &mut dyn Write, x: &str, y: &str, verbose: bool) -> std
     }
 }
 
+fn write_empty_section(
+    output: &mut dyn Write,
+    x: &str,
+    y: &str,
+    verbose: bool,
+) -> std::io::Result<()> {
+    if verbose {
+        writeln!(output, "# x y scan field ant1 ant1name time spw obs")?;
+        writeln!(
+            output,
+            "# {x} {y} None None None None MJD(seconds) None None None"
+        )?;
+    } else {
+        writeln!(output, "# x y ")?;
+        writeln!(output, "# {x} {y}")?;
+    }
+    writeln!(output, "# No data to export")
+}
+
 fn write_point(
     output: &mut dyn Write,
     metadata: &mut Metadata<'_>,
     (x, y): (String, String),
     point: &MsScatterPointRef,
-    display: Option<MsScatterPlotMsMetadata>,
+    (display, averaged): (
+        Option<MsScatterPlotMsMetadata>,
+        Option<&MsScatterPlotMsAverageIds>,
+    ),
     frequency: Option<f64>,
     verbose: bool,
 ) -> std::io::Result<()> {
@@ -267,8 +299,24 @@ fn write_point(
     }
     let averaged_baselines = metadata.averaged_baselines;
     let row = metadata.row(point.row)?;
+    let order = display.and_then(|point| point.averaging_group);
+    let (scan_field, antenna) = match averaged.zip(order) {
+        Some((MsScatterPlotMsAverageIds::ScanAndField(ids), order)) => {
+            (ids.get(order).copied(), None)
+        }
+        Some((MsScatterPlotMsAverageIds::Antenna(ids), order)) => (None, ids.get(order).copied()),
+        None => (None, None),
+    };
+    let (scan, field) = scan_field.unwrap_or((row.scan, row.field));
     let (ant1, ant2, ant1name, ant2name) = if averaged_baselines {
         (-1, -1, "*", "*")
+    } else if let Some(antenna) = antenna {
+        let name = if antenna == row.ant1 {
+            &row.ant1name
+        } else {
+            &row.ant2name
+        };
+        (antenna, -1, name.as_str(), "*")
     } else {
         (
             row.ant1,
@@ -291,10 +339,8 @@ fn write_point(
         .map_or("?", |&code| listobs::stokes_name(code));
     writeln!(
         output,
-        "{x} {y} {} {} {} {} {} {} {} {:.3} {frequency:.9} {} {pol} {}",
+        "{x} {y} {} {scan} {field} {} {} {} {} {:.3} {frequency:.9} {} {pol} {}",
         display.map_or(point.chan_start, |point| point.channel),
-        row.scan,
-        row.field,
         ant1,
         ant2,
         ant1name,
@@ -349,8 +395,8 @@ pub(super) fn name(axis: MsAxis) -> &'static str {
         MsAxis::SigmaSpectrum => "SigmaSp",
         MsAxis::Flag => "Flag",
         MsAxis::FlagRow => "FlagRow",
-        MsAxis::AntRa => "Ant-RA",
-        MsAxis::AntDec => "Ant-DEC",
+        MsAxis::AntRa => "Ant-Ra",
+        MsAxis::AntDec => "Ant-Dec",
     }
 }
 
@@ -358,6 +404,7 @@ fn coordinate(axis: MsAxis, value: f64) -> String {
     match axis {
         MsAxis::Time => format!("{value:.3}"),
         MsAxis::Frequency => format!("{:.9}", value / 1e9),
+        MsAxis::AntRa | MsAxis::AntDec => format!("{value:.5}"),
         _ => significant(value),
     }
 }

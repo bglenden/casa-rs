@@ -59,6 +59,7 @@ pub(crate) fn document(id: &str, panels: Vec<PlotDocumentPanel>, columns: u32) -
         layout: Some(PlotLayout {
             rows,
             columns,
+            first_panel: None,
             aspect: None,
             margins: (columns > 1).then_some([0.05, 0.98, 0.09, 0.95, 0.2, 0.2]),
             font_size: Some("x-small".into()),

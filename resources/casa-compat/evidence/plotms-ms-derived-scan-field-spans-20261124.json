@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "b3ba24df376667d5e7e22a9eed88888e25ce889d",
+  "source_revision": "b3ba24df376667d5e7e22a9eed88888e25ce889d",
+  "baseline_revision": "14aceaf0dd1fee086d9011cdb3c4b40a29eb90ff",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Vector time-averaged derived visibility coordinates across scans and fields, with or without channel averaging.",
+  "result": "passed",
+  "baseline_result": "Current main matches the two separate bins and refuses the same derived expression across scans.",
+  "text_exports": 12,
+  "points": 16,
+  "figures": 1,
+  "rendered_coordinates": 1,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

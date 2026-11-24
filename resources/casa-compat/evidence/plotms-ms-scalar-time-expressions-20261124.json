@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "a74dfe233ef6157f410f371afc16942a22603614",
+  "source_revision": "a74dfe233ef6157f410f371afc16942a22603614",
+  "baseline_revision": "336e98621a7aece02dbb54a53a467019f575d5d2",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_scalar_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Stored observed and corrected residuals and ratios after ordinary scalar time averaging, with Time or Channel on X, or independently selected expressions or stored columns on either visibility axis.",
+  "result": "passed",
+  "baseline_result": "Native refused the selected ratios and independent derived axes with scalar=True and ordinary time averaging.",
+  "text_exports": 20,
+  "points": 40,
+  "figures": 2,
+  "rendered_coordinates": 4,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

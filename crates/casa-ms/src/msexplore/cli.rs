@@ -221,6 +221,18 @@ fn run_task(
     if task.surface() == "plotms"
         && let Some(path) = super::calibration::input(task)?
     {
+        if super::plotms_phasecenter::requested(task)?.is_some() {
+            return Err(TaskFailure::validation(
+                "PlotMS phasecenter for calibration tables is pending (#1032)",
+            )
+            .at("phasecenter"));
+        }
+        super::plotms_pointing::refuse_nonpointing_controls(task)?;
+        if super::plotms_figure::requested_position(task)? != [0, 0] {
+            return Err(TaskFailure::validation(
+                "nondefault grid placement for PlotMS calibration tables is pending #1032",
+            ));
+        }
         return super::calibration::run(task, &path, payload);
     }
     let options = if task.surface() == "plotms" {
@@ -238,6 +250,11 @@ fn run_task(
         let visibility_document = calibration.is_some() || atmosphere.is_some();
         let (options, visibility_document) =
             plotms_options::options_from_plotms(task, visibility_document)?;
+        let phasecenter = super::plotms_phasecenter::requested(task)?
+            .map(|value| {
+                options.plotms_phasecenter(&value, calibration.is_none() && atmosphere.is_none())
+            })
+            .transpose()?;
         if !options.additional_ordinates.is_empty() {
             if calibration.is_some()
                 || options.plotms_averaging_active()
@@ -279,6 +296,8 @@ fn run_task(
                     options.plotms_extended_averaging()
                         && options.secondary_y_data_column.is_some()
                         && !options.plotms_independent_average(),
+                    options.supports_channel_derived(columns)
+                        || options.supports_extended_derived(columns),
                     columns,
                 )?;
             }
@@ -287,6 +306,7 @@ fn run_task(
                 1 + usize::from(options.y_axis2.is_some()) + options.additional_ordinates.len();
             if (0..ordinate_count)
                 .any(|index| super::calibration::figure::shows_flagged(symbols, index))
+                && !columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns))
             {
                 return Err(TaskFailure::validation(
                     "displaying flagged points for this MeasurementSet column plot is pending #1032",
@@ -302,7 +322,14 @@ fn run_task(
                 calibration,
                 atmosphere,
                 load_models,
+                phasecenter,
             );
+        }
+        super::plotms_pointing::refuse_nonpointing_controls(task)?;
+        if super::plotms_figure::requested_position(task)? != [0, 0] {
+            return Err(TaskFailure::validation(
+                "grid placement for this PlotMS axis pair is pending #1032",
+            ));
         }
         options
     } else {
@@ -330,7 +357,45 @@ fn run_visibility_plot(
     calibration: Option<(PlotMsCalibrationLoader, Vec<String>)>,
     atmosphere: Option<super::calibration::atmosphere::Options>,
     load_models: Option<PlotMsModelLoader>,
+    phasecenter: Option<casa_types::measures::direction::MDirection>,
 ) -> Result<TaskSuccess, TaskFailure> {
+    let offset_scan_grid = options.iteraxis == Some(MsIterationAxis::Scan)
+        && options.gridrows == 1
+        && options.gridcols == 2
+        && options.x_axis == Some(MsAxis::Time)
+        && options.y_axis == Some(MsAxis::Amplitude)
+        && options.y_axis2.is_none()
+        && options.data_column == MsDataColumn::Data
+        && !options.plotms_averaging_active()
+        && calibration.is_none()
+        && atmosphere.is_none();
+    let static_grid =
+        super::plotms_figure::static_grid(task, options.iteraxis.is_some(), offset_scan_grid)?;
+    if static_grid.is_some() {
+        // The scatter computation receives a single plot. The grid places it on the page.
+        options.gridrows = 1;
+        options.gridcols = 1;
+    }
+    let pointing =
+        super::plotms_pointing::PointingAxes::from_task(task, [options.x_axis, options.y_axis])?;
+    if pointing.is_some() {
+        let supported_axis = |axis: Option<MsAxis>| {
+            axis.is_some_and(|axis| axis.is_pointing() || axis == MsAxis::Time)
+        };
+        if !supported_axis(options.x_axis)
+            || !supported_axis(options.y_axis)
+            || options.y_axis2.is_some()
+            || options.plotms_averaging_active()
+            || options.iteraxis.is_some()
+            || calibration.is_some()
+            || atmosphere.is_some()
+            || plotms_options::raw_symbol_visibility(task).flagged
+        {
+            return Err(TaskFailure::validation(
+                "PlotMS pointing currently supports unaveraged Time, Ant-Ra and Ant-Dec pairs without iteration, a callibrary, overlays or flagged symbols (#1032)",
+            ));
+        }
+    }
     let output = options.plot_output.as_deref();
     super::task_contract::refuse_unwritable_outputs(
         &[("plotfile", output)],
@@ -345,6 +410,11 @@ fn run_visibility_plot(
         ))
     })?;
     let mut axis_columns = options.plotms_axis_columns();
+    let extended_derived = calibration.is_none()
+        && axis_columns.is_some_and(|columns| options.supports_extended_derived(columns));
+    let raw_symbols = (pointing.is_some()
+        || axis_columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
+    .then(|| plotms_options::raw_symbol_visibility(task));
     let mut prefer_float_data = false;
     if calibration.is_none()
         && let Some(columns) = &mut axis_columns
@@ -356,7 +426,22 @@ fn run_visibility_plot(
             axes,
             options.plotms_averaging_active(),
         )?;
+        if let Some((storage, axis)) = options.derived_average_storage(*columns, adjusted) {
+            plotms_columns::check_averaged_derived_storage(&ms, storage, axis)?;
+        }
         prefer_float_data = use_float;
+        if phasecenter.is_some()
+            && use_float
+            && axes.into_iter().zip(adjusted).any(|(axis, column)| {
+                axis.is_some_and(MsAxis::is_visibility_math)
+                    && matches!(column, MsDataColumn::Data | MsDataColumn::Float)
+            })
+        {
+            return Err(TaskFailure::validation(
+                "PlotMS phasecenter with MeasurementSet FLOAT_DATA is pending (#1032)",
+            )
+            .at("phasecenter"));
+        }
         if adjusted != *columns {
             let [x, y, secondary_y] = adjusted;
             options.data_column = y;
@@ -407,7 +492,8 @@ fn run_visibility_plot(
     let figure_file = output.filter(|_| !is_text);
     let mut plots = Vec::new();
     if output.is_some() || show {
-        let spec = build_explore_spec(&options).map_err(TaskFailure::validation)?;
+        let spec =
+            build_explore_spec(&options, pointing.is_some()).map_err(TaskFailure::validation)?;
         let payload = match &calibrated {
             Some(input) => build_calibrated_plotms_payload(&ms, &spec, input),
             None => build_uncalibrated_plotms_payload(
@@ -418,6 +504,10 @@ fn run_visibility_plot(
                     secondary_y: options.secondary_y_data_column,
                     additional_y: &options.additional_ordinates,
                     weights: options.weight_axis_columns,
+                    raw_symbols,
+                    pointing,
+                    phasecenter,
+                    extended_derived,
                 },
                 prefer_float_data,
                 load_models,
@@ -454,6 +544,9 @@ fn run_visibility_plot(
                         right_ordinates: &options.right_ordinates,
                     }),
             )?;
+            if let Some(layout) = static_grid {
+                plots[0].document.layout = Some(layout);
+            }
         }
         if let Some(path) = text_file {
             super::plotms_text::write_export(task, &ms, &payload, path, library, &overlays)?;
@@ -484,7 +577,7 @@ fn run(options: CliOptions) -> Result<RunOutcome, TaskFailure> {
     .map_err(refused)?;
     let flag_edit = build_flag_edit_spec(&options).map_err(refused)?;
     let explore_spec = if options.plot_output.is_some() || flag_edit.is_some() {
-        Some(build_explore_spec(&options).map_err(refused)?)
+        Some(build_explore_spec(&options, false).map_err(refused)?)
     } else {
         None
     };
@@ -564,7 +657,7 @@ struct RunOutcome {
     note: Option<String>,
 }
 
-fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
+fn build_explore_spec(options: &CliOptions, pointing: bool) -> Result<MsExploreSpec, String> {
     if let Some(page_spec_path) = &options.page_spec {
         let page_spec = load_page_spec_file(page_spec_path)?;
         let mut header_items = parse_header_items(page_spec.headeritems.as_deref())?;
@@ -640,7 +733,7 @@ fn build_explore_spec(options: &CliOptions) -> Result<MsExploreSpec, String> {
         max_plot_points: options.max_points,
         plots: vec![plot_spec],
     };
-    spec.validate_with_ordinate_columns(options.has_independent_ordinates())?;
+    spec.validate_with_plotms(options.has_independent_ordinates(), pointing)?;
     Ok(spec)
 }
 
@@ -684,7 +777,6 @@ fn build_plot_spec(options: &CliOptions) -> Result<MsPlotSpec, String> {
     )?;
     spec.y_axes
         .extend(options.additional_ordinates.iter().map(|&(axis, _)| axis));
-    spec.validate_with_ordinate_columns(options.has_independent_ordinates())?;
     Ok(spec)
 }
 

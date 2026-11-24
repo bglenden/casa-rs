@@ -5,8 +5,9 @@ use std::path::PathBuf;
 
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
+use casa_types::measures::direction::MDirection;
 
-use super::super::{calibration, plotms_columns};
+use super::super::{RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter};
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
     MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count, legend_position, number,
@@ -54,6 +55,128 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
+    pub(super) fn supports_channel_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
+        let supported_pair = |derived: MsDataColumn, stored| {
+            derived.is_derived() && matches!(stored, MsDataColumn::Data | MsDataColumn::Corrected)
+        };
+        let supported_abscissa = self.x_axis.is_some_and(|axis| {
+            if axis.is_visibility_math() {
+                supported_pair(x, y) || supported_pair(y, x)
+            } else {
+                matches!(axis, MsAxis::Channel | MsAxis::Time) && y.is_derived()
+            }
+        });
+        self.avgchannel.is_some_and(|width| width > 1)
+            && !self.plotms_extended_averaging()
+            && supported_abscissa
+            && self.y_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis2.is_none()
+            && self.iteraxis.is_none()
+    }
+
+    pub(super) fn supports_extended_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
+        let channel_average = self.avgchannel.is_some_and(|width| width > 1);
+        let supported_average = if self.avgbaseline {
+            self.scalar
+        } else {
+            self.avgtime.is_some()
+        };
+        let visibility_column = |column: MsDataColumn| {
+            column.is_derived()
+                || matches!(
+                    column,
+                    MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+                )
+        };
+        let supported_abscissa = self.x_axis.is_some_and(|axis| {
+            if axis == MsAxis::Time || ((channel_average || self.scalar) && axis == MsAxis::Channel)
+            {
+                y.is_derived()
+            } else {
+                axis.is_visibility_math()
+                    && visibility_column(x)
+                    && visibility_column(y)
+                    && (x.is_derived() || y.is_derived())
+            }
+        });
+        supported_abscissa
+            && self.y_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis2.is_none()
+            && self.iteraxis.is_none()
+            && supported_average
+            && !self.avgantenna
+            && !self.avgspw
+    }
+
+    pub(super) fn derived_average_storage(
+        &self,
+        requested: [MsDataColumn; 3],
+        adjusted: [MsDataColumn; 3],
+    ) -> Option<([MsDataColumn; 3], &'static str)> {
+        if self.supports_channel_derived(requested) {
+            Some((adjusted, "channel"))
+        } else if self.supports_extended_derived(requested) {
+            let axis = if self.scalar && self.avgbaseline {
+                "scalar baseline"
+            } else if self.scalar {
+                "scalar time"
+            } else if self.avgchannel.is_some_and(|width| width > 1) {
+                "time- and channel"
+            } else {
+                "time"
+            };
+            Some((adjusted, axis))
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
+        self.x_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis.is_some_and(MsAxis::is_visibility_math)
+            && self.y_axis2.is_none()
+            && !self.plotms_averaging_active()
+            && self.iteraxis.is_none()
+            && self.color_by == MsColorAxis::None
+            && columns[..2]
+                .iter()
+                .all(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
+    }
+
+    pub(super) fn plotms_phasecenter(
+        &self,
+        value: &str,
+        without_calibration_or_overlays: bool,
+    ) -> Result<MDirection, TaskFailure> {
+        let raw_visibility = |axis: MsAxis, column: MsDataColumn| {
+            axis.is_visibility_math()
+                && matches!(
+                    column,
+                    MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+                )
+        };
+        let x = self.x_axis.is_some_and(|axis| {
+            axis.uses_uvw_metres()
+                || raw_visibility(axis, self.x_data_column.unwrap_or(self.data_column))
+        });
+        if !x
+            || !self
+                .y_axis
+                .is_some_and(|axis| raw_visibility(axis, self.data_column))
+            || !without_calibration_or_overlays
+            || self.y_axis2.is_some()
+            || self.plotms_averaging_active()
+            || self.iteraxis.is_some()
+            || self.freqframe.is_some()
+        {
+            return Err(TaskFailure::validation(
+                "PlotMS phasecenter currently supports one unaveraged complex visibility ordinate and a complex visibility or UVW abscissa, with no iteration, reporting frame, callibrary or overlays (#1032)",
+            )
+            .at("phasecenter"));
+        }
+        plotms_phasecenter::parse(value)
+    }
+
     pub(super) fn plotms_independent_average(&self) -> bool {
         let transforms_frequency =
             self.x_axis == Some(MsAxis::Frequency) && self.freqframe.is_some();
@@ -61,15 +184,16 @@ impl CliOptions {
         let time_average = self.avgtime.is_some()
             && !self.avgbaseline
             && !(transforms_frequency && crosses_boundary);
-        let baseline_average = self.avgbaseline && !crosses_boundary && !transforms_frequency;
-        let ordinary_time = time_average
-            && !crosses_boundary
-            && !transforms_frequency
-            && self.avgchannel.is_none_or(|width| width <= 1);
+        let baseline_average =
+            self.avgbaseline && (!crosses_boundary || self.scalar) && !transforms_frequency;
+        let channel_average = self.avgchannel.is_some_and(|width| width > 1);
+        let ordinary_time =
+            time_average && !transforms_frequency && !crosses_boundary && !channel_average;
+        let scalar_time = time_average && !transforms_frequency;
         (time_average || baseline_average)
             && !self.avgantenna
             && !self.avgspw
-            && (!self.scalar || ordinary_time)
+            && (!self.scalar || scalar_time || baseline_average)
             && !self.has_mixed_ordinate_dimensions()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()
@@ -85,6 +209,21 @@ impl CliOptions {
             || self.avgbaseline
             || self.avgantenna
             || self.avgspw
+    }
+}
+
+pub(super) fn raw_symbol_visibility(task: &TaskInvocation<'_>) -> RawSymbolVisibility {
+    let is_custom = |name| calibration::figure::shows_flagged(task.value(name), 0);
+    let has_symbol = |name| {
+        let shape = match task.value(name) {
+            Some(ParameterValue::Array(values)) => values.first(),
+            other => other,
+        };
+        !matches!(shape, Some(ParameterValue::String(value)) if value == "nosymbol")
+    };
+    RawSymbolVisibility {
+        unflagged: !is_custom("customsymbol") || has_symbol("symbolshape"),
+        flagged: is_custom("customflaggedsymbol") && has_symbol("flaggedsymbolshape"),
     }
 }
 
@@ -184,7 +323,9 @@ pub(super) fn options_from_plotms(
         || y_axis.is_visibility_math()
         || y_axis2.is_some()
         || x_axis.is_row_identifier()
-        || y_axis.is_row_identifier();
+        || y_axis.is_row_identifier()
+        || x_axis.is_pointing()
+        || y_axis.is_pointing();
     let visibility_document = visibility_document || document_axes;
     let plot_format = if visibility_document {
         MsExportFormat::Txt

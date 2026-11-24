@@ -5,8 +5,7 @@ use crate::lock::read_sync_data_from_table_dir;
 use crate::storage::StorageProfiler;
 use casa_types::{ArrayValue, ScalarValue};
 
-type SparseArrayRowValues = Vec<(usize, Option<ArrayValue>)>;
-type SparseArrayColumns = Vec<Option<SparseArrayRowValues>>;
+type SparseArrayColumns<T> = Vec<Option<Vec<(usize, Option<T>)>>>;
 type SparseScalarRowValues = Vec<(usize, Option<ScalarValue>)>;
 type SparseScalarColumns = Vec<Option<SparseScalarRowValues>>;
 
@@ -830,6 +829,7 @@ impl Table {
                                 &group_col_descs,
                                 &group_changed_columns,
                                 true,
+                                ArrayValue::clone,
                             )?
                         {
                             let dm_data = table_dat
@@ -993,6 +993,7 @@ impl Table {
                                 &group_col_descs,
                                 &group_changed_columns,
                                 group.dm_type == "TiledDataStMan",
+                                std::convert::identity,
                             )?
                         {
                             crate::storage::tiled_stman::save_tiled_columns_sparse_rows_in_place(
@@ -2308,13 +2309,14 @@ fn collect_sparse_scalar_group_values_from_current_cells(
     Ok(Some(columns))
 }
 
-fn collect_sparse_array_group_values_from_current_cells(
-    table: &Table,
+fn collect_sparse_array_group_values_from_current_cells<'a, T>(
+    table: &'a Table,
     row_indices: &[usize],
     col_descs: &[crate::storage::table_control::ColumnDescContents],
     changed_columns: &std::collections::HashSet<&str>,
     unchanged_scalars_allowed: bool,
-) -> Result<Option<SparseArrayColumns>, TableError> {
+    payload: impl Fn(&'a ArrayValue) -> T,
+) -> Result<Option<SparseArrayColumns<T>>, TableError> {
     let mut columns = Vec::with_capacity(col_descs.len());
     for col_desc in col_descs {
         let unchanged = !changed_columns.contains(col_desc.col_name.as_str());
@@ -2342,7 +2344,7 @@ fn collect_sparse_array_group_values_from_current_cells(
                     slot += 1;
                 }
                 if slot < pending_values.len() && pending_values[slot].0 == row_index {
-                    values.push((row_index, Some(pending_values[slot].1.clone())));
+                    values.push((row_index, Some(payload(&pending_values[slot].1))));
                 }
             }
         } else {
@@ -2353,7 +2355,7 @@ fn collect_sparse_array_group_values_from_current_cells(
                 .collect();
             for &row_index in row_indices {
                 if let Some(value) = pending_by_row.get(&row_index) {
-                    values.push((row_index, Some((*value).clone())));
+                    values.push((row_index, Some(payload(value))));
                 }
             }
         }

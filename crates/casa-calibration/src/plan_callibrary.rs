@@ -375,15 +375,13 @@ pub(super) fn validate_overlaps(tables: &[PlannedTable]) -> Result<(), ApplyPlan
 
 /// Keep physical IDs in the row plan, alongside the scalar metadata VisCal sees.
 pub(super) fn buffer_observations(
-    ms: &MeasurementSet,
     rows: &mut [ApplyRowPlan],
+    array_id: impl Fn(usize) -> Result<i32, ApplyPlanError>,
 ) -> Result<(), ApplyPlanError> {
-    let ids = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
-    let arrays = load_i32_column_rows(ms.main_table(), "ARRAY_ID", &ids)?;
     let mut first = HashMap::new();
     for (index, row) in rows.iter_mut().enumerate() {
         let key = (
-            value_at_i32(&arrays, index, "ARRAY_ID")?,
+            array_id(index)?,
             row.scan_number,
             row.field_id,
             row.data_desc_id,

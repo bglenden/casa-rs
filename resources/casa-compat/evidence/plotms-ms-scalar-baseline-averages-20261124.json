@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "ac7430e84c266c5eb483ded034b66ee188afddc5",
+  "source_revision": "ac7430e84c266c5eb483ded034b66ee188afddc5",
+  "baseline_revision": "2e36c4d4909ea7c1b2ae8ee01c5e347df59b5368",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Scalar visibility averaging while collapsing selected MeasurementSet baselines, including channel reduction, scalar time intervals, independent axes and ordinates, and scan spans.",
+  "result": "passed",
+  "baseline_result": "Main projected a vector phase of 77.5702 degrees in the first selected baseline average; pinned CASA corrected phase was 64 degrees.",
+  "text_exports": 11,
+  "points": 55,
+  "figures": 2,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "aligned_slot_control_points": 1,
+  "direct_reference_refusals": 1,
+  "time_coordinate_tolerance_seconds": 0.00051
+}

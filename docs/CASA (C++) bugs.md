@@ -4065,11 +4065,54 @@ weighted mean. Native flagdata divides by the real sum of weights. The
 oracle checks the expected finite mean, the normal signed-weight behavior
 and the zero-total-weight case independently.
 
+The same underflow occurs in CASA 6.7.6.14 with casaplotms 2.9.1 after time
+and channel averaging a corrected minus model expression. In a bin with
+corrected values of 2 and model values of 1, calibrated channel weights
+of `1e-25` produce a residual of 0 in CASA. Observed sigma values of
+`1e13` instead hide the bin. Native PlotMS compares the real weight sum
+directly and preserves the residual of 1 in both cases. The paired
+oracle also checks signed nonzero totals and the separate observed mask
+when an accumulated inverse variance overflows during time averaging.
+
 The parameter bridge narrows widths before comparing them to the window
 length. A width of `4294967298` wraps into two channels, which can flag two
 samples even though the whole-window mean falls outside the clipping
 range. Native flagdata applies the same whole-window rule as other widths
 larger than the window, for both scalar and per-window forms.
+
+## PlotMS scalar time plots can fail after encountering a sparse weight spectrum
+
+With `avgchannel="2"`, `avgtime="20"`, and `scalar=True`, CASA 6.7.6.14
+with casaplotms 2.9.1 can export a corrected-minus-model plot when the
+first selected input buffer starts with an undefined `WEIGHT_SPECTRUM`
+cell. Reversing the integration times in the same fixture makes the
+iterator reach a fully defined buffer before the incomplete one. CASA then
+returns `INVALID_ARGUMENT` during export. Native PlotMS resolves spectral
+weight availability for each input buffer and uses the scalar `WEIGHT`
+values for the buffer that lacks a spectrum. Its four exported coordinates
+match the separate CASA control with `WEIGHT_SPECTRUM` removed. Both
+implementations agree on the original chronological fixture (#2231).
+
+## PlotMS can refuse a correlation stored in different physical slots
+
+Select `YY` from two baselines in the same integration and spectral window.
+The first data description records `[XX, YY]`, and the second records `[YY]`.
+CASA 6.7.6.14 with casaplotms 2.9.1 exports either baseline separately and
+returns `INVALID_ARGUMENT` when both are selected for scalar baseline averaging.
+casa-rs reads each row's selected `YY` slot and combines the two samples in
+the scalar output. Its amplitude of 1.2 and phase of 64 degrees match a CASA
+control with the original samples and `YY` in slot zero in both descriptions.
+The control also uses different `XX` values to verify correlation selection
+and preserves the original collapsed baseline metadata (#2234).
+
+The pinned task also refuses different physical `YY` slots when vector time
+averaging feeds a per-antenna average. The paired fixture records
+`[XX, XY, YX, YY]` on the first baseline and `[YY]` on the second. After
+selecting `YY`, both buffers have the same selected shape. casa-rs emits one
+point per antenna, with Real DATA and Imaginary CORRECTED_DATA coordinates
+of (2, 4), (1, −2), and (3, −6). These match the CASA control with `YY`
+in slot zero in both descriptions (#2239).
+
 ## Time-averaged clipping and TFCrop can substitute zeros for defined inputs
 
 In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping or
@@ -11018,6 +11061,22 @@ for the requested complex columns and preserves the constant value 1. The
 paired fixture checks the selected bins and metadata in both modes (#1032).
 [Pinned transform setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/mstransform/MSTransform/MSTransformManager.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 [Pinned time averager](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/AveragingTvi2.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
+
+## PlotMS can stall while exporting phase-shifted coordinates to text
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, plot U in metres against observed
+phase for selected XX channels on a complex MeasurementSet. Enable
+`transform=True` and set `phasecenter="J2000 00h00m02.00s -29d59m40.00s"`.
+The headless task writes the PNG and returns. A text export of the same
+phase shift can stop after the selection header and fail to return.
+
+casa-rs exports the selected coordinates and flags to text. The paired
+test compares them with pinned PlotMS on a separate MS written by the
+CASA `phaseshift` task. Both CASA paths use the same phase-shifting
+visibility iterator. The test also compares PNG export using the original
+MS and active transform in both public PlotMS tasks (#1032).
+[Pinned PlotMS iterator setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+[Pinned phase-shifting iterator](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/PhaseShiftingTVI.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 
 ## Empty MS visibility strides can abort or change the attachment
 

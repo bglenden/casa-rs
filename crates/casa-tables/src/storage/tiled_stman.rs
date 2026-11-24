@@ -380,6 +380,8 @@ mod band_writer;
 mod casacore_tiled_data_tests;
 #[cfg(test)]
 mod casacore_tiled_order_tests;
+mod selected_cells;
+use selected_cells::load_selected_rows_from_touched_cubes;
 mod selected_tiles;
 use selected_tiles::{SelectedTiles, copy_pixels};
 mod shape_cube;
@@ -3034,48 +3036,6 @@ fn load_tiled_column_rows_cell_variant(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn load_selected_rows_from_touched_cubes(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    output_len: usize,
-    patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
-) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-    let mut outputs = vec![None; output_len];
-    let mut read_session = TileReadSession::default();
-
-    for (cube_idx, patches) in patches_by_cube {
-        let Some(cube) = header.cubes.get(cube_idx) else {
-            continue;
-        };
-        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
-            continue;
-        }
-        for selected in patches {
-            outputs[selected.out_idx] = decode_selected_cube_row_from_shared_tiles(
-                table_path,
-                dm_seq_nr,
-                header,
-                cube_idx,
-                cube,
-                target_col_idx,
-                col_desc,
-                dt,
-                elem_size,
-                selected,
-                &mut read_session,
-            )?;
-        }
-    }
-
-    Ok(outputs)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn load_tiled_column_rows_shape_variant_1d_typed(
     table_path: &Path,
     dm_seq_nr: u32,
@@ -4437,7 +4397,9 @@ pub(crate) fn save_empty_tiled_shape_column(
     )
 }
 
-type SparseArrayRowValues = Vec<(usize, Option<ArrayValue>)>;
+mod sparse_write_bytes;
+
+type SparseArrayRowValues<'a> = Vec<(usize, Option<&'a ArrayValue>)>;
 
 #[derive(Clone, Copy, Debug)]
 struct SparseTiledCubeRowPatch {
@@ -4451,7 +4413,7 @@ pub(crate) fn save_tiled_columns_sparse_rows_in_place(
     dm_type_name: &str,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     if changed_rows.is_empty() {
@@ -4509,7 +4471,7 @@ fn save_tiled_column_group_rows_sparse_in_place(
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
@@ -4566,7 +4528,7 @@ fn save_tiled_cell_group_rows_sparse_in_place(
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
@@ -4617,7 +4579,7 @@ fn save_tiled_data_group_rows_sparse_in_place(
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
@@ -4702,7 +4664,7 @@ fn save_tiled_shape_group_rows_sparse_in_place(
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
     table_desc: &TableDescContents,
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     changed_rows: &[usize],
 ) -> Result<bool, StorageError> {
     let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
@@ -5098,7 +5060,7 @@ fn patch_tiled_cube_sparse_rows(
     table_path: &Path,
     dm_seq_nr: u32,
     col_descs: &[ColumnDescContents],
-    sparse_columns: &[Option<SparseArrayRowValues>],
+    sparse_columns: &[Option<SparseArrayRowValues<'_>>],
     big_endian: bool,
     col_data_types: &[CasacoreDataType],
     tile_index: &[Option<usize>],
@@ -5116,14 +5078,14 @@ fn patch_tiled_cube_sparse_rows(
         ));
     }
 
-    struct SparseColumnPatch {
+    struct SparseColumnPatch<'a> {
         col_data_type: CasacoreDataType,
         elem_size: usize,
         expected_row_bytes: usize,
         row_block_bytes: usize,
         tile_storage_len: usize,
         col_offset: usize,
-        encoded_rows: std::collections::HashMap<usize, Vec<u8>>,
+        encoded_rows: std::collections::HashMap<usize, Cow<'a, [u8]>>,
     }
 
     let cell_shape = &cube.cube_shape[..row_axis];
@@ -5181,7 +5143,7 @@ fn patch_tiled_cube_sparse_rows(
             }
             let encoded = match value {
                 Some(value) => {
-                    let (encoded, dt) = encode_tiled_array(value, big_endian)?;
+                    let (encoded, dt) = sparse_write_bytes::encode_row(value, big_endian)?;
                     if dt != col_data_type {
                         return Err(StorageError::FormatMismatch(format!(
                             "tiled sparse save column {} expected {:?} but encoded {:?}",
@@ -5197,7 +5159,7 @@ fn patch_tiled_cube_sparse_rows(
                     }
                     encoded
                 }
-                None => vec![0u8; expected_row_bytes],
+                None => Cow::Owned(vec![0u8; expected_row_bytes]),
             };
             encoded_rows.insert(*row_idx, encoded);
         }
@@ -9597,11 +9559,10 @@ fn load_streamed_column_tile(
     let tile_nelem: usize = cube.tile_shape.iter().product();
     let tile_bytes = tile_nelem * tile_element_size(dt);
     let file_tile_bytes = tile_storage_bytes(dt, tile_nelem);
-    let useful_read_ahead_bytes = contiguous_tiles
-        .checked_sub(1)
-        .and_then(|remaining| remaining.checked_mul(bucket_size))
-        .and_then(|bytes| bytes.checked_add(file_tile_bytes))
-        .ok_or_else(|| StorageError::FormatMismatch("selected tile run size overflow".into()))?;
+    let useful_read_ahead_bytes = read_ahead_span(contiguous_tiles, bucket_size, file_tile_bytes)
+        .ok_or_else(|| {
+        StorageError::FormatMismatch("selected tile run size overflow".into())
+    })?;
     let swap_size = match dt {
         CasacoreDataType::TpComplex => 4,
         CasacoreDataType::TpDComplex => 8,
@@ -9624,6 +9585,18 @@ fn load_streamed_column_tile(
         needs_swap,
         swap_size,
     )
+}
+
+fn read_ahead_span(tiles: usize, bucket_bytes: usize, column_tile_bytes: usize) -> Option<usize> {
+    let additional_tiles = tiles.checked_sub(1)?;
+    // A bucket can contain large tiles from other columns. Read ahead only
+    // when the buffer can reach the end of a second tile of this column.
+    if bucket_bytes > STREAMING_TILED_READ_AHEAD_BYTES.saturating_sub(column_tile_bytes) {
+        return Some(column_tile_bytes);
+    }
+    additional_tiles
+        .checked_mul(bucket_bytes)?
+        .checked_add(column_tile_bytes)
 }
 
 /// The byte order of a shared tile's pixels: [`load_shared_column_tile`]
@@ -9759,132 +9732,6 @@ fn reconstruct_cube_column_from_shared_tiles(
     }
 
     Ok(result)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_selected_cube_row_from_shared_tiles(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    cube_idx: usize,
-    cube: &TsmCubeInfo,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    selected: SelectedCubeRow,
-    session: &mut TileReadSession,
-) -> Result<Option<ArrayValue>, StorageError> {
-    let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-    let cell_shape: Vec<usize> = cube.cube_shape[..cell_ndim].to_vec();
-    let cell_nelem: usize = cell_shape.iter().product();
-    let cell_tile_shape = &cube.tile_shape[..cell_ndim];
-    let cell_tiles_per_dim: Vec<usize> = cell_shape
-        .iter()
-        .zip(cell_tile_shape.iter())
-        .map(|(&cell, &tile)| cell.div_ceil(tile))
-        .collect();
-    let row_tile = selected.pos_in_cube / cube.tile_shape[cell_ndim];
-    let row_in_tile = selected.pos_in_cube % cube.tile_shape[cell_ndim];
-    let row_tile_nelem: usize = cell_tile_shape.iter().product();
-    let tiles_per_dim: Vec<usize> = cube
-        .cube_shape
-        .iter()
-        .zip(cube.tile_shape.iter())
-        .map(|(&shape, &tile)| shape.div_ceil(tile))
-        .collect();
-    let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
-    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
-
-    if cell_tile_shape == cell_shape.as_slice() {
-        let tile_index = row_tile * tile_grid_strides[cell_ndim];
-        let tile = load_shared_column_tile(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            bucket_size,
-            col_offsets[target_col_idx],
-            dt,
-            tile_index,
-            session,
-        )?;
-        let src_start = row_in_tile * row_tile_nelem * elem_size;
-        let src_end = src_start + row_tile_nelem * elem_size;
-        let value = decode_array_value(
-            &tile[src_start..src_end],
-            &cell_shape,
-            dt,
-            SHARED_TILE_BIG_ENDIAN,
-        )?;
-        return match value {
-            Value::Array(array) => Ok(Some(array)),
-            other => Err(StorageError::FormatMismatch(format!(
-                "tiled array column {} decoded as non-array value {:?}",
-                col_desc.col_name,
-                other.kind()
-            ))),
-        };
-    }
-
-    let mut raw = vec![0u8; cell_nelem * elem_size];
-
-    for cell_tile_linear in 0..cell_tiles_per_dim.iter().product::<usize>() {
-        let cell_tile_pos = linear_to_nd(cell_tile_linear, &cell_tiles_per_dim);
-        let mut full_tile_pos = cell_tile_pos.clone();
-        full_tile_pos.push(row_tile);
-        let tile_index: usize = full_tile_pos
-            .iter()
-            .zip(tile_grid_strides.iter())
-            .map(|(pos, stride)| pos * stride)
-            .sum();
-        let tile = load_shared_column_tile(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            bucket_size,
-            col_offsets[target_col_idx],
-            dt,
-            tile_index,
-            session,
-        )?;
-        let src_start = row_in_tile * row_tile_nelem * elem_size;
-        let src_end = src_start + row_tile_nelem * elem_size;
-        let tile_row = &tile[src_start..src_end];
-        let cell_start: Vec<usize> = cell_tile_pos
-            .iter()
-            .enumerate()
-            .map(|(axis, &pos)| pos * cell_tile_shape[axis])
-            .collect();
-        let actual_extent: Vec<usize> = cell_shape
-            .iter()
-            .enumerate()
-            .map(|(axis, &shape)| std::cmp::min(cell_tile_shape[axis], shape - cell_start[axis]))
-            .collect();
-        copy_tile_to_cube(
-            tile_row,
-            cell_tile_shape,
-            &mut raw,
-            &cell_shape,
-            &cell_start,
-            &actual_extent,
-            elem_size,
-        );
-    }
-
-    match decode_array_value(&raw, &cell_shape, dt, SHARED_TILE_BIG_ENDIAN)? {
-        Value::Array(array) => Ok(Some(array)),
-        other => Err(StorageError::FormatMismatch(format!(
-            "tiled array column {} decoded as non-array value {:?}",
-            col_desc.col_name,
-            other.kind()
-        ))),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

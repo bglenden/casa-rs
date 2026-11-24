@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "12ea23c0cf875538b1cc025308d41c8fb6fc6306",
+  "source_revision": "12ea23c0cf875538b1cc025308d41c8fb6fc6306",
+  "baseline_revision": "e9ec2c0144804beadcede04c005bd154d6c1f1c4",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Static scalar and vector per-antenna visibility plots at individual integrations, including antenna identities, correlation selection, spectral weights, cube flags and export order.",
+  "result": "passed",
+  "baseline_result": "Main exported the contributing baseline IDs and names and ordered correlations before antennas. CASA exported the averaged antenna identity and ordered antenna before correlation.",
+  "text_exports": 8,
+  "points": 56,
+  "figures": 1,
+  "rendered_coordinates": 8,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

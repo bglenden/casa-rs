@@ -34,10 +34,19 @@ pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
         && !spec.averaging.avgantenna
         && !spec.averaging.avgspw
         && !spec.averaging.scalar
-        && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
-        && (spec.x_axis.is_visibility_math()
-            || matches!(spec.x_axis, MsAxis::Time | MsAxis::Channel)
-            || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
+        && supports_reduced_visibility_axes(spec)
+}
+
+pub(super) fn uses_antenna_visibility_average(spec: &MsPlotSpec) -> bool {
+    spec.averaging.avgantenna
+        && (spec.averaging.avgtime.is_none()
+            || spec.averaging.scalar
+            || spec.averaging.avgchannel.is_none_or(|width| width <= 1))
+        && !spec.averaging.avgbaseline
+        && !spec.averaging.avgscan
+        && !spec.averaging.avgfield
+        && !spec.averaging.avgspw
+        && supports_reduced_visibility_axes(spec)
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
@@ -56,16 +65,16 @@ pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
                 && spec.y_axis().uses_uvw_metres()))
 }
 
-pub(super) fn uses_scalar_time_average(spec: &MsPlotSpec) -> bool {
+pub(super) fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.scalar
-        && spec.averaging.avgtime.is_some()
-        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
-        && !spec.averaging.avgbaseline
-        && !spec.averaging.avgscan
-        && !spec.averaging.avgfield
+        && (spec.averaging.avgtime.is_some() || spec.averaging.avgbaseline)
         && !spec.averaging.avgantenna
         && !spec.averaging.avgspw
-        && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
+        && supports_reduced_visibility_axes(spec)
+}
+
+fn supports_reduced_visibility_axes(spec: &MsPlotSpec) -> bool {
+    spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
         && (spec.x_axis.is_visibility_math()
             || matches!(spec.x_axis, MsAxis::Time | MsAxis::Channel)
             || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
@@ -80,6 +89,42 @@ pub(super) fn uses_model(axes: [Option<MsAxis>; 3], columns: [MsDataColumn; 3]) 
     axes.into_iter()
         .zip(columns)
         .any(|(axis, column)| axis.is_some_and(MsAxis::is_visibility_math) && column.needs_model())
+}
+
+pub(super) fn uses_channel_derived(spec: &MsPlotSpec, x: Option<MsDataColumn>) -> bool {
+    spec.averaging.avgchannel.is_some_and(|width| width > 1)
+        && [
+            (spec.x_axis, x.unwrap_or(spec.data_column)),
+            (spec.y_axis(), spec.data_column),
+        ]
+        .into_iter()
+        .any(|(axis, column)| axis.is_visibility_math() && column.is_derived())
+}
+
+pub(super) fn check_averaged_derived_storage(
+    ms: &MeasurementSet,
+    columns: [MsDataColumn; 3],
+    averaging_axis: &str,
+) -> Result<(), TaskFailure> {
+    let schema = ms.main_table().schema();
+    let operands = columns
+        .into_iter()
+        .filter(|column| column.is_derived())
+        .map(|column| {
+            if column.is_corrected_model_expression() {
+                "CORRECTED_DATA"
+            } else {
+                "DATA"
+            }
+        });
+    for name in std::iter::once("MODEL_DATA").chain(operands) {
+        if !schema.is_some_and(|schema| schema.contains_column(name)) {
+            return Err(TaskFailure::validation(format!(
+                "{averaging_axis}-averaged residuals and ratios require stored {name} (#1032)"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn weight_axis_columns(
@@ -98,6 +143,7 @@ pub(super) fn weight_axis_columns(
 pub(super) fn check_averaging(
     averaging: bool,
     extended_averaging_with_independent_ordinates: bool,
+    supports_derived: bool,
     columns: [MsDataColumn; 3],
 ) -> Result<(), TaskFailure> {
     if extended_averaging_with_independent_ordinates {
@@ -105,7 +151,7 @@ pub(super) fn check_averaging(
             "time, baseline, antenna and SPW averaging of independent MeasurementSet ordinate columns is pending #1032",
         ));
     }
-    if averaging && columns.into_iter().any(MsDataColumn::is_derived) {
+    if averaging && !supports_derived && columns.into_iter().any(MsDataColumn::is_derived) {
         return Err(TaskFailure::validation(
             "averaging derived data columns in this MeasurementSet plot is pending #1032",
         ));
@@ -116,6 +162,7 @@ pub(super) fn check_averaging(
 #[derive(Clone, Copy)]
 pub(super) struct PlotMsWeightKinds {
     pub(super) axes: [WeightKind; 3],
+    pub(super) model: Option<WeightKind>,
     pub(super) primary: WeightKind,
     pub(super) row_weight: WeightKind,
     pub(super) row_sigma: WeightKind,
@@ -123,7 +170,7 @@ pub(super) struct PlotMsWeightKinds {
 
 impl PlotMsWeightKinds {
     pub(super) fn uses(self, kind: WeightKind) -> bool {
-        self.primary == kind || self.axes.contains(&kind)
+        self.primary == kind || self.model == Some(kind) || self.axes.contains(&kind)
     }
 }
 
@@ -159,10 +206,10 @@ pub(super) fn weight_kinds(
                     .then_some(column)
             })
         });
-    // PlotMS configures the transform to load all columns for a mixed-column
-    // request, so a model uses the corrected or observed weighting when present.
+    // A derived expression itself loads all columns, as does a mixed-column request.
+    // A model uses corrected or observed weighting when present in that iterator.
     let first = active.next();
-    let all = first.is_some_and(|first| active.any(|column| column != first));
+    let all = first.is_some_and(|first| first.is_derived() || active.any(|column| column != first));
     let has_observed = all && has("DATA");
     let has_corrected = all && has("CORRECTED_DATA");
     let primary = if has_observed {
@@ -174,8 +221,16 @@ pub(super) fn weight_kinds(
     };
     let kind = |column| {
         let column = match column {
-            MsDataColumn::Data => OptionalMainColumn::Data,
-            MsDataColumn::Corrected => OptionalMainColumn::CorrectedData,
+            MsDataColumn::Data
+            | MsDataColumn::DataMinusModel
+            | MsDataColumn::DataMinusModelScalar
+            | MsDataColumn::DataDivModel
+            | MsDataColumn::DataDivModelScalar => OptionalMainColumn::Data,
+            MsDataColumn::Corrected
+            | MsDataColumn::CorrectedMinusModel
+            | MsDataColumn::CorrectedMinusModelScalar
+            | MsDataColumn::CorrectedDivModel
+            | MsDataColumn::CorrectedDivModelScalar => OptionalMainColumn::CorrectedData,
             MsDataColumn::Model => OptionalMainColumn::ModelData,
             _ => return WeightKind::Unit,
         };
@@ -183,6 +238,8 @@ pub(super) fn weight_kinds(
     };
     PlotMsWeightKinds {
         axes: columns.map(kind),
+        model: (input.extended_derived || uses_channel_derived(spec, input.x_data_column))
+            .then(|| kind(MsDataColumn::Model)),
         primary: kind(primary),
         row_weight: if has_corrected {
             WeightKind::Calibrated
@@ -212,15 +269,7 @@ impl ChannelStatistics {
         inverse_variance: Option<&FloatGrid>,
     ) -> Self {
         let sum = |grid: Option<&FloatGrid>, bin: &ChannelBin| {
-            sum_channel_weights(
-                bin.channels().map(|channel| {
-                    let value = grid.map_or(1.0, |grid| {
-                        grid.values[correlation * grid.chan_count + channel] as f32
-                    });
-                    (flags[(correlation, channel)], value)
-                }),
-                false,
-            )
+            channel_bin_weight(grid, correlation, bin, flags, ChannelWeightMask::FlagsOnly)
         };
         let spectra: Vec<_> = bins
             .iter()
@@ -253,31 +302,48 @@ impl ChannelStatistics {
     }
 }
 
-/// The baseline reducer receives the transform's scalar weight, averaged
+/// The next reducer receives the transform's scalar weight, averaged
 /// across the output channels of the first selected correlation.
 pub(super) fn channel_averaged_row_weight(
     weights: Option<&FloatGrid>,
     correlation: usize,
     bins: &[ChannelBin],
     flags: &ndarray::ArrayView2<'_, bool>,
-    propagate_weights: bool,
+    mask: ChannelWeightMask,
 ) -> f64 {
     f64::from(mean_weight_preferring_unflagged(bins.iter().map(|bin| {
-        sum_channel_weights(
-            bin.channels().map(|channel| {
-                let weight = weights.map_or(1.0, |grid| {
-                    grid.values[correlation * grid.chan_count + channel] as f32
-                });
-                (flags[(correlation, channel)], weight)
-            }),
-            propagate_weights,
-        )
+        channel_bin_weight(weights, correlation, bin, flags, mask)
     })))
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum ChannelWeightMask {
+    FlagsOnly,
+    Positive,
+    Nonzero,
+}
+
+pub(super) fn channel_bin_weight(
+    weights: Option<&FloatGrid>,
+    correlation: usize,
+    bin: &ChannelBin,
+    flags: &ndarray::ArrayView2<'_, bool>,
+    mask: ChannelWeightMask,
+) -> (bool, f32) {
+    sum_channel_weights(
+        bin.channels().map(|channel| {
+            let weight = weights.map_or(1.0, |grid| {
+                grid.values[correlation * grid.chan_count + channel] as f32
+            });
+            (flags[(correlation, channel)], weight)
+        }),
+        mask,
+    )
 }
 
 pub(super) fn sum_channel_weights(
     samples: impl Iterator<Item = (bool, f32)>,
-    propagate_weights: bool,
+    mask: ChannelWeightMask,
 ) -> (bool, f32) {
     let mut sums = [0.0, 0.0];
     let mut all_flagged = true;
@@ -286,7 +352,12 @@ pub(super) fn sum_channel_weights(
         sums[usize::from(flagged)] += weight;
     }
     let sum = sums[usize::from(all_flagged)];
-    let usable = !all_flagged && (!propagate_weights || sum > 0.0);
+    let usable = !all_flagged
+        && match mask {
+            ChannelWeightMask::FlagsOnly => true,
+            ChannelWeightMask::Positive => sum > 0.0,
+            ChannelWeightMask::Nonzero => sum != 0.0 && !sum.is_nan(),
+        };
     (!usable, sum)
 }
 
@@ -425,7 +496,9 @@ pub(super) fn resolve_storage_columns<const N: usize>(
                 ));
             }
         }
-        if averaging && has_float && matches!(column, Data | Float) {
+        let uses_observed = matches!(column, Data | Float)
+            || (column.is_derived() && !column.is_corrected_model_expression());
+        if averaging && has_float && uses_observed {
             return Err(TaskFailure::validation(
                 "averaging MeasurementSet FLOAT_DATA is pending #1032",
             ));

@@ -999,11 +999,7 @@ impl MsCalEngine {
         // MAIN.UVW row vector. Matching that path therefore
         // requires the target/source order opposite to the intuitive
         // source->target helper naming used elsewhere.
-        let uvrot = uvw_rotation_matrix(target_dir, source_dir);
-        let imaging_uvw_m = row_vec3_mul_mat3(raw_uvw_m, uvrot);
-        let phrot = uvw_phase_rotation_vector(target_dir, source_dir);
-        let phase_shift_m = dot3(phrot, imaging_uvw_m);
-        Ok((imaging_uvw_m, phase_shift_m))
+        Ok(UvwRotation::new(target_dir, source_dir).apply(raw_uvw_m))
     }
 
     /// Reproject raw MS UVW coordinates from one field phase center to an
@@ -1027,11 +1023,7 @@ impl MsCalEngine {
             });
         }
         let source_dir = self.field_dir(source_field_id)?;
-        let uvrot = uvw_rotation_matrix(target_direction, source_dir);
-        let imaging_uvw_m = row_vec3_mul_mat3(raw_uvw_m, uvrot);
-        let phrot = uvw_phase_rotation_vector(target_direction, source_dir);
-        let phase_shift_m = dot3(phrot, imaging_uvw_m);
-        Ok((imaging_uvw_m, phase_shift_m))
+        Ok(UvwRotation::new(target_direction, source_dir).apply(raw_uvw_m))
     }
 
     /// The observatory position used by this engine.
@@ -1053,6 +1045,28 @@ impl MsCalEngine {
                 max: self.antenna_mount_alt_az.len(),
                 context: "antenna_id".to_string(),
             })
+    }
+}
+
+/// The unprojected casacore UVWMachine rotation between two directions in
+/// the same reference frame.
+pub(crate) struct UvwRotation {
+    uvw: [[f64; 3]; 3],
+    phase: [f64; 3],
+}
+
+impl UvwRotation {
+    pub(crate) fn new(source: &MDirection, target: &MDirection) -> Self {
+        Self {
+            uvw: uvw_rotation_matrix(source, target),
+            phase: uvw_phase_rotation_vector(source, target),
+        }
+    }
+
+    /// Return the rotated UVW and geometric path difference in metres.
+    pub(crate) fn apply(&self, uvw: [f64; 3]) -> ([f64; 3], f64) {
+        let rotated = row_vec3_mul_mat3(uvw, self.uvw);
+        (rotated, dot3(self.phase, rotated))
     }
 }
 

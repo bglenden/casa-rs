@@ -16,8 +16,8 @@ use std::path::Path;
 
 use casa_ms::MeasurementSet;
 use casa_ms::transform::{
-    MsTransformReport, MsTransformRequest, SpectrumBaseline, SpectrumRow, SpectrumWeights,
-    TransformTaskHistory, transform_baseline_spectra,
+    MsTransformReport, MsTransformRequest, MsTransformTiling, SpectrumBaseline, SpectrumRow,
+    SpectrumWeights, TransformTaskHistory, transform_baseline_spectra,
 };
 use casa_types::{ArrayValue, Complex32, RecordValue};
 use ndarray::{Array1, ArrayD, Axis};
@@ -25,7 +25,7 @@ use ndarray::{Array1, ArrayD, Axis};
 pub use auto_mask::SingleDishLineFinder;
 use diagnostics::Diagnostics;
 use linear_fit::Fit;
-use polynomial::{Polynomial, PolynomialFit};
+use polynomial::{Polynomial, PolynomialFit, PreparedPolynomial};
 pub use sinusoid::SingleDishSinusoid;
 use table::{AppliedBaseline, BaselineRow, BaselineTable, SpectrumModel, mask_ranges};
 use variable::{StoredLineFinder, VariableParameters};
@@ -260,6 +260,7 @@ impl SingleDishSession {
         };
         let mut options = self.line_averaging.operation_options()?;
         options.history = request.history;
+        options.tiling = Some(MsTransformTiling::Standard);
         let mut report = transform_baseline_spectra(
             &MsTransformRequest {
                 input_ms: path.to_path_buf(),
@@ -417,6 +418,7 @@ impl FitRequest<'_> {
 struct FitOperation<'a> {
     request: FitRequest<'a>,
     bases: BTreeMap<(usize, bool, usize), PolynomialFit>,
+    polynomial_design: Option<PreparedPolynomial>,
     records: Vec<RecordValue>,
     record_models: bool,
     diagnostics: Diagnostics,
@@ -448,6 +450,7 @@ impl<'a> FitOperation<'a> {
         Self {
             request,
             bases: BTreeMap::new(),
+            polynomial_design: None,
             records: Vec::new(),
             record_models,
             diagnostics,
@@ -535,7 +538,13 @@ impl<'a> FitOperation<'a> {
                     }
                 };
                 basis
-                    .fit(values, mask, clip_sigma, max_fits)?
+                    .fit(
+                        values,
+                        mask,
+                        clip_sigma,
+                        max_fits,
+                        &mut self.polynomial_design,
+                    )?
                     .map(|fit| (fit, ModelBasis::Polynomial(family, *order)))
             }
             SingleDishBaselineBasis::CubicSpline { pieces } => {
