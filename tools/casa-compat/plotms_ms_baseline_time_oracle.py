@@ -118,6 +118,44 @@ def compare_partial_spectrum(root, native, controls):
     print(f"spectrum-availability: {len(selected)} matching time-and-baseline coordinates", flush=True)
 
 
+def compare_time_channel_baselines(root, native):
+    work = root / "time-channel-baselines"
+    work.mkdir()
+    plain, spectral, _, flagged = make_channel_baseline_fixture(work)
+    with opened(plain) as table:
+        start = table.getcol("TIME").min()
+    controls = request(plain) | dict(
+        antenna="A0&A1;A0&A2", xaxis="real", xdatacolumn="data",
+        yaxis=["real", "real"], ydatacolumn=["corrected", "model"],
+        yaxislocation=["left", "right"], spw="0:0~3", avgtime="20",
+        avgchannel="2", avgbaseline=True,
+    )
+    cases = (
+        ("scalar-spectra", plain, [(4.7, 47), (9.7, 97)]),
+        ("stored-spectra", spectral, [(217 / 110, 31), (163 / 22, 815 / 11)]),
+        ("masked-channel-and-time", flagged, [(53 / 30, 50 / 3), (7.5, 75)]),
+    )
+    for name, vis, corrected in cases:
+        options = controls | dict(vis=str(vis), expformat="txt")
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 8
+        assert [point[2] for point in selected] == ["0", "1"] * 4
+        assert [point[10] for point in selected] == ["100.000500000", "100.002500000"] * 4
+        assert [point[9] for point in selected] == [f"{start + offset:.3f}" for offset in (15, 15, 45, 45)] * 2
+        assert {tuple(point[5:9]) for point in selected} == {("-1", "-1", "*", "*")}
+        model = [(x, 10 * y) for x, y in corrected]
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   corrected * 2 + model * 2, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching time, channel and baseline coordinates", flush=True)
+    controls["vis"] = str(flagged)
+    compare_ordinate_figure(work, "masked-channel-and-time", native, controls,
+                           "Real", ["Real:corrected", "Real:model"])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -136,6 +174,7 @@ def main():
 
     with chdir(root), plotms_launcher(args.app_run):
         compare(root, native)
+        compare_time_channel_baselines(root, native)
 
 
 if __name__ == "__main__":
