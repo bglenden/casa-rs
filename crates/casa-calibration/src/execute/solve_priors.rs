@@ -9,7 +9,8 @@ use super::chain::{ApplyChain, has_polarization_matrix, viscal_order};
 use super::{
     ApplyExecutionError, ApplyPlan, ArrayValue, Complex32, EvaluatedApplyRow, ExecutionRowInputs,
     HashMap, MeasurementSet, PreviewWeightSource, RowGeometryCache, applies_preview_weights,
-    apply_row, evaluate_apply_rows, for_each_apply_row, shared_channel_flags,
+    apply_row, complex_visibility_from_float, evaluate_apply_rows, for_each_apply_row,
+    shared_channel_flags,
 };
 
 #[derive(Clone, Copy)]
@@ -112,10 +113,17 @@ impl SolvePriorApply {
         data: &ArrayValue,
         flags: ArrayValue,
     ) -> Result<Option<EvaluatedApplyRow>, ApplyExecutionError> {
-        self.rows
-            .get(&row)
-            .map(|&position| self.apply(position, correlations, data, flags))
-            .transpose()
+        let Some(&position) = self.rows.get(&row) else {
+            return Ok(None);
+        };
+        let converted;
+        let data = if let ArrayValue::Float32(samples) = data {
+            converted = complex_visibility_from_float(samples);
+            &converted
+        } else {
+            data
+        };
+        self.apply(position, correlations, data, flags).map(Some)
     }
 
     pub(crate) fn correct(

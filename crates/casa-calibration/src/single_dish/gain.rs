@@ -384,7 +384,9 @@ fn write(
     channels: &BTreeMap<usize, usize>,
 ) -> Result<usize, String> {
     let count = samples.len();
-    let mut writer = CalibrationTableWriter::with_mode(
+    let destination = crate::output::CalibrationOutput::prepare_single_dish_solve(output, mode)
+        .map_err(error_text)?;
+    let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
             output,
@@ -397,9 +399,9 @@ fn write(
             include_polarization_basis: true,
             time_extra_precision_column: None,
         },
+        destination,
         mode,
-    )
-    .map_err(error_text)?;
+    );
     let mut windows = BTreeSet::new();
     for sample in samples {
         windows.insert(sample.integration.window);
