@@ -425,8 +425,10 @@ def compare_antenna_averaged_export(root, native):
                            (base["title"], "Amp", "Phase:corrected (degrees)"))
 
     compare_antenna_ordinate_order(root, native, base)
-    compare_weighted_antenna_exports(root, native, source, start, base)
+    weighted = compare_weighted_antenna_exports(root, native, source, start, base)
+    compare_weighted_scalar_antenna(root, native, weighted, start, base)
     compare_antenna_flagged_integration(root, native, source, start, base)
+    compare_antenna_autocorrelation(root, native)
 
 
 def compare_antenna_ordinate_order(root, native, base):
@@ -486,6 +488,7 @@ def compare_weighted_antenna_exports(root, native, source, start, base):
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == 2 * len(samples)
     print("weighted-ordered: 22 matching points in integration, antenna, channel and correlation order", flush=True)
+    return weighted
 
 
 def compare_antenna_flagged_integration(root, native, source, start, base):
@@ -521,6 +524,114 @@ def compare_antenna_flagged_integration(root, native, source, start, base):
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == 4
     print("flagged-integration: 4 matching points in the separate visible integrations", flush=True)
+
+
+def compare_weighted_scalar_antenna(root, native, weighted, start, base):
+    separate = root / "separate-antenna-spectra.ms"
+    row_weights = root / "antenna-row-weights.ms"
+    for path in (separate, row_weights):
+        copy_ms(weighted, path)
+        with opened(path, True) as table:
+            if path == separate:
+                table.putcol("SIGMA_SPECTRUM", np.ones_like(table.getcol("SIGMA_SPECTRUM")))
+            else:
+                table.removecols(["WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"])
+                weights = np.where(table.getcol("ANTENNA2") == 2, 3, 1).astype(np.float32)
+                table.putcol("WEIGHT", np.broadcast_to(weights, table.getcol("WEIGHT").shape).copy())
+                table.putcol("SIGMA", np.ones_like(table.getcol("SIGMA")))
+
+    abscissa = {"data": np.hypot(1, 4), "corrected": np.hypot(10, 14)}
+    angles = {"data": np.degrees(np.arctan2(4, 1)), "corrected": np.degrees(np.arctan2(14, 10))}
+    controls = base | dict(vis=str(separate), antenna="A0&A1;A0&A2", correlation="XX", spw="0:1",
+                           xaxis="amp", yaxis="phase", scalar=True, title="Weighted scalar antenna averages")
+    cases = (
+        ("separate-spectra", separate, "data", "corrected"),
+        ("observed-spectra", separate, "data", "data"),
+        ("corrected-spectra", separate, "corrected", "corrected"),
+        ("row-weights", row_weights, "data", "corrected"),
+        ("observed-row-weights", row_weights, "data", "data"),
+    )
+    for name, vis, x_column, y_column in cases:
+        request_args = controls | dict(vis=str(vis), xdatacolumn=x_column, ydatacolumn=y_column)
+        amp = abscissa[x_column]
+        phase = angles[y_column]
+        coordinates = [(amp * 7 / 4, phase + 67.5), (amp, -phase), (2 * amp, -phase - 90)]
+        compare_antenna_average_case(root, native, name, request_args, coordinates,
+                                             [("0", "XX"), ("1", "XX"), ("2", "XX")], start)
+        if name == "separate-spectra":
+            compare_figure(root, native, request_args, root / f"{name}.casa.txt",
+                           (controls["title"], "Amp", "Phase:corrected (degrees)"))
+
+    request_args = controls | dict(vis=str(weighted), correlation="XX,XY")
+    phase_xy = np.degrees(np.arctan2(16, 13))
+    amp, angle = abscissa["data"], angles["corrected"]
+    coordinates = [(amp * 7 / 4, angle + 67.5), (np.hypot(3, 5), phase_xy),
+                   (amp, -angle), (np.hypot(3, 5), -phase_xy), (2 * amp, -angle - 90)]
+    compare_antenna_average_case(root, native, "masked-spectrum", request_args, coordinates,
+                                         [("0", "XX"), ("0", "XY"), ("1", "XX"), ("1", "XY"), ("2", "XX")], start)
+
+    components = controls | dict(xaxis="real", yaxis="imag")
+    component_coordinates = [(amp * 7 / 4, np.radians(angle + 67.5)), (amp, np.radians(-angle)),
+                             (2 * amp, np.radians(-angle - 90))]
+    compare_antenna_average_case(root, native, "packed-real-imag", components, component_coordinates,
+                                         [("0", "XX"), ("1", "XX"), ("2", "XX")], start)
+
+    for name, low, high, factor, offset in (
+        ("zero-spectrum", 1, 0, 1, 0),
+        ("signed-spectrum", 0, -3, 1.5, 45),
+        ("small-spectrum", 1e-28, 3e-28, 7 / 4, 67.5),
+    ):
+        vis = root / f"{name}.ms"
+        copy_ms(separate, vis)
+        with opened(vis, True) as table:
+            shape = table.getcol("WEIGHT_SPECTRUM").shape
+            weights = np.where(table.getcol("ANTENNA2") == 2, high, low).astype(np.float32)
+            table.putcol("WEIGHT_SPECTRUM", np.broadcast_to(weights, shape).copy())
+        request_args = controls | dict(vis=str(vis))
+        coordinates = [(amp * factor, angle + offset), (amp, -angle), (2 * amp, -angle - 90)]
+        compare_antenna_average_case(root, native, name, request_args, coordinates,
+                                             [("0", "XX"), ("1", "XX"), ("2", "XX")], start)
+
+
+def compare_antenna_average_case(root, native, name, controls, coordinates, identifiers, start):
+    expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert [(point[5], point[12]) for point in selected] == identifiers
+    assert {point[6] for point in selected} == {"-1"}
+    assert {(point[2], point[10]) for point in selected} == {("1", "100.001000000")}
+    np.testing.assert_allclose([float(point[9]) for point in selected], start, rtol=0, atol=.00051)
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               coordinates, rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == len(coordinates)
+    print(f"{name}: {len(coordinates)} matching antenna average coordinates", flush=True)
+
+
+def compare_antenna_autocorrelation(root, native):
+    source = root / "autocorrelation.ms"
+    make_cal_ms(str(source), stokes="XX XY YX YY", autocorrelation_weight=1.0)
+    casa.clearcal(str(source), addmodel=True)
+    with opened(source, True) as table:
+        shape = table.getcol("DATA").shape
+        for column, values in (("DATA", (1, 3 + 5j, 3 - 5j, 7)),
+                               ("CORRECTED_DATA", (10, 13 + 16j, 13 - 16j, 19))):
+            array = np.asarray(values, dtype=np.complex64)[:, None, None]
+            table.putcol(column, np.broadcast_to(array, shape).copy())
+        table.putcol("FLAG", np.zeros(shape, dtype=bool))
+        table.putcol("FLAG_ROW", np.zeros(shape[2], dtype=bool))
+        start = table.getcol("TIME").min()
+    base = request(source) | dict(antenna="A0&&&", avgantenna=True, spw="0:1",
+                                  correlation="XY,YX", msselect=f"TIME < {start + 1:.3f}", scalar=True)
+    for name, overrides, x, correlations in (
+        ("scalar-autocorrelation", {}, np.hypot(3, 5), ("XY", "YX")),
+        ("scalar-one-hand-autocorrelation", dict(correlation="XY"), np.hypot(3, 5), ("XY",)),
+        ("vector-autocorrelation", dict(xaxis="real", yaxis="imag", scalar=False), 3, ("XY", "YX")),
+    ):
+        controls = base | overrides
+        compare_antenna_average_case(root, native, name, controls,
+                                             [(x, 0)] * len(correlations),
+                                             [("0", label) for label in correlations], start)
 
 
 def main():

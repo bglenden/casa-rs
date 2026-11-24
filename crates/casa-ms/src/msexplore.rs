@@ -5359,6 +5359,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
     let scalar_average = uncalibrated && plotms_columns::uses_scalar_visibility_average(spec);
     let antenna_average = uncalibrated && plotms_columns::uses_antenna_visibility_average(spec);
+    let scalar_visibility = scalar_average || (antenna_average && spec.averaging.scalar);
     let collapse_baselines = (plotms_columns::uses_vector_baseline_average(spec)
         || (scalar_average && spec.averaging.avgbaseline))
         && uncalibrated;
@@ -5936,9 +5937,12 @@ fn build_generic_visibility_scatter_with_averaging(
             let mut sigma_spectrum_samples = Vec::<f64>::new();
             let scalar_weight = shared_baseline_weight
                 .unwrap_or_else(|| time_weight_kinds.map_or(row_weight, |_| 1.0));
-            for baseline_token in &baseline_tokens {
-                let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(target)
-                    if antenna1_value != antenna2_value && *target == antenna2_value);
+            for (endpoint, baseline_token) in baseline_tokens.iter().enumerate() {
+                // For a per-antenna average the second end contributes a
+                // conjugate, including when both ends are the same antenna.
+                let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(_))
+                    && endpoint == 1
+                    && (antenna_average || antenna1_value != antenna2_value);
                 for bin in channel_bins.iter() {
                     let channel_masked = channel_mask_grid.is_some_and(|grid| {
                         if scalar_channels {
@@ -6133,13 +6137,17 @@ fn build_generic_visibility_scatter_with_averaging(
                                     };
                                 }
                             }
-                        } else if scalar_average {
-                            accumulator
-                                .x_visibility
-                                .add_scalar(x_samples, scalar_weight);
-                            accumulator
-                                .y_visibility
-                                .add_scalar(y_samples, scalar_weight);
+                        } else if scalar_visibility {
+                            accumulator.x_visibility.add_scalar(
+                                x_samples,
+                                scalar_weight,
+                                conjugate,
+                            );
+                            accumulator.y_visibility.add_scalar(
+                                y_samples,
+                                scalar_weight,
+                                conjugate,
+                            );
                         } else if average_model_channels_equally {
                             for (axis, average) in [
                                 (0, &mut accumulator.x_visibility),
@@ -6464,7 +6472,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         group
                             .and_then(|group| time_uvws.as_ref()?.get(&group))
                             .map(|&uvw| uvw_metres_coordinate(axis, uvw))
-                    } else if scalar_average && axis.is_visibility_math() {
+                    } else if scalar_visibility && axis.is_visibility_math() {
                         let samples = if x_axis {
                             &accumulator.x_visibility
                         } else {

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "062ad15d4270f236a03e8db5a9baeb72e54d2b87",
+  "source_revision": "062ad15d4270f236a03e8db5a9baeb72e54d2b87",
+  "baseline_revision": "cdc62f131b68100b951504b800a4617b6b396602",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Standalone per-antenna MeasurementSet visibility averages using scalar amplitude and phase, including stored weights, cube flags and both ends of selected baselines.",
+  "result": "passed",
+  "baseline_result": "Main gave a weighted corrected phase of 126.027 degrees. CASA and the analytic mean gave 121.962 degrees.",
+  "text_exports": 13,
+  "points": 37,
+  "figures": 1,
+  "rendered_coordinates": 3,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}

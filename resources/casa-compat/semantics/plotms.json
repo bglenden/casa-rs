@@ -102,7 +102,8 @@
         "ms-scalar-time-corrected-residual",
         "ms-scalar-time-expressions",
         "ms-stored-channel-then-scalar-time",
-        "ms-scalar-baseline-averages"
+        "ms-scalar-baseline-averages",
+        "ms-weighted-scalar-antenna"
       ],
       "behaviors": [
         "coordinates"
@@ -138,7 +139,8 @@
         "ms-channel-then-scalar-time",
         "ms-stored-channel-then-scalar-time",
         "ms-channel-scalar-scan-field-spans",
-        "ms-scalar-baseline-averages"
+        "ms-scalar-baseline-averages",
+        "ms-weighted-scalar-antenna"
       ],
       "behaviors": [
         "coordinates"
@@ -181,7 +183,8 @@
         "ms-pointing-directions",
         "ms-scalar-time-expressions",
         "ms-stored-channel-then-scalar-time",
-        "ms-scalar-baseline-averages"
+        "ms-scalar-baseline-averages",
+        "ms-weighted-scalar-antenna"
       ],
       "behaviors": [
         "coordinates"
@@ -226,7 +229,8 @@
         "ms-channel-then-scalar-time",
         "ms-stored-channel-then-scalar-time",
         "ms-channel-scalar-scan-field-spans",
-        "ms-scalar-baseline-averages"
+        "ms-scalar-baseline-averages",
+        "ms-weighted-scalar-antenna"
       ],
       "behaviors": [
         "coordinates"
@@ -540,10 +544,11 @@
       "status": "Partial"
     },
     "avgantenna": {
-      "scope": "Average per antenna (mutually exclusive with avgbaseline) Static per-antenna visibility exports at individual integrations use the averaged antenna ID and name and follow integration, antenna, channel and correlation order. Per-antenna scalar weighted phase and extended averages remain partial.",
+      "scope": "Average per antenna (mutually exclusive with avgbaseline) Static per-antenna visibility exports at individual integrations use the averaged antenna ID and name and follow integration, antenna, channel and correlation order. Scalar antenna averages use independently averaged amplitude and phase with a common visibility weight. They include the conjugated contribution from each second endpoint. Extended antenna averages remain partial.",
       "evidence": [
         "paired",
-        "ms-per-antenna-export"
+        "ms-per-antenna-export",
+        "ms-weighted-scalar-antenna"
       ],
       "behaviors": [
         "averaging"
@@ -561,7 +566,7 @@
       "status": "Implemented"
     },
     "scalar": {
-      "scope": "Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. Ordinary scalar time averaging uses the first selected correlation’s row weight and reduces amplitude and phase separately for stored visibility axes. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar baseline averages accumulate weighted amplitudes and phases. They also compose with a preceding complex channel average and scalar time bins, including supported independent visibility and stored residual coordinates.",
+      "scope": "Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. Ordinary scalar time averaging uses the first selected correlation’s row weight and reduces amplitude and phase separately for stored visibility axes. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar baseline averages accumulate weighted amplitudes and phases. They also compose with a preceding complex channel average and scalar time bins, including supported independent visibility and stored residual coordinates. Standalone per-antenna scalar averages use the same amplitude and phase components, including Real and Imag projections.",
       "evidence": [
         "paired",
         "ms-channel-columns",
@@ -572,7 +577,8 @@
         "ms-channel-then-scalar-time",
         "ms-stored-channel-then-scalar-time",
         "ms-channel-scalar-scan-field-spans",
-        "ms-scalar-baseline-averages"
+        "ms-scalar-baseline-averages",
+        "ms-weighted-scalar-antenna"
       ],
       "behaviors": [
         "averaging"
@@ -2251,6 +2257,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-per-antenna-export-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2235"
+      ]
+    },
+    "ms-weighted-scalar-antenna": {
+      "kind": "Same-input weighted scalar per-antenna visibility averages",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Standalone per-antenna MeasurementSet visibility averages using scalar amplitude and phase, including stored weights, cube flags and both ends of selected baselines.",
+      "result": "Thirteen paired TXT exports match 37 selected coordinates. They cover independently selected observed and corrected columns, stored spectral and row weights, masked, zero, signed and small weights, packed Real and Imag values, and scalar and vector autocorrelations. A paired 500 by 360 PNG checks three artist coordinates and phase units.",
+      "casa_version": "6.7.6.14",
+      "revision": "062ad15d4270f236a03e8db5a9baeb72e54d2b87",
+      "source_revision": "062ad15d4270f236a03e8db5a9baeb72e54d2b87",
+      "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-weighted-scalar-antenna-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2236"
       ]
     }
   }
