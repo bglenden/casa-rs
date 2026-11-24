@@ -4242,11 +4242,13 @@ fn build_generic_visibility_scatter(
             std::collections::HashSet::<(usize, usize)>::new(),
         )
     });
+    let mut buffer_first_slot = 0;
     for (row_slot, row) in row_numbers.iter().copied().enumerate() {
         if let Some((row_points, buffer_points)) = &mut ordinate_points {
             row_points.clear();
             if buffer_starts[row_slot] {
                 buffer_points.clear();
+                buffer_first_slot = row_slot;
             }
         }
         let flag_row_value = selected_flag_rows[row_slot];
@@ -4448,6 +4450,19 @@ fn build_generic_visibility_scatter(
 
         let mut row_contributed = false;
         let mut row_panels = std::collections::BTreeSet::<String>::new();
+        let group_for = |slot: usize, correlation: Option<&str>| {
+            visibility_group(
+                spec.color_by,
+                field_id_value,
+                &field,
+                spw_id,
+                &spectral_window,
+                scan_number_value,
+                selected_antenna1[slot],
+                selected_antenna2[slot],
+                correlation,
+            )
+        };
         for (corr_index, corr_label) in &selected_correlations {
             let grouping_started = timing_enabled.then(Instant::now);
             let statistics = statistics_kinds.map(|kinds| {
@@ -4465,17 +4480,7 @@ fn build_generic_visibility_scatter(
             let row_sigma = statistics
                 .as_ref()
                 .map_or(sigma_values[*corr_index], |statistics| statistics.sigma);
-            let (group_key, group_label) = visibility_group(
-                spec.color_by,
-                field_id_value,
-                &field,
-                spw_id,
-                &spectral_window,
-                scan_number_value,
-                antenna1_value,
-                antenna2_value,
-                Some(corr_label),
-            );
+            let (group_key, group_label) = group_for(row_slot, Some(corr_label));
             let (panel_key, panel_label) = iteration_group(
                 iteraxis,
                 field_id_value,
@@ -4595,22 +4600,33 @@ fn build_generic_visibility_scatter(
                     .get_mut(&panel_key)
                     .expect("panel inserted before mutation");
                 for (y_index, y_axis, series_key, series_label, color_group) in &series_identity {
-                    if !y_axis.is_visibility_math()
+                    let (point_row_slot, point_correlation) = if !y_axis.is_visibility_math()
                         && let Some((row_points, buffer_points)) = &mut ordinate_points
                     {
-                        // Channel pairs retain the first clear correlation on each
-                        // baseline, or in the buffer for observatory coordinates.
-                        let seen = if y_axis.uses_derived_geometry() {
-                            buffer_points
-                        } else {
-                            row_points
-                        };
+                        let (seen, point_row_slot, first_channel) =
+                            if y_axis.uses_derived_geometry() {
+                                (buffer_points, buffer_first_slot, 0)
+                            } else {
+                                (
+                                    row_points,
+                                    row_slot,
+                                    (row_slot - buffer_first_slot) * channel_bins.len(),
+                                )
+                            };
                         if flag_samples.iter().all(|flag| *flag)
                             || !seen.insert((*y_index, bin.ordinal))
                         {
                             continue;
                         }
-                    }
+                        // PlotMS retains a point if any input sample is clear.
+                        // Its metadata indexes the selected correlations by the
+                        // point's linear index in the collapsed shape.
+                        let projected_index = first_channel + bin.ordinal;
+                        let correlation = projected_index % selected_correlations.len();
+                        (point_row_slot, selected_correlations[correlation].0)
+                    } else {
+                        (row_slot, *corr_index)
+                    };
                     let Some(y_value) = compute_axis_value(
                         *y_axis,
                         axis_samples(*y_index + 1),
@@ -4631,6 +4647,24 @@ fn build_generic_visibility_scatter(
                     else {
                         continue;
                     };
+                    let projected_series = ((point_row_slot, point_correlation)
+                        != (row_slot, *corr_index)
+                        && matches!(
+                            spec.color_by,
+                            MsColorAxis::Baseline | MsColorAxis::Correlation
+                        ))
+                    .then(|| {
+                        let correlation = selected_correlations
+                            .iter()
+                            .find(|(slot, _)| *slot == point_correlation)
+                            .map(|(_, label)| label.as_str());
+                        let (key, label) = group_for(point_row_slot, correlation);
+                        visibility_columns.series_identity(spec, *y_index, &key, &label)
+                    });
+                    let (series_key, series_label, color_group) = projected_series.as_ref().map_or(
+                        (series_key, series_label, color_group),
+                        |(key, label, color)| (key, label, color),
+                    );
                     if geometry_dedup_required
                         && !geometry_samples_seen.insert((
                             panel_key.clone(),
@@ -4658,8 +4692,8 @@ fn build_generic_visibility_scatter(
                     let push_started = timing_enabled.then(Instant::now);
                     series.points.push((x_value, y_value));
                     series.provenance.push(MsScatterPointRef {
-                        row,
-                        corr: *corr_index,
+                        row: row_numbers[point_row_slot],
+                        corr: point_correlation,
                         chan_start: bin.start,
                         chan_end: bin.end,
                     });
@@ -4669,7 +4703,7 @@ fn build_generic_visibility_scatter(
                         series.plotms_metadata.push(MsScatterPlotMsMetadata {
                             channel: bin.display_channel(),
                             average_time: None,
-                            averaging_group: use_iterator_order.then_some(row_slot),
+                            averaging_group: use_iterator_order.then_some(point_row_slot),
                         });
                     }
                     if let Some(started) = push_started {

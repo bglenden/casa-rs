@@ -474,24 +474,43 @@ def compare_multiple_ordinates(root, vis, native):
         ("three-ordinates-two-correlations", dense | dict(xconnector="line"),
          "three-ordinates-two-correlations", split, 3),
     )
-    for axis, label in (("u", "U (m)"), ("elevation", "Elevation (deg)")):
-        name = f"three-ordinate-mixed-{axis}"
-        mixed = dense | dict(yaxis=["real", "phase", axis], expformat="txt")
+    multiple_baselines = root / "mixed-ordinate-baselines.ms"
+    copy_ms(vis, multiple_baselines)
+    with opened(multiple_baselines, True) as table:
+        flags = table.getcol("FLAG")
+        first_baseline = (table.getcol("ANTENNA1") == 0) & (table.getcol("ANTENNA2") == 1)
+        flags[:, 2, first_baseline] = True
+        table.putcol("FLAG", flags)
+    both_baselines = dict(vis=str(multiple_baselines), antenna="A0&A1;A0&A2")
+    first_baseline_ids = {("1", "1", "XX"), ("2", "1", "YY"), ("3", "1", "XX")}
+    mixed_cases = (
+        ("u", "U (m)", {}, 30, 18, first_baseline_ids),
+        ("elevation", "Elevation (deg)", {}, 30, 18, first_baseline_ids),
+        ("u-baselines", "U (m)", both_baselines, 54, 30, {
+            ("1", "1", "XX"), ("3", "1", "XX"), ("1", "2", "YY"),
+            ("2", "2", "XX"), ("3", "2", "YY"),
+        }),
+        ("elevation-baselines", "Elevation (deg)", both_baselines, 54, 18, first_baseline_ids),
+    )
+    for case, label, overrides, visibility_count, metadata_count, identifiers in mixed_cases:
+        axis = case.split("-")[0]
+        name = f"three-ordinate-mixed-{case}"
+        mixed = dense | overrides | dict(yaxis=["real", "phase", axis], expformat="txt")
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**mixed, plotfile=str(expected)) is None
         points = rows(expected)
-        assert len(points) == 78
-        real, phase, metadata = points[:30], points[30:60], points[60:]
+        assert len(points) == 2 * visibility_count + metadata_count
+        real = points[:visibility_count]
+        phase = points[visibility_count:2 * visibility_count]
+        metadata = points[2 * visibility_count:]
         assert [point[2:] for point in real] == [point[2:] for point in phase]
-        representatives = {}
-        for point in real:
-            representatives.setdefault(tuple(point[2:12] + point[13:]), point[2:])
-        assert [point[2:] for point in metadata] == list(representatives.values())
+        assert {(point[2], point[6], point[12]) for point in metadata} == identifiers
         assert native(**mixed, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(points)
-        print(f"{name}: 30 Real, 30 Phase and 18 {axis} coordinates", flush=True)
+        print(f"{name}: {visibility_count} Real and Phase, {metadata_count} {axis} coordinates",
+              flush=True)
         sides = [("left", f"Real:model, {label}", (0, 2)), ("right", "Phase (degrees)", (1,))]
-        figures += ((name, mixed, name, sides, (30, 60)),)
+        figures += ((name, mixed, name, sides, (visibility_count, 2 * visibility_count)),)
 
     for name, controls, text, expectations, sections in figures:
         figure = controls | dict(expformat="png", width=500, height=360, dpi=100)
