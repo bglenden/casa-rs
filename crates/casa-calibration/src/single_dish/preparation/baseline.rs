@@ -16,8 +16,8 @@ use std::path::Path;
 
 use casa_ms::MeasurementSet;
 use casa_ms::transform::{
-    MsTransformReport, MsTransformRequest, SpectrumBaseline, SpectrumRow, SpectrumWeights,
-    TransformTaskHistory, transform_baseline_spectra,
+    MsTransformReport, MsTransformRequest, MsTransformTiling, SpectrumBaseline, SpectrumRow,
+    SpectrumWeights, TransformTaskHistory, transform_baseline_spectra,
 };
 use casa_types::{ArrayValue, Complex32, RecordValue};
 use ndarray::{Array1, ArrayD, Axis};
@@ -260,6 +260,7 @@ impl SingleDishSession {
         };
         let mut options = self.line_averaging.operation_options()?;
         options.history = request.history;
+        options.tiling = Some(MsTransformTiling::Standard);
         let mut report = transform_baseline_spectra(
             &MsTransformRequest {
                 input_ms: path.to_path_buf(),
