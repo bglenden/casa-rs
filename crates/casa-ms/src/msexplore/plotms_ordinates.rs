@@ -350,7 +350,7 @@ struct ChannelVisibilityMean {
 
 #[derive(Debug)]
 struct TimeProjection {
-    projection: VisibilityColumnProjection,
+    projection: Option<VisibilityColumnProjection>,
     weighted_sums: [Complex32; 2],
     total_weights: [f32; 2],
 }
@@ -364,7 +364,12 @@ impl TimeProjection {
             let mean = if weight > 0.0 { sum / weight } else { sum };
             Complex64::new(f64::from(mean.re), f64::from(mean.im))
         });
-        self.projection.axis_value(axis, means, true)
+        match self.projection {
+            Some(projection) => projection.axis_value(axis, means, true),
+            None => Some(VisibilityColumnProjection::vector_axis_value(
+                axis, means[0],
+            )),
+        }
     }
 }
 
@@ -382,26 +387,28 @@ impl AveragedVisibility {
         weights.push(weight);
     }
 
-    pub(super) fn add_time_projection(
+    pub(super) fn add_vector_time_sample(
         &mut self,
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
         spectra: [Option<&FloatGrid>; 2],
         corr: usize,
         bin: &ChannelBin,
-    ) {
+    ) -> bool {
         debug_assert_eq!(bin.channels().count(), 1);
         if flags[(corr, bin.start)] {
-            return;
+            return false;
         }
-        let (projection, model) = grid
+        let index = corr * grid.chan_count + bin.start;
+        let (projection, model_value) = grid
             .model
             .as_ref()
-            .expect("time projection requires a model");
-        let index = corr * grid.chan_count + bin.start;
+            .map_or((None, Complex64::default()), |(projection, model)| {
+                (Some(*projection), model[index])
+            });
         let weights =
             spectra.map(|spectrum| spectrum.map_or(1.0, |grid| grid.values[index] as f32));
-        let values = [grid.values[index], model[index]];
+        let values = [grid.values[index], model_value];
         // DATA uses inverse variance. MODEL_DATA uses calibrated weights if the
         // iterator reads CORRECTED_DATA, and observed weights otherwise.
         let weighted_values = std::array::from_fn(|operand| {
@@ -415,11 +422,12 @@ impl AveragedVisibility {
             }
         } else {
             self.0 = VisibilitySamples::TimeProjection(TimeProjection {
-                projection: *projection,
+                projection,
                 weighted_sums: weighted_values,
                 total_weights: weights,
             });
         }
+        true
     }
 
     /// The CASA scalar reducer stores amplitude and phase as separate components.

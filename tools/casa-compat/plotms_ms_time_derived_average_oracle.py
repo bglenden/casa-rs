@@ -221,6 +221,52 @@ def compare_scalar_expressions(root, native):
                            (controls["title"], "Time (MJD seconds)", "Phase:data-model (scalar) (degrees)"))
 
 
+def compare_two_visibility_axes(root, native):
+    vis, integration, start = prepare_time_fixture(root)
+    with opened(vis, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[0, 1] = np.where(integration % 2 == 0, 1, .5)
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    masked = root / "masked-axis-pair.ms"
+    copy_ms(vis, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1] = np.isin(integration, [1, 4, 5])
+        table.putcol("FLAG", flags)
+
+    offsets = np.arange(0, 6, 2)
+    observed = 3 + 6j + (1 + 2j) * (offsets + .8)
+    corrected = 8 - 1j + (3 - 1j) * (offsets + .75)
+    model = 2 + 2j + (.5 + .25j) * (offsets + .75)
+    ratio_pair = np.column_stack([(corrected / model).real, observed.imag])
+    residual_pair = np.column_stack([corrected.imag, np.abs(observed - model)])
+    times = start + 5 + 10 * offsets
+    ratio_x = ("real", "corrected/model_vector", "imag", "data")
+    residual_y = ("imag", "corrected", "amp", "data-model_vector")
+    base = request(vis) | dict(spw="0:1", avgtime="20", title="Time averages on two visibility axes")
+    names = ("xaxis", "xdatacolumn", "yaxis", "ydatacolumn")
+    cases = (
+        ("corrected-ratio-abscissa", vis, ratio_x, ratio_pair, times),
+        ("observed-residual-ordinate", vis, residual_y, residual_pair, times),
+        ("masked-axis-pair", masked, ratio_x, [(1.75, 6), ratio_pair[1]], [start, times[1]]),
+    )
+    for name, source, axes, coordinates, averaged_times in cases:
+        controls = base | dict(zip(names, axes, strict=True), vis=str(source))
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [("1", "XX")] * len(coordinates)
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], averaged_times, rtol=0, atol=.00051)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching independently averaged paired coordinates", flush=True)
+        if name == "corrected-ratio-abscissa":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Real:corrected/model (vector)", "Imag"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -247,6 +293,9 @@ def main():
         scalar = root / "scalar"
         scalar.mkdir()
         compare_scalar_expressions(scalar, native)
+        two_axes = root / "two-axes"
+        two_axes.mkdir()
+        compare_two_visibility_axes(two_axes, native)
 
 
 if __name__ == "__main__":
