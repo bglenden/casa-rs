@@ -46,7 +46,9 @@ def test_ms_getdata_column_products_on_casa_reference_table(native_dataset, tmp_
     assert parent.putcol("FLAG", flags)
     reference = tmp_path / "views.ms"
     mapped = np.array([12, 4, 17, 9, 12, 7], dtype=np.int64)
+    assert parent.renamecol("DATA", "OBSERVED_SAMPLES")
     view = parent.selectrows(mapped, str(reference))
+    assert view.renamecol("OBSERVED_SAMPLES", "DATA")
     assert view.done()
     assert parent.done()
 

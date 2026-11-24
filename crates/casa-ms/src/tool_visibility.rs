@@ -584,7 +584,7 @@ impl<'a> VisibilityRead<'a> {
             )?);
         }
         reduction
-            .as_ref()
+            .as_mut()
             .expect("averaging input exists")
             .reduce(values)
     }

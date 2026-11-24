@@ -40,32 +40,18 @@ impl RowAverage {
         if correlations == 0 || channels == 0 || weights.shape() != [correlations, rows] {
             return Err(input("WEIGHT does not match the visibility averaging axes"));
         }
-        let mut total_weight = vec![0.0; correlations * channels];
-        let mut result_flags = vec![true; total_weight.len()];
-        for (row_flags, row_weights) in memory_order(&flags)?
-            .chunks_exact(total_weight.len())
-            .zip(memory_order(&weights)?.chunks_exact(correlations))
-        {
-            for ((flagged, total), (&flag, &weight)) in result_flags
-                .iter_mut()
-                .zip(&mut total_weight)
-                .zip(row_flags.iter().zip(row_weights.iter().cycle()))
-            {
-                if !flag {
-                    *flagged = false;
-                    *total += f64::from(weight);
-                }
-            }
-        }
         Ok(Self {
             flags,
             weights,
-            total_weight,
-            result_flags: shaped(&[correlations, channels, 1], result_flags)?,
+            total_weight: Vec::new(),
+            result_flags: shaped(
+                &[correlations, channels, 1],
+                vec![true; correlations * channels],
+            )?,
         })
     }
 
-    pub(super) fn reduce(&self, data: &ArrayValue) -> MsResult<ArrayValue> {
+    pub(super) fn reduce(&mut self, data: &ArrayValue) -> MsResult<ArrayValue> {
         match data {
             ArrayValue::Float32(values) => Ok(ArrayValue::Float32(self.mean(
                 values,
@@ -84,7 +70,7 @@ impl RowAverage {
     }
 
     fn mean<Input, Sum>(
-        &self,
+        &mut self,
         data: &ArrayD<Input>,
         widen: impl Fn(Input) -> Sum,
         narrow: impl Fn(Sum) -> Input,
@@ -100,21 +86,14 @@ impl RowAverage {
             return shaped(&[0, 0], Vec::new());
         }
         let correlations = data.shape()[0];
-        let plane = self.total_weight.len();
+        let plane = correlations * data.shape()[1];
         let mut sums = vec![Sum::default(); plane];
-        for ((samples, flags), weights) in memory_order(data)?
-            .chunks_exact(plane)
-            .zip(memory_order(&self.flags)?.chunks_exact(plane))
-            .zip(memory_order(&self.weights)?.chunks_exact(correlations))
-        {
-            for (sum, ((&sample, &flagged), &weight)) in sums
-                .iter_mut()
-                .zip(samples.iter().zip(flags).zip(weights.iter().cycle()))
-            {
-                if !flagged {
-                    *sum += widen(sample) * f64::from(weight);
-                }
-            }
+        let samples = memory_order(data)?;
+        if self.total_weight.is_empty() {
+            self.total_weight.resize(plane, 0.0);
+            self.accumulate::<_, _, true>(samples, &mut sums, correlations, widen)?;
+        } else {
+            self.accumulate::<_, _, false>(samples, &mut sums, correlations, widen)?;
         }
         let means = sums
             .into_iter()
@@ -122,6 +101,60 @@ impl RowAverage {
             .map(|(sum, &weight)| narrow(if weight > 0.0 { sum / weight } else { sum }))
             .collect();
         shaped(&data.shape()[..2], means)
+    }
+
+    /// Compute the shared weight sum and flags with the first product.
+    fn accumulate<Input, Sum, const CAPTURE_WEIGHTS: bool>(
+        &mut self,
+        samples: &[Input],
+        sums: &mut [Sum],
+        correlations: usize,
+        widen: impl Fn(Input) -> Sum,
+    ) -> MsResult<()>
+    where
+        Input: Copy,
+        Sum: AddAssign + Mul<f64, Output = Sum>,
+    {
+        let plane = sums.len();
+        let flags = memory_order(&self.flags)?;
+        let weights = memory_order(&self.weights)?;
+        let result_flags = self
+            .result_flags
+            .as_slice_memory_order_mut()
+            .ok_or_else(|| input("averaged flags are not contiguous"))?;
+        for ((row, row_flags), row_weights) in samples
+            .chunks_exact(plane)
+            .zip(flags.chunks_exact(plane))
+            .zip(weights.chunks_exact(correlations))
+        {
+            // One WEIGHT vector covers every channel in this row.
+            for (((sums, totals), result_flags), (samples, flags)) in sums
+                .chunks_exact_mut(correlations)
+                .zip(self.total_weight.chunks_exact_mut(correlations))
+                .zip(result_flags.chunks_exact_mut(correlations))
+                .zip(
+                    row.chunks_exact(correlations)
+                        .zip(row_flags.chunks_exact(correlations)),
+                )
+            {
+                for (((sum, total), result_flag), ((&sample, &flagged), &weight)) in sums
+                    .iter_mut()
+                    .zip(totals)
+                    .zip(result_flags)
+                    .zip(samples.iter().zip(flags).zip(row_weights))
+                {
+                    if !flagged {
+                        let weight = f64::from(weight);
+                        *sum += widen(sample) * weight;
+                        if CAPTURE_WEIGHTS {
+                            *total += weight;
+                            *result_flag = false;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn into_fields(self) -> (ArrayD<bool>, ArrayD<bool>, ArrayValue) {
