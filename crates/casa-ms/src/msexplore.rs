@@ -4939,7 +4939,11 @@ fn build_generic_visibility_scatter_with_averaging(
     let propagate_channel_weights = channel_baselines
         && selected_weight_spectrum
             .as_ref()
-            .and_then(|column| column.find(0))
+            .and_then(|column| {
+                // Spectrum availability is established before iterator sorting.
+                let (slot, _) = row_numbers.iter().enumerate().min_by_key(|&(_, row)| row)?;
+                column.find(slot)
+            })
             .is_some();
     let selected_sigma_spectrum = if needs_sigma_spectrum || needs_observed_weights {
         SigmaSpectrumColumn::new(ms.main_table())
@@ -5128,9 +5132,11 @@ fn build_generic_visibility_scatter_with_averaging(
         let primary_weight_grid = time_weight_kinds
             .filter(|_| combined_vector_average)
             .and_then(|kinds| weight_grid(kinds.primary));
+        // The baseline reducer sees the mask after the last visibility cube
+        // transform. Mixed stored columns use the calibrated mask here.
         let channel_mask_grid = channel_baseline_kinds
             .filter(|_| propagate_channel_weights)
-            .and_then(|kinds| weight_grid(kinds.primary));
+            .and_then(|kinds| weight_grid(kinds.row_weight));
 
         let selected_correlations =
             select_correlation_slots(corr_count, &corr_types, requested_corr_codes.as_deref());
@@ -5229,7 +5235,6 @@ fn build_generic_visibility_scatter_with_averaging(
             let weight = channel_baseline_kinds.map_or(weight_values[correlation], |kinds| {
                 plotms_columns::channel_averaged_row_weight(
                     weight_grid(kinds.row_weight),
-                    channel_mask_grid,
                     correlation,
                     &channel_bins,
                     &flags,

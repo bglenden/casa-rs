@@ -90,6 +90,9 @@ def compare(root, native):
     figure = controls | dict(vis=str(spectral_flagged))
     compare_ordinate_figure(root, "spectra-with-flags", native, figure, "Real", ["Real:corrected", "Real:model"])
     compare_single_columns(root, native, controls, source, spectral, spectral_flagged)
+    compare_first_correlation(root, native, controls, source, spectral)
+    compare_vector_cancellation(root, native, controls, source)
+    compare_spectrum_availability(root, native, controls, source)
 
 
 def compare_single_columns(root, native, controls, source, spectral, spectral_flagged):
@@ -111,6 +114,102 @@ def compare_single_columns(root, native, controls, source, spectral, spectral_fl
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching channel-and-baseline coordinates", flush=True)
+
+
+def compare_first_correlation(root, native, controls, source, spectral):
+    fully_flagged = root / "first-correlation-flagged.ms"
+    copy_ms(source, fully_flagged)
+    with opened(fully_flagged, True) as table:
+        high = table.getcol("ANTENNA2") == 2
+        flags = table.getcol("FLAG")
+        flags[0, :, high] = True
+        table.putcol("FLAG", flags)
+    zero_observed = root / "first-correlation-zero-observed.ms"
+    copy_ms(spectral, zero_observed)
+    with opened(zero_observed, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[0, :, high] = 0
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    cases = (
+        ("first-correlation-flagged", fully_flagged,
+         [(2, 20), (62 / 13, 620 / 13), (7, 70), (114 / 13, 1140 / 13)]),
+        ("zero-observed-weights", zero_observed,
+         [(133 / 110, 31), (217 / 110, 31), (133 / 22, 815 / 11), (657 / 110, 71)]),
+    )
+    for name, vis, integration in cases:
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        options = controls | dict(vis=str(vis), correlation="XX,YY", expformat="txt")
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 48
+        assert [point[12] for point in selected] == ["XX", "YY"] * 24
+        model = [(x, 10 * y) for x, y in integration]
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   integration * 6 + model * 6, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching channel-and-baseline coordinates", flush=True)
+
+
+def compare_vector_cancellation(root, native, controls, source):
+    vis = root / "cancellation.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        phase = np.where(table.getcol("ANTENNA2") == 2, 1j, 1).astype(np.complex64)
+        for index, column in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            data = table.getcol(column)
+            data[:, 0, :] = 10**index * phase
+            data[:, 1, :] = -10**index * phase
+            table.putcol(column, data)
+    options = controls | dict(vis=str(vis), xaxis="amp", yaxis=["amp", "amp"],
+                              spw="0:0~1", expformat="txt")
+    expected, actual = (root / f"cancellation.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert len(selected) == 12
+    np.testing.assert_array_equal(np.array([point[:2] for point in selected], dtype=float), 0)
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == len(selected)
+    print(f"cancellation: {len(selected)} matching channel-and-baseline coordinates", flush=True)
+
+
+def compare_spectrum_availability(root, native, controls, source):
+    vis = root / "reversed-partial-spectrum.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        selected = ((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+                    & np.isin(table.getcol("ANTENNA2"), [1, 2]))
+        first_selected = int(np.flatnonzero(selected)[0])
+        timestamps, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        reversed_times = timestamps[-1 - integration]
+        table.putcol("TIME", reversed_times)
+        table.putcol("TIME_CENTROID", reversed_times)
+        descriptor = table.getcoldesc("DATA")
+        for column in ("WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"):
+            table.addcols({column: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                        dataManagerGroup=column)})
+        shape = table.getcol("DATA").shape
+        weights = np.ones(shape[:2], dtype=np.float32)
+        for row in range(table.nrows()):
+            if row != first_selected:
+                table.putcell("WEIGHT_SPECTRUM", row, weights)
+        assert not table.iscelldefined("WEIGHT_SPECTRUM", first_selected)
+        data = np.zeros(shape, dtype=np.complex64)
+        data[:, 1, :] = 10
+        table.putcol("DATA", data)
+        sigma = np.ones(shape, dtype=np.float32)
+        sigma[:, 1, :] = 0.5
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    options = controls | dict(vis=str(vis), xdatacolumn="data", yaxis="real", ydatacolumn="data",
+                              yaxislocation="left", spw="0:0~1", expformat="txt")
+    expected, actual = (root / f"spectrum-availability.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert len(selected) == 6
+    np.testing.assert_array_equal(np.array([point[:2] for point in selected], dtype=float), 5)
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == len(selected)
+    print(f"spectrum-availability: {len(selected)} matching channel-and-baseline coordinates", flush=True)
 
 
 def main():
