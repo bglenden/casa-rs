@@ -336,7 +336,7 @@ impl SingleDishSinusoid {
             failure: "sakura_LSQFitSinusoidFloat() failed -- NG",
         };
         Ok(linear
-            .solve(spectrum, included, clip_sigma, max_fits)?
+            .solve(spectrum, included, clip_sigma, max_fits, None)?
             .map(|fit| (fit, waves)))
     }
 }
