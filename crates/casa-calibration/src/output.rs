@@ -49,6 +49,22 @@ impl CalibrationOutput {
         Self::prepare_type(path, mode, Some(crate::constants::TABLE_INFO_TYPE), false)
     }
 
+    /// CASA single-dish solves also allow explicit replacement of a separate MS.
+    pub(crate) fn prepare_single_dish_solve(
+        path: &Path,
+        mode: CalibrationOutputMode,
+    ) -> Result<Self, CalibrationTableWriteError> {
+        if mode == CalibrationOutputMode::Replace
+            && fs::read_to_string(path.join("table.info")).is_ok_and(|text| {
+                casa_tables::TableInfo::parse(&text).table_type == "Measurement Set"
+            })
+        {
+            Self::prepare_measurement_set(path, true)
+        } else {
+            Self::prepare(path, mode)
+        }
+    }
+
     /// Simulation already validates the destination against its MS and has
     /// historically replaced an incomplete table identified by table.dat.
     pub(crate) fn prepare_simulated(path: &Path) -> Result<Self, CalibrationTableWriteError> {

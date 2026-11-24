@@ -171,15 +171,8 @@ pub(super) fn write(
 ) -> Result<usize, String> {
     let scans = ScanTiming::read(ms.main_table())?;
     let spectral = ms.spectral_window().map_err(error_text)?;
-    let existing_ms = mode == CalibrationOutputMode::Replace
-        && std::fs::read_to_string(destination.join("table.info"))
-            .is_ok_and(|text| casa_tables::TableInfo::parse(&text).table_type == "Measurement Set");
-    let output = if existing_ms {
-        crate::output::CalibrationOutput::prepare_measurement_set(destination, true)
-    } else {
-        crate::output::CalibrationOutput::prepare(destination, mode)
-    }
-    .map_err(error_text)?;
+    let output = crate::output::CalibrationOutput::prepare_single_dish_solve(destination, mode)
+        .map_err(error_text)?;
     let mut writer = CalibrationTableWriter::staged(
         ms,
         CalibrationTableDescriptor {
