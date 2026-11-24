@@ -130,10 +130,19 @@ def compare_time_channel_baselines(root, native):
         yaxislocation=["left", "right"], spw="0:0~3", avgtime="20",
         avgchannel="2", avgbaseline=True,
     )
+    zero_observed, zero_calibrated = (work / f"{name}.ms" for name in ("zero-observed", "zero-calibrated"))
+    for vis, column in ((zero_observed, "SIGMA_SPECTRUM"), (zero_calibrated, "WEIGHT_SPECTRUM")):
+        copy_ms(spectral, vis)
+        with opened(vis, True) as table:
+            weights = table.getcol(column)
+            weights[0, :, table.getcol("ANTENNA2") == 2] = 0
+            table.putcol(column, weights)
     cases = (
         ("scalar-spectra", plain, [(4.7, 47), (9.7, 97)]),
         ("stored-spectra", spectral, [(217 / 110, 31), (163 / 22, 815 / 11)]),
         ("masked-channel-and-time", flagged, [(53 / 30, 50 / 3), (7.5, 75)]),
+        ("zero-observed", zero_observed, [(133 / 110, 31), (133 / 22, 815 / 11)]),
+        ("zero-calibrated", zero_calibrated, [(1.4, 28), (7, 70)]),
     )
     for name, vis, corrected in cases:
         options = controls | dict(vis=str(vis), expformat="txt")
@@ -151,9 +160,13 @@ def compare_time_channel_baselines(root, native):
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching time, channel and baseline coordinates", flush=True)
-    controls["vis"] = str(flagged)
-    compare_ordinate_figure(work, "masked-channel-and-time", native, controls,
+    compare_ordinate_figure(work, "masked-channel-and-time", native, controls | dict(vis=str(flagged)),
                            "Real", ["Real:corrected", "Real:model"])
+    expected, actual = (work / f"single-ordinate.{engine}.txt" for engine in ("casa", "native"))
+    options = controls | dict(yaxis="real", ydatacolumn="corrected", yaxislocation="left", expformat="txt")
+    assert reference(**options, plotfile=str(expected)) is None
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 4
 
 
 def main():
