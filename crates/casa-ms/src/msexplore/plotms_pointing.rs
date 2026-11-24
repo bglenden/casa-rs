@@ -102,7 +102,7 @@ fn refuse_controls<const N: usize>(
 
 fn scalar_control<'a>(task: &'a TaskInvocation<'_>, name: &str) -> Result<&'a str, TaskFailure> {
     match task.value(name) {
-        None | Some(ParameterValue::Null) => Ok(""),
+        None => Ok(""),
         Some(ParameterValue::String(text)) => Ok(text),
         Some(ParameterValue::Array(values)) if values.is_empty() => Ok(""),
         _ => Err(TaskFailure::validation(format!(
@@ -201,7 +201,7 @@ impl PointingCoordinates {
     }
 
     pub(super) fn values(&self, antenna: i32, time: f64) -> Result<[Option<f64>; 2], String> {
-        let sample = |axis: DirectionAxis| {
+        let sample = |axis: DirectionAxis| -> Result<f64, String> {
             let track = self
                 .tracks
                 .get(&antenna)
