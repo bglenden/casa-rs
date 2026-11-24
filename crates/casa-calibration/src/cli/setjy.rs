@@ -65,7 +65,7 @@ struct PreparedModels {
     models: FieldModels,
     fluxes: CasaValue,
     completed: bool,
-    imager_history: Vec<String>,
+    manual_samples: Vec<(f64, f64)>,
 }
 
 pub(super) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -143,10 +143,33 @@ fn run_multi(
 fn run_ms(
     task: &TaskInvocation<'_>,
     path: &Path,
+    opened: OpenedMs,
+    parts: &mut [OpenedMs],
+    scratch: bool,
+    partition: bool,
+) -> Result<CasaValue, TaskFailure> {
+    let mut imager_history = Vec::new();
+    let result = run_ms_holding(
+        task,
+        path,
+        opened,
+        parts,
+        scratch,
+        partition,
+        &mut imager_history,
+    );
+    super::history::record_setjy_imager_flux(path, imager_history);
+    result
+}
+
+fn run_ms_holding(
+    task: &TaskInvocation<'_>,
+    path: &Path,
     mut opened: OpenedMs,
     parts: &mut [OpenedMs],
     scratch: bool,
     partition: bool,
+    imager_history: &mut Vec<String>,
 ) -> Result<CasaValue, TaskFailure> {
     let standard = task.text("standard")?;
     let solar_2012 = standard.as_deref() == Some("Butler-JPL-Horizons 2012");
@@ -170,7 +193,15 @@ fn run_ms(
         if selected.selected_rows.is_empty() {
             return empty_selection(task, partition);
         }
-        let result = fluxdict::run(task, opened, parts, selection, &selected, scratch)?;
+        let result = fluxdict::run(
+            task,
+            opened,
+            parts,
+            selection,
+            &selected,
+            scratch,
+            imager_history,
+        )?;
         record_history(task, path, partition);
         return Ok(result);
     }
@@ -221,7 +252,7 @@ fn run_ms(
         models,
         fluxes,
         completed,
-        imager_history,
+        manual_samples,
     } = prepare(
         &opened.measurement_set,
         &selected,
@@ -229,6 +260,7 @@ fn run_ms(
         &spws,
         task.flag("scalebychan")?,
         image.as_deref().map(|path| (path, scratch)),
+        imager_history,
     )?;
     let has_models = models.values().any(|model| !model.entries.is_empty());
     let partially_written = !completed && has_models;
@@ -262,7 +294,7 @@ fn run_ms(
     )?;
     opened.release().map_err(execution)?;
     record_history(task, path, partition);
-    super::history::record_setjy_imager_flux(path, imager_history);
+    record_manual_spectrum(imager_history, &manual_samples);
     if partially_written {
         // CASA's cleanup after the later failure raises once an earlier
         // component list has already been applied and retired.
@@ -529,6 +561,7 @@ fn prepare(
     spws: &[i32],
     by_channel: bool,
     image: Option<(&Path, bool)>,
+    imager_history: &mut Vec<String>,
 ) -> Result<PreparedModels, TaskFailure> {
     let mut groups = BTreeMap::<i32, BTreeMap<i32, Vec<usize>>>::new();
     for row in &selected.selected_rows {
@@ -558,10 +591,9 @@ fn prepare(
     let mut models = FieldModels::new();
     let mut returned = BTreeMap::new();
     let mut completed = true;
-    let mut imager_history = Vec::new();
     let mut manual_samples = Vec::new();
-    let report_manual = image.is_none()
-        && matches!(flux, FluxParameters::Manual(manual) if manual.reports_spectral_index());
+    let report_manual =
+        matches!(flux, FluxParameters::Manual(manual) if manual.reports_spectral_index());
     for (field, windows_for_field) in groups.into_iter().rev() {
         manual_samples.clear();
         let direction = engine
@@ -693,8 +725,7 @@ fn prepare(
                 FluxParameters::Solar2010(_) => ResolvedFlux::Catalog(None, 1.),
                 _ => ResolvedFlux::Unscaled,
             };
-            model.images =
-                params.prepare(ms, selected, &frame, field, flux, &mut imager_history)?;
+            model.images = params.prepare(ms, selected, &frame, field, flux, imager_history)?;
             model
                 .entries
                 .extend(model.images.iter().map(|image| image.entry.clone()));
@@ -710,7 +741,6 @@ fn prepare(
             },
         );
     }
-    record_manual_spectrum(&mut imager_history, &manual_samples);
     let entries = returned
         .into_iter()
         .map(|(key, value)| entry(key, value))
@@ -724,7 +754,7 @@ fn prepare(
         models,
         fluxes: returned,
         completed,
-        imager_history,
+        manual_samples,
     })
 }
 

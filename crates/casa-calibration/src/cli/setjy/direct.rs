@@ -8,7 +8,9 @@ use casa_provider_contracts::CasaValue;
 use casa_tables::TableWriteLock;
 use casa_types::measures::frequency::MFrequency;
 
-use super::{FluxParameters, ManualFlux, PreparedModels, prepare, requested_windows};
+use super::{
+    FluxParameters, ManualFlux, PreparedModels, prepare, record_manual_spectrum, requested_windows,
+};
 use crate::attachment::{AttachmentError, ImagerAttachments};
 use crate::ft::setjy::standards::{FluxCatalog, FluxScale, canonical_tool_standard};
 use crate::interpolation::Curve;
@@ -60,10 +62,19 @@ pub fn imager_setjy(
             entries: Vec::new(),
         });
     };
+    let mut imager_history = Vec::new();
     let outcome = input.with_write(|ms, _, lock| {
-        setjy_holding(ms, lock, input.options().use_scratch, request, &flux)
-    })?;
-    super::super::history::record_setjy_imager_flux(input.path(), outcome.imager_history);
+        setjy_holding(
+            ms,
+            lock,
+            input.options().use_scratch,
+            request,
+            &flux,
+            &mut imager_history,
+        )
+    });
+    super::super::history::record_setjy_imager_flux(input.path(), imager_history);
+    let outcome = outcome?;
     if let Some(selection) = outcome.next {
         attachments.retain_setjy_selection(selection)?;
     }
@@ -79,7 +90,6 @@ struct SetJyOutcome {
     reply: CasaValue,
     next: Option<MsSelection>,
     partial: bool,
-    imager_history: Vec<String>,
 }
 
 fn setjy_holding(
@@ -88,6 +98,7 @@ fn setjy_holding(
     scratch: bool,
     request: &ImagerSetJyRequest,
     flux: &FluxParameters,
+    imager_history: &mut Vec<String>,
 ) -> Result<SetJyOutcome, AttachmentError> {
     let mut selected = match resolve_casa_calibration_selection(ms, &request.selection) {
         Ok(selection) => selection,
@@ -99,7 +110,6 @@ fn setjy_holding(
                 },
                 next: None,
                 partial: false,
-                imager_history: Vec::new(),
             });
         }
     };
@@ -108,7 +118,6 @@ fn setjy_holding(
             reply: super::flux_dictionary(Vec::new()),
             next: None,
             partial: false,
-            imager_history: Vec::new(),
         });
     }
     selected.channel_selections.clear();
@@ -120,7 +129,6 @@ fn setjy_holding(
             },
             next: first.map(|field| focus(&request.selection, field, None)),
             partial: false,
-            imager_history: Vec::new(),
         });
     }
     let windows = requested_windows(ms, request.selection.spw.as_deref())
@@ -129,7 +137,7 @@ fn setjy_holding(
         models,
         fluxes: reply,
         completed,
-        imager_history,
+        manual_samples,
     } = prepare(
         ms,
         &selected,
@@ -137,6 +145,7 @@ fn setjy_holding(
         &windows,
         request.by_channel,
         request.image.as_deref().map(|image| (image, scratch)),
+        imager_history,
     )
     .map_err(|error| preparation(error.message))?;
     let next = if completed {
@@ -175,11 +184,11 @@ fn setjy_holding(
         super::publish_virtual(ms, lock, models, &windows)
             .map_err(|error| preparation(error.message))?;
     }
+    record_manual_spectrum(imager_history, &manual_samples);
     Ok(SetJyOutcome {
         reply,
         next,
         partial,
-        imager_history,
     })
 }
 
