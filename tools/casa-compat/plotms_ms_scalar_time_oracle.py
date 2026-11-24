@@ -329,6 +329,19 @@ def compare_scalar_time_spans(root, native):
             compare_figure(root, native, controls, expected, (controls["title"], "Time (MJD seconds)",
                                                               "Amp:corrected-model (vector)"))
 
+    ordinates = base | cross | dict(yaxis=["amp", "real"], ydatacolumn=["corrected", "model"],
+                                    yaxislocation=["left", "right"], coloraxis="scan", expformat="txt")
+    expected, actual = (root / f"cross-both-stored-ordinates.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**ordinates, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [(point[3], point[4]) for point in selected] == [("-1", "0")] * 2
+    np.testing.assert_allclose([float(point[0]) for point in selected], start + 55., rtol=0, atol=.00051)
+    np.testing.assert_allclose([float(point[1]) for point in selected], [28., 280.], rtol=1.2e-5)
+    assert native(**ordinates, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)], start + 55., rtol=0, atol=.00051)
+    print("cross-both-stored-ordinates: 2 matching scalar scan and field span coordinates", flush=True)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

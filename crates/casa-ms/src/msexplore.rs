@@ -2244,6 +2244,10 @@ pub struct MsScatterPlotMsMetadata {
     pub average_time: Option<f64>,
     /// Position in the selected visibility iterator, when export needs its order.
     pub averaging_group: Option<usize>,
+    /// Scan cached for a scalar time bin. A bin spanning scans has ID -1.
+    pub averaged_scan: Option<i32>,
+    /// Field cached from the first integration of a scalar time bin.
+    pub averaged_field: Option<i32>,
 }
 
 /// One plotted point's originating visibility sample range.
@@ -4937,6 +4941,8 @@ fn build_generic_visibility_scatter(
                             channel: point_bin.display_channel(),
                             average_time: None,
                             averaging_group: use_iterator_order.then_some(point_row_slot),
+                            averaged_scan: None,
+                            averaged_field: None,
                         });
                     }
                     if let Some(started) = push_started {
@@ -5403,6 +5409,23 @@ fn build_generic_visibility_scatter_with_averaging(
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
+    let scalar_spans = (scalar_time && (spec.averaging.avgscan || spec.averaging.avgfield))
+        .then(|| {
+            plotms_ordinates::ScalarSpanPlan::new(
+                plotms_ordinates::ScalarSpanColumns {
+                    observations: selected_observations
+                        .as_deref()
+                        .expect("scalar observations"),
+                    scans: &selected_scan_numbers,
+                    fields: &selected_field_ids,
+                    descriptions: &selected_data_desc_ids,
+                    times: &selected_times,
+                },
+                &data_description,
+                &spec.averaging,
+            )
+        })
+        .transpose()?;
     let chan_freq = if needs_spectral_coordinates {
         Some(ChanFreqColumn::new(spectral_window.table()))
     } else {
@@ -5705,6 +5728,9 @@ fn build_generic_visibility_scatter_with_averaging(
             (Some(group), bins.first_row_slot(group))
         });
         let group = time_group.or_else(|| {
+            if let Some(spans) = &scalar_spans {
+                return spans.group(row_slot);
+            }
             selected_observations.as_ref().map(|observations| {
                 baseline_groups.observe(
                     [
@@ -5722,8 +5748,16 @@ fn build_generic_visibility_scatter_with_averaging(
             })
         });
         let representative_row = row_numbers[representative_slot];
-        let representative_field = selected_field_ids[representative_slot];
-        let representative_scan = selected_scan_numbers[representative_slot];
+        let span_metadata =
+            group.and_then(|group| scalar_spans.as_ref().map(|spans| spans.metadata(group)));
+        let representative_field = span_metadata
+            .map_or(selected_field_ids[representative_slot], |metadata| {
+                metadata.field
+            });
+        let representative_scan = span_metadata
+            .map_or(selected_scan_numbers[representative_slot], |metadata| {
+                metadata.scan
+            });
         if let Some(group) = time_group {
             // Time averaging sees selected input channels, including any
             // incomplete bin that channel averaging will subsequently drop.
@@ -6348,6 +6382,8 @@ fn build_generic_visibility_scatter_with_averaging(
                 output.points.push((x_value, y_value));
                 output.provenance.push(representative);
                 if calibration.is_some() {
+                    let span_metadata = group
+                        .and_then(|group| scalar_spans.as_ref().map(|spans| spans.metadata(group)));
                     output.plotms_metadata.push(MsScatterPlotMsMetadata {
                         channel: accumulator.display_channel,
                         average_time: spec
@@ -6355,6 +6391,8 @@ fn build_generic_visibility_scatter_with_averaging(
                             .avgtime
                             .and_then(|_| project(MsAxis::Time, false)),
                         averaging_group: order,
+                        averaged_scan: span_metadata.map(|metadata| metadata.scan),
+                        averaged_field: span_metadata.map(|metadata| metadata.field),
                     });
                 }
                 point_budget.record_points(

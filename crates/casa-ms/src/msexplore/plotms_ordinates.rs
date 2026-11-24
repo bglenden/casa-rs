@@ -8,14 +8,15 @@ use ndarray::ArrayView2;
 
 use super::MsAxis;
 use super::{
-    ChannelBin, ComplexGrid, FloatGrid, MsDataColumn, MsPlotSpec, MsScatterSeries, PlotMsInput,
-    PreparedSelectedDataSource, VisibilityBinSamples, VisibilityColumnProjection,
+    ChannelBin, ComplexGrid, FloatGrid, MsAverageSpec, MsDataColumn, MsPlotSpec, MsScatterSeries,
+    PlotMsInput, PreparedSelectedDataSource, VisibilityBinSamples, VisibilityColumnProjection,
     check_grid_shapes, collect_bin_samples_into, compute_visibility_math,
     compute_weighted_visibility_math, plotms_figure, scatter_series_identity,
     weighted_visibility_mean,
 };
 use crate::MeasurementSet;
 use crate::selection::ChannelRange;
+use crate::subtables::data_description::MsDataDescription;
 use crate::transform::{WeightKind, sigma_from_weight, weight_from_sigma};
 
 pub(super) struct VisibilityColumns<'a> {
@@ -761,6 +762,86 @@ impl BaselineIntegrationGroups {
             }
         }
         self.ordinal
+    }
+}
+
+pub(super) struct ScalarSpanColumns<'a> {
+    pub(super) observations: &'a [i32],
+    pub(super) scans: &'a [i32],
+    pub(super) fields: &'a [i32],
+    pub(super) descriptions: &'a [i32],
+    pub(super) times: &'a [f64],
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ScalarSpanMetadata {
+    pub(super) scan: i32,
+    pub(super) field: i32,
+}
+
+pub(super) struct ScalarSpanPlan {
+    row_groups: Vec<Option<usize>>,
+    metadata: Vec<ScalarSpanMetadata>,
+}
+
+impl ScalarSpanPlan {
+    pub(super) fn new(
+        columns: ScalarSpanColumns<'_>,
+        descriptions: &MsDataDescription<'_>,
+        averaging: &MsAverageSpec,
+    ) -> Result<Self, String> {
+        let interval = averaging.avgtime.expect("scalar time interval");
+        let mut row_groups = Vec::with_capacity(columns.times.len());
+        let mut metadata = Vec::<ScalarSpanMetadata>::new();
+        let mut groups = BaselineIntegrationGroups::default();
+        let mut windows = vec![None; descriptions.row_count()];
+        for (slot, &time) in columns.times.iter().enumerate() {
+            let Some(window) = windows.get_mut(columns.descriptions[slot] as usize) else {
+                row_groups.push(None);
+                continue;
+            };
+            let spw = match *window {
+                Some(spw) => spw,
+                None => {
+                    let spw = descriptions
+                        .spectral_window_id(columns.descriptions[slot] as usize)
+                        .map_err(|error| error.to_string())?;
+                    *window = Some(spw);
+                    spw
+                }
+            };
+            let scan = columns.scans[slot];
+            let field = columns.fields[slot];
+            let group = groups.observe(
+                [
+                    columns.observations[slot],
+                    if averaging.avgscan { 0 } else { scan },
+                    if averaging.avgfield { 0 } else { field },
+                    spw,
+                ],
+                time,
+                interval,
+            );
+            if group == metadata.len() {
+                metadata.push(ScalarSpanMetadata { scan, field });
+            } else if metadata[group].scan != scan {
+                // PlotMS marks a scalar buffer spanning scans with scan -1.
+                metadata[group].scan = -1;
+            }
+            row_groups.push(Some(group));
+        }
+        Ok(Self {
+            row_groups,
+            metadata,
+        })
+    }
+
+    pub(super) fn group(&self, row_slot: usize) -> Option<usize> {
+        self.row_groups[row_slot]
+    }
+
+    pub(super) fn metadata(&self, group: usize) -> ScalarSpanMetadata {
+        self.metadata[group]
     }
 }
 

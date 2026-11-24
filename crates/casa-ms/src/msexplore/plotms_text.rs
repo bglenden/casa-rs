@@ -320,8 +320,12 @@ fn write_point(
         output,
         "{x} {y} {} {} {} {} {} {} {} {:.3} {frequency:.9} {} {pol} {}",
         display.map_or(point.chan_start, |point| point.channel),
-        row.scan,
-        row.field,
+        display
+            .and_then(|point| point.averaged_scan)
+            .unwrap_or(row.scan),
+        display
+            .and_then(|point| point.averaged_field)
+            .unwrap_or(row.field),
         ant1,
         ant2,
         ant1name,
