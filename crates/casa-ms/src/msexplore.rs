@@ -3006,9 +3006,9 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
-    let direct_time_channels =
-        !extended_derived && plot.is_some_and(plotms_columns::uses_direct_vector_time_channels);
-    if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_channels {
+    let direct_time_projection =
+        !extended_derived && plot.is_some_and(plotms_columns::uses_direct_vector_time_projection);
+    if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_projection {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
@@ -3045,24 +3045,17 @@ fn build_uncalibrated_plotms_payload(
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
-    let multiple_visibility_ordinates = columns.secondary_y.is_some()
-        || !columns.additional_y.is_empty()
-        || plot.is_some_and(|plot| {
-            plot.y_axis().is_visibility_math()
-                && plot
-                    .secondary_y_axis()
-                    .is_some_and(MsAxis::is_visibility_math)
-        });
+    let independent_ordinates = columns.secondary_y.is_some() || !columns.additional_y.is_empty();
     if plot.is_some_and(|plot| {
         (plotms_columns::uses_channel_derived(plot, columns.x)
             || vector_baselines
             || scalar_average
             || spw_average
             || (antenna_average && plot.averaging.avgtime.is_some())
-            || direct_time_channels
+            || direct_time_projection
             || extended_derived
             || weighted_time_uvw
-            || (multiple_visibility_ordinates && uses_extended_averaging(plot)))
+            || (independent_ordinates && uses_extended_averaging(plot)))
             && uses_model(plot)
     }) {
         plotms_model::refuse_selected_virtual_fields(
@@ -3096,8 +3089,8 @@ fn build_uncalibrated_plotms_payload(
                     || time_baselines
                     || time_spw
                     || weighted_time_uvw
-                    || direct_time_channels
-                    || (!antenna_average && (multiple_visibility_ordinates || extended_derived)))
+                    || direct_time_projection
+                    || (!antenna_average && (independent_ordinates || extended_derived)))
         })
         .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
         .map(|(plot, seconds)| {
@@ -3116,7 +3109,7 @@ fn build_uncalibrated_plotms_payload(
                     || time_spw
                     || weighted_time_uvw
                     || extended_derived
-                    || direct_time_channels,
+                    || direct_time_projection,
                 time_spw,
             )
             .map_err(|error| error.to_string())
@@ -5532,16 +5525,16 @@ fn build_generic_visibility_scatter_with_averaging(
     let antenna_channels = antenna_average && average_channels && !time_antenna;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
-    let direct_time_channels = uncalibrated
+    let direct_time_projection = uncalibrated
         && time_bins.is_some()
         && !extended_derived
-        && plotms_columns::uses_direct_vector_time_channels(spec);
+        && plotms_columns::uses_direct_vector_time_projection(spec);
     let average_operands = extended_derived
         || scalar_channels
         || scalar_spw_time
         || time_antenna
         || time_spw
-        || direct_time_channels;
+        || direct_time_projection;
     let channel_first = channel_baselines || scalar_channels || antenna_channels || spw_channels;
     let time_weight_kinds = calibration
         .filter(|_| time_bins.is_some())
@@ -5967,7 +5960,7 @@ fn build_generic_visibility_scatter_with_averaging(
         let time_channel_primary = primary_weight_grid
             .zip(primary_time_weight_kind)
             .filter(|_| {
-                extended_derived || time_antenna_channels || time_spw || direct_time_channels
+                extended_derived || time_antenna_channels || time_spw || direct_time_projection
             });
         let time_antenna_spectrum = time_weight_kinds
             .filter(|_| time_antenna)
@@ -6444,7 +6437,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                                 primary: time_channel_primary,
                                                 equal_channel_means: (time_antenna_channels
                                                     || time_spw
-                                                    || direct_time_channels)
+                                                    || direct_time_projection)
                                                     && model_channels_equally,
                                             },
                                             *corr_index,
@@ -6679,7 +6672,7 @@ fn build_generic_visibility_scatter_with_averaging(
             .collect();
     }
     let buffer_times = time_bins
-        .filter(|_| extended_derived || direct_time_channels)
+        .filter(|_| extended_derived || direct_time_projection)
         .map(|groups| {
             // PlotMS caches the first averaged baseline's time for the whole buffer.
             groups
@@ -6755,6 +6748,10 @@ fn build_generic_visibility_scatter_with_averaging(
         || spw_average
         || antenna_channels
         || scalar_antenna_time
+        || (scalar_average
+            && spec.secondary_y_axis().is_some()
+            && iteraxis.is_none()
+            && plotms_columns::uses_ordinary_time_visibility(spec))
         || (scalar_average && collapse_baselines)
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;

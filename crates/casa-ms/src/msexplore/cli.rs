@@ -564,7 +564,15 @@ fn run_visibility_plot(
             }
         }
         if let Some(path) = text_file {
-            super::plotms_text::write_export(task, &ms, &payload, path, library, &overlays)?;
+            super::plotms_text::write_export(
+                task,
+                &ms,
+                &payload,
+                path,
+                library,
+                &overlays,
+                &spec.plots[0].y_axes,
+            )?;
         }
     }
     TaskSuccess::new(

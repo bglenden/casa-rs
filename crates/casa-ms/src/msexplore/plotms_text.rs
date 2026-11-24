@@ -28,6 +28,7 @@ pub(super) fn write_export(
     output: &Path,
     library: &[String],
     overlays: &[Vec<Curve>],
+    ordinates: &[MsAxis],
 ) -> Result<(), TaskFailure> {
     let parent = output
         .parent()
@@ -47,7 +48,7 @@ pub(super) fn write_export(
         MsPlotPayload::Scatter(plot) => {
             writeln!(writer, "# From plot {index}").map_err(io)?;
             if plot.series.is_empty() {
-                for y in std::iter::once(plot.y_axis).chain(plot.secondary_y_axis) {
+                for &y in ordinates {
                     write_empty_section(&mut writer, name(plot.x_axis), name(y), verbose)
                         .map_err(io)?;
                 }
