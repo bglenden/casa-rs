@@ -46,6 +46,17 @@ def make_fixture(root):
     return vis, integration, start
 
 
+def attach_spectra(vis, integration):
+    with opened(vis, True) as table:
+        descriptor = table.getcoldesc("DATA")
+        shape = table.getcol("DATA").shape
+        for name, values in (("WEIGHT_SPECTRUM", [8, 1, 2]), ("SIGMA_SPECTRUM", [0.5, 1, 2])):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            spectrum = np.asarray(values, dtype=np.float32)[integration % 3]
+            table.putcol(name, np.broadcast_to(spectrum, shape).copy())
+
+
 def compare(root, native):
     source, integration, start = make_fixture(root)
     cube_flags, row_flags = (root / f"{name}-flags.ms" for name in ("cube", "row"))
@@ -59,14 +70,7 @@ def compare(root, native):
         table.putcol("FLAG_ROW", integration == 2)
     spectra = root / "spectra.ms"
     copy_ms(source, spectra)
-    with opened(spectra, True) as table:
-        descriptor = table.getcoldesc("DATA")
-        shape = table.getcol("DATA").shape
-        for name, values in (("WEIGHT_SPECTRUM", [8, 1, 2]), ("SIGMA_SPECTRUM", [0.5, 1, 2])):
-            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
-                                      dataManagerGroup=name)})
-            spectrum = np.asarray(values, dtype=np.float32)[integration % 3]
-            table.putcol(name, np.broadcast_to(spectrum, shape).copy())
+    attach_spectra(spectra, integration)
     controls = request(source) | dict(
         xaxis="amp", xdatacolumn="data", yaxis=["phase", "real"], ydatacolumn=["corrected", "model"],
         yaxislocation=["left", "right"], spw="0:1", avgtime="20", scalar=True,
@@ -185,6 +189,79 @@ def compare_corrected_residuals(root, native):
                          ("Time (MJD seconds)", "Amp:corrected-model (vector)"))
 
 
+def compare_expressions(root, native):
+    source, integration, start = make_fixture(root)
+    fallback, spectra, zero, unbounded = (
+        root / f"{name}.ms" for name in ("without-corrected", "spectra", "zero-model", "unbounded")
+    )
+    for path in (fallback, spectra, zero, unbounded):
+        copy_ms(source, path)
+    attach_spectra(spectra, integration)
+    with opened(fallback, True) as table:
+        table.removecols("CORRECTED_DATA")
+        table.putcol("SIGMA", np.full_like(table.getcol("SIGMA"), .5))
+    with opened(zero, True) as table:
+        table.putcol("MODEL_DATA", np.zeros_like(table.getcol("MODEL_DATA")))
+    with opened(unbounded, True) as table:
+        unit = np.ones_like(table.getcol("MODEL_DATA"))
+        table.putcol("MODEL_DATA", unit * np.exp(1j * np.deg2rad(10)))
+
+    corrected, model = 14 / 3 + 1j * np.deg2rad(74.5), 31 / 6 + 1j * np.deg2rad(45)
+    quotient = corrected / model
+    phase_ratio = np.rad2deg(corrected.imag / model.imag)
+    base = request(source) | dict(xaxis="time", xdatacolumn="", spw="0:1", avgtime="20",
+                                  scalar=True, title="Scalar-time visibility expressions")
+    cases = (
+        ("vector-real", source, "time", "", "real", "corrected/model_vector", None, quotient.real),
+        ("vector-phase", source, "time", "", "phase", "corrected/model_vector", None,
+         np.rad2deg(quotient.imag)),
+        ("scalar-amplitude", source, "time", "", "amp", "corrected/model_scalar", None, 28 / 31),
+        ("scalar-phase", source, "time", "", "phase", "corrected/model_scalar", None, phase_ratio),
+        ("scalar-real-difference", source, "time", "", "real", "corrected/model_scalar", None, -.5),
+        ("scalar-imaginary-difference", source, "time", "", "imag", "corrected/model_scalar", None,
+         np.deg2rad(29.5)),
+        ("vector-zero-model", zero, "time", "", "amp", "corrected/model_vector", None, np.inf),
+        ("scalar-zero-phase", zero, "time", "", "phase", "corrected/model_scalar", None, np.inf),
+        ("observed-residual", source, "time", "", "amp", "data-model_vector", None, -1.5),
+        ("observed-ratio", source, "time", "", "phase", "data/model_scalar", None,
+         np.rad2deg((50 / 3) / 45)),
+        ("without-corrected", fallback, "time", "", "amp", "data-model_scalar", None, -1.5),
+        ("corrected-fallback", fallback, "time", "", "amp", "corrected-model_scalar", None, -1.5),
+        ("row-weight-over-spectra", spectra, "time", "", "amp", "data-model_vector", None, -1.5),
+        ("channel-derived", source, "channel", "", "amp", "data-model_vector", 1, -1.5),
+        ("stored-x-derived-y", source, "amp", "data", "phase", "corrected/model_scalar", 11 / 3,
+         phase_ratio),
+        ("derived-x-stored-y", source, "amp", "corrected-model_vector", "phase", "model", -.5, 45),
+        ("derived-x-derived-y", source, "amp", "data-model_vector", "phase", "corrected/model_scalar",
+         -1.5, phase_ratio),
+        ("unbounded-ratio-x", unbounded, "phase", "corrected/model_scalar", "amp", "model",
+         np.rad2deg(74.5 / 10), 1),
+    )
+    titles = {
+        "derived-x-derived-y": ("Amp:data-model (vector)", "Phase:corrected/model (scalar) (degrees)"),
+        "unbounded-ratio-x": ("Phase:corrected/model (scalar) (degrees)", "Amp:model"),
+    }
+    times = start + np.array([10., 40.])
+    for name, vis, xaxis, xcolumn, yaxis, ycolumn, x, y in cases:
+        controls = base | dict(vis=str(vis), xaxis=xaxis, xdatacolumn=xcolumn,
+                               yaxis=yaxis, ydatacolumn=ycolumn)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[5], point[6], point[12]) for point in selected] == [("1", "0", "1", "XX")] * 2
+        np.testing.assert_allclose([float(point[9]) for point in selected], times, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[0]) for point in selected], times if x is None else [x] * 2,
+                                   rtol=0 if x is None else 1.2e-5, atol=.00051 if x is None else 1e-7)
+        np.testing.assert_allclose([float(point[1]) for point in selected], [y] * 2, rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 2
+        if x is None:
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], times, rtol=0, atol=.00051)
+        print(f"{name}: 2 matching scalar-time visibility expression coordinates", flush=True)
+        if name in titles:
+            compare_figure(root, native, controls, expected, (controls["title"], *titles[name]))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -206,6 +283,9 @@ def main():
         residual = root / "residual"
         residual.mkdir()
         compare_corrected_residuals(residual, native)
+        expressions = root / "expressions"
+        expressions.mkdir()
+        compare_expressions(expressions, native)
 
 
 if __name__ == "__main__":
