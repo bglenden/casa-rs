@@ -118,7 +118,9 @@ impl TimeBaselineStatistics {
                         .map(|_| ChannelWeightSum::default())
                         .collect()
                 }),
-                channel_bin_widths: if row.bins.iter().any(|bin| bin.averaged) {
+                channel_bin_widths: if row.first_correlation.is_some()
+                    && row.bins.iter().any(|bin| bin.averaged)
+                {
                     row.bins.iter().map(|bin| bin.channels().count()).collect()
                 } else {
                     Vec::new()

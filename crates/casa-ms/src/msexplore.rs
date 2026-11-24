@@ -5779,6 +5779,9 @@ fn build_generic_visibility_scatter_with_averaging(
         let time_channel_primary = primary_weight_grid
             .zip(time_weight_kinds.map(|kinds| kinds.primary))
             .filter(|_| extended_derived);
+        let time_antenna_spectrum = time_weight_kinds
+            .filter(|_| time_antenna)
+            .map(|kinds| weight_grid(kinds.row_weight));
         // The baseline reducer sees the mask after the last visibility cube
         // transform. Mixed stored columns use the calibrated mask here.
         let channel_mask_grid = channel_first_kinds
@@ -6054,21 +6057,20 @@ fn build_generic_visibility_scatter_with_averaging(
                     let scalar_weight = antenna_weight.map_or(scalar_weight, |(_, weight)| {
                         plotms_columns::baseline_weight(f64::from(weight))
                     });
-                    // The time stage sums each column's weights. The channel
-                    // stage uses those sums and propagates the primary mask.
+                    // Later channel and antenna reductions use the sums of
+                    // weights from the vector time transform.
                     let primary_weight = primary_weight_grid
                         .filter(|_| !extended_derived)
                         .map(|grid| plotms_columns::bin_weight(grid, *corr_index, bin, &flags))
                         .or_else(|| {
-                            let kinds = time_weight_kinds.filter(|_| time_antenna)?;
-                            let weight = if flags[(*corr_index, bin.start)] {
-                                0.0
-                            } else {
-                                weight_grid(kinds.row_weight).map_or(1.0, |grid| {
-                                    grid.values[*corr_index * grid.chan_count + bin.start]
-                                })
-                            };
-                            Some(weight)
+                            let (flagged, weight) = plotms_columns::channel_bin_weight(
+                                time_antenna_spectrum?,
+                                *corr_index,
+                                bin,
+                                &flags,
+                                plotms_columns::ChannelWeightMask::FlagsOnly,
+                            );
+                            Some(if flagged { 0.0 } else { f64::from(weight) })
                         });
                     for (index, (grid, buffer)) in visibility_grids
                         .iter()
@@ -6120,11 +6122,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         sigma_spectrum_samples.clear();
                     }
                     let (group_key, group_label) = visibility_group(
-                        if time_antenna && spec.color_by == MsColorAxis::Baseline {
-                            MsColorAxis::None
-                        } else {
-                            spec.color_by
-                        },
+                        spec.color_by,
                         representative_field,
                         &field,
                         spw_id,

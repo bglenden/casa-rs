@@ -938,6 +938,9 @@ def compare_vector_antenna_time_averages(root, native, source, start, base, ampl
             compare_figure(root, native, request_args, expected,
                            (controls["title"], "Time (MJD seconds)", "Imag:corrected"))
         print(f"{name}: {len(coordinates)} matching vector antenna time coordinates", flush=True)
+    compare_empty_export(root, native, "all-flagged-vector-antenna-time",
+                         controls | dict(vis=str(root / "scalar-antenna-all-flagged-time.ms")),
+                         ("Real", "Imag:corrected"))
 
 
 def main():
