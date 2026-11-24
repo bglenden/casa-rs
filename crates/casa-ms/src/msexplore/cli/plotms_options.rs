@@ -75,22 +75,21 @@ impl CliOptions {
     }
 
     pub(super) fn supports_time_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
-        let stored = |column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected);
-        let vector_expression = |column| {
-            matches!(
-                column,
-                MsDataColumn::DataMinusModel
-                    | MsDataColumn::DataDivModel
-                    | MsDataColumn::CorrectedMinusModel
-                    | MsDataColumn::CorrectedDivModel
-            )
+        let visibility_column = |column: MsDataColumn| {
+            column.is_derived()
+                || matches!(
+                    column,
+                    MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
+                )
         };
         let supported_abscissa = self.x_axis.is_some_and(|axis| {
             if axis == MsAxis::Time {
                 y.is_derived()
             } else {
                 axis.is_visibility_math()
-                    && ((vector_expression(x) && stored(y)) || (vector_expression(y) && stored(x)))
+                    && visibility_column(x)
+                    && visibility_column(y)
+                    && (x.is_derived() || y.is_derived())
             }
         });
         supported_abscissa

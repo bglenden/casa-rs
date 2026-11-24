@@ -6184,9 +6184,14 @@ fn build_generic_visibility_scatter_with_averaging(
         .clone()
         .unwrap_or_else(|| axis_label(spec.y_axis()));
     let secondary_y_label = spec.secondary_y_axis().map(axis_label);
-    let fixed_x_bounds = fixed_bounds(spec.x_axis);
-    let fixed_y_bounds = fixed_bounds(spec.y_axis())
-        .filter(|_| !(time_derived && spec.data_column.has_unbounded_phase()));
+    let bounds_for_column = |axis, column: MsDataColumn| {
+        fixed_bounds(axis).filter(|_| !(time_derived && column.has_unbounded_phase()))
+    };
+    let x_column = calibration
+        .and_then(|input| input.x_data_column)
+        .unwrap_or(spec.data_column);
+    let fixed_x_bounds = bounds_for_column(spec.x_axis, x_column);
+    let fixed_y_bounds = bounds_for_column(spec.y_axis(), spec.data_column);
     let secondary_fixed_y_bounds = spec.secondary_y_axis().and_then(fixed_bounds);
 
     let time_baseline_plan = time_baseline_stats

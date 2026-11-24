@@ -233,6 +233,12 @@ def compare_two_visibility_axes(root, native):
         flags = table.getcol("FLAG")
         flags[0, 1] = np.isin(integration, [1, 4, 5])
         table.putcol("FLAG", flags)
+    wrapped = root / "wrapped-abscissa.ms"
+    copy_ms(vis, wrapped)
+    with opened(wrapped, True) as table:
+        unit = np.ones_like(table.getcol("DATA"))
+        table.putcol("DATA", unit * (-1 + .1j))
+        table.putcol("MODEL_DATA", unit * (-1 - .1j))
 
     offsets = np.arange(0, 6, 2)
     observed = 3 + 6j + (1 + 2j) * (offsets + .8)
@@ -240,6 +246,7 @@ def compare_two_visibility_axes(root, native):
     model = 2 + 2j + (.5 + .25j) * (offsets + .75)
     ratio_pair = np.column_stack([(corrected / model).real, observed.imag])
     residual_pair = np.column_stack([corrected.imag, np.abs(observed - model)])
+    unbounded_phase = np.full(3, np.degrees(np.angle(-1 + .1j) - np.angle(-1 - .1j)))
     times = start + 5 + 10 * offsets
     ratio_x = ("real", "corrected/model_vector", "imag", "data")
     residual_y = ("imag", "corrected", "amp", "data-model_vector")
@@ -249,6 +256,15 @@ def compare_two_visibility_axes(root, native):
         ("corrected-ratio-abscissa", vis, ratio_x, ratio_pair, times),
         ("observed-residual-ordinate", vis, residual_y, residual_pair, times),
         ("masked-axis-pair", masked, ratio_x, [(1.75, 6), ratio_pair[1]], [start, times[1]]),
+        ("two-vector", vis, ("real", "corrected-model_vector", "phase", "data/model_vector"),
+         np.column_stack([(corrected - model).real, np.angle(observed / model, deg=True)]), times),
+        ("scalar-x-and-vector-y", wrapped,
+         ("phase", "data-model_scalar", "real", "corrected/model_vector"),
+         np.column_stack([unbounded_phase, (corrected / (-1 - .1j)).real]), times),
+        ("scalar-x-and-stored-y", wrapped, ("phase", "data-model_scalar", "real", "corrected"),
+         np.column_stack([unbounded_phase, corrected.real]), times),
+        ("vector-x-and-stored-model-y", vis, ("real", "corrected/model_vector", "imag", "model"),
+         np.column_stack([(corrected / model).real, model.imag]), times),
     )
     for name, source, axes, coordinates, averaged_times in cases:
         controls = base | dict(zip(names, axes, strict=True), vis=str(source))
@@ -265,6 +281,10 @@ def compare_two_visibility_axes(root, native):
         if name == "corrected-ratio-abscissa":
             compare_figure(root, native, controls, expected,
                            (controls["title"], "Real:corrected/model (vector)", "Imag"))
+        elif name == "scalar-x-and-vector-y":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Phase:data-model (scalar) (degrees)",
+                            "Real:corrected/model (vector)"))
 
 
 def main():
