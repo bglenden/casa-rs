@@ -112,15 +112,13 @@ pub(super) fn sort_selected_rows(
     })
 }
 
-/// Return the selected MAIN rows and buffer starts in ordinary PlotMS iterator order.
+/// Return selected MAIN rows and buffer starts in ordinary PlotMS iterator order.
+/// Each input pair contains a row number and its data-description ID.
 pub(crate) fn selected_plotms_integration_order(
     ms: &MeasurementSet,
-    selected: &[ResolvedMsSelectionRow],
+    selected: impl Iterator<Item = (usize, i32)>,
 ) -> Result<(Vec<usize>, Vec<bool>), MsTransformError> {
-    let (rows, descriptions) = selected
-        .iter()
-        .map(|row| (row.row_index, row.data_desc_id))
-        .unzip();
+    let (rows, descriptions) = selected.unzip();
     let ordered = sort_selected_rows(
         ms.main_table(),
         ms.path().unwrap_or_else(|| Path::new("<memory>")),
