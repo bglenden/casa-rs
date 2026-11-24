@@ -405,6 +405,33 @@ fn filter_rows_for_save(
         .collect()
 }
 
+fn full_projection_layout(
+    fields: &[RecordField],
+    names: &[(&String, &String)],
+) -> Option<(Vec<String>, Vec<(usize, usize)>)> {
+    let layout: Vec<_> = fields.iter().map(|field| field.name.clone()).collect();
+    let wanted: Vec<_> = names
+        .iter()
+        .filter_map(|(_, name)| layout.iter().position(|present| present == *name))
+        .collect();
+    if wanted.len() != layout.len() {
+        return None;
+    }
+    let mut indices: Vec<_> = (0..layout.len()).collect();
+    let mut swaps = Vec::new();
+    for (target, original) in wanted.into_iter().enumerate() {
+        let current = indices
+            .iter()
+            .position(|index| *index == original)
+            .expect("actual field is in the layout");
+        if current != target {
+            indices.swap(current, target);
+            swaps.push((current, target));
+        }
+    }
+    Some((layout, swaps))
+}
+
 fn override_value_for_row(
     column_overrides: &ColumnOverrides,
     column: &str,
@@ -3866,10 +3893,30 @@ impl CompositeStorage {
                         .is_some_and(|seen| !std::mem::replace(seen, true))
                 })
             };
+            let move_layout = move_rows
+                .then(|| {
+                    parent
+                        .rows
+                        .first()
+                        .and_then(|row| full_projection_layout(row.fields(), &names))
+                })
+                .flatten();
             for &row in &reference.row_map {
                 let index = row as usize;
-                if move_rows {
-                    rows.push(std::mem::take(&mut parent.rows[index]));
+                if let Some((layout, swaps)) = &move_layout
+                    && parent.rows[index].fields().len() == layout.len()
+                    && parent.rows[index]
+                        .fields()
+                        .iter()
+                        .zip(layout)
+                        .all(|(field, name)| &field.name == name)
+                {
+                    let mut owned = std::mem::take(&mut parent.rows[index]);
+                    let fields = owned.fields_mut();
+                    for &(a, b) in swaps {
+                        fields.swap(a, b);
+                    }
+                    rows.push(owned);
                     undefined_cells.push(std::mem::take(&mut parent.undefined_cells[index]));
                     continue;
                 }
@@ -4115,23 +4162,24 @@ impl CompositeStorage {
         let schema = schema.ok_or_else(|| {
             StorageError::FormatMismatch("cannot save without schema".to_string())
         })?;
-        let rows_have_undefined_cells = undefined_cells
+        // A persisted projection may already omit every undefined cell
+        // from its records. Only copy records if a masked value must be removed.
+        let rows_need_filter = rows
             .iter()
-            .any(|undefined| !undefined.is_empty());
+            .zip(undefined_cells)
+            .any(|(row, undefined)| undefined.iter().any(|column| row.get(column).is_some()));
         let filtered_rows_storage =
-            rows_have_undefined_cells.then(|| filter_rows_for_save(rows, undefined_cells));
+            rows_need_filter.then(|| filter_rows_for_save(rows, undefined_cells));
         let filtered_rows: &[RecordValue] = filtered_rows_storage.as_deref().unwrap_or(rows);
-        let row_field_positions = (!rows_have_undefined_cells)
-            .then(|| {
-                filtered_rows.first().map(|row| {
-                    row.fields()
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, field)| (field.name.clone(), idx))
-                        .collect::<HashMap<_, _>>()
-                })
-            })
-            .flatten();
+        // These positions are hints. The indexed writers verify each field
+        // name and look it up when later rows have a different layout.
+        let row_field_positions = filtered_rows.first().map(|row| {
+            row.fields()
+                .iter()
+                .enumerate()
+                .map(|(idx, field)| (field.name.clone(), idx))
+                .collect::<HashMap<_, _>>()
+        });
         let effective_row_count = column_overrides.row_count().unwrap_or(filtered_rows.len());
         let nrrow = effective_row_count as u64;
         let has_virtual = !virtual_bindings.is_empty();
