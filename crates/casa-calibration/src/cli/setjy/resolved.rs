@@ -8,6 +8,7 @@ use casa_ms::{MeasurementSet, MsSelection, ResolvedMsSelection};
 use casa_task_runtime::TaskFailure;
 use casa_types::measures::frame::MeasFrame;
 use casa_types::measures::frequency::{FrequencyRef, MFrequency};
+use casa_types::quanta::casacore::stream_double_precision;
 
 use super::{CalibratorSpectrum, ManualFlux, MsCalEngine, execution};
 use crate::ft::image::ImageModel;
@@ -35,6 +36,7 @@ impl ImageParameters<'_> {
         frame: &MeasFrame,
         field: i32,
         flux: ResolvedFlux<'_>,
+        history: &mut Vec<String>,
     ) -> Result<Vec<ImageModel>, TaskFailure> {
         let mut request = selected.request.clone();
         request.field = Some(field.to_string());
@@ -90,7 +92,7 @@ impl ImageParameters<'_> {
                 })
                 .collect::<Result<Vec<_>, _>>()?
         };
-        calibrator_images(
+        let (models, scalar_flux) = calibrator_images(
             ms,
             &selections,
             self.path,
@@ -99,7 +101,17 @@ impl ImageParameters<'_> {
             frame,
             self.scratch,
         )
-        .map_err(execution)
+        .map_err(execution)?;
+        if let Some(jy) = scalar_flux {
+            let intensity = stream_double_precision(jy, 6);
+            let frequency = stream_double_precision(frequencies.samples[0], 6);
+            history.push(format!("Using model image {}", self.path.display()));
+            history.push(format!(
+                "Scaling spw(s) {:?}'s model image to I = {intensity} Jy @ {frequency}Hz (LSRK) for visibility prediction.",
+                self.windows
+            ));
+        }
+        Ok(models)
     }
 }
 
