@@ -83,12 +83,18 @@ impl CliOptions {
             && (!ordinary_only || !spans)
             && !self.avgbaseline
             && !self.avgantenna;
-        let other_reduction =
-            (self.avgbaseline || self.avgantenna || self.avgspw) && !ordinary_only && !spans;
+        let other_reduction = !ordinary_only
+            && ((self.avgantenna && (!spans || self.avgtime.is_some()))
+                || ((self.avgbaseline || self.avgspw) && !spans));
         let supported_reduction = (time_average || other_reduction)
             && self.freqframe.is_none()
             && self.plotms_independent_average(!ordinary_only);
+        let colors_spanned_antenna = self.avgantenna
+            && !self.scalar
+            && ((self.avgscan && self.color_by == MsColorAxis::Scan)
+                || (self.avgfield && self.color_by == MsColorAxis::Field));
         (!self.plotms_extended_averaging() || supported_reduction)
+            && !colors_spanned_antenna
             && !self.has_mixed_ordinate_dimensions()
             && self.plotms_axis_columns().is_some_and(|columns| {
                 columns
@@ -237,17 +243,12 @@ impl CliOptions {
             && !self.avgantenna
             && (!crosses_boundary || self.scalar)
             && !transforms_frequency;
-        let antenna_average = allow_extended_list
-            && self.avgantenna
+        let list_reduction = allow_extended_list
             && !self.avgbaseline
-            && !crosses_boundary
-            && self.freqframe.is_none();
-        let spectral_window_average = allow_extended_list
-            && self.avgspw
-            && !self.avgbaseline
-            && !self.avgantenna
             && (!crosses_boundary || self.avgtime.is_some())
             && self.freqframe.is_none();
+        let antenna_average = list_reduction && self.avgantenna;
+        let spectral_window_average = list_reduction && self.avgspw && !self.avgantenna;
         let channel_average = self.avgchannel.is_some_and(|width| width > 1);
         let ordinary_time = time_average
             && !self.avgspw

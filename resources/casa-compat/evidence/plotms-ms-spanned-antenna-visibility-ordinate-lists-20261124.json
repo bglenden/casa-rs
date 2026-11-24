@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "688bb6076f1364d9f311308e6da1344008a78d5d",
+  "source_revision": "688bb6076f1364d9f311308e6da1344008a78d5d",
+  "baseline_revision": "ebf415bdffeb43b51dd00384652d3f60cb4b21a5",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_antenna_ordinates_oracle.py --only spans --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Vector and scalar per-antenna time averages of independent stored MeasurementSet visibility ordinates spanning scans, fields, or both, including channel bins.",
+  "result": "passed",
+  "baseline_result": "Main refuses the same public request for three independent stored per-antenna ordinates with a scan or field span.",
+  "text_exports": 13,
+  "points": 180,
+  "figures": 1,
+  "rendered_coordinates": 18,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "color_refusal_controls": 2,
+  "evidence_reuse": "The final guard affects only colors on spanned vector antenna lists. Reused the eight uncolored pairs and PNG and ran the focused review cases."
+}
