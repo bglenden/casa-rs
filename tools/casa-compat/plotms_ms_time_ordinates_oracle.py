@@ -18,6 +18,7 @@ from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
 from plotms_ms_channel_ordinates_oracle import compare_sides
 from plotms_ms_columns_oracle import (
     compare_text, copy_ms, opened, plotms_launcher, reference, request, rows, time_average_fixture,
+    time_scan_field_fixture,
 )
 
 
@@ -62,7 +63,7 @@ def reversed_partial_spectrum(root):
     return vis, times[baseline].min()
 
 
-def compare_empty_time(root, native, vis, base):
+def compare_empty_time(root, native, vis, base, *, scalar_modes=(False, True)):
     from casars import _plot_document
 
     target = root / "all-selected-cube-cells-flagged.ms"
@@ -84,7 +85,8 @@ def compare_empty_time(root, native, vis, base):
         assert all(not (axis.lines or axis.collections) for axis in figure.axes)
         return figure, primary
 
-    for name, scalar in (("empty-vector-time", False), ("empty-scalar-time", True)):
+    for scalar in scalar_modes:
+        name = "empty-scalar-time" if scalar else "empty-vector-time"
         controls = base | dict(vis=str(target), xaxis="time", xdatacolumn="", scalar=scalar)
         casa_txt, native_txt = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(casa_txt), expformat="txt") is None
@@ -218,6 +220,118 @@ def compare(root, native):
         print(f"{name}: {count} matching time-averaged coordinates", flush=True)
     compare_sides(root, native, base, expected_x="Real")
     compare_empty_time(root, native, vis, base)
+    compare_vector_span_weights(root, native, base, signed, model_only)
+
+
+def compare_vector_span_weights(root, native, base, signed, model_only):
+    for name, overrides, y_values in (
+        ("spanned-signed-weight", dict(vis=str(signed), xaxis="time", xdatacolumn=""), (2, -2, -200)),
+        ("spanned-shared-model", model_only | dict(yaxis=["amp", "real", "phase"], ydatacolumn=["model"] * 3),
+         (600, 600, 0)),
+    ):
+        controls = base | overrides | dict(avgscan=True, expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert {point[3] for point in selected} == {"1"}
+        np.testing.assert_allclose([float(point[1]) for point in selected], np.repeat(y_values, 3), rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        if controls["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                                       [float(point[0]) for point in selected], rtol=0, atol=.00051)
+        print(f"{name}: {len(selected)} matching vector coordinates when a single scan is spanned", flush=True)
+
+
+def compare_spanned_ordinate_lists(root, native):
+    root.mkdir()
+    vis, times, scans, fields, _ = time_scan_field_fixture(root)
+    base = request(vis) | dict(field="", xaxis="time", xdatacolumn="", spw="0:1", avgtime="200",
+                               yaxis=["real"] * 3, ydatacolumn=["data", "corrected", "model"],
+                               yaxislocation=["left", "right", "left"])
+    for scalar in (False, True):
+        compare_span_mode(root, native, base, times, scans, fields, scalar=scalar)
+    compare_span_controls(root, native, vis, base, times)
+    compare_empty_time(root, native, vis, base | dict(avgscan=True, avgfield=True))
+    check_spanned_overlay_refusal(root, native, base)
+
+
+def compare_span_mode(root, native, base, times, scans, fields, *, scalar):
+    mode, observed = ("scalar", 2.8) if scalar else ("vector", 2.6)
+    for name, bounds, spans_scans in (
+        ("scans", dict(vis=str(scans), avgscan=True), True),
+        ("fields", dict(vis=str(fields), avgfield=True), False),
+        ("scans-and-fields", dict(avgscan=True, avgfield=True), True),
+    ):
+        controls = base | bounds | dict(scalar=scalar)
+        label = f"{mode}-{name}-ordinate-list"
+        expected, actual = (root / f"{label}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        scan = "-1" if scalar and spans_scans else "1"
+        assert [(point[3], point[4], point[12]) for point in selected] == [(scan, "0", "XX")] * 3
+        np.testing.assert_allclose([float(point[0]) for point in selected], times[0] + 55,
+                                   rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected], [observed, 28., 280.], rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 3
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], times[0] + 55,
+                                   rtol=0, atol=.00051)
+        print(f"{label}: 3 matching averaged visibility ordinates", flush=True)
+        if scalar and name == "scans-and-fields":
+            compare_sides(root, native, controls, expected_x="Time (MJD seconds)", name=label)
+
+
+def check_spanned_overlay_refusal(root, native, base):
+    from casars.tasks import TaskParameterError
+
+    output = root / "spanned-overlay.native.txt"
+    controls = base | dict(xaxis="channel", avgscan=True, avgfield=True, showatm=True,
+                           plotfile=str(output), expformat="txt")
+    try:
+        native(**controls)
+    except TaskParameterError as error:
+        assert "more than two MeasurementSet ordinates" in str(error) and "#1032" in str(error), error
+    else:
+        raise AssertionError("PlotMS enabled an overlay with a scan- and field-spanning ordinate list")
+    assert not output.exists()
+    print("Spanned ordinate list overlay refusal preserved", flush=True)
+
+
+def compare_span_controls(root, native, vis, base, times):
+    masked = root / "masked-field.ms"
+    copy_ms(vis, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1] = table.getcol("TIME") >= times[6]
+        table.putcol("FLAG", flags)
+    split = (times[[0, 6]] + 25, [(1., 3.), (10., 30.), (100., 300.)], [("1", "0"), ("2", "1")])
+    both = dict(avgscan=True, avgfield=True)
+    for name, overrides, x, y, ids in (
+        ("scan-averaging-retains-fields", dict(avgscan=True), *split),
+        ("field-averaging-retains-scans", dict(avgfield=True), *split),
+        ("spans-and-channels", both | dict(spw="0:0~1", avgchannel="2",
+                                          yaxis=["real", "real", "real", "phase"],
+                                          ydatacolumn=["data", "corrected", "model", "model"],
+                                          yaxislocation=["left", "right", "left", "right"]),
+         [times[0] + 55], [(2.6,), (28.,), (280.,), (0.,)], [("1", "0")]),
+        ("spans-with-masked-field", both | dict(vis=str(masked)),
+         [times[0] + 25], [(1.,), (10.,), (100.,)], [("1", "0")]),
+    ):
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        count = len(y) * len(ids)
+        assert [(point[3], point[4]) for point in selected] == ids * len(y)
+        coordinates = np.array([point[:2] for point in selected], dtype=float)
+        np.testing.assert_allclose(coordinates[:, 0], np.tile(x, len(y)), rtol=0, atol=.00051)
+        np.testing.assert_allclose(coordinates[:, 1], np.asarray(y).ravel(), rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], coordinates[:, 0],
+                                   rtol=0, atol=.00051)
+        print(f"{name}: {count} matching averaged visibility ordinates", flush=True)
 
 
 def main():
@@ -238,6 +352,7 @@ def main():
 
     with chdir(root), plotms_launcher(args.app_run):
         compare(root, native)
+        compare_spanned_ordinate_lists(root / "spans", native)
 
 
 if __name__ == "__main__":

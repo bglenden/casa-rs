@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "f429403ee3b358fa890158ebc5696ef280f76ded",
+  "source_revision": "f429403ee3b358fa890158ebc5696ef280f76ded",
+  "baseline_revision": "5279a2411268dc2dcedd572d4cf9fbede6fc8dc2",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_time_ordinates_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Independent stored MeasurementSet visibility ordinate lists across scan and field boundaries during vector and scalar time averaging, including a four-ordinate channel/time request.",
+  "result": "passed",
+  "baseline_result": "Main refuses more than two stored visibility ordinates when time averages span scans or fields. The pinned reference exports vector Real 2.6, 28, 280 and scalar Real 2.8, 28, 280 on the same input.",
+  "text_exports": 12,
+  "points": 55,
+  "empty_text_exports": 2,
+  "figures": 3,
+  "rendered_coordinates": 3,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "reuse": "The final vector change reran the affected populated and empty vector cases. Positive scalar and overlay refusal evidence is reused from the preceding revisions.",
+  "absolute_time_tolerance_seconds": 0.00051
+}

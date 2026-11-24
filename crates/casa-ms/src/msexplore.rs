@@ -5463,6 +5463,11 @@ fn build_generic_visibility_scatter_with_averaging(
     let collapse_baselines = (plotms_columns::uses_vector_baseline_average(spec)
         || (scalar_average && spec.averaging.avgbaseline))
         && uncalibrated;
+    let retain_empty_span = uncalibrated
+        && spec.y_axes.len() > 2
+        && (spec.averaging.avgscan || spec.averaging.avgfield)
+        && (time_bins.is_some() || scalar_average)
+        && !(collapse_baselines || antenna_average || spw_average);
     let time_baselines = collapse_baselines && time_bins.is_some();
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
@@ -6193,6 +6198,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         && !(scalar_channels
                             || antenna_channels
                             || spw_channels
+                            || retain_empty_span
                             || iterated_ordinate_list)
                     {
                         continue;
@@ -6706,6 +6712,7 @@ fn build_generic_visibility_scatter_with_averaging(
         || spw_average
         || antenna_channels
         || scalar_antenna_time
+        || retain_empty_span
         || iterated_ordinate_list
         || (scalar_average
             && spec.secondary_y_axis().is_some()
