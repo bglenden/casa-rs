@@ -209,3 +209,70 @@ def test_ms_range_reduces_corrected_model_and_float_products(
             np.testing.assert_allclose(result[name], extrema(data[samples]), rtol=3e-6,
                                        atol=1e-7, strict=True, err_msg=name)
         assert reader.done()
+
+
+def test_ms_range_uses_unity_at_zero_model_samples(baseline_fixture, native_dataset):
+    casa, _, raw = baseline_fixture
+    shape = raw["data"].shape
+    corrected = np.full(shape, 10 + 10j, dtype=np.complex64)
+    model = np.full(shape, 2 + 0j, dtype=np.complex64)
+    model[0, 0, 0] = 0.0
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    for name, data in [("MODEL_DATA", model), ("CORRECTED_DATA", corrected)]:
+        description = dict(table.getcoldesc("DATA"), dataManagerType="StandardStMan",
+                           dataManagerGroup=name)
+        assert table.addcols({name: description})
+        assert table.putcol(name, data)
+    assert table.done()
+    result = {"ratio_amplitude": [1.0, np.sqrt(50.0)], "ratio_real": [1.0, 5.0],
+              "ratio_imaginary": [0.0, 5.0], "ratio_phase": [0.0, np.pi / 4]}
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        actual = reader.range(list(result), useflags=False)
+        assert actual.keys() == result.keys()
+        for name, expected in result.items():
+            np.testing.assert_allclose(actual[name], expected, rtol=1e-6, strict=True)
+        assert reader.done()
+
+
+def test_ms_float_range_keeps_reader_alive_when_all_samples_are_flagged(baseline_fixture,
+                                                                        native_dataset):
+    casa, _, raw = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    description = dict(table.getcoldesc("DATA"), valueType="float",
+                       dataManagerType="StandardStMan", dataManagerGroup="FLOAT_DATA")
+    assert table.addcols({"FLOAT_DATA": description})
+    samples = raw["data"].real.astype(np.float32)
+    assert table.putcol("FLOAT_DATA", samples)
+    assert table.putcol("FLAG", np.ones(raw["flag"].shape, dtype=bool))
+    assert table.done()
+    # CASA 6.7.6.14 aborts in MaskedArray::minMax with no unmasked sample.
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    np.testing.assert_array_equal(reader.range("float_data")["float_data"], [0., 0.], strict=True)
+    np.testing.assert_array_equal(reader.range("float_data", useflags=False)["float_data"],
+                                  extrema(samples), strict=True)
+    assert reader.done()
+
+
+def test_ms_range_observes_published_subtable_edits(baseline_fixture, native_dataset):
+    casa, make_view, _ = baseline_fixture
+    path = make_view("range-live-metadata.ms", [0, 10, 20])
+    readers = [api.ms() for api in (casa, tools)]
+    for reader in readers:
+        assert reader.open(path)
+    original = readers[0].range("chan_freq")["chan_freq"]
+    np.testing.assert_array_equal(readers[1].range("chan_freq")["chan_freq"],
+                                  original, strict=True)
+    expected = original + 2500.0
+    table = casa.table()
+    assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+    assert table.putcell("CHAN_FREQ", 0, expected[:, 0])
+    assert table.done()
+    for reader in readers:
+        np.testing.assert_array_equal(reader.range("chan_freq")["chan_freq"],
+                                      expected, strict=True)
+        assert reader.done()

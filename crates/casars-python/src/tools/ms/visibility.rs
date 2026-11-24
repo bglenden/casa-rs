@@ -19,6 +19,7 @@ use super::attachment_info::{TableFiles, TableStamp};
 use super::iteration::VisibilityIteration;
 use super::metadata_link::{MetadataLink, MetadataSnapshot};
 use super::owned_record::visibility_record;
+use super::subtable_queries::Subtables;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
 
@@ -26,6 +27,7 @@ use crate::convert::value::CasaValue;
 pub(super) struct VisibilityState {
     initialized: bool,
     main: Option<Arc<VisibilityMain>>,
+    range_subtables: Subtables,
     time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
     channels: Option<VisibilityChannels>,
     polarization: Option<Arc<VisibilityPolarization>>,
@@ -77,6 +79,7 @@ impl VisibilityState {
         });
         if !current {
             self.main = Some(Arc::new(VisibilityMain::open(path)?));
+            self.range_subtables = Subtables::default();
         }
         Ok(self.main.as_deref().expect("MAIN table was opened"))
     }
@@ -279,11 +282,8 @@ impl AttachedMs {
         {
             return Ok(CasaValue::empty_record());
         }
-        let snapshot = request
-            .needs_metadata()
-            .then(|| link.snapshot(None).map_err(runtime_error))
-            .transpose()?;
-        let main = self.visibility.main(&self.path)?;
+        self.visibility.main(&self.path)?;
+        let main = self.visibility.main.as_ref().expect("MAIN was opened");
         let all_rows;
         let rows = if let Some(rows) = self.selected_rows.as_deref() {
             rows
@@ -297,7 +297,7 @@ impl AttachedMs {
                 &main.members,
                 main.reference.as_ref(),
                 rows,
-                snapshot.as_ref().map(|snapshot| &snapshot.ms),
+                |id| self.visibility.range_subtables.read(&main.table, id),
             )
             .map_err(runtime_error)?;
         link.verify_directory().map_err(runtime_error)?;

@@ -15,6 +15,29 @@ use crate::column_def::ColumnDef;
 use crate::error::{MsError, MsResult};
 use crate::schema::SubtableId;
 
+/// Resolve a logical row across the ordered parts of a linked MS subtable.
+///
+/// # Errors
+/// The row must belong to one of the supplied parts.
+pub fn linked_subtable_row(
+    tables: &[Table],
+    row: usize,
+    id: SubtableId,
+) -> MsResult<(&Table, usize)> {
+    let mut local = row;
+    for table in tables {
+        if local < table.row_count() {
+            return Ok((table, local));
+        }
+        local -= table.row_count();
+    }
+    Err(MsError::InvalidIndex {
+        context: id.name().into(),
+        index: row,
+        max: row - local,
+    })
+}
+
 macro_rules! define_generic_subtable {
     (
         read = $read_ty:ident,

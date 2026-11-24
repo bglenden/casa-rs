@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use casa_ms::subtables::{
     FieldDirectionColumn, MetadataDirection, MsDataDescription, MsField, MsPolarization,
-    MsSpectralWindow,
+    MsSpectralWindow, linked_subtable_row,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, SubtableId};
 use casa_tables::{Table, TableOptions, TablePartNames};
@@ -21,10 +21,25 @@ use crate::tools::{LogLine, emit};
 
 #[derive(Default)]
 pub(super) struct Subtables {
+    antenna: Subtable,
     field: Subtable,
     data_description: Subtable,
     spectral_window: Subtable,
     polarization: Subtable,
+}
+
+impl Subtables {
+    pub(super) fn read(&self, main: &Table, id: SubtableId) -> MsResult<Ref<'_, [Table]>> {
+        let subtable = match id {
+            SubtableId::Antenna => &self.antenna,
+            SubtableId::DataDescription => &self.data_description,
+            SubtableId::Field => &self.field,
+            SubtableId::Polarization => &self.polarization,
+            SubtableId::SpectralWindow => &self.spectral_window,
+            _ => return Err(MsError::MissingSubtable(id.name().into())),
+        };
+        subtable.read(main, id)
+    }
 }
 
 #[derive(Default)]
@@ -90,21 +105,6 @@ impl Subtable {
     }
 }
 
-fn subtable_row(tables: &[Table], row: usize, id: SubtableId) -> MsResult<(&Table, usize)> {
-    let mut local = row;
-    for table in tables {
-        if local < table.row_count() {
-            return Ok((table, local));
-        }
-        local -= table.row_count();
-    }
-    Err(MsError::InvalidIndex {
-        context: id.name().into(),
-        index: row,
-        max: row - local,
-    })
-}
-
 impl AttachedMs {
     fn field_direction(&self, column: &str, field: i64, time: f64) -> MsResult<MetadataDirection> {
         let column = match column.to_ascii_uppercase().as_str() {
@@ -121,7 +121,7 @@ impl AttachedMs {
         let field = usize::try_from(field)
             .map_err(|_| MsError::InvalidInput(format!("Invalid FIELD row {field}")))?;
         let tables = self.subtables.field.read(&self.main, SubtableId::Field)?;
-        let (table, row) = subtable_row(&tables, field, SubtableId::Field)?;
+        let (table, row) = linked_subtable_row(&tables, field, SubtableId::Field)?;
         MsField::new(table).metadata_direction_at_seconds(row, column, time)
     }
 
@@ -146,16 +146,16 @@ impl AttachedMs {
 
         let mut records = Vec::new();
         for id in self.used_data_descriptions()? {
-            let (table, dd_row) = subtable_row(&dd, id, SubtableId::DataDescription)?;
+            let (table, dd_row) = linked_subtable_row(&dd, id, SubtableId::DataDescription)?;
             let description = MsDataDescription::new(table);
             let spw_id = nonnegative_id(
                 description.spectral_window_id(dd_row)?,
                 "SPECTRAL_WINDOW_ID",
             )?;
             let pol_id = nonnegative_id(description.polarization_id(dd_row)?, "POLARIZATION_ID")?;
-            let (table, spw_row) = subtable_row(&spw, spw_id, SubtableId::SpectralWindow)?;
+            let (table, spw_row) = linked_subtable_row(&spw, spw_id, SubtableId::SpectralWindow)?;
             let window = MsSpectralWindow::new(table);
-            let (table, pol_row) = subtable_row(&pol, pol_id, SubtableId::Polarization)?;
+            let (table, pol_row) = linked_subtable_row(&pol, pol_id, SubtableId::Polarization)?;
             let polarization = MsPolarization::new(table);
             let chan_freq = window.chan_freq(spw_row)?;
             let chan_width = window.chan_width(spw_row)?;

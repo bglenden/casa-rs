@@ -339,7 +339,7 @@ fn rows_by_time<'a>(main: &Table, rows: &'a [usize]) -> MsResult<Cow<'a, [usize]
     ))
 }
 
-struct VisibilityRead<'a> {
+pub(crate) struct VisibilityRead<'a> {
     main: &'a Table,
     rows: &'a [usize],
     first_row: Option<usize>,
@@ -376,7 +376,7 @@ const SCALARS: [(&str, &str); 10] = [
     ("time", "TIME"),
 ];
 
-const COMPLEX_PRODUCTS: [(&str, &str, bool); 6] = [
+pub(crate) const COMPLEX_PRODUCTS: [(&str, &str, bool); 6] = [
     ("", "DATA", false),
     ("corrected_", "CORRECTED_DATA", false),
     ("model_", "MODEL_DATA", false),
@@ -387,7 +387,7 @@ const COMPLEX_PRODUCTS: [(&str, &str, bool); 6] = [
 const PRODUCT_NAMES: [&str; 5] = ["data", "amplitude", "phase", "real", "imaginary"];
 
 impl<'a> VisibilityRead<'a> {
-    fn new(
+    pub(crate) fn new(
         main: &'a Table,
         members: &'a [Table],
         reference: Option<&'a PlainReferenceRead>,
@@ -478,7 +478,7 @@ impl<'a> VisibilityRead<'a> {
         })
     }
 
-    fn vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
+    pub(crate) fn vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
         let is_row_weight = matches!(name, "WEIGHT" | "SIGMA");
         let values = if let Some(channels) = self.channels
             && channels.width() > 1
@@ -541,7 +541,7 @@ impl<'a> VisibilityRead<'a> {
         }
     }
 
-    fn raw_matrix_cells(&self, name: &str, widen_complex: bool) -> MsResult<ArrayValue> {
+    pub(crate) fn raw_matrix_cells(&self, name: &str, widen_complex: bool) -> MsResult<ArrayValue> {
         if let Some(reference) = &self.reference {
             return read_matrix_cells(
                 reference.read.parent(),
@@ -1210,7 +1210,7 @@ fn insert_array_aliases(
     }
 }
 
-fn divide_visibility(sample: Complex32, model: Complex32) -> Complex32 {
+pub(crate) fn divide_visibility(sample: Complex32, model: Complex32) -> Complex32 {
     let [real, imaginary, model_real, model_imaginary] =
         [sample.re, sample.im, model.re, model.im].map(f64::from);
     // Every finite Float32 product, including two subnormal values, fits
