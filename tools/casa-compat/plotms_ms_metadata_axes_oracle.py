@@ -387,6 +387,25 @@ def compare_metadata_pairs(root, native, source):
         print(f"{name}: {count} matching collapsed metadata coordinates", flush=True)
         if labels:
             compare_figure(work, native, controls, expected, ("Selected metadata", *labels))
+    check_metadata_flagged_symbols(work, native, base)
+
+
+def check_metadata_flagged_symbols(work, native, base):
+    from casars.tasks import TaskParameterError
+
+    controls = base | dict(xaxis="channel", yaxis="row", customflaggedsymbol=True)
+    expected = work / "flagged-symbols.casa.txt"
+    actual = work / "flagged-symbols.native.txt"
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    assert len(rows(expected)) == 36
+    assert {point[1] for point in rows(expected)} == {str(row) for row in range(12)}
+    try:
+        native(**controls, plotfile=str(actual), expformat="txt")
+    except TaskParameterError as error:
+        assert "displaying flagged points" in str(error) and "#1032" in str(error)
+    else:
+        raise AssertionError("Metadata flag symbols were accepted without exporting flagged points")
+    assert not actual.exists()
 
 
 def main():

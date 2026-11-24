@@ -267,16 +267,21 @@ fn run_task(
                 "MeasurementSet FLOAT_DATA with a callibrary is pending #1032",
             ));
         }
-        if calibration.is_none()
-            && let Some(columns) = options.plotms_axis_columns()
-        {
-            plotms_columns::check_averaging(
-                options.plotms_averaging_active(),
-                options.plotms_extended_averaging()
-                    && options.secondary_y_data_column.is_some()
-                    && !options.plotms_independent_average(),
-                columns,
-            )?;
+        let columns = options.plotms_axis_columns();
+        let row_identifier_axes = [options.x_axis, options.y_axis]
+            .into_iter()
+            .flatten()
+            .any(MsAxis::is_row_identifier);
+        if calibration.is_none() && (columns.is_some() || row_identifier_axes) {
+            if let Some(columns) = columns {
+                plotms_columns::check_averaging(
+                    options.plotms_averaging_active(),
+                    options.plotms_extended_averaging()
+                        && options.secondary_y_data_column.is_some()
+                        && !options.plotms_independent_average(),
+                    columns,
+                )?;
+            }
             let symbols = task.value("customflaggedsymbol");
             let ordinate_count =
                 1 + usize::from(options.y_axis2.is_some()) + options.additional_ordinates.len();
