@@ -15,7 +15,7 @@
       ]
     },
     "datacolumn": {
-      "scope": "name of data column to be used [\"data\", \"float_data\", or \"corrected\"]",
+      "scope": "name of data column to be used `[\"data\", \"float_data\", or \"corrected\"]`",
       "status": "Implemented",
       "behaviors": [
         "inputs"

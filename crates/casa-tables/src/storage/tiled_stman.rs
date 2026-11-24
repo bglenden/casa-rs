@@ -381,6 +381,7 @@ mod casacore_tiled_data_tests;
 #[cfg(test)]
 mod casacore_tiled_order_tests;
 mod selected_cells;
+pub(crate) use selected_cells::cell_read_buffer_bytes;
 use selected_cells::load_selected_rows_from_touched_cubes;
 mod selected_tiles;
 use selected_tiles::{SelectedTiles, copy_pixels};

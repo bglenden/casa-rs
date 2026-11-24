@@ -5,6 +5,22 @@ use std::borrow::Cow;
 use super::*;
 
 impl TableColumn<'_> {
+    /// Upper bound on tiled I/O scratch for one uncached array-cell read,
+    /// apart from the cell and its decoded output. Inspects storage headers
+    /// only, including the physical column of a compressed complex array.
+    /// Returns zero for in-memory columns and non-tiled managers.
+    ///
+    /// The bound includes decoded tiles, transient shared-tile copies and
+    /// file read-ahead; it does not include table metadata or process caches.
+    pub fn array_cell_read_buffer_bytes(&self) -> Result<usize, TableError> {
+        let Some(path) = self.table.path() else {
+            return Ok(0);
+        };
+        crate::storage::CompositeStorage
+            .array_cell_read_buffer_bytes(path, &self.shape_column()?)
+            .map_err(TableError::from)
+    }
+
     /// Returns whether an array cell is defined without reading its payload or
     /// populating the table-level row cache.
     ///

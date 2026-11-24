@@ -366,19 +366,6 @@ impl GridBudget {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::GridBudget;
-
-    #[test]
-    fn independent_windows_share_the_grid_allowance() {
-        let mut budget = GridBudget::new(256_000, true);
-        assert_eq!(budget.maximum_output_channels(500).unwrap(), 500);
-        budget.charge(500, 500).unwrap();
-        assert!(budget.maximum_output_channels(500).is_err());
-    }
-}
-
 impl Window {
     fn new(
         options: &MsRegridOptions,
@@ -855,4 +842,17 @@ pub(super) fn input_noise(
         weight = ArrayValue::Float32(sigma.mapv(weight_from_sigma));
     }
     Ok((weight, sigma))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GridBudget;
+
+    #[test]
+    fn independent_windows_share_the_grid_allowance() {
+        let mut budget = GridBudget::new(256_000, true);
+        assert_eq!(budget.maximum_output_channels(500).unwrap(), 500);
+        budget.charge(500, 500).unwrap();
+        assert!(budget.maximum_output_channels(500).is_err());
+    }
 }

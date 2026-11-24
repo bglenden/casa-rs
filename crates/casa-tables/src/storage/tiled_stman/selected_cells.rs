@@ -10,6 +10,97 @@ use super::{
     TiledStManHeader, TsmCubeInfo, Value, copy_tile_to_cube, decode_array_value, linear_to_nd,
 };
 
+pub(crate) fn cell_read_buffer_bytes(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    table_desc: &super::TableDescContents,
+    bound_cols: &[(usize, &super::PlainColumnEntry)],
+    target_desc_idx: usize,
+) -> Result<usize, StorageError> {
+    let (variant, header) =
+        super::read_tiled_header(&table_path.join(format!("table.f{dm_seq_nr}")))?;
+    let (header, target) = super::tile_target(
+        &variant,
+        std::borrow::Cow::Owned(header),
+        table_desc,
+        bound_cols,
+        target_desc_idx,
+        (dm_seq_nr, &[]),
+    )?;
+    header.cubes.iter().try_fold(0, |maximum, cube| {
+        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() || cube.cube_shape.contains(&0) {
+            return Ok(maximum);
+        }
+        let cell_manager = matches!(variant, super::TiledVariant::Cell { .. });
+        let cell_axes = cube.cube_shape.len() - usize::from(!cell_manager);
+        single_cell_buffers(
+            &cube.cube_shape[..cell_axes],
+            &cube.tile_shape,
+            &header.col_data_types,
+            target,
+            cell_manager,
+        )
+        .map(|bytes| maximum.max(bytes))
+    })
+}
+
+/// Scratch beside the decoded cell: recent shared tiles or one streamed tile
+/// plus its file read-ahead. A CellStMan cell is an entire cube and always
+/// uses shared tiles; other managers stream cells spanning more than 8 tiles.
+fn single_cell_buffers(
+    cell_shape: &[usize],
+    tile_shape: &[usize],
+    types: &[CasacoreDataType],
+    target: usize,
+    cell_manager: bool,
+) -> Result<usize, StorageError> {
+    let invalid = || {
+        StorageError::FormatMismatch(
+            "selected cell buffer size overflow or invalid tile shape".into(),
+        )
+    };
+    if tile_shape.len() != cell_shape.len() + usize::from(!cell_manager) || tile_shape.contains(&0)
+    {
+        return Err(invalid());
+    }
+    let pixels = super::checked_storage_product(tile_shape, "selected cell tile")?;
+    let tiles = cell_shape
+        .iter()
+        .zip(tile_shape)
+        .try_fold(1usize, |n, (&cell, &tile)| {
+            n.checked_mul(cell.div_ceil(tile)).ok_or_else(invalid)
+        })?;
+    let dt = *types.get(target).ok_or_else(invalid)?;
+    let decoded = pixels
+        .checked_mul(super::tile_element_size(dt))
+        .ok_or_else(invalid)?;
+    if cell_manager || tiles <= TILE_READ_SESSION_RECENT_TILE_COUNT {
+        // Vec -> Arc briefly duplicates the newest tile. When the cache is
+        // already full it evicts only after this allocation has completed.
+        return decoded
+            .checked_mul(tiles.min(TILE_READ_SESSION_RECENT_TILE_COUNT + 1) + 1)
+            .ok_or_else(invalid);
+    }
+    let stored = |dt| {
+        if dt == CasacoreDataType::TpBool {
+            Ok(pixels.div_ceil(8))
+        } else {
+            pixels
+                .checked_mul(super::tile_element_size(dt))
+                .ok_or_else(invalid)
+        }
+    };
+    let bucket = types.iter().try_fold(0usize, |n, &dt| {
+        n.checked_add(stored(dt)?).ok_or_else(invalid)
+    })?;
+    let file_tile = stored(dt)?;
+    let span = super::read_ahead_span(tiles, bucket, file_tile).ok_or_else(invalid)?;
+    let ahead = span
+        .min(super::STREAMING_TILED_READ_AHEAD_BYTES)
+        .max(file_tile);
+    decoded.checked_add(ahead).ok_or_else(invalid)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn load_selected_rows_from_touched_cubes(
     table_path: &Path,
@@ -152,5 +243,45 @@ impl SelectedColumn<'_> {
                 other.kind()
             ))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cell_read_buffers_follow_physical_tiles() {
+        let complex = [CasacoreDataType::TpComplex];
+        assert_eq!(
+            single_cell_buffers(&[1, 9], &[1, 1, 4_194_304], &complex, 0, false).unwrap(),
+            64 << 20
+        );
+        // Bool file bytes are packed, while its decoded tile uses one byte/pixel.
+        assert_eq!(
+            single_cell_buffers(
+                &[1, 9],
+                &[1, 1, 8 << 20],
+                &[CasacoreDataType::TpBool],
+                0,
+                false
+            )
+            .unwrap(),
+            17 << 20
+        );
+        assert_eq!(
+            single_cell_buffers(&[1, 8], &[1, 1, 8], &complex, 0, false).unwrap(),
+            9 * 64
+        );
+        assert_eq!(
+            single_cell_buffers(&[1, 9], &[1, 1, 8], &[CasacoreDataType::TpInt], 0, false).unwrap(),
+            320
+        );
+        assert_eq!(
+            single_cell_buffers(&[1, 100], &[1, 1], &complex, 0, true).unwrap(),
+            10 * 8
+        );
+        assert!(single_cell_buffers(&[1, 9], &[1, 0, 8], &complex, 0, false).is_err());
+        assert!(single_cell_buffers(&[1, 9], &[1, usize::MAX, 8], &complex, 0, false).is_err());
     }
 }

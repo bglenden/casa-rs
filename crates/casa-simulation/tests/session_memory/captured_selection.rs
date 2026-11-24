@@ -7,6 +7,41 @@ use super::{
 };
 
 #[test]
+fn global_clauses_share_the_cell_read_buffer() {
+    if !alone("captured_selection::global_clauses_share_the_cell_read_buffer") {
+        return;
+    }
+    casa_tables::set_table_cache_budget_bytes(0);
+    let policy = resources(512 << 20);
+    charge_process_caches(policy.host(), policy.policy()).unwrap();
+    let measures = casa_test_support::deterministic_measures_provider();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("global.ms");
+    let mut sm = configured(&path, &measures, 512 << 20, 4);
+    sm.observe(&scan(6)).unwrap();
+    sm.close().unwrap();
+    for query in [
+        "any(DATA == DATA) ORDERBY TIME",
+        "any(DATA == DATA) GROUPBY DATA_DESC_ID",
+        "any(DATA == DATA) GROUPBY DATA_DESC_ID ORDERBY TIME",
+    ] {
+        let mut sm = Simulator::open_from_ms(
+            &path,
+            SimulatorOptions {
+                measures: measures.clone(),
+                resources: resources(64 << 20),
+                now: MEpoch::from_mjd(REFERENCE_MJD, EpochRef::UTC),
+            },
+        )
+        .unwrap();
+        drop(measured(query, || {
+            sm.set_data(&[], &[], query).unwrap();
+            sm
+        }));
+    }
+}
+
+#[test]
 fn captured_masks_keep_their_reservation() {
     if !alone("captured_selection::captured_masks_keep_their_reservation") {
         return;

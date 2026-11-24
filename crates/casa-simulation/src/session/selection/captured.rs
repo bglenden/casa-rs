@@ -95,7 +95,7 @@ fn capture_from_ms(
         },
     )
     .map_err(SimulatorError::admission)?;
-    let row_bytes = expression::row_bytes(ms.main_table(), columns, nodes)?;
+    let (row_bytes, read_buffers) = expression::row_bytes(ms.main_table(), columns, nodes)?;
     let global = !select.order_by.is_empty() || !select.group_by.is_empty();
     let mut memory = admit(
         resources.host(),
@@ -105,6 +105,7 @@ fn capture_from_ms(
             memory: (ms.row_count().div_ceil(64) as u64)
                 .saturating_mul(8)
                 .saturating_add(row_bytes)
+                .saturating_add(read_buffers)
                 .saturating_add(if global {
                     (ms.row_count() as u64).saturating_mul(
                         512 + row_bytes

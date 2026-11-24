@@ -41,7 +41,9 @@ fn run_gain_solve(
         CalibrationSolveRequest::Gain(request.clone()),
     )? {
         CalibrationSolveResult::Gain(report) => Ok(report),
-        CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
+        CalibrationSolveResult::Bandpass(_) | CalibrationSolveResult::LegacyEp { .. } => {
+            unreachable!("gain request result")
+        }
     }
 }
 
@@ -54,7 +56,9 @@ fn run_bandpass_solve(
         CalibrationSolveRequest::Bandpass(request.clone()),
     )? {
         CalibrationSolveResult::Bandpass(report) => Ok(report),
-        CalibrationSolveResult::Gain(_) => unreachable!("bandpass request result"),
+        CalibrationSolveResult::Gain(_) | CalibrationSolveResult::LegacyEp { .. } => {
+            unreachable!("bandpass request result")
+        }
     }
 }
 
@@ -522,20 +526,27 @@ fn phase_only_solution_time_weights_each_baseline_by_its_squared_amplitude() {
 }
 
 #[test]
-fn calwt_prior_tables_scale_the_solve_weights() {
-    // The data and the prior both carry amplitude 2 per antenna at t=102,
-    // so the corrected data are constant. With calwt the prior scales the
-    // t=102 weights by |2*2|^2 = 16: TIME = (100 + 101 + 16*102) / 18.
-    // Without calwt the weights stay equal and TIME is the plain mean.
+fn prior_solve_weights_follow_the_measurement_equation_order() {
+    // Same-type G priors corrupt the model (CASA VisEquation::collapse2,
+    // corrected in #2152). Dividing by that model scales the solve weights
+    // by |2*2|^2 = 16 at t=102, independently of calwt. A G prior precedes
+    // a T solve and corrects DATA instead: only calwt then scales weights.
     let base = [
         Complex32::new(1.0, 0.0),
         Complex32::from_polar(1.0, 0.3),
         Complex32::from_polar(1.0, -0.2),
     ];
-    for (calwt, expected) in [
-        (true, (100.0 + 101.0 + 16.0 * 102.0) / 18.0),
-        (false, 101.0),
+    for (gain_type, calwt) in [
+        (GainType::G, true),
+        (GainType::G, false),
+        (GainType::T, true),
+        (GainType::T, false),
     ] {
+        let expected = if gain_type == GainType::G || calwt {
+            (100.0 + 101.0 + 16.0 * 102.0) / 18.0
+        } else {
+            101.0
+        };
         let dir = TempDir::new().expect("tempdir");
         let clusters = [(100.0, 1.0), (101.0, 1.0), (102.0, 2.0)]
             .map(|(time, scale)| cluster(time, base.map(|gain| gain * scale)));
@@ -551,7 +562,7 @@ fn calwt_prior_tables_scale_the_solve_weights() {
         let caltable = dir.path().join("calwt.gcal");
         let mut request = gain_request(
             caltable.clone(),
-            GainType::G,
+            gain_type,
             GainSolveMode::AmplitudePhase,
             GainSolveInterval::Infinite,
         );
@@ -560,7 +571,11 @@ fn calwt_prior_tables_scale_the_solve_weights() {
         run_gain_solve(&ms_path, &request).expect("solve G through the prior");
 
         for row in read_cal_rows(&caltable) {
-            assert_close(row.time, expected, &format!("calwt={calwt} TIME"));
+            assert_close(
+                row.time,
+                expected,
+                &format!("{gain_type:?} calwt={calwt} TIME"),
+            );
             assert_gain_close(row.gains[0], base[row.antenna as usize], "solved gain");
         }
     }

@@ -26,7 +26,9 @@ fn run_gain_solve(
         CalibrationSolveRequest::Gain(request.clone()),
     )? {
         CalibrationSolveResult::Gain(report) => Ok(report),
-        CalibrationSolveResult::Bandpass(_) => unreachable!("gain request result"),
+        CalibrationSolveResult::Bandpass(_) | CalibrationSolveResult::LegacyEp { .. } => {
+            unreachable!("gain request result")
+        }
     }
 }
 

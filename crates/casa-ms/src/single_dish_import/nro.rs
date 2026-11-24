@@ -13,7 +13,7 @@ use std::path::Path;
 use casa_tables::{ColumnSchema, Table, TableSchema};
 use casa_types::{PrimitiveType, RecordField, RecordValue};
 
-use self::binary::{ARRAYS, OBSERVATION_HEADER_BYTES, Record, invalid};
+use self::binary::{OBSERVATION_HEADER_BYTES, Record, invalid};
 use self::header::Header;
 use super::{
     Antenna, Direction, Field, ImportHeader, ImportedScanTable, RawIntegration, Source, TimeGroups,
@@ -234,9 +234,8 @@ fn array_table(header: &Header) -> MsResult<Table> {
             .collect(),
     )?;
     let mut table = Table::with_schema(schema);
-    for index in 0..ARRAYS {
-        let ids =
-            header.arrays[index].map_or([-1; 3], |array| [array.beam, array.code, array.window]);
+    for (index, array) in header.arrays.iter().enumerate() {
+        let ids = array.map_or([-1; 3], |array| [array.beam, array.code, array.window]);
         let values = [index as i32, ids[0], ids[1], ids[2]];
         let row = RecordValue::new(
             names

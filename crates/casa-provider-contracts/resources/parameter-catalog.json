@@ -6641,7 +6641,7 @@
       },
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "algorithm",
+      "semantic_role": "output_data",
       "documentation": {
         "summary": "Name of the pulse calibration table.",
         "details": null,
@@ -6702,7 +6702,7 @@
       },
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "algorithm",
+      "semantic_role": "output_data",
       "documentation": {
         "summary": "Name of the copy to receive ANTAB calibration.",
         "details": null,
@@ -19404,7 +19404,7 @@
       },
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "algorithm",
+      "semantic_role": "output_data",
       "documentation": {
         "summary": "Optional tab-separated report of fitted line components.",
         "details": null,

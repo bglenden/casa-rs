@@ -243,11 +243,11 @@ fn read_only_modes_leave_the_measurement_set_unchanged() {
     let ms_arg = ms.to_str().unwrap();
     let before = snapshot(&ms);
 
-    for (binary, args) in [(env!("CARGO_BIN_EXE_msexplore"), vec![ms_arg])] {
-        let output = run(binary, &args);
-        assert!(output.status.success(), "{binary} {args:?}: {output:?}");
-        assert_eq!(snapshot(&ms), before, "{binary} {args:?}");
-    }
+    let binary = env!("CARGO_BIN_EXE_msexplore");
+    let args = [ms_arg];
+    let output = run(binary, &args);
+    assert!(output.status.success(), "{binary} {args:?}: {output:?}");
+    assert_eq!(snapshot(&ms), before, "{binary} {args:?}");
     let companion = flag_versions(&ms);
     assert!(!companion.exists());
     // Listing a fresh MS initializes CASA's empty companion catalog.

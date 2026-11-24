@@ -5147,7 +5147,7 @@ pub(crate) fn load_simulator_table(
 fn load_parameters(
     table_plan: &ApplyCalibrationTablePlan,
     geometry_engine: Option<&Arc<MsCalEngine>>,
-    real_parameters: bool,
+    simulator: bool,
     ms: Option<&MeasurementSet>,
 ) -> Result<LoadedCalibrationTable, ApplyExecutionError> {
     match table_plan.summary.table_subtype.as_str() {
@@ -5228,11 +5228,12 @@ fn load_parameters(
                     "M Mueller" | "Mf Mueller" if baseline => Some((2, "baseline calibration")),
                     _ => matrix.map(polarization::JonesMatrix::parameter_shape),
                 },
-                cross_hand_phase,
+                // The simulator constructs [X, 1] itself from raw CPARAM.
+                cross_hand_phase && !simulator,
                 reversed,
             )?,
             CalibrationParameterFamily::Float
-                if real_parameters || table_plan.summary.table_subtype == "G EVLASWPOW" =>
+                if simulator || table_plan.summary.table_subtype == "G EVLASWPOW" =>
             {
                 let values = read_fparam()?;
                 let path = &table_plan.spec.path;

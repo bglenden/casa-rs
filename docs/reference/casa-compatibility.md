@@ -3141,7 +3141,7 @@ Mappings, defaults, catalog domains, constraints and conditional default-only re
 | CASA parameter | CASA default | casa-rs default; mapping | Implementation | Scope and runtime restrictions | Evidence |
 |---|---|---|---|---|---|
 | `infile` | `''` | `''`; `infile` → `infile` | Implemented | name of input MS. [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `path` (measurement_set) | [paired](#sdatmcor-evidence-paired) |
-| `datacolumn` | `'data'` | `'data'`; `datacolumn` → `datacolumn` | Implemented | name of data column to be used ["data", "float_data", or "corrected"] [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
+| `datacolumn` | `'data'` | `'data'`; `datacolumn` → `datacolumn` | Implemented | name of data column to be used `["data", "float_data", or "corrected"]` [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |
 | `outfile` | `''` | `''`; `outfile` → `outfile` | Implemented | name of output MS. [output](#sdatmcor-behavior-output)<br>Catalog domain: `path` (measurement_set) | [paired](#sdatmcor-evidence-paired) |
 | `overwrite` | `False` | `False`; `overwrite` → `overwrite` | Implemented | allow to overwrite the output file if already exists. [output](#sdatmcor-behavior-output)<br>Catalog domain: `bool` | [paired](#sdatmcor-evidence-paired) |
 | `field` | `''` | `''`; `field` → `field` | Implemented | Select fields. Use field id(s) or name(s). [inputs](#sdatmcor-behavior-inputs)<br>Catalog domain: `string` | [paired](#sdatmcor-evidence-paired) |

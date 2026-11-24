@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import inspect
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,7 +21,14 @@ def test_catalog_generates_one_wrapper_for_every_task() -> None:
     task_ids = tuple(surface["id"] for surface in surfaces)
     assert len(task_ids) == len(set(task_ids))
     assert {"clearcal", "delmod", "simanalyze"} <= set(task_ids)
-    assert tasks.TASK_SURFACES == task_ids
+    assert len(tasks.TASK_SURFACES) == len(task_ids)
+    assert set(tasks.TASK_SURFACES) == set(task_ids)
+    # Wrappers follow the launch catalog's order, independently of the
+    # parameter catalog's insertion order.
+    applications = json.loads((
+        REPO_ROOT / "crates/casa-provider-contracts/resources/application-catalog.json"
+    ).read_text())["applications"]
+    assert tasks.TASK_SURFACES == tuple(item["id"] for item in applications)
     assert all(callable(getattr(tasks, name)) for name in tasks.TASK_SURFACES)
     assert not hasattr(tasks, "plotcal")
 
@@ -188,17 +196,27 @@ def test_generated_stubs_use_catalog_domains_and_surface_refinements() -> None:
         REPO_ROOT / "crates/casars-python/python/casars/tasks/_catalog.pyi"
     )
 
+    # These CASA cVariant parameters acquired intentionally unrestricted
+    # values in the regridding and flagging implementations. Pin the exact
+    # set so an accidental catch-all on any other parameter still fails.
+    variant_parameters = {
+        ("mstransform", "start"), ("mstransform", "width"),
+        ("mstransform", "phasecenter"), ("flagdata", "datacolumn"),
+        ("flagdata", "lowerlimit"), ("flagdata", "upperlimit"),
+        ("flagdata", "winsize"), ("flagdata", "extendpols"),
+    }
+    actual_variants = set()
     for surface in parameters.catalog()["surfaces"]:
         annotations = _annotations(task_functions[surface["id"]])
         for binding in surface["bindings"]:
-            # Surface-specific wrappers must expose useful types rather than
-            # falling back to the recursive catch-all accepted by Mapping APIs.
-            assert annotations[binding["name"]] != "ParameterData"
+            if annotations[binding["name"]] == "ParameterData":
+                actual_variants.add((surface["id"], binding["name"]))
             explicit = binding["projections"]["python"].get("type_hint")
             if explicit is not None:
                 assert annotations[binding["name"]] == ast.unparse(
                     ast.parse(explicit, mode="eval")
                 )
+    assert actual_variants == variant_parameters
 
     tclean = _annotations(task_functions["tclean"])
     assert tclean["imsize"] == "int | list[int] | tuple[int, ...]"

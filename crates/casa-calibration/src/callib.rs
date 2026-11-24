@@ -651,7 +651,21 @@ mod tests {
             save_apply_specs_to_callib(&path, &[spec.clone()]).unwrap();
             let text = std::fs::read_to_string(&path).unwrap();
             let loaded = load_apply_specs_from_callib(&path).unwrap();
-            assert_eq!(loaded[0].interp, spec.interp.for_callibrary());
+            // Parsing may canonicalize Casa{nearest, linear, ...} to
+            // NearestLinear; compare the actual interpolation controls.
+            let expected = spec.interp.for_callibrary();
+            assert_eq!(loaded[0].interp.time_options(2), expected.time_options(2));
+            assert_eq!(loaded[0].interp.frequency_mode(), expected.frequency_mode());
+            assert_eq!(
+                loaded[0].interp.uses_frequency_axis(),
+                expected.uses_frequency_axis()
+            );
+            if let ApplyInterpolationMode::Casa {
+                relative_frequency, ..
+            } = loaded[0].interp
+            {
+                assert!(!relative_frequency);
+            }
             save_apply_specs_to_callib(&path, &loaded).unwrap();
             assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         }

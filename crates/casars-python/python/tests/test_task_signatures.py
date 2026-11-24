@@ -1,7 +1,7 @@
 """casa-rs's CASA tasks present CASA's signatures (#931).
 
 Every task that mimics a CASA task takes CASA 6.7.6.14's parameters by name,
-in CASA's order, positionally, with the defaults CASA's signature shows,
+in CASA's order and argument kinds, with the defaults CASA's signature shows,
 then casa-rs's own controls as keyword-only arguments, and returns CASA's
 value. The CASA signatures are the pinned inventory in
 `resources/casa-compat/casa-6.7.6.14/` (#931 PR 4a). A CASA-named task that
@@ -74,7 +74,8 @@ def test_a_casa_task_takes_casas_parameters_then_keyword_only_controls(name: str
         parameter["name"] for parameter in theirs
     ]
     for parameter, casa in zip(ours, theirs):
-        assert parameter.kind.name == casa["kind"] == "POSITIONAL_OR_KEYWORD", parameter.name
+        # sdcal's intent is keyword-only in the pinned CASA signature.
+        assert parameter.kind.name == casa["kind"], parameter.name
         assert repr(parameter.default) == casa["default"], parameter.name
     for parameter in ours[len(theirs) :]:
         assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, parameter.name

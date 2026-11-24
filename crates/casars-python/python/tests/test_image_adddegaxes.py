@@ -240,17 +240,43 @@ def test_adddegaxes_preserves_an_older_coordinate_record():
     assert source.done()
 
 
-def test_adddegaxes_rejects_unread_coordinate_fields(tmp_path):
+def test_adddegaxes_after_rejected_coordinate_record(tmp_path):
     target = tmp_path / "copy.im"
     source = tools.image()
     assert source.fromshape(shape=[3, 2])
     record = source.coordsys().torecord()
+    original = source.coordsys().torecord()
     record["quality1"] = {"quality": ["DATA"]}
+    # Quality coordinates are supported since #1870; this incomplete record
+    # is rejected when installed, before adddegaxes ever sees it.
+    with pytest.raises(RuntimeError, match="Missing Quality axis name"):
+        source.setcoordsys(record)
+    assert not target.exists()
+    _assert_value(source.coordsys().torecord(), original)
+    child = source.adddegaxes(str(target), spectral=True)
+    np.testing.assert_array_equal(child.getchunk(), np.zeros((3, 2, 1), dtype=np.float32))
+    assert child.done()
+    np.testing.assert_array_equal(source.shape(), [3, 2])
+    assert source.done()
+
+
+def test_adddegaxes_rejects_unread_coordinate_fields(tmp_path):
+    target = tmp_path / "copy.im"
+    source = tools.image()
+    assert source.fromshape(shape=[3, 2], linear=True)
+    record = source.coordsys().torecord()
+    record["coordinate0"] = record.pop("linear0")
+    record["coordinate0"]["coordinate_type"] = "Linear"
+    # The modern coordinate entry takes precedence when reading the record;
+    # adddegaxes must still refuse the additional, unread legacy coordinate.
+    record["quality1"] = {"axes": ["Quality"], "quality": ["DATA"]}
     assert source.setcoordsys(record)
-    with pytest.raises(RuntimeError, match=r"quality coordinate.*#1626"):
+    original = source.coordsys().torecord()
+    with pytest.raises(RuntimeError, match="Image coordinates do not describe all pixel axes"):
         source.adddegaxes(str(target), spectral=True)
     assert not target.exists()
-    np.testing.assert_array_equal(source.shape(), [3, 2])
+    _assert_value(source.coordsys().torecord(), original)
+    np.testing.assert_array_equal(source.getchunk(), np.zeros((3, 2), dtype=np.float32))
     assert source.done()
 
 

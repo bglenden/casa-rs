@@ -246,7 +246,8 @@ impl CalibrationTableLookup {
         let mut lookup = if bpoly {
             Self::open_bpoly(path, basic, frequencies)?
         } else {
-            Self::open_parameters(path, basic, FieldSelection::AnyField, real)?
+            // Simulator lookup keeps raw CPARAM too: X/Xf is expanded by its caller.
+            Self::open_parameters(path, basic, FieldSelection::AnyField, true)?
         };
         // CASA's BPOLY-to-B conversion writes unpartitioned (-1) scan and
         // observation headers. The legacy input has neither modern column.
