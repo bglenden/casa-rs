@@ -5976,16 +5976,21 @@ fn build_generic_visibility_scatter_with_averaging(
                         let mut series_used =
                             !x_samples.values.is_empty() || !y_samples.values.is_empty();
                         if time_derived {
-                            let grid = visibility_columns
-                                .grid(y_index + 1, &visibility_grids)
-                                .expect("a model expression has a visibility grid");
-                            accumulator.y_visibility.add_time_projection(
-                                grid,
-                                &flags,
-                                [axis_weights[y_index + 1], time_model_weight],
-                                *corr_index,
-                                bin,
-                            );
+                            for (axis, average) in [
+                                (0, &mut accumulator.x_visibility),
+                                (y_index + 1, &mut accumulator.y_visibility),
+                            ] {
+                                if let Some(grid) = visibility_columns.grid(axis, &visibility_grids)
+                                {
+                                    series_used |= average.add_vector_time_sample(
+                                        grid,
+                                        &flags,
+                                        [axis_weights[axis], time_model_weight],
+                                        *corr_index,
+                                        bin,
+                                    );
+                                }
+                            }
                         } else if scalar_time {
                             accumulator
                                 .x_visibility
@@ -6967,18 +6972,8 @@ impl VisibilityColumnProjection {
     ) -> Option<f64> {
         let as_complex_float =
             |value: Complex64| num_complex::Complex32::new(value.re as f32, value.im as f32);
-        let complex_axis = |value: Complex64| {
-            let value = as_complex_float(value);
-            f64::from(match axis {
-                MsAxis::Amplitude => value.norm(),
-                MsAxis::Phase => Self::float_phase_degrees(value.arg()),
-                MsAxis::Real => value.re,
-                MsAxis::Imaginary => value.im,
-                _ => unreachable!("visibility projection requires a visibility axis"),
-            })
-        };
         match self {
-            Self::VectorResidual => Some(complex_axis(observed - model)),
+            Self::VectorResidual => Some(Self::vector_axis_value(axis, observed - model)),
             Self::ScalarResidual if averaged_operands => {
                 let observed = as_complex_float(observed);
                 let model = as_complex_float(model);
@@ -7009,7 +7004,7 @@ impl VisibilityColumnProjection {
                     observed / model
                 };
                 // CASA caches the complex float quotient before converting its axes.
-                Some(complex_axis(value))
+                Some(Self::vector_axis_value(axis, value))
             }
             Self::ScalarRatio => {
                 let observed = as_complex_float(observed);
@@ -7024,6 +7019,17 @@ impl VisibilityColumnProjection {
                 }))
             }
         }
+    }
+
+    fn vector_axis_value(axis: MsAxis, value: Complex64) -> f64 {
+        let value = num_complex::Complex32::new(value.re as f32, value.im as f32);
+        f64::from(match axis {
+            MsAxis::Amplitude => value.norm(),
+            MsAxis::Phase => Self::float_phase_degrees(value.arg()),
+            MsAxis::Real => value.re,
+            MsAxis::Imaginary => value.im,
+            _ => unreachable!("visibility projection requires a visibility axis"),
+        })
     }
 
     fn float_phase_degrees(radians: f32) -> f32 {

@@ -74,10 +74,27 @@ impl CliOptions {
             && self.iteraxis.is_none()
     }
 
-    pub(super) fn supports_time_derived(&self, [_, y, _]: [MsDataColumn; 3]) -> bool {
-        self.x_axis == Some(MsAxis::Time)
+    pub(super) fn supports_time_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
+        let stored = |column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected);
+        let vector_expression = |column| {
+            matches!(
+                column,
+                MsDataColumn::DataMinusModel
+                    | MsDataColumn::DataDivModel
+                    | MsDataColumn::CorrectedMinusModel
+                    | MsDataColumn::CorrectedDivModel
+            )
+        };
+        let supported_abscissa = self.x_axis.is_some_and(|axis| {
+            if axis == MsAxis::Time {
+                y.is_derived()
+            } else {
+                axis.is_visibility_math()
+                    && ((vector_expression(x) && stored(y)) || (vector_expression(y) && stored(x)))
+            }
+        });
+        supported_abscissa
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
-            && y.is_derived()
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
             && self.avgtime.is_some()
