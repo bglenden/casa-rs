@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use casa_ms::msexplore::cli::PlotMsModelReferences;
 use casa_ms::{
     MeasurementSet, PreparedTransformInputView, ResolvedMsSelectionRow, SubtableId,
     TransformInputColumns, TransformInputView, initial_model_visibility, scratch_columns,
@@ -23,6 +24,7 @@ pub fn transform_model_input(
 ) -> Arc<dyn TransformInputView> {
     Arc::new(ModelView {
         calibration,
+        plot_references: None,
         materialize: if materialize {
             ModelMaterialization::SourceColumn
         } else {
@@ -31,9 +33,12 @@ pub fn transform_model_input(
     })
 }
 
-pub(crate) fn plotms_model_input() -> impl TransformInputView {
+pub(crate) fn plotms_model_input(
+    references: Option<PlotMsModelReferences<'_>>,
+) -> impl TransformInputView + '_ {
     ModelView {
         calibration: None,
+        plot_references: references,
         materialize: ModelMaterialization::SelectedPlot,
     }
 }
@@ -46,12 +51,13 @@ enum ModelMaterialization {
 }
 
 #[derive(Debug)]
-struct ModelView {
+struct ModelView<'a> {
     calibration: Option<Arc<dyn TransformInputView>>,
+    plot_references: Option<PlotMsModelReferences<'a>>,
     materialize: ModelMaterialization,
 }
 
-impl ModelView {
+impl ModelView<'_> {
     fn materializes(&self, input: &MeasurementSet) -> bool {
         match self.materialize {
             ModelMaterialization::Disabled => false,
@@ -64,7 +70,7 @@ impl ModelView {
     }
 }
 
-impl TransformInputView for ModelView {
+impl TransformInputView for ModelView<'_> {
     fn prepare<'a>(
         &self,
         input: &'a MeasurementSet,
@@ -80,7 +86,19 @@ impl TransformInputView for ModelView {
         let available = stored || self.materializes(input);
         let fields = scratch_columns::virtual_model_fields(input);
         let models = if available && rows.iter().any(|row| fields.contains(&row.field_id)) {
-            Some(VisibilityModels::for_transform(input, rows).map_err(model_error)?)
+            let mut models = VisibilityModels::for_transform(
+                input,
+                rows,
+                self.plot_references
+                    .map(|references| references.recipe_slots),
+            )
+            .map_err(model_error)?;
+            if let Some(references) = self.plot_references {
+                models
+                    .set_plot_phase_references(rows, references.phase_slots)
+                    .map_err(model_error)?;
+            }
+            Some(models)
         } else {
             None
         };
@@ -90,7 +108,7 @@ impl TransformInputView for ModelView {
                     let reads_column = stored
                         && models
                             .as_ref()
-                            .is_none_or(|models| models.reads_column(row.field_id));
+                            .is_none_or(|models| models.reads_transform_column(row.row_index));
                     (
                         row.row_index,
                         ModelRow {

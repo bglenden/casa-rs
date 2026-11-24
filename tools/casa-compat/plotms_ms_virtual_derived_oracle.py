@@ -13,7 +13,7 @@ import numpy as np
 
 from plotms_ms_channel_ordinates_oracle import virtual_fixtures
 from plotms_ms_columns_oracle import (
-    compare_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request, rows,
+    compare_figure, compare_ordinate_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request, rows,
     time_average_fixture, time_scan_field_fixture, varying_fourier_fixture, virtual_fourier_fixture,
 )
 
@@ -164,7 +164,7 @@ def compare_scan_span(root, native):
     print("virtual-scan-span: 1 matching averaged model expression coordinate", flush=True)
 
 
-def compare_scalar_field_spans(root, native):
+def make_virtual_span_fixture(root):
     root.mkdir()
     both, times, scan_only, field, _ = time_scan_field_fixture(root)
     for vis in (field, both, scan_only):
@@ -175,6 +175,11 @@ def compare_scalar_field_spans(root, native):
                 continue
             assert casa.setjy(str(vis), field=str(field_id), standard="manual", usescratch=False,
                               fluxdensity=[flux, 0, 0, 0])
+    return both, times, scan_only, field
+
+
+def compare_scalar_field_spans(root, native):
+    both, times, scan_only, field = make_virtual_span_fixture(root)
     title = "Scalar virtual model across fields"
     base = request(field) | dict(field="", xaxis="time", xdatacolumn="", yaxis="real", spw="0:1",
                                  avgtime="200", avgfield=True, scalar=True, title=title, expformat="txt")
@@ -222,13 +227,162 @@ def compare_scalar_field_spans(root, native):
             assert "MODEL_DATA" not in table.colnames()
 
 
+def compare_vector_field_spans(root, native, *, only=None):
+    both, times, scan, field = make_virtual_span_fixture(root)
+    if only == "vector-field-channels":
+        compare_vector_field_channels(root, native, field)
+        return
+    if only == "vector-scan-spans":
+        compare_vector_scan_spans(root, native, scan, both, times[0])
+        return
+    if only == "vector-buffer-references":
+        compare_vector_buffer_references(root, native, field, scan, times[0])
+        return
+    reverse = root / "virtual-reversed-time.ms"
+    copy_ms(field, reverse)
+    with opened(reverse, True) as table:
+        stamps = table.getcol("TIME")
+        flipped = stamps.min() + (stamps.max() - stamps)
+        table.putcol("TIME", flipped)
+        table.putcol("TIME_CENTROID", flipped)
+    base = request(field) | dict(field="", xaxis="time", xdatacolumn="", spw="0:1", avgtime="200",
+                                 avgfield=True, yaxis=["real", "imag"], ydatacolumn=["model", "model"],
+                                 yaxislocation=["left", "right"], expformat="txt")
+    combined = (3.61076, -.225413)
+    for name, overrides, offsets, values, metadata in (
+        ("vector-field-model", {}, (55, 55), combined, [("1", "0")] * 2),
+        ("vector-field-chunk", dict(avgtime="40"), (15, 55, 95) * 2,
+         (7.25, 4.22486, -.642576, 0, -.0908225, -.585417), [("1", "0"), ("1", "0"), ("1", "1")] * 2),
+        ("vector-field-scan-barrier", dict(vis=str(both)), (25, 85) * 2,
+         (7.25, 3.25, 0, 0), [("1", "0"), ("2", "1")] * 2),
+        ("vector-scan-and-field-model", dict(vis=str(both), avgscan=True), (55, 55), combined, [("1", "0")] * 2),
+        ("vector-field-reversed", dict(vis=str(reverse)), (55, 55), (.819438, -.0185677), [("1", "1")] * 2),
+        ("vector-field-late-selection", dict(field="1"), (85, 85), (3.25, 0), [("1", "1")] * 2),
+        ("vector-field-single-model", dict(yaxis="real", ydatacolumn="model", yaxislocation="left"),
+         (55,), (combined[0],), [("1", "0")]),
+        ("vector-field-residual", dict(yaxis="real", ydatacolumn="corrected-model_vector", yaxislocation="left"),
+         (55,), (27.3006,), [("1", "0")]),
+    ):
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [tuple(point[3:5]) for point in selected] == metadata
+        assert {tuple(point[5:9]) for point in selected} == {("0", "1", "A0@P0", "A1@P1")}
+        np.testing.assert_allclose([float(point[1]) for point in selected], values, rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(values)
+        centers = times[0] + np.asarray(offsets)
+        for points in (selected, rows(actual)):
+            np.testing.assert_allclose([float(point[0]) for point in points], centers, rtol=0, atol=.00051)
+        print(f"{name}: {len(values)} matching coordinates in the selected chunk phase reference", flush=True)
+        if name == "vector-field-chunk":
+            compare_ordinate_figure(root, name, native, controls, "Time (MJD seconds)", ["Real:model", "Imag:model"])
+    for vis in (field, both, reverse):
+        with opened(vis) as table:
+            assert "MODEL_DATA" not in table.colnames()
+    compare_vector_field_channels(root, native, field)
+    compare_vector_scan_spans(root, native, scan, both, times[0])
+    compare_vector_buffer_references(root, native, field, scan, times[0])
+
+
+def compare_vector_field_channels(root, native, field):
+    masked = root / "virtual-field-masked-channels.ms"
+    copy_ms(field, masked)
+    with opened(masked, True) as table:
+        early = table.getcol("FIELD_ID") == 0
+        flags = table.getcol("FLAG")
+        flags[:, :2, early] = True
+        table.putcol("FLAG", flags)
+    controls = request(field) | dict(field="", spw="0:0~3", xdatacolumn="", avgtime="200",
+                                     avgfield=True, avgchannel="2", expformat="txt")
+    for name, overrides, count in (
+        ("vector-field-channel-model", dict(vis=str(masked), xaxis="frequency", yaxis=["real", "imag"],
+                                            ydatacolumn=["model", "model"], yaxislocation=["left", "right"]), 4),
+        ("vector-field-channel-residual", dict(xaxis="time", yaxis="real", ydatacolumn="corrected-model_vector"), 2),
+    ):
+        options = controls | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [point[2] for point in selected] == ["0", "1"] * (count // 2)
+        assert {point[12] for point in selected} == {"XX"}
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        if options["xaxis"] == "time":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                                       [float(point[0]) for point in selected], rtol=0, atol=.00051)
+        else:
+            assert [point[0] for point in rows(actual)] == ["100.000500000", "100.002500000"] * 2
+        print(f"{name}: {count} matching virtual field coordinates with channel bins", flush=True)
+
+
+def compare_vector_scan_spans(root, native, scan, both, start):
+    base = request(scan) | dict(field="", spw="0:1", xaxis="time", xdatacolumn="", avgtime="200",
+                                avgscan=True, yaxis=["real", "imag"], ydatacolumn=["model", "model"],
+                                yaxislocation=["left", "right"], expformat="txt")
+    for name, vis, offsets, values, fields in (
+        ("vector-scan-model", scan, (55, 55), (7.25, 0), ["0", "0"]),
+        ("vector-scan-model-retains-field", both, (25, 85) * 2, (7.25, 3.25, 0, 0), ["0", "1"] * 2),
+    ):
+        options = base | dict(vis=str(vis))
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [point[4] for point in selected] == fields
+        np.testing.assert_allclose([float(point[1]) for point in selected], values, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(values)
+        for points in (selected, rows(actual)):
+            np.testing.assert_allclose([float(point[0]) for point in points],
+                                       start + np.asarray(offsets), rtol=0, atol=.00051)
+        print(f"{name}: {len(values)} matching virtual model coordinates across scans", flush=True)
+
+
+def compare_vector_buffer_references(root, native, field, scan, start):
+    tied, moving = (root / f"vector-{name}.ms" for name in ("tied-fields", "moving-reference"))
+    copy_ms(field, tied)
+    copy_ms(scan, moving)
+    with opened(tied, True) as table:
+        table.putcol("FIELD_ID", (table.getcol("ANTENNA2") == 2).astype(np.int32))
+    with opened(moving / "FIELD", True) as table:
+        table.putcell("NUM_POLY", 0, 1)
+        table.putcell("TIME", 0, start)
+        for column in ("PHASE_DIR", "REFERENCE_DIR", "DELAY_DIR"):
+            table.putcell(column, 0, np.column_stack((table.getcell(column, 0), [3e-6, 0.])))
+    base = request(tied) | dict(field="", spw="0:1", xaxis="time", xdatacolumn="", avgtime="200",
+                                avgfield=True, yaxis=["real", "imag"], ydatacolumn=["model", "model"],
+                                yaxislocation=["left", "right"], expformat="txt")
+    first_time = dict(msselect=f"TIME < {start + 1:.3f}")
+    for name, overrides, values, metadata, center in (
+        ("tied-field-recipes", first_time | dict(antenna="A0&A1;A0&A2"), (7.25, 7.25, 0, 0),
+         [("0", "0", "1"), ("0", "0", "2")] * 2, start),
+        ("tied-field-single-baseline", first_time | dict(antenna="A0&A2"), (3.25, 0), [("1", "0", "2")] * 2, start),
+        ("moving-field-epoch", dict(vis=str(moving), avgscan=True, avgfield=False, field="0",
+                                    msselect=f"TIME > {start + 19:.3f}"),
+         (-7.22626, -.452888), [("0", "0", "1")] * 2, start + 65),
+    ):
+        options = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [tuple(point[4:7]) for point in selected] == metadata
+        np.testing.assert_allclose([float(point[1]) for point in selected], values, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(values)
+        for points in (selected, rows(actual)):
+            np.testing.assert_allclose([float(point[0]) for point in points], center, rtol=0, atol=.00051)
+        print(f"{name}: {len(values)} matching virtual coordinates and visibility-buffer references", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("scalar-field-spans",))
+    parser.add_argument("--only", choices=("scalar-field-spans", "vector-field-spans", "vector-field-channels",
+                                           "vector-scan-spans", "vector-buffer-references"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -244,7 +398,10 @@ def main():
             compare_averaged_expressions(root, native)
             compare_scan_span(root / "spans", native)
             compare_varying_fourier_expression(root / "fourier-model", native)
-        compare_scalar_field_spans(root / "scalar-field-spans", native)
+        if args.only in (None, "scalar-field-spans"):
+            compare_scalar_field_spans(root / "scalar-field-spans", native)
+        if args.only != "scalar-field-spans":
+            compare_vector_field_spans(root / "vector-field-spans", native, only=args.only)
 
 
 if __name__ == "__main__":
