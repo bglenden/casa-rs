@@ -9,7 +9,7 @@ use ndarray::Array2;
 
 use super::{
     MsAxis, MsDataColumn, MsPlotSpec, PlotMsColumnSelection,
-    cli::PlotMsModelLoader,
+    cli::{PlotMsModelLoader, PlotMsModelReferences},
     plotms_columns::{
         supports_ordinary_time_axes, uses_channel_derived, uses_ordinary_time_averaging,
         uses_scalar_visibility_average,
@@ -78,7 +78,7 @@ pub(super) fn selected_model_cells(
     rows: &[ResolvedMsSelectionRow],
     plot: Option<&MsPlotSpec>,
     columns: &PlotMsColumnSelection<'_>,
-    model_phase_reference_slots: Option<&[usize]>,
+    model_references: Option<PlotMsModelReferences<'_>>,
     load_models: Option<PlotMsModelLoader>,
 ) -> Result<Option<HashMap<usize, ArrayValue>>, String> {
     let Some(plot) = plot else {
@@ -110,7 +110,7 @@ pub(super) fn selected_model_cells(
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
         )
     });
-    let vector_span = model_phase_reference_slots.is_some();
+    let vector_span = model_references.is_some();
     let field_models_supported = !plot.averaging.avgfield || plot.averaging.scalar || vector_span;
     let derived_average = columns.implicit_derived_model
         && field_models_supported
@@ -119,7 +119,7 @@ pub(super) fn selected_model_cells(
         || ((!extended || ordinary_time || scalar_span || vector_span) && standard_columns)
         || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {
-        return load(ms, rows, model_phase_reference_slots);
+        return load(ms, rows, model_references);
     }
     if averaging || (plot.iteration.iteraxis.is_some() && plot.secondary_y_axis().is_some()) {
         let message = if can_predict {

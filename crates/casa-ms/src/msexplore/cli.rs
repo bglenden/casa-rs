@@ -188,13 +188,23 @@ pub fn task_front_end_with_plot_payload(
 pub type PlotMsCalibrationLoader =
     fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
 
-/// Compute MODEL_DATA on the exact selected MAIN rows. An optional slice maps
-/// each selected row to the selection slot supplying its chunk phase reference.
-/// Return None when the physical or default model supplies all selected cells.
+/// Iterator references for vector time averaging of virtual model cells. Both
+/// slices are indexed by input selection slot and contain slots in that same
+/// selection.
+#[derive(Debug, Clone, Copy)]
+pub struct PlotMsModelReferences<'a> {
+    /// The first row of the iterator chunk supplies FIELD direction and epoch.
+    pub phase_slots: &'a [usize],
+    /// The first row of each input visibility buffer supplies the model recipe.
+    pub recipe_slots: &'a [usize],
+}
+
+/// Compute MODEL_DATA on the exact selected MAIN rows. Return None when the
+/// physical or default model supplies all selected cells.
 pub type PlotMsModelLoader = fn(
     &MeasurementSet,
     &[ResolvedMsSelectionRow],
-    Option<&[usize]>,
+    Option<PlotMsModelReferences<'_>>,
 ) -> Result<Option<HashMap<usize, ArrayValue>>, String>;
 
 /// Use the existing PlotMS front end with caller-provided calibration and model sources.

@@ -3074,9 +3074,12 @@ fn build_uncalibrated_plotms_payload(
         &selected.selected_rows,
         plot,
         &columns,
-        time_bins
-            .as_ref()
-            .and_then(crate::transform::PlotTimeGroups::model_phase_reference_slots),
+        time_bins.as_ref().and_then(|groups| {
+            Some(cli::PlotMsModelReferences {
+                phase_slots: groups.model_phase_reference_slots()?,
+                recipe_slots: groups.input_buffer_first_slots(),
+            })
+        }),
         load_models,
     )?;
     let (row_order, starts_visibility_buffer) = if (vector_baselines && !time_baselines)
@@ -5495,8 +5498,8 @@ fn build_generic_visibility_scatter_with_averaging(
         && !average_channels;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
-    let vector_span_models = (spec.averaging.avgscan || spec.averaging.avgfield)
-        && !spec.averaging.scalar
+    let vector_span_models = time_bins
+        .is_some_and(|groups| groups.model_phase_reference_slots().is_some())
         && calibration.is_some_and(|input| input.models.is_some());
     let direct_time_projection = uncalibrated
         && time_bins.is_some()
@@ -6032,14 +6035,19 @@ fn build_generic_visibility_scatter_with_averaging(
             }
         }
         let representative_row = row_numbers[representative_slot];
+        let metadata_slot = if vector_span_models {
+            time_bins
+                .and_then(|groups| groups.input_buffer_first_slot(representative_slot))
+                .unwrap_or(representative_slot)
+        } else {
+            representative_slot
+        };
         let span_metadata =
             group.and_then(|group| scalar_spans.as_ref().map(|spans| spans.metadata(group)));
-        let representative_field = span_metadata
-            .map_or(selected_field_ids[representative_slot], |metadata| {
-                metadata.field
-            });
+        let representative_field =
+            span_metadata.map_or(selected_field_ids[metadata_slot], |metadata| metadata.field);
         let representative_scan = span_metadata
-            .map_or(selected_scan_numbers[representative_slot], |metadata| {
+            .map_or(selected_scan_numbers[metadata_slot], |metadata| {
                 metadata.scan
             });
         if let Some(group) = time_group {
@@ -6710,6 +6718,12 @@ fn build_generic_visibility_scatter_with_averaging(
             })
             .collect();
         Some(MsScatterPlotMsAverageIds::ScanFieldAndAntenna(ids))
+    } else if vector_span_models && let Some(groups) = time_bins {
+        let ids = groups
+            .model_metadata_slots()
+            .map(|slot| (selected_scan_numbers[slot], selected_field_ids[slot]))
+            .collect();
+        Some(MsScatterPlotMsAverageIds::ScanAndField(ids))
     } else if let Some(spans) = &scalar_spans {
         let ids = averaged_rows
             .iter()

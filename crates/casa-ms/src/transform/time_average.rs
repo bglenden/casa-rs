@@ -224,6 +224,18 @@ impl PlotTimeGroups {
         self.input_buffer_first_slots.get(row_slot).copied()
     }
 
+    /// Slots supplying the input buffer's recipe for each selected row.
+    pub(crate) fn input_buffer_first_slots(&self) -> &[usize] {
+        &self.input_buffer_first_slots
+    }
+
+    /// Input buffer rows supplying metadata for the vector time groups.
+    pub(crate) fn model_metadata_slots(&self) -> impl Iterator<Item = usize> + '_ {
+        self.first_row_slots
+            .iter()
+            .map(|&slot| self.input_buffer_first_slots[slot])
+    }
+
     /// The first selected row of each input chunk supplies its phase center.
     pub(crate) fn model_phase_reference_slots(&self) -> Option<&[usize]> {
         self.model_phase_reference_slots.as_deref()
