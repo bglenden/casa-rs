@@ -650,13 +650,15 @@ def compare_channel_antenna_averages(root, native, weighted, start, base):
         weights = np.where(table.getcol("ANTENNA2") == 2, 3, 1).astype(np.float32)
         table.putcol("WEIGHT", np.broadcast_to(weights, table.getcol("WEIGHT").shape).copy())
         table.putcol("SIGMA", np.ones_like(table.getcol("SIGMA")))
-    split, signed, zero, flagged = (root / f"channel-antenna-{name}.ms"
-                                    for name in ("split", "signed", "zero", "flagged"))
-    for path in (split, signed, zero, flagged):
+    split, signed, zero, flagged, flagged_rows = (root / f"channel-antenna-{name}.ms" for name in
+                                                  ("split", "signed", "zero", "flagged", "flagged-rows"))
+    for path in (split, signed, zero, flagged, flagged_rows):
         copy_ms(source, path)
         with opened(path, True) as table:
-            if path == flagged:
+            if path in (flagged, flagged_rows):
                 table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
+                if path == flagged_rows:
+                    table.putcol("FLAG_ROW", np.ones_like(table.getcol("FLAG_ROW")))
                 continue
             weights = table.getcol("WEIGHT_SPECTRUM")
             distant = table.getcol("ANTENNA2") == 2
@@ -726,7 +728,9 @@ def compare_channel_antenna_averages(root, native, weighted, start, base):
         if name == "scalar-channel-antenna":
             compare_figure(root, native, request_args, expected,
                            (controls["title"], "Amp", "Phase:corrected (degrees)"))
-    for name, source in (("zero-calibrated-channel-antenna", zero), ("all-flagged-channel-antenna", flagged)):
+    for name, source in (("zero-calibrated-channel-antenna", zero),
+                         ("all-flagged-channel-antenna", flagged),
+                         ("row-flagged-channel-antenna", flagged_rows)):
         compare_empty_export(root, native, name, controls | dict(vis=str(source)),
                              ("Amp", "Phase:corrected (degrees)"))
 
