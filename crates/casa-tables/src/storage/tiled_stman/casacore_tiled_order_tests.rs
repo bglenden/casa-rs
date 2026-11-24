@@ -94,7 +94,7 @@ fn assert_cells(
     assert_eq!(table.row_count(), rows);
     for &column in columns {
         let cells = table.column_accessor(column).expect("column");
-        let selection = [rows - 1, 0, rows - 1, 1];
+        let selection = [rows - 1, 0, rows - 1, 0];
         assert_eq!(
             cells
                 .array_cells_owned_uncached(&selection)
