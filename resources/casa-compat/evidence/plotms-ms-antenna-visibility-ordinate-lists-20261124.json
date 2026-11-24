@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "45c27ef66a5feef5574c0379649a8eb9961e56ab",
+  "source_revision": "45c27ef66a5feef5574c0379649a8eb9961e56ab",
+  "baseline_revision": "763bc78552041db6132baef49d8c6125bf429f15",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_antenna_ordinates_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Per-antenna vector and scalar averages of three or more independent stored MeasurementSet visibility ordinates, including compatible time and channel transformations.",
+  "result": "passed",
+  "baseline_result": "Main refuses more than two stored visibility ordinates with antenna averaging. Earlier candidates also discarded fully flagged products or clear cube samples on row-flagged unbinned input.",
+  "text_exports": 8,
+  "points": 1152,
+  "empty_text_exports": 4,
+  "figures": 1,
+  "rendered_coordinates": 36,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "refusal_controls": 2,
+  "evidence_reuse": "After review, reran only the four affected unbinned row-flag cases. The prior paired time, channel, complex and rendering evidence remains applicable."
+}
