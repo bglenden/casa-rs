@@ -40,6 +40,8 @@ def compare_metadata(root, native, vis):
                                np.tile(np.degrees(np.angle(observed) / np.abs(model)), 6), rtol=1.2e-5)
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
     assert compare_text(actual, expected) == 12
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                               [float(point[0]) for point in selected], rtol=0, atol=0.00051)
     print("time-ratio: 12 matching selected times and phase coordinates", flush=True)
 
 
