@@ -80,7 +80,7 @@ pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_
 use subtable_copy::copy_subtables;
 pub use task_history::{TransformTaskHistory, append_task_history};
 pub(crate) use time_average::{
-    PlotTimeGroups, centered_time_and_interval, selected_plot_time_groups,
+    PlotTimeGroups, TimeUvwAverage, centered_time_and_interval, selected_plot_time_groups,
 };
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;

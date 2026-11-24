@@ -71,7 +71,7 @@ use crate::spectral_selection::{
 use crate::subtables::SubTable;
 use crate::subtables::data_description::MsDataDescription;
 use crate::subtables::polarization::MsPolarization;
-use crate::transform::{PlotTimeGroups, TimeAverageOptions, WeightKind};
+use crate::transform::{PlotTimeGroups, TimeAverageOptions, TimeUvwAverage, WeightKind};
 use crate::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
 
 const AVG_TIME_BUCKET_EPSILON_SECONDS: f64 = 0.002;
@@ -619,7 +619,11 @@ impl MsAxis {
     }
 
     fn uses_uvw(self) -> bool {
-        matches!(self, Self::UvDistance | Self::U | Self::V | Self::W) || self.uses_wavelengths()
+        self.uses_uvw_metres() || self.uses_wavelengths()
+    }
+
+    fn uses_uvw_metres(self) -> bool {
+        matches!(self, Self::UvDistance | Self::U | Self::V | Self::W)
     }
 }
 
@@ -2832,9 +2836,11 @@ fn build_uncalibrated_plotms_payload(
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
+    let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
     if plot.is_some_and(|plot| {
         (vector_baselines
             || scalar_time
+            || weighted_time_uvw
             || (columns.secondary_y.is_some() && uses_extended_averaging(plot)))
             && plotms_columns::uses_model(
                 [
@@ -2852,7 +2858,9 @@ fn build_uncalibrated_plotms_payload(
         plotms_model::refuse_averaged_virtual_fields(ms, &selected.selected_rows)?;
     }
     let time_bins = plot
-        .filter(|_| !scalar_time && (columns.secondary_y.is_some() || time_baselines))
+        .filter(|_| {
+            !scalar_time && (columns.secondary_y.is_some() || time_baselines || weighted_time_uvw)
+        })
         .and_then(|plot| Some((plot, plot.averaging.avgtime?)))
         .map(|(plot, seconds)| {
             crate::transform::selected_plot_time_groups(
@@ -5001,6 +5009,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let visibility_columns =
         plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
     let time_bins = calibration.and_then(|input| input.time_bins);
+    let weighted_time_uvw = time_bins.is_some() && plotms_columns::uses_weighted_time_uvw(spec);
     let collapse_baselines = plotms_columns::uses_vector_baseline_average(spec)
         && calibration.is_some_and(|input| input.rows.is_none());
     let scalar_time = plotms_columns::uses_scalar_time_average(spec)
@@ -5187,6 +5196,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
+    let mut time_uvws = HashMap::<usize, TimeUvwAverage>::new();
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut scalar_time_rows = std::collections::BTreeSet::new();
@@ -5352,6 +5362,7 @@ fn build_generic_visibility_scatter_with_averaging(
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
         let row_time_value = selected_times[row_slot];
+        let row_uvw_value = selected_uvw[row_slot];
         let (time_group, representative_slot) = time_bins.map_or((None, row_slot), |bins| {
             let group = bins.group(row_slot);
             (Some(group), bins.first_row_slot(group))
@@ -5385,6 +5396,22 @@ fn build_generic_visibility_scatter_with_averaging(
                 &selected_correlations,
                 ranges.map(Vec::as_slice),
             );
+            if weighted_time_uvw && let Some(kinds) = time_weight_kinds {
+                let weight = selected_correlations
+                    .iter()
+                    .map(|(corr, _)| match kinds.row_weight {
+                        WeightKind::Calibrated => weight_values[*corr],
+                        WeightKind::Observed => f64::from(crate::transform::weight_from_sigma(
+                            sigma_values[*corr] as f32,
+                        )),
+                        WeightKind::Unit => 1.0,
+                    })
+                    .sum();
+                let _ = time_uvws
+                    .entry(group)
+                    .or_default()
+                    .add(row_uvw_value, !unflagged, weight);
+            }
             if let (Some(statistics), Some(observations), Some(kinds)) = (
                 &mut time_baseline_stats,
                 &selected_observations,
@@ -5415,7 +5442,6 @@ fn build_generic_visibility_scatter_with_averaging(
                     .observe(row_time_value, unflagged);
             }
         }
-        let row_uvw_value = selected_uvw[row_slot];
         let row_interval_value = selected_intervals[row_slot];
         if let Some(group) = group.filter(|_| scalar_time) {
             scalar_time_rows.insert((group, antenna1_value, antenna2_value));
@@ -5671,6 +5697,9 @@ fn build_generic_visibility_scatter_with_averaging(
                                 accumulator.any_flag_row |= flag_row_value;
                                 series_used = true;
                             }
+                            axis if weighted_time_uvw && axis.uses_uvw_metres() => {
+                                series_used = true;
+                            }
                             axis if !axis.is_visibility_math() => {
                                 if let Some(value) = compute_axis_value(
                                     axis,
@@ -5722,6 +5751,9 @@ fn build_generic_visibility_scatter_with_averaging(
                             MsAxis::FlagRow => {
                                 accumulator.has_flag_row_samples = true;
                                 accumulator.any_flag_row |= flag_row_value;
+                                series_used = true;
+                            }
+                            axis if weighted_time_uvw && axis.uses_uvw_metres() => {
                                 series_used = true;
                             }
                             axis if !axis.is_visibility_math() => {
@@ -5810,6 +5842,10 @@ fn build_generic_visibility_scatter_with_averaging(
         .zip(time_bins)
         .zip(spec.averaging.avgtime)
         .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval));
+    let time_uvws: HashMap<_, _> = time_uvws
+        .into_iter()
+        .map(|(group, average)| (group, average.mean()))
+        .collect();
     let scalar_time_order = scalar_time_rows
         .into_iter()
         .enumerate()
@@ -5885,6 +5921,10 @@ fn build_generic_visibility_scatter_with_averaging(
                 let project = |axis: MsAxis, x_axis| {
                     if axis == MsAxis::Time && (time_bins.is_some() || scalar_time) {
                         planned_time
+                    } else if weighted_time_uvw && axis.uses_uvw_metres() {
+                        group
+                            .and_then(|group| time_uvws.get(&group))
+                            .map(|&uvw| uvw_metres_coordinate(axis, uvw))
                     } else if scalar_time && axis.is_visibility_math() {
                         let samples = if x_axis {
                             &accumulator.x_visibility
@@ -6643,24 +6683,28 @@ struct RowCoordinates {
 
 fn uvw_coordinate(
     axis: MsAxis,
-    [u, v, w]: [f64; 3],
+    uvw: [f64; 3],
     bin: &ChannelBin,
     spectrum: Option<&SpectralContext>,
 ) -> Option<f64> {
     const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
 
-    let metres = match axis {
-        MsAxis::UvDistance | MsAxis::UvWave => (u * u + v * v).sqrt(),
-        MsAxis::U | MsAxis::UWave => u,
-        MsAxis::V | MsAxis::VWave => v,
-        MsAxis::W | MsAxis::WWave => w,
-        _ => unreachable!("UVW coordinates require a UVW axis"),
-    };
+    let metres = uvw_metres_coordinate(axis, uvw);
     if axis.uses_wavelengths() {
         let frequency_hz = spectrum?.channel_frequencies_hz.get(bin.start)?;
         Some(metres / SPEED_OF_LIGHT_M_S * frequency_hz)
     } else {
         Some(metres)
+    }
+}
+
+fn uvw_metres_coordinate(axis: MsAxis, [u, v, w]: [f64; 3]) -> f64 {
+    match axis {
+        MsAxis::UvDistance | MsAxis::UvWave => (u * u + v * v).sqrt(),
+        MsAxis::U | MsAxis::UWave => u,
+        MsAxis::V | MsAxis::VWave => v,
+        MsAxis::W | MsAxis::WWave => w,
+        _ => unreachable!("UVW coordinates require a UVW axis"),
     }
 }
 
