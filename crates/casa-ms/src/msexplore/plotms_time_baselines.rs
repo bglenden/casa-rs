@@ -88,7 +88,7 @@ impl TimeAverageStatistics {
             mean_weight_preferring_unflagged(self.channel_bin_widths.iter().map(|&width| {
                 let (bin, rest) = channels.split_at(width);
                 channels = rest;
-                plotms_columns::sum_channel_weights(bin.iter().map(ChannelWeightSum::sample))
+                plotms_columns::sum_channel_weights(bin.iter().map(ChannelWeightSum::sample), true)
             }))
         };
         plotms_columns::baseline_weight(f64::from(weight))

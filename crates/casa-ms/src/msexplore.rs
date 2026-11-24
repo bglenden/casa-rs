@@ -4868,6 +4868,11 @@ fn build_generic_visibility_scatter_with_averaging(
         .filter(|_| channel_baselines)
         .map(|input| plotms_columns::weight_kinds(ms, spec, input));
     let combined_vector_average = time_weight_kinds.is_some() && average_channels;
+    // A model-only request gives each surviving channel equal weight after
+    // the iterator has normalized that channel's time samples.
+    let average_model_channels_equally = time_baselines
+        && combined_vector_average
+        && time_weight_kinds.is_some_and(|kinds| kinds.row_weight == WeightKind::Unit);
     let visibility_weight_kinds = time_weight_kinds.or(channel_baseline_kinds);
     let needs_weight_kind = |kind| {
         visibility_weight_kinds.is_some_and(|kinds| kinds.uses(kind))
@@ -5289,6 +5294,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     correlation,
                     &channel_bins,
                     &flags,
+                    propagate_channel_weights,
                 )
             });
             plotms_columns::baseline_weight(weight)
@@ -5440,12 +5446,24 @@ fn build_generic_visibility_scatter_with_averaging(
                         let y_samples = samples(y_index + 1);
                         let mut series_used =
                             !x_samples.values.is_empty() || !y_samples.values.is_empty();
-                        accumulator
-                            .x_visibility
-                            .add(x_samples, scalar_weight, conjugate);
-                        accumulator
-                            .y_visibility
-                            .add(y_samples, scalar_weight, conjugate);
+                        if average_model_channels_equally {
+                            for (axis, average) in [
+                                (0, &mut accumulator.x_visibility),
+                                (y_index + 1, &mut accumulator.y_visibility),
+                            ] {
+                                if let Some(grid) = visibility_columns.grid(axis, &visibility_grids)
+                                {
+                                    average.add_channel_time_row(grid, &flags, *corr_index, bin);
+                                }
+                            }
+                        } else {
+                            accumulator
+                                .x_visibility
+                                .add(x_samples, scalar_weight, conjugate);
+                            accumulator
+                                .y_visibility
+                                .add(y_samples, scalar_weight, conjugate);
+                        }
                         if calibration.is_some()
                             && spec.averaging.avgtime.is_some()
                             && time_group.is_none()

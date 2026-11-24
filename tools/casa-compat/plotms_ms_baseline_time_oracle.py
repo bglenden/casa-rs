@@ -167,6 +167,41 @@ def compare_time_channel_baselines(root, native):
     assert reference(**options, plotfile=str(expected)) is None
     assert native(**options, plotfile=str(actual)) is None
     assert compare_text(actual, expected) == 4
+    compare_channel_time_reductions(work, native, controls, spectral)
+
+
+def compare_channel_time_reductions(work, native, controls, spectral):
+    model = work / "partly-flagged-model.ms"
+    calibrated = work / "partly-zero-calibrated.ms"
+    for path in (model, calibrated):
+        copy_ms(spectral, path)
+    with opened(model, True) as table:
+        _, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        affected = (table.getcol("ANTENNA2") == 2) & (integration % 2 == 0)
+        flags = table.getcol("FLAG")
+        flags[0, 1, affected] = True
+        table.putcol("FLAG", flags)
+    with opened(calibrated, True) as table:
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        weights[0, :2, table.getcol("ANTENNA2") == 2] = 0
+        table.putcol("WEIGHT_SPECTRUM", weights)
+    cases = (
+        ("model-channel-means", model, "model", "20", 2, [(0, 3700 / 11), (1, 9200 / 11)]),
+        ("calibrated-bin-weights", calibrated, "corrected", "20", 2, [(0, 28), (1, 510 / 7)]),
+        ("calibrated-bin-weights-no-time", calibrated, "corrected", "", 6, [(0, 28), (1, 510 / 7)]),
+    )
+    for name, vis, column, interval, windows, coords in cases:
+        options = controls | dict(vis=str(vis), xaxis="channel", xdatacolumn="", yaxis="real",
+                                  ydatacolumn=column, yaxislocation="left", avgtime=interval, expformat="txt")
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == len(coords) * windows
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coords * windows, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching time, channel and baseline coordinates", flush=True)
 
 
 def main():

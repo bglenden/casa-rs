@@ -153,25 +153,34 @@ pub(super) fn channel_averaged_row_weight(
     correlation: usize,
     bins: &[ChannelBin],
     flags: &ndarray::ArrayView2<'_, bool>,
+    propagate_weights: bool,
 ) -> f64 {
     f64::from(mean_weight_preferring_unflagged(bins.iter().map(|bin| {
-        sum_channel_weights(bin.channels().map(|channel| {
-            let weight = weights.map_or(1.0, |grid| {
-                grid.values[correlation * grid.chan_count + channel] as f32
-            });
-            (flags[(correlation, channel)], weight)
-        }))
+        sum_channel_weights(
+            bin.channels().map(|channel| {
+                let weight = weights.map_or(1.0, |grid| {
+                    grid.values[correlation * grid.chan_count + channel] as f32
+                });
+                (flags[(correlation, channel)], weight)
+            }),
+            propagate_weights,
+        )
     })))
 }
 
-pub(super) fn sum_channel_weights(samples: impl Iterator<Item = (bool, f32)>) -> (bool, f32) {
+pub(super) fn sum_channel_weights(
+    samples: impl Iterator<Item = (bool, f32)>,
+    propagate_weights: bool,
+) -> (bool, f32) {
     let mut sums = [0.0, 0.0];
     let mut all_flagged = true;
     for (flagged, weight) in samples {
         all_flagged &= flagged;
         sums[usize::from(flagged)] += weight;
     }
-    (all_flagged, sums[usize::from(all_flagged)])
+    let sum = sums[usize::from(all_flagged)];
+    let usable = !all_flagged && (!propagate_weights || sum > 0.0);
+    (!usable, sum)
 }
 
 pub(super) fn bin_has_weight(
