@@ -7,14 +7,14 @@ use std::path::Path;
 use casa_ms::{MeasurementSet, MsSelection};
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_tables::{Table, TableOptions};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_task_runtime::{CasaLoggingConfig, TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{
     ArrayValue, RecordValue, ScalarValue, Value,
     quanta::{Quantity, Unit},
 };
 use ndarray::Array1;
 
-use super::{MainRows, SingleDishAtmosphere, SingleDishSession, inputs};
+use super::{MainRows, SingleDishAtmosphere, SingleDishSession, inputs, thread_count};
 use crate::single_dish::selector;
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -50,7 +50,7 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .transpose()?;
     let output_spw = task.required_text("outputspw")?;
     let rows = MainRows::read(&ms).map_err(execution)?;
-    let config = configuration(task, &ms, &rows, &output_spw, atmosphere, humidity)?;
+    let (config, messages) = configuration(task, &ms, &rows, &output_spw, atmosphere, humidity)?;
     let mut session = SingleDishSession::default();
     session.open(input);
     session
@@ -83,7 +83,17 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
             },
         )
         .map_err(execution)?;
-    TaskSuccess::new(CasaValue::None, &report)
+    let fallback =
+        !CasaLoggingConfig::output_was_configured(&std::env::args_os().skip(1).collect::<Vec<_>>());
+    let unix_seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    let mjd_seconds = unix_seconds + 40_587.0 * 86_400.0;
+    let mut result = TaskSuccess::new(CasaValue::None, &report)?;
+    for message in messages {
+        result = result.with_replayed_info(mjd_seconds, "sdatmcor", &message, fallback);
+    }
+    Ok(result)
 }
 
 fn include_autocorrelations(ms: &MeasurementSet, text: String) -> Result<String, TaskFailure> {
@@ -153,19 +163,29 @@ fn configuration(
     output: &str,
     atmosphere: i64,
     humidity: f64,
-) -> Result<RecordValue, TaskFailure> {
+) -> Result<(RecordValue, Vec<String>), TaskFailure> {
     let reference = inputs::default_antenna(ms, raw).map_err(execution)?;
     let site = inputs::site_altitude(ms, reference).map_err(execution)?;
     let detailed = task.flag("atmdetail")?;
     let processes = task.required_text("spw")?;
     let selected = resolve_windows(ms, &processes, "spw")?;
     let written = resolve_windows(ms, output, "outputspw")?;
-    let windows = selected
+    let (windows, uncorrected): (Vec<_>, Vec<_>) = written
         .into_iter()
-        .filter(|window| raw.windows.contains(window) && written.contains(window))
-        .collect::<Vec<_>>();
+        .filter(|window| raw.windows.contains(window))
+        .partition(|window| selected.contains(window));
     let length = ms.spectral_window().map_err(execution)?.row_count();
     let gain = gain_factors(task.value("gainfactor"), length)?;
+    let mut messages = vec![format!("processspw (input) = {windows:?}")];
+    if let [window] = uncorrected.as_slice() {
+        messages.push(format!("SPW {window} is output but not corrected"));
+    } else if !uncorrected.is_empty() {
+        let ids = uncorrected.iter().map(i32::to_string).collect::<Vec<_>>();
+        messages.push(format!(
+            "SPWs {} are output but not corrected",
+            ids.join(" ")
+        ));
+    }
     let mut record = RecordValue::default();
     record.upsert(
         "processspw",
@@ -183,6 +203,10 @@ fn configuration(
         .transpose()
         .map_err(execution)?
         .unwrap_or(-1);
+    messages.push(format!(
+        "Setting numThreads_ to {}",
+        thread_count(Some(f64::from(threads)))
+    ));
     record.upsert("nthreads", Value::Scalar(ScalarValue::Int32(threads)));
     record.upsert("maxAltitude", scalar(120.));
     record.upsert(
@@ -228,7 +252,7 @@ fn configuration(
             record.upsert(field, doubles(values));
         }
     }
-    Ok(record)
+    Ok((record, messages))
 }
 
 fn resolve_windows(

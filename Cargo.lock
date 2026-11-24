@@ -263,6 +263,7 @@ dependencies = [
  "casa-types",
  "csv-core",
  "flate2",
+ "libc",
  "libm",
  "ndarray",
  "num-complex",
