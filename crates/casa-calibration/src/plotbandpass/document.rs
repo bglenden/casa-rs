@@ -150,8 +150,19 @@ pub(crate) fn pages(
             document
                 .validate_payload(0)
                 .map_err(|error| error.to_string())?;
+            let first = &source[0];
             let last = &source[source.len() - 1];
-            let output_file = output_file(display, &last.suffix, index);
+            // CASA records the page cursor before trying to draw a panel, so
+            // a multi-panel filename can refer to a skipped flagged group.
+            let suffix = if capacity == 1 {
+                first.suffix.as_str()
+            } else {
+                first
+                    .first_skipped_suffix
+                    .as_deref()
+                    .unwrap_or(&first.suffix)
+            };
+            let output_file = output_file(display, suffix, index);
             let date = format_time(last.epoch / 86_400.0, YMD, 0);
             let date = date.get(..10).unwrap_or(&date).replace('/', "-");
             let mut footer = format!("{subtitle}  ObsDate={date}");
