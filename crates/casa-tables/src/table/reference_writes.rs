@@ -70,7 +70,55 @@ fn base_row(chain: &[RefTableDatContents], mut row: usize) -> Result<usize, Tabl
     Ok(row)
 }
 
+/// The writable physical cells of selected rows in a saved RefTable.
+#[doc(hidden)]
+pub struct ReferenceWriteProjection {
+    /// The root MAIN directory whose write lock protects these cells.
+    pub path: PathBuf,
+    /// Root row numbers in the requested logical row order.
+    pub rows: Vec<usize>,
+    /// Physical column names in the requested logical column order.
+    pub columns: Vec<String>,
+}
+
 impl Table {
+    /// Resolve selected logical rows and columns through their saved references.
+    /// Repeated rows remain repeated. The caller must verify the descriptors
+    /// after acquiring the returned root's write lock.
+    ///
+    /// # Errors
+    /// A requested cell is outside the view or a descriptor is unreadable.
+    #[doc(hidden)]
+    pub fn reference_write_projection(
+        &self,
+        rows: &[usize],
+        columns: &[&str],
+    ) -> Result<Option<ReferenceWriteProjection>, TableError> {
+        let Some(source) = &self.source_path else {
+            return Ok(None);
+        };
+        if !self.is_reference_table()? {
+            return Ok(None);
+        }
+        let (root, chain) = reference_chain(source.clone(), false)?;
+        let rows = rows
+            .iter()
+            .map(|&row| base_row(&chain, row))
+            .collect::<Result<_, _>>()?;
+        let columns = columns
+            .iter()
+            .map(|&column| {
+                self.require_column(column)?;
+                Ok(base_name(&chain, column).to_owned())
+            })
+            .collect::<Result<_, TableError>>()?;
+        Ok(Some(ReferenceWriteProjection {
+            path: root,
+            rows,
+            columns,
+        }))
+    }
+
     pub(crate) fn reference_column_manager_type(
         &self,
         column: &str,

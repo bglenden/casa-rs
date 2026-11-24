@@ -105,6 +105,16 @@ impl VisibilityPolarization {
         matches!(self.project, Projection::Converted { .. })
     }
 
+    pub(super) fn write_indices(&self, id: i32) -> MsResult<&[usize]> {
+        let Projection::Stored(plans) = &self.project else {
+            return Err(input("putdata cannot write derived polarization"));
+        };
+        plans
+            .get(&id)
+            .map(|plan| plan.indices.as_slice())
+            .ok_or_else(|| missing_description(id))
+    }
+
     pub(super) fn types(&self, id: i32) -> MsResult<&[StokesType]> {
         match &self.project {
             Projection::Stored(plans) => plans

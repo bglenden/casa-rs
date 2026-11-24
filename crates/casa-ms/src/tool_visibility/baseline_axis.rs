@@ -27,20 +27,27 @@ pub(super) struct BaselineGrid {
     occupied: Vec<(usize, usize)>,
 }
 
+fn baseline_columns(
+    columns: &HashMap<String, RequiredScalarColumnValues>,
+) -> MsResult<(&[f64], &[i32], &[i32])> {
+    let (
+        RequiredScalarColumnValues::Float64(time),
+        RequiredScalarColumnValues::Int32(first),
+        RequiredScalarColumnValues::Int32(second),
+    ) = (&columns["TIME"], &columns["ANTENNA1"], &columns["ANTENNA2"])
+    else {
+        return Err(input("invalid TIME or antenna ID column type"));
+    };
+    Ok((time, first, second))
+}
+
 impl BaselineGrid {
     pub(super) fn new(
         columns: &HashMap<String, RequiredScalarColumnValues>,
         selection: Option<&[(i32, i32)]>,
         gap: i32,
     ) -> MsResult<Self> {
-        let (
-            RequiredScalarColumnValues::Float64(time),
-            RequiredScalarColumnValues::Int32(first),
-            RequiredScalarColumnValues::Int32(second),
-        ) = (&columns["TIME"], &columns["ANTENNA1"], &columns["ANTENNA2"])
-        else {
-            return Err(input("invalid TIME or antenna ID column type"));
-        };
+        let (time, first, second) = baseline_columns(columns)?;
         if first.len() != time.len() || second.len() != time.len() {
             return Err(input("antenna ID and TIME column lengths differ"));
         }
@@ -121,6 +128,35 @@ impl BaselineGrid {
 
     pub(super) fn baseline_count(&self) -> usize {
         self.baseline_count
+    }
+
+    pub(super) fn time_count(&self) -> usize {
+        self.times.len()
+    }
+
+    pub(super) fn write_positions(
+        &self,
+        columns: &HashMap<String, RequiredScalarColumnValues>,
+    ) -> MsResult<Vec<[usize; 2]>> {
+        let (times, first, second) = baseline_columns(columns)?;
+        // A collapsed grid slot can supply several physical rows on write.
+        times
+            .iter()
+            .zip(first)
+            .zip(second)
+            .map(|((&time, &first), &second)| {
+                let baseline = self
+                    .baselines
+                    .get(&(first, second))
+                    .copied()
+                    .ok_or_else(|| input("putdata baseline axis omits a selected row"))?;
+                let integration = self
+                    .times
+                    .binary_search_by(|value| value.partial_cmp(&time).unwrap())
+                    .expect("the write grid was constructed from these finite times");
+                Ok([baseline, integration])
+            })
+            .collect()
     }
 
     pub(super) fn reduction_rows(&self) -> impl Iterator<Item = (usize, usize)> + '_ {

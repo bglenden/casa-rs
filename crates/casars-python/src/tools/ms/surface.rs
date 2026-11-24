@@ -416,8 +416,8 @@ const METHODS: &[Method] = &[
     method(
         "putdata",
         &[param("items", K::Record, EmptyRecord)],
-        R::Any,
-        No,
+        R::Bool,
+        Status::Partial,
     ),
     method(
         "putdataold",

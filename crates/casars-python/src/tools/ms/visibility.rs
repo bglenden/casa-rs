@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read visibility records from the current MS attachment.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -9,7 +10,8 @@ use casa_ms::tool_iteration::ToolIteration;
 use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
-use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
+use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames, TableWriteLock};
+use casa_types::RecordValue;
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
@@ -26,6 +28,9 @@ use crate::convert::value::CasaValue;
 #[derive(Default)]
 pub(super) struct VisibilityState {
     initialized: bool,
+    averaged: bool,
+    baseline_write: Option<(i32, i64)>,
+    recent_baseline_read: bool,
     main: Option<Arc<VisibilityMain>>,
     range_subtables: Subtables,
     time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
@@ -38,13 +43,28 @@ pub(super) struct VisibilityMain {
     table: Table,
     members: Vec<Table>,
     reference: Option<PlainReferenceRead>,
-    publication: Vec<(TableFiles, Option<TableStamp>)>,
+    publication: Vec<VisibilityPublication>,
     plain: bool,
+}
+
+struct VisibilityPublication {
+    path: PathBuf,
+    files: TableFiles,
+    stamp: Option<TableStamp>,
+}
+
+struct VisibilityWriteTarget {
+    path: PathBuf,
+    names: Vec<String>,
+    rows: BTreeMap<usize, usize>,
 }
 
 impl VisibilityState {
     pub(super) fn reset_selection(&mut self) {
         self.initialized = false;
+        self.averaged = false;
+        self.baseline_write = None;
+        self.recent_baseline_read = false;
         self.channels = None;
         self.polarization = None;
         if let Some(iteration) = &mut self.iteration {
@@ -75,7 +95,7 @@ impl VisibilityState {
         let current = self.main.as_ref().is_some_and(|main| {
             main.publication
                 .iter()
-                .all(|(files, stamp)| stamp.is_some() && files.stamp() == *stamp)
+                .all(|source| source.stamp.is_some() && source.files.stamp() == source.stamp)
         });
         if !current {
             self.main = Some(Arc::new(VisibilityMain::open(path)?));
@@ -93,7 +113,11 @@ impl VisibilityMain {
         let table = Table::open_with_layout_paths(TableOptions::new(path), |path| {
             let files = TableFiles::new(path);
             let stamp = files.stamp();
-            publication.push((files, stamp));
+            publication.push(VisibilityPublication {
+                path: path.to_owned(),
+                files,
+                stamp,
+            });
         })
         .map_err(runtime_error)?;
         let parts = Table::immediate_part_names(path, path).map_err(runtime_error)?;
@@ -125,13 +149,94 @@ impl VisibilityMain {
         };
         if !dependencies
             .iter()
-            .all(|(files, stamp)| files.same_descriptor(*stamp))
+            .all(|source| source.files.same_descriptor(source.stamp))
         {
             return Err(runtime_error(
                 "MeasurementSet iterator row layout changed. Call iterinit again.",
             ));
         }
         Ok(())
+    }
+
+    fn verify_write_layout(&self, written: &BTreeSet<PathBuf>) -> PyResult<()> {
+        if self.publication.iter().all(|source| {
+            source.files.same_descriptor(source.stamp)
+                || (!written.is_empty()
+                    && source
+                        .path
+                        .canonicalize()
+                        .is_ok_and(|path| written.contains(&path)))
+        }) {
+            Ok(())
+        } else {
+            Err(runtime_error(
+                "MeasurementSet row layout changed. Refresh the selection before putdata.",
+            ))
+        }
+    }
+
+    fn write_targets(
+        &self,
+        rows: &[usize],
+        names: &[&str],
+    ) -> PyResult<Vec<VisibilityWriteTarget>> {
+        let own_names = || names.iter().map(|name| (*name).to_owned()).collect();
+        if self.plain {
+            return Ok(vec![VisibilityWriteTarget {
+                path: self.table.path().expect("disk-backed MAIN").to_owned(),
+                names: own_names(),
+                rows: rows.iter().copied().zip(0..).collect(),
+            }]);
+        }
+        if let Some(reference) = self
+            .table
+            .reference_write_projection(rows, names)
+            .map_err(runtime_error)?
+        {
+            return Ok(vec![VisibilityWriteTarget {
+                path: reference.path.canonicalize().map_err(runtime_error)?,
+                names: reference.columns,
+                rows: reference.rows.into_iter().zip(0..).collect(),
+            }]);
+        }
+        let mut count = 0;
+        let mut ends = Vec::with_capacity(self.members.len());
+        let mut paths = Vec::with_capacity(self.members.len());
+        for part in &self.members {
+            count += part.row_count();
+            ends.push(count);
+            paths.push(
+                part.path()
+                    .expect("disk-backed multi-MS member")
+                    .canonicalize()
+                    .map_err(runtime_error)?,
+            );
+        }
+        if ends.is_empty() || count != self.table.row_count() {
+            return Err(runtime_error(
+                "putdata cannot map the physical rows of this concatenation (#1030)",
+            ));
+        }
+        let mut groups = BTreeMap::<&Path, BTreeMap<usize, usize>>::new();
+        for (position, &row) in rows.iter().enumerate() {
+            let index = ends.partition_point(|&end| end <= row);
+            let path = paths
+                .get(index)
+                .ok_or_else(|| runtime_error("putdata row is outside the multi-MS"))?;
+            let first = if index == 0 { 0 } else { ends[index - 1] };
+            groups
+                .entry(path)
+                .or_default()
+                .insert(row - first, position);
+        }
+        Ok(groups
+            .into_iter()
+            .map(|(path, rows)| VisibilityWriteTarget {
+                path: path.to_owned(),
+                names: own_names(),
+                rows,
+            })
+            .collect())
     }
 
     fn open_plain_members(paths: Vec<PathBuf>) -> PyResult<Vec<Table>> {
@@ -207,12 +312,25 @@ impl PyMsTool {
             time_measures: None,
             iterator_read: false,
         };
-        let reply = py.detach(|| {
+        let reply = py.detach(|| -> PyResult<CasaValue> {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_mut() else {
                 return Ok(CasaValue::empty_record());
             };
-            ms.getdata_rows(&items, increment, options)
+            let reply = ms.getdata_rows(&items, increment, options)?;
+            if ms.writable {
+                if ifraxis {
+                    ms.visibility.baseline_write = Some((ifraxisgap as i32, increment));
+                }
+                if let CasaValue::Record(fields) = &reply
+                    && fields.iter().any(|(name, _)| {
+                        tool_visibility::VisibilityWriteRecord::accepts_column(name)
+                    })
+                {
+                    ms.visibility.recent_baseline_read = ifraxis;
+                }
+            }
+            Ok(reply)
         })?;
         reply.into_python(py)
     }
@@ -272,6 +390,150 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    pub(super) fn putdata_rows(&mut self, items: RecordValue) -> PyResult<bool> {
+        if items.fields().is_empty()
+            || self
+                .selected_rows
+                .as_deref()
+                .is_some_and(<[usize]>::is_empty)
+            || self.visibility.averaged
+            || self.visibility.channels.is_some()
+            || self.visibility.iteration.as_ref().is_some_and(|iteration| {
+                iteration.channels.is_some() || iteration.conversion.is_some()
+            })
+            || self
+                .visibility
+                .polarization
+                .as_deref()
+                .is_some_and(VisibilityPolarization::is_conversion)
+        {
+            return Ok(false);
+        }
+        let link = self.metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        if !self.visibility.initialized && self.initialize_visibility(&link)?.is_none() {
+            return Ok(false);
+        }
+        let captured = self
+            .visibility
+            .iteration
+            .as_ref()
+            .and_then(|iteration| iteration.layout.clone());
+        let main = if let Some(layout) = captured {
+            layout.verify_write_layout(&BTreeSet::new())?;
+            layout
+        } else {
+            self.visibility.main(&self.path)?;
+            self.visibility
+                .main
+                .as_ref()
+                .expect("MAIN table was opened")
+                .clone()
+        };
+        let rows = if let Some(iteration) = &self.visibility.iteration {
+            iteration.cursor.rows().map_err(runtime_error)?.to_vec()
+        } else if let Some(rows) = &self.selected_rows {
+            rows.to_vec()
+        } else {
+            (0..main.table.row_count()).collect()
+        };
+        if rows.is_empty() {
+            return Ok(false);
+        }
+        let layout = self.visibility.baseline_write;
+        let total_rows = self
+            .selected_rows
+            .as_ref()
+            .map_or_else(|| main.table.row_count(), |selected| selected.len());
+        let baseline_pairs = if self.visibility.iteration.is_some() {
+            layout
+                .map(|(_, increment)| self.iteration_baselines(&main, increment))
+                .transpose()?
+        } else {
+            None
+        };
+        let options = tool_visibility::VisibilityWriteOptions {
+            baseline_gap: layout.map(|(gap, _)| gap),
+            sampled_baselines: layout.is_some_and(|(_, increment)| {
+                increment > 1 && (increment as u32 as usize) <= total_rows
+            }),
+            recent_baseline_read: self.visibility.recent_baseline_read,
+            baseline_pairs: baseline_pairs.as_deref(),
+            polarization: self
+                .visibility
+                .iteration
+                .as_ref()
+                .map_or(self.visibility.polarization.as_deref(), |iteration| {
+                    iteration.polarization.as_deref()
+                }),
+            iterator: self.visibility.iteration.is_some(),
+        };
+        let record = tool_visibility::VisibilityWriteRecord::new(&main.table, rows, items, options)
+            .map_err(runtime_error)?;
+        let names = record.column_names().collect::<Vec<_>>();
+        if names.is_empty() {
+            return Ok(false);
+        }
+        let targets = main.write_targets(record.rows(), &names)?;
+        let refresh_cursor = self
+            .visibility
+            .iteration
+            .as_ref()
+            .is_some_and(|iteration| iteration.layout.is_some());
+        let mut written = BTreeSet::new();
+        let mut temporary = BTreeMap::new();
+        for target in &targets {
+            if refresh_cursor {
+                written.insert(target.path.clone());
+            }
+            if !self.write_locks.contains_key(&target.path) {
+                let lock =
+                    TableWriteLock::acquire_to_reread(&target.path, 0).map_err(runtime_error)?;
+                temporary.insert(target.path.clone(), lock);
+            }
+        }
+        link.verify_directory().map_err(runtime_error)?;
+        main.verify_write_layout(&BTreeSet::new())?;
+        let prepared = targets
+            .into_iter()
+            .map(|target| {
+                let ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
+                let part = record
+                    .prepare_part(&ms, target.rows.into_iter().collect(), target.names)
+                    .map_err(runtime_error)?;
+                Ok((target.path, ms, part))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        self.visibility.main = None;
+        for (path, mut ms, part) in prepared {
+            let lock = self
+                .write_locks
+                .get_mut(&path)
+                .or_else(|| temporary.get_mut(&path))
+                .expect("physical MAIN write lock was acquired");
+            record
+                .write_part(&mut ms, lock, part)
+                .map_err(runtime_error)?;
+        }
+        if let Some(iteration) = self
+            .visibility
+            .iteration
+            .as_mut()
+            .filter(|_| refresh_cursor)
+        {
+            // Refresh data read bindings and the stamps changed by our own
+            // write without accepting a different saved view projection.
+            main.verify_write_layout(&written)?;
+            let refreshed = VisibilityMain::open(&self.path)?;
+            main.verify_write_layout(&written)?;
+            iteration.layout = Some(Arc::new(refreshed));
+        }
+        for (_, lock) in temporary {
+            lock.release().map_err(runtime_error)?;
+        }
+        Ok(true)
+    }
+
     pub(super) fn visibility_range(&mut self, request: &ToolRangeRequest) -> PyResult<CasaValue> {
         let link = self.metadata_link();
         link.verify_directory().map_err(runtime_error)?;
@@ -559,6 +821,7 @@ impl AttachedMs {
         increment: i64,
         options: tool_visibility::VisibilityReadOptions<'_>,
     ) -> PyResult<CasaValue> {
+        self.visibility.averaged = options.average;
         let link = self.metadata_link();
         link.verify_directory().map_err(runtime_error)?;
         if self

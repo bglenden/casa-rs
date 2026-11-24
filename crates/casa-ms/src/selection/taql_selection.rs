@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Bind casacore's MSCAL selection functions to the shared MS row grammars.
 
-use casa_tables::TableError;
-use casa_tables::taql::ast::{Expr, Literal};
+use casa_tables::taql::ast::{BinaryOp, Expr, Literal, SelectStatement};
 use casa_tables::taql::{self, IndexStyle, RecordExpressionType, Statement, TaqlError, TaqlResult};
+use casa_tables::{ColumnType, RequiredScalarColumnValues, TableError};
+use casa_types::PrimitiveType;
 
 use super::intent::MatchMode;
 use super::taql_geometry::GeometryBinder;
-use super::{MsSelection, RowGrammar, int_list, parser, row_grammar};
+use super::{
+    MsSelection, RowGrammar, default_selection_budget, int_list, parser, row_grammar,
+    rows_per_block_for_budget,
+};
 use crate::{MeasurementSet, MsError, MsResult};
 
 pub(super) fn select_rows(
@@ -17,10 +21,15 @@ pub(super) fn select_rows(
     first_only: bool,
 ) -> MsResult<Vec<usize>> {
     let statement = selection_query(ms, query, rows_per_block)?;
-    if first_only && let Statement::Select(select) = &statement {
-        return taql::first_matching_row(select, ms.main_table())
-            .map(|row| row.into_iter().collect())
-            .map_err(taql_error);
+    if let Statement::Select(select) = &statement {
+        if first_only {
+            return taql::first_matching_row(select, ms.main_table())
+                .map(|row| row.into_iter().collect())
+                .map_err(taql_error);
+        }
+        if let Some(rows) = select_scalar_integer_rows(ms, select, rows_per_block)? {
+            return Ok(rows);
+        }
     }
     match taql::exec::execute_readonly(&statement, ms.main_table()).map_err(taql_error)? {
         TaqlResult::Select { row_indices, .. } => Ok(row_indices),
@@ -28,6 +37,91 @@ pub(super) fn select_rows(
             "expected a TaQL SELECT statement".into(),
         )),
     }
+}
+
+fn select_scalar_integer_rows(
+    ms: &MeasurementSet,
+    select: &SelectStatement,
+    rows_per_block: Option<usize>,
+) -> MsResult<Option<Vec<usize>>> {
+    let SelectStatement {
+        columns,
+        from: None,
+        joins,
+        where_clause: Some(Expr::Binary { left, op, right }),
+        group_by,
+        having: None,
+        order_by,
+        order_distinct: false,
+        limit: None,
+        offset: None,
+        distinct: false,
+        style: _,
+        giving: None,
+        giving_expr: None,
+    } = select
+    else {
+        return Ok(None);
+    };
+    if !(columns.is_empty() && joins.is_empty() && group_by.is_empty() && order_by.is_empty()) {
+        return Ok(None);
+    }
+    let (column, literal, reverse) = match (left.as_ref(), right.as_ref()) {
+        (Expr::ColumnRef(column), Expr::Literal(Literal::Int(literal))) => {
+            (column, *literal, false)
+        }
+        (Expr::Literal(Literal::Int(literal)), Expr::ColumnRef(column)) => (column, *literal, true),
+        _ => return Ok(None),
+    };
+    let matches: fn(i64, i64) -> bool = match (op, reverse) {
+        (BinaryOp::Eq, _) => |cell, other| cell == other,
+        (BinaryOp::Ne, _) => |cell, other| cell != other,
+        (BinaryOp::Lt, false) | (BinaryOp::Gt, true) => |cell, other| cell < other,
+        (BinaryOp::Le, false) | (BinaryOp::Ge, true) => |cell, other| cell <= other,
+        (BinaryOp::Gt, false) | (BinaryOp::Lt, true) => |cell, other| cell > other,
+        (BinaryOp::Ge, false) | (BinaryOp::Le, true) => |cell, other| cell >= other,
+        _ => return Ok(None),
+    };
+
+    let table = ms.main_table();
+    let name = column.column.as_str();
+    if column.table.is_some()
+        || !table
+            .schema()
+            .and_then(|schema| schema.column(name))
+            .is_some_and(|schema| {
+                schema.column_type() == &ColumnType::Scalar
+                    && schema.data_type() == Some(PrimitiveType::Int32)
+                    && !schema.options().undefined
+            })
+    {
+        return Ok(None);
+    }
+
+    // Predicates on IDs need one scalar column, even when the MS has large visibility arrays.
+    let row_count = table.row_count();
+    let rows_per_block = match rows_per_block {
+        Some(rows) => rows,
+        None => rows_per_block_for_budget(default_selection_budget()?)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?,
+    };
+    let mut selected_rows = Vec::new();
+    for start in (0..row_count).step_by(rows_per_block) {
+        let end = start.saturating_add(rows_per_block).min(row_count);
+        let rows = (start..end).collect::<Vec<_>>();
+        let mut columns = table.required_scalar_columns_owned_for_rows(&[name], &rows)?;
+        let Some(RequiredScalarColumnValues::Int32(values)) = columns.remove(name) else {
+            return Err(MsError::InvalidInput(format!(
+                "expected a scalar integer column {name}"
+            )));
+        };
+        selected_rows.extend(
+            rows.into_iter()
+                .zip(values)
+                .filter_map(|(row, value)| matches(i64::from(value), literal).then_some(row)),
+        );
+    }
+    Ok(Some(selected_rows))
 }
 
 pub(super) fn validate_predicate(

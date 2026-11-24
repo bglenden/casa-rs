@@ -11394,3 +11394,51 @@ aborts with an uncaught `ArrayError` from `MaskedArray::minMax`, which
 requires an unmasked sample. casa-rs uses the same zero extrema as an
 entirely flagged complex visibility range and keeps the tool attached.
 Calling again with `useflags=False` returns the recorded extrema (#1030).
+
+## MS writes can overrun a positioned max-row block
+
+Position an MS cursor with `iterinit(['TIME'], 0.0, 10, False)`, advance
+to the second block, and pass its ten-row `getdata('data')` array back to
+`putdata`. CASA 6.7.6.14 restarts the inner traversal and attempts to
+slice rows 10–19 from the ten-row array. The resulting `ArrayError`
+aborts the Python process. casa-rs uses the rows of the positioned
+block and writes no other rows (#1030).
+
+## An invalid MS write can leave CASA using the previous selection
+
+On a writable MS, pass a Float32 array for `FLAG_ROW` to `putdata`.
+CASA 6.7.6.14 rejects its type after creating an internal iterator.
+Selecting only row zero and writing one Boolean row plus a weight vector
+on the same attachment can then abort. Closing and reopening before the
+second selection succeeds. casa-rs validates the record before starting
+a mutation. The error leaves the attachment usable for a new selection
+and write (#1030).
+
+## MS writes can reorder values read from saved views
+
+Read `getdata('data')` from a saved reference whose rows are out of order,
+or from a multi-MS whose members cover the same integration times. With
+no explicit iterator, CASA 6.7.6.14 can sort the rows for `putdata` even
+though it returned the input in view order. Modified samples then go to
+different physical rows or members. casa-rs writes each row to its saved
+physical location in view order. Where a reference repeats one physical
+row, its final supplied value wins (#1030).
+
+For a single integration, `getdata(ifraxis=True)` drops the singleton
+time dimension. On the saved row order `[2, 0, 3]`, CASA 6.7.6.14
+returned the three baselines in order `[0, 2, 3]` and swapped physical
+rows 0 and 2 when the array was written back unchanged. casa-rs resolves
+an ambiguous trailing axis using the most recent read of writable
+visibility data. A subsequent ordinary row-axis read restores row
+ordering for such arrays (#1030).
+
+## An MS write after baseline downsampling can overwrite omitted rows with zeros
+
+On a writable MeasurementSet, read `getdata('data', ifraxis=True,
+increment=2)` and pass its baseline-axis array to `putdata`. CASA
+6.7.6.14 restores the full row selection after the read but retains the
+sampled baseline axis. It writes zeros to rows on baselines absent from
+that axis. In the control, CASA zeros the visibilities in 15 of 30 rows.
+casa-rs rejects the sampled baseline-axis record before
+mutation. A fresh read with `increment=1` supplies a complete writable
+grid (#1030).
