@@ -153,7 +153,8 @@
         "ms-vector-time-channel-antenna",
         "ms-direct-stored-vector-time-channel",
         "ms-spw-average-coordinates",
-        "ms-vector-spw-time"
+        "ms-vector-spw-time",
+        "ms-vector-spw-channel-spans"
       ],
       "behaviors": [
         "coordinates"
@@ -251,7 +252,8 @@
         "ms-vector-time-channel-antenna",
         "ms-direct-stored-vector-time-channel",
         "ms-spw-average-coordinates",
-        "ms-vector-spw-time"
+        "ms-vector-spw-time",
+        "ms-vector-spw-channel-spans"
       ],
       "behaviors": [
         "coordinates"
@@ -485,7 +487,8 @@
         "ms-antenna-scan-field-spans",
         "ms-direct-stored-vector-time-channel",
         "ms-spw-average-coordinates",
-        "ms-scalar-spw-time-spans"
+        "ms-scalar-spw-time-spans",
+        "ms-vector-spw-channel-spans"
       ],
       "behaviors": [
         "averaging"
@@ -525,7 +528,8 @@
         "ms-antenna-scan-field-spans",
         "ms-direct-stored-vector-time-channel",
         "ms-scalar-spw-time-spans",
-        "ms-vector-spw-time"
+        "ms-vector-spw-time",
+        "ms-vector-spw-channel-spans"
       ],
       "behaviors": [
         "averaging"
@@ -543,7 +547,8 @@
         "ms-channel-scalar-scan-field-spans",
         "ms-scalar-baseline-averages",
         "ms-antenna-scan-field-spans",
-        "ms-scalar-spw-time-spans"
+        "ms-scalar-spw-time-spans",
+        "ms-vector-spw-channel-spans"
       ],
       "behaviors": [
         "averaging"
@@ -560,7 +565,8 @@
         "ms-scalar-scan-field-spans",
         "ms-channel-scalar-scan-field-spans",
         "ms-antenna-scan-field-spans",
-        "ms-scalar-spw-time-spans"
+        "ms-scalar-spw-time-spans",
+        "ms-vector-spw-channel-spans"
       ],
       "behaviors": [
         "averaging"
@@ -600,12 +606,13 @@
       "status": "Partial"
     },
     "avgspw": {
-      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer. Ordinary vector time and SPW averages first reduce each baseline and window with the selected visibility spectra, then form closed PlotMS groups from the returned buffers.",
+      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer. Ordinary vector time and SPW averages first reduce each baseline and window with the selected visibility spectra, then form closed PlotMS groups from the returned buffers. Vector time and SPW averages can also use complex channel bins after the visibility time transform and span scans or fields independently.",
       "evidence": [
         "paired",
         "ms-spw-average-coordinates",
         "ms-scalar-spw-time-spans",
-        "ms-vector-spw-time"
+        "ms-vector-spw-time",
+        "ms-vector-spw-channel-spans"
       ],
       "behaviors": [
         "averaging"
@@ -2449,6 +2456,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-vector-spw-time-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2250"
+      ]
+    },
+    "ms-vector-spw-channel-spans": {
+      "kind": "Paired vector time, channel and SPW averages with scan and field spans",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Vector time and MeasurementSet SPW averages of stored visibilities with optional complex channel bins and independent scan and field spans.",
+      "result": "Twelve TXT pairs match 23 points, including separate observed and corrected spectra, zero-weight bins, model channel means after the time transform, retained scan and field boundaries and individual and combined spans. The separate-window control matches the first two transforms. One 500 by 360 PNG matches two artist coordinates and labels.",
+      "casa_version": "6.7.6.14",
+      "revision": "c7078f4f6e7103cc7622f0a498386dea039e70f8",
+      "source_revision": "c7078f4f6e7103cc7622f0a498386dea039e70f8",
+      "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate> --only vector-channel-spans",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-vector-spw-channel-spans-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2251"
       ]
     }
   }
