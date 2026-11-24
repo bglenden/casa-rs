@@ -27,7 +27,10 @@ def test_ms_getdata_average_complete_baseline_grid(baseline_fixture):
     for api in (casa, tools):
         reader = api.ms()
         assert reader.open(path)
+        first_items = ["data", "flag", "weight"]
+        first = reader.getdata(first_items, ifraxis=True, average=True)
         result = reader.getdata(fields, ifraxis=True, average=True)
+        same_visibility(first, {name: result[name] for name in first_items})
         assert reader.nrow(True) == len(rows)
         assert reader.done()
         np.testing.assert_allclose(result["data"], means, rtol=3e-6, atol=1e-7)
