@@ -438,6 +438,11 @@ def compare_pointing_axes(root, native):
 
     base = dict(vis=str(vis), xaxis="time", yaxis="ant-ra", antenna="A0&&&", yframe="j2000",
                 yinterp="nearest", showgui=False, overwrite=True)
+    sparse = work / "sparse-pointing.ms"
+    copy_ms(vis, sparse)
+    with opened(sparse / "POINTING", True) as table:
+        a0 = np.flatnonzero(table.getcol("ANTENNA_ID") == 0)
+        table.removerows(a0[-1:])
     lon = [350] * 3 + [12] * 4 + [47] * 5
     lat = [-28] * 3 + [-25] * 4 + [-32] * 5
     cases = (
@@ -448,8 +453,12 @@ def compare_pointing_axes(root, native):
         ("nearest-selected", dict(field="FLUX", spw="0:1~3^2", correlation="YY"), 5),
         ("nearest-galactic", dict(yframe="galactic"), 12),
         ("nearest-azelgeo", dict(yaxis="ant-dec", yframe="azelgeo"), 12),
+        ("nearest-b1950", dict(yframe="b1950"), 12),
+        ("independent-pointing-axes", dict(xaxis="ant-ra", xframe="j2000", xinterp="nearest",
+                                         yaxis="ant-dec", yframe="galactic", yinterp="spline"), 12),
         ("default-pointing", dict(yframe="", yinterp=""), 12),
         ("spline-pointing", dict(yinterp="spline"), 12),
+        ("sparse-pointing", dict(vis=str(sparse)), 12),
     )
     for name, overrides, count in cases:
         controls = base | overrides
@@ -462,6 +471,10 @@ def compare_pointing_axes(root, native):
             np.testing.assert_allclose([float(p[1]) for p in points], lon)
         if name == "nearest-dec":
             np.testing.assert_allclose([float(p[0]) for p in points], lat)
+        if name == "independent-pointing-axes":
+            np.testing.assert_allclose([float(p[0]) for p in points], lon)
+        if name == "sparse-pointing":
+            assert all(float(p[1]) == 0 for p in points)
         if name == "nearest-selected":
             assert {(p[2], p[12]) for p in points} == {("1", "YY")}
             np.testing.assert_allclose([float(p[1]) for p in points], [350, 350, 12, 12, 12])
