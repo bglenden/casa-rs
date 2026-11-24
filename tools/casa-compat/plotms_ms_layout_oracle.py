@@ -12,16 +12,18 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
-from plotms_ms_columns_oracle import casa, compare_text, fixture, plotms_launcher, reference, request, rows
+from plotms_ms_columns_oracle import (
+    casa, compare_text, copy_ms, fixture, opened, plotms_launcher, reference, request, rows,
+)
 
 
-def check_markers_in_cell(path, row, column, grid):
+def occupied_marker_cells(path, grid):
     with Image.open(path) as image:
         assert image.size == (500, 360), (path, image.size)
         pixels = np.asarray(image.convert("RGB"))
     y, x = np.nonzero(np.all(pixels == [0xdd, 0x22, 0x55], axis=-1))
     assert len(x) > 0, path
-    assert np.all(x * grid[1] // 500 == column) and np.all(y * grid[0] // 360 == row), (path, x, y)
+    return set(zip(y * grid[0] // 360, x * grid[1] // 500, strict=True))
 
 
 def compare_cell(root, native, base, row, column):
@@ -61,7 +63,7 @@ def compare_cell(root, native, base, row, column):
             assert native(**image, plotfile=str(actual)) is None
         presentation.assert_called_once()
         for path in (expected, actual):
-            check_markers_in_cell(path, row, column, grid)
+            assert occupied_marker_cells(path, grid) == {(row, column)}, path
     print(f"{name}: 12 matching points in both page exports", flush=True)
 
 
@@ -85,6 +87,77 @@ def check_output_controls(root, native, base):
         else:
             raise AssertionError(f"{engine} accepted an existing output with overwrite disabled")
         assert existing.read_bytes() == before
+
+
+def compare_offset_scan_pages(root, native, vis, base):
+    from casars import _plot_document
+
+    source = root / "four-scans.ms"
+    copy_ms(vis, source)
+    with opened(source, True) as table:
+        time = table.getcol("TIME")
+        integration = np.round((time - time.min()) / 10).astype(int)
+        scans = (integration // 3 + 1).astype(np.int32)
+        assert np.array_equal(np.unique(scans), [1, 2, 3, 4])
+        table.putcol("SCAN_NUMBER", scans)
+        within = integration % 3
+        amplitude = np.where(scans % 2 == 1, 1 + within, 10 - within)
+        data = table.getcol("DATA")
+        table.putcol("DATA", np.broadcast_to(amplitude, data.shape).astype(data.dtype))
+
+    controls = base | dict(vis=str(source), field="", spw="0:1", xaxis="time", xdatacolumn="",
+                          yaxis="amp", ydatacolumn="data", iteraxis="scan", gridrows=1, gridcols=2,
+                          rowindex=0, colindex=1, title="")
+    complete = root / "all-scan-coordinates.casa.txt"
+    assert reference(**(controls | dict(gridcols=4, colindex=0)), expformat="txt", plotfile=str(complete)) is None
+    points = rows(complete)
+    expected_coords = {scan: np.array([point[:2] for point in points if point[3] == str(scan)], dtype=float)
+                       for scan in range(1, 5)}
+    for scan, expected in enumerate(([1, 2, 3], [10, 9, 8], [1, 2, 3], [10, 9, 8]), start=1):
+        np.testing.assert_array_equal(expected_coords[scan][:, 1], expected)
+
+    pages = (
+        ("_Scan1", ((1, (0, 1)),)),
+        ("_Scan2,3_2", ((2, (0, 0)), (3, (0, 1)))),
+        ("_Scan4_3", ((4, (0, 0)),)),
+    )
+    render = _plot_document.render_document
+    rendered = []
+
+    def record(*args, **kwargs):
+        figure, axes = render(*args, **kwargs)
+        page = []
+        for axis in figure.axes:
+            slot = axis.get_subplotspec()
+            assert slot.get_gridspec().get_geometry() == (1, 2)
+            page.append(((slot.rowspan.start, slot.colspan.start), axis.lines[0].get_xydata()))
+        rendered.append(page)
+        return figure, axes
+
+    for export, plan in (("current", pages[:1]), ("all", pages)):
+        expected, actual = (root / f"offset-{export}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, exprange=export, expformat="txt", plotfile=str(expected)) is None
+        assert [point[3] for point in rows(expected)] == ["1"] * 3 + ["2"] * 3
+        assert native(**controls, exprange=export, expformat="txt", plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 6
+
+        rendered.clear()
+        image = controls | dict(exprange=export, expformat="png", width=500, height=360, dpi=100)
+        for engine, task in (("casa", reference), ("native", native)):
+            stem = f"offset-{export}.{engine}"
+            with patch.object(_plot_document, "render_document", record):
+                assert task(**image, plotfile=str(root / f"{stem}.png")) is None
+            outputs = {root / f"{stem}{suffix}.png" for suffix, _ in plan}
+            assert set(root.glob(f"{stem}*.png")) == outputs
+            for suffix, panels in plan:
+                output = root / f"{stem}{suffix}.png"
+                assert occupied_marker_cells(output, (1, 2)) == {cell for _, cell in panels}, output
+        for page, (_, panels) in zip(rendered, plan, strict=True):
+            for (slot, coordinates), (scan, expected_slot) in zip(page, panels, strict=True):
+                assert slot == expected_slot
+                np.testing.assert_allclose(coordinates[:, 0], expected_coords[scan][:, 0], rtol=0, atol=0.00051)
+                np.testing.assert_array_equal(coordinates[:, 1], expected_coords[scan][:, 1])
+        print(f"offset-{export}: six matching text points and {len(plan)} matching image pages", flush=True)
 
 
 def main():
@@ -112,6 +185,7 @@ def main():
             compare_cell(root, native, base, row, column)
         compare_cell(root, native, base | dict(gridcols=3, titlefont=14), 1, 2)
         check_output_controls(root, native, base)
+        compare_offset_scan_pages(root, native, vis, base)
 
 
 if __name__ == "__main__":
