@@ -311,13 +311,102 @@ def compare_selection(root, native, base, vis):
     print("unequal: explicit shape refusal before export", flush=True)
 
 
+def compare_scalar_time(root, native, base, vis):
+    staggered = root / "staggered-windows.ms"
+    copy_ms(vis, staggered)
+    with opened(staggered, True) as table:
+        times = table.getcol("TIME")
+        start = times.min()
+        delayed = times + 2 * (table.getcol("DATA_DESC_ID") == 1)
+        table.putcol("TIME", delayed)
+        table.putcol("TIME_CENTROID", delayed)
+    scans, fields, spans, flagged = (root / f"{name}.ms" for name in
+                                     ("scan-boundary", "field-boundary", "both-boundaries", "flagged-time-bin"))
+    for source in (scans, fields, spans, flagged):
+        copy_ms(staggered, source)
+    for source in (fields, spans):
+        with opened(source / "FIELD", True) as table:
+            table.addrows(1)
+            for column in table.colnames():
+                if table.iscelldefined(column, 0):
+                    table.putcell(column, 1, table.getcell(column, 0))
+            table.putcell("NAME", 1, "SECOND")
+    for source in (scans, fields, spans):
+        with opened(source, True) as table:
+            second = (table.getcol("TIME") >= start + 10).astype(np.int32)
+            if source in (scans, spans):
+                table.putcol("SCAN_NUMBER", 1 + second)
+            if source in (fields, spans):
+                table.putcol("FIELD_ID", second)
+    with opened(flagged, True) as table:
+        times = table.getcol("TIME")
+        flags = table.getcol("FLAG")
+        flags[0, 1, times == start + 10] = True
+        table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", times == start + 2)
+
+    low = np.angle(5 + 6j, deg=True)
+    high = np.angle(7 + 8j, deg=True)
+    first_phase = (2 * low + 3 * high) / 5
+    mixed_phase = (low + 3 * high) / 4
+    # A bin retains the first SPW ID and the last attached buffer's grid.
+    closed = [(5, 1, 0, 0, "90.001000000"), (12, 1, 0, 1, "100.001000000")]
+    scan_barrier = [(3, 1, 0, 0, "100.001000000"), (13, 2, 0, 0, "100.001000000")]
+    field_barrier = [(3, 1, 0, 0, "100.001000000"), (13, 1, 1, 0, "100.001000000")]
+    options = base | dict(vis=str(staggered), xaxis="time", xdatacolumn="", avgtime="10",
+                          scalar=True, title="Scalar time and SPW average")
+    channels = dict(avgchannel="2", spw="0:0~3,1:0~3")
+    closed_channels = [(5, 1, 0, 0, f"{frequency:.9f}") for frequency in (90.0005, 90.0025)] + [
+        (12, 1, 0, 1, f"{frequency:.9f}") for frequency in (100.0005, 100.0025)
+    ]
+    cases = (
+        ("scalar-time", {}, closed, [first_phase, high]),
+        ("scalar-time-channel", channels, closed_channels, [first_phase] * 2 + [high] * 2),
+        ("scalar-time-frequency", dict(xaxis="frequency"), closed, [first_phase, high]),
+        ("scalar-time-columns", dict(xaxis="amp", xdatacolumn="data"), closed, [first_phase, high]),
+        ("scalar-time-flags", dict(vis=str(flagged)), closed, [mixed_phase, high]),
+        ("scalar-scan-barrier", dict(vis=str(scans), avgtime="20"), scan_barrier, [mixed_phase] * 2),
+        ("scalar-scan-span", dict(vis=str(scans), avgtime="20", avgscan=True),
+         [(8, -1, 0, 0, "100.001000000")], [mixed_phase]),
+        ("scalar-field-barrier", dict(vis=str(fields), avgtime="20", field=""), field_barrier, [mixed_phase] * 2),
+        ("scalar-field-span", dict(vis=str(fields), avgtime="20", field="", avgfield=True),
+         [(8, 1, 0, 0, "100.001000000")], [mixed_phase]),
+        ("scalar-both-spans", dict(vis=str(spans), avgtime="20", field="", avgscan=True, avgfield=True) | channels,
+         [(8, -1, 0, 0, "100.000500000"), (8, -1, 0, 0, "100.002500000")], [mixed_phase] * 2),
+    )
+    for name, overrides, bins, phases in cases:
+        controls = options | overrides
+        expected = export(root, f"{name}.casa", reference, controls)
+        selected = rows(expected)
+        metadata = [(f"{start + time:.3f}", str(scan), str(field), str(spw), frequency)
+                    for time, scan, field, spw, frequency in bins]
+        assert [(p[9], p[3], p[4], p[11], p[10]) for p in selected] == metadata
+        np.testing.assert_allclose(coordinates(selected)[:, 1], phases, rtol=1.2e-5)
+        match controls["xaxis"]:
+            case "time":
+                assert [p[0] for p in selected] == [p[9] for p in selected]
+            case "frequency":
+                assert [p[0] for p in selected] == [p[10] for p in selected]
+            case "amp":
+                np.testing.assert_allclose(coordinates(selected)[:, 0], [(2 * abs(2 + 4j) + 30) / 5, 10],
+                                           rtol=1.2e-5)
+        actual = export(root, f"{name}.native", native, controls)
+        assert compare_text(actual, expected) == len(bins)
+        if controls["xaxis"] in ("time", "frequency"):
+            assert [p[0] for p in rows(actual)] == [p[0] for p in selected]
+        print(f"{name}: {len(bins)} matching scalar time and SPW coordinates", flush=True)
+    compare_figure(root, native, options, root / "scalar-time.casa.txt",
+                   (options["title"], "Time (MJD seconds)", "Phase:corrected (degrees)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint", "malformed"))
+    parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
+                                           "malformed", "scalar-time"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -344,6 +433,8 @@ def main():
             compare_disjoint_channels(root, native, base)
         if args.only in (None, "malformed"):
             compare_malformed_shape(root, native, base, vis)
+        if args.only in (None, "scalar-time"):
+            compare_scalar_time(root, native, base, vis)
 
 
 if __name__ == "__main__":
