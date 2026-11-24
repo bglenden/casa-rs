@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyBytesMethods, PyDict, PyDictMethods, PyString};
 
 use super::metadata_link::MetadataSnapshot;
-
+use super::visibility::missing_selection_integer;
 use super::{PyMsTool, runtime_error, strict_bool};
 use crate::convert::selector::listing_selector;
 use crate::convert::value::CasaValue;
@@ -93,6 +93,31 @@ impl PyMsTool {
         })
     }
 
+    #[pyo3(signature = (datadescid = 0, reset = false), text_signature = "($self, datadescid=0, reset=False)")]
+    fn selectinit(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = selectinit_id)] datadescid: i64,
+        #[pyo3(from_py_with = strict_bool)] reset: bool,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let Some(attached) = attached.as_mut() else {
+                return Ok(false);
+            };
+            if reset {
+                attached.reset_visibility_selection()?;
+                return Ok(true);
+            }
+            if (datadescid as i32) < 0 {
+                return Err(runtime_error(
+                    "The data description id must be a list of positive integers",
+                ));
+            }
+            attached.select_visibility_description(datadescid)
+        })
+    }
+
     #[pyo3(signature = (), text_signature = "($self)")]
     fn msselectedindices(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.attachment_info(py, |attached| {
@@ -151,6 +176,15 @@ impl PyMsTool {
         })?;
         index_record(&indices, false).into_python(py)
     }
+}
+
+fn selectinit_id(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+    if missing_selection_integer(value)? {
+        return Ok(-1);
+    }
+    value
+        .extract::<i64>()
+        .map_err(|_| PyTypeError::new_err("argument _datadescid must be an integer"))
 }
 
 fn selector(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<String>> {

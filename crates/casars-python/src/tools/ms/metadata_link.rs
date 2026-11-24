@@ -271,6 +271,13 @@ fn concatenated_subtables(main: &Table, scratch: &Path) -> MsResult<HashMap<Subt
 }
 
 impl AttachedMs {
+    pub(super) fn reset_visibility_selection(&mut self) -> PyResult<()> {
+        self.set_selected_rows(None)?;
+        self.selection_state = super::selection_indices::SelectionState::default();
+        self.visibility.reset_selection();
+        Ok(())
+    }
+
     pub(super) fn set_selected_rows(&mut self, rows: Option<Vec<usize>>) -> PyResult<()> {
         let rows = rows.map(Arc::from);
         if let Some(metadata) = self.metadata.get() {
@@ -311,9 +318,7 @@ impl PyMsTool {
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             if let Some(ms) = attached.as_mut() {
-                ms.set_selected_rows(None)?;
-                ms.selection_state = super::selection_indices::SelectionState::default();
-                ms.visibility.reset_selection();
+                ms.reset_visibility_selection()?;
             }
             Ok(true)
         })
