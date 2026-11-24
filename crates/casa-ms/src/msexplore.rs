@@ -2972,7 +2972,10 @@ fn build_uncalibrated_plotms_payload(
     let plot = spec.plots.first();
     let extended_derived = columns.extended_derived;
     let scalar_average = plot.is_some_and(plotms_columns::uses_scalar_visibility_average);
-    if extended_derived && !scalar_average {
+    let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
+    let time_antenna = antenna_average
+        && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
+    if (extended_derived && !scalar_average) || time_antenna {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
@@ -3007,11 +3010,8 @@ fn build_uncalibrated_plotms_payload(
         .transpose()?
         .flatten();
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
-    let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
-    let time_antenna = antenna_average
-        && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
     let weighted_time_uvw = plot.is_some_and(plotms_columns::uses_weighted_time_uvw);
     if plot.is_some_and(|plot| {
         (plotms_columns::uses_channel_derived(plot, columns.x)
