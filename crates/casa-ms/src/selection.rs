@@ -753,7 +753,7 @@ fn resolve_row_indices_with_grammar(
         .map(|resolved| resolved.row_indices().collect())
 }
 
-fn resolve_selection_with_grammar(
+pub(crate) fn resolve_selection_with_grammar(
     ms: &MeasurementSet,
     request: &MsSelection,
     grammar: RowGrammar,
