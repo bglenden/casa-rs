@@ -397,6 +397,66 @@ def compare_combined_weight_edges(root, native, vis, base):
         print(f"{name}: {len(rows(actual))} verified weight-edge coordinates", flush=True)
 
 
+def compare_combined_observed_expressions(root, native):
+    vis, integration, start = prepare_time_fixture(root)
+    with opened(vis, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[0, 1] = np.where(integration % 2 == 0, 1, .5)
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    without_corrected = root / "without-corrected.ms"
+    copy_ms(vis, without_corrected)
+    with opened(without_corrected, True) as table:
+        table.removecols(["CORRECTED_DATA"])
+
+    def reduced_operand(first_bin, last_channel, step, weights):
+        result = []
+        for index in range(3):
+            integrations = np.array([2 * index, 2 * index + 1])
+            offset = np.tile(integrations, 2)
+            first = np.repeat(first_bin, 2) + step * offset
+            result.extend([np.average(first, weights=weights), last_channel + step * integrations.mean()])
+        return np.asarray(result)
+
+    observed_weights = [1, 1, 1, 4]
+    calibrated_weights = [1, 1, 1, 3]
+    observed = reduced_operand([1 + 1j, 3 + 6j], 11 + 1j, 1 + 2j, observed_weights)
+    corrected = reduced_operand([2 + 3j, 8 - 1j], 12 + 4j, 3 - 1j, calibrated_weights)
+    calibrated_model = reduced_operand([1 - 1j, 2 + 2j], 5 - 3j, .5 + .25j, calibrated_weights)
+    observed_model = reduced_operand([1 - 1j, 2 + 2j], 5 - 3j, .5 + .25j, observed_weights)
+    channel = np.tile([0, 1], 3)
+    times = np.repeat(start + 5 + 20 * np.arange(3), 2)
+    base = request(vis) | dict(spw="0:0~3", xdatacolumn="", avgtime="20", avgchannel="2",
+                               title="Observed time and channel averages")
+    cases = (
+        ("observed-vector", vis, "channel", "real", "data-model_vector",
+         (observed - calibrated_model).real),
+        ("observed-scalar", vis, "time", "phase", "data/model_scalar",
+         np.degrees(np.angle(observed) / np.abs(calibrated_model))),
+        ("corrected-scalar", vis, "channel", "amp", "corrected-model_scalar",
+         np.abs(corrected) - np.abs(calibrated_model)),
+        ("without-corrected", without_corrected, "channel", "real", "data/model_vector",
+         (observed / observed_model).real),
+        ("corrected-fallback", without_corrected, "channel", "real", "corrected/model_vector",
+         (observed / observed_model).real),
+    )
+    for name, source, x_axis, y_axis, column, values in cases:
+        controls = base | dict(vis=str(source), xaxis=x_axis, yaxis=y_axis, ydatacolumn=column)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [("0", "XX"), ("1", "XX")] * 3
+        x = times if x_axis == "time" else channel
+        np.testing.assert_allclose([float(row[0]) for row in selected], x, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(row[1]) for row in selected], values, rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        np.testing.assert_allclose([float(row[0]) for row in rows(actual)], x, rtol=0, atol=.00051)
+        print(f"{name}: 6 matching separately weighted time and channel projections", flush=True)
+        if name == "observed-scalar":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Time (MJD seconds)", "Phase:data/model (scalar) (degrees)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -429,6 +489,9 @@ def main():
         combined = root / "combined"
         combined.mkdir()
         compare_combined_time_channel_derived(combined, native)
+        combined_observed = root / "combined-observed"
+        combined_observed.mkdir()
+        compare_combined_observed_expressions(combined_observed, native)
 
 
 if __name__ == "__main__":
