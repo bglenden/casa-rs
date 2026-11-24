@@ -47,13 +47,16 @@ pub(super) fn uses_antenna_visibility_average(spec: &MsPlotSpec) -> bool {
 }
 
 pub(super) fn uses_ordinary_time_averaging(spec: &MsPlotSpec) -> bool {
+    uses_time_averaging(spec, false)
+}
+
+fn uses_time_averaging(spec: &MsPlotSpec, allow_spans: bool) -> bool {
     let averaging = &spec.averaging;
     averaging.avgtime.is_some()
         && !averaging.avgbaseline
         && !averaging.avgantenna
-        && !averaging.avgscan
-        && !averaging.avgfield
         && !averaging.avgspw
+        && (allow_spans || !(averaging.avgscan || averaging.avgfield))
 }
 
 pub(super) fn uses_ordinary_time_visibility(spec: &MsPlotSpec) -> bool {
@@ -84,7 +87,7 @@ pub(super) fn uses_direct_vector_time_projection(
     let shared_or_channel = supports_reduced_visibility_axes(spec)
         && (spec.secondary_y_axis().is_some()
             || spec.averaging.avgchannel.is_some_and(|width| width > 1));
-    uses_ordinary_time_averaging(spec)
+    uses_time_averaging(spec, spec.y_axes.len() > 2)
         && !spec.averaging.scalar
         && (model_only || shared_or_channel)
 }

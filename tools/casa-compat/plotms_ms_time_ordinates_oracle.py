@@ -63,7 +63,7 @@ def reversed_partial_spectrum(root):
     return vis, times[baseline].min()
 
 
-def compare_empty_time(root, native, vis, base):
+def compare_empty_time(root, native, vis, base, *, scalar_modes=(False, True)):
     from casars import _plot_document
 
     target = root / "all-selected-cube-cells-flagged.ms"
@@ -85,7 +85,8 @@ def compare_empty_time(root, native, vis, base):
         assert all(not (axis.lines or axis.collections) for axis in figure.axes)
         return figure, primary
 
-    for name, scalar in (("empty-vector-time", False), ("empty-scalar-time", True)):
+    for scalar in scalar_modes:
+        name = "empty-scalar-time" if scalar else "empty-vector-time"
         controls = base | dict(vis=str(target), xaxis="time", xdatacolumn="", scalar=scalar)
         casa_txt, native_txt = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**controls, plotfile=str(casa_txt), expformat="txt") is None
@@ -248,32 +249,37 @@ def compare_spanned_ordinate_lists(root, native):
     base = request(vis) | dict(field="", xaxis="time", xdatacolumn="", spw="0:1", avgtime="200",
                                yaxis=["real"] * 3, ydatacolumn=["data", "corrected", "model"],
                                yaxislocation=["left", "right", "left"])
-    for mode, scalar, observed in (("vector", False, 2.6), ("scalar", True, 2.8)):
-        for name, bounds, spans_scans in (
-            ("scans", dict(vis=str(scans), avgscan=True), True),
-            ("fields", dict(vis=str(fields), avgfield=True), False),
-            ("scans-and-fields", dict(avgscan=True, avgfield=True), True),
-        ):
-            controls = base | bounds | dict(scalar=scalar)
-            label = f"{mode}-{name}-ordinate-list"
-            expected, actual = (root / f"{label}.{engine}.txt" for engine in ("casa", "native"))
-            assert reference(**controls, plotfile=str(expected), expformat="txt") is None
-            selected = rows(expected)
-            scan = "-1" if scalar and spans_scans else "1"
-            assert [(point[3], point[4], point[12]) for point in selected] == [(scan, "0", "XX")] * 3
-            np.testing.assert_allclose([float(point[0]) for point in selected], times[0] + 55,
-                                       rtol=0, atol=.00051)
-            np.testing.assert_allclose([float(point[1]) for point in selected], [observed, 28., 280.], rtol=1.2e-5)
-            assert native(**controls, plotfile=str(actual), expformat="txt") is None
-            assert compare_text(actual, expected) == 3
-            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], times[0] + 55,
-                                       rtol=0, atol=.00051)
-            print(f"{label}: 3 matching averaged visibility ordinates", flush=True)
-            if scalar and name == "scans-and-fields":
-                compare_sides(root, native, controls, expected_x="Time (MJD seconds)", name=label)
+    for scalar in (False, True):
+        compare_span_mode(root, native, base, times, scans, fields, scalar=scalar)
     compare_span_controls(root, native, vis, base, times)
     compare_empty_time(root, native, vis, base | dict(avgscan=True, avgfield=True))
     check_spanned_overlay_refusal(root, native, base)
+
+
+def compare_span_mode(root, native, base, times, scans, fields, *, scalar):
+    mode, observed = ("scalar", 2.8) if scalar else ("vector", 2.6)
+    for name, bounds, spans_scans in (
+        ("scans", dict(vis=str(scans), avgscan=True), True),
+        ("fields", dict(vis=str(fields), avgfield=True), False),
+        ("scans-and-fields", dict(avgscan=True, avgfield=True), True),
+    ):
+        controls = base | bounds | dict(scalar=scalar)
+        label = f"{mode}-{name}-ordinate-list"
+        expected, actual = (root / f"{label}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        scan = "-1" if scalar and spans_scans else "1"
+        assert [(point[3], point[4], point[12]) for point in selected] == [(scan, "0", "XX")] * 3
+        np.testing.assert_allclose([float(point[0]) for point in selected], times[0] + 55,
+                                   rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected], [observed, 28., 280.], rtol=1.2e-5)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == 3
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], times[0] + 55,
+                                   rtol=0, atol=.00051)
+        print(f"{label}: 3 matching averaged visibility ordinates", flush=True)
+        if scalar and name == "scans-and-fields":
+            compare_sides(root, native, controls, expected_x="Time (MJD seconds)", name=label)
 
 
 def check_spanned_overlay_refusal(root, native, base):
