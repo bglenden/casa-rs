@@ -1010,8 +1010,10 @@ impl SolveAccumulator {
                     values: accumulations,
                     attempted: &mut self.attempted,
                     channelized: options.channelized,
+                    // Fringe uses the phase and weight even below the gain solver's amplitude cutoff.
                     keep_zero_data: baseline_solve
                         || options.input_rows.is_accor()
+                        || options.input_rows.is_fringe()
                         || self.direct_gain.is_some() && row.antenna1 == row.antenna2,
                     retain_zero_model: options.gain_type.is_delay()
                         || options.gain_type == GainType::T
