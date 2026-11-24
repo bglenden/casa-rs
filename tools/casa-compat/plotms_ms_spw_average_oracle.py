@@ -914,6 +914,75 @@ def compare_virtual_spw_model_references(root, native, base, vis, sloped):
             np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
 
 
+def compare_virtual_spw_model_spans(root, native):
+    root.mkdir()
+    original = virtual_spw_models(root, "separate-virtual-windows")
+    staggered, start = stagger_windows(root, original, "staggered-virtual-windows")
+    scans, fields, both = (root / f"virtual-window-{name}.ms" for name in ("scans", "fields", "both"))
+    for vis in (scans, fields, both):
+        copy_ms(staggered, vis)
+        if vis != scans:
+            add_second_field(vis)
+            with opened(vis / "FIELD", True) as table:
+                table.putcell("SOURCE_ID", 1, -1)
+        with opened(vis, True) as table:
+            late = (table.getcol("TIME") >= start + 10).astype(np.int32)
+            if vis != fields:
+                table.putcol("SCAN_NUMBER", 1 + late)
+            if vis != scans:
+                table.putcol("FIELD_ID", late)
+        if vis != scans:
+            for window, flux, frequency in ((0, 5.5, "90GHz"), (1, 2.5, "100GHz")):
+                assert casa.setjy(str(vis), field="1", spw=str(window), standard="manual", usescratch=False,
+                                  fluxdensity=[flux, 0, 0, 0], reffreq=frequency)
+    base = request(original) | dict(field="", xaxis="frequency", xdatacolumn="", spw="0:1,1:1",
+                                     yaxis="real", ydatacolumn="model", avgspw=True, avgtime="20",
+                                     title="Virtual models across SPWs and time boundaries")
+    separate = [("1", "0"), ("2", "1")]
+    for name, vis, spans, values, scans_and_fields in (
+        ("no-span", both, {}, ([5.25, 4.0], [4.25, 3.25]), (separate, separate)),
+        ("scan", scans, dict(avgscan=True), ([3.125], [2.625]), ([("1", "0")], [("-1", "0")])),
+        ("field", fields, dict(avgfield=True), ([4.625], [3.75]), ([("1", "0")], [("1", "0")])),
+        ("both", both, dict(avgscan=True, avgfield=True), ([4.625], [3.75]), ([("1", "0")], [("-1", "0")])),
+        ("retained-field", both, dict(avgscan=True), ([5.25, 4.0], [4.25, 3.25]), (separate, separate)),
+        ("retained-scan", both, dict(avgfield=True), ([5.25, 4.0], [4.25, 3.25]), (separate, separate)),
+    ):
+        for scalar in (False, True):
+            label = f"{'scalar' if scalar else 'vector'}-virtual-window-{name}"
+            controls = base | spans | dict(vis=str(vis), scalar=scalar)
+            expected = export(root, f"{label}.casa", reference, controls)
+            selected = rows(expected)
+            frequency = "100.001000000" if scalar else "90.001000000"
+            assert [(p[0], p[3], p[4], p[11]) for p in selected] == [
+                (frequency, scan, field, "0") for scan, field in scans_and_fields[scalar]
+            ]
+            # The new scan in the scan-only input has no matching model
+            # recipe. Its two later integrations supply the unit fallback.
+            np.testing.assert_allclose([float(p[1]) for p in selected], values[scalar], rtol=1.2e-5)
+            actual = export(root, f"{label}.native", native, controls)
+            assert compare_text(actual, expected) == len(values[scalar])
+            print(f"{label}: {len(selected)} matching selected time/SPW coordinates", flush=True)
+    # Channel averaging gives these model-only buffers equal weights in both modes.
+    channel_model = (7.25 + 3.25 + 5.5 + 2.5) / 4
+    for scalar, band, scan in ((False, 90, "1"), (True, 100, "-1")):
+        label = f"{'scalar' if scalar else 'vector'}-virtual-window-channel-spans"
+        controls = base | dict(vis=str(both), avgscan=True, avgfield=True, scalar=scalar,
+                               avgchannel="2", spw="0:0~3,1:0~3")
+        expected = export(root, f"{label}.casa", reference, controls)
+        selected = rows(expected)
+        assert [(p[0], p[3], p[4], p[11]) for p in selected] == [
+            (f"{band}.000500000", scan, "0", "0"), (f"{band}.002500000", scan, "0", "0"),
+        ]
+        np.testing.assert_allclose([float(p[1]) for p in selected], [channel_model] * 2, rtol=1.2e-5)
+        assert compare_text(export(root, f"{label}.native", native, controls), expected) == 2
+        print(f"{label}: 2 matching selected time/channel/SPW coordinates", flush=True)
+        if not scalar:
+            compare_figure(root, native, controls, expected, (base["title"], "Frequency (GHz)", "Real:model"))
+    for source in (scans, fields, both):
+        with opened(source) as table:
+            np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -923,7 +992,7 @@ def main():
     parser.add_argument("--only", choices=("coordinates", "selection", "weights", "sparse", "disjoint",
                                            "malformed", "scalar-time", "vector-time", "vector-optional",
                                            "vector-channel-spans", "ordinate-lists", "ordinate-list-spans",
-                                           "ordinate-list-uvw", "virtual-models"))
+                                           "ordinate-list-uvw", "virtual-models", "virtual-model-spans"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -937,6 +1006,9 @@ def main():
     with chdir(root), plotms_launcher(args.app_run):
         if args.only == "virtual-models":
             compare_virtual_spw_models(root / "virtual-models", native)
+            return
+        if args.only == "virtual-model-spans":
+            compare_virtual_spw_model_spans(root / "virtual-model-spans", native)
             return
         vis = make_fixture(root)
         base = request(vis) | dict(avgspw=True, spw="0:1,1:1", title="Spectral-window average")
@@ -965,6 +1037,7 @@ def main():
             compare_ordinate_lists(root / "ordinate-lists", native, base, vis, only=args.only)
         if args.only is None:
             compare_virtual_spw_models(root / "virtual-models", native)
+            compare_virtual_spw_model_spans(root / "virtual-model-spans", native)
 
 
 if __name__ == "__main__":

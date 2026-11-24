@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "1979ae156985d2334724b2ec6fa64b46746e6436",
+  "source_revision": "1979ae156985d2334724b2ec6fa64b46746e6436",
+  "baseline_revision": "6670c3c34f7bac41f13a5bb54e05d140be2a23f1",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only virtual-model-spans --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Virtual MeasurementSet model cells averaged across spectral windows with time bins spanning scans, fields or both, optionally with channel averaging.",
+  "result": "passed",
+  "baseline_result": "Main matches four unspanned coordinates and refuses the public scan-spanning virtual SPW model request.",
+  "text_exports": 14,
+  "points": 22,
+  "figures": 1,
+  "rendered_coordinates": 2,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "physical_models_changed": 0
+}
