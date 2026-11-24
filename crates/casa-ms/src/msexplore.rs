@@ -1717,13 +1717,14 @@ impl MsPlotSpec {
 
     /// Validate the current plot specification against the current engine.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_with_plotms(false, false)
+        self.validate_with_plotms(false, false, false)
     }
 
     fn validate_with_plotms(
         &self,
         independent_ordinates: bool,
         pointing: bool,
+        iterated_ordinates: bool,
     ) -> Result<(), String> {
         self.validate_common(independent_ordinates, pointing)?;
         if self.layout.rowindex != 0 || self.layout.colindex != 0 || self.layout.plotindex != 0 {
@@ -1732,6 +1733,12 @@ impl MsPlotSpec {
             );
         }
         let iterated = self.iteration.iteraxis.is_some();
+        if iterated && self.y_axes.len() > 1 && !iterated_ordinates {
+            return Err(
+                "msexplore multi-y plots are currently available for non-iterated plots only"
+                    .to_string(),
+            );
+        }
         if !iterated && (self.layout.gridrows != 1 || self.layout.gridcols != 1) {
             return Err(
                 "msexplore gridrows/gridcols require --iteraxis; non-iterated standalone plots still render a single panel".to_string(),
@@ -1780,13 +1787,6 @@ impl MsPlotSpec {
         }
         if self.style.symbol_size.is_some_and(|size| size == 0) {
             return Err("msexplore symbolsize must be a positive integer".to_string());
-        }
-        let iterated = self.iteration.iteraxis.is_some();
-        if iterated && self.y_axes.len() > 1 {
-            return Err(
-                "msexplore multi-y plots are currently available for non-iterated plots only"
-                    .to_string(),
-            );
         }
         if self.iteration.xselfscale && self.iteration.xsharedaxis {
             return Err(
@@ -2082,13 +2082,14 @@ pub struct MsExploreSpec {
 impl MsExploreSpec {
     /// Validate the high-level request.
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_with_plotms(false, false)
+        self.validate_with_plotms(false, false, false)
     }
 
     fn validate_with_plotms(
         &self,
         independent_ordinates: bool,
         pointing: bool,
+        iterated_ordinates: bool,
     ) -> Result<(), String> {
         if self.plots.is_empty() {
             return Err("msexplore requires at least one plot per invocation".to_string());
@@ -2097,7 +2098,11 @@ impl MsExploreSpec {
             return Err("msexplore max_plot_points must be a positive integer".to_string());
         }
         if self.plots.len() == 1 {
-            self.plots[0].validate_with_plotms(independent_ordinates, pointing)?;
+            self.plots[0].validate_with_plotms(
+                independent_ordinates,
+                pointing,
+                iterated_ordinates,
+            )?;
             return Ok(());
         }
 
@@ -2785,6 +2790,7 @@ fn build_msexplore_payload_internal(
             input.secondary_y_data_column.is_some() || !input.additional_ordinates.is_empty()
         }),
         calibration.is_some_and(|input| input.pointing.is_some()),
+        calibration.is_some_and(|input| input.rows.is_none()),
     )?;
     if calibration.and_then(|input| input.time_bins).is_none()
         && spec.plots.iter().any(|plot| {

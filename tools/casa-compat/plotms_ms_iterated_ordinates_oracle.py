@@ -88,6 +88,7 @@ def compare(root, native):
         flags = table.getcol("FLAG")
         flags[1, 2, :] = True
         table.putcol("FLAG", flags)
+        table.putcell("FLAG_ROW", 0, True)
     base = request(vis) | dict(xaxis="channel", xdatacolumn="", spw="0:0~3",
                                correlation="", iteraxis="corr", exprange="all",
                                yaxis=["real", "real", "real"],

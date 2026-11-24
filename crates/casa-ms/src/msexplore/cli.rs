@@ -255,14 +255,24 @@ fn run_task(
                 options.plotms_phasecenter(&value, calibration.is_none() && atmosphere.is_none())
             })
             .transpose()?;
+        if options.iteraxis.is_some()
+            && options.y_axis2.is_some()
+            && (options.plotms_averaging_active()
+                || options.has_mixed_ordinate_dimensions()
+                || calibration.is_some()
+                || atmosphere.is_some())
+        {
+            return Err(TaskFailure::validation(
+                "PlotMS iterated ordinate lists with averaging, mixed axes, a callibrary or overlays are pending #1032",
+            ));
+        }
         if !options.additional_ordinates.is_empty() {
             if calibration.is_some()
                 || (options.plotms_averaging_active()
                     && !options.supports_channel_visibility_ordinates())
-                || options.iteraxis.is_some()
             {
                 return Err(TaskFailure::validation(
-                    "more than two MeasurementSet ordinates with averaging, iteration or a callibrary are pending #1032",
+                    "more than two MeasurementSet ordinates with this averaging or a callibrary are pending #1032",
                 ));
             }
             if options.has_mixed_ordinate_dimensions() && !options.uses_channel_ordinate_masks() {
@@ -496,8 +506,8 @@ fn run_visibility_plot(
     let figure_file = output.filter(|_| !is_text);
     let mut plots = Vec::new();
     if output.is_some() || show {
-        let spec =
-            build_explore_spec(&options, pointing.is_some()).map_err(TaskFailure::validation)?;
+        let spec = build_explore_spec(&options, pointing.is_some(), true)
+            .map_err(TaskFailure::validation)?;
         let payload = match &calibrated {
             Some(input) => build_calibrated_plotms_payload(&ms, &spec, input),
             None => build_uncalibrated_plotms_payload(
@@ -544,6 +554,7 @@ fn run_visibility_plot(
                     .filter(|_| calibrated.is_none())
                     .map(|columns| super::plotms_figure::VisibilityAxisColumns {
                         base: columns,
+                        secondary_axis: options.y_axis2,
                         additional: &options.additional_ordinates,
                         right_ordinates: &options.right_ordinates,
                     }),
@@ -581,7 +592,7 @@ fn run(options: CliOptions) -> Result<RunOutcome, TaskFailure> {
     .map_err(refused)?;
     let flag_edit = build_flag_edit_spec(&options).map_err(refused)?;
     let explore_spec = if options.plot_output.is_some() || flag_edit.is_some() {
-        Some(build_explore_spec(&options, false).map_err(refused)?)
+        Some(build_explore_spec(&options, false, false).map_err(refused)?)
     } else {
         None
     };
@@ -661,7 +672,11 @@ struct RunOutcome {
     note: Option<String>,
 }
 
-fn build_explore_spec(options: &CliOptions, pointing: bool) -> Result<MsExploreSpec, String> {
+fn build_explore_spec(
+    options: &CliOptions,
+    pointing: bool,
+    iterated_ordinates: bool,
+) -> Result<MsExploreSpec, String> {
     if let Some(page_spec_path) = &options.page_spec {
         let page_spec = load_page_spec_file(page_spec_path)?;
         let mut header_items = parse_header_items(page_spec.headeritems.as_deref())?;
@@ -737,7 +752,11 @@ fn build_explore_spec(options: &CliOptions, pointing: bool) -> Result<MsExploreS
         max_plot_points: options.max_points,
         plots: vec![plot_spec],
     };
-    spec.validate_with_plotms(options.has_independent_ordinates(), pointing)?;
+    spec.validate_with_plotms(
+        options.has_independent_ordinates(),
+        pointing,
+        iterated_ordinates,
+    )?;
     Ok(spec)
 }
 
