@@ -4114,6 +4114,7 @@ fn build_generic_visibility_scatter(
         Some(calibration) => calibration.row_order.to_vec(),
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
+    let first_selected_row = row_numbers.first().copied();
     let uses_row_numbers = spec.x_axis == MsAxis::Row || spec.y_axes.contains(&MsAxis::Row);
     let selection_order = uses_row_numbers.then(|| row_numbers.clone());
     let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
@@ -4368,13 +4369,22 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    // CASA checks the first row of the selected table before sorting its iterator.
+    let spectrum_probe_slot = if channel_derived {
+        row_numbers
+            .iter()
+            .position(|&row| Some(row) == first_selected_row)
+    } else {
+        Some(0)
+    };
     let channel_weight_kinds = calibration
         .filter(|_| {
             project_plotms_columns
                 && use_spectral_weights
                 && selected_weight_spectrum
                     .as_ref()
-                    .and_then(|column| column.find(0))
+                    .zip(spectrum_probe_slot)
+                    .and_then(|(column, slot)| column.find(slot))
                     .is_some()
         })
         .map(|input| {
@@ -4568,6 +4578,9 @@ fn build_generic_visibility_scatter(
             .map_or([WeightKind::Calibrated; 3], |kinds| kinds.axes)
             .map(weight_grid);
         let column_weights = visibility_columns.column_weights(axis_weights);
+        let model_weights = channel_weight_kinds
+            .and_then(|kinds| kinds.model)
+            .and_then(weight_grid);
         let primary_weight_grid = channel_weight_kinds.and_then(|kinds| weight_grid(kinds.primary));
         for (column_name, grid) in [
             ("WEIGHT_SPECTRUM", weight_spectrum_grid.as_ref()),
@@ -4727,7 +4740,13 @@ fn build_generic_visibility_scatter(
                     let flags = flags.as_ref().expect("visibility data loads flags");
                     let weights = column_weights.get(index).copied().flatten();
                     if channel_derived && bin.averaged {
-                        buffer.collect_channel_average(grid, flags, weights, *corr_index, bin);
+                        buffer.collect_channel_average(
+                            grid,
+                            flags,
+                            [weights, model_weights],
+                            *corr_index,
+                            bin,
+                        );
                     } else {
                         buffer.collect(grid, flags, weights, *corr_index, bin, show_flagged);
                     }

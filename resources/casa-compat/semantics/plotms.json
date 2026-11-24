@@ -97,7 +97,7 @@
       "status": "Partial"
     },
     "xdatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for X independently of Y. Unaveraged real and signed amplitude axes can use FLOAT_DATA. A blank selector uses observed data for a new plot. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -114,7 +114,8 @@
         "ms-time-columns",
         "ms-channel-time-columns",
         "ms-channel-derived",
-        "ms-channel-scalar-derived"
+        "ms-channel-scalar-derived",
+        "ms-channel-observed-derived"
       ],
       "behaviors": [
         "coordinates"
@@ -162,7 +163,7 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged visibility ordinates and up to two channel-averaged ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and other mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged visibility ordinates and up to two channel-averaged ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and other mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -181,7 +182,8 @@
         "ms-channel-time-columns",
         "ms-channel-ordinate-masks",
         "ms-channel-derived",
-        "ms-channel-scalar-derived"
+        "ms-channel-scalar-derived",
+        "ms-channel-observed-derived"
       ],
       "behaviors": [
         "coordinates"
@@ -387,7 +389,7 @@
       "status": "Implemented"
     },
     "avgchannel": {
-      "scope": "Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product. Channel-only corrected vector and scalar residuals and ratios project their stored complex operands after averaging with calibrated weights.",
+      "scope": "Average selected channels into bins. MeasurementSet data, corrected and stored model axes use the corresponding spectral weights when available, including two independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product. Channel-only corrected vector and scalar residuals and ratios project their stored complex operands after averaging with calibrated weights. Observed and model operands can use independent selected spectra before vector or scalar projection.",
       "evidence": [
         "paired",
         "ms-channel-columns",
@@ -397,7 +399,8 @@
         "ms-channel-statistics",
         "ms-empty-combined-averages",
         "ms-channel-derived",
-        "ms-channel-scalar-derived"
+        "ms-channel-scalar-derived",
+        "ms-channel-observed-derived"
       ],
       "behaviors": [
         "averaging"
@@ -1895,6 +1898,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-channel-scalar-derived-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2212"
+      ]
+    },
+    "ms-channel-observed-derived": {
+      "kind": "Same-input channel averages with separate observed and model spectra",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs channel-only scalar and vector observed DATA/model plots with a companion stored visibility axis.",
+      "result": "Eleven paired texts match 132 selected points, units and identifiers. The model uses calibrated weights when CORRECTED_DATA exists and observed weights otherwise. The corrected expression falls back to DATA. Cases include a partly flagged bin, the quotient on either axis, an infinite ratio with zero model weights, and an undefined spectrum on the first selected table row with reversed iterator order. Weighted complex normalization matches selected NaN and infinite components. A paired 500 by 360 PNG draws 12 native phase coordinates. On the mixed-storage MS, the corrected-only case matches. Pinned CASA feeds FLOAT_DATA to the observed expression and native retains the issue-linked effective FLOAT_DATA averaging refusal.",
+      "casa_version": "6.7.6.14",
+      "revision": "131b4a17cde4b4c76ab7a7b375efacc29c2aa55d",
+      "source_revision": "131b4a17cde4b4c76ab7a7b375efacc29c2aa55d",
+      "command": "casa-python tools/casa-compat/plotms_ms_observed_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-channel-observed-derived-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2213"
       ]
     }
   }

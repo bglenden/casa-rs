@@ -211,7 +211,7 @@ impl BinBuffer {
         &mut self,
         grid: &ComplexGrid,
         flags: &ArrayView2<'_, bool>,
-        weight: Option<&FloatGrid>,
+        spectra: [Option<&FloatGrid>; 2],
         corr: usize,
         bin: &ChannelBin,
     ) {
@@ -223,7 +223,7 @@ impl BinBuffer {
                 [grid.values.as_slice(), model.as_slice()],
                 grid.chan_count,
                 flags,
-                weight,
+                spectra,
                 corr,
                 bin,
             )
@@ -232,7 +232,7 @@ impl BinBuffer {
             [grid.values.as_slice()],
             grid.chan_count,
             flags,
-            weight,
+            [spectra[0]],
             corr,
             bin,
         ) {
@@ -254,42 +254,54 @@ fn channel_averaged_operands<const N: usize>(
     inputs: [&[Complex64]; N],
     channel_count: usize,
     flags: &ArrayView2<'_, bool>,
-    spectrum: Option<&FloatGrid>,
+    spectra: [Option<&FloatGrid>; N],
     corr: usize,
     bin: &ChannelBin,
 ) -> Option<[Complex64; N]> {
     let mut sums = [Complex32::new(0.0, 0.0); N];
-    let mut total_weight = 0.0_f32;
+    let mut total_weights = [0.0_f32; N];
     let mut sample_count = 0_usize;
     for channel in bin.channels() {
         if channel >= channel_count || flags[(corr, channel)] {
             continue;
         }
         let index = corr * channel_count + channel;
-        let weight = spectrum.map_or(1.0, |weights| weights.values[index] as f32);
         // The channel iterator accumulates clear visibility values in Complex32.
         // In particular it retains any nonfinite value on a clear channel.
-        for (sum, values) in sums.iter_mut().zip(inputs) {
-            let value = values[index];
-            *sum += Complex32::new(value.re as f32, value.im as f32) * weight;
+        for operand in 0..N {
+            let value = inputs[operand][index];
+            let weight = spectra[operand].map_or(1.0, |weights| weights.values[index] as f32);
+            sums[operand] += Complex32::new(value.re as f32, value.im as f32) * weight;
+            total_weights[operand] += weight;
         }
-        total_weight += weight;
         sample_count += 1;
     }
     if sample_count == 0 {
         return None;
     }
-    let normalization = if spectrum.is_some() {
-        total_weight
-    } else {
-        sample_count as f32
-    };
-    let means = if normalization > 0.0 {
-        sums.map(|sum| sum / normalization)
-    } else {
-        [Complex32::new(0.0, 0.0); N]
-    };
-    Some(means.map(|mean| Complex64::new(f64::from(mean.re), f64::from(mean.im))))
+    Some(std::array::from_fn(|operand| {
+        let normalization = if spectra[operand].is_some() {
+            total_weights[operand]
+        } else {
+            sample_count as f32
+        };
+        let sum = sums[operand];
+        let mut mean = if normalization > 0.0 {
+            sum / normalization
+        } else {
+            Complex32::new(0.0, 0.0)
+        };
+        // CASA divides a weighted complex sum by a complex normalization.
+        // A nonfinite component affects its finite partner even for a real weight.
+        if spectra[operand].is_some() && normalization > 0.0 && normalization.is_finite() {
+            if sum.re.is_finite() && !sum.im.is_finite() {
+                mean.re = f32::NAN;
+            } else if sum.im.is_finite() && !sum.re.is_finite() {
+                mean.im = f32::NAN;
+            }
+        }
+        Complex64::new(f64::from(mean.re), f64::from(mean.im))
+    }))
 }
 
 fn vector_mean(values: &[Complex64], weights: &[f64]) -> Option<Complex64> {

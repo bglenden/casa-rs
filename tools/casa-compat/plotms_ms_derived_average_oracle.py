@@ -72,7 +72,7 @@ def check_unimplemented_averaging(root, native, vis):
 
     base = request(vis) | dict(xaxis="real", yaxis="imag", ydatacolumn="data", expformat="txt")
     for name, overrides in (
-        ("observed-ratio", dict(xdatacolumn="data/model_scalar", avgchannel="2")),
+        ("iterated-ratio", dict(xdatacolumn="data/model_scalar", avgchannel="2", iteraxis="scan")),
         ("time-ratio", dict(xdatacolumn="corrected/model_vector", avgtime="20")),
     ):
         output = root / f"{name}.native.txt"
