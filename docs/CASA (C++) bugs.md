@@ -10430,6 +10430,15 @@ overwrite. If a later selection or fit fails, the older report is
 lost. casa-rs stages the text report and replaces the existing file
 after successful processing.
 
+## Atmospheric correction can remove an unrelated output directory
+
+CASA 6.7.6.14 uses recursive directory removal for an existing
+`sdatmcor` destination when `overwrite=True`. A nonempty directory
+containing unrelated files is deleted before output is written.
+casa-rs replaces a readable MeasurementSet or an empty placeholder
+after preparing the new product. It preserves a nonempty directory
+that contains no MeasurementSet.
+
 ## An empty atmospheric correction window selection raises a record-type error
 
 CASA 6.7.6.14 resolves the windows to process separately from the windows

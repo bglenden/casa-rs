@@ -30,6 +30,14 @@ pub(crate) struct CalibrationOutput {
     table_subtype: Option<&'static str>,
     _reservation: Reservation,
     simulated_marker: bool,
+    replace_empty_directory: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplacementException {
+    None,
+    SimulatedMarker,
+    EmptyDirectory,
 }
 
 /// A destination-wide claim survives a killed writer. Only its owner removes it.
@@ -52,7 +60,7 @@ impl CalibrationOutput {
             mode,
             Some(crate::constants::TABLE_INFO_TYPE),
             None,
-            false,
+            ReplacementException::None,
         )
     }
 
@@ -80,7 +88,7 @@ impl CalibrationOutput {
             CalibrationOutputMode::Replace,
             Some(crate::constants::TABLE_INFO_TYPE),
             None,
-            true,
+            ReplacementException::SimulatedMarker,
         )
     }
 
@@ -97,13 +105,36 @@ impl CalibrationOutput {
             },
             Some("Measurement Set"),
             None,
-            false,
+            ReplacementException::None,
+        )
+    }
+
+    /// Atmospheric correction can replace an explicitly supplied empty output directory.
+    pub(crate) fn prepare_atmosphere(
+        path: &Path,
+        overwrite: bool,
+    ) -> Result<Self, CalibrationTableWriteError> {
+        if !overwrite {
+            return Self::prepare_measurement_set(path, false);
+        }
+        Self::prepare_type(
+            path,
+            CalibrationOutputMode::Replace,
+            Some("Measurement Set"),
+            None,
+            ReplacementException::EmptyDirectory,
         )
     }
 
     /// Detached imports replace any readable casacore destination table.
     pub(crate) fn prepare_import(path: &Path) -> Result<Self, CalibrationTableWriteError> {
-        Self::prepare_type(path, CalibrationOutputMode::Replace, None, None, false)
+        Self::prepare_type(
+            path,
+            CalibrationOutputMode::Replace,
+            None,
+            None,
+            ReplacementException::None,
+        )
     }
 
     pub(crate) fn prepare_baseline_table(
@@ -115,7 +146,13 @@ impl CalibrationOutput {
         } else {
             CalibrationOutputMode::Create
         };
-        Self::prepare_type(path, mode, Some("ApplyTable"), None, false)
+        Self::prepare_type(
+            path,
+            mode,
+            Some("ApplyTable"),
+            None,
+            ReplacementException::None,
+        )
     }
 
     pub(crate) fn prepare_ephemeris_table(
@@ -127,7 +164,13 @@ impl CalibrationOutput {
         } else {
             CalibrationOutputMode::Create
         };
-        Self::prepare_type(path, mode, Some("IERS"), Some("Comet"), false)
+        Self::prepare_type(
+            path,
+            mode,
+            Some("IERS"),
+            Some("Comet"),
+            ReplacementException::None,
+        )
     }
 
     fn prepare_type(
@@ -135,7 +178,7 @@ impl CalibrationOutput {
         mode: CalibrationOutputMode,
         table_type: Option<&'static str>,
         table_subtype: Option<&'static str>,
-        simulated_marker: bool,
+        replacement: ReplacementException,
     ) -> Result<Self, CalibrationTableWriteError> {
         let fail = |reason| CalibrationTableWriteError::Prepare {
             path: path.display().to_string(),
@@ -173,13 +216,18 @@ impl CalibrationOutput {
                 )));
             }
         }
+        let simulated_marker = replacement == ReplacementException::SimulatedMarker;
+        let replace_empty_directory = replacement == ReplacementException::EmptyDirectory
+            && fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_none());
         if path.exists() {
             if mode == CalibrationOutputMode::Create {
                 return Err(fail(
                     "output already exists; use append or replacement explicitly".to_string(),
                 ));
             }
-            validate_product(path, table_type, table_subtype, simulated_marker)?;
+            if !replace_empty_directory {
+                validate_product(path, table_type, table_subtype, simulated_marker)?;
+            }
         }
         let staging = sibling(path, "casa-rs-incomplete")?;
         fs::create_dir(&staging).map_err(|e| fail(format!("cannot reserve staging path {} (an interrupted or concurrent write may exist): {e}", staging.display())))?;
@@ -191,6 +239,7 @@ impl CalibrationOutput {
             table_subtype,
             _reservation: reservation,
             simulated_marker,
+            replace_empty_directory,
         })
     }
 
@@ -200,7 +249,9 @@ impl CalibrationOutput {
             output: self.destination.display().to_string(),
             reason,
         };
-        if !self.destination.exists() {
+        if !self.destination.exists() || self.replace_empty_directory {
+            // A directory rename can only replace an empty directory. If another
+            // process added content during the run, the existing directory survives.
             return fs::rename(&self.staging, &self.destination).map_err(|e| fail(e.to_string()));
         }
         if self.mode == CalibrationOutputMode::Create {

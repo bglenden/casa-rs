@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! The sdatmcor task's public selection and ATM parameter conversion.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use casa_ms::{MeasurementSet, MsSelection};
+use casa_ms::{MeasurementSet, MsSelection, MsSelectionIoBudget, ResolvedMsSelectionRow};
 use casa_provider_contracts::{CasaValue, ParameterValue};
 use casa_tables::{Table, TableOptions};
-use casa_task_runtime::{TaskFailure, TaskInvocation, TaskSuccess};
+use casa_task_runtime::{CasaLoggingConfig, TaskFailure, TaskInvocation, TaskSuccess};
 use casa_types::{
     ArrayValue, RecordValue, ScalarValue, Value,
-    quanta::{Quantity, Unit},
+    quanta::{Quantity, Unit, format},
 };
 use ndarray::Array1;
 
-use super::{MainRows, SingleDishAtmosphere, SingleDishSession, inputs};
+use super::{MainRows, SingleDishAtmosphere, SingleDishSession, inputs, thread_count};
 use crate::single_dish::selector;
 
 pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure> {
@@ -50,40 +50,135 @@ pub(crate) fn run(task: &TaskInvocation<'_>) -> Result<TaskSuccess, TaskFailure>
         .transpose()?;
     let output_spw = task.required_text("outputspw")?;
     let rows = MainRows::read(&ms).map_err(execution)?;
-    let config = configuration(task, &ms, &rows, &output_spw, atmosphere, humidity)?;
+    let (config, diagnostics) = configuration(task, &ms, &rows, &output_spw, atmosphere, humidity)?;
+    let selection = MsSelection {
+        spw: Some(output_spw),
+        field: selector(task, "field")?,
+        scan: selector(task, "scan")?,
+        antenna,
+        correlation: selector(task, "correlation")?,
+        timerange: selector(task, "timerange")?,
+        intent: selector(task, "intent")?,
+        observation: selector(task, "observation")?,
+        feed: selector(task, "feed")?,
+        msselect: selector(task, "msselect")?,
+        ..MsSelection::default()
+    };
     let mut session = SingleDishSession::default();
     session.open(input);
     session
-        .set_selection(
-            MsSelection {
-                spw: Some(output_spw),
-                field: selector(task, "field")?,
-                scan: selector(task, "scan")?,
-                antenna,
-                correlation: selector(task, "correlation")?,
-                timerange: selector(task, "timerange")?,
-                intent: selector(task, "intent")?,
-                observation: selector(task, "observation")?,
-                feed: selector(task, "feed")?,
-                msselect: selector(task, "msselect")?,
-                ..MsSelection::default()
-            },
-            false,
-        )
+        .set_selection(selection.clone(), false)
         .map_err(execution)?;
-    let report = session
-        .atmcor_prepared(
-            &ms,
-            rows,
-            SingleDishAtmosphere {
-                config: &config,
-                datacolumn: &column,
-                outfile: output,
-                overwrite,
-            },
-        )
-        .map_err(execution)?;
-    TaskSuccess::new(CasaValue::None, &report)
+    let default_logs =
+        !CasaLoggingConfig::output_was_configured(&std::env::args_os().skip(1).collect::<Vec<_>>());
+    diagnostics.start(default_logs);
+    let result = session.atmcor_prepared(
+        &ms,
+        rows,
+        SingleDishAtmosphere {
+            config: &config,
+            datacolumn: &column,
+            outfile: output,
+            overwrite,
+        },
+    );
+    if diagnostics.has_uncorrected_windows() {
+        let written = result.as_ref().map_or_else(
+            |_| selected_windows_after_failure(&ms, selection),
+            |report| report.spectral_window_ids.iter().copied().collect(),
+        );
+        diagnostics.report_uncorrected(&written, default_logs);
+    }
+    TaskSuccess::new(CasaValue::None, &result.map_err(execution)?)
+}
+
+struct Diagnostics {
+    requested: Vec<i32>,
+    corrected: BTreeSet<i32>,
+    output: BTreeSet<i32>,
+    threads: usize,
+}
+
+impl Diagnostics {
+    fn start(&self, default_logs: bool) {
+        log_message(
+            tracing::Level::INFO,
+            "SDAtmosphereCorrectionTVI::SDAtmosphereCorrectionTVI",
+            &format!("Setting numThreads_ to {}", self.threads),
+            default_logs,
+        );
+        log_message(
+            tracing::Level::INFO,
+            "SDAtmosphereCorrectionTVI::initializeAtmosphereCorrection",
+            &format!("processspw (input) = {:?}", self.requested),
+            default_logs,
+        );
+    }
+
+    fn has_uncorrected_windows(&self) -> bool {
+        !self.output.is_subset(&self.corrected)
+    }
+
+    fn report_uncorrected(&self, written: &BTreeSet<i32>, default_logs: bool) {
+        let windows = written
+            .difference(&self.corrected)
+            .copied()
+            .collect::<Vec<_>>();
+        let message = match windows.as_slice() {
+            [] => return,
+            [window] => format!("SPW {window} is output but not corrected"),
+            _ => {
+                let ids = windows.iter().map(i32::to_string).collect::<Vec<_>>();
+                format!("SPWs {} are output but not corrected", ids.join(" "))
+            }
+        };
+        log_message(
+            tracing::Level::WARN,
+            "SDAtmosphereCorrectionTVI::initializeAtmosphereCorrection",
+            &message,
+            default_logs,
+        );
+    }
+}
+
+fn log_message(level: tracing::Level, location: &str, message: &str, default_logs: bool) {
+    if default_logs {
+        let unix_seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+        let timestamp = format::format_time(
+            40_587.0 + unix_seconds / 86_400.0,
+            format::FITS | format::USE_SPACE,
+            6,
+        );
+        eprintln!("{timestamp}\t{level}\t{location}\t{message}");
+    } else if level == tracing::Level::WARN {
+        tracing::warn!(casa.location = location, "{message}");
+    } else {
+        tracing::info!(casa.location = location, "{message}");
+    }
+}
+
+fn selected_windows_after_failure(
+    ms: &MeasurementSet,
+    mut selection: MsSelection,
+) -> BTreeSet<i32> {
+    // A successful transform already reports the original window IDs it
+    // wrote. Only resolve metadata again when there is no transform report.
+    if selection.antenna.as_deref().is_none_or(str::is_empty) {
+        selection.antenna = Some("*&&&".into());
+    }
+    MsSelectionIoBudget::from_system_memory(1, std::mem::size_of::<ResolvedMsSelectionRow>(), None)
+        .ok()
+        .and_then(|budget| ms.resolve_casa_selection(&selection, budget).ok())
+        .map(|resolved| {
+            resolved
+                .selected_rows
+                .into_iter()
+                .map(|row| row.spectral_window_id)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn include_autocorrelations(ms: &MeasurementSet, text: String) -> Result<String, TaskFailure> {
@@ -153,23 +248,35 @@ fn configuration(
     output: &str,
     atmosphere: i64,
     humidity: f64,
-) -> Result<RecordValue, TaskFailure> {
+) -> Result<(RecordValue, Diagnostics), TaskFailure> {
     let reference = inputs::default_antenna(ms, raw).map_err(execution)?;
     let site = inputs::site_altitude(ms, reference).map_err(execution)?;
     let detailed = task.flag("atmdetail")?;
     let processes = task.required_text("spw")?;
     let selected = resolve_windows(ms, &processes, "spw")?;
     let written = resolve_windows(ms, output, "outputspw")?;
-    let windows = selected
+    let output = written
         .into_iter()
-        .filter(|window| raw.windows.contains(window) && written.contains(window))
+        .filter(|window| raw.windows.contains(window))
+        .collect::<BTreeSet<_>>();
+    let windows = output
+        .iter()
+        .copied()
+        .filter(|window| selected.contains(window))
         .collect::<Vec<_>>();
+    let corrected = windows
+        .iter()
+        .copied()
+        .filter(|window| raw.science.contains(window))
+        .collect();
     let length = ms.spectral_window().map_err(execution)?.row_count();
     let gain = gain_factors(task.value("gainfactor"), length)?;
     let mut record = RecordValue::default();
     record.upsert(
         "processspw",
-        Value::Array(ArrayValue::Int32(Array1::from_vec(windows).into_dyn())),
+        Value::Array(ArrayValue::Int32(
+            Array1::from_vec(windows.clone()).into_dyn(),
+        )),
     );
     record.upsert("gainfactor", doubles(gain));
     record.upsert("refant", Value::Scalar(ScalarValue::Int32(reference)));
@@ -228,7 +335,15 @@ fn configuration(
             record.upsert(field, doubles(values));
         }
     }
-    Ok(record)
+    Ok((
+        record,
+        Diagnostics {
+            requested: windows,
+            corrected,
+            output,
+            threads: thread_count(Some(f64::from(threads))),
+        },
+    ))
 }
 
 fn resolve_windows(
