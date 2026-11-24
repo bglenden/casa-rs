@@ -1838,32 +1838,7 @@ impl MsPlotSpec {
                     .to_string(),
             );
         }
-        let has_interval_or_wavelength = self.x_axis.is_interval_or_wavelength()
-            || self
-                .y_axes
-                .iter()
-                .copied()
-                .any(MsAxis::is_interval_or_wavelength);
-        if has_interval_or_wavelength
-            && (uses_extended_averaging(self)
-                || self.averaging.avgchannel.is_some_and(|width| width > 1))
-        {
-            return Err(
-                "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
-            );
-        }
-        if has_interval_or_wavelength && self.transforms.freqframe.is_some() {
-            return Err(
-                "PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)"
-                    .into(),
-            );
-        }
-        if self.y_axes.iter().copied().any(|y| {
-            (self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
-                || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math())
-        }) {
-            return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
-        }
+        self.validate_interval_and_wavelength_axes()?;
         plotms_row_axes::validate(self)?;
         let supported_x = matches!(
             self.x_axis,
@@ -1941,6 +1916,34 @@ impl MsPlotSpec {
                 .any(|axis| matches!(axis, MsAxis::Flag))
         {
             return Err("msexplore flag plots do not yet support avgchannel binning".to_string());
+        }
+        Ok(())
+    }
+
+    fn validate_interval_and_wavelength_axes(&self) -> Result<(), String> {
+        let requested = self.x_axis.is_interval_or_wavelength()
+            || self
+                .y_axes
+                .iter()
+                .copied()
+                .any(MsAxis::is_interval_or_wavelength);
+        if !requested {
+            return Ok(());
+        }
+        if uses_extended_averaging(self) || self.averaging.avgchannel.is_some_and(|width| width > 1)
+        {
+            return Err(
+                "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
+            );
+        }
+        if self.transforms.freqframe.is_some() {
+            return Err("PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)".into());
+        }
+        if self.y_axes.iter().copied().any(|y| {
+            (self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
+                || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math())
+        }) {
+            return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
         }
         Ok(())
     }
