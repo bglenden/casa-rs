@@ -20,6 +20,7 @@ def read_columns(path, *columns):
 
 @pytest.mark.parametrize("method, arguments, inplace", [
     ("sort", (["ANTENNA1", "ANTENNA2"],), False),
+    ("sort", ("TIME",), False),
     ("timesort", (), False),
     ("timesort", (), True),
     ("sort", ([],), False),
@@ -32,9 +33,11 @@ def test_ms_sort_matches_pinned_order_history_and_attachment(native_dataset, tmp
     ids = np.arange(table.nrows(), dtype=np.int32)
     assert table.putcol("SCAN_NUMBER", ids)
     assert table.putcol("TIME", table.getcol("TIME")[::-1])
+    assert table.putcolkeyword("TIME", "QuantumUnits", ["d"])
+    assert table.putcolkeyword("FLAG_CATEGORY", "CATEGORY", ["ONLINE"])
     assert table.done()
     original = read_columns(native_dataset, "SCAN_NUMBER", "TIME", "ANTENNA1", "ANTENNA2")
-    if method == "timesort":
+    if method == "timesort" or arguments == ("TIME",):
         expected_order = np.argsort(original[1], kind="stable")
     elif arguments[0]:
         expected_order = np.lexsort((original[3], original[2]))
@@ -50,7 +53,7 @@ def test_ms_sort_matches_pinned_order_history_and_attachment(native_dataset, tmp
         output = source if inplace else directory / "ordered.ms"
         tool = api.ms()
         assert getattr(tool, method)() is False
-        assert tool.open(str(source), nomodify=True)
+        assert tool.open(str(source), nomodify=True, lock=inplace)
         assert getattr(tool, method)("" if inplace else str(output), *arguments)
         assert tool.name() == str(source)
         assert tool.iswritable() is inplace
@@ -63,6 +66,10 @@ def test_ms_sort_matches_pinned_order_history_and_attachment(native_dataset, tmp
         assert native_copy.nrow() == len(ids)
         assert native_copy.done()
         np.testing.assert_array_equal(read_columns(output, "SCAN_NUMBER")[0], ids[expected_order])
+        assert table.open(str(output))
+        assert list(table.getcolkeyword("TIME", "QuantumUnits")) == ["d"]
+        assert list(table.getcolkeyword("FLAG_CATEGORY", "CATEGORY")) == ["ONLINE"]
+        assert table.done()
         history = ["APPLICATION", "MESSAGE", "ORIGIN", "PRIORITY", "OBJECT_ID", "OBSERVATION_ID"]
         row = [column[-1] for column in read_columns(output / "HISTORY", *history)]
         row[1] = row[1].replace(str(source), "source.ms")
@@ -84,6 +91,7 @@ def test_ms_sorted_named_selection_preserves_source_and_unrelated_target(native_
     blocked.mkdir()
     marker = blocked / "important.txt"
     marker.write_text("keep")
+    (blocked / "table.dat").write_text("a file, rather than a casacore descriptor")
     with pytest.raises(RuntimeError):
         tool.timesort(str(blocked))
     assert marker.read_text() == "keep"
@@ -98,6 +106,73 @@ def test_ms_sorted_named_selection_preserves_source_and_unrelated_target(native_
     np.testing.assert_array_equal(actual_time, selected_data["time"][order])
     np.testing.assert_array_equal(actual_data, selected_data["data"][:, :, order])
     assert tool.done()
+
+
+def test_ms_sort_protects_backing_tables_and_copies_nested_subtables(native_dataset):
+    casa = pinned_casa()
+    extra = native_dataset / "FIELD" / "EXTRA_FEED"
+    copytree(native_dataset / "FEED", extra)
+    table = casa.table()
+    assert table.open(str(native_dataset / "FIELD"), nomodify=False)
+    assert table.putkeyword("EXTRA", f"Table: {extra}")
+    assert table.done()
+    tool = tools.ms()
+    assert tool.open(str(native_dataset), nomodify=False, lock=True)
+    with pytest.raises(RuntimeError, match="overlaps a source table"):
+        tool.timesort(str(native_dataset / "ANTENNA"))
+    output = native_dataset / "ordered.ms"
+    assert tool.timesort(str(output))
+    assert table.open(str(output / "FIELD"))
+    assert table.getkeyword("EXTRA") == f"Table: {output / 'FIELD' / 'EXTRA_FEED'}"
+    assert table.done()
+    assert table.open(str(output / "FIELD" / "EXTRA_FEED"))
+    assert table.nrows() > 0
+    assert table.done()
+    output.rename(native_dataset.with_name("verified-sorted-copy.ms"))
+    assert tool.timesort()
+    assert tool.iswritable()
+    assert tool.done()
+
+
+def test_ms_sort_uses_casa_complex_scalar_order(native_dataset, tmp_path):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    count = table.nrows()
+    table.addcols({"COMPLEX_KEY": dict(valueType="complex", dataManagerType="StandardStMan",
+                                       dataManagerGroup="sort_keys", comment="scalar keys")})
+    keys = (np.arange(count, 0, -1) * (1 + 3j)).astype(np.complex64)
+    assert table.putcol("COMPLEX_KEY", keys)
+    assert table.done()
+    for index, api in enumerate((casa, tools)):
+        output = tmp_path / f"ordered-{index}.ms"
+        tool = api.ms()
+        assert tool.open(str(native_dataset))
+        assert tool.sort(str(output), "COMPLEX_KEY")
+        np.testing.assert_array_equal(read_columns(output, "COMPLEX_KEY")[0], keys[::-1])
+        assert tool.done()
+
+
+def test_ms_sort_omits_links_to_its_own_root(native_dataset, tmp_path):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    referenced = table.selectrows([0, 1])
+    view_path = tmp_path / "same-root.table"
+    persisted = referenced.copy(str(view_path))
+    assert persisted.done()
+    assert referenced.done()
+    assert table.putkeyword("SAME_ROOT", f"Table: {view_path}")
+    assert table.done()
+    for index, api in enumerate((casa, tools)):
+        output = tmp_path / f"sorted-{index}.ms"
+        tool = api.ms()
+        assert tool.open(str(native_dataset))
+        assert tool.timesort(str(output))
+        assert tool.done()
+        assert table.open(str(output))
+        assert "SAME_ROOT" not in table.keywordnames()
+        assert table.done()
 
 
 @pytest.mark.parametrize("column_link", [False, True])

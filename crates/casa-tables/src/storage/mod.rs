@@ -3818,7 +3818,7 @@ impl CompositeStorage {
         metadata_only: bool,
     ) -> Result<StorageSnapshot, StorageError> {
         let parent_path = add_directory_for_link(&reference.parent_relative_path, path);
-        let parent = if metadata_only {
+        let mut parent = if metadata_only {
             self.load_metadata_only(&parent_path)?
         } else {
             self.load(&parent_path)?
@@ -3851,8 +3851,28 @@ impl CompositeStorage {
         if !metadata_only {
             rows.reserve(reference.row_map.len());
             undefined_cells.reserve(reference.row_map.len());
+            let move_rows = parent.schema.as_ref().is_some_and(|schema| {
+                names.len() == schema.columns().len()
+                    && names
+                        .iter()
+                        .zip(schema.columns())
+                        .all(|((name, base), column)| {
+                            name == base && name.as_str() == column.name()
+                        })
+            }) && {
+                let mut seen = vec![false; parent.rows.len()];
+                reference.row_map.iter().all(|&row| {
+                    seen.get_mut(row as usize)
+                        .is_some_and(|seen| !std::mem::replace(seen, true))
+                })
+            };
             for &row in &reference.row_map {
                 let index = row as usize;
+                if move_rows {
+                    rows.push(std::mem::take(&mut parent.rows[index]));
+                    undefined_cells.push(std::mem::take(&mut parent.undefined_cells[index]));
+                    continue;
+                }
                 let fields = parent.rows.get(index).ok_or_else(|| {
                     StorageError::FormatMismatch(format!(
                         "RefTable references missing parent row {row}"
