@@ -6,7 +6,7 @@
 //!
 //! Cf. C++ `MSAntennaColumns` / `MSAntenna`.
 
-use casa_tables::Table;
+use casa_tables::{Table, TableError};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use ndarray::ArrayD;
 
@@ -79,6 +79,26 @@ impl<'a> MsAntenna<'a> {
     /// Antenna position as `[x, y, z]` in meters (ITRF).
     pub fn position(&self, row: usize) -> MsResult<[f64; 3]> {
         extract_f64_3(get_array(self.table, row, "POSITION")?)
+    }
+
+    pub(crate) fn positions(&self, rows: &[usize]) -> MsResult<Vec<[f64; 3]>> {
+        if rows.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.table
+            .column_accessor("POSITION")?
+            .array_cells_owned(rows)?
+            .into_iter()
+            .zip(rows)
+            .map(|(value, &row)| match value {
+                Some(value) => extract_f64_3(&value),
+                None => Err(TableError::ColumnNotFound {
+                    row_index: row,
+                    column: "POSITION".to_string(),
+                }
+                .into()),
+            })
+            .collect()
     }
 
     /// Axes offset of mount to feed reference point, `[x, y, z]` in meters.

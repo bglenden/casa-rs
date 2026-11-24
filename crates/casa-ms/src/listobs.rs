@@ -21,9 +21,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
+use casa_types::measures::MeasuresProvider;
 use casa_types::measures::direction::DirectionRef;
 use casa_types::measures::position::MPosition;
 use casa_types::quanta::{MvAngle, MvTime};
@@ -953,17 +955,22 @@ fn build_antennas(
     observations: &[ObservationSummary],
     main_usage: &MainUsage,
     tool_view: bool,
+    measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
 ) -> MsResult<Vec<AntennaSummary>> {
     let antenna = ms.antenna()?;
-    let observatory = observatory_position(observations, main_usage, &antenna)?;
-    let mut summaries = Vec::with_capacity(antenna.row_count());
-    for row in 0..antenna.row_count() {
-        if (main_usage.selection_applied || !main_usage.used_antenna_ids.is_empty())
-            && !main_usage.used_antenna_ids.contains(&row)
-        {
-            continue;
-        }
-        let position_m = antenna.position(row)?;
+    let observatory = observatory_position(observations, main_usage, &antenna, measures)?;
+    let rows: Vec<_> = if main_usage.selection_applied || !main_usage.used_antenna_ids.is_empty() {
+        main_usage
+            .used_antenna_ids
+            .range(..antenna.row_count())
+            .copied()
+            .collect()
+    } else {
+        (0..antenna.row_count()).collect()
+    };
+    let positions = antenna.positions(&rows)?;
+    let mut summaries = Vec::with_capacity(rows.len());
+    for (row, position_m) in rows.into_iter().zip(positions) {
         let position = MPosition::new_itrf(position_m[0], position_m[1], position_m[2]);
         let (longitude_radians, latitude_radians, _) = position.as_spherical();
         let offsets = match observatory.as_ref() {
@@ -1673,14 +1680,25 @@ fn observatory_position(
     observations: &[ObservationSummary],
     main_usage: &MainUsage,
     antenna: &crate::MsAntenna<'_>,
+    measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
 ) -> MsResult<Option<MPosition>> {
     let telescope_name = observations
         .iter()
         .map(|obs| obs.telescope_name.as_str())
         .find(|name| !name.is_empty());
     if let Some(name) = telescope_name {
-        let measures = crate::open_measures_runtime()?;
-        if let Some(position) = MPosition::from_observatory_name(name, measures.as_ref())? {
+        let provider = match measures.and_then(OnceLock::get) {
+            Some(provider) => Arc::clone(provider),
+            None => {
+                let provider = crate::open_measures_runtime()?;
+                if let Some(cache) = measures {
+                    Arc::clone(cache.get_or_init(|| provider))
+                } else {
+                    provider
+                }
+            }
+        };
+        if let Some(position) = MPosition::from_observatory_name(name, provider.as_ref())? {
             return Ok(Some(position));
         }
     }

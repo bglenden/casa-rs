@@ -21,17 +21,19 @@ impl ListObsSummary {
                 &MsSelection::from_summary_options(options),
             )?)
         };
-        Self::from_rows(ms, options, selected_rows.as_deref(), false)
+        Self::from_rows(ms, options, selected_rows.as_deref(), false, None)
     }
 
     /// Summarize the current MS tool view, grouping each scan by field.
     /// Row indices are in view order and may contain repeated rows.
+    /// The attachment's Measures provider is initialized only when needed.
     pub fn from_tool_view(
         ms: &MeasurementSet,
         selected_rows: Option<&[usize]>,
         verbose: bool,
         listunfl: bool,
         cachesize: f64,
+        measures: &OnceLock<Arc<dyn MeasuresProvider>>,
     ) -> MsResult<Self> {
         let options = ListObsOptions {
             verbose,
@@ -39,7 +41,7 @@ impl ListObsSummary {
             cachesize_mb: Some(cachesize as f32),
             ..ListObsOptions::default()
         };
-        Self::from_rows(ms, &options, selected_rows, true)
+        Self::from_rows(ms, &options, selected_rows, true, Some(measures))
     }
 
     fn from_rows(
@@ -47,6 +49,7 @@ impl ListObsSummary {
         options: &ListObsOptions,
         selected_rows: Option<&[usize]>,
         tool_view: bool,
+        measures: Option<&OnceLock<Arc<dyn MeasuresProvider>>>,
     ) -> MsResult<Self> {
         let unflagged_context = if options.listunfl {
             Some(UnflaggedRowContext::new(ms)?)
@@ -65,7 +68,7 @@ impl ListObsSummary {
             .map(|summary| summary.spectral_window_id as i32)
             .collect::<BTreeSet<_>>();
         let sources = build_sources(ms, &used_spw_ids)?;
-        let antennas = build_antennas(ms, &observations, &main_usage, tool_view)?;
+        let antennas = build_antennas(ms, &observations, &main_usage, tool_view, measures)?;
 
         let field_name_lookup: HashMap<i32, String> = fields
             .iter()

@@ -49,6 +49,7 @@ impl PyMsTool {
                 verbose,
                 listunfl,
                 cachesize,
+                &attachment.visibility.time_measures,
             )
             .map_err(runtime_error)?;
             summary.measurement_set.path = Some(attachment.name.display().to_string());
