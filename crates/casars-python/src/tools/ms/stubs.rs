@@ -436,16 +436,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (newmsname = None, columns = None), text_signature = "($self, newmsname='', columns=[])")]
-    fn sort(
-        &self,
-        newmsname: Option<&Bound<'_, PyAny>>,
-        columns: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("sort")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outputms = None, field = None, spw = None, step = None, baseline = None, timebin = None, time = None, scan = None, uvrange = None, taql = None, whichcol = None, tileshape = None, subarray = None, combine = None, correlation = None, intent = None, obs = None), text_signature = "($self, outputms='', field=[], spw=[], step=[1], baseline=[], timebin=[], time='', scan=[], uvrange=[], taql='', whichcol='DATA', tileshape=[], subarray=[], combine='', correlation='', intent='', obs='')")]
     fn split(
         &self,
@@ -480,12 +470,6 @@ impl PyMsTool {
         respectname: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("testconcatenate")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (newmsname = None), text_signature = "($self, newmsname='')")]
-    fn timesort(&self, newmsname: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("timesort")
     }
 
     /// Not yet implemented in casa-rs.

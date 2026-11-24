@@ -544,8 +544,8 @@ const METHODS: &[Method] = &[
             param("newmsname", K::Text, Text("")),
             param("columns", K::Any, Empty),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "split",
@@ -667,8 +667,8 @@ const METHODS: &[Method] = &[
     method(
         "timesort",
         &[param("newmsname", K::Text, Text(""))],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "tofits",

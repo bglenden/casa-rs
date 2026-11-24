@@ -1,0 +1,100 @@
+"""Stable ordering and publication for the public MeasurementSet sorts."""
+
+from shutil import copytree
+
+import numpy as np
+import pytest
+
+from casars import tools
+from test_tools_ms import pinned_casa
+from test_tools_msmetadata import measures, native_dataset
+
+
+def read_columns(path, *columns):
+    table = pinned_casa().table()
+    assert table.open(str(path))
+    result = [table.getcol(column) for column in columns]
+    assert table.done()
+    return result
+
+
+@pytest.mark.parametrize("method, arguments, inplace", [
+    ("sort", (["ANTENNA1", "ANTENNA2"],), False),
+    ("timesort", (), False),
+    ("timesort", (), True),
+    ("sort", ([],), False),
+])
+def test_ms_sort_matches_pinned_order_history_and_attachment(native_dataset, tmp_path,
+                                                             method, arguments, inplace):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    ids = np.arange(table.nrows(), dtype=np.int32)
+    assert table.putcol("SCAN_NUMBER", ids)
+    assert table.putcol("TIME", table.getcol("TIME")[::-1])
+    assert table.done()
+    original = read_columns(native_dataset, "SCAN_NUMBER", "TIME", "ANTENNA1", "ANTENNA2")
+    if method == "timesort":
+        expected_order = np.argsort(original[1], kind="stable")
+    elif arguments[0]:
+        expected_order = np.lexsort((original[3], original[2]))
+    else:
+        expected_order = ids
+
+    samples = []
+    for namespace, api in enumerate((casa, tools)):
+        directory = tmp_path / str(namespace)
+        directory.mkdir()
+        source = directory / "source.ms"
+        copytree(native_dataset, source)
+        output = source if inplace else directory / "ordered.ms"
+        tool = api.ms()
+        assert getattr(tool, method)() is False
+        assert tool.open(str(source), nomodify=True)
+        assert getattr(tool, method)("" if inplace else str(output), *arguments)
+        assert tool.name() == str(source)
+        assert tool.iswritable() is inplace
+        assert tool.nrow() == len(ids)
+        assert tool.done()
+        if not inplace:
+            np.testing.assert_array_equal(read_columns(source, "SCAN_NUMBER")[0], ids)
+        native_copy = tools.ms()
+        assert native_copy.open(str(output))
+        assert native_copy.nrow() == len(ids)
+        assert native_copy.done()
+        np.testing.assert_array_equal(read_columns(output, "SCAN_NUMBER")[0], ids[expected_order])
+        history = ["APPLICATION", "MESSAGE", "ORIGIN", "PRIORITY", "OBJECT_ID", "OBSERVATION_ID"]
+        row = [column[-1] for column in read_columns(output / "HISTORY", *history)]
+        row[1] = row[1].replace(str(source), "source.ms")
+        assert row[0] == "ms"
+        assert row[2:] == [f"ms::{method}()", "INFO", 0, -1]
+        samples.append((row, read_columns(output, "TIME", "DATA", "FLAG")))
+    assert samples[0][0] == samples[1][0]
+    for expected, actual in zip(samples[0][1], samples[1][1]):
+        np.testing.assert_array_equal(actual, expected)
+        assert actual.dtype == expected.dtype
+
+
+def test_ms_sorted_named_selection_preserves_source_and_unrelated_target(native_dataset, tmp_path):
+    tool = tools.ms()
+    assert tool.open(str(native_dataset))
+    assert tool.select({"rows": [21, 3, 8, 1]})
+    selected_data = tool.getdata(["data", "time"])
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    marker = blocked / "important.txt"
+    marker.write_text("keep")
+    with pytest.raises(RuntimeError):
+        tool.timesort(str(blocked))
+    assert marker.read_text() == "keep"
+    with pytest.raises(RuntimeError, match="unselected rows"):
+        tool.timesort()
+    assert tool.nrow(True) == 4
+    output = tmp_path / "selected.ms"
+    assert tool.timesort(bytes(output))
+    assert tool.nrow(True) == 4
+    actual_time, actual_data = read_columns(output, "TIME", "DATA")
+    order = np.argsort(selected_data["time"], kind="stable")
+    np.testing.assert_array_equal(actual_time, selected_data["time"][order])
+    np.testing.assert_array_equal(actual_data, selected_data["data"][:, :, order])
+    assert tool.done()

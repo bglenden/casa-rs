@@ -56,7 +56,7 @@ mod selection_metadata;
 mod single_dish_polarization;
 mod spectral_metadata;
 mod subtable_copy;
-mod task_history;
+pub(crate) mod task_history;
 pub(crate) mod time_average;
 mod time_projection;
 mod visibility_columns;

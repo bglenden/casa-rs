@@ -11532,3 +11532,20 @@ tool raises a Python `SystemError` because the binding returns with a
 conversion exception pending. casa-rs reports the invalid argument
 with `TypeError`. Numeric arguments, including NumPy floating-point
 scalars, remain accepted (#1030).
+
+## MS sorting can overwrite an unrelated output directory
+
+In CASA 6.7.6.14, `ms.sort(newmsname, ['TIME'])` can remove a nonempty
+directory at the output name even when it contains unrelated files and
+is not a table. casa-rs refuses that destination. It publishes a
+complete stage atomically and can replace an otherwise eligible table
+or an empty directory (#1030).
+
+## MS sorting a transient selection checks a nonexistent table path
+
+In CASA 6.7.6.14, after `ms.select({'rows': [21, 3, 8, 1]})`,
+`ms.timesort('selected.ms')` raises `DOos::freeSpace` for the
+unmaterialized table name. casa-rs creates the named copy of the
+selected rows and preserves the source attachment. It requires a named
+destination for the transient selection to protect unselected rows from
+in-place replacement (#1030).
