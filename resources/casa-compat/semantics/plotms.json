@@ -130,7 +130,8 @@
         "ms-vector-time-derived-paired-axes",
         "ms-vector-time-extended-pairs",
         "ms-time-channel-independent-axes",
-        "ms-scalar-time-expressions"
+        "ms-scalar-time-expressions",
+        "ms-derived-scan-field-spans"
       ],
       "behaviors": [
         "coordinates"
@@ -210,7 +211,8 @@
         "ms-time-channel-observed-scalar",
         "ms-time-channel-independent-axes",
         "ms-scalar-time-corrected-residual",
-        "ms-scalar-time-expressions"
+        "ms-scalar-time-expressions",
+        "ms-derived-scan-field-spans"
       ],
       "behaviors": [
         "coordinates"
@@ -431,7 +433,8 @@
         "ms-channel-derived-metadata",
         "ms-time-channel-corrected-derived",
         "ms-time-channel-observed-scalar",
-        "ms-time-channel-independent-axes"
+        "ms-time-channel-independent-axes",
+        "ms-derived-scan-field-spans"
       ],
       "behaviors": [
         "averaging"
@@ -458,7 +461,8 @@
         "ms-time-channel-observed-scalar",
         "ms-time-channel-independent-axes",
         "ms-scalar-time-corrected-residual",
-        "ms-scalar-time-expressions"
+        "ms-scalar-time-expressions",
+        "ms-derived-scan-field-spans"
       ],
       "behaviors": [
         "averaging"
@@ -466,11 +470,12 @@
       "status": "Partial"
     },
     "avgscan": {
-      "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata.",
+      "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging.",
       "evidence": [
         "paired",
         "ms-scan-field-time-columns",
-        "ms-empty-combined-averages"
+        "ms-empty-combined-averages",
+        "ms-derived-scan-field-spans"
       ],
       "behaviors": [
         "averaging"
@@ -478,11 +483,12 @@
       "status": "Partial"
     },
     "avgfield": {
-      "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata.",
+      "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging.",
       "evidence": [
         "paired",
         "ms-scan-field-time-columns",
-        "ms-empty-combined-averages"
+        "ms-empty-combined-averages",
+        "ms-derived-scan-field-spans"
       ],
       "behaviors": [
         "averaging"
@@ -2109,6 +2115,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-scalar-time-expressions-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2228"
+      ]
+    },
+    "ms-derived-scan-field-spans": {
+      "kind": "Same-input vector visibility expressions with scan and field spans",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Vector time-averaged derived visibility coordinates across scans and fields, with or without channel averaging.",
+      "result": "Twelve paired TXT exports match 16 coordinates and exact scan, field and sample identifiers. The cases cover separate and combined spans, chronological versus physical order, a shorter time bin, a selected cube mask, independently weighted axes and time-then-channel averaging. A paired 500 by 360 PNG checks the rendered coordinate and axis units.",
+      "casa_version": "6.7.6.14",
+      "revision": "b3ba24df376667d5e7e22a9eed88888e25ce889d",
+      "source_revision": "b3ba24df376667d5e7e22a9eed88888e25ce889d",
+      "command": "casa-python tools/casa-compat/plotms_ms_time_derived_average_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-derived-scan-field-spans-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2229"
       ]
     }
   }
