@@ -1713,9 +1713,7 @@ def compare_default_model(root, native):
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical_model)
 
 
-def compare_virtual_fourier_model(root, native):
-    work = root / "fourier-model"
-    work.mkdir()
+def virtual_fourier_fixture(work):
     vis, columns = fixture(work)
     with opened(vis / "FIELD") as field:
         direction = field.getcell("PHASE_DIR", 0)[:, 0]
@@ -1726,6 +1724,25 @@ def compare_virtual_fourier_model(root, native):
     assert casa.ft(vis=str(vis), model=str(model), field="FLUX", usescratch=False) is None
     with opened(vis) as table:
         columns["MODEL_DATA"] = table.getcol("MODEL_DATA")
+    return vis, columns
+
+
+def varying_fourier_fixture(vis, time_source):
+    copy_ms(vis, time_source)
+    with opened(time_source, True) as table:
+        _, slots = np.unique(table.getcol("TIME"), return_inverse=True)
+        uvw = table.getcol("UVW")
+        uvw[:, slots % 2 == 1] *= 3
+        table.putcol("UVW", uvw)
+        weights = table.getcol("WEIGHT")
+        weights[:] = np.where(slots % 2 == 0, 1, 9)
+        table.putcol("WEIGHT", weights)
+
+
+def compare_virtual_fourier_model(root, native):
+    work = root / "fourier-model"
+    work.mkdir()
+    vis, columns = virtual_fourier_fixture(work)
     controls = request(vis) | dict(xaxis="real", yaxis="imag", xdatacolumn="model", ydatacolumn="model")
     expected, actual = (work / f"fourier.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected), expformat="txt") is None
@@ -1739,15 +1756,7 @@ def compare_virtual_fourier_model(root, native):
 
     # Give successive integrations distinct Fourier phases in the time test.
     time_source = work / "time-varying-fourier.ms"
-    copy_ms(vis, time_source)
-    with opened(time_source, True) as table:
-        _, slots = np.unique(table.getcol("TIME"), return_inverse=True)
-        uvw = table.getcol("UVW")
-        uvw[:, slots % 2 == 1] *= 3
-        table.putcol("UVW", uvw)
-        weights = table.getcol("WEIGHT")
-        weights[:] = np.where(slots % 2 == 0, 1, 9)
-        table.putcol("WEIGHT", weights)
+    varying_fourier_fixture(vis, time_source)
     samples = controls | dict(vis=str(time_source), spw="0:1")
     raw = work / "fourier-time-input.casa.txt"
     assert reference(**samples, plotfile=str(raw), expformat="txt") is None

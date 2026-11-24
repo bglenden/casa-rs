@@ -71,8 +71,8 @@ pub(super) fn selected_model_cells(
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
         )
     });
-    let derived_average = (columns.extended_derived && !plot.averaging.avgfield)
-        || (!extended && uses_channel_derived(plot, columns.x));
+    let derived_average = columns.implicit_derived_model
+        && (columns.extended_derived || (!extended && uses_channel_derived(plot, columns.x)));
     let can_predict =
         !averaging || ((!extended || ordinary_time) && standard_columns) || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {

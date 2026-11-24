@@ -153,14 +153,13 @@ pub(super) fn check_averaged_derived_storage(
     ms: &MeasurementSet,
     columns: [MsDataColumn; 3],
     averaging_axis: &str,
-    span_fields: bool,
+    implicit_model: bool,
 ) -> Result<(), TaskFailure> {
     let schema = ms.main_table().schema();
     // The visibility reader supplies either a selected virtual model or the
-    // default point source. FLOAT_DATA requires a stored model, and implicit
-    // model evaluation across field spans still needs PlotMS parity work.
+    // default point source in supported plots. FLOAT_DATA requires a stored model.
     let stored_model =
-        span_fields || schema.is_some_and(|schema| schema.contains_column("FLOAT_DATA"));
+        !implicit_model || schema.is_some_and(|schema| schema.contains_column("FLOAT_DATA"));
     let operands = columns
         .into_iter()
         .filter(|column| column.is_derived())

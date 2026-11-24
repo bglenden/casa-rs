@@ -14,7 +14,7 @@ import numpy as np
 from plotms_ms_channel_ordinates_oracle import virtual_fixtures
 from plotms_ms_columns_oracle import (
     compare_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request, rows,
-    time_average_fixture, time_scan_field_fixture,
+    time_average_fixture, time_scan_field_fixture, varying_fourier_fixture, virtual_fourier_fixture,
 )
 
 
@@ -88,6 +88,54 @@ def compare_averaged_expressions(root, native):
             assert "MODEL_DATA" not in table.colnames()
     with opened(mixed) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), stored_model)
+    compare_overlay_refusals(root, native, base | channel_columns | dict(xaxis="channel"), (virtual, mixed))
+
+
+def compare_overlay_refusals(root, native, controls, sources):
+    from casars.tasks import TaskExecutionError, TaskParameterError
+
+    errors = (
+        (TaskParameterError, "require stored MODEL_DATA (#1032)"),
+        (TaskExecutionError, "virtual MeasurementSet models are pending #1032"),
+    )
+    for vis, (category, message) in zip(sources, errors, strict=True):
+        output = root / f"{vis.stem}-overlay.native.txt"
+        try:
+            native(**(controls | dict(vis=str(vis), showatm=True, expformat="txt", plotfile=str(output))))
+        except category as error:
+            assert message in str(error), error
+        else:
+            raise AssertionError(f"PlotMS enabled an implicit-model averaged expression with an overlay for {vis.name}")
+        assert not output.exists()
+    print("Implicit-model averaged expression overlay controls keep both refusals", flush=True)
+
+
+def compare_varying_fourier_expression(root, native):
+    root.mkdir()
+    vis, columns = virtual_fourier_fixture(root)
+    varying = root / "time-varying-fourier.ms"
+    varying_fourier_fixture(vis, varying)
+    samples = request(varying) | dict(xaxis="real", yaxis="imag", spw="0:1", expformat="txt")
+    operands = []
+    for column in ("corrected", "model"):
+        output = root / f"{column}-operand.casa.txt"
+        assert reference(**samples, xdatacolumn=column, ydatacolumn=column, plotfile=str(output)) is None
+        operands.append(np.array([point[:2] for point in rows(output)], dtype=float).reshape(3, 2, 2))
+    corrected, model = operands
+    average = np.average(corrected - model, weights=[1, 9], axis=1)
+    first_model = np.average(corrected, weights=[1, 9], axis=1) - model[:, 0]
+    assert np.max(np.abs(average - first_model)) > 1
+    column = "corrected-model_vector"
+    controls = samples | dict(xdatacolumn=column, ydatacolumn=column, avgtime="20")
+    expected, actual = (root / f"fourier-residual.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = np.array([point[:2] for point in rows(expected)], dtype=float)
+    np.testing.assert_allclose(selected, average, rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 3
+    with opened(varying) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), columns["MODEL_DATA"])
+    print("fourier-residual: 3 matching weighted residuals from distinct model samples", flush=True)
 
 
 def compare_scan_span(root, native):
@@ -133,6 +181,7 @@ def main():
     with chdir(root), plotms_launcher(args.app_run):
         compare_averaged_expressions(root, native)
         compare_scan_span(root / "spans", native)
+        compare_varying_fourier_expression(root / "fourier-model", native)
 
 
 if __name__ == "__main__":
