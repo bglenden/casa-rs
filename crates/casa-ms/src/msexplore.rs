@@ -4114,6 +4114,7 @@ fn build_generic_visibility_scatter(
         Some(calibration) => calibration.row_order.to_vec(),
         None => resolve_selected_rows_with_msselect(ms, selection, &listobs_options)?,
     };
+    let first_selected_row = row_numbers.first().copied();
     let uses_row_numbers = spec.x_axis == MsAxis::Row || spec.y_axes.contains(&MsAxis::Row);
     let selection_order = uses_row_numbers.then(|| row_numbers.clone());
     let needs_interval = spec.x_axis == MsAxis::Interval || spec.y_axes.contains(&MsAxis::Interval);
@@ -4368,13 +4369,22 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    // CASA checks the first row of the selected table before sorting its iterator.
+    let spectrum_probe_slot = if channel_derived {
+        row_numbers
+            .iter()
+            .position(|&row| Some(row) == first_selected_row)
+    } else {
+        Some(0)
+    };
     let channel_weight_kinds = calibration
         .filter(|_| {
             project_plotms_columns
                 && use_spectral_weights
                 && selected_weight_spectrum
                     .as_ref()
-                    .and_then(|column| column.find(0))
+                    .zip(spectrum_probe_slot)
+                    .and_then(|(column, slot)| column.find(slot))
                     .is_some()
         })
         .map(|input| {

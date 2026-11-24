@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from plotms_ms_columns_oracle import (
-    casa, compare_figure, copy_ms, opened, plotms_launcher, reference, request, rows,
+    casa, compare_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request, rows,
 )
 from plotms_ms_derived_average_oracle import weighted_fixture
 from plotms_ms_scalar_derived_average_oracle import compare_case
@@ -96,6 +96,72 @@ def check_effective_float(root, native, controls):
     print("effective-float: reference uses weighted FLOAT_DATA and native retains its refusal", flush=True)
 
 
+def compare_initial_spectrum(root, native, vis):
+    source = root / "initial-spectrum-undefined.ms"
+    copy_ms(vis, source)
+    with opened(source, True) as table:
+        times = table.getcol("TIME")
+        times = times.min() + times.max() - times
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+        table.putcol("SCAN_NUMBER", np.ones_like(table.getcol("SCAN_NUMBER")))
+        selected = np.flatnonzero((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 1)
+                                  & (table.getcol("ANTENNA2") == 2))
+        first = int(selected[0])
+        assert first > 0 and times[first] > times[int(selected[-1])]
+        column = "WEIGHT_SPECTRUM"
+        weights = table.getcol(column)
+        descriptor = table.getcoldesc(column)
+        table.removecols([column])
+        table.addcols({column: descriptor})
+        for row in range(table.nrows()):
+            if row != first:
+                table.putcell(column, row, weights[:, :, row])
+        assert not table.iscelldefined(column, first)
+        assert table.iscelldefined(column, int(selected[-1]))
+
+    # The selected table's first row has no spectrum, even though the
+    # iterator starts with a defined spectrum after sorting by time.
+    controls = request(source) | dict(antenna="A1&A2", avgchannel="2", spw="0:0~3",
+                                      xaxis="real", xdatacolumn="data/model_vector",
+                                      yaxis="imag", ydatacolumn="corrected")
+    compare_case(root, native, "initial-spectrum-undefined", controls, [(1.9, 1), (52 / 34, 4)])
+
+
+def compare_nonfinite_components(root, native, vis):
+    source = root / "nonfinite-components.ms"
+    copy_ms(vis, source)
+    variants = (
+        (complex(1, np.nan), (np.nan, np.nan)),
+        (complex(np.inf, 2), (np.inf, np.nan)),
+        (complex(2, np.inf), (np.nan, np.inf)),
+        (complex(np.inf, np.nan), (np.inf, np.nan)),
+        (complex(np.inf, np.inf), (np.inf, np.inf)),
+        (complex(-np.inf, 2), (-np.inf, np.nan)),
+    )
+    with opened(source, True) as table:
+        selected = np.flatnonzero((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+                                  & (table.getcol("ANTENNA2") == 1))
+        observed, times = table.getcol("DATA"), table.getcol("TIME")
+        by_time = {}
+        for row, (value, mean) in zip(selected, variants, strict=True):
+            observed[:, 0, row] = value
+            by_time[f"{times[row]:.3f}"] = mean
+        table.putcol("DATA", observed)
+    controls = request(source) | dict(avgchannel="2", spw="0:0~3",
+                                      xaxis="real", xdatacolumn="data-model_scalar",
+                                      yaxis="imag", ydatacolumn="data")
+    expected, actual = (root / f"nonfinite-components.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert [(point[2], point[12]) for point in selected] == [("0", "XX"), ("1", "XX")] * 6
+    coordinates = [by_time[point[9]] if point[2] == "0" else (6, 1) for point in selected]
+    np.testing.assert_array_equal(np.array([point[:2] for point in selected], dtype=float), coordinates)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 12
+    print("nonfinite-components: 12 matching selected points", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -116,6 +182,8 @@ def main():
         vis = weighted_fixture(root)
         compare_weighted(root, native, vis)
         compare_weight_edges(root, native, vis)
+        compare_initial_spectrum(root, native, vis)
+        compare_nonfinite_components(root, native, vis)
 
 
 if __name__ == "__main__":

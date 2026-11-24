@@ -285,11 +285,21 @@ fn channel_averaged_operands<const N: usize>(
         } else {
             sample_count as f32
         };
-        let mean = if normalization > 0.0 {
-            sums[operand] / normalization
+        let sum = sums[operand];
+        let mut mean = if normalization > 0.0 {
+            sum / normalization
         } else {
             Complex32::new(0.0, 0.0)
         };
+        // CASA divides a weighted complex sum by a complex normalization.
+        // A nonfinite component affects its finite partner even for a real weight.
+        if spectra[operand].is_some() && normalization > 0.0 && normalization.is_finite() {
+            if sum.re.is_finite() && !sum.im.is_finite() {
+                mean.re = f32::NAN;
+            } else if sum.im.is_finite() && !sum.re.is_finite() {
+                mean.im = f32::NAN;
+            }
+        }
         Complex64::new(f64::from(mean.re), f64::from(mean.im))
     }))
 }
