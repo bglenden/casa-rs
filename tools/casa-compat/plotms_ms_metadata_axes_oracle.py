@@ -126,7 +126,8 @@ def compare(root, native):
 
     compare_flags_and_calibration(root, native, fixture_data[0])
     check_frame_refusal(root, native, fixture_data[0])
-    compare_feed_selection(root, native)
+    feed_fixture = compare_feed_selection(root, native)
+    compare_row_axes(root, native, feed_fixture)
 
 
 def compare_flags_and_calibration(root, native, vis):
@@ -229,6 +230,7 @@ def compare_feed_selection(root, native):
     assert compare_text(actual, expected) == 30
     print("feed-callibrary: 30 matching selected feed coordinates", flush=True)
     compare_feed_atmosphere(work, native, vis)
+    return vis
 
 
 def compare_feed_atmosphere(work, native, source):
@@ -249,6 +251,73 @@ def compare_feed_atmosphere(work, native, source):
                                   feed="1", spw="0", showatm=True)
     _, count, _ = paired_text(work, native, "feed-atmosphere", controls)
     assert count == 14
+
+
+def compare_row_axes(root, native, source):
+    from casatools import quanta
+
+    work = root / "row-axes"
+    work.mkdir()
+    vis = work / "rows.ms"
+    copy_ms(source, vis)
+    with opened(vis / "STATE", True) as table:
+        first_state = table.nrows()
+        table.addrows(3)
+        modes = np.array(["CALIBRATE_PHASE#ON_SOURCE", "OBSERVE_TARGET#ON_SOURCE",
+                          "CALIBRATE_PHASE#ON_SOURCE"])
+        table.putcol("OBS_MODE", modes, startrow=first_state, nrow=len(modes))
+    observation = vis / "OBSERVATION"
+    with opened(observation, True) as table:
+        next_observation = table.nrows()
+        table.copyrows(str(observation), startrowout=next_observation, nrow=1)
+    with opened(vis, True) as table:
+        times, integrations = np.unique(table.getcol("TIME"), return_inverse=True)
+        second_baseline = table.getcol("ANTENNA2") == 2
+        states = first_state + np.where(second_baseline, 1, integrations % 3)
+        table.putcol("STATE_ID", states.astype(np.int32))
+        table.putcol("OBSERVATION_ID", np.where(integrations % 6 < 3, 0, next_observation).astype(np.int32))
+
+    base = request(vis) | dict(xaxis="row", yaxis="real", xdatacolumn="", ydatacolumn="data",
+                               antenna="A0&A1;A0&A2", spw="0:1~5^2", correlation="XX,YY",
+                               title="Selected visibility rows")
+    units = quanta()
+    bounds = times[[1, 3]] + [-1.0, 1.0]
+    timerange = "~".join(units.time(units.quantity(value, "s"), form="ymd", prec=10)[0]
+                         for value in bounds)
+    cases = (
+        ("row", {}, 72, set(range(12))),
+        ("antenna1", dict(xaxis="ant1"), 72, {0}),
+        ("antenna2", dict(xaxis="antenna2"), 72, {1, 2}),
+        ("observation", dict(xaxis="observation"), 72, {0, next_observation}),
+        ("intent", dict(xaxis="intent"), 72, {1, 2}),
+        ("feed1", dict(xaxis="feed1"), 72, {0, 1}),
+        ("feed2", dict(xaxis="feed2"), 72, {0, 1}),
+        ("observation-selected", dict(xaxis="observation", observation=str(next_observation)),
+         36, {next_observation}),
+        ("intent-selected", dict(xaxis="intent", intent="OBSERVE_TARGET*"), 48, {2}),
+        ("feed-selected", dict(xaxis="feed2", feed="1"), 36, {0, 1}),
+        ("time-selected", dict(timerange=timerange), 36, set(range(6))),
+        ("uv-selected", dict(uvrange=">29.9m"), 36, set(range(6))),
+        ("taql-selected", dict(msselect="ARRAY_ID = 1 AND ANTENNA2 = 2"), 18, {0, 1, 2}),
+        ("row-ordinate", dict(xaxis="real", yaxis="row", xdatacolumn="data", ydatacolumn=""),
+         72, set(range(12))),
+    )
+    for name, options, count, identifiers in cases:
+        controls = base | options
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        points = rows(expected)
+        axis_slot = int(name == "row-ordinate")
+        assert len(points) == count, (name, len(points), count)
+        assert {int(point[axis_slot]) for point in points} == identifiers, name
+        assert {point[2] for point in points} == {"1", "3", "5"}
+        assert {point[12] for point in points} == {"XX", "YY"}
+        if name == "row":
+            assert [int(point[0]) for point in points[::6]] == [0, 1, 5, 4, 2, 3, 8, 9, 6, 7, 11, 10]
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching row axis coordinates", flush=True)
+    compare_figure(work, native, base, work / "row.casa.txt", ("Selected visibility rows", "Row", "Real"))
 
 
 def main():
