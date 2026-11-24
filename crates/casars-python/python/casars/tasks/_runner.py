@@ -396,6 +396,10 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
             message = error.completion.message or ""
             if message.endswith(" exists."):
                 raise ValueError(message) from error
+            table, _, column = message.rpartition(" does not contain ")
+            if table.startswith("MeasurementSet ") and column in ("DATA", "FLOAT_DATA", "CORRECTED_DATA"):
+                infile = table.removeprefix("MeasurementSet ")
+                raise RuntimeError(f"Desired column ({column}) not found in the input MS ({infile}).") from error
             raise RuntimeError(message) from error
     if name == "sdatmcor":
         return _call_sdatmcor(values)
