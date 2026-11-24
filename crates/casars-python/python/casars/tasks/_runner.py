@@ -244,6 +244,8 @@ def _call_casa(wrapper: Callable[..., Any], arguments: Mapping[str, Any]) -> Any
     name = wrapper.__name__
     if name in ("applycal", "clearcal", "delmod", "ft", "initweights", "statwt", "uvmodelfit", "uvsub"):
         _validate_required_path(values, "vis", arguments["vis"])
+    if name == "wvrgcal":
+        return _call_wvrgcal(values, arguments)
     if name in ("flagdata", "flagmanager"):
         vis = arguments["vis"]
         if vis is not None and not isinstance(vis, (list, tuple)):
@@ -1755,6 +1757,39 @@ def _resolve_relative_data_path(path: str) -> str:
         if candidate.exists():
             return str(candidate)
     return path
+
+
+def _call_wvrgcal(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
+    vis = arguments["vis"]
+    if vis is not None:
+        if not isinstance(vis, str):
+            raise AssertionError(f"the vis parameter must be a path that exists ('{vis}' does not exist)")
+        _validate_required_path(values, "vis", vis)
+
+    caltable = arguments["caltable"]
+    errors = {}
+    if caltable is None:
+        errors["caltable"] = ["null value not allowed"]
+    elif not isinstance(caltable, str):
+        errors["caltable"] = ["must be of cPath type"]
+    if vis is None:
+        errors["vis"] = ["null value not allowed"]
+    if errors:
+        raise AssertionError(str(errors))
+
+    output = os.path.expanduser(caltable)
+    directory = os.path.dirname(output) or "."
+    if not output:
+        problem = "Must provide output calibration table name in parameter caltable."
+    elif os.path.exists(output):
+        problem = f"Output caltable {output} already exists - will not overwrite."
+    elif not os.access(directory, os.W_OK):
+        problem = f"Don't have write permission for output directory {directory}"
+    else:
+        values["caltable"] = output
+        return run("wvrgcal", **values).value
+    print(f"*** Error ***  {problem}")
+    raise Exception()
 
 
 def _call_appendantab(values: dict[str, Any], arguments: Mapping[str, Any]) -> Any:
