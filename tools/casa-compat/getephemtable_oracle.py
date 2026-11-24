@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import threading
 from unittest.mock import patch
 from urllib.parse import parse_qs
@@ -119,8 +120,8 @@ def compare_case(work, raw, objectname, asis, timerange, interval, expected):
     return len(oracle[1]["MJD"][1])
 
 
-def check_http_error(work, apis):
-    with horizons("No result", status=404) as (url, requests), route_horizons_requests(url):
+def check_query_failure(work, apis, url):
+    with route_horizons_requests(url):
         for label, api in apis:
             output = work / f"{label}-failed.tab"
             rawfile = work / f"{label}-failed.txt"
@@ -129,7 +130,17 @@ def check_http_error(work, apis):
                 outfile=str(output), rawdatafile=str(rawfile),
             ) is None
             assert not output.exists() and not rawfile.exists()
+
+
+def check_transport_errors(work, apis):
+    with horizons("No result", status=404) as (url, requests):
+        check_query_failure(work, apis, url)
         assert len(requests) == len(apis)
+    # Keep the port reserved, without accepting connections.
+    with socket.socket() as unavailable:
+        unavailable.bind(("127.0.0.1", 0))
+        port = unavailable.getsockname()[1]
+        check_query_failure(work, apis, f"http://127.0.0.1:{port}/api/horizons.api")
 
 
 def check_destination_protection(work, raw):
@@ -219,8 +230,8 @@ def main():
         if name == "calendar":
             compare_moving_field(case)
             print("Three moving J2000 phase centres agree through both MeasurementSet readers")
-    check_http_error(root, (("casa", casatasks), ("native", tasks)))
-    print("Both public tasks handle a real HTTP 404 without publishing products")
+    check_transport_errors(root, (("casa", casatasks), ("native", tasks)))
+    print("Both public tasks handle HTTP 404 and refused connections without publishing products")
     check_destination_protection(root, raw)
     print("An overlapping raw path and an unrelated IERS table retain their original storage")
     for name, data, target, site_time in extra:
