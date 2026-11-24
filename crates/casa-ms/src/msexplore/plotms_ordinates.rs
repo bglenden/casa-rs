@@ -750,7 +750,8 @@ impl AveragedVisibility {
     pub(super) fn add_normalized_vector_sample(&mut self, value: Complex32, weight: f32) {
         self.add_time_projection(TimeProjection {
             projection: None,
-            weighted_sums: [value * weight, Complex32::default()],
+            // The antenna accumulator adds to positive zero, including at the first endpoint.
+            weighted_sums: [Complex32::default() + value * weight, Complex32::default()],
             total_weights: [weight, 0.0],
         });
     }

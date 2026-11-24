@@ -4105,6 +4105,14 @@ control with the original samples and `YY` in slot zero in both descriptions.
 The control also uses different `XX` values to verify correlation selection
 and preserves the original collapsed baseline metadata (#2234).
 
+The pinned task also refuses different physical `YY` slots when vector time
+averaging feeds a per-antenna average. The paired fixture records
+`[XX, XY, YX, YY]` on the first baseline and `[YY]` on the second. After
+selecting `YY`, both buffers have the same selected shape. casa-rs emits one
+point per antenna, with Real DATA and Imaginary CORRECTED_DATA coordinates
+of (2, 4), (1, −2), and (3, −6). These match the CASA control with `YY`
+in slot zero in both descriptions (#2239).
+
 ## Time-averaged clipping and TFCrop can substitute zeros for defined inputs
 
 In CASA 6.7.6.14, time-averaged `flagdata` compares zeros when clipping or
