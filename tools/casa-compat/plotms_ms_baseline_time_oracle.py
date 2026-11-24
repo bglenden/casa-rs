@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Compare public PlotMS vector time and baseline averages with pinned CASA."""
+"""Compare public PlotMS time and baseline averages with pinned CASA."""
 
 import argparse
 from contextlib import chdir
@@ -14,6 +14,7 @@ import numpy as np
 from plotms_ms_baseline_channels_oracle import make_fixture as make_channel_baseline_fixture
 from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
 from plotms_ms_columns_oracle import (
+    compare_figure,
     compare_ordinate_figure,
     compare_text,
     copy_ms,
@@ -229,6 +230,63 @@ def compare_channel_time_reductions(work, native, controls, spectral):
         print(f"{name}: {len(selected)} matching time, channel and baseline coordinates", flush=True)
 
 
+def compare_scalar_baselines(root, native):
+    source, flagged, start = make_fixture(root)
+    for vis in (source, flagged):
+        with opened(vis, True) as table:
+            high = table.getcol("ANTENNA2") == 2
+            for column, phase in (("DATA", 120), ("CORRECTED_DATA", 80), ("MODEL_DATA", 45)):
+                angles = np.radians(np.where(high, -phase, phase))
+                values = table.getcol(column) * np.exp(1j * angles)
+                table.putcol(column, values.astype(np.complex64))
+
+    base = request(source) | dict(
+        antenna="A0&A1;A0&A2", spw="0:1", avgbaseline=True, scalar=True,
+        xaxis="amp", xdatacolumn="data", yaxis="phase", ydatacolumn="corrected",
+        title="Scalar baseline averages",
+    )
+    amplitudes = [1.2, 31 / 11, 56 / 12, 33 / 7, 58 / 8, 89 / 9]
+    phases = [64, 400 / 11, 40 / 3, 400 / 7, 20, -80 / 9]
+    times = [start + offset for offset in range(0, 60, 10)]
+    pairs = list(zip(amplitudes, phases, strict=True))
+    flagged_pairs = [pairs[0], (5, -80), pairs[2], (9, -80), (11, -80), pairs[5]]
+    avgtime_pairs = [(3, 400 / 11), (7.5, 20)]
+    avgtime_times = [start + 10, start + 40]
+    channels = dict(spw="0:0~3", avgchannel="2")
+    cases = (
+        ("independent", {}, pairs, times),
+        ("time-axis", dict(xaxis="time"), list(zip(times, phases, strict=True)), times),
+        ("cube-flags", dict(vis=str(flagged)), flagged_pairs, times),
+        ("signed-residual", dict(yaxis="amp", ydatacolumn="corrected-model_vector"),
+         [(amp, -90 * amp) for amp in amplitudes], times),
+        ("avgtime", dict(avgtime="20"), avgtime_pairs, avgtime_times),
+        ("avgchannel", channels, [pair for pair in pairs for _ in range(2)], np.repeat(times, 2)),
+        ("avgtime-avgchannel", channels | dict(avgtime="20"),
+         [pair for pair in avgtime_pairs for _ in range(2)], np.repeat(avgtime_times, 2)),
+    )
+    for name, overrides, coordinates, centers in cases:
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert len(selected) == len(coordinates)
+        assert {tuple(point[3:9]) for point in selected} == {("1", "0", "-1", "-1", "*", "*")}
+        assert {tuple(point[11:13]) for point in selected} == {("0", "XX")}
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   coordinates, rtol=1.2e-5)
+        if "avgchannel" in controls:
+            assert [point[2] for point in selected] == ["0", "1"] * (len(selected) // 2)
+            assert [point[10] for point in selected] == ["100.000500000", "100.002500000"] * (len(selected) // 2)
+        else:
+            assert {(point[2], point[10]) for point in selected} == {("1", "100.001000000")}
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(coordinates)
+        print(f"{name}: {len(coordinates)} matching scalar baseline coordinates", flush=True)
+        if name == "independent":
+            compare_figure(root, native, controls, expected, (base["title"], "Amp", "Phase:corrected (degrees)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -248,6 +306,9 @@ def main():
     with chdir(root), plotms_launcher(args.app_run):
         compare(root, native)
         compare_time_channel_baselines(root, native)
+        scalar = root / "scalar-baselines"
+        scalar.mkdir()
+        compare_scalar_baselines(scalar, native)
 
 
 if __name__ == "__main__":
