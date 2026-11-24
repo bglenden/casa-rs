@@ -273,18 +273,21 @@ def compare_expressions(root, native):
             compare_figure(root, native, controls, expected, (controls["title"], *titles[name]))
 
 
-def compare_scalar_time_spans(root, native):
+def compare_scalar_time_spans(root, native, *, average_channels=False):
     source, times, scan, field, reversed_time = time_scan_field_fixture(root)
     start = times[0]
     masked = root / "masked-spans.ms"
     copy_ms(source, masked)
     with opened(masked, True) as table:
         flags = table.getcol("FLAG")
-        flags[0, 1, :] = table.getcol("TIME") >= times[6]
+        channels = slice(0, 2) if average_channels else slice(1, 2)
+        flags[0, channels, :] = table.getcol("TIME") >= times[6]
         table.putcol("FLAG", flags)
     base = request(source) | dict(field="", xaxis="time", xdatacolumn="", yaxis="amp",
                                   ydatacolumn="corrected-model_vector", spw="0:1", avgtime="200",
                                   scalar=True, title="Scalar averages across scans and fields")
+    if average_channels:
+        base |= dict(spw="0:0~1", avgchannel="2")
     split = [(None, -90., 25., "1", "0"), (None, -270., 85., "2", "1")]
     joined = [(None, -252., 55., "-1", "0")]
     cross = dict(avgscan=True, avgfield=True)
@@ -305,6 +308,9 @@ def compare_scalar_time_spans(root, native):
          [(-277.2, .1, 55., "-1", "0")]),
         ("cross-both-stored", cross | dict(ydatacolumn="corrected"), [(None, 28., 55., "-1", "0")]),
     )
+    if average_channels:
+        cases += (("cross-both-frequency", cross | dict(xaxis="frequency", ydatacolumn="corrected"),
+                   [(100.0005, 28., 55., "-1", "0")]),)
     for name, overrides, coordinates in cases:
         controls = base | overrides
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
@@ -317,6 +323,9 @@ def compare_scalar_time_spans(root, native):
                                    [point[1] for point in coordinates], rtol=1.2e-5)
         if controls["xaxis"] == "time":
             np.testing.assert_allclose([float(point[0]) for point in selected], centers, rtol=0, atol=.00051)
+        elif controls["xaxis"] == "frequency":
+            np.testing.assert_allclose([float(point[0]) for point in selected],
+                                       [point[0] for point in coordinates], rtol=0, atol=1e-7)
         else:
             np.testing.assert_allclose([float(point[0]) for point in selected],
                                        [point[0] for point in coordinates], rtol=1.2e-5)
@@ -324,6 +333,9 @@ def compare_scalar_time_spans(root, native):
         assert compare_text(actual, expected) == len(coordinates)
         if controls["xaxis"] == "time":
             np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+        elif controls["xaxis"] == "frequency":
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                                       [point[0] for point in coordinates], rtol=0, atol=1e-7)
         print(f"{name}: {len(coordinates)} matching scalar scan and field span coordinates", flush=True)
         if name == "cross-both":
             compare_figure(root, native, controls, expected, (controls["title"], "Time (MJD seconds)",
@@ -746,6 +758,9 @@ def main():
         spans = root / "scan-field-spans"
         spans.mkdir()
         compare_scalar_time_spans(spans, native)
+        combined_spans = root / "channel-scan-field-spans"
+        combined_spans.mkdir()
+        compare_scalar_time_spans(combined_spans, native, average_channels=True)
         combined = root / "time-channel"
         combined.mkdir()
         compare_combined_scalar_time(combined, native)
