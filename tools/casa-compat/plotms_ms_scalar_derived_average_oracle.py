@@ -20,12 +20,13 @@ def compare_case(root, native, name, controls, coordinates):
     expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected), expformat="txt") is None
     selected = rows(expected)
-    assert [(point[2], point[12]) for point in selected] == [("0", "XX"), ("1", "XX")] * 6
+    bins = [(str(index), "XX") for index in range(len(coordinates))]
+    assert [(point[2], point[12]) for point in selected] == bins * 6
     values = np.array([point[:2] for point in selected], dtype=float)
     np.testing.assert_allclose(values, np.tile(coordinates, (6, 1)), rtol=1.2e-5, atol=1e-7)
     assert native(**controls, plotfile=str(actual), expformat="txt") is None
-    assert compare_text(actual, expected) == 12
-    print(f"{name}: 12 matching selected coordinates", flush=True)
+    assert compare_text(actual, expected) == len(selected)
+    print(f"{name}: {len(selected)} matching selected coordinates", flush=True)
     return expected
 
 
@@ -60,6 +61,30 @@ def compare_weighted(root, native, vis):
     compare_case(root, native, "equal-rounded-norms", controls, [(0, 5), (0, 1)])
 
 
+def compare_companion_reduction(root, native, vis):
+    source = root / "companion-reduction.ms"
+    copy_ms(vis, source)
+    with opened(source, True) as table:
+        shape = table.getcol("DATA").shape
+        clear = np.zeros(shape, dtype=bool)
+        unit = np.ones(shape, dtype=np.float32)
+        corrected = np.resize(np.array([2**25, 1, -(2**25)], dtype=np.complex64), shape[1])
+        table.putcol("CORRECTED_DATA", np.broadcast_to(corrected[None, :, None], shape))
+        table.putcol("MODEL_DATA", np.zeros(shape, dtype=np.complex64))
+        table.putcol("FLAG", clear)
+        table.putcol("WEIGHT_SPECTRUM", unit)
+        table.putcol("SIGMA_SPECTRUM", unit)
+        observed = table.getcol("DATA")
+        observed[:, 0, :] = complex(0, np.nan)
+        table.putcol("DATA", observed)
+    controls = request(source) | dict(avgchannel="3", spw="0:0~2", xaxis="amp",
+                                      xdatacolumn="corrected-model_scalar")
+    compare_case(root, native, "corrected-companion-cancellation",
+                 controls | dict(yaxis="real", ydatacolumn="corrected"), [(0, 0)])
+    compare_case(root, native, "observed-companion-nonfinite",
+                 controls | dict(yaxis="imag", ydatacolumn="data"), [(0, np.nan)])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -77,7 +102,9 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare_weighted(root, native, weighted_fixture(root))
+        vis = weighted_fixture(root)
+        compare_weighted(root, native, vis)
+        compare_companion_reduction(root, native, vis)
 
 
 if __name__ == "__main__":

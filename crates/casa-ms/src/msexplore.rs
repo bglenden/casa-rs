@@ -4724,14 +4724,13 @@ fn build_generic_visibility_scatter(
                 for (index, (grid, buffer)) in
                     visibility_grids.iter().zip(&mut bin_buffers).enumerate()
                 {
-                    buffer.collect(
-                        grid,
-                        flags.as_ref().expect("visibility data loads flags"),
-                        column_weights.get(index).copied().flatten(),
-                        *corr_index,
-                        bin,
-                        show_flagged,
-                    );
+                    let flags = flags.as_ref().expect("visibility data loads flags");
+                    let weights = column_weights.get(index).copied().flatten();
+                    if channel_derived && bin.averaged {
+                        buffer.collect_channel_average(grid, flags, weights, *corr_index, bin);
+                    } else {
+                        buffer.collect(grid, flags, weights, *corr_index, bin, show_flagged);
+                    }
                 }
                 if let Some(flags) = flags.as_ref() {
                     collect_bin_flags_into(flags, *corr_index, bin, &mut flag_samples);
