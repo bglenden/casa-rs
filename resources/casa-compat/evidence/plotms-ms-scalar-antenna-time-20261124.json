@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "7f2f8503ed8592f7b9c65bf4251da93a5408dba1",
+  "source_revision": "7f2f8503ed8592f7b9c65bf4251da93a5408dba1",
+  "baseline_revision": "0cdd0e2b09f644f7e62bfbeacca7e2ba3dd295e7",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Ordinary scalar time averaging per antenna, including preceding complex channel averaging, weighted visibility axes, interval timing and output antenna IDs.",
+  "result": "passed",
+  "baseline_result": "Main exported nine selected points over three scalar intervals. CASA exported six selected points over two intervals.",
+  "text_exports": 10,
+  "points": 63,
+  "figures": 2,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "paired_shape_refusals": 1,
+  "pending_virtual_model_reference_points": 6,
+  "time_coordinate_tolerance_seconds": 0.00051
+}
