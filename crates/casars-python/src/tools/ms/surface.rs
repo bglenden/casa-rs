@@ -188,7 +188,7 @@ const METHODS: &[Method] = &[
             param("average", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Status::Partial,
     ),
     method(
         "getdataold",

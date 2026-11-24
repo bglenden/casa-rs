@@ -89,6 +89,7 @@ IMPLEMENTED["calibrater"] = {
     "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags", "fluxscale", "specifycal", "state",
 }
 PARTIAL = {
+    "ms": {"getdata"},
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
 }
