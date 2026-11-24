@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Compare public PlotMS vector channel and baseline averages with pinned CASA."""
+
+import argparse
+from contextlib import chdir
+from importlib.metadata import version
+import os
+from pathlib import Path
+
+import casatasks as casa
+import numpy as np
+
+from plotms_ms_columns_oracle import (
+    compare_ordinate_figure,
+    compare_text,
+    copy_ms,
+    opened,
+    plotms_launcher,
+    reference,
+    request,
+    rows,
+    time_average_fixture,
+)
+
+
+def make_fixture(root):
+    source, integration = time_average_fixture(root)
+    with opened(source, True) as table:
+        high = table.getcol("ANTENNA2") == 2
+        shape = table.getcol("DATA").shape
+        indices = np.arange(shape[1])
+        amplitudes = 2 * indices[None, :, None] + np.where(high, 4, 1)
+        for factor, name in enumerate(("DATA", "CORRECTED_DATA", "MODEL_DATA")):
+            table.putcol(name, np.broadcast_to((amplitudes * 10**factor).astype(np.complex64), shape).copy())
+        for name, value in (("WEIGHT", 9), ("SIGMA", 0.5)):
+            weights = np.where(high, value, 1).astype(np.float32)
+            table.putcol(name, np.broadcast_to(weights, (shape[0], shape[2])).copy())
+    spectral, spectral_flagged, plain_flagged = (
+        root / f"{name}.ms" for name in ("spectral", "spectral-flagged", "plain-flagged")
+    )
+    copy_ms(source, spectral)
+    with opened(spectral, True) as table:
+        descriptor = table.getcoldesc("DATA")
+        for name, high_ratio, low_ratio in (("WEIGHT_SPECTRUM", 1, 9), ("SIGMA_SPECTRUM", 0.5, 2)):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            spectrum = np.where(indices[:, None] % 2 == 0, 1, np.where(high, high_ratio, low_ratio))
+            table.putcol(name, np.broadcast_to(spectrum.astype(np.float32), shape).copy())
+    for original, flagged in ((source, plain_flagged), (spectral, spectral_flagged)):
+        copy_ms(original, flagged)
+        with opened(flagged, True) as table:
+            flags = table.getcol("FLAG")
+            flags[0, 1, ~high] = True
+            flags[0, :2, high & (integration % 2 == 0)] = True
+            table.putcol("FLAG", flags)
+    return source, spectral, plain_flagged, spectral_flagged
+
+
+def compare(root, native):
+    source, spectral, plain_flagged, spectral_flagged = make_fixture(root)
+    controls = request(source) | dict(
+        antenna="A0&A1;A0&A2", xaxis="real", xdatacolumn="data",
+        yaxis=["real", "real"], ydatacolumn=["corrected", "model"],
+        yaxislocation=["left", "right"], spw="0:0~3", avgchannel="2", avgbaseline=True,
+    )
+    cases = (
+        ("row-weights", source, [(4.7, 47), (9.7, 97)] * 6),
+        ("spectra", spectral, [(217 / 110, 31), (163 / 22, 815 / 11)] * 6),
+        ("row-weights-with-flags", plain_flagged,
+         [(1, 10), (9.7, 97), (137 / 29, 1370 / 29), (284 / 29, 2840 / 29)] * 3),
+        ("spectra-with-flags", spectral_flagged,
+         [(1, 10), (7.5, 75), (134 / 65, 250 / 13), (100 / 13, 1000 / 13)] * 3),
+    )
+    for name, vis, corrected in cases:
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        options = controls | dict(vis=str(vis), expformat="txt")
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 24
+        assert [point[2] for point in selected] == ["0", "1"] * 12
+        assert [point[10] for point in selected] == ["100.000500000", "100.002500000"] * 12
+        assert {tuple(point[5:9]) for point in selected} == {("-1", "-1", "*", "*")}
+        model = [(x, 10 * y) for x, y in corrected]
+        np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                                   corrected + model, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching channel-and-baseline coordinates", flush=True)
+    figure = controls | dict(vis=str(spectral_flagged))
+    compare_ordinate_figure(root, "spectra-with-flags", native, figure, "Real", ["Real:corrected", "Real:model"])
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--native-bin", type=Path, required=True)
+    parser.add_argument("--calibrate-bin", type=Path)
+    parser.add_argument("--app-run", type=Path)
+    args = parser.parse_args()
+    assert casa.version_string() == "6.7.6.14"
+    assert version("casaplotms") == "2.9.1"
+    root = args.work.resolve()
+    root.mkdir()
+    os.environ["CASARS_MSEXPLORE_BIN"] = str(args.native_bin.resolve())
+    calibrate = args.calibrate_bin or args.native_bin.with_name("calibrate")
+    os.environ["CASARS_CALIBRATE_BIN"] = str(calibrate.resolve())
+    from casars.tasks import plotms as native
+
+    with chdir(root), plotms_launcher(args.app_run):
+        compare(root, native)
+
+
+if __name__ == "__main__":
+    main()
