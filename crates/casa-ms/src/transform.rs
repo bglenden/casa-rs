@@ -71,6 +71,7 @@ pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 pub use input_view::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use main_arrays::MainArrayBlock;
+pub(crate) use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};
 use subtable_copy::copy_subtables;
@@ -873,7 +874,7 @@ fn mstransform_staged(
     } else {
         selection_metadata::sort_selected_rows(
             input.main_table(),
-            request,
+            &request.input_ms,
             selected_rows,
             selected_ddids,
             order,

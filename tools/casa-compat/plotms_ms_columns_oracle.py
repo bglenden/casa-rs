@@ -1066,6 +1066,44 @@ def compare_baseline_averaged_columns(root, native):
             assert compare_text(actual, expected) == len(corrected)
     figure = controls | dict(vis=str(work / "baseline-independent.ms"))
     compare_ordinate_figure(work, "baseline-independent", native, figure, "Real", ["Real:corrected", "Real:model"])
+    compare_baselines_in_observation_order(work, source, controls, native)
+
+
+def compare_baselines_in_observation_order(work, source, controls, native):
+    vis = work / "overlapping-observations.ms"
+    copy_ms(source, vis)
+    with opened(vis / "OBSERVATION", True) as table:
+        other = table.nrows()
+        table.addrows(1)
+        for name in table.colnames():
+            if table.iscelldefined(name, 0):
+                table.putcell(name, other, table.getcell(name, 0))
+    with opened(vis, True) as table:
+        times, integration = np.unique(table.getcol("TIME"), return_inverse=True)
+        second_observation = integration >= 6
+        reversed_times = times[5 - integration % 6]
+        table.putcol("TIME", reversed_times)
+        table.putcol("TIME_CENTROID", reversed_times)
+        table.putcol("OBSERVATION_ID", np.where(second_observation, other, 0).astype(np.int32))
+        for name, value in (("FIELD_ID", 0), ("SCAN_NUMBER", 1), ("WEIGHT", 1)):
+            table.putcol(name, np.full_like(table.getcol(name), value))
+        high = table.getcol("ANTENNA2") == 2
+        for name, values in (("DATA", np.where(second_observation, 9, 1)),
+                             ("CORRECTED_DATA", np.where(second_observation, 9, np.where(high, -1, 1))),
+                             ("MODEL_DATA", np.where(second_observation, 15, 5))):
+            shape = table.getcol(name).shape
+            table.putcol(name, np.broadcast_to(values.astype(np.complex64), shape).copy())
+    options = controls | dict(vis=str(vis), yaxis=["amp", "real"], expformat="txt")
+    expected, actual = (work / f"observation-order.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [point[13] for point in selected] == (["0"] * 6 + [str(other)] * 6) * 2
+    assert [point[9] for point in selected] == [f"{time:.3f}" for time in times[:6]] * 4
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(1, 0)] * 6 + [(9, 9)] * 6 + [(1, 5)] * 6 + [(9, 15)] * 6)
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == len(selected)
+    print(f"observation-order: {len(selected)} matching baseline-averaged coordinates", flush=True)
 
 
 def compare_float_columns(root, vis, source, native):
