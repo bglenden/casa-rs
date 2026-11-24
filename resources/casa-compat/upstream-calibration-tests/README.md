@@ -36,6 +36,14 @@ paths for that run. The `predictcomp` and `sdatmcor` suites also resolve stock
 data outside the casatestdata `unittest` directory. The runner adds that pinned
 source directory to CASA's search path for those two suites.
 
+For `gencal_test_tec_vla::test_tec_maps`, use the Mac mini with CASA 6.7.6.14
+and a fresh working directory whose full path has no spaces. CASA passes the
+download path to `gunzip` unquoted. Let CASA's normal anonymous FTPS download from
+`gdc.cddis.eosdis.nasa.gov` retrieve `igsg1160.10i.Z` and
+`IGS0OPSFIN_20233350000_01D_02H_GIM.INX.gz`. The cloud workspace could not
+reach the FTP greeting. Record fixture download verification and the upstream
+test result separately.
+
 For `getephemtable`, run `test_secondaryname_in_parentheses` in a fresh process
 with `--only` so the C++ measures reader opens the newly published table. The
 original `test_webservice_errors` patches a private CASA Python function.
