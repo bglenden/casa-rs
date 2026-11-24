@@ -207,6 +207,23 @@ pub(super) struct AveragedVisibility {
 }
 
 impl AveragedVisibility {
+    pub(super) fn add_weighted_value(&mut self, value: Complex64, weight: f64) {
+        self.values.push(value);
+        self.weights.push(weight);
+    }
+
+    pub(super) fn vector_mean(&self) -> Option<Complex64> {
+        if self.values.is_empty() {
+            return None;
+        }
+        let total = self.weights.iter().sum::<f64>();
+        Some(if total > 0.0 {
+            weighted_visibility_mean(&self.values, &self.weights, total)
+        } else {
+            Complex64::new(0.0, 0.0)
+        })
+    }
+
     pub(super) fn add(
         &mut self,
         samples: VisibilityBinSamples<'_>,

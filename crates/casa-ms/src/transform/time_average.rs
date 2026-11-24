@@ -2,6 +2,7 @@
 //! Baseline and visibility accumulation for MeasurementSet time averaging.
 
 use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
 use std::path::Path;
 
 use casa_tables::TableError;
@@ -41,6 +42,7 @@ pub(super) struct TimeGroup {
     pub(super) first: TimeSample,
     pub(super) rows: Vec<TimeInputRow>,
     pub(super) row_in_chunk: usize,
+    completed_before: Option<usize>,
 }
 
 impl TimeGroup {
@@ -49,6 +51,7 @@ impl TimeGroup {
             first,
             rows: vec![row],
             row_in_chunk: 0,
+            completed_before: None,
         }
     }
 
@@ -175,6 +178,13 @@ pub(super) fn uvw_coordinates(uvw: Option<&ArrayValue>) -> Option<[f64; 3]> {
 pub(crate) struct PlotTimeGroups {
     group_by_row_slot: Vec<usize>,
     first_row_slots: Vec<usize>,
+    buffers: Vec<PlotTimeBuffer>,
+}
+
+/// A subchunk of finalized rows emitted by the averaging visibility iterator.
+pub(crate) struct PlotTimeBuffer {
+    pub(crate) groups: Range<usize>,
+    pub(crate) first_group: usize,
 }
 
 impl PlotTimeGroups {
@@ -187,6 +197,11 @@ impl PlotTimeGroups {
     pub(crate) fn first_row_slot(&self, group: usize) -> usize {
         self.first_row_slots[group]
     }
+
+    /// The emitted subchunks needed by the downstream PlotMS baseline reducer.
+    pub(crate) fn buffers(&self) -> &[PlotTimeBuffer] {
+        &self.buffers
+    }
 }
 
 /// Plan vector time groups for the selected PlotMS rows and scan/field barriers.
@@ -194,8 +209,14 @@ pub(crate) fn selected_plot_time_groups(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
     options: TimeAverageOptions,
+    collect_buffers: bool,
 ) -> Result<PlotTimeGroups, MsTransformError> {
     let groups = plan(ms, rows, options, MainRowOrder::Transform)?;
+    let buffers = if collect_buffers {
+        plot_time_buffers(&groups)
+    } else {
+        Vec::new()
+    };
     let mut group_by_row = HashMap::with_capacity(rows.len());
     let mut first_rows = Vec::with_capacity(groups.len());
     for (index, group) in groups.into_iter().enumerate() {
@@ -217,7 +238,38 @@ pub(crate) fn selected_plot_time_groups(
     Ok(PlotTimeGroups {
         group_by_row_slot,
         first_row_slots,
+        buffers,
     })
+}
+
+fn plot_time_buffers(groups: &[TimeGroup]) -> Vec<PlotTimeBuffer> {
+    let mut offset = 0;
+    groups
+        .chunk_by(|left, right| {
+            left.first.chunk == right.first.chunk && left.completed_before == right.completed_before
+        })
+        .map(|buffer| {
+            let start = offset;
+            offset += buffer.len();
+            let anchor = if buffer[0].completed_before.is_none() {
+                // The iterator flushes the remaining averages in antenna-pair order.
+                buffer
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, group)| {
+                        let [first, second] = group.first.antenna_pair;
+                        (first.max(second), first.min(second))
+                    })
+                    .map_or(0, |(index, _)| index)
+            } else {
+                0
+            };
+            PlotTimeBuffer {
+                groups: start..offset,
+                first_group: start + anchor,
+            }
+        })
+        .collect()
 }
 
 pub(super) fn group_baselines(
@@ -260,10 +312,9 @@ pub(super) fn group_baselines(
         if slot == active.len() {
             active.push(TimeGroup::new(sample, row));
         } else if active[slot].exceeds(&sample, max_time, max_uvw_squared) {
-            finished.push(std::mem::replace(
-                &mut active[slot],
-                TimeGroup::new(sample, row),
-            ));
+            let mut complete = std::mem::replace(&mut active[slot], TimeGroup::new(sample, row));
+            complete.completed_before = Some(first.row);
+            finished.push(complete);
         } else {
             active[slot].rows.push(row);
         }

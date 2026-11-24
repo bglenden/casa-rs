@@ -13,9 +13,10 @@ use crate::transform::{
     WeightKind, mean_weight_preferring_unflagged, visibility_weight_kind, weight_from_sigma,
 };
 
-pub(super) fn uses_integration_baseline_average(spec: &MsPlotSpec) -> bool {
+pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.avgbaseline
-        && spec.averaging.avgtime.is_none()
+        && (spec.averaging.avgtime.is_none()
+            || spec.averaging.avgchannel.is_none_or(|width| width <= 1))
         && !spec.averaging.avgscan
         && !spec.averaging.avgfield
         && !spec.averaging.avgantenna
