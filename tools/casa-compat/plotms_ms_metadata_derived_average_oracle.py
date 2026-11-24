@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from plotms_ms_columns_oracle import (
-    casa, compare_figure, compare_text, plotms_launcher, reference, request, rows,
+    casa, compare_figure, compare_text, copy_ms, opened, plotms_launcher, reference, request, rows,
 )
 from plotms_ms_derived_average_oracle import weighted_fixture
 from plotms_ms_scalar_derived_average_oracle import compare_case
@@ -43,6 +43,27 @@ def compare_metadata(root, native, vis):
     print("time-ratio: 12 matching selected times and phase coordinates", flush=True)
 
 
+def compare_primary_mask(root, native, vis):
+    source = root / "zero-primary-spectrum.ms"
+    copy_ms(vis, source)
+    with opened(source, True) as table:
+        spectrum = table.getcol("SIGMA_SPECTRUM")
+        spectrum[:, :2, :] = 0
+        table.putcol("SIGMA_SPECTRUM", spectrum)
+    controls = request(source) | dict(xaxis="channel", xdatacolumn="", yaxis="amp",
+                                      ydatacolumn="corrected-model_vector", avgchannel="2",
+                                      spw="0:0~3", expformat="txt")
+    expected, actual = (root / f"zero-primary.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**controls, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [(point[2], point[12]) for point in selected] == [("1", "XX")] * 6
+    np.testing.assert_allclose(np.array([point[:2] for point in selected], dtype=float),
+                               [(1, np.sqrt(98))] * 6, rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    print("zero-primary: 6 matching points after masking the first channel bin", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -60,7 +81,9 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare_metadata(root, native, weighted_fixture(root))
+        vis = weighted_fixture(root)
+        compare_metadata(root, native, vis)
+        compare_primary_mask(root, native, vis)
 
 
 if __name__ == "__main__":
