@@ -671,19 +671,7 @@ fn prepare(
                     container,
                 });
             }
-            field_flux.insert(
-                spw.to_string(),
-                CasaValue::Dict {
-                    entries: vec![entry(
-                        "fluxd",
-                        CasaValue::FloatArray {
-                            dtype: FloatDtype::Float64,
-                            shape: vec![4],
-                            data: stokes.map(CasaFloat).to_vec(),
-                        },
-                    )],
-                },
-            );
+            field_flux.insert(spw.to_string(), window_flux_reply(stokes));
         }
         if let Some((path, scratch)) = image {
             let params = resolved::ImageParameters {
@@ -693,21 +681,8 @@ fn prepare(
                 windows: spws,
             };
             use resolved::ResolvedFlux;
-            let image_spectrum = match flux {
-                FluxParameters::Standard {
-                    catalog,
-                    interpolation,
-                } if by_channel => {
-                    match catalog
-                        .spectrum(&name, &direction, *epoch / 86_400., *interpolation)
-                        .map_err(execution)?
-                    {
-                        CatalogMatch::Spectrum(spectrum) => Some(spectrum),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
+            let image_spectrum =
+                image_catalog_spectrum(flux, by_channel, &name, &direction, *epoch)?;
             let flux = match flux {
                 FluxParameters::Manual(manual) if manual.intensity_jy() != 0. => {
                     ResolvedFlux::Manual(manual)
@@ -751,6 +726,45 @@ fn prepare(
         completed,
         imager_history,
     })
+}
+
+fn window_flux_reply(stokes: [f64; 4]) -> CasaValue {
+    CasaValue::Dict {
+        entries: vec![entry(
+            "fluxd",
+            CasaValue::FloatArray {
+                dtype: FloatDtype::Float64,
+                shape: vec![4],
+                data: stokes.map(CasaFloat).to_vec(),
+            },
+        )],
+    }
+}
+
+fn image_catalog_spectrum<'a>(
+    flux: &'a FluxParameters,
+    by_channel: bool,
+    name: &str,
+    direction: &MDirection,
+    epoch: f64,
+) -> Result<Option<CalibratorSpectrum<'a>>, TaskFailure> {
+    let FluxParameters::Standard {
+        catalog,
+        interpolation,
+    } = flux
+    else {
+        return Ok(None);
+    };
+    if !by_channel {
+        return Ok(None);
+    }
+    match catalog
+        .spectrum(name, direction, epoch / 86_400., *interpolation)
+        .map_err(execution)?
+    {
+        CatalogMatch::Spectrum(spectrum) => Ok(Some(spectrum)),
+        _ => Ok(None),
+    }
 }
 
 fn imager_flux_history(
