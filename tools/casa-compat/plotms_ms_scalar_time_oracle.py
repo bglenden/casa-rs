@@ -407,6 +407,108 @@ def compare_scalar_span_shapes(root, native, source, controls, center):
     print("selected-polarization: 1 matching point and matching incompatible-shape refusals", flush=True)
 
 
+def compare_combined_scalar_time(root, native):
+    source, integration, start = make_fixture(root)
+    with opened(source, True) as table:
+        shape = table.getcol("DATA").shape
+        for name, values in (
+            ("DATA", (3, 1, 5, 5)),
+            ("CORRECTED_DATA", (2j, -2j, 3 + 4j, 3 + 4j)),
+            ("MODEL_DATA", (1, 1, 1, 1)),
+        ):
+            column = table.getcol(name)
+            column[:, :4, :] = np.broadcast_to(np.asarray(values, dtype=np.complex64)[None, :, None],
+                                               (shape[0], 4, shape[2]))
+            table.putcol(name, column)
+    masked, spectra, varying = (root / f"{name}.ms" for name in ("masked", "spectra", "varying"))
+    for path in (masked, spectra, varying):
+        copy_ms(source, path)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 0, :] = True
+        table.putcol("FLAG", flags)
+    with opened(spectra, True) as table:
+        descriptor = table.getcoldesc("DATA")
+        shape = table.getcol("DATA").shape
+        for name, first in (("WEIGHT_SPECTRUM", (1, 3, 4, 4)), ("SIGMA_SPECTRUM", (1, .5, 1, 1))):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            values = np.ones(shape, dtype=np.float32)
+            values[:, :4, :] = np.broadcast_to(np.asarray(first, dtype=np.float32)[None, :, None],
+                                              (shape[0], 4, shape[2]))
+            table.putcol(name, values)
+    with opened(varying, True) as table:
+        values = table.getcol("CORRECTED_DATA")
+        values[:, :4, :] = 2 * (integration % 3) + 1
+        table.putcol("CORRECTED_DATA", values)
+        table.putcol("WEIGHT", np.ones_like(table.getcol("WEIGHT")))
+        descriptor = table.getcoldesc("DATA")
+        table.addcols({"WEIGHT_SPECTRUM": dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                              dataManagerGroup="WEIGHT_SPECTRUM")})
+        table.putcol("WEIGHT_SPECTRUM", np.broadcast_to((integration % 3 + 1).astype(np.float32), values.shape).copy())
+
+    zero_observed, zero_calibrated = (root / f"{name}.ms" for name in ("zero-observed", "zero-calibrated"))
+    for path, col in ((zero_observed, "SIGMA_SPECTRUM"), (zero_calibrated, "WEIGHT_SPECTRUM")):
+        copy_ms(spectra, path)
+        with opened(path, True) as table:
+            values = table.getcol(col)
+            values[:, :2, :] = 0
+            table.putcol(col, values)
+
+    implicit_spectrum = root / "implicit-spectrum.ms"
+    copy_ms(source, implicit_spectrum)
+    with opened(implicit_spectrum, True) as table:
+        values = table.getcol("CORRECTED_DATA")
+        values[:, :4, :] = 2 * (integration % 3) + 1
+        table.putcol("CORRECTED_DATA", values)
+        flags = table.getcol("FLAG")
+        flags[0, 0, :] = integration % 3 == 2
+        table.putcol("FLAG", flags)
+
+    base = request(source) | dict(xaxis="channel", xdatacolumn="", yaxis="amp",
+                                  ydatacolumn="corrected-model_vector", spw="0:0~3",
+                                  avgtime="20", avgchannel="2", scalar=True,
+                                  title="Channel and scalar time averaging")
+    phase = np.rad2deg(np.arctan2(4., 3.))
+    cases = (
+        ("channels-amplitude", {}, (0, 1), [0., 1.], [-1., 4.]),
+        ("channels-phase", dict(yaxis="phase"), (0, 1), [0., 1.], [0., phase]),
+        ("masked-channel", dict(vis=str(masked)), (0, 1), [0., 1.], [1., 4.]),
+        ("separate-axes", dict(xaxis="amp", xdatacolumn="data", yaxis="phase"),
+         (0, 1), [2., 5.], [0., phase]),
+        ("spectral-weights", dict(vis=str(spectra), xaxis="amp", xdatacolumn="data", yaxis="phase"),
+         (0, 1), [1.4, 5.], [-90., phase]),
+        ("time-weight-monitor", dict(vis=str(varying), xaxis="time"), (0, 1), None, [8 / 3] * 2),
+        ("implicit-weight-spectrum", dict(vis=str(implicit_spectrum)), (0, 1), [0., 1.], [2.4] * 2),
+        ("zero-observed", dict(vis=str(zero_observed)), (0, 1), [0., 1.], [0., 4.]),
+        ("zero-calibrated", dict(vis=str(zero_calibrated)), (1,), [1.], [4.]),
+        ("corrected-vector-ratio", dict(ydatacolumn="corrected/model_vector"),
+         (0, 1), [0., 1.], [0., 5.]),
+        ("observed-scalar-ratio", dict(ydatacolumn="data/model_scalar"),
+         (0, 1), [0., 1.], [2., 5.]),
+    )
+    for name, options, channels, x, y in cases:
+        controls = base | options
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        centers = np.repeat(start + np.array([10., 40.]), len(channels))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [int(point[2]) for point in selected] == [*channels] * 2
+        assert {(point[5], point[6], point[12]) for point in selected} == {("0", "1", "XX")}
+        np.testing.assert_allclose([float(point[9]) for point in selected], centers, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected], y * 2, rtol=1.2e-5, atol=1e-7)
+        np.testing.assert_allclose([float(point[0]) for point in selected], centers if x is None else x * 2,
+                                   rtol=0 if x is None else 1.2e-5, atol=.00051 if x is None else 1e-7)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        if x is None:
+            np.testing.assert_allclose([float(point[0]) for point in rows(actual)], centers, rtol=0, atol=.00051)
+        print(f"{name}: {len(selected)} matching channel and scalar time coordinates", flush=True)
+        if name == "channels-phase":
+            compare_figure(root, native, controls, expected, (controls["title"], "Channel",
+                                                              "Phase:corrected-model (vector) (degrees)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -434,6 +536,9 @@ def main():
         spans = root / "scan-field-spans"
         spans.mkdir()
         compare_scalar_time_spans(spans, native)
+        combined = root / "time-channel"
+        combined.mkdir()
+        compare_combined_scalar_time(combined, native)
 
 
 if __name__ == "__main__":
