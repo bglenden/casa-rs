@@ -1103,6 +1103,37 @@ def compare_single_spw_iteration_layout(root, native):
     print("single-model-five-scans: 4 matching first-page coordinates and 2 page names", flush=True)
 
 
+def compare_two_spw_ordinates(root, native, vis):
+    from plotms_ms_columns_oracle import compare_ordinate_figure
+
+    base = request(vis) | dict(field="", xaxis="frequency", xdatacolumn="", spw="0:1,1:1",
+                               yaxis=["real", "imag"], ydatacolumn=["model", "corrected"],
+                               yaxislocation=["left", "right"], avgspw=True)
+    stored = dict(ydatacolumn=["corrected", "data"])
+    time = dict(avgtime="20")
+    cases = (
+        ("virtual-two-spw-ordinates", {}, [7.25, 3.25, 5.5, 2.5, 12, 16, 12, 16]),
+        ("stored-two-spw-ordinates", stored, [10, 14, 10, 14, 4, -8, 4, -8]),
+        ("virtual-two-time-spw-ordinates", time, [4.25, 3.25, 15, 15]),
+        ("stored-two-scalar-time-spw-ordinates", stored | time | dict(scalar=True),
+         [19.8503, 19.8503, -.418684, -.418684]),
+        ("virtual-two-time-channel-spw-ordinates", time | dict(avgchannel="2", spw="0:0~3,1:0~3"),
+         [4.25, 4.25, 3.25, 3.25, 11.25, 26.25, 11.25, 26.25]),
+    )
+    for name, changes, values in cases:
+        controls = base | changes
+        expected = export(root, f"{name}.casa", reference, controls)
+        np.testing.assert_allclose(coordinates(rows(expected))[:, 1], values, rtol=1.2e-5)
+        actual = export(root, f"{name}.native", native, controls)
+        assert compare_text(actual, expected) == len(values)
+        if name == "virtual-two-time-channel-spw-ordinates":
+            compare_ordinate_figure(root, name, native, controls, "Frequency (GHz)",
+                                    ["Real:model", "Imag:corrected"])
+        print(f"{name}: {len(values)} matching selected coordinates across both ordinates", flush=True)
+    with opened(vis) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -1113,7 +1144,7 @@ def main():
                                            "malformed", "scalar-time", "vector-time", "vector-optional",
                                            "vector-channel-spans", "ordinate-lists", "ordinate-list-spans",
                                            "ordinate-list-uvw", "virtual-models", "virtual-model-spans", "iteration",
-                                           "iteration-layout"))
+                                           "iteration-layout", "two-ordinates"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1139,6 +1170,10 @@ def main():
             return
         if args.only == "iteration-layout":
             compare_single_spw_iteration_layout(root, native)
+            return
+        if args.only == "two-ordinates":
+            _, _, _, both = virtual_spw_span_fixture(root / "two-ordinates")
+            compare_two_spw_ordinates(root / "two-ordinates", native, both)
             return
         vis = make_fixture(root)
         base = request(vis) | dict(avgspw=True, spw="0:1,1:1", title="Spectral-window average")
@@ -1171,6 +1206,7 @@ def main():
             compare_spw_iteration(root / "virtual-model-spans", native, both)
             compare_spw_ordinate_order(root / "virtual-model-spans", native, original)
             compare_single_spw_iteration_layout(root / "virtual-model-spans", native)
+            compare_two_spw_ordinates(root / "virtual-model-spans", native, both)
 
 
 if __name__ == "__main__":
