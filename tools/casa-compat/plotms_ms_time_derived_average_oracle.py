@@ -397,6 +397,16 @@ def compare_combined_weight_edges(root, native, vis, base):
         print(f"{name}: {len(rows(actual))} verified weight-edge coordinates", flush=True)
 
 
+def combined_time_operand(first_bin, last_channel, step, weights):
+    result = []
+    for index in range(3):
+        integrations = np.array([2 * index, 2 * index + 1])
+        offset = np.tile(integrations, 2)
+        first = np.repeat(first_bin, 2) + step * offset
+        result.extend([np.average(first, weights=weights), last_channel + step * integrations.mean()])
+    return np.asarray(result)
+
+
 def compare_combined_observed_expressions(root, native):
     vis, integration, start = prepare_time_fixture(root)
     with opened(vis, True) as table:
@@ -408,21 +418,12 @@ def compare_combined_observed_expressions(root, native):
     with opened(without_corrected, True) as table:
         table.removecols(["CORRECTED_DATA"])
 
-    def reduced_operand(first_bin, last_channel, step, weights):
-        result = []
-        for index in range(3):
-            integrations = np.array([2 * index, 2 * index + 1])
-            offset = np.tile(integrations, 2)
-            first = np.repeat(first_bin, 2) + step * offset
-            result.extend([np.average(first, weights=weights), last_channel + step * integrations.mean()])
-        return np.asarray(result)
-
     observed_weights = [1, 1, 1, 4]
     calibrated_weights = [1, 1, 1, 3]
-    observed = reduced_operand([1 + 1j, 3 + 6j], 11 + 1j, 1 + 2j, observed_weights)
-    corrected = reduced_operand([2 + 3j, 8 - 1j], 12 + 4j, 3 - 1j, calibrated_weights)
-    calibrated_model = reduced_operand([1 - 1j, 2 + 2j], 5 - 3j, .5 + .25j, calibrated_weights)
-    observed_model = reduced_operand([1 - 1j, 2 + 2j], 5 - 3j, .5 + .25j, observed_weights)
+    observed = combined_time_operand([1 + 1j, 3 + 6j], 11 + 1j, 1 + 2j, observed_weights)
+    corrected = combined_time_operand([2 + 3j, 8 - 1j], 12 + 4j, 3 - 1j, calibrated_weights)
+    calibrated_model = combined_time_operand([1 - 1j, 2 + 2j], 5 - 3j, .5 + .25j, calibrated_weights)
+    observed_model = combined_time_operand([1 - 1j, 2 + 2j], 5 - 3j, .5 + .25j, observed_weights)
     channel = np.tile([0, 1], 3)
     times = np.repeat(start + 5 + 20 * np.arange(3), 2)
     base = request(vis) | dict(spw="0:0~3", xdatacolumn="", avgtime="20", avgchannel="2",
@@ -482,6 +483,65 @@ def compare_combined_observed_expressions(root, native):
     print("sigma-roundtrip: 3 matching nonzero Float results after observed reweighting", flush=True)
 
 
+def compare_combined_axis_pairs(root, native):
+    vis, integration, start = prepare_time_fixture(root)
+    with opened(vis, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[0, 1] = np.where(integration % 2 == 0, 1, .5)
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    wrapped = root / "wrapped.ms"
+    copy_ms(vis, wrapped)
+    with opened(wrapped, True) as table:
+        unit = np.ones_like(table.getcol("DATA"))
+        table.putcol("DATA", unit * (-1 + .1j))
+        table.putcol("MODEL_DATA", unit * (-1 - .1j))
+    masked = root / "masked-pair.ms"
+    copy_ms(vis, masked)
+    with opened(masked, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[:, :2] = 0
+        table.putcol("SIGMA_SPECTRUM", sigma)
+
+    observed = combined_time_operand([1 + 1j, 3 + 6j], 11 + 1j, 1 + 2j, [1, 1, 1, 4])
+    corrected = combined_time_operand([2 + 3j, 8 - 1j], 12 + 4j, 3 - 1j, [1, 1, 1, 3])
+    model = combined_time_operand([1 - 1j, 2 + 2j], 5 - 3j, .5 + .25j, [1, 1, 1, 3])
+    ratio = (corrected / model).real
+    wrap = np.full(6, np.degrees(np.angle(-1 + .1j) - np.angle(-1 - .1j)))
+    channels = np.tile([0, 1], 3)
+    times = np.repeat(start + 5 + 20 * np.arange(3), 2)
+    base = request(vis) | dict(spw="0:0~3", avgtime="20", avgchannel="2",
+                               title="Independent time and channel averages")
+    names = ("xaxis", "xdatacolumn", "yaxis", "ydatacolumn")
+    ratio_x = ("real", "corrected/model_vector", "imag", "data")
+    cases = (
+        ("corrected-x-observed-y", vis, ratio_x, ratio, observed.imag, channels, times),
+        ("corrected-x-observed-residual-y", vis, ("imag", "corrected", "amp", "data-model_vector"),
+         corrected.imag, np.abs(observed - model), channels, times),
+        ("unbounded-scalar-x-vector-y", wrapped,
+         ("phase", "data-model_scalar", "real", "corrected/model_vector"),
+         wrap, (corrected / (-1 - .1j)).real, channels, times),
+        ("model-companion", vis, ("real", "corrected/model_vector", "imag", "model"),
+         ratio, model.imag, channels, times),
+        ("masked-pair", masked, ratio_x, ratio[1::2], observed.imag[1::2], channels[1::2], times[1::2]),
+    )
+    for name, source, axes, x, y, expected_channels, expected_time in cases:
+        controls = base | dict(zip(names, axes, strict=True), vis=str(source))
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [(str(chan), "XX") for chan in expected_channels]
+        np.testing.assert_allclose(np.asarray([point[:2] for point in selected], dtype=float),
+                                   np.column_stack([x, y]), rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], expected_time, rtol=0, atol=.00051)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching independent time and channel visibility coordinates", flush=True)
+        if name == "unbounded-scalar-x-vector-y":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Phase:data-model (scalar) (degrees)",
+                            "Real:corrected/model (vector)"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -517,6 +577,9 @@ def main():
         combined_observed = root / "combined-observed"
         combined_observed.mkdir()
         compare_combined_observed_expressions(combined_observed, native)
+        paired = root / "combined-pairs"
+        paired.mkdir()
+        compare_combined_axis_pairs(paired, native)
 
 
 if __name__ == "__main__":
