@@ -81,12 +81,12 @@ impl<'a> SelectedTiles<'a> {
         cube_idx: usize,
         cube: &'a TsmCubeInfo,
     ) -> Result<Self, StorageError> {
-        if cube.cube_shape.len() < 2
+        if cube.cube_shape.is_empty()
             || cube.tile_shape.len() != cube.cube_shape.len()
             || cube.tile_shape.contains(&0)
         {
             return Err(StorageError::FormatMismatch(format!(
-                "typed selected read found tile shape {:?} for cube shape {:?}",
+                "selected read found tile shape {:?} for cube shape {:?}",
                 cube.tile_shape, cube.cube_shape
             )));
         }

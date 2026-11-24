@@ -380,6 +380,8 @@ mod band_writer;
 mod casacore_tiled_data_tests;
 #[cfg(test)]
 mod casacore_tiled_order_tests;
+mod selected_cells;
+use selected_cells::load_selected_rows_from_touched_cubes;
 mod selected_tiles;
 use selected_tiles::{SelectedTiles, copy_pixels};
 mod shape_cube;
@@ -3030,48 +3032,6 @@ fn load_tiled_column_rows_cell_variant(
             &mut read_session,
         )?;
     }
-    Ok(outputs)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn load_selected_rows_from_touched_cubes(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    output_len: usize,
-    patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
-) -> Result<Vec<Option<ArrayValue>>, StorageError> {
-    let mut outputs = vec![None; output_len];
-    let mut read_session = TileReadSession::default();
-
-    for (cube_idx, patches) in patches_by_cube {
-        let Some(cube) = header.cubes.get(cube_idx) else {
-            continue;
-        };
-        if cube.file_seq_nr < 0 || cube.cube_shape.is_empty() {
-            continue;
-        }
-        for selected in patches {
-            outputs[selected.out_idx] = decode_selected_cube_row_from_shared_tiles(
-                table_path,
-                dm_seq_nr,
-                header,
-                cube_idx,
-                cube,
-                target_col_idx,
-                col_desc,
-                dt,
-                elem_size,
-                selected,
-                &mut read_session,
-            )?;
-        }
-    }
-
     Ok(outputs)
 }
 
@@ -9759,132 +9719,6 @@ fn reconstruct_cube_column_from_shared_tiles(
     }
 
     Ok(result)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_selected_cube_row_from_shared_tiles(
-    table_path: &Path,
-    dm_seq_nr: u32,
-    header: &TiledStManHeader,
-    cube_idx: usize,
-    cube: &TsmCubeInfo,
-    target_col_idx: usize,
-    col_desc: &ColumnDescContents,
-    dt: CasacoreDataType,
-    elem_size: usize,
-    selected: SelectedCubeRow,
-    session: &mut TileReadSession,
-) -> Result<Option<ArrayValue>, StorageError> {
-    let cell_ndim = cube.cube_shape.len().saturating_sub(1);
-    let cell_shape: Vec<usize> = cube.cube_shape[..cell_ndim].to_vec();
-    let cell_nelem: usize = cell_shape.iter().product();
-    let cell_tile_shape = &cube.tile_shape[..cell_ndim];
-    let cell_tiles_per_dim: Vec<usize> = cell_shape
-        .iter()
-        .zip(cell_tile_shape.iter())
-        .map(|(&cell, &tile)| cell.div_ceil(tile))
-        .collect();
-    let row_tile = selected.pos_in_cube / cube.tile_shape[cell_ndim];
-    let row_in_tile = selected.pos_in_cube % cube.tile_shape[cell_ndim];
-    let row_tile_nelem: usize = cell_tile_shape.iter().product();
-    let tiles_per_dim: Vec<usize> = cube
-        .cube_shape
-        .iter()
-        .zip(cube.tile_shape.iter())
-        .map(|(&shape, &tile)| shape.div_ceil(tile))
-        .collect();
-    let tile_grid_strides = fortran_order_strides(&tiles_per_dim);
-    let (bucket_size, col_offsets) = compute_tile_layout(&header.col_data_types, &cube.tile_shape);
-
-    if cell_tile_shape == cell_shape.as_slice() {
-        let tile_index = row_tile * tile_grid_strides[cell_ndim];
-        let tile = load_shared_column_tile(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            bucket_size,
-            col_offsets[target_col_idx],
-            dt,
-            tile_index,
-            session,
-        )?;
-        let src_start = row_in_tile * row_tile_nelem * elem_size;
-        let src_end = src_start + row_tile_nelem * elem_size;
-        let value = decode_array_value(
-            &tile[src_start..src_end],
-            &cell_shape,
-            dt,
-            SHARED_TILE_BIG_ENDIAN,
-        )?;
-        return match value {
-            Value::Array(array) => Ok(Some(array)),
-            other => Err(StorageError::FormatMismatch(format!(
-                "tiled array column {} decoded as non-array value {:?}",
-                col_desc.col_name,
-                other.kind()
-            ))),
-        };
-    }
-
-    let mut raw = vec![0u8; cell_nelem * elem_size];
-
-    for cell_tile_linear in 0..cell_tiles_per_dim.iter().product::<usize>() {
-        let cell_tile_pos = linear_to_nd(cell_tile_linear, &cell_tiles_per_dim);
-        let mut full_tile_pos = cell_tile_pos.clone();
-        full_tile_pos.push(row_tile);
-        let tile_index: usize = full_tile_pos
-            .iter()
-            .zip(tile_grid_strides.iter())
-            .map(|(pos, stride)| pos * stride)
-            .sum();
-        let tile = load_shared_column_tile(
-            table_path,
-            dm_seq_nr,
-            header,
-            cube_idx,
-            cube,
-            target_col_idx,
-            bucket_size,
-            col_offsets[target_col_idx],
-            dt,
-            tile_index,
-            session,
-        )?;
-        let src_start = row_in_tile * row_tile_nelem * elem_size;
-        let src_end = src_start + row_tile_nelem * elem_size;
-        let tile_row = &tile[src_start..src_end];
-        let cell_start: Vec<usize> = cell_tile_pos
-            .iter()
-            .enumerate()
-            .map(|(axis, &pos)| pos * cell_tile_shape[axis])
-            .collect();
-        let actual_extent: Vec<usize> = cell_shape
-            .iter()
-            .enumerate()
-            .map(|(axis, &shape)| std::cmp::min(cell_tile_shape[axis], shape - cell_start[axis]))
-            .collect();
-        copy_tile_to_cube(
-            tile_row,
-            cell_tile_shape,
-            &mut raw,
-            &cell_shape,
-            &cell_start,
-            &actual_extent,
-            elem_size,
-        );
-    }
-
-    match decode_array_value(&raw, &cell_shape, dt, SHARED_TILE_BIG_ENDIAN)? {
-        Value::Array(array) => Ok(Some(array)),
-        other => Err(StorageError::FormatMismatch(format!(
-            "tiled array column {} decoded as non-array value {:?}",
-            col_desc.col_name,
-            other.kind()
-        ))),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

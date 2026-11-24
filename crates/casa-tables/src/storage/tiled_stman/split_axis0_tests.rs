@@ -70,6 +70,38 @@ fn flag(code: usize) -> bool {
     code.is_multiple_of(3)
 }
 
+#[test]
+fn complete_selected_cells_read_each_touched_tile_stripe_once() {
+    let shape = [3, 65];
+    let rows = [8, 3, 2, 0, 8, 1];
+    for endian in ENDIANS {
+        let directory = tempdir().expect("test directory");
+        let table = tiled_table(
+            directory.path(),
+            &shape,
+            9,
+            DataManagerKind::TiledShapeStMan,
+            &[2, 4, 2],
+            endian,
+        );
+        for primitive in PRIMITIVES {
+            let column = table.column_accessor(name_of(primitive)).expect("column");
+            STREAMED_READ_COUNTS.with(|counts| counts.set((0, 0)));
+            let cells = column
+                .array_cells_owned_uncached(&rows)
+                .expect("selected whole cells");
+            let (calls, bytes) = STREAMED_READ_COUNTS.with(|counts| counts.get());
+            assert_eq!(calls, 3, "one contiguous read per selected row stripe");
+            assert!(bytes > 0);
+            let expected: Vec<_> = rows
+                .iter()
+                .map(|&row| Some(cell(primitive, &shape, row)))
+                .collect();
+            assert_eq!(cells, expected, "{primitive:?} {endian:?}");
+        }
+    }
+}
+
 /// Column `name_of(primitive)` per primitive.
 fn name_of(primitive: PrimitiveType) -> &'static str {
     match primitive {
