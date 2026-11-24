@@ -7,6 +7,7 @@ use std::sync::Arc;
 use casa_types::measures::frequency::MFrequency;
 
 use super::ChannelBin;
+use super::plotms_ordinates::ScalarSpanPlan;
 use crate::columns::frequency_columns::ChanFreqColumn;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,11 +17,13 @@ pub(super) struct SpectralChannel {
 }
 
 /// The displayed channels and frequencies for an averaged visibility buffer.
-/// PlotMS takes these coordinates from the first selected input window.
+/// PlotMS takes the window ID from the first buffer and the grid from the
+/// buffer still attached to the iterator when it caches the average.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MsScatterPlotMsAverageSpw {
     /// Spectral-window ID of the first input visibility buffer.
     pub spectral_window: i32,
+    pub(super) scan_field: Option<(i32, i32)>,
     channels: Arc<[SpectralChannel]>,
 }
 
@@ -40,7 +43,7 @@ impl MsScatterPlotMsAverageSpw {
 
 #[derive(Default)]
 pub(super) struct SpectralAverageGroups {
-    averages: Vec<MsScatterPlotMsAverageSpw>,
+    averages: Vec<Option<MsScatterPlotMsAverageSpw>>,
     windows: HashMap<i32, SpectralWindowChannels>,
 }
 
@@ -57,6 +60,7 @@ impl SpectralAverageGroups {
         input_channels: usize,
         bins: &[ChannelBin],
         frequencies: &ChanFreqColumn<'_>,
+        starts_buffer: bool,
     ) -> Result<(), String> {
         let window = match self.windows.entry(spw) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
@@ -85,16 +89,32 @@ impl SpectralAverageGroups {
             }
         };
         check_input_channels(spw, window.input_channels, input_channels)?;
-        if group == self.averages.len() {
-            self.averages.push(MsScatterPlotMsAverageSpw {
-                spectral_window: spw,
-                channels: window.display_channels.clone(),
-            });
+        if group >= self.averages.len() {
+            self.averages.resize_with(group + 1, || None);
+        }
+        let average = self.averages[group].get_or_insert_with(|| MsScatterPlotMsAverageSpw {
+            spectral_window: spw,
+            scan_field: None,
+            channels: window.display_channels.clone(),
+        });
+        if starts_buffer {
+            average.channels.clone_from(&window.display_channels);
         }
         Ok(())
     }
 
-    pub(super) fn into_averages(self) -> Arc<[MsScatterPlotMsAverageSpw]> {
+    pub(super) fn into_averages(
+        mut self,
+        spans: Option<&ScalarSpanPlan>,
+    ) -> Arc<[Option<MsScatterPlotMsAverageSpw>]> {
+        if let Some(spans) = spans {
+            for (group, average) in self.averages.iter_mut().enumerate() {
+                if let Some(average) = average {
+                    let span = spans.metadata(group);
+                    average.scan_field = Some((span.scan, span.field));
+                }
+            }
+        }
         self.averages.into()
     }
 }

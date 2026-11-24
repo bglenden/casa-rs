@@ -107,7 +107,9 @@ pub(super) fn sort_selected_rows(
     for (index, &(keys, description, time, _)) in ordering.iter().enumerate() {
         let start = index == 0 || {
             let (previous_keys, previous_description, previous_time, _) = ordering[index - 1];
-            (keys, description, time) != (previous_keys, previous_description, previous_time)
+            (keys, time) != (previous_keys, previous_time)
+                || (!matches!(order, MainRowOrder::SpectralWindowAverage)
+                    && description != previous_description)
         };
         starts_visibility_buffer.push(start);
     }
