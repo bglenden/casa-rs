@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "90eea67d8f2b57c485632963d32affdbb60a90f7",
+  "source_revision": "90eea67d8f2b57c485632963d32affdbb60a90f7",
+  "baseline_revision": "f5c69512849fac89f7b3abf1a1b7513df976065b",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_scalar_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Complex channel averaging followed by scalar time averaging across scans and fields, including independent stored or derived visibility axes and two stored ordinates.",
+  "result": "passed",
+  "baseline_result": "Current main matches separate scalar time bins and refuses the first derived expression spanning scans.",
+  "text_exports": 14,
+  "points": 20,
+  "paired_refusals": 1,
+  "figures": 1,
+  "rendered_coordinates": 1,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "time_coordinate_tolerance_seconds": 0.00051
+}
