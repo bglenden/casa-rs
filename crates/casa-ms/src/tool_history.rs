@@ -14,7 +14,6 @@ use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 
 use crate::column_def::build_table_schema;
 use crate::ms::{apply_column_metadata, measurement_set_table_options, subtable_path_from_main};
-use crate::transform::open_staged_subtable_for_write;
 use crate::{MeasurementSet, MsError, MsResult, SubtableId, open_measures_runtime, schema};
 
 /// One entry displayed by `ms.listhistory()`.
@@ -106,13 +105,11 @@ pub fn append_tool_history(
         None => with_history_write_lock(path, held_locks, create_history)?,
     };
     with_history_write_lock(&history, held_locks, |table, lock| {
-        let rows = history_rows(table, messages, cli_command, origin, application)?;
-        if let Some(lock) = lock
-            && !rows.is_empty()
-        {
+        let rows = history_rows(&table, messages, cli_command, origin, application)?;
+        if !rows.is_empty() {
             lock.record_write();
         }
-        table.append_records_in_place(&rows)?;
+        table.append_records_and_close(&rows)?;
         Ok(())
     })
 }
@@ -120,19 +117,24 @@ pub fn append_tool_history(
 fn with_history_write_lock<T>(
     path: &Path,
     held_locks: &mut BTreeMap<PathBuf, TableWriteLock>,
-    write: impl FnOnce(&mut Table, Option<&mut TableWriteLock>) -> MsResult<T>,
+    write: impl FnOnce(Table, &mut TableWriteLock) -> MsResult<T>,
 ) -> MsResult<T> {
     if !held_locks.is_empty() {
         let canonical = path
             .canonicalize()
             .map_err(|error| MsError::InvalidInput(format!("{}: {error}", path.display())))?;
         if let Some(lock) = held_locks.get_mut(&canonical) {
-            let mut table = Table::open(TableOptions::new(&canonical))?;
-            return write(&mut table, Some(lock));
+            let table = Table::open(TableOptions::new(&canonical))?;
+            return write(table, lock);
         }
     }
-    let mut table = open_staged_subtable_for_write(path)?;
-    write(&mut table, None)
+    let mut lock = TableWriteLock::acquire_to_reread(path, 0)?;
+    let table = Table::open(TableOptions::new(path))?;
+    let result = write(table, &mut lock);
+    let released = lock.release();
+    let value = result?;
+    released?;
+    Ok(value)
 }
 
 fn history_paths(main: &Table, main_is_plain: bool) -> MsResult<Vec<PathBuf>> {
@@ -168,7 +170,7 @@ fn history_path(main: &Table, main_is_plain: bool) -> MsResult<Option<PathBuf>> 
     }
 }
 
-fn create_history(main: &mut Table, lock: Option<&mut TableWriteLock>) -> MsResult<PathBuf> {
+fn create_history(mut main: Table, lock: &mut TableWriteLock) -> MsResult<PathBuf> {
     let path = main
         .path()
         .ok_or_else(|| MsError::InvalidInput("HISTORY requires a persisted MeasurementSet".into()))?
@@ -181,7 +183,7 @@ fn create_history(main: &mut Table, lock: Option<&mut TableWriteLock>) -> MsResu
             "HISTORY is missing from the source of this MeasurementSet view".into(),
         ));
     }
-    if let Some(history) = history_path(main, true)? {
+    if let Some(history) = history_path(&main, true)? {
         // Another writer may have created HISTORY while MAIN was being locked.
         return Ok(history);
     }
@@ -221,9 +223,7 @@ fn create_history(main: &mut Table, lock: Option<&mut TableWriteLock>) -> MsResu
     }
     // Publish the link before any messages are appended, so a failed link
     // update can be retried without duplicating messages.
-    if let Some(lock) = lock {
-        lock.record_write();
-    }
+    lock.record_write();
     main.keywords_mut()
         .upsert(name, Value::table_ref(format!("././{name}")));
     main.save_keywords_atomically(&path)?;
