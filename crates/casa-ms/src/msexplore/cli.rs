@@ -430,7 +430,7 @@ fn run_visibility_plot(
             options.plotms_averaging_active(),
         )?;
         if let Some((storage, axis)) = options.derived_average_storage(*columns, adjusted) {
-            plotms_columns::check_averaged_derived_storage(&ms, storage, axis)?;
+            plotms_columns::check_averaged_derived_storage(&ms, storage, axis, options.avgfield)?;
         }
         prefer_float_data = use_float;
         if phasecenter.is_some()

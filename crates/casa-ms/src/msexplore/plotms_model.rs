@@ -10,7 +10,9 @@ use ndarray::Array2;
 use super::{
     MsAxis, MsDataColumn, MsPlotSpec, PlotMsColumnSelection,
     cli::PlotMsModelLoader,
-    plotms_columns::{supports_ordinary_time_axes, uses_ordinary_time_averaging},
+    plotms_columns::{
+        supports_ordinary_time_axes, uses_channel_derived, uses_ordinary_time_averaging,
+    },
     selected_i32_values, uses_extended_averaging,
 };
 use crate::selection::ResolvedMsSelectionRow;
@@ -69,7 +71,10 @@ pub(super) fn selected_model_cells(
             MsDataColumn::Data | MsDataColumn::Corrected | MsDataColumn::Model
         )
     });
-    let can_predict = !averaging || ((!extended || ordinary_time) && standard_columns);
+    let derived_average = (columns.extended_derived && !plot.averaging.avgfield)
+        || (!extended && uses_channel_derived(plot, columns.x));
+    let can_predict =
+        !averaging || ((!extended || ordinary_time) && standard_columns) || derived_average;
     if let Some(load) = load_models.filter(|_| can_predict) {
         return load(ms, rows);
     }

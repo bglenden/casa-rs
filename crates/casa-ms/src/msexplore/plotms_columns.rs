@@ -153,8 +153,14 @@ pub(super) fn check_averaged_derived_storage(
     ms: &MeasurementSet,
     columns: [MsDataColumn; 3],
     averaging_axis: &str,
+    span_fields: bool,
 ) -> Result<(), TaskFailure> {
     let schema = ms.main_table().schema();
+    // The visibility reader supplies either a selected virtual model or the
+    // default point source. FLOAT_DATA requires a stored model, and implicit
+    // model evaluation across field spans still needs PlotMS parity work.
+    let stored_model =
+        span_fields || schema.is_some_and(|schema| schema.contains_column("FLOAT_DATA"));
     let operands = columns
         .into_iter()
         .filter(|column| column.is_derived())
@@ -165,7 +171,11 @@ pub(super) fn check_averaged_derived_storage(
                 "DATA"
             }
         });
-    for name in std::iter::once("MODEL_DATA").chain(operands) {
+    for name in stored_model
+        .then_some("MODEL_DATA")
+        .into_iter()
+        .chain(operands)
+    {
         if !schema.is_some_and(|schema| schema.contains_column(name)) {
             return Err(TaskFailure::validation(format!(
                 "{averaging_axis}-averaged residuals and ratios require stored {name} (#1032)"
