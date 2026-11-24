@@ -83,7 +83,13 @@ impl CliOptions {
                 )
         };
         let supported_abscissa = self.x_axis.is_some_and(|axis| {
-            if axis == MsAxis::Time {
+            if self.avgchannel.is_some_and(|width| width > 1) {
+                matches!(axis, MsAxis::Time | MsAxis::Channel)
+                    && matches!(
+                        y,
+                        MsDataColumn::CorrectedMinusModel | MsDataColumn::CorrectedDivModel
+                    )
+            } else if axis == MsAxis::Time {
                 y.is_derived()
             } else {
                 axis.is_visibility_math()
@@ -97,13 +103,31 @@ impl CliOptions {
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
             && self.avgtime.is_some()
-            && self.avgchannel.is_none_or(|width| width <= 1)
             && !self.scalar
             && !self.avgscan
             && !self.avgfield
             && !self.avgbaseline
             && !self.avgantenna
             && !self.avgspw
+    }
+
+    pub(super) fn derived_average_storage(
+        &self,
+        requested: [MsDataColumn; 3],
+        adjusted: [MsDataColumn; 3],
+    ) -> Option<([MsDataColumn; 3], &'static str)> {
+        if self.supports_channel_derived(requested) {
+            Some((adjusted, "channel"))
+        } else if self.supports_time_derived(requested) {
+            if self.avgchannel.is_some_and(|width| width > 1) {
+                // This composition currently requires the physical corrected column.
+                Some((requested, "time- and channel"))
+            } else {
+                Some((adjusted, "time"))
+            }
+        } else {
+            None
+        }
     }
 
     pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {

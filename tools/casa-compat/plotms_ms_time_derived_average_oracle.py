@@ -287,6 +287,116 @@ def compare_two_visibility_axes(root, native):
                             "Real:corrected/model (vector)"))
 
 
+def compare_combined_time_channel_derived(root, native):
+    vis, integration, start = prepare_time_fixture(root)
+    zero = root / "zero-primary.ms"
+    copy_ms(vis, zero)
+    with opened(zero, True) as table:
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[:, :2] = 0
+        table.putcol("SIGMA_SPECTRUM", sigma)
+    zero_calibrated = root / "zero-calibrated.ms"
+    copy_ms(vis, zero_calibrated)
+    with opened(zero_calibrated, True) as table:
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        weights[:, :2] = 0
+        table.putcol("WEIGHT_SPECTRUM", weights)
+    rounded = root / "rounded-time-then-channel.ms"
+    copy_ms(vis, rounded)
+    with opened(rounded, True) as table:
+        corrected = np.zeros_like(table.getcol("CORRECTED_DATA"))
+        corrected[:, 0] = np.where(integration % 2 == 0, 1e8, -1e8)
+        corrected[:, 1] = 1
+        corrected[:, 3] = 4
+        table.putcol("CORRECTED_DATA", corrected)
+        table.putcol("MODEL_DATA", np.zeros_like(corrected))
+        table.putcol("WEIGHT_SPECTRUM", np.ones_like(table.getcol("WEIGHT_SPECTRUM")))
+
+    expected_operands = []
+    for index in range(3):
+        integrations = np.array([2 * index, 2 * index + 1])
+        offset = np.tile(integrations, 2)
+        weights = [1, 1, 1, 3]
+        corrected = np.repeat([2 + 3j, 8 - 1j], 2) + (3 - 1j) * offset
+        model = np.repeat([1 - 1j, 2 + 2j], 2) + (.5 + .25j) * offset
+        expected_operands.extend([
+            (np.average(corrected, weights=weights), np.average(model, weights=weights)),
+            (12 + 4j + (3 - 1j) * integrations.mean(), 5 - 3j + (.5 + .25j) * integrations.mean()),
+        ])
+    corrected, model = np.asarray(expected_operands).T
+    channel = np.tile([0, 1], 3)
+    times = np.repeat(start + 5 + 20 * np.arange(3), 2)
+    residual = (corrected - model).real
+    ratio = (corrected / model).real
+    zero_calibrated_ratio = np.where(channel == 0, np.nan, ratio)
+    base = request(vis) | dict(spw="0:0~3", xdatacolumn="", yaxis="real", avgtime="20",
+                               avgchannel="2", title="Combined visibility averages")
+    cases = (
+        ("combined-channel-residual", vis, "channel", "corrected-model_vector", channel, residual, channel, times),
+        ("combined-time-ratio", vis, "time", "corrected/model_vector", times, ratio, channel, times),
+        ("zero-primary", zero, "channel", "corrected-model_vector", channel[1::2], residual[1::2], channel[1::2], times[1::2]),
+        ("zero-calibrated", zero_calibrated, "channel", "corrected/model_vector",
+         channel, zero_calibrated_ratio, channel, times),
+        ("time-before-channel", rounded, "channel", "corrected-model_vector", channel, np.tile([.5, 4], 3), channel, times),
+    )
+    for name, source, axis, column, x, y, channels, metadata_time in cases:
+        controls = base | dict(vis=str(source), xaxis=axis, ydatacolumn=column)
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        selected = rows(expected)
+        assert [(point[2], point[12]) for point in selected] == [(str(chan), "XX") for chan in channels]
+        np.testing.assert_allclose([float(point[0]) for point in selected], x, rtol=0, atol=.00051)
+        np.testing.assert_allclose([float(point[1]) for point in selected], y, rtol=1.2e-5)
+        np.testing.assert_allclose([float(point[9]) for point in selected], metadata_time, rtol=0, atol=.00051)
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(selected)
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)], x, rtol=0, atol=.00051)
+        if name == "time-before-channel":
+            np.testing.assert_array_equal([float(point[1]) for point in rows(actual)], y)
+        print(f"{name}: {len(selected)} matching coordinates after time and channel averaging", flush=True)
+        if name == "combined-time-ratio":
+            compare_figure(root, native, controls, expected,
+                           (controls["title"], "Time (MJD seconds)", "Real:corrected/model (vector)"))
+    compare_combined_weight_edges(root, native, vis, base)
+
+
+def compare_combined_weight_edges(root, native, vis, base):
+    controls = base | dict(xaxis="channel", ydatacolumn="corrected-model_vector", expformat="txt")
+    cases = (
+        ("signed", "WEIGHT_SPECTRUM", -1, False, [(0, -2), (1, 1)], None),
+        ("signed-without-data", "WEIGHT_SPECTRUM", -1, True, [(0, -2), (1, 1)], None),
+        ("overflow-observed", "SIGMA_SPECTRUM", 1e-20, False, [(1, 1)], None),
+        ("tiny-calibrated", "WEIGHT_SPECTRUM", 1e-25, False, [(0, 0), (1, 1)], [(0, 1), (1, 1)]),
+        ("tiny-observed", "SIGMA_SPECTRUM", 1e13, False, [(1, 1)], [(0, 1), (1, 1)]),
+    )
+    for name, column, weight, remove_data, casa_values, native_values in cases:
+        source = root / f"{name}.ms"
+        copy_ms(vis, source)
+        with opened(source, True) as table:
+            model = np.ones_like(table.getcol("MODEL_DATA"))
+            table.putcol("CORRECTED_DATA", 2 * model)
+            table.putcol("MODEL_DATA", model)
+            spectrum = table.getcol(column)
+            spectrum[:, :2] = weight
+            table.putcol(column, spectrum)
+            if remove_data:
+                table.removecols(["DATA"])
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        selection = controls | dict(vis=str(source))
+        assert reference(**selection, plotfile=str(expected)) is None
+        assert native(**selection, plotfile=str(actual)) is None
+        np.testing.assert_array_equal(np.array([point[:2] for point in rows(expected)], dtype=float),
+                                      casa_values * 3)
+        if native_values is None:
+            assert compare_text(actual, expected) == len(casa_values) * 3
+        else:
+            # The finite nonzero normalization and corresponding residual
+            # survive the channel transform even when squaring would underflow.
+            np.testing.assert_array_equal(np.array([point[:2] for point in rows(actual)], dtype=float),
+                                          native_values * 3)
+        print(f"{name}: {len(rows(actual))} verified weight-edge coordinates", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -316,6 +426,9 @@ def main():
         two_axes = root / "two-axes"
         two_axes.mkdir()
         compare_two_visibility_axes(two_axes, native)
+        combined = root / "combined"
+        combined.mkdir()
+        compare_combined_time_channel_derived(combined, native)
 
 
 if __name__ == "__main__":

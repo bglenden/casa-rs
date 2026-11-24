@@ -4065,6 +4065,15 @@ weighted mean. Native flagdata divides by the real sum of weights. The
 oracle checks the expected finite mean, the normal signed-weight behavior
 and the zero-total-weight case independently.
 
+The same underflow occurs in CASA 6.7.6.14 with casaplotms 2.9.1 after time
+and channel averaging a corrected minus model expression. In a bin with
+corrected values of 2 and model values of 1, calibrated channel weights
+of `1e-25` produce a residual of 0 in CASA. Observed sigma values of
+`1e13` instead hide the bin. Native PlotMS compares the real weight sum
+directly and preserves the residual of 1 in both cases. The paired
+oracle also checks signed nonzero totals and the separate observed mask
+when an accumulated inverse variance overflows during time averaging.
+
 The parameter bridge narrows widths before comparing them to the window
 length. A width of `4294967298` wraps into two channels, which can flag two
 samples even though the whole-window mean falls outside the clipping

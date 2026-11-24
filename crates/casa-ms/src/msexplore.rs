@@ -5659,6 +5659,9 @@ fn build_generic_visibility_scatter_with_averaging(
                     kinds.primary
                 })
             });
+        let time_channel_primary = primary_weight_grid
+            .zip(time_weight_kinds.map(|kinds| kinds.primary))
+            .filter(|_| time_derived);
         // The baseline reducer sees the mask after the last visibility cube
         // transform. Mixed stored columns use the calibrated mask here.
         let channel_mask_grid = channel_baseline_kinds
@@ -5852,6 +5855,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     // The time stage sums each column's weights. The channel
                     // stage uses those sums and propagates the primary mask.
                     let primary_weight = primary_weight_grid
+                        .filter(|_| !time_derived)
                         .map(|grid| plotms_columns::bin_weight(grid, *corr_index, bin, &flags));
                     for (index, (grid, buffer)) in visibility_grids
                         .iter()
@@ -5982,10 +5986,13 @@ fn build_generic_visibility_scatter_with_averaging(
                             ] {
                                 if let Some(grid) = visibility_columns.grid(axis, &visibility_grids)
                                 {
-                                    series_used |= average.add_vector_time_sample(
+                                    series_used |= average.add_vector_time_samples(
                                         grid,
                                         &flags,
-                                        [axis_weights[axis], time_model_weight],
+                                        plotms_ordinates::VectorTimeWeights {
+                                            spectra: [axis_weights[axis], time_model_weight],
+                                            primary: time_channel_primary,
+                                        },
                                         *corr_index,
                                         bin,
                                     );
