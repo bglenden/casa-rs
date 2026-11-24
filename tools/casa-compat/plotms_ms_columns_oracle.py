@@ -466,15 +466,34 @@ def compare_multiple_ordinates(root, vis, native):
 
     split = [("left", "Real:model, Amp:corrected", (0, 2)), ("right", "Phase (degrees)", (1,))]
     figures = (
-        ("three-ordinates", base, "three-ordinates", split),
+        ("three-ordinates", base, "three-ordinates", split, 3),
         ("three-ordinates-scalar-side", base | dict(yaxislocation="right"), "three-ordinates",
-         [("left", "Real:model, Phase (degrees), Amp:corrected", (0, 1, 2))]),
+         [("left", "Real:model, Phase (degrees), Amp:corrected", (0, 1, 2))], 3),
         ("three-ordinates-short-sides", base | dict(yaxislocation=["right"]), "three-ordinates",
-         [("left", "Phase (degrees), Amp:corrected", (1, 2)), ("right", "Real:model", (0,))]),
+         [("left", "Phase (degrees), Amp:corrected", (1, 2)), ("right", "Real:model", (0,))], 3),
         ("three-ordinates-two-correlations", dense | dict(xconnector="line"),
-         "three-ordinates-two-correlations", split),
+         "three-ordinates-two-correlations", split, 3),
     )
-    for name, controls, text, expectations in figures:
+    for axis, label in (("u", "U (m)"), ("elevation", "Elevation (deg)")):
+        name = f"three-ordinate-mixed-{axis}"
+        mixed = dense | dict(yaxis=["real", "phase", axis], expformat="txt")
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**mixed, plotfile=str(expected)) is None
+        points = rows(expected)
+        assert len(points) == 78
+        real, phase, metadata = points[:30], points[30:60], points[60:]
+        assert [point[2:] for point in real] == [point[2:] for point in phase]
+        representatives = {}
+        for point in real:
+            representatives.setdefault(tuple(point[2:12] + point[13:]), point[2:])
+        assert [point[2:] for point in metadata] == list(representatives.values())
+        assert native(**mixed, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(points)
+        print(f"{name}: 30 Real, 30 Phase and 18 {axis} coordinates", flush=True)
+        sides = [("left", f"Real:model, {label}", (0, 2)), ("right", "Phase (degrees)", (1,))]
+        figures += ((name, mixed, name, sides, (30, 60)),)
+
+    for name, controls, text, expectations, sections in figures:
         figure = controls | dict(expformat="png", width=500, height=360, dpi=100)
         expected, actual = (root / f"{name}.{engine}.png" for engine in ("casa", "native"))
         assert reference(**figure, plotfile=str(expected)) is None
@@ -483,7 +502,7 @@ def compare_multiple_ordinates(root, vis, native):
         [axes] = capture
         capture.clear()
         coordinates = np.array([point[:2] for point in rows(root / f"{text}.casa.txt")], dtype=float)
-        ordinates = np.split(coordinates, 3)
+        ordinates = np.split(coordinates, sections)
         assert len(axes) == len(expectations)
         for (side, label, layers), (expected_side, expected_label, indices) in zip(axes, expectations, strict=True):
             assert (side, label, len(layers)) == (expected_side, expected_label, len(indices))
@@ -518,19 +537,6 @@ def compare_multiple_ordinates(root, vis, native):
         else:
             raise AssertionError(f"{engine} accepted an invalid ordinate location before export")
         assert not output.exists()
-
-    for axis in ("u", "elevation"):
-        mixed = dense | dict(yaxis=["real", "phase", axis], expformat="txt")
-        expected, actual = (root / f"three-ordinate-mixed-{axis}.{engine}.txt" for engine in ("casa", "native"))
-        assert reference(**mixed, plotfile=str(expected)) is None
-        assert len(rows(expected)) == 78
-        try:
-            native(**mixed, plotfile=str(actual))
-        except TaskParameterError as error:
-            assert "mixed MeasurementSet visibility and metadata ordinates or geometry abscissae are pending #1032" in str(error), error
-        else:
-            raise AssertionError(f"PlotMS used the visibility-only sample mask for the mixed {axis} plot")
-        assert not actual.exists()
 
     averaged = base | dict(avgchannel="2", expformat="txt")
     expected, actual = (root / f"three-ordinate-averaged.{engine}.txt" for engine in ("casa", "native"))
