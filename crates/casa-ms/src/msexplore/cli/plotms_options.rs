@@ -185,7 +185,7 @@ pub(super) fn options_from_plotms(
     let visibility_document = visibility_document
         || visibility_axes
         || x_axis.is_row_identifier()
-        || ordinates.iter().copied().any(MsAxis::is_row_identifier);
+        || y_axis.is_row_identifier();
     let plot_format = if visibility_document {
         MsExportFormat::Txt
     } else {
