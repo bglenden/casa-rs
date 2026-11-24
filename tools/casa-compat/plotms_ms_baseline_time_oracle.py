@@ -14,6 +14,7 @@ import numpy as np
 from plotms_ms_baseline_channels_oracle import make_fixture as make_channel_baseline_fixture
 from plotms_ms_baseline_channels_oracle import make_reversed_partial_spectrum
 from plotms_ms_columns_oracle import (
+    compare_empty_export,
     compare_figure,
     compare_ordinate_figure,
     compare_text,
@@ -25,6 +26,7 @@ from plotms_ms_columns_oracle import (
     rows,
     time_average_fixture,
 )
+from plotms_ms_scalar_time_oracle import make_mixed_polarization
 
 
 def make_fixture(root):
@@ -309,6 +311,64 @@ def compare_scalar_baselines(root, native):
         print(f"{name}: {len(coordinates)} matching scalar baseline coordinates", flush=True)
         if name == "independent":
             compare_figure(root, native, controls, expected, (base["title"], "Amp", "Phase:corrected (degrees)"))
+
+    compare_scalar_baseline_polarizations(root, native, source, base, start)
+    compare_empty_scalar_baselines(root, native, source, base)
+
+
+def compare_scalar_baseline_polarizations(root, native, source, base, start):
+    from grpc import RpcError, StatusCode
+
+    reduced = make_mixed_polarization(source, root / "mixed-polarization.ms",
+                                      lambda table: table.getcol("ANTENNA2") == 2, correlation_slot=1)
+    with opened(reduced, True) as table:
+        for row in map(int, np.flatnonzero(table.getcol("DATA_DESC_ID") == 0)):
+            for column in ("DATA", "CORRECTED_DATA"):
+                values = table.getcell(column, row)
+                values[0] *= 100j
+                table.putcell(column, row, values)
+    controls = base | dict(vis=str(reduced), correlation="YY", msselect=f"TIME < {start + 1:.3f}")
+    rejected = root / "different-physical-slots.casa.txt"
+    try:
+        reference(**controls, plotfile=str(rejected), expformat="txt")
+    except RpcError as error:
+        assert error.code() == StatusCode.INVALID_ARGUMENT, error
+    else:
+        raise AssertionError("CASA accepted YY at different physical correlation slots")
+    assert not rejected.exists()
+
+    # Reorder the full setup to give CASA a control with YY in slot zero in both setups.
+    normalized = root / "matching-slots" / reduced.name
+    normalized.parent.mkdir()
+    copy_ms(reduced, normalized)
+    with opened(normalized / "POLARIZATION", True) as pol:
+        pol.putcell("CORR_TYPE", 0, pol.getcell("CORR_TYPE", 0)[::-1].copy())
+        pol.putcell("CORR_PRODUCT", 0, pol.getcell("CORR_PRODUCT", 0)[:, ::-1].copy())
+    with opened(normalized, True) as table:
+        for row in map(int, np.flatnonzero(table.getcol("DATA_DESC_ID") == 0)):
+            for column in ("DATA", "CORRECTED_DATA", "MODEL_DATA", "FLAG", "FLAG_CATEGORY", "WEIGHT", "SIGMA"):
+                if table.iscelldefined(column, row):
+                    table.putcell(column, row, table.getcell(column, row)[::-1].copy())
+    expected, actual = (root / f"selected-yy.{engine}.txt" for engine in ("casa", "native"))
+    casa_controls = controls | dict(vis=str(normalized))
+    assert reference(**casa_controls, plotfile=str(expected), expformat="txt") is None
+    selected = rows(expected)
+    assert [(point[5], point[6], point[12]) for point in selected] == [("-1", "-1", "YY")]
+    np.testing.assert_allclose(np.array(selected[0][:2], dtype=float), [1.2, 64], rtol=1.2e-5)
+    assert native(**controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 1
+    print("selected-yy: 1 point matching the CASA control with aligned physical correlation slots", flush=True)
+
+
+def compare_empty_scalar_baselines(root, native, source, controls):
+    masked = root / "all-flagged.ms"
+    copy_ms(source, masked)
+    with opened(masked, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, :] = True
+        table.putcol("FLAG", flags)
+    compare_empty_export(root, native, "all-flagged", controls | dict(vis=str(masked)),
+                         ("Amp", "Phase:corrected (degrees)"))
 
 
 def main():

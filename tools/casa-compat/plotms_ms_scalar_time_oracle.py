@@ -356,14 +356,15 @@ def compare_scalar_time_spans(root, native, *, average_channels=False):
     compare_scalar_span_shapes(root, native, source, base | cross, start + 55.)
 
 
-def make_mixed_polarization(source, vis, reduced_rows):
+def make_mixed_polarization(source, vis, reduced_rows, *, correlation_slot=0):
     copy_ms(source, vis)
+    retained = slice(correlation_slot, correlation_slot + 1)
     with opened(vis / "POLARIZATION", True) as pol:
         polarization = pol.nrows()
         pol.addrows(1)
         pol.putcell("NUM_CORR", polarization, 1)
-        pol.putcell("CORR_TYPE", polarization, pol.getcell("CORR_TYPE", 0)[:1])
-        pol.putcell("CORR_PRODUCT", polarization, pol.getcell("CORR_PRODUCT", 0)[:, :1])
+        pol.putcell("CORR_TYPE", polarization, pol.getcell("CORR_TYPE", 0)[retained])
+        pol.putcell("CORR_PRODUCT", polarization, pol.getcell("CORR_PRODUCT", 0)[:, retained])
         pol.putcell("FLAG_ROW", polarization, False)
     with opened(vis / "DATA_DESCRIPTION", True) as dd:
         description = dd.nrows()
@@ -384,7 +385,7 @@ def make_mixed_polarization(source, vis, reduced_rows):
             for row in range(table.nrows()):
                 if table.iscelldefined(original, row):
                     values = table.getcell(original, row)
-                    table.putcell(column, row, values[:1] if reduced[row] else values)
+                    table.putcell(column, row, values[retained] if reduced[row] else values)
             table.removecols(original)
         descriptions[reduced] = description
         table.putcol("DATA_DESC_ID", descriptions)
