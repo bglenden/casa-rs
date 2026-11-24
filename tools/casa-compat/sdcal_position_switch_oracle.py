@@ -345,6 +345,33 @@ def check_intent(root, seed, temperatures, tasks):
     print('Position-switch intent selection and inactive apply/Tsys intent matched', flush=True)
 
 
+def check_measurement_set_replacement(root, seed, tasks):
+    products = {}
+    for writer, task in tasks.items():
+        product = root / f'{writer}-replaced.ms'
+        copy_ms(seed, product)
+        assert task(str(seed), 'ps', outfile=str(product), overwrite=True) is None
+        with opened(product) as replaced:
+            assert replaced.getkeyword('VisCal') == 'SDSKY_PS'
+            assert replaced.nrows() == 2
+        compare_mapping(columns(product), columns(root / f'{writer}-data.cal'), False)
+        products[writer] = product
+    expected = None
+    for writer, product in products.items():
+        for reader, task in tasks.items():
+            vis = root / f'{writer}-replaced-applied-{reader}.ms'
+            copy_ms(seed, vis)
+            assert task(str(vis), 'apply', applytable=str(product)) is None
+            with opened(vis) as main:
+                result = {key: main.getcol(key) for key in ('CORRECTED_DATA', 'FLAG', 'WEIGHT')}
+            if expected is None:
+                expected = result
+            else:
+                compare_mapping(result, expected, False)
+    print(f'Separate MeasurementSet replacement passed {len(tasks)} sky-table writers '
+          f'and {len(tasks)} application readers', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('work', type=Path)
@@ -362,6 +389,7 @@ def main():
     check_selectors_and_errors(root, seed, temperatures, tasks)
     check_parameter_planes(root, seed, tasks)
     check_intent(root, seed, temperatures, tasks)
+    check_measurement_set_replacement(root, seed, tasks)
     if 'native' in tasks:
         check_busy_replacement(root, seed, temperatures, tasks['native'])
 
