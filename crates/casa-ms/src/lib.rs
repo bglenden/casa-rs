@@ -76,6 +76,7 @@ pub mod subtables;
 pub mod task_contract;
 mod task_front_end;
 pub mod tool_iteration;
+pub mod tool_lister;
 pub mod tool_range;
 pub mod tool_scan_summary;
 pub mod tool_statistics;

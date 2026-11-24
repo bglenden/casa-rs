@@ -273,8 +273,8 @@ const METHODS: &[Method] = &[
             param("pagerows", K::Int, Int(50)),
             param("listfile", K::Text, Text("")),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "listfits",
