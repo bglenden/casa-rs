@@ -131,7 +131,8 @@
         "ms-vector-time-extended-pairs",
         "ms-time-channel-independent-axes",
         "ms-scalar-time-expressions",
-        "ms-derived-scan-field-spans"
+        "ms-derived-scan-field-spans",
+        "ms-scalar-scan-field-spans"
       ],
       "behaviors": [
         "coordinates"
@@ -212,7 +213,8 @@
         "ms-time-channel-independent-axes",
         "ms-scalar-time-corrected-residual",
         "ms-scalar-time-expressions",
-        "ms-derived-scan-field-spans"
+        "ms-derived-scan-field-spans",
+        "ms-scalar-scan-field-spans"
       ],
       "behaviors": [
         "coordinates"
@@ -462,7 +464,8 @@
         "ms-time-channel-independent-axes",
         "ms-scalar-time-corrected-residual",
         "ms-scalar-time-expressions",
-        "ms-derived-scan-field-spans"
+        "ms-derived-scan-field-spans",
+        "ms-scalar-scan-field-spans"
       ],
       "behaviors": [
         "averaging"
@@ -470,12 +473,13 @@
       "status": "Partial"
     },
     "avgscan": {
-      "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging.",
+      "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans.",
       "evidence": [
         "paired",
         "ms-scan-field-time-columns",
         "ms-empty-combined-averages",
-        "ms-derived-scan-field-spans"
+        "ms-derived-scan-field-spans",
+        "ms-scalar-scan-field-spans"
       ],
       "behaviors": [
         "averaging"
@@ -483,12 +487,13 @@
       "status": "Partial"
     },
     "avgfield": {
-      "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging.",
+      "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans.",
       "evidence": [
         "paired",
         "ms-scan-field-time-columns",
         "ms-empty-combined-averages",
-        "ms-derived-scan-field-spans"
+        "ms-derived-scan-field-spans",
+        "ms-scalar-scan-field-spans"
       ],
       "behaviors": [
         "averaging"
@@ -530,13 +535,14 @@
       "status": "Implemented"
     },
     "scalar": {
-      "scope": "Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. Ordinary scalar time averaging uses the first selected correlation’s row weight and reduces amplitude and phase separately for stored visibility axes. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate.",
+      "scope": "Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. Ordinary scalar time averaging uses the first selected correlation’s row weight and reduces amplitude and phase separately for stored visibility axes. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans.",
       "evidence": [
         "paired",
         "ms-channel-columns",
         "ms-scalar-time-columns",
         "ms-scalar-time-corrected-residual",
-        "ms-scalar-time-expressions"
+        "ms-scalar-time-expressions",
+        "ms-scalar-scan-field-spans"
       ],
       "behaviors": [
         "averaging"
@@ -2129,6 +2135,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-derived-scan-field-spans-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2229"
+      ]
+    },
+    "ms-scalar-scan-field-spans": {
+      "kind": "Same-input scalar time averages with scan and field spans",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Ordinary scalar time averaging across scans and fields, including independent stored or derived visibility axes and two stored ordinates.",
+      "result": "Thirteen paired TXT exports match 19 selected coordinates and IDs. The cases check the mixed scan code, first field, shorter bins, a backward timestamp, the scalar interval midpoint when later cube cells are flagged, independent expressions and two stored ordinates. A single selected correlation works across differently shaped polarization setups, and both providers refuse incompatible selected shapes. A paired 500 by 360 PNG verifies the plotted coordinate and units.",
+      "casa_version": "6.7.6.14",
+      "revision": "35bd1dce473ee95f02c5642be4c8a4d8d4a471ca",
+      "source_revision": "35bd1dce473ee95f02c5642be4c8a4d8d4a471ca",
+      "command": "casa-python tools/casa-compat/plotms_ms_scalar_time_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-scalar-scan-field-spans-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2230"
       ]
     }
   }
