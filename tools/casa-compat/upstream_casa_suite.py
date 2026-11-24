@@ -3,7 +3,7 @@
 """Run pinned upstream CASA suites against the original or native Python entry points."""
 
 import argparse
-from contextlib import redirect_stderr
+from contextlib import nullcontext, redirect_stderr
 from functools import wraps
 import json
 import os
@@ -29,6 +29,12 @@ IMAGE_TOOL_FIXTURES = {
     "image_subimage": None,
     "image_transpose": "ia_transpose",
 }
+CALIBRATION_FIXTURE_GROUPS = {
+    "getjyperkalma": "gencal",
+    "predictcomp": None,
+    "sdatmcor": None,
+}
+CALIBRATION_REFERENCE_DATA_SUITES = {"predictcomp", "sdatmcor"}
 _fixture_errors = []
 
 
@@ -44,7 +50,10 @@ def pytest_configure():
 
     if casatasks.version_string() != CASA_VERSION:
         raise RuntimeError(f"the upstream suite requires CASA {CASA_VERSION}")
-    ctsys.setpath([os.environ["CASARS_UPSTREAM_TEST_DATA"], *ctsys.getpath()])
+    fixture_paths = [os.environ["CASARS_UPSTREAM_TEST_DATA"]]
+    if reference_root := os.environ.get("CASARS_UPSTREAM_REFERENCE_DATA"):
+        fixture_paths.append(reference_root)
+    ctsys.setpath([*fixture_paths, *ctsys.getpath()])
     if not casatasks.casalog.setlogfile(str(Path.cwd() / "casapy.log")):
         raise RuntimeError("could not open the upstream suite log")
 
@@ -76,7 +85,7 @@ def pytest_configure():
     if timings := os.environ.get("CASARS_UPSTREAM_TEST_TIMINGS"):
         entry_point = _timed_task(entry_point, Path(timings))
     if implementation == "casa-rs":
-        entry_point = _native_task(entry_point, casatasks.casalog)
+        entry_point = _native_task(entry_point, casatasks.casalog, task)
     setattr(casatasks, task, entry_point)
 
 
@@ -109,7 +118,7 @@ def _timed_task(task, output):
     return run
 
 
-def _native_task(task, casalog):
+def _native_task(task, casalog, name):
     @wraps(task)
     def run(*args, **kwargs):
         try:
@@ -120,7 +129,11 @@ def _native_task(task, casalog):
             # Upstream expected-failure assertions may catch this exception.
             _fixture_errors.append(str(error))
             raise
-        with log, redirect_stderr(log):
+        transport = nullcontext()
+        if name == "gencal":
+            from upstream_gencal_services import jyperk_transport
+            transport = jyperk_transport(kwargs)
+        with log, redirect_stderr(log), transport:
             return task(*args, **kwargs)
     return run
 
@@ -162,7 +175,7 @@ def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures
             "calibrater": ("calibrater,table", "calibrater"),
             "getantposalma": (task, None),
             "getcalmodvla": (task, None),
-        }.get(name, (task, task))
+        }.get(name, (task, CALIBRATION_FIXTURE_GROUPS.get(name, task)))
     source = casatestdata / "unittest" / fixture_group if fixture_group else None
     if source is not None and fixture_group != "exportfits" and not source.is_dir():
         raise FileNotFoundError(f"missing upstream fixtures: {source}")
@@ -188,6 +201,8 @@ def run_suite(suite, casatestdata, implementation, output, only, trial, fixtures
         }
         if script_kind == "tool":
             env["CASARS_UPSTREAM_TEST_TOOL"] = tool
+        if name in CALIBRATION_REFERENCE_DATA_SUITES:
+            env["CASARS_UPSTREAM_REFERENCE_DATA"] = str(casatestdata)
         if eager_asdm_fixtures:
             env["CASARS_UPSTREAM_EAGER_ASDM_FIXTURES"] = "1"
         env["PYTHONPATH"] = os.pathsep.join(filter(None, (
