@@ -323,6 +323,13 @@ pub(super) fn name(axis: MsAxis) -> &'static str {
         MsAxis::SpectralWindow => "Spw",
         MsAxis::Correlation => "Corr",
         MsAxis::Baseline => "Baseline",
+        MsAxis::Row
+        | MsAxis::Antenna1
+        | MsAxis::Antenna2
+        | MsAxis::Observation
+        | MsAxis::Intent
+        | MsAxis::Feed1
+        | MsAxis::Feed2 => axis.display_name(),
         MsAxis::Antenna => "Antenna",
         MsAxis::UvDistance => "UVdist",
         MsAxis::U => "U",
