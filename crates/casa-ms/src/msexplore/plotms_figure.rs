@@ -484,9 +484,14 @@ fn paginate(
         // When the iteration count initially fits on one page, its extra export
         // still uses the first page's cell and has no iteration labels in the filename.
         let reuse_first_canvas = offset != 0 && page > 0 && panels.len() <= capacity;
+        let first_panel = if page == 0 || reuse_first_canvas {
+            position
+        } else {
+            [0, 0]
+        };
         let mut document = document.clone();
         document.layout = Some(PlotLayout {
-            first_panel: (offset != 0 && (page == 0 || reuse_first_canvas)).then_some(position),
+            first_panel: (offset != 0).then_some(first_panel),
             ..layout.clone()
         });
         document.panels.extend_from_slice(page_panels);
@@ -502,6 +507,11 @@ fn paginate(
                 }
                 _ => &panel.label,
             });
+        if offset != 0 {
+            for (panel, scan) in document.panels.iter_mut().zip(labels.clone()) {
+                panel.title = format!("{} Scan: {scan}", document.title);
+            }
+        }
         let axis = if reuse_first_canvas {
             ""
         } else {

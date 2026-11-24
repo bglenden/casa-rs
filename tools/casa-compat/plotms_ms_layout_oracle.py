@@ -90,7 +90,7 @@ def check_output_controls(root, native, base):
 
 
 def compare_offset_scan_pages(root, native, vis, base, scan_count=4):
-    from casars import _plot_document
+    from casars.tasks import _plotms_plot
 
     root = root / f"offset-{scan_count}-scans"
     root.mkdir()
@@ -110,7 +110,7 @@ def compare_offset_scan_pages(root, native, vis, base, scan_count=4):
 
     controls = base | dict(vis=str(source), field="", spw="0:1", xaxis="time", xdatacolumn="",
                           yaxis="amp", ydatacolumn="data", iteraxis="scan", gridrows=1, gridcols=2,
-                          rowindex=0, colindex=1, title="")
+                          rowindex=0, colindex=1, title="Selected scan amplitude", titlefont=13)
     complete = root / "all-scan-coordinates.casa.txt"
     assert reference(**(controls | dict(gridcols=scan_count, colindex=0)),
                      expformat="txt", plotfile=str(complete)) is None
@@ -136,18 +136,19 @@ def compare_offset_scan_pages(root, native, vis, base, scan_count=4):
     )
     if scan_count == 2:
         pages = (pages[0], ("_2", ((2, (0, 1)),)))
-    render = _plot_document.render_document
+    configure = _plotms_plot.configure
     rendered = []
 
-    def record(*args, **kwargs):
-        figure, axes = render(*args, **kwargs)
+    def record(figure, axes, document, options):
+        configure(figure, axes, document, options)
         page = []
+        assert not any(text.get_text() == controls["title"] for text in figure.texts)
         for axis in figure.axes:
             slot = axis.get_subplotspec()
             assert slot.get_gridspec().get_geometry() == (1, 2)
-            page.append(((slot.rowspan.start, slot.colspan.start), axis.lines[0].get_xydata()))
+            assert axis.title.get_fontsize() == controls["titlefont"]
+            page.append(((slot.rowspan.start, slot.colspan.start), axis.lines[0].get_xydata(), axis.get_title()))
         rendered.append(page)
-        return figure, axes
 
     for export, plan in (("current", pages[:1]), ("all", pages)):
         expected, actual = (root / f"offset-{export}.{engine}.txt" for engine in ("casa", "native"))
@@ -160,7 +161,7 @@ def compare_offset_scan_pages(root, native, vis, base, scan_count=4):
         image = controls | dict(exprange=export, expformat="png", width=500, height=360, dpi=100)
         for engine, task in (("casa", reference), ("native", native)):
             stem = f"offset-{export}.{engine}"
-            with patch.object(_plot_document, "render_document", record):
+            with patch.object(_plotms_plot, "configure", record):
                 assert task(**image, plotfile=str(root / f"{stem}.png")) is None
             outputs = {root / f"{stem}{suffix}.png" for suffix, _ in plan}
             assert set(root.glob(f"{stem}*.png")) == outputs
@@ -168,8 +169,9 @@ def compare_offset_scan_pages(root, native, vis, base, scan_count=4):
                 output = root / f"{stem}{suffix}.png"
                 assert occupied_marker_cells(output, (1, 2)) == {cell for _, cell in panels}, output
         for page, (_, panels) in zip(rendered, plan, strict=True):
-            for (slot, coordinates), (scan, expected_slot) in zip(page, panels, strict=True):
+            for (slot, coordinates, title), (scan, expected_slot) in zip(page, panels, strict=True):
                 assert slot == expected_slot
+                assert title == f"{controls['title']} Scan: {scan}"
                 np.testing.assert_allclose(coordinates[:, 0], expected_coords[scan][:, 0], rtol=0, atol=0.00051)
                 np.testing.assert_array_equal(coordinates[:, 1], expected_coords[scan][:, 1])
         print(f"offset-{scan_count}-{export}: {2 * samples_per_scan} matching text points, "
