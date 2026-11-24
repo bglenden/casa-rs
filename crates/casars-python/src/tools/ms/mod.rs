@@ -15,6 +15,7 @@ mod selection_record;
 mod statwt;
 mod stubs;
 mod subtable_queries;
+mod summary;
 pub(crate) mod surface;
 mod visibility;
 

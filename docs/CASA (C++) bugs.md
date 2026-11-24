@@ -11461,3 +11461,19 @@ vector. casa-rs raises a Python `RuntimeError` when a numeric selection
 field has more than one non-singleton axis. It retains earlier successful
 fields in the same ordered record. A vector with a singleton axis, such
 as shape `(1, 4)`, is accepted (#1030).
+
+## MS summary can return success without writing the report
+
+On an attached MeasurementSet in CASA 6.7.6.14, call
+`ms.summary(listfile="missing-directory/report.txt")` with a missing
+parent. CASA returns a summary record even though it cannot create the
+report. casa-rs raises an I/O error and preserves the attachment so the
+caller can retry with a writable path (#1030).
+
+## MS summary misreports a nonnumeric cache-size argument
+
+In CASA 6.7.6.14, calling `ms.summary(cachesize="50")` on a detached
+tool raises a Python `SystemError` because the binding returns with a
+conversion exception pending. casa-rs reports the invalid argument
+with `TypeError`. Numeric arguments, including NumPy floating-point
+scalars, remain accepted (#1030).
