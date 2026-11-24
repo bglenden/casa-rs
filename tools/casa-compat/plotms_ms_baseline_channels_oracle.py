@@ -250,6 +250,22 @@ def compare_baseline_ordinate_lists(root, native):
             figure = controls | overrides | dict(xlabel="Channel bin")
             compare_sides(root, native, figure, expected_x="Channel bin", name=name)
     compare_baseline_ordinate_edges(root, native, vis, spectra_flags, controls)
+    compare_empty_baseline_channel_bins(root, native, spectra_flags, controls)
+
+
+def compare_empty_baseline_channel_bins(root, native, spectra_flags, controls):
+    masked = root / "zero-weight-spectrum.ms"
+    copy_ms(spectra_flags, masked)
+    with opened(masked, True) as table:
+        weights = table.getcol("WEIGHT_SPECTRUM")
+        table.putcol("WEIGHT_SPECTRUM", np.zeros_like(weights))
+    options = controls | dict(vis=str(masked), avgchannel="2", expformat="txt")
+    expected, actual = (root / f"empty-baseline-channel-bins.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    assert not rows(expected) and expected.read_text().count("# No data to export") == 3
+    assert native(**options, plotfile=str(actual)) is None
+    assert actual.read_bytes() == expected.read_bytes()
+    print("empty-baseline-channel-bins: three empty sections matched", flush=True)
 
 
 def compare_baseline_ordinate_edges(root, native, vis, spectra_flags, controls):
