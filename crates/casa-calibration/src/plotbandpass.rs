@@ -70,6 +70,7 @@ pub(crate) struct BandpassPanel {
     pub(crate) y_label: &'static str,
     pub(crate) series: Vec<BandpassSeries>,
     pub(crate) suffix: String,
+    first_skipped_suffix: Option<String>,
     pub(crate) x_limits: [f64; 2],
     pub(crate) frequency_channels: Vec<f64>,
     atmosphere: Vec<AtmosphericCurve>,
@@ -255,13 +256,17 @@ pub(crate) fn prepare_bandpass(
         atmosphere: atmosphere.as_ref(),
         fdm_windows: fdm_windows.as_deref(),
     };
+    let mut first_skipped_suffix = None;
     'groups: for (key, rows) in selected {
         for &axis in &ordinates {
             if panel_limit.is_some_and(|limit| panels.len() >= limit) {
                 break 'groups;
             }
-            let panel = panel(&context, key, &rows, axis)?;
-            if !panel.series.is_empty() {
+            let mut panel = panel(&context, key, &rows, axis)?;
+            if panel.series.is_empty() {
+                first_skipped_suffix.get_or_insert(panel.suffix);
+            } else {
+                panel.first_skipped_suffix = first_skipped_suffix.take();
                 panels.push(panel);
             }
         }
@@ -549,6 +554,7 @@ fn panel(
         ordinate,
         title,
         suffix,
+        first_skipped_suffix: None,
         x_label,
         y_label: ordinate_label(
             ordinate,
