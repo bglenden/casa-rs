@@ -158,7 +158,7 @@ impl AttachedMs {
                 snapshot = link.snapshot(None).map_err(runtime_error)?;
             }
             self.visibility.initialized = true;
-            let rows = sampled_rows(snapshot.ms.row_count(), increment);
+            let rows = sampled_rows(count, snapshot.ms.row_count(), increment)?;
             let record = tool_visibility::read_tool_visibility(
                 snapshot.ms.main_table(),
                 &[],
@@ -172,7 +172,7 @@ impl AttachedMs {
         if items.is_empty() {
             return Ok(CasaValue::empty_record());
         }
-        let mut rows = sampled_rows(count, increment);
+        let mut rows = sampled_rows(count, count, increment)?;
         if let Some(prior) = &self.selected_rows {
             for row in &mut rows {
                 *row = prior[*row];
@@ -224,13 +224,19 @@ fn integer_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i64> {
         .map_err(|_| PyTypeError::new_err(format!("argument _{name} must be an integer")))
 }
 
-fn sampled_rows(count: usize, increment: i64) -> Vec<usize> {
-    // CASA's admission comparison narrows the stride to an unsigned int,
-    // then uses the full stride in the output size and sampling.
-    if increment > 1 && (increment as u32 as usize) <= count {
-        let stride = increment as usize;
-        (0..count).step_by(stride).take(count / stride).collect()
+fn sampled_rows(initial_count: usize, count: usize, increment: i64) -> PyResult<Vec<usize>> {
+    // CASA sizes the stride selection using the count before implicit data
+    // description selection, then applies it to the current row view.
+    if increment > 1 && (increment as u32 as usize) <= initial_count {
+        let Ok(stride) = usize::try_from(increment) else {
+            return Ok(Vec::new());
+        };
+        let samples = initial_count / stride;
+        if samples > 0 && (samples - 1) * stride >= count {
+            return Err(runtime_error("RefTable Row vector"));
+        }
+        Ok((0..count).step_by(stride).take(samples).collect())
     } else {
-        (0..count).collect()
+        Ok((0..count).collect())
     }
 }

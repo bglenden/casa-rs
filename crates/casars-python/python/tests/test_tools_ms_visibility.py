@@ -201,6 +201,66 @@ def test_ms_getdata_initializes_heterogeneous_descriptions(two_spws_dataset):
         same_visibility(native, reference)
 
 
+def test_ms_getdata_frequency_axes_follow_data_descriptions(native_dataset):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(native_dataset / "SPECTRAL_WINDOW"), nomodify=False)
+    original_freq = table.getcell("CHAN_FREQ", 0)
+    original_resolution = table.getcell("RESOLUTION", 0)
+    second_freq = original_freq + 1000
+    second_resolution = original_resolution + 250
+    overrides = {"CHAN_FREQ": second_freq, "RESOLUTION": second_resolution}
+    assert table.addrows(1)
+    for name in table.colnames():
+        if table.iscelldefined(name, 0):
+            value = overrides[name] if name in overrides else table.getcell(name, 0)
+            assert table.putcell(name, 1, value)
+    assert table.done()
+
+    assert table.open(str(native_dataset / "DATA_DESCRIPTION"), nomodify=False)
+    pol_id = int(table.getcell("POLARIZATION_ID", 0))
+    assert table.addrows(2)
+    assert table.putcol("POLARIZATION_ID", np.full(3, pol_id, dtype=np.int32))
+    assert table.putcol("SPECTRAL_WINDOW_ID", np.array([1, 0, 1], dtype=np.int32))
+    assert table.putcol("FLAG_ROW", np.zeros(3, dtype=bool))
+    assert table.done()
+    assert table.open(str(native_dataset), nomodify=False)
+    assert table.putcol("DATA_DESC_ID", np.resize(np.array([2, 0, 1], dtype=np.int32), table.nrows()))
+    assert table.done()
+
+    frequencies = np.column_stack((second_freq, original_freq, second_freq))
+    resolutions = np.column_stack((second_resolution, original_resolution, second_resolution))
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        axis = reader.getdata("axis_info")["axis_info"]["freq_axis"]
+        np.testing.assert_array_equal(axis["chan_freq"], frequencies, strict=True)
+        np.testing.assert_array_equal(axis["resolution"], resolutions, strict=True)
+        assert reader.done()
+
+
+def test_ms_getdata_first_stride_uses_preinitialization_row_count(two_spws_dataset):
+    casa = pinned_casa()
+    for increment, rows in [(2, None), (29, 2), (30, None), (40, 1), (61, 30)]:
+        observed = []
+        for api in (casa, tools):
+            reader = api.ms()
+            assert reader.open(two_spws_dataset)
+            assert reader.nrow(True) == 60
+            if rows is None:
+                with pytest.raises(RuntimeError, match="RefTable Row vector"):
+                    reader.getdata("time", increment=increment)
+            else:
+                record = reader.getdata("time", increment=increment)
+                assert record["time"].shape == (rows,)
+                observed.append(record)
+            assert reader.nrow(True) == 30
+            assert reader.getdata("time")["time"].shape == (30,)
+            assert reader.done()
+        if observed:
+            same_visibility(*observed[::-1])
+
+
 def test_ms_getdata_ratio_preserves_infinite_components(native_dataset):
     casa = pinned_casa()
     table = casa.table()

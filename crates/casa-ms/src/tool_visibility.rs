@@ -672,7 +672,7 @@ fn axis_info(ms: &MeasurementSet, ids: &[i32]) -> MsResult<RecordValue> {
     let windows = descriptions
         .into_iter()
         .map(|id| dd.spectral_window_id(id))
-        .collect::<MsResult<BTreeSet<_>>>()?;
+        .collect::<MsResult<Vec<_>>>()?;
     let spw = ms.spectral_window()?;
     let mut lengths = None;
     let mut frequencies = Vec::new();
