@@ -5587,12 +5587,12 @@ fn build_generic_visibility_scatter_with_averaging(
             scalar_channel_buffer_first = Some(row_slot);
         }
         let flag_row_value = selected_flag_rows[row_slot];
-        if flag_row_value
+        let skip_flagged_row = flag_row_value
             && !include_row_flagged_points
             && time_bins.is_none()
             && !collapse_baselines
-            && !scalar_average
-        {
+            && !scalar_average;
+        if skip_flagged_row && !antenna_average {
             continue;
         }
 
@@ -5604,6 +5604,29 @@ fn build_generic_visibility_scatter_with_averaging(
         let spw_id = data_description
             .spectral_window_id(ddid)
             .map_err(|error| error.to_string())?;
+        let field_id_value = selected_field_ids[row_slot];
+        let scan_number_value = selected_scan_numbers[row_slot];
+        let row_time_value = selected_times[row_slot];
+        // The iterator counts a flagged integration before applying the plot mask.
+        // It can separate two visible buffers that have the same timestamp.
+        let antenna_group = selected_observations
+            .as_ref()
+            .filter(|_| antenna_average)
+            .map(|observations| {
+                baseline_groups.observe(
+                    [
+                        observations[row_slot],
+                        scan_number_value,
+                        field_id_value,
+                        spw_id,
+                    ],
+                    row_time_value,
+                    0.0,
+                )
+            });
+        if skip_flagged_row {
+            continue;
+        }
         let pol_id = data_description
             .polarization_id(ddid)
             .map_err(|error| error.to_string())?;
@@ -5746,17 +5769,14 @@ fn build_generic_visibility_scatter_with_averaging(
             &mut selected_channel_bins,
         )?;
 
-        let field_id_value = selected_field_ids[row_slot];
-        let scan_number_value = selected_scan_numbers[row_slot];
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
-        let row_time_value = selected_times[row_slot];
         let row_uvw_value = selected_uvw[row_slot];
         let (time_group, representative_slot) = time_bins.map_or((None, row_slot), |bins| {
             let group = bins.group(row_slot);
             (Some(group), bins.first_row_slot(group))
         });
-        let group = time_group.or_else(|| {
+        let group = time_group.or(antenna_group).or_else(|| {
             if let Some(spans) = &scalar_spans {
                 return spans.group(row_slot);
             }
@@ -6496,7 +6516,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 series_entries.push(output);
             }
         }
-        if time_weight_kinds.is_some() || collapse_baselines || scalar_average {
+        if time_weight_kinds.is_some() || collapse_baselines || scalar_average || antenna_average {
             series_entries.sort_by_key(|entry| entry.y_index);
         }
         if series_entries.is_empty() && !retain_empty_panel {
