@@ -140,14 +140,7 @@ impl MeasurementSet {
         for start in (0..table.row_count()).step_by(rows_per_block) {
             let end = start.saturating_add(rows_per_block).min(table.row_count());
             let rows = (start..end).collect::<Vec<_>>();
-            let mut columns = table.required_scalar_columns_owned_for_rows(&["TIME"], &rows)?;
-            let Some(casa_tables::RequiredScalarColumnValues::Float64(values)) =
-                columns.remove("TIME")
-            else {
-                return Err(MsError::InvalidInput(
-                    "expected a scalar Double TIME column".into(),
-                ));
-            };
+            let values = super::columns::load_f64_column(table, "TIME", &rows)?;
             selected.extend(rows.into_iter().zip(values).filter_map(|(row, time)| {
                 let inside = !time.is_nan()
                     && times

@@ -159,6 +159,15 @@ pub(super) fn load_i32_column(table: &Table, column: &str, rows: &[usize]) -> Ms
 }
 
 pub(super) fn load_f64_column(table: &Table, column: &str, rows: &[usize]) -> MsResult<Vec<f64>> {
+    let mut values = Vec::new();
+    let mut destinations = [RequiredScalarColumnDestination::new(
+        column,
+        RequiredScalarColumnValuesMut::Float64(&mut values),
+    )];
+    if project_required_scalars(table, rows, &mut destinations) {
+        return Ok(values);
+    }
+    drop(values);
     table
         .column_accessor(column)?
         .scalar_cells_owned_for_rows(rows)?
