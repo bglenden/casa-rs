@@ -192,7 +192,8 @@ fn fringefit(task: &TaskInvocation<'_>) -> Result<SolveGainTaskRequest, TaskFail
             correlation_combination,
             concatenate_windows: task.flag("concatspws")?,
         }),
-        solve_mode: GainSolveMode::Phase,
+        // CASA's task leaves calibrater.setsolve's default apmode="AP" in place.
+        solve_mode: GainSolveMode::AmplitudePhase,
         solve_interval: solint(task)?,
         preaverage_seconds: 0.,
         correlation_dependent_flags: task.flag("corrdepflags")?,
