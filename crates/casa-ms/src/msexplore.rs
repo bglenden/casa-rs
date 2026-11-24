@@ -1848,6 +1848,7 @@ impl MsPlotSpec {
                     | MsAxis::Real
                     | MsAxis::Imaginary
                     | MsAxis::Channel
+                    | MsAxis::UvDistance
                     | MsAxis::U
                     | MsAxis::V
                     | MsAxis::W
@@ -5196,7 +5197,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
-    let mut time_uvws = HashMap::<usize, TimeUvwAverage>::new();
+    let mut time_uvws = weighted_time_uvw.then(HashMap::<usize, TimeUvwAverage>::new);
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut scalar_time_rows = std::collections::BTreeSet::new();
@@ -5396,7 +5397,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 &selected_correlations,
                 ranges.map(Vec::as_slice),
             );
-            if weighted_time_uvw && let Some(kinds) = time_weight_kinds {
+            if let (Some(time_uvws), Some(kinds)) = (&mut time_uvws, time_weight_kinds) {
                 let weight = selected_correlations
                     .iter()
                     .map(|(corr, _)| match kinds.row_weight {
@@ -5842,10 +5843,12 @@ fn build_generic_visibility_scatter_with_averaging(
         .zip(time_bins)
         .zip(spec.averaging.avgtime)
         .map(|((statistics, groups), interval)| statistics.plan(groups, &row_numbers, interval));
-    let time_uvws: HashMap<_, _> = time_uvws
-        .into_iter()
-        .map(|(group, average)| (group, average.mean()))
-        .collect();
+    let time_uvws = time_uvws.map(|averages| {
+        averages
+            .into_iter()
+            .map(|(group, average)| (group, average.mean()))
+            .collect::<HashMap<_, _>>()
+    });
     let scalar_time_order = scalar_time_rows
         .into_iter()
         .enumerate()
@@ -5923,7 +5926,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         planned_time
                     } else if weighted_time_uvw && axis.uses_uvw_metres() {
                         group
-                            .and_then(|group| time_uvws.get(&group))
+                            .and_then(|group| time_uvws.as_ref()?.get(&group))
                             .map(|&uvw| uvw_metres_coordinate(axis, uvw))
                     } else if scalar_time && axis.is_visibility_math() {
                         let samples = if x_axis {

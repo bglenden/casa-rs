@@ -860,6 +860,9 @@ def compare_time_averaged_columns(root, native):
         ("both-correlations", single_ordinate | dict(ydatacolumn="corrected", correlation="XX,YY"), 6.25, 0, 6),
         ("ordinate", single_ordinate | dict(xaxis="real", xdatacolumn="corrected", yaxis="u", ydatacolumn=""),
          9, 1, 3),
+        ("distance-ordinate",
+         single_ordinate | dict(xaxis="real", xdatacolumn="corrected", yaxis="uvdist", ydatacolumn=""),
+         np.hypot(9, -19), 1, 3),
         ("one-clear-integration", dict(vis=str(flagged_uvw)), 10, 0, 6),
         ("one-clear-channel", dict(vis=str(flagged_uvw), spw="0:0~1"), 9, 0, 12),
     )
@@ -875,6 +878,16 @@ def compare_time_averaged_columns(root, native):
         print(f"time-weighted-{name}: {count} matching time-averaged UVW coordinates", flush=True)
     compare_ordinate_figure(work, "time-weighted-u", native, uvw_controls, "U (m)",
                             ["Real:corrected", "Real:model"])
+    distance_ordinate = uvw_controls | single_ordinate | dict(
+        xaxis="real", xdatacolumn="corrected", yaxis="uvdist", ydatacolumn="", avgtime="", expformat="txt",
+    )
+    expected, actual = (work / f"raw-distance-ordinate.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**distance_ordinate, plotfile=str(expected)) is None
+    np.testing.assert_allclose([float(point[1]) for point in rows(expected)],
+                               np.tile([1, np.hypot(10, 21)], 3), rtol=1.2e-5)
+    assert native(**distance_ordinate, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    print("raw-distance-ordinate: 6 matching UV distance coordinates", flush=True)
     compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
 
 
