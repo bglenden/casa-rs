@@ -941,6 +941,38 @@ def compare_vector_antenna_time_averages(root, native, source, start, base, ampl
     compare_empty_export(root, native, "all-flagged-vector-antenna-time",
                          controls | dict(vis=str(root / "scalar-antenna-all-flagged-time.ms")),
                          ("Real", "Imag:corrected"))
+    compare_vector_antenna_time_order(root, native, source, controls, start)
+
+
+def compare_vector_antenna_time_order(root, native, source, controls, start):
+    reordered = root / "vector-antenna-time-reordered.ms"
+    copy_ms(source, reordered)
+    with opened(reordered, True) as table:
+        times = table.getcol("TIME")
+        first, second, third = np.unique(times)[:3]
+        first_rows, second_rows, third_rows = (times == time for time in (first, second, third))
+        times[second_rows] = third
+        times[third_rows] = second
+        table.putcol("TIME", times)
+        table.putcol("TIME_CENTROID", times)
+        for column, unit in (("DATA", 1), ("CORRECTED_DATA", 1j)):
+            values = table.getcol(column)
+            values[0, 1, first_rows] = 1e8 * unit
+            values[0, 1, second_rows] = -1e8 * unit
+            values[0, 1, third_rows] = unit
+            table.putcol(column, values)
+    args = controls | dict(vis=str(reordered), antenna="A0&A1", avgtime="40",
+                           msselect=f"TIME < {start + 21:.3f}", expformat="txt")
+    expected, actual = (root / f"vector-antenna-time-order.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**args, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [point[5:7] for point in selected] == [["0", "-1"], ["1", "-1"]]
+    # The chronological Float sums cancel. Physical row order would retain 1/3.
+    np.testing.assert_array_equal(np.array([point[:2] for point in selected], dtype=float), 0)
+    np.testing.assert_allclose([float(point[9]) for point in selected], start + 10, rtol=0, atol=.00051)
+    assert native(**args, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+    print("vector-antenna-time-order: 2 matching chronological cancellation coordinates", flush=True)
 
 
 def main():
