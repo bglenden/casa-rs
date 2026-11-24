@@ -785,7 +785,12 @@ def compare_time_averaged_columns(root, native):
             else:
                 uvw = np.zeros_like(table.getcol("UVW"))
                 uvw[0, odd] = 10
+                uvw[1] = -2 * uvw[0] - 1
+                uvw[2] = 3 * uvw[0] + 2
                 table.putcol("UVW", uvw)
+                weights = table.getcol("WEIGHT")
+                weights[1] = np.where(odd, 1, 5)
+                table.putcol("WEIGHT", weights)
 
     base = request(vis) | dict(xaxis="real", xdatacolumn="data", yaxis=["real", "real"],
                                ydatacolumn=["corrected", "model"], yaxislocation=["left", "right"],
@@ -837,20 +842,98 @@ def compare_time_averaged_columns(root, native):
         if axis == "time":
             for path in (expected, actual):
                 assert all(float(row[0]) == float(row[9]) for row in rows(path))
-    from casars.tasks import TaskParameterError
+    flagged_uvw = work / "flagged-uvw.ms"
+    copy_ms(weighted_uvw, flagged_uvw)
+    with opened(flagged_uvw, True) as table:
+        flags = table.getcol("FLAG")
+        flags[0, 1, ~odd] = True
+        table.putcol("FLAG", flags)
+    uvw_controls = base | dict(vis=str(weighted_uvw), xaxis="u", xdatacolumn="")
+    single_ordinate = dict(yaxis="real", yaxislocation="left")
+    coordinate_cases = (
+        ("u", {}, 9, 0, 6),
+        ("v", dict(xaxis="v"), -19, 0, 6),
+        ("w", dict(xaxis="w"), 29, 0, 6),
+        ("uvdist", dict(xaxis="uvdist"), np.hypot(9, -19), 0, 6),
+        ("model-only", single_ordinate | dict(ydatacolumn="model"), 5, 0, 3),
+        ("observed-only", single_ordinate | dict(ydatacolumn="data"), 8, 0, 3),
+        ("both-correlations", single_ordinate | dict(ydatacolumn="corrected", correlation="XX,YY"), 6.25, 0, 6),
+        ("ordinate", single_ordinate | dict(xaxis="real", xdatacolumn="corrected", yaxis="u", ydatacolumn=""),
+         9, 1, 3),
+        ("distance-ordinate",
+         single_ordinate | dict(xaxis="real", xdatacolumn="corrected", yaxis="uvdist", ydatacolumn=""),
+         np.hypot(9, -19), 1, 3),
+        ("one-clear-integration", dict(vis=str(flagged_uvw)), 10, 0, 6),
+        ("one-clear-channel", dict(vis=str(flagged_uvw), spw="0:0~1"), 9, 0, 12),
+    )
+    for name, overrides, coordinate, side, count in coordinate_cases:
+        options = uvw_controls | overrides | dict(expformat="txt")
+        expected, actual = (work / f"time-weighted-{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == count
+        np.testing.assert_allclose([float(point[side]) for point in selected], coordinate, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        print(f"time-weighted-{name}: {count} matching time-averaged UVW coordinates", flush=True)
+    compare_ordinate_figure(work, "time-weighted-u", native, uvw_controls, "U (m)",
+                            ["Real:corrected", "Real:model"])
+    distance_ordinate = uvw_controls | single_ordinate | dict(
+        xaxis="real", xdatacolumn="corrected", yaxis="uvdist", ydatacolumn="", avgtime="", expformat="txt",
+    )
+    reordered_uvw = work / "reordered-uvw.ms"
+    copy_ms(weighted_uvw, reordered_uvw)
+    with opened(reordered_uvw, True) as table:
+        times = table.getcol("TIME")
+        reversed_times = times.min() + times.max() - times
+        table.putcol("TIME", reversed_times)
+        table.putcol("TIME_CENTROID", reversed_times)
+        table.putcell("FLAG_ROW", 0, True)
+    unaveraged_distances = [1, np.hypot(10, 21)]
+    channel_distance = dict(spw="0:0~1", avgchannel="2")
+    reordered_distance = dict(vis=str(reordered_uvw))
+    for name, overrides, distances in (
+        ("raw", {}, unaveraged_distances),
+        ("channel", channel_distance, unaveraged_distances),
+        ("raw-reordered", reordered_distance, unaveraged_distances[::-1]),
+        ("channel-reordered", channel_distance | reordered_distance, unaveraged_distances[::-1]),
+    ):
+        options = distance_ordinate | overrides
+        expected, actual = (work / f"{name}-distance-ordinate.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        np.testing.assert_allclose([float(point[1]) for point in rows(expected)],
+                                   np.tile(distances, 3), rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 6
+        print(f"{name}-distance-ordinate: 6 matching UV distance coordinates", flush=True)
+    from casars.tasks import TaskExecutionError, TaskParameterError
+    from plotms_callibrary_oracle import library_entry
 
-    controls = base | dict(vis=str(weighted_uvw), xaxis="u", xdatacolumn="", expformat="txt")
-    expected, actual = (work / f"time-weighted-u.{engine}.txt" for engine in ("casa", "native"))
-    assert reference(**controls, plotfile=str(expected)) is None
-    assert len(rows(expected)) == 6
-    assert {float(row[0]) for row in rows(expected)} == {9}
+    output = work / "metadata-distance-ordinate.native.txt"
     try:
-        native(**controls, plotfile=str(actual))
+        native(**(distance_ordinate | dict(xaxis="time", xdatacolumn="")), plotfile=str(output))
     except TaskParameterError as error:
-        assert "averaging of independent MeasurementSet ordinate columns is pending #1032" in str(error), error
+        assert "UV distance ordinate combination is pending (#1032)" in str(error)
     else:
-        raise AssertionError("PlotMS admitted a request requiring weighted UVW coordinates")
-    assert not actual.exists()
+        raise AssertionError("PlotMS admitted a pending UV distance and metadata pair")
+    assert not output.exists()
+
+    unity = work / "uvw-unity.cal"
+    casa.gencal(str(weighted_uvw), str(unity), "amp", parameter=[1.0])
+    calibrated = distance_ordinate | dict(avgtime="20", callib=library_entry(unity))
+    reference_path = work / "callib-distance-ordinate.casa.txt"
+    assert reference(**calibrated, plotfile=str(reference_path)) is None
+    selected = rows(reference_path)
+    assert len(selected) == 3
+    np.testing.assert_allclose([float(point[1]) for point in selected], np.hypot(8, 17), rtol=1.2e-5)
+    output = work / "callib-distance-ordinate.native.txt"
+    try:
+        native(**calibrated, plotfile=str(output))
+    except TaskExecutionError as error:
+        assert "UV distance ordinates with a callibrary or direct msexplore are pending (#1032)" in str(error)
+    else:
+        raise AssertionError("PlotMS admitted a pending time-averaged callibrary UV distance ordinate")
+    assert not output.exists()
     compare_ordinate_figure(work, "time-independent", native, base, "Real", ["Real:corrected", "Real:model"])
 
 

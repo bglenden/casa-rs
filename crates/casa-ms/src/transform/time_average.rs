@@ -334,12 +334,61 @@ pub(super) struct TimeCoordinates {
 pub(super) struct TimeCoordinatesAverage {
     first: TimeCoordinates,
     last: TimeCoordinates,
-    count: usize,
-    flagged: bool,
-    weight: f64,
+    uvw: TimeUvwAverage,
     exposure: f64,
     centroid_offset: f64,
+}
+
+/// Weighted UVW coordinates over one time group on one baseline.
+#[derive(Default)]
+pub(crate) struct TimeUvwAverage {
+    count: usize,
+    has_unflagged: bool,
+    weight: f64,
     uvw: [f64; 3],
+}
+
+impl TimeUvwAverage {
+    /// Prefer unflagged integrations and use unit weights when all are flagged.
+    /// Return whether other sums must reset and the effective row weight.
+    pub(crate) fn add(
+        &mut self,
+        uvw: [f64; 3],
+        flagged: bool,
+        scalar_weight: f64,
+    ) -> Option<(bool, f64)> {
+        if self.has_unflagged && flagged {
+            return None;
+        }
+        let reset = !self.has_unflagged && !flagged;
+        if reset {
+            *self = Self {
+                has_unflagged: true,
+                ..Self::default()
+            };
+        }
+        let weight = if flagged { 1.0 } else { scalar_weight };
+        self.count += 1;
+        self.weight += weight;
+        for (accumulator, coordinate) in self.uvw.iter_mut().zip(uvw) {
+            *accumulator += coordinate * weight;
+        }
+        Some((reset, weight))
+    }
+
+    fn normalization(&self) -> f64 {
+        if self.weight == 0.0 {
+            self.count.max(1) as f64
+        } else {
+            self.weight
+        }
+    }
+
+    /// Return the mean U, V and W coordinates in metres.
+    pub(crate) fn mean(&self) -> [f64; 3] {
+        let normalization = self.normalization();
+        self.uvw.map(|coordinate| coordinate / normalization)
+    }
 }
 
 impl TimeCoordinatesAverage {
@@ -347,31 +396,22 @@ impl TimeCoordinatesAverage {
         Self {
             first,
             last: first,
-            count: 0,
-            flagged: true,
-            weight: 0.0,
+            uvw: TimeUvwAverage::default(),
             exposure: 0.0,
             centroid_offset: 0.0,
-            uvw: [0.0; 3],
         }
     }
 
     pub(super) fn add(&mut self, sample: TimeCoordinates, scalar_weight: f64) {
-        if !self.flagged && sample.flag_row {
+        let Some((reset, weight)) = self.uvw.add(sample.uvw, sample.flag_row, scalar_weight) else {
             return;
+        };
+        if reset {
+            self.exposure = 0.0;
+            self.centroid_offset = 0.0;
         }
-        if self.flagged && !sample.flag_row {
-            *self = Self::new(self.first);
-            self.flagged = false;
-        }
-        let weight = if self.flagged { 1.0 } else { scalar_weight };
-        self.count += 1;
-        self.weight += weight;
         self.exposure += sample.exposure;
         self.centroid_offset += (sample.centroid - self.first.time) * weight;
-        for (accumulator, coordinate) in self.uvw.iter_mut().zip(sample.uvw) {
-            *accumulator += coordinate * weight;
-        }
         self.last = sample;
     }
 
@@ -380,17 +420,13 @@ impl TimeCoordinatesAverage {
             (self.first.time, self.first.interval),
             (self.last.time, self.last.interval),
         );
-        let normalization = if self.weight == 0.0 {
-            self.count.max(1) as f64
-        } else {
-            self.weight
-        };
+        let normalization = self.uvw.normalization();
         TimeCoordinates {
             time,
             centroid: self.first.time + self.centroid_offset / normalization,
             interval,
             exposure: self.exposure,
-            uvw: self.uvw.map(|coordinate| coordinate / normalization),
+            uvw: self.uvw.mean(),
             // The time iterator uses its row flag during accumulation and
             // clears it on output. The selected cell flags carry through.
             flag_row: false,

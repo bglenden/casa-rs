@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "82265bc45d0148717c963a0c7a55e1a2d5a99115",
+  "source_revision": "82265bc45d0148717c963a0c7a55e1a2d5a99115",
+  "baseline_revision": "6803ddea054eb41a6be32efc164e9288ca3a65a1",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --work <columns-dir> --native-bin <msexplore> --calibrate-bin <calibrate> && casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --work <baseline-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs ordinary vector-time MeasurementSet U, V, W and UV distance axes in metres with stored visibilities.",
+  "result": "passed",
+  "baseline_result": "CASA exported weighted U = 9 m. Native refused two ordinates and used the arithmetic mean for single-ordinate cases.",
+  "text_exports": 16,
+  "points": 90,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "pointwise_relative_tolerance": 1.2e-05,
+  "pointwise_absolute_tolerance": 1e-07
+}

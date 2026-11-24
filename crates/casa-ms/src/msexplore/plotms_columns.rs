@@ -27,6 +27,22 @@ pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
             || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
 }
 
+pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
+    spec.averaging.avgtime.is_some()
+        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
+        && !spec.averaging.scalar
+        && !spec.averaging.avgscan
+        && !spec.averaging.avgfield
+        && !spec.averaging.avgbaseline
+        && !spec.averaging.avgantenna
+        && !spec.averaging.avgspw
+        && ((spec.x_axis.uses_uvw_metres()
+            && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math))
+            || (spec.x_axis.is_visibility_math()
+                && spec.y_axes.len() == 1
+                && spec.y_axis().uses_uvw_metres()))
+}
+
 pub(super) fn uses_scalar_time_average(spec: &MsPlotSpec) -> bool {
     spec.averaging.scalar
         && spec.averaging.avgtime.is_some()

@@ -50,18 +50,19 @@ impl CliOptions {
             && !self.avgbaseline
             && !(transforms_frequency && crosses_boundary);
         let baseline_average = self.avgbaseline && !crosses_boundary && !transforms_frequency;
-        let scalar_time = time_average
+        let ordinary_time = time_average
             && !crosses_boundary
             && !transforms_frequency
             && self.avgchannel.is_none_or(|width| width <= 1);
         (time_average || baseline_average)
             && !self.avgantenna
             && !self.avgspw
-            && (!self.scalar || scalar_time)
+            && (!self.scalar || ordinary_time)
             && !self.has_mixed_ordinate_dimensions()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()
                     || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
+                    || (ordinary_time && !self.scalar && axis.uses_uvw_metres())
             })
     }
 
