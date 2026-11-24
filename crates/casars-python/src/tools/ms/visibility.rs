@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
-use casa_ms::{MeasurementSet, MsSelection};
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
+use casa_ms::{MeasurementSet, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames};
 use casa_types::measures::MeasuresProvider;
 use pyo3::exceptions::{PySystemError, PyTypeError};
@@ -345,7 +345,11 @@ impl AttachedMs {
             let rows = sampled_rows(count, snapshot.ms.row_count(), increment)?;
             if !axis_info || polarization.is_some() {
                 self.visibility.main(&self.path)?;
-                let main = self.visibility.main.as_ref().expect("MAIN table was opened");
+                let main = self
+                    .visibility
+                    .main
+                    .as_ref()
+                    .expect("MAIN table was opened");
                 let reply = main.read_selected(
                     self.selected_rows.as_deref(),
                     rows,
@@ -378,7 +382,8 @@ impl AttachedMs {
             return Ok(CasaValue::empty_record());
         }
         let rows = sampled_rows(count, count, increment)?;
-        let reply = main.read_selected(self.selected_rows.as_deref(), rows, items, None, options)?;
+        let reply =
+            main.read_selected(self.selected_rows.as_deref(), rows, items, None, options)?;
         link.verify_directory().map_err(runtime_error)?;
         Ok(reply)
     }
