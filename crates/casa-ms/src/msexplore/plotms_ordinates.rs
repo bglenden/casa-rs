@@ -255,6 +255,28 @@ impl AveragedVisibility {
         weights.push(weight);
     }
 
+    /// The CASA scalar reducer stores amplitude and phase as separate components.
+    pub(super) fn add_scalar_time(&mut self, samples: VisibilityBinSamples<'_>, weight: f64) {
+        let (values, weights) = self.weighted_mut();
+        values.extend(
+            samples
+                .values
+                .iter()
+                .map(|value| Complex64::new(value.norm(), value.arg())),
+        );
+        weights.resize(values.len(), weight);
+    }
+
+    pub(super) fn project_scalar_time(&self, axis: MsAxis) -> Option<f64> {
+        let mean = self.vector_mean()?;
+        match axis {
+            MsAxis::Amplitude | MsAxis::Real => Some(mean.re),
+            MsAxis::Phase => Some(mean.im.to_degrees()),
+            MsAxis::Imaginary => Some(mean.im),
+            _ => None,
+        }
+    }
+
     pub(super) fn add_channel_time_row(
         &mut self,
         grid: &ComplexGrid,
@@ -339,19 +361,19 @@ pub(super) struct VisibilityTimeBounds {
 
 #[derive(Default)]
 pub(super) struct BaselineIntegrationGroups {
-    previous: Option<([i32; 4], f64)>,
+    anchor: Option<([i32; 4], f64)>,
     ordinal: usize,
 }
 
 impl BaselineIntegrationGroups {
-    pub(super) fn observe(&mut self, ids: [i32; 4], time: f64) -> usize {
-        let integration = (ids, time);
-        if self
-            .previous
-            .replace(integration)
-            .is_some_and(|previous| previous != integration)
-        {
-            self.ordinal += 1;
+    pub(super) fn observe(&mut self, ids: [i32; 4], time: f64, interval: f64) -> usize {
+        match self.anchor {
+            Some((anchor_ids, start))
+                if anchor_ids == ids && time >= start && time - start <= interval => {}
+            anchor => {
+                self.ordinal += usize::from(anchor.is_some());
+                self.anchor = Some((ids, time));
+            }
         }
         self.ordinal
     }

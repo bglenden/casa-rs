@@ -26,6 +26,21 @@ pub(super) fn uses_vector_baseline_average(spec: &MsPlotSpec) -> bool {
             || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
 }
 
+pub(super) fn uses_scalar_time_average(spec: &MsPlotSpec) -> bool {
+    spec.averaging.scalar
+        && spec.averaging.avgtime.is_some()
+        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
+        && !spec.averaging.avgbaseline
+        && !spec.averaging.avgscan
+        && !spec.averaging.avgfield
+        && !spec.averaging.avgantenna
+        && !spec.averaging.avgspw
+        && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
+        && (spec.x_axis.is_visibility_math()
+            || matches!(spec.x_axis, MsAxis::Time | MsAxis::Channel)
+            || (spec.x_axis == MsAxis::Frequency && spec.transforms.freqframe.is_none()))
+}
+
 pub(super) fn baseline_weight(weight: f64) -> f64 {
     let minimum = f64::from(f32::MIN_POSITIVE);
     if weight < minimum { minimum } else { weight }
