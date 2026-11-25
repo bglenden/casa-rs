@@ -66,10 +66,10 @@ def labels(vis, values):
             f"Target name: {field}", f"Target RA,Dec: {direction}".rstrip())
 
 
-def ocr(image, region):
+def ocr(image, region, scale=3):
     crop = image.crop(region)
     sample = BytesIO()
-    crop.resize((crop.width * 3, crop.height * 3)).save(sample, format="PNG")
+    crop.resize((crop.width * scale, crop.height * scale)).save(sample, format="PNG")
     output = subprocess.run(["tesseract", "stdin", "stdout", "--psm", "6"],
                             input=sample.getvalue(), capture_output=True, check=True).stdout.decode()
     return " ".join(output.split())
@@ -82,8 +82,11 @@ def check_pinned(path, expected):
         regions = [(392 if index % 2 else 0, 4 + 30 * (index // 2),
                     WIDTH if index % 2 else 385, 29 + 30 * (index // 2))
                    for index in range(len(expected))]
-        fields = tuple(ocr(image, region) for region in regions)
-        assert fields == expected, (path, fields, expected)
+        for region, label in zip(regions, expected, strict=True):
+            actual = ocr(image, region)
+            if actual != label:
+                actual = ocr(image, region, scale=2)
+            assert actual == label, (path, actual, label)
         assert TITLE in ocr(image, (0, 100, WIDTH, 150)), path
         gap = np.asarray(image.crop((0, 91, WIDTH, 112)).convert("RGB"))
         assert np.all(gap == 255), path
