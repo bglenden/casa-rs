@@ -11472,6 +11472,16 @@ memory and leaves the working directory and input reference intact.
 Writable plain MeasurementSets and independent writable references
 publish the sorted cache in the physical MeasurementSet (#1030).
 
+## The original MS visibility iterator can return the wrong antenna or abort
+
+CASA 6.7.6.14 returns the `ANTENNA1` column for both antenna fields in
+`ms.ngetdata(['antenna1', 'antenna2'])`. Casa-rs returns the recorded
+second antenna from `ANTENNA2`. On an open MS before initialization,
+`niterend()` and `niternext()` dereference the absent cursor in CASA.
+`ngetdata('model_data')` and `ngetdata('corrected_data')` also abort when
+the requested column is absent. Casa-rs raises a Python `RuntimeError`
+in these cases and keeps the attachment available (#1030).
+
 ## MS writes can reorder values read from saved views
 
 Read `getdata('data')` from a saved reference whose rows are out of order,

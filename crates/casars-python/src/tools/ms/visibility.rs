@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
-use casa_ms::tool_iteration::{LegacyIterationOptions, LegacyToolIteration, ToolIteration};
+use casa_ms::tool_iteration::{
+    LegacyIterationOptions, LegacyToolIteration, ToolIteration, Vi1ToolIteration,
+};
 use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
@@ -22,6 +24,7 @@ use super::iteration::VisibilityIteration;
 use super::metadata_link::{MetadataLink, MetadataSnapshot, compose_rows};
 use super::owned_record::visibility_record;
 use super::subtable_queries::Subtables;
+use super::vi1::Vi1Iteration;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
 
@@ -37,6 +40,7 @@ pub(super) struct VisibilityState {
     channels: Option<VisibilityChannels>,
     polarization: Option<Arc<VisibilityPolarization>>,
     pub(super) iteration: Option<VisibilityIteration>,
+    pub(super) vi1: Option<Vi1Iteration>,
 }
 
 pub(super) struct VisibilityMain {
@@ -160,6 +164,42 @@ impl VisibilityState {
 }
 
 impl VisibilityMain {
+    pub(super) fn vi1_cursor(
+        &self,
+        selected: Option<&[usize]>,
+        interval: f64,
+        maxrows: i64,
+        defaults: bool,
+    ) -> PyResult<Vi1ToolIteration> {
+        Vi1ToolIteration::new(
+            &self.table,
+            self.reference.as_ref(),
+            selected,
+            interval,
+            maxrows,
+            defaults,
+        )
+        .map_err(runtime_error)
+    }
+
+    pub(super) fn read_vi1_rows(
+        &self,
+        rows: &[usize],
+        selected: Option<&[usize]>,
+        items: &[String],
+    ) -> PyResult<CasaValue> {
+        let record = tool_visibility::read_vi1_visibility(
+            &self.table,
+            &self.members,
+            self.reference.as_ref(),
+            rows,
+            selected,
+            items,
+        )
+        .map_err(runtime_error)?;
+        Ok(visibility_record(record))
+    }
+
     pub(super) fn legacy_iteration(
         &self,
         options: LegacyIterationOptions<'_>,
@@ -613,11 +653,15 @@ impl AttachedMs {
             .iteration
             .as_ref()
             .is_some_and(|iteration| iteration.main.verify_write_layout(&BTreeSet::new()).is_ok());
+        let refresh_vi1 =
+            self.visibility.vi1.as_ref().is_some_and(|iteration| {
+                iteration.main.verify_write_layout(&BTreeSet::new()).is_ok()
+            });
         let mut written = BTreeSet::new();
         let mut temporary = BTreeMap::new();
         let has_legacy_grid = self.legacy_selection.axes.baseline_read.is_some();
         for (_, target) in &targets {
-            if refresh_cursor || has_legacy_grid || refresh_legacy_cursor {
+            if refresh_cursor || has_legacy_grid || refresh_legacy_cursor || refresh_vi1 {
                 written.insert(target.path.clone());
             }
             if !self.write_locks.contains_key(&target.path) && !temporary.contains_key(&target.path)
@@ -656,7 +700,7 @@ impl AttachedMs {
                 .write_part(&mut ms, lock, part)
                 .map_err(runtime_error)?;
         }
-        if refresh_cursor || refresh_legacy_grid || refresh_legacy_cursor {
+        if refresh_cursor || refresh_legacy_grid || refresh_legacy_cursor || refresh_vi1 {
             // Refresh data read bindings and the stamps changed by our own
             // write without accepting a different saved view projection.
             main.verify_write_layout(&written)?;
@@ -668,6 +712,9 @@ impl AttachedMs {
             if refresh_legacy_cursor
                 && let Some(iteration) = self.legacy_selection.iteration.as_mut()
             {
+                iteration.main = Arc::clone(&refreshed);
+            }
+            if refresh_vi1 && let Some(iteration) = &mut self.visibility.vi1 {
                 iteration.main = Arc::clone(&refreshed);
             }
             if refresh_legacy_grid

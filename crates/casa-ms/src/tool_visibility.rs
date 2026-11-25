@@ -23,6 +23,7 @@ mod channel_axis;
 mod concatenation;
 mod polarization_axis;
 mod projection;
+mod vi1;
 mod write_record;
 mod write_rows;
 use averaging::RowAverage;
@@ -34,6 +35,7 @@ use concatenation::{MemberRows, concatenate_arrays};
 pub(crate) use concatenation::{concatenate_scalars, member_rows};
 pub use polarization_axis::VisibilityPolarization;
 pub(crate) use projection::read_reference_scalars;
+pub use vi1::read_vi1_visibility;
 pub use write_rows::{
     LegacyVisibilityWriteGrid, LegacyVisibilityWriteOptions, VisibilityWriteOptions,
     VisibilityWriteRecord,

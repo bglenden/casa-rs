@@ -190,49 +190,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (items = None, ifraxis = None, ifraxisgap = None, increment = None, average = None), text_signature = "($self, items=[], ifraxis=False, ifraxisgap=0, increment=1, average=False)")]
-    fn ngetdata(
-        &self,
-        items: Option<&Bound<'_, PyAny>>,
-        ifraxis: Option<&Bound<'_, PyAny>>,
-        ifraxisgap: Option<&Bound<'_, PyAny>>,
-        increment: Option<&Bound<'_, PyAny>>,
-        average: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("ngetdata")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn niterend(&self) -> PyResult<Py<PyAny>> {
-        stub("niterend")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (columns = None, interval = None, maxrows = None, adddefaultsortcolumns = None), text_signature = "($self, columns=[], interval=0.0, maxrows=0, adddefaultsortcolumns=True)")]
-    fn niterinit(
-        &self,
-        columns: Option<&Bound<'_, PyAny>>,
-        interval: Option<&Bound<'_, PyAny>>,
-        maxrows: Option<&Bound<'_, PyAny>>,
-        adddefaultsortcolumns: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("niterinit")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn niternext(&self) -> PyResult<Py<PyAny>> {
-        stub("niternext")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (), text_signature = "($self)")]
-    fn niterorigin(&self) -> PyResult<Py<PyAny>> {
-        stub("niterorigin")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (dorms = None, byantenna = None, sepacs = None, fitspw = None, fitcorr = None, combine = None, timebin = None, minsamp = None, field = None, spw = None, antenna = None, timerange = None, scan = None, intent = None, array = None, correlation = None, obs = None, datacolumn = None), text_signature = "($self, dorms=False, byantenna=True, sepacs=True, fitspw=[], fitcorr=[], combine='', timebin=[], minsamp=3, field=[], spw=[], antenna='', timerange='', scan=[], intent='', array=[], correlation='', obs='', datacolumn='corrected_data')")]
     fn oldstatwt(
         &self,

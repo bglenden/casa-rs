@@ -125,6 +125,10 @@ impl AttachedMs {
                 .as_ref()
                 .and_then(|iteration| iteration.layout.as_ref())
                 .is_some_and(|layout| layout.verify_write_layout(&BTreeSet::new()).is_ok());
+        let vi1_current = source.is_some()
+            && self.visibility.vi1.as_ref().is_some_and(|iteration| {
+                iteration.main.verify_write_layout(&BTreeSet::new()).is_ok()
+            });
         let published = source
             .map(|source| self.cache_legacy_iteration(&link, &main, source, options, &mut cursor))
             .transpose()?
@@ -135,6 +139,9 @@ impl AttachedMs {
             main.verify_write_layout(&written)?;
             if modern_current && let Some(iteration) = &mut self.visibility.iteration {
                 iteration.layout = Some(Arc::clone(&refreshed));
+            }
+            if vi1_current && let Some(iteration) = &mut self.visibility.vi1 {
+                iteration.main = Arc::clone(&refreshed);
             }
             refreshed
         } else {
