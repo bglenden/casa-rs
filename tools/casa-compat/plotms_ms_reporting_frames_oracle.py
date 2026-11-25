@@ -114,6 +114,68 @@ def check_wavelength(work, native, name, options, axes, me, qa):
     check_active(work, native, name, options | dict(xaxis=wavelength), points, values, freqs)
 
 
+def compare_averaged_reporting_epochs(work, native):
+    work.mkdir()
+    me, qa = measures(), quanta()
+    assert me.doframe(me.observatory('VLA'))
+    assert me.doframe(me.direction('J2000', '12h00m00s', '40d00m00s'))
+    try:
+        vis = make_fixture(work, 'irregular-frequency', integrations=4)
+        set_epochs(vis, (0, 10, 20, 6000))
+        base = dict(vis=str(vis), xaxis='frequency', yaxis='amp', ydatacolumn='data', antenna='A0&A1',
+                    spw='0:0~3', correlation='XX', showgui=False, overwrite=True,
+                    averagedata=True, avgchannel='2', avgtime='7200', freqframe='LSRK',
+                    customsymbol=True, symbolshape='square', symbolsize=5, symbolcolor='dd2255',
+                    symbolfill='fill', symboloutline=False)
+        expected = work / 'irregular-frequency-stored.casa.txt'
+        assert reference(**base, transform=False, expformat='txt', plotfile=str(expected)) is None
+        points = rows(expected)
+        assert len(points) == 2
+        freqs = reporting_frequencies(points, 'LSRK', me, qa)
+        check_active(work, native, 'irregular-frequency', base, points, freqs, freqs)
+        velocity = base | dict(xaxis='velocity', restfreq='95GHz', veldef='OPTICAL')
+        check_active(work, native, 'irregular-velocity', velocity, points,
+                     velocities(freqs, 95.0)['OPTICAL'], freqs)
+
+        vis = make_fixture(work, 'unequal-baseline-epochs', antenna_count=3, integrations=3)
+        set_epochs(vis, (0, 10, 6000))
+        with opened(vis, True) as table:
+            times = table.getcol('TIME')
+            start = min(times)
+            late_second = (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 2) & (times == max(times))
+            flags = table.getcol('FLAG')
+            flags[:, :, late_second] = True
+            table.putcol('FLAG', flags)
+            uvw = np.zeros_like(table.getcol('UVW'))
+            uvw[0, :] = 10
+            table.putcol('UVW', uvw)
+        options = base | dict(vis=str(vis), xaxis='u', spw='0:1', antenna='A0&A1;A0&A2', avgchannel='')
+        expected = work / 'unequal-baseline-metres.casa.txt'
+        assert reference(**options, transform=False, expformat='txt', plotfile=str(expected)) is None
+        points = rows(expected)
+        assert [p[6] for p in points] == ['1', '2']
+        assert [float(p[9]) for p in points] == [start + 3000] * 2
+        meta_frequencies = reporting_frequencies(points, 'LSRK', me, qa)
+        axis_points = [p[:9] + [str(start + delta)] + p[10:] for p, delta in zip(points, (3000, 5), strict=True)]
+        axis_frequencies = reporting_frequencies(axis_points, 'LSRK', me, qa)
+        coordinates = axis_frequencies * 10e6 / LIGHT_SPEED_KM_S
+        check_active(work, native, 'unequal-baseline-wavelengths', options | dict(xaxis='uwave'),
+                     points, coordinates, meta_frequencies, artist_atol=1e-5)
+    finally:
+        me.done()
+        qa.done()
+
+
+def set_epochs(vis, offsets):
+    with opened(vis, True) as table:
+        times = table.getcol('TIME')
+        unique = np.unique(times)
+        assert len(unique) == len(offsets)
+        new_times = unique[0] + np.asarray(offsets)[np.searchsorted(unique, times)]
+        for column in ('TIME', 'TIME_CENTROID'):
+            table.putcol(column, new_times)
+
+
 def compare_channel_frequency_transform(work, native, base, raw):
     from casars import _plot_document
 
@@ -183,7 +245,7 @@ def velocities(frequencies, rest):
     }
 
 
-def check_active(work, native, name, options, raw, coordinates, freqs):
+def check_active(work, native, name, options, raw, coordinates, freqs, *, artist_atol=None):
     # The pinned transformed TXT path stalls in the export header. Pair the public
     # PNG and compare its scientific inputs with pinned measures and untransformed TXT.
     options = options | dict(transform=True, title=name)
@@ -200,16 +262,16 @@ def check_active(work, native, name, options, raw, coordinates, freqs):
     wavelength = options['xaxis'].endswith('wave')
     np.testing.assert_allclose([float(p[0]) for p in plotted], coordinates, rtol=0,
                                atol=0.051 if velocity else (0.01 if wavelength else 1e-7))
-    check_active_figure(native, actual, options, figure, coordinates, raw)
+    check_active_figure(native, actual, options, figure, coordinates, raw, artist_atol)
     for path in (expected, actual):
         cells = occupied_marker_cells(path, (1, 2))
         # CASA can place both wavelength groups on one half with its own axis range.
-        if not wavelength:
+        if not wavelength and len({p[11] for p in raw}) > 1:
             assert cells == {(0, 0), (0, 1)}
     print(f'{name}: {len(raw)} selected coordinates and metadata agree with CASA measures', flush=True)
 
 
-def check_active_figure(native, output, options, figure, coordinates, raw):
+def check_active_figure(native, output, options, figure, coordinates, raw, artist_atol):
     from casars import _plot_document
 
     render = _plot_document.render_document
@@ -223,8 +285,9 @@ def check_active_figure(native, output, options, figure, coordinates, raw):
         assert axis.get_xlabel() == label
         assert axis.get_ylabel() == 'Amp'
         points = axis.lines[0].get_xydata()
-        np.testing.assert_allclose(points[:, 0], coordinates, rtol=1.2e-5 if wavelength else 0,
-                                   atol=1e-4 if velocity else 1e-7)
+        tolerance = artist_atol if artist_atol is not None else (1e-4 if velocity else 1e-7)
+        relative = 1.2e-5 if wavelength and artist_atol is None else 0
+        np.testing.assert_allclose(points[:, 0], coordinates, rtol=relative, atol=tolerance)
         np.testing.assert_allclose(points[:, 1], [float(p[1]) for p in raw], rtol=1.2e-5)
         captured.append(len(points))
         return page, axis

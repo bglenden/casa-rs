@@ -132,6 +132,17 @@ pub(super) fn uses_averaged_geometry_coordinates(spec: &MsPlotSpec) -> bool {
             .any(MsAxis::is_interval_or_wavelength)
 }
 
+pub(super) fn uses_spectral_reporting_time_grid(spec: &MsPlotSpec) -> bool {
+    let is_spectral = |axis| matches!(axis, MsAxis::Frequency | MsAxis::Velocity);
+    let y = spec.y_axis();
+    spec.transforms.freqframe.is_some()
+        && spec.y_axes.len() == 1
+        && uses_ordinary_time_averaging(spec)
+        && !spec.averaging.scalar
+        && ((is_spectral(spec.x_axis) && y.is_visibility_math())
+            || (spec.x_axis.is_visibility_math() && is_spectral(y)))
+}
+
 fn uses_unbinned_vector_time_averaging(spec: &MsPlotSpec) -> bool {
     uses_ordinary_time_averaging(spec)
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1)

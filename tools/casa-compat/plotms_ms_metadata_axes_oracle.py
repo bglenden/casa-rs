@@ -268,6 +268,21 @@ def compare_wavelength_frame_selection(work, native):
                                [float(point[10]) for point in points], rtol=0, atol=1e-7)
     print("wavelength-frames: two paired same-frame and two mixed-frame points", flush=True)
 
+    with opened(mixed, True) as table:
+        second_window = table.getcol("DATA_DESC_ID") == 1
+        for column in ("TIME", "TIME_CENTROID"):
+            times = table.getcol(column)
+            times[second_window] -= 120
+            table.putcol(column, times)
+    expected, actual = (work / f"mixed-earlier-lsrk.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**selection, plotfile=str(expected)) is None
+    points = rows(expected)
+    assert [p[11] for p in points] == ["0", "1"] and float(points[0][9]) > float(points[1][9])
+    assert points[0][10] == "90.001000000"
+    assert native(**selection, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+    print("mixed-earlier-lsrk: first iterator window still supplies the reporting frame", flush=True)
+
 
 def make_horizontal_fixture(work):
     vis, *_ = make_fixture(work, reverse_times=True)
@@ -1434,7 +1449,7 @@ def main():
                                            "ephemeris-axes", "static-metadata-coordinates",
                                            "metadata-flag-symbols", "pointing", "pointing-lists",
                                            "pointing-partners", "pointing-averaging", "reporting-frames",
-                                           "reporting-wavelengths"))
+                                           "reporting-wavelengths", "averaged-reporting-epochs"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1474,6 +1489,10 @@ def main():
             from plotms_ms_reporting_frames_oracle import compare_reporting_frames
 
             compare_reporting_frames(root / "reporting-frames", native)
+        if args.only in (None, "averaged-reporting-epochs"):
+            from plotms_ms_reporting_frames_oracle import compare_averaged_reporting_epochs
+
+            compare_averaged_reporting_epochs(root / "averaged-reporting-epochs", native)
         if args.only in (None, "reporting-wavelengths"):
             from plotms_ms_reporting_frames_oracle import compare_wavelength_reporting_frames
 
