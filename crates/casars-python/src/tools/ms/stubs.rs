@@ -276,12 +276,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (selected = None), text_signature = "($self, selected=False)")]
-    fn nrowold(&self, selected: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("nrowold")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (dorms = None, byantenna = None, sepacs = None, fitspw = None, fitcorr = None, combine = None, timebin = None, minsamp = None, field = None, spw = None, antenna = None, timerange = None, scan = None, intent = None, array = None, correlation = None, obs = None, datacolumn = None), text_signature = "($self, dorms=False, byantenna=True, sepacs=True, fitspw=[], fitcorr=[], combine='', timebin=[], minsamp=3, field=[], spw=[], antenna='', timerange='', scan=[], intent='', array=[], correlation='', obs='', datacolumn='corrected_data')")]
     fn oldstatwt(
         &self,
@@ -377,31 +371,9 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (datadescid = None, reset = None), text_signature = "($self, datadescid=0, reset=False)")]
-    fn selectinitold(
-        &self,
-        datadescid: Option<&Bound<'_, PyAny>>,
-        reset: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("selectinitold")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (items = None), text_signature = "($self, items={})")]
-    fn selectold(&self, items: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("selectold")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (wantedpol = None), text_signature = "($self, wantedpol=[])")]
     fn selectpolarizationold(&self, wantedpol: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("selectpolarizationold")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (msselect = None), text_signature = "($self, msselect='')")]
-    fn selecttaqlold(&self, msselect: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("selecttaqlold")
     }
 
     /// Not yet implemented in casa-rs.

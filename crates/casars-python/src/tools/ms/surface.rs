@@ -352,8 +352,8 @@ const METHODS: &[Method] = &[
     method(
         "nrowold",
         &[param("selected", K::Bool, Bool(false))],
-        R::Any,
-        No,
+        R::Int,
+        Yes,
     ),
     method(
         "oldstatwt",
@@ -505,14 +505,14 @@ const METHODS: &[Method] = &[
             param("datadescid", K::Int, Int(0)),
             param("reset", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "selectold",
         &[param("items", K::Record, EmptyRecord)],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "selectpolarization",
@@ -535,8 +535,8 @@ const METHODS: &[Method] = &[
     method(
         "selecttaqlold",
         &[param("msselect", K::Text, Text(""))],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "sort",

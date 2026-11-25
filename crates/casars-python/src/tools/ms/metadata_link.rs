@@ -163,6 +163,33 @@ impl MetadataLink {
         Ok((snapshot, rows))
     }
 
+    pub(super) fn snapshot_relative_rows(
+        &self,
+        rows: Option<&[usize]>,
+    ) -> MsResult<Arc<MetadataSnapshot>> {
+        let Some(rows) = rows else {
+            return self.snapshot(None);
+        };
+        self.verify_directory()?;
+        let working = self
+            .state
+            .lock()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?
+            .selected
+            .clone();
+        let projected;
+        let rows = if let Some(working) = working {
+            projected = rows.iter().map(|&row| working[row]).collect::<Vec<_>>();
+            projected.as_slice()
+        } else {
+            rows
+        };
+        let view = Arc::new(MetadataView::new(&self.path, Some(rows))?);
+        let snapshot = MetadataSnapshot::from_view(view)?;
+        self.verify_directory()?;
+        Ok(Arc::new(snapshot))
+    }
+
     pub(in crate::tools) fn snapshot(
         &self,
         cached: Option<&Arc<MetadataSnapshot>>,
@@ -309,6 +336,7 @@ impl AttachedMs {
         }
         self.selected_rows = rows;
         self.exact_time_metadata = None;
+        self.legacy_selection = Default::default();
         Ok(())
     }
 

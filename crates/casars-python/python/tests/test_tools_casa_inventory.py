@@ -73,8 +73,9 @@ IMPLEMENTED["ms"] = {
     "close", "done", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "getscansummary", "ismultims", "iswritable",
     "iterend", "iterinit", "iternext", "iterorigin", "listhistory", "lister",
-    "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
-    "open", "range", "reset", "select", "selectinit", "selecttaql", "sort",
+    "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow", "nrowold",
+    "open", "range", "reset", "select", "selectinit", "selectinitold", "selectold",
+    "selecttaql", "selecttaqlold", "sort",
     "statistics", "statisticsold", "statwt", "summary", "timesort", "uvsub",
 }
 IMPLEMENTED["agentflagger"] = {

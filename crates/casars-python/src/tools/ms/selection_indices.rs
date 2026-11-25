@@ -278,7 +278,7 @@ impl AttachedMs {
     }
 }
 
-fn selectinit_id(value: &Bound<'_, PyAny>) -> PyResult<i64> {
+pub(super) fn selectinit_id(value: &Bound<'_, PyAny>) -> PyResult<i64> {
     if missing_selection_integer(value)? {
         return Ok(-1);
     }
