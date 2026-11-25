@@ -132,7 +132,7 @@ def compare(root, native):
         )
 
     compare_flags_and_calibration(root, native, fixture_data[0])
-    check_frame_refusal(root, native, fixture_data[0])
+    check_interval_frame_refusal(root, native, fixture_data[0])
     feed_fixture = compare_feed_selection(root, native)
     row_fixture = compare_row_axes(root, native, feed_fixture)
     compare_metadata_pairs(root, native, row_fixture)
@@ -235,7 +235,6 @@ def compare_averaged_coordinates(root, native):
 
 
 def compare_wavelength_frame_selection(work, native):
-    from casars.tasks import TaskExecutionError
     from plotms_ms_spw_average_oracle import make_fixture as make_spw_fixture
 
     topo = make_spw_fixture(work)
@@ -263,14 +262,26 @@ def compare_wavelength_frame_selection(work, native):
     np.testing.assert_allclose([float(row[10]) for row in points], [90.001, 100.003287289], rtol=0, atol=1e-6)
     np.testing.assert_allclose([float(row[0]) for row in points],
                                [10 * float(row[10]) * 1e9 / SPEED_OF_LIGHT for row in points], rtol=1.2e-5)
-    try:
-        native(**selection, plotfile=str(actual))
-    except TaskExecutionError as error:
-        assert "different native spectral frames require reporting-frame transforms (#1032)" in str(error)
-    else:
-        raise AssertionError("An unconverted mixed-frame wavelength export would use the wrong frequency")
-    assert not actual.exists()
-    print("wavelength-frames: two paired same-frame points and one mixed-frame refusal", flush=True)
+    assert native(**selection, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+    np.testing.assert_allclose([float(point[10]) for point in rows(actual)],
+                               [float(point[10]) for point in points], rtol=0, atol=1e-7)
+    print("wavelength-frames: two paired same-frame and two mixed-frame points", flush=True)
+
+    with opened(mixed, True) as table:
+        second_window = table.getcol("DATA_DESC_ID") == 1
+        for column in ("TIME", "TIME_CENTROID"):
+            times = table.getcol(column)
+            times[second_window] -= 120
+            table.putcol(column, times)
+    expected, actual = (work / f"mixed-earlier-lsrk.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**selection, plotfile=str(expected)) is None
+    points = rows(expected)
+    assert [p[11] for p in points] == ["0", "1"] and float(points[0][9]) > float(points[1][9])
+    assert points[0][10] == "90.001000000"
+    assert native(**selection, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+    print("mixed-earlier-lsrk: first iterator window still supplies the reporting frame", flush=True)
 
 
 def make_horizontal_fixture(work):
@@ -646,9 +657,9 @@ def compare_ephemeris_axes(root, native, app_run):
 
 
 def compare_static_metadata_coordinates(root, native):
-    from casars.tasks import TaskExecutionError, TaskParameterError
     from plotms_ms_columns_oracle import compare_empty_export
     from plotms_ms_iterated_ordinates_oracle import compare_figures
+    from plotms_ms_reporting_frames_oracle import compare_channel_frequency_transform
 
     work = root / "static-metadata-coordinates"
     work.mkdir()
@@ -725,15 +736,7 @@ def compare_static_metadata_coordinates(root, native):
         empty_options = dict(options, vis=str(empty))
         del empty_options["expformat"]
         compare_empty_export(work, native, f"{name}-all-flagged", empty_options, (xlabel, ylabel))
-    transformed = base | dict(xaxis="channel", yaxis=["frequency"], transform=True, freqframe="LSRK")
-    output = work / "reporting-frame.native.txt"
-    try:
-        native(**transformed, plotfile=str(output))
-    except (TaskExecutionError, TaskParameterError) as error:
-        assert "Channel/Frequency reporting frames are pending (#1032)" in str(error)
-    else:
-        raise AssertionError("Reporting-frame TXT requires consistent ordinate and metadata frequencies")
-    assert not output.exists()
+    compare_channel_frequency_transform(work, native, base, rows(work / "channel-frequency.casa.txt"))
     verify_source(vis, before)
 
 
@@ -763,20 +766,19 @@ def compare_flags_and_calibration(root, native, vis):
     print("row-flag-only: 12 matching coordinates with the cube flag mask", flush=True)
 
 
-def check_frame_refusal(root, native, vis):
+def check_interval_frame_refusal(root, native, vis):
     from casars.tasks import TaskParameterError
 
-    for name in ("interval", "uwave"):
-        output = root / f"{name}-frame.native.txt"
-        options = controls(vis) | dict(xaxis=name, expformat="txt", transform=True, freqframe="BARY")
-        try:
-            native(**options, plotfile=str(output))
-        except TaskParameterError as error:
-            assert "reporting-frame transforms for interval and wavelength plots" in str(error)
-            assert "#1032" in str(error)
-        else:
-            raise AssertionError(f"Unsupported {name} reporting frame was exported")
-        assert not output.exists()
+    output = root / "interval-frame.native.txt"
+    options = controls(vis) | dict(xaxis="interval", expformat="txt", transform=True, freqframe="BARY")
+    try:
+        native(**options, plotfile=str(output))
+    except TaskParameterError as error:
+        assert "reporting-frame transforms for interval and wavelength plots" in str(error)
+        assert "#1032" in str(error)
+    else:
+        raise AssertionError("Unsupported Interval reporting frame was exported")
+    assert not output.exists()
 
 
 def make_feed_selection_fixture(work):
@@ -1446,7 +1448,8 @@ def main():
                                            "antenna-horizontal-axes", "antenna-horizontal-same-epoch",
                                            "ephemeris-axes", "static-metadata-coordinates",
                                            "metadata-flag-symbols", "pointing", "pointing-lists",
-                                           "pointing-partners", "pointing-averaging"))
+                                           "pointing-partners", "pointing-averaging", "reporting-frames",
+                                           "reporting-wavelengths", "averaged-reporting-epochs"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1482,6 +1485,22 @@ def main():
             compare_ephemeris_axes(root, native, args.app_run)
         if args.only in (None, "static-metadata-coordinates"):
             compare_static_metadata_coordinates(root, native)
+        if args.only in (None, "reporting-frames"):
+            from plotms_ms_reporting_frames_oracle import compare_reporting_frames
+
+            compare_reporting_frames(root / "reporting-frames", native)
+        if args.only in (None, "averaged-reporting-epochs"):
+            from plotms_ms_reporting_frames_oracle import compare_averaged_reporting_epochs
+
+            compare_averaged_reporting_epochs(root / "averaged-reporting-epochs", native)
+        if args.only in (None, "reporting-wavelengths"):
+            from plotms_ms_reporting_frames_oracle import compare_wavelength_reporting_frames
+
+            compare_wavelength_reporting_frames(root / "reporting-wavelengths", native)
+        if args.only == "reporting-wavelengths":
+            work = root / "average-wavelength-frames"
+            work.mkdir()
+            compare_wavelength_frame_selection(work, native)
         if args.only == "metadata-flag-symbols":
             compare_selected_metadata_flag_symbols(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):

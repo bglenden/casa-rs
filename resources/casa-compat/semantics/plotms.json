@@ -84,7 +84,7 @@
       ]
     },
     "xaxis": {
-      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Channel and Time can be paired with one channel-averaged derived visibility ordinate. Time can be paired with one ordinary vector-time-averaged observed or corrected model expression. Unaveraged Row abscissae can address both selected windows or pair with read-only corrected visibility. Row can identify vector time-averaged visibility groups within each iterator chunk. U uses transformed baseline weights for supported vector time and spectral-window visibility averages. Vector time averages without channel rebinning support Interval and same-frame wavelength coordinates. Wt*Amp also accepts a visibility column on the abscissa. Averaged spectral weight can be used on the abscissa. Selected Channel pairs with raw array horizontal coordinates on the buffer grid. Selected Channel also pairs with unaveraged antenna horizontal coordinates. Channel and Time support the attached ephemeris radial velocity and distance pairs, respectively. Channel/Frequency retains the selected channel grid, while array Elevation/Time uses the visibility buffer grid. Pair Ant-Ra with Channel and Ant-Dec with Real using the selected visibility-cell masks.",
+      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Channel and Time can be paired with one channel-averaged derived visibility ordinate. Time can be paired with one ordinary vector-time-averaged observed or corrected model expression. Unaveraged Row abscissae can address both selected windows or pair with read-only corrected visibility. Row can identify vector time-averaged visibility groups within each iterator chunk. U uses transformed baseline weights for supported vector time and spectral-window visibility averages. Vector time averages without channel rebinning support Interval and same-frame wavelength coordinates. Wt*Amp also accepts a visibility column on the abscissa. Averaged spectral weight can be used on the abscissa. Selected Channel pairs with raw array horizontal coordinates on the buffer grid. Selected Channel also pairs with unaveraged antenna horizontal coordinates. Channel and Time support the attached ephemeris radial velocity and distance pairs, respectively. Channel/Frequency retains the selected channel grid, while array Elevation/Time uses the visibility buffer grid. Pair Ant-Ra with Channel and Ant-Dec with Real using the selected visibility-cell masks. Supported spectral coordinates include requested reporting frames against visibility data and converted Frequency on the raw Channel/Frequency grid.",
       "evidence": [
         "paired",
         "ms-interval-wavelength",
@@ -123,7 +123,8 @@
         "ms-antenna-horizontal-axes",
         "ms-ephemeris-axes",
         "ms-static-metadata-coordinates",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "coordinates"
@@ -206,7 +207,7 @@
       "status": "Partial"
     },
     "yaxis": {
-      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates. Two channel-axis callibrary ordinates can display stored and transient corrected visibilities. Atmospheric transmission can accompany independently selected model and corrected visibility ordinates. A visibility abscissa can use independent Row and Elevation ordinates, and Time can use Row in scan pages. Wavelength ordinates use each selected channel on supported vector time averages. Vector time/channel averages include weight and sigma spectra and Wt*Amp. Array Azimuth, Elevation, Hour Angle and Parallactic Angle use the mean antenna position in Channel plots. The MeasurementSet Poln axis is refused. Ant-Azimuth, Ant-Elevation and Ant-ParAngle use each antenna position in raw Channel plots. Radial Velocity and Distance (rho) use the first time and FIELD of each selected buffer for the Channel and Time pairs. Frequency and Time are supported for the raw Channel/Frequency and Elevation/Time metadata pairs. A scalar antenna direction ordinate can expand into several layers through its list-valued interpolation control. A generic axis list involving an antenna direction is refused. Channel and Real can use antenna direction as the abscissa. Channel can also be plotted against antenna latitude.",
+      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates. Two channel-axis callibrary ordinates can display stored and transient corrected visibilities. Atmospheric transmission can accompany independently selected model and corrected visibility ordinates. A visibility abscissa can use independent Row and Elevation ordinates, and Time can use Row in scan pages. Wavelength ordinates use each selected channel on supported vector time averages. Vector time/channel averages include weight and sigma spectra and Wt*Amp. Array Azimuth, Elevation, Hour Angle and Parallactic Angle use the mean antenna position in Channel plots. The MeasurementSet Poln axis is refused. Ant-Azimuth, Ant-Elevation and Ant-ParAngle use each antenna position in raw Channel plots. Radial Velocity and Distance (rho) use the first time and FIELD of each selected buffer for the Channel and Time pairs. Frequency and Time are supported for the raw Channel/Frequency and Elevation/Time metadata pairs. A scalar antenna direction ordinate can expand into several layers through its list-valued interpolation control. A generic axis list involving an antenna direction is refused. Channel and Real can use antenna direction as the abscissa. Channel can also be plotted against antenna latitude. Supported spectral coordinates include requested reporting frames against visibility data and converted Frequency on the raw Channel/Frequency grid.",
       "evidence": [
         "paired",
         "ms-multiple-visibility-ordinates",
@@ -238,7 +239,8 @@
         "ms-ephemeris-axes",
         "ms-static-metadata-coordinates",
         "ms-pointing-list-controls",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "coordinates"
@@ -596,7 +598,8 @@
         "ms-channel-metadata-flag-symbols",
         "ms-effective-float-averages",
         "ms-combined-spw-baseline-antenna-ids",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "averaging"
@@ -663,7 +666,8 @@
         "ms-effective-float-averages",
         "ms-antenna-time-window-correlation-shapes",
         "ms-combined-spw-baseline-antenna-ids",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "averaging"
@@ -839,11 +843,12 @@
       "status": "Partial"
     },
     "transform": {
-      "scope": "Disable frequency controls and the fixed MeasurementSet phase-center shift when false. Additional active calibration transforms remain open.",
+      "scope": "Disable frequency controls and the fixed MeasurementSet phase-center shift when false. Additional active calibration transforms remain open. Active MeasurementSet spectral transforms share one reporting grid between Frequency, Velocity, wavelength coordinates and verbose TXT metadata.",
       "evidence": [
         "selectors",
         "ms-fixed-phasecenter",
-        "remaining"
+        "remaining",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "advanced"
@@ -851,11 +856,12 @@
       "status": "Partial"
     },
     "freqframe": {
-      "scope": "Calibration-table PlotMS retains the table’s stored spectral coordinates and warns when an active frame is requested. MeasurementSet transform coverage is tracked separately.",
+      "scope": "Calibration-table PlotMS retains the table’s stored spectral coordinates and warns when an active frame is requested. MeasurementSet Frequency, Velocity and wavelength coordinates use the selected reporting frame and write the same frequencies in verbose TXT. Vector time-averaged wavelengths use the baseline’s time, and Frequency, Velocity and verbose metadata use the first row’s time in the output buffer. When no frame is requested, the mixed-window wavelength case uses the first iterator buffer’s frame.",
       "evidence": [
         "calibration-controls",
         "selectors",
-        "remaining"
+        "remaining",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "advanced"
@@ -863,10 +869,11 @@
       "status": "Partial"
     },
     "restfreq": {
-      "scope": "CASA leaves modern calibration-table coordinates unchanged for supplied rest-frequency values. Frequency and velocity transforms for other inputs remain separately tracked.",
+      "scope": "Use the supplied rest frequency for active MeasurementSet Velocity plots. When unspecified or inactive, use the middle selected frequency in the buffer. Modern calibration tables retain their stored coordinates.",
       "evidence": [
         "selectors",
-        "remaining"
+        "remaining",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "advanced"
@@ -874,14 +881,15 @@
       "status": "Partial"
     },
     "veldef": {
-      "scope": "The definition in which to render velocity",
+      "scope": "Use RADIO, OPTICAL or TRUE for active MeasurementSet Velocity plots. Inactive transforms use the stored spectral grid and RADIO.",
       "evidence": [
-        "remaining"
+        "remaining",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "advanced"
       ],
-      "status": "Not implemented"
+      "status": "Partial"
     },
     "phasecenter": {
       "scope": "Shift selected unaveraged complex visibilities and UVW to a fixed J2000 phase center on a MeasurementSet with fixed J2000 field directions. Plot one complex visibility ordinate against a complex visibility or UVW coordinate in metres. Other frames and compositions with averaging, iteration, reporting frames, callibraries, overlays, selected FLOAT_DATA or virtual models remain open.",
@@ -1346,7 +1354,8 @@
         "ms-per-antenna-export",
         "ms-iterated-visibility-ordinates",
         "ms-pointing-list-controls",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "behaviors": [
         "export"
@@ -1551,7 +1560,7 @@
       "id": "coordinates",
       "title": "Project axes and flags",
       "status": "Partial",
-      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine. Plot unaveraged visibility axes with integration interval and UVW in wavelengths using the selected visibility buffer and per-channel frequency. Unaveraged channel plots of three or more axes on Y use separate masks for visibility, U, V, W and observatory elevation ordinates. Plot raw row and buffer identifiers with selected visibility axes and use distinct STATE observing mode IDs for Intent. Use each metadata-only Time or Channel pair's dimensions to collapse selected visibility flags and report its compact point identifiers. Pair Time, antenna longitude and antenna latitude with selected cube masks, nearest or spline interpolation, and independently chosen scalar direction frames. Repeat the scalar pointing ordinate with parallel frame, interpolation and side controls. Use selected channels and flags for scalar pointing pairs with Channel or Real, and preserve raw metadata pointing coordinates in scan panels and metadata-only averaging requests.",
+      "scope": "Read complex and real parameter cells and select calibration axes. Keep flagged sample visibility consistent in text and image products. Validate active axis and range controls before writing. Use the reference axes for Tsys and antenna-position products. Evaluate stored BPOLY and GSPLINE coefficients and expose their solution flags and metadata. Plot independent stored MeasurementSet DATA, CORRECTED_DATA and MODEL_DATA axes and unaveraged vector and scalar residuals or model ratios with the shared sample mask. Use DATA for corrected axes, residuals and ratios when the stored corrected column is absent on a complex MeasurementSet. Use FLOAT_DATA for observed visibilities on unaveraged mixed inputs and signed amplitude or real axes on float-only inputs. Keep the requested order and column identity for independent unaveraged visibility ordinates and group them by figure side. Use the default visibility model for complex data without a stored model or an applicable virtual recipe. Predict selected virtual component and Fourier models through the native visibility model engine. Plot unaveraged visibility axes with integration interval and UVW in wavelengths using the selected visibility buffer and per-channel frequency. Unaveraged channel plots of three or more axes on Y use separate masks for visibility, U, V, W and observatory elevation ordinates. Plot raw row and buffer identifiers with selected visibility axes and use distinct STATE observing mode IDs for Intent. Use each metadata-only Time or Channel pair's dimensions to collapse selected visibility flags and report its compact point identifiers. Pair Time, antenna longitude and antenna latitude with selected cube masks, nearest or spline interpolation, and independently chosen scalar direction frames. Repeat the scalar pointing ordinate with parallel frame, interpolation and side controls. Use selected channels and flags for scalar pointing pairs with Channel or Real, and preserve raw metadata pointing coordinates in scan panels and metadata-only averaging requests. Share the selected reporting grid between Frequency, Velocity, wavelength coordinates and verbose MeasurementSet output. Match the default selected-channel rest frequency and group-time wavelength conversion.",
       "evidence": [
         "paired",
         "selectors",
@@ -1575,9 +1584,10 @@
         "ms-metadata-pair-masks",
         "ms-pointing-directions",
         "ms-pointing-list-controls",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-reporting-frequency-and-wavelengths"
       ],
-      "gap": "Sample masks for other mixed visibility and metadata axes, additional averaging modes and additional MS column forms are open. Averaged interval and wavelength coordinates and reporting-frame transforms for these axes remain open."
+      "gap": "Sample masks for other mixed visibility and metadata axes, additional averaging modes and additional MS column forms are open. Interval reporting-frame transforms and additional interval or wavelength averaging compositions remain open."
     },
     {
       "id": "averaging",
@@ -1650,7 +1660,8 @@
         "ms-atmosphere",
         "selectors",
         "remaining",
-        "callibrary"
+        "callibrary",
+        "ms-reporting-frequency-and-wavelengths"
       ],
       "gap": "Remaining shared PlotMS forms are tracked in #1032 and #215."
     }
@@ -3233,6 +3244,22 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-pointing-sample-masks-20261125.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2308"
+      ]
+    },
+    "ms-reporting-frequency-and-wavelengths": {
+      "kind": "Same-input MeasurementSet spectral reporting grids",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Two-window VLA spectral and strided wavelength fixtures and the selected ALMA Channel/Frequency metadata fixture.",
+      "result": "Active TOPO, LSRK and BARY Frequency, RADIO/OPTICAL/TRUE Velocity, and LSRK time/channel Frequency share the measured reporting grid for 186 points, including unequal-epoch Frequency and Velocity reductions. Ten raw or averaged wavelength cases cover 25 signed U/V/W/UV samples, with a raw BARY control and distinct output baseline epochs. Four directly paired inactive TXT cases retain 80 samples and prove the default middle selected rest frequency. Three further direct pairs match six same-frame and mixed-window coordinates (#2289), including 100.003287289 GHz in the second mixed window. The original first iterator frame still applies when the other window has earlier epochs. The #2297 Channel/Frequency control matches the ordinate and verbose frequency for 14 selected points after converting to LSRK. Pinned active TXT stalls before the plot data; the 20 active PNG pairs, stored-frame TXT and pinned measures establish the scientific values.",
+      "casa_version": "6.7.6.14",
+      "revision": "ad2148f7a44da4c97cd36f5b95e32c66427a8ac9",
+      "source_revision": "ad2148f7a44da4c97cd36f5b95e32c66427a8ac9",
+      "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only <reporting-frames|reporting-wavelengths|averaged-reporting-epochs|static-metadata-coordinates> --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-reporting-frames-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2310",
+        "https://github.com/bglenden/casa-rs/pull/2289",
+        "https://github.com/bglenden/casa-rs/pull/2297"
       ]
     }
   }

@@ -11151,6 +11151,27 @@ reproduces the failed Real request and uses the signed CASA Amp export
 to check the corrected native values and point IDs (#1032).
 [Pinned PlotMS cache](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 
+## PlotMS can stall during a transformed spectral text export
+
+- Date noted: 2026-11-25
+- Status: casa-rs exports the selected reporting grid in both products (#1032)
+
+On the two-window VLA fixture with `xaxis='frequency'`, `yaxis='amp'`,
+`transform=True` and active `freqframe='TOPO'` or `'LSRK'`, the pinned
+CASA 6.7.6.14 / casaplotms 2.9.1 public task starts its TXT file and leaves
+only the selection header. Fresh offscreen servers reproduce the stall
+in verbose and compact TXT and when an explicit rest frequency is used.
+The LSRK velocity request with `restfreq='95GHz'` also stalls in TXT.
+The equivalent PNG requests complete.
+
+casa-rs exports the plotted reporting frequencies and uses the same
+channel grid for verbose TXT metadata. The oracle pairs the reference
+PNG and the same-selection untransformed TXT, then verifies each active
+plotted coordinate with pinned CASA measures and the Doppler or
+wavelength formula. It also directly pairs untransformed velocity,
+including the upper middle frequency of the selected buffer when the
+task uses the implicit rest frequency.
+
 ## PlotMS can stall while exporting phase-shifted coordinates to text
 
 In CASA 6.7.6.14 with casaplotms 2.9.1, plot U in metres against observed

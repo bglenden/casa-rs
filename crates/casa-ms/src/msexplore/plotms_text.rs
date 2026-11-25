@@ -213,21 +213,17 @@ fn write_series(
             Some(MsScatterPlotMsAverageIds::SpectralWindow { .. })
         );
         let mut points = section.iter().flat_map(|series| {
-            series
-                .points
-                .iter()
-                .zip(&series.provenance)
-                .enumerate()
-                .map(|(index, (xy, point))| (xy, point, series.plotms_metadata.get(index).copied()))
+            (0..series.points.len().min(series.provenance.len())).map(move |index| (series, index))
         });
-        let write = |(&(x, y), point, display)| {
+        let write = |(series, index): (&MsScatterSeries, usize)| {
+            let (x, y) = series.points[index];
             write_point(
                 output,
                 metadata,
                 (coordinate(x_axis, x), coordinate(y_axis, y)),
-                point,
-                (display, averaged_ids),
-                None,
+                &series.provenance[index],
+                (series.plotms_metadata.get(index).copied(), averaged_ids),
+                series.plotms_reporting_frequencies_hz.get(index).copied(),
                 verbose,
             )
         };
@@ -237,7 +233,9 @@ fn write_series(
             || y_axis == MsAxis::UvDistance
         {
             let mut ordered = points.collect::<Vec<_>>();
-            ordered.sort_unstable_by_key(|&(_, point, display)| {
+            ordered.sort_unstable_by_key(|&(series, index)| {
+                let point = &series.provenance[index];
+                let display = series.plotms_metadata.get(index);
                 if spw_average && let Some(display) = display {
                     return (
                         display.averaging_group.unwrap_or(point.row),

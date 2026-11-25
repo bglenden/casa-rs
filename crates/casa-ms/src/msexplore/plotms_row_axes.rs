@@ -55,9 +55,6 @@ pub(super) fn unaveraged_coordinate_mask(
         return Ok(None);
     };
     let mask = metadata_coordinate_pair(spec.x_axis, *y);
-    if mask.is_some() && *y == MsAxis::Frequency && spec.transforms.freqframe.is_some() {
-        return Err("PlotMS Channel/Frequency reporting frames are pending (#1032)".into());
-    }
     if mask.is_some()
         && (!raw_plotms
             || uses_extended_averaging(spec)

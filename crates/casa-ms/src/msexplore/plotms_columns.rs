@@ -127,10 +127,20 @@ pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
 
 pub(super) fn uses_averaged_geometry_coordinates(spec: &MsPlotSpec) -> bool {
     uses_unbinned_vector_time_averaging(spec)
-        && spec.transforms.freqframe.is_none()
         && std::iter::once(spec.x_axis)
             .chain(spec.y_axes.iter().copied())
             .any(MsAxis::is_interval_or_wavelength)
+}
+
+pub(super) fn uses_spectral_reporting_time_grid(spec: &MsPlotSpec) -> bool {
+    let is_spectral = |axis| matches!(axis, MsAxis::Frequency | MsAxis::Velocity);
+    let y = spec.y_axis();
+    spec.transforms.freqframe.is_some()
+        && spec.y_axes.len() == 1
+        && uses_ordinary_time_averaging(spec)
+        && !spec.averaging.scalar
+        && ((is_spectral(spec.x_axis) && y.is_visibility_math())
+            || (spec.x_axis.is_visibility_math() && is_spectral(y)))
 }
 
 fn uses_unbinned_vector_time_averaging(spec: &MsPlotSpec) -> bool {
