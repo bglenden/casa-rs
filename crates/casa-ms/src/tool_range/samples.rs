@@ -16,13 +16,14 @@ use crate::{MsError, MsResult};
 
 const PRODUCTS: [&str; 4] = ["amplitude", "phase", "real", "imaginary"];
 
-pub(super) struct RangeSamples {
+pub(super) struct RangeSamples<'a> {
     groups: Vec<ComplexRanges>,
     matrix_columns: BTreeSet<&'static str>,
     float: Option<Extrema>,
     weight: Option<Extrema>,
     sigma: Option<Extrema>,
     masked: bool,
+    options: VisibilityReadOptions<'a>,
 }
 
 struct ComplexRanges {
@@ -32,8 +33,13 @@ struct ComplexRanges {
     extrema: [Option<Extrema>; 4],
 }
 
-impl RangeSamples {
-    pub(super) fn new(main: &Table, names: &BTreeSet<String>, use_flags: bool) -> Self {
+impl<'a> RangeSamples<'a> {
+    pub(super) fn new(
+        main: &Table,
+        names: &BTreeSet<String>,
+        use_flags: bool,
+        options: VisibilityReadOptions<'a>,
+    ) -> Self {
         let has_column = |name| {
             main.schema()
                 .is_some_and(|schema| schema.contains_column(name))
@@ -76,6 +82,7 @@ impl RangeSamples {
             weight: names.contains("weight").then(Extrema::default),
             sigma: names.contains("sigma").then(Extrema::default),
             masked,
+            options,
         }
     }
 
@@ -86,10 +93,15 @@ impl RangeSamples {
             .map(|&name| if name == "FLOAT_DATA" { 4 } else { 8 })
             .sum::<usize>();
         let vectors = 4 * (usize::from(self.weight.is_some()) + usize::from(self.sigma.is_some()));
+        let reads_flags = self.masked
+            || self
+                .options
+                .channels
+                .is_some_and(|channels| channels.width() > 1);
         correlations
             .saturating_mul(
                 channels
-                    .saturating_mul(size + usize::from(self.masked))
+                    .saturating_mul(size + usize::from(reads_flags))
                     .saturating_add(vectors),
             )
             .max(1)
@@ -117,7 +129,7 @@ impl RangeSamples {
                 rows,
                 rows.first().copied(),
                 &no_scalars,
-                VisibilityReadOptions::default(),
+                self.options,
             )?;
             self.read_block(&read)?;
         }
@@ -127,7 +139,7 @@ impl RangeSamples {
     fn read_block(&mut self, read: &VisibilityRead<'_>) -> MsResult<()> {
         let mask = self
             .masked
-            .then(|| read.raw_matrix_cells("FLAG", false))
+            .then(|| read.range_matrix_cells("FLAG", true))
             .transpose()?;
         let flags = match &mask {
             Some(ArrayValue::Bool(values)) => Some(values),
@@ -136,7 +148,7 @@ impl RangeSamples {
         };
         let mut matrices = BTreeMap::new();
         for &column in &self.matrix_columns {
-            matrices.insert(column, read.raw_matrix_cells(column, false)?);
+            matrices.insert(column, read.range_matrix_cells(column, true)?);
         }
         for group in &mut self.groups {
             let Some(ArrayValue::Complex32(values)) = matrices.get(group.source) else {
@@ -178,6 +190,21 @@ impl RangeSamples {
         if let Some(range) = &mut self.float {
             let Some(ArrayValue::Float32(values)) = matrices.get("FLOAT_DATA") else {
                 return Err(invalid("FLOAT_DATA range requires Float cells"));
+            };
+            let physical_flags = if self.masked
+                && self
+                    .options
+                    .polarization
+                    .is_some_and(|plan| plan.is_conversion())
+            {
+                Some(read.range_matrix_cells("FLAG", false)?)
+            } else {
+                None
+            };
+            let flags = match &physical_flags {
+                Some(ArrayValue::Bool(values)) => Some(values),
+                None => flags,
+                _ => return Err(invalid("FLAG range requires Bool cells")),
             };
             let flags = mask_for(values, flags)?;
             for (index, &value) in memory(values)?.iter().enumerate() {

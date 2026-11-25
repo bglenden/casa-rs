@@ -142,11 +142,6 @@ def test_legacy_metadata_range_reads_the_saved_legacy_view(native_dataset):
     for expected, actual in zip(*results):
         same_record(actual, expected)
 
-    tool = tools.ms()
-    assert tool.open(str(native_dataset))
-    with pytest.raises(NotImplementedError, match=r"rangeold.*#1030"):
-        tool.rangeold(["chan_freq"])
-    assert tool.done()
 
 
 def test_legacy_taql_clauses_preserve_projection_order(native_dataset):

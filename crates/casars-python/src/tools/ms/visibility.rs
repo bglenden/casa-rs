@@ -110,6 +110,7 @@ impl VisibilityState {
         link: &MetadataLink,
         requested_rows: Option<&[usize]>,
         request: &ToolRangeRequest,
+        options: tool_visibility::VisibilityReadOptions<'_>,
     ) -> PyResult<CasaValue> {
         link.verify_directory().map_err(runtime_error)?;
         if requested_rows.is_some_and(<[usize]>::is_empty) {
@@ -127,9 +128,14 @@ impl VisibilityState {
         let reference = main.reference.as_ref();
         let owner = reference.map_or(&main.table, PlainReferenceRead::parent);
         let record = request
-            .read(&main.table, &main.members, reference, rows, |ids| {
-                self.range_subtables.read_range(owner, ids)
-            })
+            .read(
+                &main.table,
+                &main.members,
+                reference,
+                rows,
+                options,
+                |ids| self.range_subtables.read_range(owner, ids),
+            )
             .map_err(runtime_error)?;
         link.verify_directory().map_err(runtime_error)?;
         Ok(visibility_record(record))
@@ -568,8 +574,13 @@ impl AttachedMs {
 
     pub(super) fn visibility_range(&mut self, request: &ToolRangeRequest) -> PyResult<CasaValue> {
         let link = self.metadata_link();
-        self.visibility
-            .range_for_rows(&self.path, &link, self.selected_rows.as_deref(), request)
+        self.visibility.range_for_rows(
+            &self.path,
+            &link,
+            self.selected_rows.as_deref(),
+            request,
+            tool_visibility::VisibilityReadOptions::default(),
+        )
     }
 
     pub(super) fn initialize_public_iteration(

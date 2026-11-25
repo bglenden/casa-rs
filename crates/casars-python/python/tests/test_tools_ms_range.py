@@ -13,6 +13,61 @@ def extrema(values):
     return np.array([values.min(), values.max()], dtype=np.float64)
 
 
+@pytest.mark.parametrize("polarization", [None, "LL", "XX"])
+@pytest.mark.parametrize("useflags", [False, True])
+def test_legacy_range_uses_projected_samples_and_recorded_spectral_axes(
+    baseline_fixture, native_dataset, polarization, useflags
+):
+    casa, _, raw = baseline_fixture
+    flagged = raw["flag"].copy()
+    flagged[:, :2, 19] = True
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    assert table.putcol("FLAG", flagged)
+    assert table.done()
+    items = ["real", "imaginary", "amplitude", "phase", "weight", "sigma",
+             "chan_freq", "num_chan", "num_corr", "corr_names", "rows"]
+    order = [19, 0, 13, 19, 7]
+    independent = None
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.selectinitold()
+        if polarization:
+            assert reader.selectpolarizationold(polarization)
+        assert reader.selectchannelold(2, 0, 2, 2)
+        assert reader.selectold({"rows": order})
+        result = reader.rangeold(items, useflags=useflags, blocksize=np.int64(1))
+        assert result.keys() == set(items)
+        if api is casa:
+            selected = reader.getdataold(["data", "flag", "weight", "sigma"])
+            values = selected["data"]
+            values = values[~selected["flag"]] if useflags else values.ravel()
+            independent = {
+                "real": extrema(values.real),
+                "imaginary": extrema(values.imag),
+                "amplitude": extrema(np.abs(values)),
+                "phase": extrema(np.angle(values)),
+                "weight": extrema(selected["weight"]),
+                "sigma": extrema(selected["sigma"]),
+                "chan_freq": reader.range("chan_freq")["chan_freq"],
+                "num_chan": np.array([4]),
+                "num_corr": np.array([2]),
+                "corr_names": np.array([["RR"], ["LL"]]),
+                "rows": np.array(order),
+            }
+        for item in items:
+            expected = independent[item]
+            if expected.dtype.kind == "f":
+                np.testing.assert_allclose(result[item], expected, rtol=1e-6, atol=1e-12,
+                                           strict=True, err_msg=item)
+            else:
+                np.testing.assert_array_equal(result[item], expected, strict=True, err_msg=item)
+        assert reader.nrow(True) == len(raw["time"])
+        assert reader.nrowold(True) == len(order)
+        assert reader.done()
+
+
 @pytest.mark.parametrize("useflags,blocksize", [(True, 1), (False, 10), (True, -1)])
 def test_ms_range_uses_selected_rows_and_recorded_axes(baseline_fixture, native_dataset,
                                                        useflags, blocksize):
