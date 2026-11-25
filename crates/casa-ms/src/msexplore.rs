@@ -2817,7 +2817,7 @@ struct PlotMsInput<'a> {
     weight_axis_columns: [Option<MsDataColumn>; 3],
     prefer_float_data: bool,
     raw_symbols: Option<RawSymbolVisibility>,
-    pointing: Option<plotms_pointing::PointingAxes>,
+    pointing: Option<&'a plotms_pointing::PointingAxes>,
     phasecenter: Option<MDirection>,
 }
 
@@ -2827,7 +2827,7 @@ struct PlotMsColumnSelection<'a> {
     additional_y: &'a [(MsAxis, MsDataColumn)],
     weights: [Option<MsDataColumn>; 3],
     raw_symbols: Option<RawSymbolVisibility>,
-    pointing: Option<plotms_pointing::PointingAxes>,
+    pointing: Option<&'a plotms_pointing::PointingAxes>,
     phasecenter: Option<MDirection>,
     extended_derived: bool,
     implicit_derived_model: bool,
@@ -4584,6 +4584,7 @@ fn build_generic_visibility_scatter(
     let pointing_coordinates = pointing
         .map(|axes| plotms_pointing::PointingCoordinates::read(ms, axes, &selected_antenna1))
         .transpose()?;
+    let mut pointing_values = Vec::new();
     let selected_intervals = if needs_interval {
         let mut intervals = selected_f64_values(ms.main_table(), "INTERVAL", &row_numbers)?;
         let mut first_interval = 0.0;
@@ -5005,10 +5006,9 @@ fn build_generic_visibility_scatter(
         let scan_number_value = selected_scan_numbers[row_slot];
         let antenna1_value = selected_antenna1[row_slot];
         let row_time_value = selected_times[row_slot];
-        let pointing_values = pointing_coordinates
-            .as_ref()
-            .map(|coordinates| coordinates.values(antenna1_value, row_time_value))
-            .transpose()?;
+        if let Some(coordinates) = &pointing_coordinates {
+            coordinates.values(antenna1_value, row_time_value, &mut pointing_values)?;
+        }
         let row_coordinates = RowCoordinates {
             time: row_time_value,
             interval: selected_intervals.get(row_slot).copied(),
@@ -5211,15 +5211,15 @@ fn build_generic_visibility_scatter(
                     scatter_timing.bin_collect += started.elapsed();
                 }
                 let axis_started = timing_enabled.then(Instant::now);
-                let axis_value = |axis_slot, axis| {
+                let axis_value = |axis_slot: usize, axis| {
                     if antenna_horizontal && axis == spec.y_axis() {
                         return Ok(antenna_geometry);
                     }
                     if buffer_geometry_axis == Some(axis) {
                         return Ok(buffer_geometry_value);
                     }
-                    if let Some(values) = pointing_values
-                        && let Some(value) = values[axis_slot]
+                    if let Some(values) = pointing_values.get(axis_slot.saturating_sub(1))
+                        && let Some(value) = values[axis_slot.min(1)]
                     {
                         return Ok(Some(value));
                     }
@@ -5345,7 +5345,8 @@ fn build_generic_visibility_scatter(
                                 plotms_averaged_ids: None,
                             });
                     let push_started = timing_enabled.then(Instant::now);
-                    series.points.push((x_value, y_value));
+                    let x = pointing_values.get(*y_index).and_then(|pair| pair[0]);
+                    series.points.push((x.unwrap_or(x_value), y_value));
                     series.provenance.push(MsScatterPointRef {
                         row: row_numbers[point_row_slot],
                         corr: point_correlation,
@@ -5432,13 +5433,13 @@ fn build_generic_visibility_scatter(
         .style
         .xlabel
         .clone()
-        .or_else(|| pointing.and_then(|axes| axes.label(0)))
+        .or_else(|| pointing.and_then(plotms_pointing::PointingAxes::x_label))
         .unwrap_or_else(|| axis_label(spec.x_axis));
     let y_label = spec
         .style
         .ylabel
         .clone()
-        .or_else(|| pointing.and_then(|axes| axes.label(1)))
+        .or_else(|| pointing.and_then(|axes| axes.label(0, 1)))
         .unwrap_or_else(|| axis_label(spec.y_axis()));
     let secondary_y_label = spec.secondary_y_axis().map(axis_label);
     let bounds_for_column = |axis, column: MsDataColumn| {

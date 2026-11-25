@@ -9,7 +9,7 @@ use casa_types::measures::direction::MDirection;
 
 use super::super::{
     RawSymbolVisibility, calibration, plotms_columns, plotms_figure::VisibilityAxisColumns,
-    plotms_phasecenter, plotms_row_axes,
+    plotms_phasecenter, plotms_pointing::PointingAxes, plotms_row_axes,
 };
 use super::{
     CliOptions, MeasurementSet, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis,
@@ -66,22 +66,37 @@ impl CliOptions {
         ])
     }
 
-    pub(super) fn figure_axis_columns(
-        &self,
+    pub(super) fn add_pointing_ordinates(&mut self, pointing: &PointingAxes) {
+        if pointing.len() > 1 {
+            self.y_axis2 = self.y_axis;
+            self.secondary_y_data_column = Some(self.data_column);
+            self.additional_ordinates.extend(
+                (2..pointing.len())
+                    .map(|_| (self.y_axis.expect("pointing ordinate"), self.data_column)),
+            );
+        }
+    }
+
+    pub(super) fn figure_axis_columns<'a>(
+        &'a self,
         columns: Option<[MsDataColumn; 3]>,
         calibrated: bool,
-    ) -> Option<VisibilityAxisColumns<'_>> {
+        pointing: Option<&'a PointingAxes>,
+    ) -> Option<VisibilityAxisColumns<'a>> {
         columns
             .or_else(|| {
                 let (x, y) = self.x_axis.zip(self.y_axis)?;
-                plotms_row_axes::metadata_coordinate_pair(x, y).map(|_| [self.data_column; 3])
+                (pointing.is_some() || plotms_row_axes::metadata_coordinate_pair(x, y).is_some())
+                    .then_some([self.data_column; 3])
             })
             .filter(|_| !calibrated || self.secondary_y_data_column.is_some())
             .map(|base| VisibilityAxisColumns {
                 base,
                 secondary_axis: self.y_axis2,
                 additional: &self.additional_ordinates,
-                right_ordinates: &self.right_ordinates,
+                right_ordinates: pointing
+                    .map_or(&self.right_ordinates, PointingAxes::right_ordinates),
+                pointing,
             })
     }
 
