@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Stage a row append without moving the buckets that existing readers use.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -17,6 +17,14 @@ use super::{
     write_i64_be, write_i64_le,
 };
 
+pub(crate) struct StagedRecords {
+    pub(crate) retained_end: u64,
+    pub(crate) new_end: u64,
+    pub(crate) header: Vec<u8>,
+    pub(crate) tail: tempfile::SpooledTempFile,
+}
+
+/// Stage the new header and tail without copying the retained buckets.
 pub(crate) fn stage_records(
     original: &Path,
     destination: &Path,
@@ -25,7 +33,7 @@ pub(crate) fn stage_records(
     old_rows: u64,
     records: &[RecordValue],
     defaults: &RecordValue,
-) -> Result<(), StorageError> {
+) -> Result<StagedRecords, StorageError> {
     let mut source = File::open(original)?;
     let header = parse_ssm_header(&mut source)?;
     let mut indices = parse_ssm_indices(&mut source, &header)?;
@@ -33,18 +41,17 @@ pub(crate) fn stage_records(
     let malformed = || StorageError::FormatMismatch("invalid StandardStMan append layout".into());
     if indices.is_empty()
         || indices.iter().any(|index| index.rows_per_bucket == 0)
-        || layout.col_index_map.len() != columns.len()
-        || layout.column_offsets.len() != columns.len()
+        || layout.col_index_map.len() < columns.len()
+        || layout.column_offsets.len() < columns.len()
         || layout
             .col_index_map
             .iter()
+            .take(columns.len())
             .any(|&index| index as usize >= indices.len())
     {
         return Err(malformed());
     }
 
-    fs::copy(original, destination)?;
-    let mut file = OpenOptions::new().write(true).open(destination)?;
     let indirect_path = |path: &Path| {
         let mut name = path.as_os_str().to_os_string();
         name.push("i");
@@ -63,7 +70,16 @@ pub(crate) fn stage_records(
         None
     };
     let bucket_bytes = header.bucket_size as usize;
-    let mut next_bucket = append_start(&mut source, &header, &indices)? as usize;
+    let first_changed_bucket = append_start(&mut source, &header, &indices)? as usize;
+    let retained_end = bucket_offset(first_changed_bucket, bucket_bytes);
+    let tail_offset = |bucket| bucket_offset(bucket, bucket_bytes) - retained_end;
+    // A small append commonly uses one data bucket per index, one string
+    // bucket, and one index bucket. Larger tails spill to a temporary file.
+    let mut tail = tempfile::spooled_tempfile_in(
+        bucket_bytes.saturating_mul(indices.len().saturating_add(2)),
+        destination.parent().expect("staged manager directory"),
+    );
+    let mut next_bucket = first_changed_bucket;
     let string_start = next_bucket
         + indices
             .iter()
@@ -115,11 +131,8 @@ pub(crate) fn stage_records(
                             value,
                             &mut |payload| {
                                 strings.stream(payload, bucket_bytes, |number, bucket| {
-                                    file.seek(SeekFrom::Start(bucket_offset(
-                                        string_start + number,
-                                        bucket_bytes,
-                                    )))?;
-                                    file.write_all(bucket)?;
+                                    tail.seek(SeekFrom::Start(tail_offset(string_start + number)))?;
+                                    tail.write_all(bucket)?;
                                     Ok(())
                                 })
                             },
@@ -129,8 +142,8 @@ pub(crate) fn stage_records(
                     }
                 }
             }
-            file.seek(SeekFrom::Start(bucket_offset(next_bucket, bucket_bytes)))?;
-            file.write_all(&data)?;
+            tail.seek(SeekFrom::Start(tail_offset(next_bucket)))?;
+            tail.write_all(&data)?;
             index
                 .last_row
                 .push(old_rows + (block * rows_per_bucket + rows.len() - 1) as u64);
@@ -141,18 +154,16 @@ pub(crate) fn stage_records(
         }
     }
     strings.release(|number, bucket| {
-        file.seek(SeekFrom::Start(bucket_offset(
-            string_start + number,
-            bucket_bytes,
-        )))?;
-        file.write_all(bucket)?;
+        tail.seek(SeekFrom::Start(tail_offset(string_start + number)))?;
+        tail.write_all(bucket)?;
         Ok(())
     })?;
     if let Some(writer) = arrays.as_mut() {
         writer.finish()?;
     }
     let first_index = string_start + strings.len();
-    let mut sink = IndexBucketSink::new(file.try_clone()?, first_index, bucket_bytes);
+    let mut sink =
+        IndexBucketSink::at_offset(tail, first_index, bucket_bytes, tail_offset(first_index));
     for (index, columns) in indices.iter().zip(columns_per_index) {
         sink = sink.write_index(
             index.bucket_number.len() as u32,
@@ -163,7 +174,7 @@ pub(crate) fn stage_records(
             header.big_endian,
         )?;
     }
-    let (index_buckets, index_length) = sink.finish()?;
+    let (mut tail, index_buckets, index_length) = sink.finish()?;
     let nr_buckets = first_index + index_buckets;
     let string_bucket = if strings.len() == 0 {
         header.last_string_bucket
@@ -184,10 +195,13 @@ pub(crate) fn stage_records(
         header.pers_cache_size,
         header.big_endian,
     )?;
-    file.seek(SeekFrom::Start(0))?;
-    file.write_all(&revised)?;
-    file.set_len(bucket_offset(nr_buckets, bucket_bytes))?;
-    Ok(())
+    tail.rewind()?;
+    Ok(StagedRecords {
+        retained_end,
+        new_end: bucket_offset(nr_buckets, bucket_bytes),
+        header: revised,
+        tail,
+    })
 }
 
 fn append_start(

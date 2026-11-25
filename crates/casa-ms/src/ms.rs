@@ -1041,7 +1041,7 @@ impl MeasurementSet {
     }
 }
 
-fn apply_column_metadata(table: &mut Table, defs: &[ColumnDef]) {
+pub(crate) fn apply_column_metadata(table: &mut Table, defs: &[ColumnDef]) {
     for def in defs {
         let has_column = table
             .schema()

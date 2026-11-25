@@ -21,6 +21,24 @@ use crate::MeasurementSet;
 use crate::columns::main_ids;
 use crate::columns::time_columns::TimeColumn;
 
+pub(super) struct ExportAxes<'a> {
+    pub ordinates: &'a [MsAxis],
+    pub channel_major: bool,
+}
+
+pub(super) fn requests_text(
+    task: &TaskInvocation<'_>,
+    output: Option<&Path>,
+) -> Result<bool, TaskFailure> {
+    let format = task.text("expformat")?.filter(|ext| !ext.is_empty());
+    Ok(output.is_some_and(|path| {
+        format
+            .as_deref()
+            .or_else(|| path.extension().and_then(std::ffi::OsStr::to_str))
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+    }))
+}
+
 pub(super) fn write_export(
     task: &TaskInvocation<'_>,
     ms: &MeasurementSet,
@@ -28,7 +46,7 @@ pub(super) fn write_export(
     output: &Path,
     library: &[String],
     overlays: &[Vec<Curve>],
-    ordinates: &[MsAxis],
+    axes: ExportAxes<'_>,
 ) -> Result<(), TaskFailure> {
     let parent = output
         .parent()
@@ -52,9 +70,9 @@ pub(super) fn write_export(
                 &mut metadata,
                 plot.x_axis,
                 &plot.series,
-                ordinates,
+                axes.ordinates,
                 verbose,
-                library.is_empty(),
+                axes.channel_major,
             )
             .map_err(io)?;
             if let Some(curves) = overlays.first() {
@@ -78,9 +96,9 @@ pub(super) fn write_export(
                     &mut metadata,
                     grid.x_axis,
                     &plot.series,
-                    ordinates,
+                    axes.ordinates,
                     verbose,
-                    library.is_empty(),
+                    axes.channel_major,
                 )
                 .map_err(io)?;
                 if let Some(curves) = overlays.get(panel) {

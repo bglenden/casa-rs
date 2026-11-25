@@ -77,6 +77,7 @@ IMPLEMENTED["ms"] = {
     "open", "range", "reset", "select", "selectinit", "selectinitold", "selectold",
     "selecttaql", "selecttaqlold", "sort",
     "statistics", "statisticsold", "statwt", "summary", "timesort", "uvsub",
+    "writehistory", "writehistory_batch",
 }
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",

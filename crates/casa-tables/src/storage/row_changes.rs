@@ -54,6 +54,10 @@ enum Extension {
         path: PathBuf,
         len: u64,
     },
+    StandardAppend {
+        path: PathBuf,
+        records: standard_stman::StagedRecords,
+    },
 }
 
 pub(crate) struct StagedEdit<'a> {
@@ -210,7 +214,7 @@ impl<'a> StagedEdit<'a> {
                 let Rows::AppendRecords { records, defaults } = rows else {
                     unreachable!()
                 };
-                standard_stman::stage_records(
+                let records = standard_stman::stage_records(
                     &original,
                     &destination,
                     columns,
@@ -219,6 +223,10 @@ impl<'a> StagedEdit<'a> {
                     records,
                     defaults,
                 )?;
+                self.extensions.push(Extension::StandardAppend {
+                    path: original,
+                    records,
+                });
             }
             "StandardStMan" | "StManAipsIO" => {
                 let values = self.manager_rows(columns, rows, old_rows, false)?;

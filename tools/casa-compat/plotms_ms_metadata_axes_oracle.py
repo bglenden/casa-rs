@@ -13,7 +13,7 @@ import numpy as np
 
 from calibration_smoothcal_oracle import copy_ms
 from plotms_atmosphere_oracle import atmosphere_inputs
-from plotms_callibrary_oracle import library_entry
+from plotms_callibrary_oracle import library_entry, snapshot, verify_source
 from plotms_ms_atmosphere_oracle import paired_text
 from plotms_ms_columns_oracle import (
     compare_empty_export,
@@ -549,12 +549,119 @@ def check_pointing_observatory(work, native, controls, vis):
     assert not actual.exists()
 
 
+def compare_compound_selection(root, native):
+    from casars.tasks import TaskExecutionError
+    from casatools import quanta
+    from grpc import RpcError, StatusCode
+    from plotms_ms_spw_average_oracle import make_fixture as make_spw_fixture
+
+    work = root / "compound-selection"
+    work.mkdir()
+    vis = make_spw_fixture(work, antenna_count=3, channel_count=8, integrations=5)
+    feed = vis / 'FEED'
+    with opened(feed, True) as table:
+        count = table.nrows()
+        table.copyrows(str(feed), startrowout=count, nrow=count)
+        table.putcol('FEED_ID', np.ones(count, dtype=np.int32), startrow=count, nrow=count)
+    field = vis / 'FIELD'
+    with opened(field, True) as table:
+        alternate = table.nrows()
+        table.copyrows(str(field), startrowout=alternate, nrow=1)
+        table.putcell('NAME', alternate, 'PHASE')
+    observation = vis / 'OBSERVATION'
+    with opened(observation, True) as table:
+        obs = table.nrows()
+        table.copyrows(str(observation), startrowout=obs, nrow=1)
+    with opened(vis / 'STATE', True) as table:
+        target = table.nrows()
+        table.addrows(2)
+        table.putcol('OBS_MODE', np.array(['OBSERVE_TARGET#ON_SOURCE', 'CALIBRATE_PHASE#ON_SOURCE']),
+                     startrow=target, nrow=2)
+    with opened(vis, True) as table:
+        time = table.getcol('TIME')
+        integrations, slot = np.unique(time, return_inverse=True)
+        window = table.getcol('DATA_DESC_ID')
+        ant2 = table.getcol('ANTENNA2')
+        table.putcol('SCAN_NUMBER', np.where((slot > 0) & (slot < 4), 2, 1).astype(np.int32))
+        table.putcol('FIELD_ID', np.where(slot == 4, alternate, 0).astype(np.int32))
+        table.putcol('STATE_ID', (target + (slot == 3)).astype(np.int32))
+        table.putcol('OBSERVATION_ID', np.where(slot == 0, 0, obs).astype(np.int32))
+        table.putcol('ARRAY_ID', (slot < 4).astype(np.int32))
+        table.putcol('FEED1', (ant2 == 2).astype(np.int32))
+        table.putcol('FEED2', np.zeros(len(time), dtype=np.int32))
+        uvw = np.zeros((3, len(time)))
+        uvw[0] = np.where((window == 0) & (slot == 2), 15, 50)
+        table.putcol('UVW', uvw)
+        clear = (table.getcol('ANTENNA1') == 0) & (ant2 == 2)
+        flags = table.getcol('FLAG')
+        flags[0, 3, clear & (window == 1) & (slot == 2)] = True
+        table.putcol('FLAG', flags)
+        flag_rows = clear & (window == 0) & (slot == 1)
+        table.putcol('FLAG_ROW', flag_rows)
+    units = quanta()
+    bounds = integrations[[1, 3]] + [-1.0, 1.0]
+    timerange = '~'.join(units.time(units.quantity(value, 's'), form='ymd', prec=10)[0] for value in bounds)
+    base = dict(vis=str(vis), showgui=False, overwrite=True, expformat='txt', xaxis='time', yaxis='real',
+                ydatacolumn='data', field='FLUX', spw='0:1~5^2,1:1~5^2', antenna='A0&A1;A0&A2',
+                timerange=timerange, scan='2', correlation='XX', intent='OBSERVE_TARGET*', feed='1',
+                array='1', observation=str(obs), uvrange='>29.9m', msselect='ANTENNA2 = 2')
+    before = snapshot(vis)
+    membership = [(integrations[1], window, channel) for window in (0, 1) for channel in (1, 3, 5)]
+    membership += [(integrations[2], 1, channel) for channel in (1, 5)]
+    expected_times, expected_spws, expected_channels = zip(*membership, strict=True)
+    for name, selectors in (("correlation", {}), ("polarization", dict(correlation="", polarization="XX"))):
+        request = base | selectors
+        expected, actual = (work / f"compound-{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**request, plotfile=str(expected)) is None
+        assert native(**request, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 8
+        for path in (expected, actual):
+            points = rows(path)
+            assert [int(point[2]) for point in points] == list(expected_channels)
+            assert [int(point[11]) for point in points] == list(expected_spws)
+            assert {tuple(point[3:7]) for point in points} == {("2", "0", "0", "2")}
+            assert {(point[12], point[13]) for point in points} == {("XX", str(obs))}
+            np.testing.assert_allclose([float(point[0]) for point in points], expected_times, rtol=0, atol=0.00051)
+            np.testing.assert_allclose([float(point[9]) for point in points], expected_times, rtol=0, atol=0.00051)
+        print(f"compound-{name}: 8 ordered visibility points and absolute MJD matched", flush=True)
+
+    conflict = work / "compound-conflicting-selectors.txt"
+    for task in (reference, native):
+        try:
+            task(**base, polarization="XX", plotfile=str(conflict))
+        except RuntimeError as error:
+            assert str(error) == "Cannot select both correlation and polarization."
+        else:
+            raise AssertionError("PlotMS accepted both correlation and polarization")
+        assert not conflict.exists()
+
+    empty = base | dict(msselect="ANTENNA2 = 1 AND ANTENNA2 = 2")
+    casa_output = work / "compound-empty.casa.txt"
+    native_output = work / "compound-empty.native.txt"
+    try:
+        reference(**empty, plotfile=str(casa_output))
+    except RpcError as error:
+        assert error.code() == StatusCode.INVALID_ARGUMENT and error.details() == "plot parameters failed"
+    else:
+        raise AssertionError("CASA accepted the empty selector intersection")
+    try:
+        native(**empty, plotfile=str(native_output))
+    except TaskExecutionError as error:
+        assert "no unflagged visibility points for the current selection" in str(error)
+    else:
+        raise AssertionError("casa-rs accepted the empty selector intersection")
+    assert not casa_output.exists() and not native_output.exists()
+    verify_source(vis, before)
+    print("compound selection: both refusal controls matched and input arrays are unchanged", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
+    parser.add_argument("--only", choices=("compound-selection",))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -566,8 +673,10 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
-        compare(root, native)
-        compare_pointing_axes(root, native)
+        if args.only is None:
+            compare(root, native)
+            compare_pointing_axes(root, native)
+        compare_compound_selection(root, native)
 
 
 if __name__ == "__main__":

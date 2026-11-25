@@ -7,7 +7,9 @@ use casa_types::ArrayValue;
 
 use crate::model::{CalibrationParameterFamily, CalibrationTableSummary};
 
-use super::{ApplyExecutionError, GainGrid, correcting_gain, correlation_receptors, stokes_name};
+use super::{
+    ApplyExecutionError, GainGrid, PlotWeights, correcting_gain, correlation_receptors, stokes_name,
+};
 use ndarray::{Array1, Array2, ArrayD, Axis};
 
 pub(super) fn supports_calwt(
@@ -123,6 +125,61 @@ pub(super) fn has_spectrum(
             path: format!("<measurement-set {column}>"),
             source: MsError::from(source),
         })
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PlotWeightColumns {
+    scalar: usize,
+    spectrum: Option<usize>,
+    expand_sigma: bool,
+}
+
+pub(super) fn plot_weight_columns(
+    table: &Table,
+    first_row: Option<usize>,
+    columns: &mut Vec<&str>,
+    channel_weighting: bool,
+) -> Result<PlotWeightColumns, ApplyExecutionError> {
+    let scalar = columns.len();
+    columns.push("SIGMA");
+    let spectrum = if has_spectrum(table, first_row, "SIGMA_SPECTRUM")? {
+        let slot = columns.len();
+        columns.push("SIGMA_SPECTRUM");
+        Some(slot)
+    } else {
+        None
+    };
+    let expand_sigma = channel_weighting
+        && spectrum.is_none()
+        && has_spectrum(table, first_row, "WEIGHT_SPECTRUM")?;
+    Ok(PlotWeightColumns {
+        scalar,
+        spectrum,
+        expand_sigma,
+    })
+}
+
+impl PlotWeightColumns {
+    pub(super) fn has_spectrum(self) -> bool {
+        self.spectrum.is_some() || self.expand_sigma
+    }
+
+    pub(super) fn read<'a>(
+        self,
+        read_array: impl Fn(usize) -> Result<&'a ArrayValue, ApplyExecutionError>,
+        shape: &[usize],
+    ) -> Result<PlotWeights, ApplyExecutionError> {
+        let read = |slot, name| from_sigma(read_array(slot)?.clone(), name);
+        let scalar = read(self.scalar, "SIGMA")?;
+        let spectrum = if self.expand_sigma {
+            Some(broadcast_spectrum(&scalar, shape)?)
+        } else {
+            self.spectrum
+                .map(|slot| read(slot, "SIGMA_SPECTRUM"))
+                .transpose()?
+        };
+        Ok(PlotWeights { scalar, spectrum })
+    }
 }
 
 /// Single-channel diagonal gains have one weight factor per correlation.
