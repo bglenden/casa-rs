@@ -601,6 +601,32 @@ fn right_ordinates(task: &TaskInvocation<'_>) -> Result<Vec<bool>, TaskFailure> 
     }
 }
 
+fn requested_ordinates(
+    task: &TaskInvocation<'_>,
+    x_axis: MsAxis,
+) -> Result<Vec<MsAxis>, TaskFailure> {
+    let y_value = task.value("yaxis");
+    let mut ordinates = calibration::axis_names(y_value)
+        .map_err(TaskFailure::validation)?
+        .into_iter()
+        .map(|axis| MsAxis::parse(&axis.to_ascii_lowercase()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(TaskFailure::validation)?;
+    if matches!(y_value, Some(ParameterValue::Array(_)))
+        && !ordinates.is_empty()
+        && (x_axis.is_pointing() || ordinates.iter().any(|axis| axis.is_pointing()))
+    {
+        return Err(TaskFailure::validation(
+            "currently not supported: multiple y-axes involving ant-ra or ant-dec",
+        )
+        .at("yaxis"));
+    }
+    if ordinates.is_empty() {
+        ordinates.push(MsAxis::Amplitude);
+    }
+    Ok(ordinates)
+}
+
 /// Translate the CASA PlotMS spellings to the existing MS exploration request.
 pub(super) fn options_from_plotms(
     task: &TaskInvocation<'_>,
@@ -623,25 +649,7 @@ pub(super) fn options_from_plotms(
             MsAxis::parse(&axis.to_ascii_lowercase())
         })
         .map_err(TaskFailure::validation)?;
-    let y_value = task.value("yaxis");
-    let mut ordinates = calibration::axis_names(y_value)
-        .map_err(TaskFailure::validation)?
-        .into_iter()
-        .map(|axis| MsAxis::parse(&axis.to_ascii_lowercase()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(TaskFailure::validation)?;
-    if matches!(y_value, Some(ParameterValue::Array(_)))
-        && !ordinates.is_empty()
-        && (x_axis.is_pointing() || ordinates.iter().any(|axis| axis.is_pointing()))
-    {
-        return Err(TaskFailure::validation(
-            "currently not supported: multiple y-axes involving ant-ra or ant-dec",
-        )
-        .at("yaxis"));
-    }
-    if ordinates.is_empty() {
-        ordinates.push(MsAxis::Amplitude);
-    }
+    let ordinates = requested_ordinates(task, x_axis)?;
     let y_axis = ordinates[0];
     let y_axis2 = ordinates.get(1).copied();
     let averaging = task.flag("averagedata")?;
