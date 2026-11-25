@@ -11226,6 +11226,19 @@ the centered CASA grid to compare the numeric text and the active
 offset CASA PNGs to check pagination and placement (#1032).
 [Pinned export action](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Actions/ActionExport.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 
+## PlotMS can ignore the requested major grid color
+
+CASA 6.7.6.14 with casaplotms 2.9.1 draws gray major grid lines for the static
+Columns MeasurementSet with `showmajorgrid=True`, `majorstyle="solid"`,
+`majorwidth=2` and `majorcolor="red"`. The same export uses gray for
+`majorcolor="aa4455"` and `majorcolor="#aa4455"`. The admitted options describe
+the color of those lines. With the major stroke disabled and the grid enabled,
+the dotted minor grid uses the requested `minorcolor="#338844"`.
+
+Casa-rs applies the requested grid colors. The paired test checks the pinned
+gray major stroke and the requested native major color. Both exports show the
+dotted minor grid with its requested color. [Paired public PlotMS oracle](../tools/casa-compat/plotms_ms_axes_presentation_oracle.py)
+
 ## PlotMS SPW averaging can repeat the first window's channel selection
 
 In CASA 6.7.6.14 with casaplotms 2.9.1, select `spw="0:0,1:2"`

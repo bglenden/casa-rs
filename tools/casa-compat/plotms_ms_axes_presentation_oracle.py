@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image
 
 from plotms_ms_columns_oracle import (
-    compare_text, opened, plotms_launcher, reference, request, rows, time_average_fixture,
+    compare_text, fixture, opened, plotms_launcher, reference, request, rows, time_average_fixture,
 )
 from plotms_ms_iterated_ordinates_oracle import compare_text_pages
 from plotms_ms_iteration_axes_oracle import data_fixture
@@ -270,12 +270,101 @@ def compare_channel_labels(root, native):
         paired_axis(root, native, name, base | settings, "x", label)
 
 
+def compare_grid_style(root, native):
+    from casars.tasks import _plotms_plot
+    from matplotlib.colors import to_hex
+
+    root.mkdir()
+    vis, _ = fixture(root)
+    base = request(vis) | dict(xaxis="channel", xdatacolumn="", yaxis="amp", ydatacolumn="data",
+                               spw="0:0~3", correlation="XX,YY", coloraxis="corr",
+                               title="Selected channels", titlefont=15,
+                               xlabel="Channel ordinal", xaxisfont=13,
+                               ylabel="Visibility amplitude", yaxisfont=12,
+                               showlegend=True, expformat="png", width=500, height=360, dpi=100)
+    configure = _plotms_plot.configure
+    recorded = []
+
+    def record(figure, axis, document, arguments):
+        configure(figure, axis, document, arguments)
+        figure.canvas.draw()
+        recorded.append((figure, axis))
+
+    for name, controls, position, grid, width, rgb in (
+        ("major-grid", dict(showmajorgrid=True, majorstyle="solid", majorwidth=2,
+                            majorcolor="red", plotrange=[-1, 4, 0, 10]),
+         "lowerLeft", "-", 2, "ff0000"),
+        ("minor-grid", dict(showmajorgrid=True, majorstyle="none", showminorgrid=True, minorstyle="dot", minorwidth=1,
+                            minorcolor="#338844", plotrange=[-1, 4, 0, 0]),
+         "exteriorRight", ":", 1, "338844"),
+    ):
+        expected, actual = (root / f"{name}-{engine}.png" for engine in ("casa", "native"))
+        options = base | controls | dict(legendposition=position)
+        assert reference(**options, plotfile=str(expected)) is None
+        with patch.object(_plotms_plot, "configure", record):
+            assert native(**options, plotfile=str(actual)) is None
+        figure, axis = recorded.pop()
+        assert axis.get_title() == ""
+        assert figure._suptitle.get_text() == base["title"]
+        assert figure._suptitle.get_fontsize() == base["titlefont"]
+        assert axis.get_xlim() == (-1, 4)
+        for coord in "xy":
+            ticks = getattr(axis, f"{coord}axis")
+            assert ticks.label.get_text() == base[f"{coord}label"]
+            assert ticks.label.get_fontsize() == base[f"{coord}axisfont"]
+            ticklist = ticks.get_major_ticks() if name == "major-grid" else ticks.get_minor_ticks()
+            active = [tick.gridline for tick in ticklist if tick.gridline.get_visible()]
+            assert active
+            assert all(line.get_linestyle() == grid and line.get_linewidth() == width
+                       and to_hex(line.get_color()) == "#" + rgb for line in active)
+        if name == "major-grid":
+            assert axis.get_ylim() == (0, 10)
+        else:
+            points = np.concatenate([line.get_ydata() for line in axis.lines])
+            lo, hi = axis.get_ylim()
+            assert 0 < lo <= float(min(points)) < float(max(points)) <= hi < 10
+        legend = axis.get_legend()
+        assert {text.get_text() for text in legend.get_texts()} == {"XX", "YY"}
+        legend_bbox = legend.get_window_extent()
+        if position == "exteriorRight":
+            assert axis.bbox.xmax <= legend_bbox.xmin < legend_bbox.xmax <= figure.bbox.xmax
+        else:
+            assert axis.bbox.contains(*legend_bbox.p0)
+            assert axis.bbox.contains(*legend_bbox.p1)
+            assert legend_bbox.x0 < axis.bbox.x0 + axis.bbox.width * 0.1
+            assert legend_bbox.y0 < axis.bbox.y0 + axis.bbox.height * 0.1
+        for path in (expected, actual):
+            with Image.open(path) as image:
+                assert image.size == (500, 360)
+                pixels = np.asarray(image.convert("RGB"), dtype=np.int16)
+            color = [int(rgb[i:i + 2], 16) for i in (0, 2, 4)]
+            count = np.count_nonzero(np.max(np.abs(pixels - color), axis=2) < 35)
+            if name == "major-grid" and path == expected:
+                # The pinned task renders its gray major pen even with an
+                # admitted named color. The native artist honors the request.
+                assert count == 0
+                grid_pixels = pixels[40:295, 70:450]
+                assert np.count_nonzero(np.all(grid_pixels == [128, 128, 128], axis=-1)) > 1000
+            else:
+                assert count > 100, path
+    for task, name in ((reference, "casa"), (native, "native")):
+        path = root / f"malformed-{name}.png"
+        try:
+            task(**base, plotrange=[1, 2, 3], plotfile=str(path))
+        except ValueError as error:
+            assert str(error) == "plotrange parameter has incorrect number of elements."
+        else:
+            raise AssertionError(f"{name} accepted an invalid plot range")
+        assert not path.exists()
+    print("grid styles: paired solid major and dotted minor grids, range, label/font and legend controls", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("ranges", "clock", "channel"))
+    parser.add_argument("--only", choices=("ranges", "clock", "channel", "style"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -290,6 +379,8 @@ def main():
             compare_clock(root / "clock", native)
         if args.only in (None, "channel"):
             compare_channel_labels(root / "channel", native)
+        if args.only in (None, "style"):
+            compare_grid_style(root / "style", native)
 
 
 if __name__ == "__main__":
