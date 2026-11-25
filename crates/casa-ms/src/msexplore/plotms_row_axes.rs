@@ -3,8 +3,10 @@
 
 use std::collections::HashMap;
 
+use casa_types::measures::position::MPosition;
+
 use super::plotms_ordinates::PointDimensions;
-use super::{MsAxis, MsPlotSpec, selected_i32_values, uses_extended_averaging};
+use super::{MsAxis, MsIterationAxis, MsPlotSpec, selected_i32_values, uses_extended_averaging};
 use crate::subtables::get_string;
 use crate::{MeasurementSet, SubtableId};
 
@@ -24,6 +26,38 @@ pub(super) fn metadata_pair(spec: &MsPlotSpec) -> Option<PointDimensions> {
     )
 }
 
+pub(super) fn uses_scan_row_iteration(spec: &MsPlotSpec) -> bool {
+    spec.iteration.iteraxis == Some(MsIterationAxis::Scan)
+        && spec.x_axis == MsAxis::Time
+        && spec.y_axes == [MsAxis::Row]
+}
+
+pub(super) fn uses_mixed_row_geometry(spec: &MsPlotSpec) -> bool {
+    spec.x_axis.is_visibility_math()
+        && matches!(
+            spec.y_axes.as_slice(),
+            [MsAxis::Row, MsAxis::Elevation] | [MsAxis::Elevation, MsAxis::Row]
+        )
+}
+
+pub(super) fn mean_antenna_position(ms: &MeasurementSet) -> Result<MPosition, String> {
+    let antenna = ms.antenna().map_err(|error| error.to_string())?;
+    let count = antenna.row_count();
+    if count == 0 {
+        return Err("PlotMS Elevation requires at least one antenna position".into());
+    }
+    // MSDerivedValues::setAntennas uses the Cartesian mean of the subtable.
+    let mut sum = [0.0; 3];
+    for row in 0..count {
+        let position = antenna.position(row).map_err(|error| error.to_string())?;
+        for (total, coordinate) in sum.iter_mut().zip(position) {
+            *total += coordinate;
+        }
+    }
+    let [x, y, z] = sum.map(|coordinate| coordinate / count as f64);
+    Ok(MPosition::new_itrf(x, y, z))
+}
+
 pub(super) fn validate(spec: &MsPlotSpec) -> Result<(), String> {
     if !requested(spec) {
         return Ok(());
@@ -32,7 +66,7 @@ pub(super) fn validate(spec: &MsPlotSpec) -> Result<(), String> {
         return Err("averaged PlotMS row identifiers are pending (#1032)".into());
     }
     if metadata_pair(spec).is_some() {
-        return if spec.iteration.iteraxis.is_some() {
+        return if spec.iteration.iteraxis.is_some() && !uses_scan_row_iteration(spec) {
             Err("iterated PlotMS metadata-only row identifier plots are pending (#1032)".into())
         } else {
             Ok(())
@@ -49,6 +83,7 @@ pub(super) fn validate(spec: &MsPlotSpec) -> Result<(), String> {
         .iter()
         .copied()
         .any(MsAxis::uses_derived_geometry)
+        && !uses_mixed_row_geometry(spec)
     {
         return Err("PlotMS row identifiers with geometry ordinates are pending (#1032)".into());
     }

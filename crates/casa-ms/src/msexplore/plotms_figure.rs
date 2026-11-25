@@ -52,6 +52,13 @@ pub(super) fn prepare(
     if let Some(columns) = columns {
         label_and_group_ordinates(task, &mut document, payload, [x, y], second, columns)?;
     }
+    if let Some(grid) = grid
+        && second.is_none()
+        && [x, y] == [MsAxis::Time, MsAxis::Row]
+        && grid.iteraxis == MsIterationAxis::Scan
+    {
+        label_iteration_panels(task, &mut document, grid)?;
+    }
     document.show_legend = task.flag("showlegend")?;
     let limits = plot_limits(task.value("plotrange"))?;
     let style = PanelStyle {
@@ -153,15 +160,10 @@ fn label_and_group_ordinates(
             group(&mut document.axes, &mut document.layers, &plot.series)
         }
         MsPlotPayload::ScatterGrid(grid) => {
-            let title = std::mem::take(&mut document.title);
-            let font = task.integer("titlefont")?;
-            let iteration = iteration_name(grid.iteraxis);
             for (panel, plot) in document.panels.iter_mut().zip(&grid.panels) {
                 group(&mut panel.axes, &mut panel.layers, &plot.series);
-                let label = iteration_value(grid.iteraxis, plot);
-                panel.title = format!("{title} {iteration}: {label}");
-                panel.title_font_size = (font > 0).then(|| font.to_string());
             }
+            label_iteration_panels(task, document, grid)?;
             if task.flag("xsharedaxis")? {
                 unite_panel_bounds(document, "x");
             }
@@ -171,6 +173,22 @@ fn label_and_group_ordinates(
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+fn label_iteration_panels(
+    task: &TaskInvocation<'_>,
+    document: &mut PlotDocument,
+    grid: &MsScatterGridPayload,
+) -> Result<(), TaskFailure> {
+    let title = std::mem::take(&mut document.title);
+    let font = task.integer("titlefont")?;
+    let iteration = iteration_name(grid.iteraxis);
+    for (panel, plot) in document.panels.iter_mut().zip(&grid.panels) {
+        let label = iteration_value(grid.iteraxis, plot);
+        panel.title = format!("{title} {iteration}: {label}");
+        panel.title_font_size = (font > 0).then(|| font.to_string());
     }
     Ok(())
 }

@@ -787,8 +787,17 @@ impl MsCalEngine {
 
     /// Compute the array-fiducial azimuth and elevation (radians) using the observatory position.
     pub fn azel_observatory(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<(f64, f64)> {
-        let frame =
-            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        self.azel_at_position(time_mjd_sec, field_id, self.observatory_position.clone())
+    }
+
+    /// Compute azimuth and elevation (radians) at the supplied array position.
+    pub(crate) fn azel_at_position(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        position: MPosition,
+    ) -> MsResult<(f64, f64)> {
+        let frame = self.make_frame_with_position(time_mjd_sec, position)?;
         let dir = self.direction_at(time_mjd_sec, field_id)?;
         let azel = dir.convert_to(DirectionRef::AZEL, &frame)?;
         Ok(azel.as_angles())

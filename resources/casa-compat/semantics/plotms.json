@@ -84,7 +84,7 @@
       ]
     },
     "xaxis": {
-      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Channel and Time can be paired with one channel-averaged derived visibility ordinate. Time can be paired with one ordinary vector-time-averaged observed or corrected model expression.",
+      "scope": "Plot x-axis (blank for default/current) Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Channel and Time can be paired with one channel-averaged derived visibility ordinate. Time can be paired with one ordinary vector-time-averaged observed or corrected model expression. Unaveraged Row abscissae can address both selected windows or pair with read-only corrected visibility.",
       "evidence": [
         "paired",
         "ms-interval-wavelength",
@@ -113,7 +113,8 @@
         "ms-vector-time-channel-antenna",
         "ms-direct-stored-vector-time-channel",
         "ms-spw-average-coordinates",
-        "ms-channel-visibility-ordinate-lists"
+        "ms-channel-visibility-ordinate-lists",
+        "ms-unaveraged-row-axes"
       ],
       "behaviors": [
         "coordinates"
@@ -193,7 +194,7 @@
       "status": "Partial"
     },
     "yaxis": {
-      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates. Two channel-axis callibrary ordinates can display stored and transient corrected visibilities. Atmospheric transmission can accompany independently selected model and corrected visibility ordinates.",
+      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates. Two channel-axis callibrary ordinates can display stored and transient corrected visibilities. Atmospheric transmission can accompany independently selected model and corrected visibility ordinates. A visibility abscissa can use independent Row and Elevation ordinates, and Time can use Row in scan pages.",
       "evidence": [
         "paired",
         "ms-multiple-visibility-ordinates",
@@ -215,7 +216,8 @@
         "ms-spw-iteration-and-ordinate-order",
         "ms-two-spw-visibility-ordinates",
         "callibrary-independent-ordinates",
-        "ms-combined-atmosphere"
+        "ms-combined-atmosphere",
+        "ms-unaveraged-row-axes"
       ],
       "behaviors": [
         "coordinates"
@@ -347,11 +349,12 @@
       "status": "Implemented"
     },
     "spw": {
-      "scope": "Spectral windows:channels (blank for all) Virtual-model spectral-window averages align selected physical channels with the prediction buffer grid.",
+      "scope": "Spectral windows:channels (blank for all) Virtual-model spectral-window averages align selected physical channels with the prediction buffer grid. Selected two-window visibility plots retain their selected Row numbering.",
       "evidence": [
         "paired",
         "ms-virtual-spw-models",
-        "ms-compound-selection"
+        "ms-compound-selection",
+        "ms-unaveraged-row-axes"
       ],
       "behaviors": [
         "selection"
@@ -854,14 +857,15 @@
       ]
     },
     "iteraxis": {
-      "scope": "The axis over which to iterate. Unaveraged MeasurementSet correlation, scan and field panels can each have multiple visibility ordinates. Static correlation, scan and field panels also accept supported channel and ordinary time-averaged visibility ordinate lists. Supported SPW averages with stored and virtual ordinates can iterate by scan, field and correlation. Scan iteration supports the channel-axis DATA and CORRECTED ordinate pair with a callibrary.",
+      "scope": "The axis over which to iterate. Unaveraged MeasurementSet correlation, scan and field panels can each have multiple visibility ordinates. Static correlation, scan and field panels also accept supported channel and ordinary time-averaged visibility ordinate lists. Supported SPW averages with stored and virtual ordinates can iterate by scan, field and correlation. Scan iteration supports the channel-axis DATA and CORRECTED ordinate pair with a callibrary. Scan iteration supports unaveraged Time and Row metadata coordinates.",
       "evidence": [
         "paired",
         "ms-iterated-grid-start",
         "ms-iterated-visibility-ordinates",
         "ms-averaged-iterated-visibility-ordinates",
         "ms-spw-iteration-and-ordinate-order",
-        "callibrary-independent-ordinates"
+        "callibrary-independent-ordinates",
+        "ms-unaveraged-row-axes"
       ],
       "behaviors": [
         "pages"
@@ -2917,6 +2921,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-compound-selection-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2285"
+      ]
+    },
+    "ms-unaveraged-row-axes": {
+      "kind": "Paired unaveraged MeasurementSet Row axes",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Static MeasurementSet Row coordinates with an independent Elevation ordinate, selected two-window visibility plots, separate scan pages for Time/Row, and the existing read-only callibrary control.",
+      "result": "Five TXT exports match 419 ordered coordinates and metadata. Both mixed cases preserve all 72 Row and 72 Elevation points each, including the separated-antenna case that distinguishes elevation at the Cartesian antenna mean from a single-antenna projection. Two-window Row coordinates retain 16 selected IDs and omit the flagged channel. Time/Row matches 12 points and two 500 by 420 scan PNGs with the requested headings and labels. The one-window callibrary control matches 72 corrected coordinates. Source visibility, flags and weights remain unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "c57a92bd86d8176b46bad050951a828caca3a96c",
+      "source_revision": "c57a92bd86d8176b46bad050951a828caca3a96c",
+      "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only raw-row-axes --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-unaveraged-row-axes-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2286"
       ]
     }
   }
