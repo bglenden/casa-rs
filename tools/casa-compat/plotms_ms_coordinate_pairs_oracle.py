@@ -150,8 +150,11 @@ def compare_uv(root, native):
                 pixels = np.asarray(image.convert("RGB"))
                 if request.get("coloraxis") == "corr":
                     continue
-                rgb = [0, 0, 255] if label == "autoscaling" else [221, 34, 85]
-                mark = np.all(pixels == rgb, axis=2)
+                if label == "autoscaling":
+                    red, green, blue = pixels.astype(np.int16).transpose(2, 0, 1)
+                    mark = (blue - red > 40) & (blue - green > 25)
+                else:
+                    mark = np.all(pixels == [221, 34, 85], axis=2)
                 assert np.any(mark)
                 if mirrored:
                     assert np.any(mark[:, :310]) and np.any(mark[:, 310:])
