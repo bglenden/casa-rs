@@ -11482,6 +11482,17 @@ second antenna from `ANTENNA2`. On an open MS before initialization,
 the requested column is absent. Casa-rs raises a Python `RuntimeError`
 in these cases and keeps the attachment available (#1030).
 
+## VI1 can reuse a cached row outside a selected reference
+
+On CASA 6.7.6.14, publish a TIME sort cache, then save a reference with
+the same row count as its root by repeating row 1 and omitting row 0.
+`ms.niterinit(maxrows=1, adddefaultsortcolumns=False)` can reuse the
+full cache for that reference. Its first buffer includes the omitted
+row 0 when requesting DATA, and requesting ROWS then fails to convert
+the unmapped row number. Casa-rs uses the cache order only when its rows
+belong to the captured view, so both records reflect the actual
+selection (#1030).
+
 ## MS writes can reorder values read from saved views
 
 Read `getdata('data')` from a saved reference whose rows are out of order,

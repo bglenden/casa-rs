@@ -154,6 +154,29 @@ def test_vi1_first_buffer_uses_a_matching_full_table_sort_cache(
     assert reader.done()
 
 
+def test_vi1_full_length_reference_never_reads_a_row_outside_its_projection(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, view, original = baseline_fixture
+    reader = writer_api.ms()
+    assert reader.open(str(native_dataset), nomodify=False)
+    assert reader.iterinitold(["TIME"], adddefaultsortcolumns=False)
+    assert reader.done()
+    physical = [1, 1, *range(2, len(original["time"]))]
+    assert reader.open(view("vi1-full-length-subset.ms", physical))
+    assert reader.niterinit(maxrows=1, adddefaultsortcolumns=False)
+    data = reader.ngetdata("data")["data"]
+    if writer_api is casa:
+        rows = [0, 1]
+        with pytest.raises(RuntimeError, match="RowNumbers"):
+            reader.ngetdata("rows")
+    else:
+        rows = [1, 1]
+        np.testing.assert_array_equal(reader.ngetdata("rows")["rows"], np.array([1, 1]), strict=True)
+    np.testing.assert_array_equal(data, original["data"][..., rows], strict=True)
+    assert reader.done()
+
+
 def test_vi1_uninitialized_and_missing_column_are_python_errors(baseline_fixture, native_dataset):
     reader = tools.ms()
     assert not reader.niterend()
