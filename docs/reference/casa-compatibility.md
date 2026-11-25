@@ -3081,10 +3081,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-callibrary-independent-ordinates"></a>
 ##### callibrary-independent-ordinates
 
-**Paired independent callibrary ordinates — passed.** Six TXT exports match 332 ordered coordinates and metadata. The flagged bandpass changes 12 CORRECTED values and preserves DATA. With unequal sigma and calibrated spectra, calwt changes the first corrected bin from 13.0989 to 10.8068 while DATA stays 1.06802. A fully flagged source bin is omitted. Both 500 by 420 PNG pages and all 48 plotted coordinates match the pinned scan exports. The source visibility, flag and weight arrays are unchanged. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Two independent stored DATA and transient CORRECTED ordinates with a MeasurementSet callibrary, raw and channel-averaged, including separate scan pages.
+**Paired independent callibrary ordinates — passed.** Eleven TXT exports match 808 ordered coordinates and metadata. The two-correlation controls preserve channel-major ordering and a clear channel cube despite FLAG_ROW. The flagged bandpass changes 12 CORRECTED values and preserves DATA. With unequal sigma and calibrated spectra, calwt changes the first corrected bin from 13.0989 to 10.8068 while DATA stays 1.06802. With WEIGHT_SPECTRUM absent, both bins are unweighted. With SIGMA_SPECTRUM absent, the calibrated grid starts from scalar SIGMA. A fully flagged source bin is omitted. Both 500 by 420 PNG pages and all 48 plotted coordinates match. Source visibility, flag and weight arrays remain unchanged. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Two independent stored DATA and transient CORRECTED ordinates with a MeasurementSet callibrary, raw and channel-averaged, including separate scan pages.
 
 - [https://github.com/bglenden/casa-rs/pull/2282](https://github.com/bglenden/casa-rs/pull/2282)
-- Revision: `10ac201a7a200c1408d784678fe0591304228197`; CASA: `6.7.6.14`.
+- Revision: `7fda38a53763b50b15c2bac90ebc084e3abd085d`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_callibrary_oracle.py --only ordinates --work <new-dir> --native-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-callibrary-independent-ordinates-20261124.json`.
 
