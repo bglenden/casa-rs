@@ -587,5 +587,16 @@ pub(super) fn options_from_plotms(
         plot_output,
         plot_format,
     };
+    if (options.avgbaseline || options.avgantenna || options.avgspw || options.scalar)
+        && [Some(x_axis), Some(y_axis), y_axis2]
+            .into_iter()
+            .flatten()
+            .chain(options.additional_ordinates.iter().map(|&(axis, _)| axis))
+            .any(MsAxis::is_weight_axis)
+    {
+        return Err(TaskFailure::validation(
+            "Selected averaging does not yet support Weight and Sigma axes.",
+        ));
+    }
     Ok((options, visibility_document))
 }

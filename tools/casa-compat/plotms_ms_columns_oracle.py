@@ -956,6 +956,9 @@ def compare_time_averaged_statistics(root, native):
         assert compare_text(actual, expected) == len(selected)
         print(f"{name}: {len(selected)} matching weighted visibility/statistic coordinates", flush=True)
 
+    title = "Time and channel weighted amplitude"
+    compare_figure(work, native, base | dict(yaxis="wt*amp", title=title),
+                   work / "time-channel-weighted-amplitude.casa.txt", (title, "Real", "Wt*Amp"))
     for mode, axis, options in (
         ("antenna", "wtsp", dict(avgantenna=True, avgchannel="", antenna="A0&A1;A0&A2")),
         ("baseline", "wtsp", dict(avgbaseline=True)),

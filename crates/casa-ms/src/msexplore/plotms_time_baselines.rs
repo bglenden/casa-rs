@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use casa_types::Complex64;
 use ndarray::ArrayView2;
 
+use super::plotms_columns::ChannelWeightSum;
 use super::plotms_ordinates::{
     AveragedVisibility, TransformedVectorSample, VisibilityAverageShapes,
 };
@@ -48,35 +49,6 @@ struct TimeAverageStatistics {
     weights: Vec<ChannelWeightSum>,
     channel_bin_widths: Vec<usize>,
     visibility_shape: Option<(usize, usize)>,
-}
-
-struct ChannelWeightSum {
-    flagged: bool,
-    sum: f32,
-}
-
-impl Default for ChannelWeightSum {
-    fn default() -> Self {
-        Self {
-            flagged: true,
-            sum: 0.0,
-        }
-    }
-}
-
-impl ChannelWeightSum {
-    fn sample(&self) -> (bool, f32) {
-        (self.flagged, self.sum)
-    }
-
-    fn observe(&mut self, flagged: bool, weight: f32) {
-        if flagged == self.flagged {
-            self.sum += weight;
-        } else if self.flagged {
-            self.flagged = false;
-            self.sum = weight;
-        }
-    }
 }
 
 impl TimeAverageStatistics {

@@ -436,6 +436,8 @@ pub enum MsAxis {
     ParallacticAngle,
     /// Per-sample weight axis.
     Weight,
+    /// Visibility amplitude multiplied by the buffer's correlation weight.
+    WeightedAmplitude,
     /// Per-sample sigma axis.
     Sigma,
     /// Per-channel WEIGHT_SPECTRUM values, with WEIGHT fallback.
@@ -493,6 +495,7 @@ impl MsAxis {
             Self::HourAngle => "hour_angle",
             Self::ParallacticAngle => "parallactic_angle",
             Self::Weight => "weight",
+            Self::WeightedAmplitude => "weighted_amplitude",
             Self::Sigma => "sigma",
             Self::WeightSpectrum => "weight_spectrum",
             Self::SigmaSpectrum => "sigma_spectrum",
@@ -541,6 +544,7 @@ impl MsAxis {
             Self::HourAngle => "Hour Angle",
             Self::ParallacticAngle => "Parallactic Angle",
             Self::Weight => "Weight",
+            Self::WeightedAmplitude => "Wt*Amp",
             Self::Sigma => "Sigma",
             Self::WeightSpectrum => "Weight Spectrum",
             Self::SigmaSpectrum => "Sigma Spectrum",
@@ -588,7 +592,8 @@ impl MsAxis {
             "elevation" => Ok(Self::Elevation),
             "hourang" | "hourangle" | "hour_angle" | "hour-angle" => Ok(Self::HourAngle),
             "parang" | "parallactic_angle" | "parallactic-angle" => Ok(Self::ParallacticAngle),
-            "weight" => Ok(Self::Weight),
+            "wt" | "weight" => Ok(Self::Weight),
+            "wt*amp" | "weighted_amplitude" => Ok(Self::WeightedAmplitude),
             "sigma" => Ok(Self::Sigma),
             "wtsp" | "weightspectrum" | "weight_spectrum" | "weight-spectrum" => {
                 Ok(Self::WeightSpectrum)
@@ -607,7 +612,18 @@ impl MsAxis {
     fn is_visibility_math(self) -> bool {
         matches!(
             self,
-            Self::Amplitude | Self::Phase | Self::Real | Self::Imaginary
+            Self::Amplitude | Self::WeightedAmplitude | Self::Phase | Self::Real | Self::Imaginary
+        )
+    }
+
+    fn is_weight_axis(self) -> bool {
+        matches!(
+            self,
+            Self::Weight
+                | Self::WeightedAmplitude
+                | Self::WeightSpectrum
+                | Self::Sigma
+                | Self::SigmaSpectrum
         )
     }
 
@@ -1876,6 +1892,13 @@ impl MsPlotSpec {
             );
         }
         self.validate_interval_and_wavelength_axes()?;
+        if uses_extended_averaging(self)
+            && !plotms_columns::uses_time_statistics(self)
+            && (self.x_axis == MsAxis::WeightedAmplitude
+                || self.y_axes.contains(&MsAxis::WeightedAmplitude))
+        {
+            return Err("This PlotMS weighted amplitude averaging is pending (#1032)".into());
+        }
         plotms_row_axes::validate(self)?;
         let supported_x = matches!(
             self.x_axis,
@@ -1888,6 +1911,7 @@ impl MsPlotSpec {
                 | MsAxis::Frequency
                 | MsAxis::Velocity
                 | MsAxis::Amplitude
+                | MsAxis::WeightedAmplitude
                 | MsAxis::Phase
                 | MsAxis::Real
                 | MsAxis::Imaginary
@@ -1921,6 +1945,7 @@ impl MsPlotSpec {
             let supported_y = matches!(
                 y_axis,
                 MsAxis::Amplitude
+                    | MsAxis::WeightedAmplitude
                     | MsAxis::Phase
                     | MsAxis::Real
                     | MsAxis::Imaginary
@@ -2770,6 +2795,13 @@ fn build_msexplore_plot_payload_validated(
     {
         return Err("Time-averaged PlotMS interval and wavelength axes with a callibrary or direct msexplore are pending (#1032)".into());
     }
+    if calibration.and_then(|input| input.time_bins).is_none()
+        && spec.averaging.avgtime.is_some()
+        && (spec.x_axis == MsAxis::WeightedAmplitude
+            || spec.y_axes.contains(&MsAxis::WeightedAmplitude))
+    {
+        return Err("Time-averaged PlotMS weighted amplitude with a callibrary or direct msexplore is pending (#1032)".into());
+    }
     if spec.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
         return build_stacked_amplitude_phase_time_page(ms, selection, spec, point_budget);
     }
@@ -3038,6 +3070,7 @@ fn build_uncalibrated_plotms_payload(
         && (vector_span_models
             || averaged_row_numbers
             || plot.is_some_and(plotms_columns::uses_averaged_geometry_coordinates)
+            || plot.is_some_and(plotms_columns::uses_time_statistics)
             || plot.is_some_and(|plot| {
                 plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
             }));
@@ -4334,12 +4367,14 @@ fn build_generic_visibility_scatter(
                 MsAxis::Flag | MsAxis::WeightSpectrum | MsAxis::SigmaSpectrum
             )
         });
-    let needs_weight_values = matches!(spec.x_axis, MsAxis::Weight | MsAxis::WeightSpectrum)
-        || spec
-            .y_axes
-            .iter()
-            .copied()
-            .any(|axis| matches!(axis, MsAxis::Weight | MsAxis::WeightSpectrum));
+    let uses_weight = |axis| {
+        matches!(
+            axis,
+            MsAxis::Weight | MsAxis::WeightSpectrum | MsAxis::WeightedAmplitude
+        )
+    };
+    let needs_weight_values =
+        uses_weight(spec.x_axis) || spec.y_axes.iter().copied().any(uses_weight);
     let needs_sigma_values = matches!(spec.x_axis, MsAxis::Sigma | MsAxis::SigmaSpectrum)
         || spec
             .y_axes
@@ -5564,6 +5599,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_geometry =
         time_bins.is_some() && plotms_columns::uses_averaged_geometry_coordinates(spec);
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
+    let average_statistics =
+        uncalibrated && time_bins.is_some() && plotms_columns::uses_time_statistics(spec);
     let spw_average = uncalibrated && plotms_columns::uses_spectral_window_average(spec);
     let time_spw = spw_average && time_bins.is_some();
     let scalar_average = uncalibrated && plotms_columns::uses_scalar_visibility_average(spec);
@@ -5609,6 +5646,7 @@ fn build_generic_visibility_scatter_with_averaging(
         && (vector_span_models
             || averaged_row_numbers.is_some()
             || time_geometry
+            || average_statistics
             || plotms_columns::uses_direct_vector_time_projection(
                 spec,
                 calibration.and_then(|input| input.x_data_column),
@@ -5736,7 +5774,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
     let use_spectral_weights = calibration.is_some()
-        && needs_visibility_grid
+        && (needs_visibility_grid || average_statistics)
         && (!scalar_average || scalar_channels)
         && (!spw_average || spw_channels || time_spw)
         && (!time_spw || needs_calibrated_weights)
@@ -5853,6 +5891,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut bin_buffers = visibility_columns.buffers();
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
     let mut time_uvws = weighted_time_uvw.then(HashMap::<(usize, i32, i32), TimeUvwAverage>::new);
+    let mut time_statistics = average_statistics.then(plotms_columns::TimeStatistics::default);
     let time_wavelengths = time_geometry
         && std::iter::once(spec.x_axis)
             .chain(spec.y_axes.iter().copied())
@@ -6171,6 +6210,12 @@ fn build_generic_visibility_scatter_with_averaging(
                 &selected_correlations,
                 ranges.map(Vec::as_slice),
             );
+            if let (Some(statistics), Some(kinds)) = (&mut time_statistics, time_weight_kinds) {
+                let spectra = [weight_grid(kinds.row_weight), weight_grid(kinds.row_sigma)];
+                for &(corr, _) in &selected_correlations {
+                    statistics.observe(group, corr, &channel_bins, &flags, spectra);
+                }
+            }
             if let (Some(time_uvws), Some(kinds)) = (&mut time_uvws, time_weight_kinds) {
                 let weight = selected_correlations
                     .iter()
@@ -6669,7 +6714,8 @@ fn build_generic_visibility_scatter_with_averaging(
                                 series_used = true;
                             }
                             axis if (weighted_time_uvw && axis.uses_uvw())
-                                || axis == MsAxis::Interval =>
+                                || axis == MsAxis::Interval
+                                || (average_statistics && axis.is_weight_axis()) =>
                             {
                                 series_used = true;
                             }
@@ -6731,7 +6777,8 @@ fn build_generic_visibility_scatter_with_averaging(
                                 series_used = true;
                             }
                             axis if (weighted_time_uvw && axis.uses_uvw())
-                                || axis == MsAxis::Interval =>
+                                || axis == MsAxis::Interval
+                                || (average_statistics && axis.is_weight_axis()) =>
                             {
                                 series_used = true;
                             }
@@ -6930,6 +6977,7 @@ fn build_generic_visibility_scatter_with_averaging(
             })
             .collect::<HashMap<_, _>>()
     });
+    let time_statistics = time_statistics.map(plotms_columns::TimeStatistics::finish);
     let retain_empty_panel = average_operands
         || spw_average
         || antenna_channels
@@ -7015,6 +7063,9 @@ fn build_generic_visibility_scatter_with_averaging(
                     continue;
                 };
                 let channel_start = representative.chan_start;
+                let statistics = time_statistics
+                    .as_ref()
+                    .and_then(|statistics| statistics.get(&(group?, representative.corr)));
                 let planned_time = group.and_then(|group| {
                     if scalar_intervals {
                         scalar_time_bounds
@@ -7045,6 +7096,18 @@ fn build_generic_visibility_scatter_with_averaging(
                         Some(*averaged_row_numbers?.get(group?)? as f64)
                     } else if axis == MsAxis::Interval {
                         Some(buffer_integrations.as_ref()?[group?]?.interval)
+                    } else if axis == MsAxis::WeightedAmplitude {
+                        let value = finalize_averaged_axis_value(
+                            MsAxis::Amplitude,
+                            &accumulator,
+                            spec.averaging.scalar,
+                            spec.averaging.avgtime.is_some(),
+                            x_axis,
+                            time_bins.is_some(),
+                        )?;
+                        Some(weight_amplitude(value, statistics?.weight))
+                    } else if average_statistics && axis.is_weight_axis() {
+                        statistics?.value(axis, channel_start)
                     } else if weighted_time_uvw && axis.uses_uvw() {
                         let uvw = *time_uvws.as_ref()?.get(&order?)?;
                         let metres = uvw_metres_coordinate(axis, uvw);
@@ -7889,8 +7952,19 @@ fn compute_axis_value(
     geometry_engine: Option<&MsCalEngine>,
 ) -> Result<Option<f64>, String> {
     if axis.is_visibility_math() {
+        let weighted = axis == MsAxis::WeightedAmplitude;
+        let axis = if weighted { MsAxis::Amplitude } else { axis };
+        let apply_weight = |value: f64| {
+            if weighted {
+                weight_amplitude(value, row_weight)
+            } else {
+                value
+            }
+        };
         if let Some((projection, operands)) = visibility.projection {
-            return Ok(projection.axis_value(axis, operands, channel_bin.averaged));
+            return Ok(projection
+                .axis_value(axis, operands, channel_bin.averaged)
+                .map(apply_weight));
         }
         let axis = if visibility.signed_amplitude && axis == MsAxis::Amplitude {
             MsAxis::Real
@@ -7903,7 +7977,8 @@ fn compute_axis_value(
             visibility.weights,
             scalar_average,
             visibility.zero_invalid_weight,
-        ));
+        )
+        .map(apply_weight));
     }
     match axis {
         MsAxis::Time => Ok(Some(row.time)),
@@ -8008,6 +8083,10 @@ fn compute_axis_value(
         }
         _ => Ok(None),
     }
+}
+
+fn weight_amplitude(amplitude: f64, weight: f64) -> f64 {
+    f64::from(amplitude as f32 * weight as f32)
 }
 
 fn average_float_samples(samples: &[f64]) -> Option<f64> {
