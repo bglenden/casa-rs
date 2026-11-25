@@ -175,9 +175,7 @@ def check_frame_refusal(root, native, vis):
         assert not output.exists()
 
 
-def compare_feed_selection(root, native):
-    work = root / "feed-selection"
-    work.mkdir()
+def make_feed_selection_fixture(work):
     vis, _ = fixture(work)
     feed_table = vis / "FEED"
     with opened(feed_table, True) as table:
@@ -197,6 +195,20 @@ def compare_feed_selection(root, native):
         selected = (table.getcol("FIELD_ID") == 0) & (antenna1 == 0) & np.isin(antenna2, [1, 2])
         flagged = np.flatnonzero(selected & (feed1 == 1) & (feed2 == 0))[0]
         table.putcell("FLAG_ROW", int(flagged), True)
+
+    return vis
+
+
+def compare_feed_selection(root, native):
+    work = root / "feed-selection"
+    work.mkdir()
+    vis = make_feed_selection_fixture(work)
+    with opened(vis) as table:
+        times = table.getcol("TIME")
+        antenna2 = table.getcol("ANTENNA2")
+        feed1, feed2 = (table.getcol(column) for column in ("FEED1", "FEED2"))
+        selected = (table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+        selected &= np.isin(antenna2, [1, 2])
 
     base = request(vis) | dict(xaxis="channel", yaxis="real", xdatacolumn="", ydatacolumn="data",
                                antenna="A0&A1;A0&A2", spw="0:0~4^2", correlation="XX,YY",
@@ -256,11 +268,7 @@ def compare_feed_atmosphere(work, native, source):
     assert count == 14
 
 
-def compare_row_axes(root, native, source):
-    from casatools import quanta
-
-    work = root / "row-axes"
-    work.mkdir()
+def make_row_axes_fixture(work, source):
     vis = work / "rows.ms"
     copy_ms(source, vis)
     with opened(vis / "STATE", True) as table:
@@ -280,9 +288,22 @@ def compare_row_axes(root, native, source):
         table.putcol("STATE_ID", states.astype(np.int32))
         table.putcol("OBSERVATION_ID", np.where(integrations % 6 < 3, 0, next_observation).astype(np.int32))
 
-    base = request(vis) | dict(xaxis="row", yaxis="real", xdatacolumn="", ydatacolumn="data",
+    return vis, times, next_observation
+
+
+def row_axis_request(vis):
+    return request(vis) | dict(xaxis="row", yaxis="real", xdatacolumn="", ydatacolumn="data",
                                antenna="A0&A1;A0&A2", spw="0:1~5^2", correlation="XX,YY",
                                title="Selected visibility rows")
+
+
+def compare_row_axes(root, native, source):
+    from casatools import quanta
+
+    work = root / "row-axes"
+    work.mkdir()
+    vis, times, next_observation = make_row_axes_fixture(work, source)
+    base = row_axis_request(vis)
     units = quanta()
     bounds = times[[1, 3]] + [-1.0, 1.0]
     timerange = "~".join(units.time(units.quantity(value, "s"), form="ymd", prec=10)[0]
@@ -326,26 +347,71 @@ def compare_row_axes(root, native, source):
         assert compare_text(actual, expected) == count
         print(f"{name}: {count} matching row axis coordinates", flush=True)
     compare_figure(work, native, base, work / "row.casa.txt", ("Selected visibility rows", "Row", "Real"))
-    check_mixed_row_geometry(work, native, base)
+    compare_unaveraged_row_axes(work, native, base)
     return vis
 
 
-def check_mixed_row_geometry(work, native, base):
-    from casars.tasks import TaskParameterError
+def compare_unaveraged_row_axes(root, native, base):
+    from plotms_ms_iterated_ordinates_oracle import compare_figures
 
-    controls = base | dict(xaxis="real", yaxis=["row", "elevation"], xdatacolumn="data", ydatacolumn="")
-    expected = work / "row-and-elevation.casa.txt"
-    actual = work / "row-and-elevation.native.txt"
-    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
-    row_points = rows(work / "row-ordinate.casa.txt")
-    assert rows(expected)[:len(row_points)] == row_points
-    try:
-        native(**controls, plotfile=str(actual), expformat="txt")
-    except TaskParameterError as error:
-        assert "PlotMS row identifiers with geometry ordinates are pending (#1032)" in str(error)
-    else:
-        raise AssertionError("Row and Elevation were exported with a shared geometry mask")
-    assert not actual.exists()
+    source = Path(base["vis"])
+    before = snapshot(source)
+    mixed = base | dict(xaxis="real", yaxis=["row", "elevation"], xdatacolumn="data", ydatacolumn="")
+    row_only = root / "row-ordinate.casa.txt"
+    if not row_only.exists():
+        assert reference(**(mixed | dict(yaxis="row")), plotfile=str(row_only), expformat="txt") is None
+    expected = root / "row-and-elevation.casa.txt"
+    actual = root / "row-and-elevation.native.txt"
+    assert reference(**mixed, plotfile=str(expected), expformat="txt") is None
+    assert native(**mixed, plotfile=str(actual), expformat="txt") is None
+    row_points = rows(row_only)
+    assert len(row_points) == 72 and rows(expected)[:72] == row_points
+    assert compare_text(actual, expected) == 144
+    assert "# Real Elevation " in actual.read_text()
+    print("row-and-elevation: 144 matching points with independent ordinate masks", flush=True)
+
+    two, _, _ = make_compound_selection_fixture(root)
+    before_two = snapshot(two)
+    scans = root / "two-scan-rows.ms"
+    copy_ms(source, scans)
+    with opened(scans, True) as table:
+        times = table.getcol("TIME")
+        first_field = table.getcol("FIELD_ID") == 0
+        boundary = np.unique(times[first_field])[3]
+        scan_numbers = table.getcol("SCAN_NUMBER")
+        scan_numbers[first_field & (times >= boundary)] = 2
+        table.putcol("SCAN_NUMBER", scan_numbers)
+    before_scans = snapshot(scans)
+    amplitude = root / "row-amplitude.cal"
+    casa.gencal(str(source), str(amplitude), "amp", parameter=[2.0])
+    cases = (
+        ("row-two-windows", dict(vis=str(two), spw="0:1~5^2,1:1~5^2", correlation="XX"), 47),
+        ("time-row-scan", dict(vis=str(scans), xaxis="time", yaxis=["row"], ydatacolumn="",
+                              iteraxis="scan", gridrows=2, exprange="all", xlabel="Time (MJD seconds)"), 12),
+        ("row-callibrary", dict(ydatacolumn="corrected", callib=library_entry(amplitude)), 72),
+    )
+    for name, overrides, count in cases:
+        controls = base | overrides
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        if name == "row-two-windows":
+            assert {point[11] for point in rows(actual)} == {"0", "1"}
+            assert {int(point[0]) for point in rows(actual)} == set(range(16))
+        if name == "time-row-scan":
+            points = rows(expected)
+            assert [point[3] for point in points] == ["1"] * 6 + ["2"] * 6
+            values = np.array([point[:2] for point in points], dtype=float)
+            np.testing.assert_allclose(np.array([point[0] for point in rows(actual)], dtype=float),
+                                       values[:, 0], rtol=0, atol=0.00051)
+            pages = [[(scan, coords)] for scan, coords in zip(("1", "2"), np.split(values, 2), strict=True)]
+            compare_figures(root, native, "time-row-scan-pages", controls | dict(gridrows=1), pages,
+                            ["Scan1", "Scan2_2"], [("left", "Row", [0])])
+        print(f"{name}: {count} matching selected Row coordinates", flush=True)
+    verify_source(source, before)
+    verify_source(two, before_two)
+    verify_source(scans, before_scans)
 
 
 def compare_metadata_pairs(root, native, source):
@@ -549,14 +615,9 @@ def check_pointing_observatory(work, native, controls, vis):
     assert not actual.exists()
 
 
-def compare_compound_selection(root, native):
-    from casars.tasks import TaskExecutionError
-    from casatools import quanta
-    from grpc import RpcError, StatusCode
+def make_compound_selection_fixture(work):
     from plotms_ms_spw_average_oracle import make_fixture as make_spw_fixture
 
-    work = root / "compound-selection"
-    work.mkdir()
     vis = make_spw_fixture(work, antenna_count=3, channel_count=8, integrations=5)
     feed = vis / 'FEED'
     with opened(feed, True) as table:
@@ -598,6 +659,17 @@ def compare_compound_selection(root, native):
         table.putcol('FLAG', flags)
         flag_rows = clear & (window == 0) & (slot == 1)
         table.putcol('FLAG_ROW', flag_rows)
+    return vis, integrations, obs
+
+
+def compare_compound_selection(root, native):
+    from casars.tasks import TaskExecutionError
+    from casatools import quanta
+    from grpc import RpcError, StatusCode
+
+    work = root / "compound-selection"
+    work.mkdir()
+    vis, integrations, obs = make_compound_selection_fixture(work)
     units = quanta()
     bounds = integrations[[1, 3]] + [-1.0, 1.0]
     timerange = '~'.join(units.time(units.quantity(value, 's'), form='ymd', prec=10)[0] for value in bounds)
@@ -661,7 +733,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("compound-selection",))
+    parser.add_argument("--only", choices=("compound-selection", "raw-row-axes"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -676,7 +748,12 @@ def main():
         if args.only is None:
             compare(root, native)
             compare_pointing_axes(root, native)
-        compare_compound_selection(root, native)
+        if args.only == "raw-row-axes":
+            feed = make_feed_selection_fixture(root)
+            vis, _, _ = make_row_axes_fixture(root, feed)
+            compare_unaveraged_row_axes(root, native, row_axis_request(vis))
+        else:
+            compare_compound_selection(root, native)
 
 
 if __name__ == "__main__":

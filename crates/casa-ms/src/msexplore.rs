@@ -4262,6 +4262,7 @@ fn build_generic_visibility_scatter(
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
     let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
+    let paged_iteration = iterated_ordinate_list || plotms_row_axes::uses_scan_row_iteration(spec);
     let calibrated_ordinate_list = calibration
         .is_some_and(|input| input.rows.is_some() && input.secondary_y_data_column.is_some());
     let order_ordinate_list = iterated_ordinate_list || calibrated_ordinate_list;
@@ -4332,8 +4333,8 @@ fn build_generic_visibility_scatter(
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let field = ms.field().map_err(|error| error.to_string())?;
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
-    if uses_row_numbers && (spectral_window.row_count() > 1 || requested_freqframe.is_some()) {
-        return Err("PlotMS Row coordinates for multiple spectral windows or a reporting frame are pending (#1032)".into());
+    if uses_row_numbers && requested_freqframe.is_some() {
+        return Err("PlotMS Row coordinates with a reporting frame are pending (#1032)".into());
     }
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
@@ -4448,6 +4449,7 @@ fn build_generic_visibility_scatter(
         None
     };
     let geometry_dedup_required = !use_ordinate_masks
+        && !plotms_row_axes::uses_mixed_row_geometry(spec)
         && (spec.x_axis.uses_derived_geometry()
             || spec
                 .y_axes
@@ -5167,7 +5169,7 @@ fn build_generic_visibility_scatter(
             visibility_columns.column(1).unwrap_or(spec.data_column),
         )
     });
-    if iterated_ordinate_list {
+    if paged_iteration {
         panel_order.sort_by_key(|key| panels[key].iteration_rank);
     }
     let mut panels = panel_order
@@ -5222,7 +5224,7 @@ fn build_generic_visibility_scatter(
         );
     }
     if let Some(iteraxis) = iteraxis {
-        let (gridrows, gridcols) = if iterated_ordinate_list {
+        let (gridrows, gridcols) = if paged_iteration {
             (spec.layout.gridrows, spec.layout.gridcols)
         } else {
             resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?
