@@ -212,14 +212,26 @@ pub(super) fn common_id(ids: &mut Vec<i32>) {
 }
 
 pub(super) fn sigma(values: ArrayValue, grid: Option<&BaselineGrid>) -> MsResult<ArrayValue> {
+    sum_row_values(values, grid, true)
+}
+
+pub(super) fn sum_weights(values: ArrayValue, grid: Option<&BaselineGrid>) -> MsResult<ArrayValue> {
+    sum_row_values(values, grid, false)
+}
+
+fn sum_row_values(
+    values: ArrayValue,
+    grid: Option<&BaselineGrid>,
+    sigma: bool,
+) -> MsResult<ArrayValue> {
     let ArrayValue::Float32(values) = values else {
-        return Err(input("SIGMA must contain Float cells"));
+        return Err(input("WEIGHT and SIGMA must contain Float cells"));
     };
     if values.is_empty() {
         return Ok(ArrayValue::Float32(values));
     }
     let &[correlations, _] = values.shape() else {
-        return Err(input("SIGMA requires a correlation and row axis"));
+        return Err(input("WEIGHT and SIGMA require correlation and row axes"));
     };
     let mut shape = vec![correlations];
     if let Some(grid) = grid {
@@ -229,7 +241,7 @@ pub(super) fn sigma(values: ArrayValue, grid: Option<&BaselineGrid>) -> MsResult
     let samples = memory_order(&values)?;
     let mut add_row = |dest: usize, row: &[f32]| {
         for (sum, &value) in squares[dest..dest + correlations].iter_mut().zip(row) {
-            *sum += value * value;
+            *sum += if sigma { value * value } else { value };
         }
     };
     if let Some(grid) = grid {
@@ -245,10 +257,12 @@ pub(super) fn sigma(values: ArrayValue, grid: Option<&BaselineGrid>) -> MsResult
             add_row(0, row);
         }
     }
-    Ok(ArrayValue::Float32(shaped(
-        &shape,
-        squares.into_iter().map(f32::sqrt).collect(),
-    )?))
+    if sigma {
+        for value in &mut squares {
+            *value = value.sqrt();
+        }
+    }
+    Ok(ArrayValue::Float32(shaped(&shape, squares)?))
 }
 
 fn memory_order<Value>(array: &ArrayD<Value>) -> MsResult<&[Value]> {

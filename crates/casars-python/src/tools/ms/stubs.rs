@@ -178,19 +178,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (items = None, ifraxis = None, ifraxisgap = None, increment = None, average = None), text_signature = "($self, items=[], ifraxis=False, ifraxisgap=0, increment=1, average=False)")]
-    fn getdataold(
-        &self,
-        items: Option<&Bound<'_, PyAny>>,
-        ifraxis: Option<&Bound<'_, PyAny>>,
-        ifraxisgap: Option<&Bound<'_, PyAny>>,
-        increment: Option<&Bound<'_, PyAny>>,
-        average: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("getdataold")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (datacolumn = None), text_signature = "($self, datacolumn='corrected')")]
     fn hanningsmooth(&self, datacolumn: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("hanningsmooth")
@@ -345,24 +332,6 @@ impl PyMsTool {
         hanning: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
         stub("regridspw")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (nchan = None, start = None, width = None, inc = None), text_signature = "($self, nchan=1, start=0, width=1, inc=1)")]
-    fn selectchannelold(
-        &self,
-        nchan: Option<&Bound<'_, PyAny>>,
-        start: Option<&Bound<'_, PyAny>>,
-        width: Option<&Bound<'_, PyAny>>,
-        inc: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("selectchannelold")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (wantedpol = None), text_signature = "($self, wantedpol=[])")]
-    fn selectpolarizationold(&self, wantedpol: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("selectpolarizationold")
     }
 
     /// Not yet implemented in casa-rs.

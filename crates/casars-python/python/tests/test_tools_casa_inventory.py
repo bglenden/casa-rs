@@ -75,7 +75,7 @@ IMPLEMENTED["ms"] = {
     "iterend", "iterinit", "iternext", "iterorigin", "listhistory", "lister",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow", "nrowold",
     "open", "range", "reset", "select", "selectinit", "selectinitold", "selectold",
-    "selecttaql", "sort",
+    "selectchannelold", "selectpolarizationold", "selecttaql", "sort",
     "statistics", "statisticsold", "statwt", "summary", "timesort", "uvsub",
     "writehistory", "writehistory_batch",
 }
@@ -93,7 +93,8 @@ IMPLEMENTED["calibrater"] = {
     "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags", "fluxscale", "specifycal", "state",
 }
 PARTIAL = {
-    "ms": {"getdata", "putdata", "rangeold", "selectchannel", "selectpolarization", "selecttaqlold"},
+    "ms": {"getdata", "getdataold", "putdata", "rangeold", "selectchannel",
+           "selectpolarization", "selecttaqlold"},
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
 }

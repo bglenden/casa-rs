@@ -200,7 +200,7 @@ const METHODS: &[Method] = &[
             param("average", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Status::Partial,
     ),
     method(
         "getfielddirmeas",
@@ -487,8 +487,8 @@ const METHODS: &[Method] = &[
             param("width", K::Int, Int(1)),
             param("inc", K::Int, Int(1)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "selectinit",
@@ -523,8 +523,8 @@ const METHODS: &[Method] = &[
     method(
         "selectpolarizationold",
         &[param("wantedpol", K::Any, Empty)],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "selecttaql",

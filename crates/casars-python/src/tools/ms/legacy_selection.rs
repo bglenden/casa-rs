@@ -15,6 +15,7 @@ use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use super::legacy_visibility::LegacyAxes;
 use super::metadata_link::compose_rows;
 use super::selection_indices::{selectinit_id, selection_dictionary, selection_text};
 use super::selection_record::{
@@ -29,16 +30,29 @@ pub(super) struct LegacySelection {
     // currently selected view after an exact-time record selection.
     rows: Option<Arc<[usize]>>,
     initial: Option<InitialSelection>,
+    pub(super) axes: LegacyAxes,
+    pub(super) baselines: Option<Vec<(i32, i32)>>,
 }
 
 impl LegacySelection {
     pub(super) fn rows(&self) -> Option<&[usize]> {
         self.rows.as_deref()
     }
+
+    pub(super) fn channel_count(&self) -> usize {
+        self.initial.as_ref().map_or(0, |initial| initial.channels)
+    }
+
+    pub(super) fn descriptions(&self) -> &[i32] {
+        self.initial
+            .as_ref()
+            .map_or(&[], |initial| &initial.descriptions)
+    }
 }
 
 struct InitialSelection {
-    single_description: Option<i32>,
+    descriptions: Vec<i32>,
+    channels: usize,
     rows: Option<Arc<[usize]>>,
 }
 
@@ -124,10 +138,10 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
-    fn initialize_legacy_selection(&mut self, requested: Option<i32>) -> PyResult<bool> {
+    pub(super) fn initialize_legacy_selection(&mut self, requested: Option<i32>) -> PyResult<bool> {
         if let Some(id) = requested
             && let Some(initial) = &self.legacy_selection.initial
-            && initial.single_description == Some(id)
+            && initial.descriptions == [id]
         {
             self.legacy_selection.rows = initial.rows.clone();
             return Ok(true);
@@ -168,7 +182,7 @@ impl AttachedMs {
                 rows.push((relative, id));
             }
         }
-        let same_shape = common_visibility_shape(
+        let (same_shape, channels) = common_visibility_shape(
             descriptions,
             &subtables[&SubtableId::SpectralWindow],
             &subtables[&SubtableId::Polarization],
@@ -182,10 +196,13 @@ impl AttachedMs {
         let rows = (rows.len() != count)
             .then(|| Arc::<[usize]>::from_iter(rows.into_iter().map(|(row, _)| row)));
         self.legacy_selection.initial = initialized.then(|| InitialSelection {
-            single_description: ids.first().copied().filter(|_| ids.len() == 1),
+            descriptions: ids.into_iter().collect(),
+            channels,
             rows: rows.clone(),
         });
         self.legacy_selection.rows = rows;
+        self.legacy_selection.axes = LegacyAxes::default();
+        self.legacy_selection.baselines = None;
         Ok(same_shape)
     }
 
@@ -201,7 +218,45 @@ impl AttachedMs {
             .map_err(runtime_error)
     }
 
-    fn prepare_legacy_filter(&mut self) -> PyResult<bool> {
+    pub(super) fn legacy_correlation_layout(&self) -> PyResult<(usize, Vec<i32>)> {
+        let refreshed = self.refresh_legacy_main()?;
+        let table = refreshed.as_ref().unwrap_or(&self.main);
+        let uncached = super::subtable_queries::Subtables::default();
+        let cache = if refreshed.is_some() {
+            &uncached
+        } else {
+            &self.subtables
+        };
+        let ids = [SubtableId::DataDescription, SubtableId::Polarization];
+        let linked = cache.read_range(table, &ids).map_err(runtime_error)?;
+        let descriptions = &linked[&SubtableId::DataDescription];
+        let polarization = &linked[&SubtableId::Polarization];
+        let count = descriptions.iter().map(Table::row_count).sum::<usize>();
+        let id = self
+            .legacy_selection
+            .descriptions()
+            .first()
+            .copied()
+            .ok_or_else(|| runtime_error("no initialized legacy data description"))?;
+        let (table, row) =
+            linked_subtable_row(descriptions, id as usize, SubtableId::DataDescription)
+                .map_err(runtime_error)?;
+        let pol = MsDataDescription::new(table)
+            .polarization_id(row)
+            .map_err(runtime_error)?;
+        let (table, row) = linked_subtable_row(
+            polarization,
+            usize::try_from(pol).map_err(runtime_error)?,
+            SubtableId::Polarization,
+        )
+        .map_err(runtime_error)?;
+        let codes = MsPolarization::new(table)
+            .corr_type(row)
+            .map_err(runtime_error)?;
+        Ok((count, codes))
+    }
+
+    pub(super) fn prepare_legacy_filter(&mut self) -> PyResult<bool> {
         if self.legacy_selection.initial.is_none() {
             self.initialize_legacy_selection(None)?;
         }
@@ -315,6 +370,7 @@ impl AttachedMs {
             RecordSelector::IfrNumber => {
                 let mut ids = integer_items(&field)?;
                 if ids.is_empty() {
+                    self.legacy_selection.baselines = None;
                     return Ok(());
                 }
                 let (snapshot, _) = self
@@ -325,6 +381,8 @@ impl AttachedMs {
                 ids.retain(|&id| {
                     (0..antennas).contains(&(id / 1000)) && (0..antennas).contains(&(id % 1000))
                 });
+                self.legacy_selection.baselines = (!ids.is_empty())
+                    .then(|| ids.iter().map(|id| (id / 1000, id % 1000)).collect());
                 Some(if ids.is_empty() {
                     "False".into()
                 } else {
@@ -420,8 +478,8 @@ fn common_visibility_shape(
     spectral_windows: &[Table],
     polarizations: &[Table],
     ids: &BTreeSet<i32>,
-) -> PyResult<bool> {
-    let mut previous = None;
+) -> PyResult<(bool, usize)> {
+    let mut first: Option<(usize, i32)> = None;
     for &id in ids {
         let (table, row) =
             linked_subtable_row(descriptions, id as usize, SubtableId::DataDescription)
@@ -439,19 +497,24 @@ fn common_visibility_shape(
             linked_subtable_row(polarizations, pol_id as usize, SubtableId::Polarization)
                 .map_err(runtime_error)?;
         let shape = (
-            MsSpectralWindow::new(spw)
-                .num_chan(spw_row)
-                .map_err(runtime_error)?,
+            usize::try_from(
+                MsSpectralWindow::new(spw)
+                    .num_chan(spw_row)
+                    .map_err(runtime_error)?,
+            )
+            .map_err(runtime_error)?,
             MsPolarization::new(pol)
                 .num_corr(pol_row)
                 .map_err(runtime_error)?,
         );
-        if previous.is_some_and(|previous| previous != shape) {
-            return Ok(false);
+        if let Some(prior) = first
+            && prior != shape
+        {
+            return Ok((false, prior.0));
         }
-        previous = Some(shape);
+        first = Some(shape);
     }
-    Ok(true)
+    Ok((true, first.map_or(0, |shape| shape.0)))
 }
 
 pub(super) fn deprecation(py: Python<'_>, name: &str, successor: &str) -> PyResult<()> {

@@ -1,14 +1,25 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Channel coordinates selected on each row of the public MS visibility view.
 
+use std::collections::BTreeSet;
 use std::ops::{AddAssign, Div, Mul, Range};
 
+use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use ndarray::ArrayD;
 
 use super::baseline_axis::{element_count, filled};
-use super::{input, shaped};
-use crate::MsResult;
+use super::{VisibilityReadOptions, input, shaped, vector};
 use crate::transform::{mean_weight_preferring_unflagged, weight_from_sigma};
+use crate::{MeasurementSet, MsResult};
+
+/// Data descriptions and labels retained by the legacy selector.
+#[derive(Clone, Copy)]
+pub struct LegacyVisibilityAxes<'a> {
+    /// Data descriptions in selector initialization order.
+    pub descriptions: &'a [i32],
+    /// Labels supplied to selectpolarizationold, including an empty request.
+    pub correlation_labels: Option<&'a [String]>,
+}
 
 /// Positive-width bins in the input channel axis of each selected window.
 #[derive(Clone, Copy, Debug)]
@@ -76,6 +87,27 @@ impl VisibilityChannels {
                     })
             })
             .collect()
+    }
+
+    pub(super) fn legacy_resolution(
+        self,
+        frequencies: &[f64],
+        widths: &[f64],
+    ) -> MsResult<Vec<f64>> {
+        self.check_bounds(frequencies.len())?;
+        self.check_bounds(widths.len())?;
+        Ok(self
+            .ranges()
+            .map(|span| {
+                let last = span.end - 1;
+                if self.width == 1 {
+                    widths[span.start]
+                } else {
+                    (widths[self.first] + widths[last]) * 0.5
+                        + (frequencies[last] - frequencies[span.start]).abs()
+                }
+            })
+            .collect())
     }
 
     pub(super) fn selects<T: Copy>(self, values: &ArrayD<T>) -> MsResult<ArrayD<T>> {
@@ -287,6 +319,98 @@ fn memory<T>(array: &ArrayD<T>) -> MsResult<&[T]> {
     array
         .as_slice_memory_order()
         .ok_or_else(|| input("visibility block is not contiguous"))
+}
+
+pub(super) fn axis_info(
+    ms: &MeasurementSet,
+    ids: &[i32],
+    first_row: usize,
+    options: VisibilityReadOptions<'_>,
+) -> MsResult<RecordValue> {
+    use casa_coordinates::StokesType;
+
+    let descriptions = options.legacy_axes.map_or(ids, |axes| axes.descriptions);
+    let indices = descriptions
+        .iter()
+        .copied()
+        .map(|id| usize::try_from(id).map_err(|_| input("negative DATA_DESC_ID")));
+    let dd = ms.data_description()?;
+    let first = descriptions
+        .get(if options.legacy_axes.is_some() {
+            0
+        } else {
+            first_row
+        })
+        .ok_or_else(|| input("no data descriptions in selection"))?;
+    let labels = options.legacy_axes.and_then(|axes| axes.correlation_labels);
+    let correlations = if let Some(labels) = labels {
+        labels.to_vec()
+    } else if let Some(polarization) = options.polarization {
+        polarization
+            .types(*first)?
+            .iter()
+            .map(|name| name.name().to_owned())
+            .collect()
+    } else {
+        let first = usize::try_from(*first).map_err(|_| input("negative DATA_DESC_ID"))?;
+        let pol_id = usize::try_from(dd.polarization_id(first)?)
+            .map_err(|_| input("negative POLARIZATION_ID"))?;
+        ms.polarization()?
+            .corr_type(pol_id)?
+            .into_iter()
+            .map(|code| {
+                StokesType::from_code(code)
+                    .map_or("??", StokesType::name)
+                    .to_owned()
+            })
+            .collect()
+    };
+    let descriptions = indices.collect::<MsResult<BTreeSet<_>>>()?;
+    let windows = descriptions
+        .into_iter()
+        .map(|id| dd.spectral_window_id(id))
+        .collect::<MsResult<Vec<_>>>()?;
+    let spw = ms.spectral_window()?;
+    let mut lengths = None;
+    let mut frequencies = Vec::new();
+    let mut resolution = Vec::new();
+    for &window in &windows {
+        let index = usize::try_from(window).map_err(|_| input("negative SPECTRAL_WINDOW_ID"))?;
+        let mut freq = spw.chan_freq(index)?;
+        let mut res = spw.resolution(index)?;
+        if let Some(channels) = options.channels {
+            res = if options.legacy_axes.is_some() {
+                channels.legacy_resolution(&freq, &res)?
+            } else {
+                channels.coordinates(&res)?
+            };
+            freq = channels.coordinates(&freq)?;
+        }
+        if freq.len() != res.len() || lengths.is_some_and(|n| n != freq.len()) {
+            return Err(input("spectral windows have different channel counts"));
+        }
+        lengths = Some(freq.len());
+        frequencies.extend(freq);
+        resolution.extend(res);
+    }
+    let shape = [lengths.unwrap_or(0), windows.len()];
+    let freq = RecordValue::new(vec![
+        RecordField::new(
+            "chan_freq",
+            Value::Array(ArrayValue::Float64(shaped(&shape, frequencies)?)),
+        ),
+        RecordField::new(
+            "resolution",
+            Value::Array(ArrayValue::Float64(shaped(&shape, resolution)?)),
+        ),
+    ]);
+    Ok(RecordValue::new(vec![
+        RecordField::new(
+            "corr_axis",
+            Value::Array(ArrayValue::String(vector(correlations))),
+        ),
+        RecordField::new("freq_axis", Value::Record(freq)),
+    ]))
 }
 
 #[cfg(test)]

@@ -26,9 +26,10 @@ mod projection;
 mod write_record;
 mod write_rows;
 use averaging::RowAverage;
-use baseline_axis::BaselineGrid;
-pub use channel_axis::VisibilityChannels;
+use baseline_axis::{BaselineGrid, rows_by_time};
+use channel_axis::axis_info;
 use channel_axis::{ChannelWeightKind, ChannelWeights};
+pub use channel_axis::{LegacyVisibilityAxes, VisibilityChannels};
 use concatenation::{MemberRows, concatenate_arrays};
 pub(crate) use concatenation::{concatenate_scalars, member_rows};
 pub use polarization_axis::VisibilityPolarization;
@@ -163,6 +164,8 @@ pub struct VisibilityReadOptions<'a> {
     /// Read a positioned visibility buffer, preserving its iteration order
     /// and applying the visibility iterator's observed-data conventions.
     pub iterator_read: bool,
+    /// Apply the legacy selector's conventions and initialized axis metadata.
+    pub legacy_axes: Option<LegacyVisibilityAxes<'a>>,
     /// Channel selection applied on each logical row before visibility products.
     pub channels: Option<VisibilityChannels>,
     /// Correlation selection or Stokes projection on the active row view.
@@ -194,12 +197,13 @@ pub fn read_tool_visibility(
         baseline_gap,
         baseline_pairs,
         iterator_read,
-        channels,
-        polarization,
         time_measures,
+        ..
     } = options;
-    let ordered_rows = if !iterator_read
-        && (channels.is_some() || polarization.is_some())
+    let legacy = options.legacy_axes.is_some();
+    let ordered_rows = if !legacy
+        && !iterator_read
+        && (options.channels.is_some() || options.polarization.is_some())
         && baseline_gap.is_none()
     {
         rows_by_time(main, rows)?
@@ -210,7 +214,9 @@ pub fn read_tool_visibility(
         .iter()
         .map(|name| name.to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
-    if average {
+    if legacy {
+        names.remove("array_id");
+    } else if average {
         // CASA interprets this item as a visibility product with the averaging
         // prefix, then discards it because no such product exists.
         names.remove("data_desc_id");
@@ -225,7 +231,13 @@ pub fn read_tool_visibility(
         options,
     )?;
     let grid = baseline_gap
-        .map(|gap| BaselineGrid::new(&read.scalar_columns, baseline_pairs, gap))
+        .map(|gap| {
+            if legacy {
+                BaselineGrid::legacy(&read.scalar_columns, baseline_pairs, gap)
+            } else {
+                BaselineGrid::new(&read.scalar_columns, baseline_pairs, gap)
+            }
+        })
         .transpose()?;
     let mut fields = BTreeMap::new();
     if names.contains("axis_info") {
@@ -234,7 +246,7 @@ pub fn read_tool_visibility(
         };
         let ms = metadata.ok_or_else(|| input("axis_info requires MeasurementSet metadata"))?;
         let first_row = grid.as_ref().and_then(BaselineGrid::first_row).unwrap_or(0);
-        let mut axes = axis_info(ms, ids, first_row, channels, polarization)?;
+        let mut axes = axis_info(ms, ids, first_row, options)?;
         if let Some(grid) = &grid {
             let first_selected = rows.first().copied().unwrap_or(0);
             let (baseline_axis, time_axis) = grid.axes(
@@ -317,32 +329,6 @@ pub fn tool_baseline_pairs(
         .collect())
 }
 
-fn rows_by_time<'a>(main: &Table, rows: &'a [usize]) -> MsResult<Cow<'a, [usize]>> {
-    if rows.len() < 2 {
-        return Ok(Cow::Borrowed(rows));
-    }
-    let values = main
-        .column_accessor("TIME")?
-        .scalar_cells_owned_for_rows(rows)?;
-    let RequiredScalarColumnValues::Float64(times) = typed_scalar_column("TIME", values)? else {
-        return Err(input("TIME must contain a double"));
-    };
-    if times.iter().any(|time| !time.is_finite()) {
-        return Err(input("TIME contains a nonfinite value"));
-    }
-    if times.is_sorted() {
-        return Ok(Cow::Borrowed(rows));
-    }
-    let mut ordered = times
-        .into_iter()
-        .zip(rows.iter().copied())
-        .collect::<Vec<_>>();
-    ordered.sort_by(|(left, _), (right, _)| left.partial_cmp(right).unwrap());
-    Ok(Cow::Owned(
-        ordered.into_iter().map(|(_, row)| row).collect(),
-    ))
-}
-
 pub(crate) struct VisibilityRead<'a> {
     main: &'a Table,
     rows: &'a [usize],
@@ -353,6 +339,7 @@ pub(crate) struct VisibilityRead<'a> {
     scalar_columns: HashMap<String, RequiredScalarColumnValues>,
     baseline_axis: bool,
     iterator_read: bool,
+    legacy: bool,
     channels: Option<VisibilityChannels>,
     polarization: Option<&'a VisibilityPolarization>,
     raw_flags: OnceCell<ArrayD<bool>>,
@@ -401,12 +388,14 @@ impl<'a> VisibilityRead<'a> {
         options: VisibilityReadOptions<'a>,
     ) -> MsResult<Self> {
         let baseline_axis = options.baseline_gap.is_some();
+        let legacy = options.legacy_axes.is_some();
         let channels = options.channels;
         let hour_angle = baseline_axis && names.contains("axis_info") && names.contains("ha");
         let mut columns = SCALARS
             .into_iter()
             .filter_map(|(name, column)| {
                 if name == "flag_row"
+                    && !legacy
                     && channels.is_some_and(|channels| channels.width() > 1)
                     && !rows.is_empty()
                 {
@@ -420,7 +409,9 @@ impl<'a> VisibilityRead<'a> {
                     .then_some(column)
             })
             .collect::<Vec<_>>();
-        if (names.contains("axis_info") || options.polarization.is_some())
+        if (names.contains("axis_info")
+            || options.polarization.is_some()
+            || (legacy && baseline_axis))
             && !columns.contains(&"DATA_DESC_ID")
         {
             columns.push("DATA_DESC_ID");
@@ -472,6 +463,7 @@ impl<'a> VisibilityRead<'a> {
             scalar_columns,
             baseline_axis,
             iterator_read: options.iterator_read,
+            legacy,
             channels,
             polarization: options.polarization,
             raw_flags: OnceCell::new(),
@@ -485,6 +477,7 @@ impl<'a> VisibilityRead<'a> {
     pub(crate) fn vector_cells(&self, name: &str) -> MsResult<ArrayValue> {
         let is_row_weight = matches!(name, "WEIGHT" | "SIGMA");
         let values = if let Some(channels) = self.channels
+            && !self.legacy
             && channels.width() > 1
             && !self.rows.is_empty()
             && is_row_weight
@@ -503,7 +496,13 @@ impl<'a> VisibilityRead<'a> {
         } else {
             self.raw_vector_cells(name)?
         };
-        if is_row_weight {
+        if self.legacy && is_row_weight {
+            if let Some(plan) = self.polarization.filter(|plan| plan.is_conversion()) {
+                plan.legacy_weight(values, self.polarization_ids()?, name == "SIGMA")
+            } else {
+                Ok(values)
+            }
+        } else if is_row_weight {
             self.gather_correlations(values)
         } else {
             Ok(values)
@@ -644,9 +643,9 @@ impl<'a> VisibilityRead<'a> {
             };
         }
         let flags = self.raw_flags()?;
-        let weights = match column {
-            "MODEL_DATA" => None,
-            "DATA" => Some(self.channel_weights(ChannelWeightKind::Observed)?),
+        let weights = match (self.legacy, column) {
+            (true, _) | (_, "MODEL_DATA") => None,
+            (_, "DATA") => Some(self.channel_weights(ChannelWeightKind::Observed)?),
             _ => Some(self.channel_weights(ChannelWeightKind::Corrected)?),
         };
         match values {
@@ -696,7 +695,11 @@ impl<'a> VisibilityRead<'a> {
                 .zip(second)
                 .map(|(&left, &right)| left.wrapping_mul(1000).wrapping_add(right))
                 .collect::<Vec<_>>();
-            if !self.iterator_read && self.channels.is_none() && self.polarization.is_none() {
+            if !self.legacy
+                && !self.iterator_read
+                && self.channels.is_none()
+                && self.polarization.is_none()
+            {
                 ifrs.sort_unstable();
                 ifrs.dedup();
             }
@@ -713,13 +716,15 @@ impl<'a> VisibilityRead<'a> {
                 continue;
             }
             if name == "data_desc_id" && self.polarization.is_some() {
-                fields.insert(
-                    name.into(),
-                    Value::Array(ArrayValue::Int32(vector(self.polarization_ids()?.to_vec()))),
-                );
+                let mut ids = self.polarization_ids()?.to_vec();
+                if average {
+                    averaging::common_id(&mut ids);
+                }
+                fields.insert(name.into(), Value::Array(ArrayValue::Int32(vector(ids))));
                 continue;
             }
             if name == "flag_row"
+                && !self.legacy
                 && let Some(channels) = self.channels.filter(|channels| channels.width() > 1)
                 && !self.rows.is_empty()
             {
@@ -772,27 +777,46 @@ impl<'a> VisibilityRead<'a> {
     ) -> MsResult<()> {
         let (raw_flags, reduced_flags) = if let Some(reduced) = reduced {
             let (raw, flags, weights) = reduced.into_fields();
-            let (raw, weights) = if self
+            let converted = self
                 .polarization
-                .is_some_and(VisibilityPolarization::is_conversion)
-            {
-                (
-                    self.matrix_cells("FLAG", false)?,
-                    self.vector_cells("WEIGHT")?,
-                )
+                .is_some_and(VisibilityPolarization::is_conversion);
+            let raw = if self.legacy {
+                if names.contains("weight") {
+                    let weights = averaging::sum_weights(self.vector_cells("WEIGHT")?, grid)?;
+                    fields.insert("weight".into(), Value::Array(weights));
+                }
+                if converted && names.contains("flag_sum") {
+                    ArrayValue::Bool(self.legacy_flags()?)
+                } else {
+                    ArrayValue::Bool(raw)
+                }
             } else {
-                (ArrayValue::Bool(raw), weights)
+                let (raw, weights) = if converted {
+                    (
+                        self.matrix_cells("FLAG", false)?,
+                        self.vector_cells("WEIGHT")?,
+                    )
+                } else {
+                    (ArrayValue::Bool(raw), weights)
+                };
+                let name = if names.contains("weight") {
+                    "weight"
+                } else {
+                    "avgweight"
+                };
+                fields.insert(name.into(), Value::Array(weights));
+                raw
             };
-            let name = if names.contains("weight") {
-                "weight"
-            } else {
-                "avgweight"
-            };
-            fields.insert(name.into(), Value::Array(weights));
             (Some(raw), Some(flags))
         } else {
             if names.contains("weight") {
-                fields.insert("weight".into(), Value::Array(self.vector_cells("WEIGHT")?));
+                let weights = self.vector_cells("WEIGHT")?;
+                let weights = if self.legacy && average {
+                    averaging::sum_weights(weights, grid)?
+                } else {
+                    weights
+                };
+                fields.insert("weight".into(), Value::Array(weights));
             }
             (None, None)
         };
@@ -808,6 +832,7 @@ impl<'a> VisibilityRead<'a> {
         if names.contains("flag") || names.contains("flag_sum") {
             let flags = match raw_flags {
                 Some(flags) => flags,
+                None if self.legacy => ArrayValue::Bool(self.legacy_flags()?),
                 None => self.matrix_cells("FLAG", false)?,
             };
             if names.contains("flag_sum") {
@@ -822,7 +847,11 @@ impl<'a> VisibilityRead<'a> {
                 fields.insert("flag_sum".into(), Value::Array(ArrayValue::Int64(sums)));
             }
             if names.contains("flag") {
-                let flags = reduced_flags.map_or(flags, ArrayValue::Bool);
+                let flags = if self.legacy && average && reduced_flags.is_none() {
+                    ArrayValue::Bool(vector(Vec::new()))
+                } else {
+                    reduced_flags.map_or(flags, ArrayValue::Bool)
+                };
                 fields.insert("flag".into(), Value::Array(flags));
             }
         }
@@ -894,7 +923,9 @@ impl<'a> VisibilityRead<'a> {
                     && (name.contains("corrected")
                         || name.contains("ratio")
                         || (name.contains("residual") && !name.contains("obs"))));
-            if missing_float || missing_complex {
+            if self.legacy && (missing_float || missing_complex) {
+                continue;
+            } else if missing_float || missing_complex {
                 // CASA checks optional-column substrings before recognizing item names.
                 let empty = if !missing_float && name.contains("data") {
                     ArrayValue::Complex32(vector(Vec::new()))
@@ -902,8 +933,9 @@ impl<'a> VisibilityRead<'a> {
                     ArrayValue::Float32(vector(Vec::new()))
                 };
                 fields.insert(name.clone(), Value::Array(empty));
-            } else if let Some((base, alias)) =
-                raw_visibility_alias(name, names, average, self.baseline_axis)?
+            } else if !self.legacy
+                && let Some((base, alias)) =
+                    raw_visibility_alias(name, names, average, self.baseline_axis)?
             {
                 aliases.entry(base).or_default().push(alias);
             }
@@ -915,13 +947,26 @@ impl<'a> VisibilityRead<'a> {
                 let key = format!("{prefix}{name}");
                 (names.contains(&key) && !fields.contains_key(&key)).then_some(key)
             });
+            if self.legacy && (!has_column(source) || (uses_model && !has_model)) {
+                for (item, key) in PRODUCT_NAMES.into_iter().zip(requested) {
+                    if let Some(key) = key {
+                        let empty = if item == "data" {
+                            ArrayValue::Complex32(vector(Vec::new()))
+                        } else {
+                            ArrayValue::Float32(vector(Vec::new()))
+                        };
+                        fields.insert(key, Value::Array(empty));
+                    }
+                }
+                continue;
+            }
             let mut raw_aliases = aliases.remove(&format!("{prefix}data"));
             let explicit = requested.iter().any(Option::is_some);
             if !explicit && raw_aliases.is_none() {
                 continue;
             }
             let reduce = average && explicit;
-            if reduce {
+            if reduce && !self.legacy {
                 for key in requested.iter().flatten() {
                     require_single_average(items, key)?;
                 }
@@ -932,10 +977,11 @@ impl<'a> VisibilityRead<'a> {
                     .into_iter()
                     .all(Option::is_none);
             let convert = self.polarization.filter(|plan| plan.is_conversion());
-            let data = if (self.iterator_read
-                || self.baseline_axis
-                || self.channels.is_some()
-                || self.polarization.is_some())
+            let data = if !self.legacy
+                && (self.iterator_read
+                    || self.baseline_axis
+                    || self.channels.is_some()
+                    || self.polarization.is_some())
                 && has_float
                 && source == "DATA"
             {
@@ -949,42 +995,12 @@ impl<'a> VisibilityRead<'a> {
                 self.matrix_cells(source, only_raw && !reduce && convert.is_none())?
             };
             let data = if uses_model {
-                let model_values = self.matrix_cells("MODEL_DATA", false)?;
-                let (ArrayValue::Complex32(mut observed), ArrayValue::Complex32(expected)) =
-                    (data, model_values)
-                else {
-                    return Err(input("visibility columns must contain Complex values"));
-                };
-                if observed.shape() != expected.shape() {
-                    return Err(input("visibility columns have different shapes"));
-                }
-                if prefix == "ratio_" {
-                    observed.zip_mut_with(&expected, |observed, expected| {
-                        *observed = divide_visibility(*observed, *expected);
-                    });
-                    if !average
-                        && let Some(channels) = self.channels
-                        && channels.width() > 1
-                        && !self.rows.is_empty()
-                    {
-                        observed.zip_mut_with(
-                            self.channel_flags(channels)?,
-                            |observed, &flagged| {
-                                if flagged {
-                                    *observed = Complex32::default();
-                                }
-                            },
-                        );
-                    }
-                } else {
-                    observed.zip_mut_with(&expected, |observed, expected| *observed -= *expected);
-                }
-                ArrayValue::Complex32(observed)
+                self.model_product(data, prefix, average, convert)?
             } else {
                 data
             };
-            let data = if let Some(polarization) = convert {
-                self.convert_visibility_product(data, polarization, !average)?
+            let data = if let Some(polarization) = convert.filter(|_| !self.legacy || !uses_model) {
+                self.convert_visibility_product(data, polarization, !average && !self.legacy)?
             } else {
                 data
             };
@@ -998,29 +1014,7 @@ impl<'a> VisibilityRead<'a> {
                 data
             };
             if !only_raw {
-                let ArrayValue::Complex32(complex) = &data else {
-                    return Err(input("visibility columns must contain Complex values"));
-                };
-                let projections: [fn(Complex32) -> f32; 4] = [
-                    |sample| sample.norm(),
-                    |sample| sample.arg(),
-                    |sample| sample.re,
-                    |sample| sample.im,
-                ];
-                let memory = complex
-                    .as_slice_memory_order()
-                    .ok_or_else(|| input("visibility block is not contiguous"))?;
-                for (name, project) in [amplitude, phase, real, imaginary]
-                    .into_iter()
-                    .zip(projections)
-                    .filter_map(|(key, project)| key.map(|key| (key, project)))
-                {
-                    let values = shaped(
-                        complex.shape(),
-                        memory.iter().copied().map(project).collect(),
-                    )?;
-                    fields.insert(name, Value::Array(ArrayValue::Float32(values)));
-                }
+                insert_visibility_components(fields, &data, [amplitude, phase, real, imaginary])?;
             }
             insert_array_aliases(
                 fields,
@@ -1041,7 +1035,9 @@ impl<'a> VisibilityRead<'a> {
                 (None, _) => self.matrix_cells("FLOAT_DATA", false)?,
             };
             let values = if average && raw_float.is_some() {
-                require_single_average(items, "float_data")?;
+                if !self.legacy {
+                    require_single_average(items, "float_data")?;
+                }
                 let mut float_average = None;
                 let input = if self
                     .polarization
@@ -1114,7 +1110,11 @@ impl<'a> VisibilityRead<'a> {
     ) -> MsResult<ArrayValue> {
         if reduction.is_none() {
             let flags = self.matrix_cells("FLAG", false)?;
-            let weights = self.vector_cells("WEIGHT")?;
+            let weights = if self.legacy {
+                self.gather_correlations(self.raw_vector_cells("WEIGHT")?)?
+            } else {
+                self.vector_cells("WEIGHT")?
+            };
             let (flags, weights) = if let Some(polarization) = convert {
                 polarization.averaging_inputs(flags, weights, self.polarization_ids()?)?
             } else {
@@ -1127,6 +1127,46 @@ impl<'a> VisibilityRead<'a> {
             .expect("averaging input exists")
             .reduce(values)
     }
+
+    fn legacy_flags(&self) -> MsResult<ArrayD<bool>> {
+        let ArrayValue::Bool(flags) = self.matrix_cells("FLAG", false)? else {
+            return Err(input("FLAG cells must be Boolean"));
+        };
+        if let Some(plan) = self.polarization.filter(|plan| plan.is_conversion()) {
+            plan.converted_flags(&flags, self.polarization_ids()?)
+        } else {
+            Ok(flags)
+        }
+    }
+}
+
+fn insert_visibility_components(
+    fields: &mut BTreeMap<String, Value>,
+    data: &ArrayValue,
+    names: [Option<String>; 4],
+) -> MsResult<()> {
+    let ArrayValue::Complex32(complex) = data else {
+        return Err(input("visibility columns must contain Complex values"));
+    };
+    let projections: [fn(Complex32) -> f32; 4] = [
+        |sample| sample.norm(),
+        |sample| sample.arg(),
+        |sample| sample.re,
+        |sample| sample.im,
+    ];
+    let memory = complex
+        .as_slice_memory_order()
+        .ok_or_else(|| input("visibility block is not contiguous"))?;
+    for (name, project) in names.into_iter().zip(projections) {
+        if let Some(name) = name {
+            let values = shaped(
+                complex.shape(),
+                memory.iter().copied().map(project).collect(),
+            )?;
+            fields.insert(name, Value::Array(ArrayValue::Float32(values)));
+        }
+    }
+    Ok(())
 }
 
 fn row_flag_sums(flags: &ArrayD<bool>, empty: bool) -> MsResult<ArrayD<i64>> {
@@ -1403,87 +1443,6 @@ fn pack_cells(column: TableColumn<'_>, rows: &[usize]) -> MsResult<ArrayValue> {
         ArrayValue::Complex64(_) => stack!(Complex64),
         _ => Err(input(format!("unexpected array element type in {name}"))),
     }
-}
-
-fn axis_info(
-    ms: &MeasurementSet,
-    ids: &[i32],
-    first_row: usize,
-    channels: Option<VisibilityChannels>,
-    polarization: Option<&VisibilityPolarization>,
-) -> MsResult<RecordValue> {
-    use casa_coordinates::StokesType;
-
-    let indices = ids
-        .iter()
-        .copied()
-        .map(|id| usize::try_from(id).map_err(|_| input("negative DATA_DESC_ID")));
-    let dd = ms.data_description()?;
-    let first = ids
-        .get(first_row)
-        .ok_or_else(|| input("no data descriptions in selection"))?;
-    let correlations = if let Some(polarization) = polarization {
-        polarization
-            .types(*first)?
-            .iter()
-            .map(|name| name.name().to_owned())
-            .collect()
-    } else {
-        let first = usize::try_from(*first).map_err(|_| input("negative DATA_DESC_ID"))?;
-        let pol_id = usize::try_from(dd.polarization_id(first)?)
-            .map_err(|_| input("negative POLARIZATION_ID"))?;
-        ms.polarization()?
-            .corr_type(pol_id)?
-            .into_iter()
-            .map(|code| {
-                StokesType::from_code(code)
-                    .map_or("??", StokesType::name)
-                    .to_owned()
-            })
-            .collect()
-    };
-    let descriptions = indices.collect::<MsResult<BTreeSet<_>>>()?;
-    let windows = descriptions
-        .into_iter()
-        .map(|id| dd.spectral_window_id(id))
-        .collect::<MsResult<Vec<_>>>()?;
-    let spw = ms.spectral_window()?;
-    let mut lengths = None;
-    let mut frequencies = Vec::new();
-    let mut resolution = Vec::new();
-    for &window in &windows {
-        let index = usize::try_from(window).map_err(|_| input("negative SPECTRAL_WINDOW_ID"))?;
-        let mut freq = spw.chan_freq(index)?;
-        let mut res = spw.resolution(index)?;
-        if let Some(channels) = channels {
-            freq = channels.coordinates(&freq)?;
-            res = channels.coordinates(&res)?;
-        }
-        if freq.len() != res.len() || lengths.is_some_and(|n| n != freq.len()) {
-            return Err(input("spectral windows have different channel counts"));
-        }
-        lengths = Some(freq.len());
-        frequencies.extend(freq);
-        resolution.extend(res);
-    }
-    let shape = [lengths.unwrap_or(0), windows.len()];
-    let freq = RecordValue::new(vec![
-        RecordField::new(
-            "chan_freq",
-            Value::Array(ArrayValue::Float64(shaped(&shape, frequencies)?)),
-        ),
-        RecordField::new(
-            "resolution",
-            Value::Array(ArrayValue::Float64(shaped(&shape, resolution)?)),
-        ),
-    ]);
-    Ok(RecordValue::new(vec![
-        RecordField::new(
-            "corr_axis",
-            Value::Array(ArrayValue::String(vector(correlations))),
-        ),
-        RecordField::new("freq_axis", Value::Record(freq)),
-    ]))
 }
 
 fn vector<T>(values: Vec<T>) -> ArrayD<T> {

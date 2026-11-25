@@ -11589,6 +11589,59 @@ casacore comparator cannot consistently order a NaN against another key.
 casa-rs orders the finite keys numerically and places NaNs in deterministic
 positions according to their floating-point representation (#1030).
 
+## Legacy MS averaging can apply weights from a different row or baseline
+
+CASA 6.7.6.14 `ms.getdataold('data', average=True)` uses one flat WEIGHT
+index for all correlations at each row or baseline and time slot.
+`MSSelUtil2::timeAverage` advances that index once per row or slot even
+though WEIGHT has a leading correlation axis. For more than one
+correlation it therefore uses weights belonging to other inputs. On the
+stock `ngc5921_ut.ms`, both engines read identical DATA, FLAG and WEIGHT
+arrays, and the error reaches 0.00226 normalized RMS for baseline
+averaging. Casa-rs applies the weight belonging to each unflagged
+correlation in each row, and matches the independently calculated weighted
+average to about 3×10⁻⁸ on that workload (#1030).
+
+For the same legacy baseline reduction, CASA puts the sum of the input
+times into the averaged `axis_info.time_axis.MJDseconds`; the main `time`
+field already contains their mean. Casa-rs reports the mean in both fields
+so the averaged coordinate lies within the observation (#1030).
+
+## Legacy MS polarization selection can abort after channel averaging
+
+On CASA 6.7.6.14 with `ngc5921_ut.ms`, call `ms.selectchannelold(2,0,2,2)`
+and then `ms.selectpolarizationold('LL')`. The next
+`ms.getdataold(['data', 'axis_info'])` aborts because the legacy selector
+retains a sliced channel shape while reinitializing its axis metadata.
+Casa-rs clears the old channel slice when initializing polarization
+selection and returns the full channel axis for the selected correlation
+(#1030).
+
+## A negative gap can crash legacy MS baseline-axis reads
+
+The first call to `ms.getdataold(['data', 'time'], ifraxis=True, ifraxisgap=-2)`
+on CASA 6.7.6.14 can segfault. `MSSelector::getData` skips building the
+baseline coordinate array for a negative gap, then indexes that array.
+Casa-rs treats a negative gap as zero and fills the baseline and
+integration axes (#1030).
+
+## Absent visibility columns can abort legacy MS reads
+
+On CASA 6.7.6.14, `ms.getdataold('corrected_data', average=True)`
+can segfault when CORRECTED_DATA is absent. Reading
+`obs_residual_data` with DATA present and MODEL_DATA absent can also
+abort because the subtraction uses incompatible shapes. Casa-rs returns
+an empty array of the requested product's type, as CASA does for an
+unaveraged read of an absent CORRECTED_DATA column (#1030).
+
+## An unknown legacy polarization can leave empty visibility axes
+
+On CASA 6.7.6.14, `ms.selectpolarizationold('bogus')` returns false but
+leaves conversion enabled with an uninitialized converter. The next
+visibility read can have no correlation samples while its labels still
+identify the recorded correlations. Casa-rs returns false and keeps the
+initialized visibility axes usable (#1030).
+
 ## PlotMS exits when adding an atmospheric curve to two visibility ordinates
 
 CASA 6.7.6.14 with casaplotms 2.9.1 terminates its PlotMS process with signal 11 for `xaxis='frequency'`, `yaxis=['real','imag']`, `ydatacolumn=['model','corrected']`, `spw='0:0;3;6'` and `showatm=True` on the paired weather fixture. The public task reports a closed RPC connection and leaves no TXT export. The same failure occurs with two stored ordinates. [Pinned overlay setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Plots/PlotMSPlot.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
