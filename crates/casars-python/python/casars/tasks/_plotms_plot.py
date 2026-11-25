@@ -3,6 +3,7 @@
 
 from collections import defaultdict
 from datetime import datetime, timedelta
+from functools import lru_cache
 
 _MJD_EPOCH = datetime(1858, 11, 17)
 
@@ -123,7 +124,7 @@ def configure(figure, panel_axes, document, options):
         for line in axis.lines:
             layer = layers.get(line.get_gid())
             if layer is not None:
-                _line(line, layer, options)
+                _line(line, layer, options, meshes=measurement_set)
     if options.get("showlegend") and figure.axes:
         handles, labels = [], []
         for axis in figure.axes:
@@ -249,7 +250,7 @@ def _share_measurement_set_axes(figure, primary, layout, options):
                     axis.set_ylabel("")
 
 
-def _line(line, layer, options):
+def _line(line, layer, options, *, meshes):
     index = layer["id"].partition("-")[0]
     series = int(index) if index.isdigit() else 0
     flagged = layer["color_group"] == "flagged"
@@ -258,20 +259,59 @@ def _line(line, layer, options):
     if _per_series(options.get(custom), series, False):
         shape = _per_series(options.get(f"{prefix}shape"), series, "circle" if flagged else "autoscaling")
         color = _per_series(options.get(f"{prefix}color"), series, "ff0000" if flagged else "0000ff")
-        fill = _per_series(options.get(f"{prefix}fill"), series, "fill")
+        fill = _per_series(options.get(f"{prefix}fill"), series, "fill").lower()
         outline = _per_series(options.get(f"{prefix}outline"), series, False)
         size = _per_series(options.get(f"{prefix}size"), series, 2)
         # Explicit PlotMS marker colors carry their own opacity.
         line.set_alpha(None)
-        line.set_marker(_MARKERS[shape.lower()])
+        marker = _MARKERS[shape.lower()]
+        color = _color(color)
+        line.set_marker(marker)
         line.set_markersize(size)
-        line.set_markeredgecolor("black" if outline else _color(color))
-        line.set_markerfacecolor("none" if fill.lower() == "nofill" else _color(color))
+        line.set_markeredgecolor("black" if outline else color)
+        patterned = meshes and fill in ("mesh1", "mesh2", "mesh3") and marker in ("o", "s", "D")
+        line.set_markerfacecolor("none" if patterned or fill == "nofill" else color)
+        if patterned:
+            line.axes.scatter(
+                line.get_xdata(), line.get_ydata(),
+                marker=_mesh_marker(marker, fill), s=size ** 2, facecolor=color,
+                linewidth=0, zorder=line.get_zorder() - 0.01,
+            )
     else:
         line.set_markersize(layer["symbol_size"])
     if options.get("xconnector") == "step":
         line.set_linestyle("-")
         line.set_drawstyle("steps-mid")
+
+
+@lru_cache(maxsize=9)
+def _mesh_marker(marker, fill):
+    import numpy as np
+    from matplotlib.markers import MarkerStyle
+    from matplotlib.path import Path
+    from matplotlib.transforms import Affine2D, Bbox
+
+    shape = MarkerStyle(marker)
+    outline = shape.get_path().transformed(shape.get_transform())
+    bounds = outline.get_extents()
+    xs = np.linspace(bounds.xmin, bounds.xmax, 17)
+    ys = np.linspace(bounds.ymin, bounds.ymax, 17)
+    regions = []
+    for row, (bottom, top) in enumerate(zip(ys, ys[1:])):
+        for column, (left, right) in enumerate(zip(xs, xs[1:])):
+            if fill == "mesh2":
+                filled = (row + column) % 2 == 0
+            else:
+                sparse = row % 2 == 0 and (column + row) % 4 == 0
+                filled = not sparse if fill == "mesh1" else sparse
+            if filled:
+                clipped = outline.clip_to_bbox(Bbox.from_extents(left, bottom, right, top))
+                if len(clipped.vertices):
+                    regions.append(clipped)
+    path = Path.make_compound_path(*regions)
+    # Keep the size of the underlying marker when Matplotlib normalizes a custom path.
+    extent = np.abs(path.vertices).max()
+    return MarkerStyle(path, transform=Affine2D().scale(2 * extent))
 
 
 def _per_series(value, series, default):

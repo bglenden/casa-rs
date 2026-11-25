@@ -101,22 +101,27 @@ pub(super) fn prepare(
     };
     let mut writer = PlotPayloadWriter::open(arrays).map_err(write_failure)?;
     let figures = if let Some(grid) = grid {
-        for (index, panel) in document.panels.iter_mut().enumerate() {
+        for (index, (panel, source)) in document.panels.iter_mut().zip(&grid.panels).enumerate() {
             style.prepare(
                 index,
                 &mut writer,
                 &mut panel.axes,
                 &mut panel.layers,
+                &source.series,
                 overlays.get(index).map(Vec::as_slice),
             )?;
         }
         paginate(task, document, grid, output, show)?
     } else {
+        let MsPlotPayload::Scatter(plot) = payload else {
+            unreachable!("visibility figures use scatter payloads");
+        };
         style.prepare(
             0,
             &mut writer,
             &mut document.axes,
             &mut document.layers,
+            &plot.series,
             overlays.first().map(Vec::as_slice),
         )?;
         vec![PlotFigure {
@@ -543,6 +548,7 @@ impl PanelStyle {
         writer: &mut PlotPayloadWriter,
         axes: &mut Vec<PlotDocumentAxis>,
         layers: &mut Vec<PlotDocumentLayer>,
+        series: &[MsScatterSeries],
         overlays: Option<&[Curve]>,
     ) -> Result<(), TaskFailure> {
         for axis in axes.iter_mut() {
@@ -560,7 +566,7 @@ impl PanelStyle {
                 axis.upper = self.limits[offset + 1];
             }
         }
-        for (index, layer) in layers.iter_mut().enumerate() {
+        for (index, (layer, source)) in layers.iter_mut().zip(series).enumerate() {
             let (x_scale, y_scale) = (
                 if self.frequency_axis(&layer.x_axis_id) {
                     1e9
@@ -587,11 +593,7 @@ impl PanelStyle {
                         .map(|v| v / y_scale),
                 )
                 .map_err(write_failure)?;
-            layer.id = if layer.color_group == "flagged" {
-                format!("0-flagged-visibility-{panel}-{index}")
-            } else {
-                format!("{index}-visibility-{panel}")
-            };
+            layer.id = format!("{}-visibility-{panel}-{index}", source.y_index);
             layer.data = Some(PlotLayerData::Points { x, y });
             layer.payload_strategy = PlotPayloadStrategy::BinaryArrays;
             layer.style = Some(PlotLayerStyle {
