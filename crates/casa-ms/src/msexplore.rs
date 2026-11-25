@@ -76,7 +76,9 @@ use crate::spectral_selection::{
 use crate::subtables::SubTable;
 use crate::subtables::data_description::MsDataDescription;
 use crate::subtables::polarization::MsPolarization;
-use crate::transform::{PlotTimeGroups, TimeAverageOptions, TimeUvwAverage, WeightKind};
+use crate::transform::{
+    PlotTimeGroups, PlotTimePhaseReferences, TimeAverageOptions, TimeUvwAverage, WeightKind,
+};
 use crate::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
 
 pub use plotms_spw::MsScatterPlotMsAverageSpw;
@@ -3187,7 +3189,13 @@ fn build_uncalibrated_plotms_payload(
                     || extended_derived
                     || direct_time_projection,
                 time_spw,
-                needs_model_references || time_phase_shift,
+                if time_phase_shift {
+                    PlotTimePhaseReferences::TimeAveragedShift
+                } else if needs_model_references {
+                    PlotTimePhaseReferences::VirtualModel
+                } else {
+                    PlotTimePhaseReferences::None
+                },
                 averaged_row_numbers,
             )
             .map_err(|error| error.to_string())

@@ -11200,6 +11200,14 @@ combining the two averages with `phasecenter` fails in pinned PlotMS
 with `INVALID_ARGUMENT`, for both equal and independent X/Y visibility
 columns. casa-rs reports the refused combination before export.
 
+The time-and-phase iterator limits its input chunks to the time bin.
+An absent baseline at a chunk's first integration leaves that baseline
+with a separate centroid within the chunk. The regression compares its
+shifted coordinates using the materialized iterator and verifies the
+first-baseline epoch in verbose PlotMS output. The pinned time averager
+retains its polynomial phase direction across time chunks within the
+same field selection.
+
 [Pinned PlotMS iterator setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 [Pinned phase-shifting iterator](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/PhaseShiftingTVI.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 

@@ -274,7 +274,7 @@ fn run_task(
         };
         let atmosphere = super::calibration::atmosphere::Options::from_task(task)?;
         let visibility_document = calibration.is_some() || atmosphere.is_some();
-        let (options, visibility_document) =
+        let (mut options, visibility_document) =
             plotms_options::options_from_plotms(task, visibility_document)?;
         let phasecenter = super::plotms_phasecenter::requested(task)?
             .map(|value| {

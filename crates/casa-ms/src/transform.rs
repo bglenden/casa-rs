@@ -80,7 +80,8 @@ pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_
 use subtable_copy::copy_subtables;
 pub use task_history::{TransformTaskHistory, append_task_history};
 pub(crate) use time_average::{
-    PlotTimeGroups, TimeUvwAverage, centered_time_and_interval, selected_plot_time_groups,
+    PlotTimeGroups, PlotTimePhaseReferences, TimeUvwAverage, centered_time_and_interval,
+    selected_plot_time_groups,
 };
 use time_projection::{TIME_OUTPUT_SCALARS, TimeGroupRead, TimeProjection};
 use visibility_columns::VisibilityColumns;
@@ -859,7 +860,7 @@ fn mstransform_staged(
     let stage_started_at = Instant::now();
     let time_groups = options
         .time_averaging
-        .map(|options| time_average::plan(&input, &rows, options, order))
+        .map(|options| time_average::plan(&input, &rows, options, order, None))
         .transpose()?;
     drop(rows);
     let selection_metadata::OrderedMainRows {

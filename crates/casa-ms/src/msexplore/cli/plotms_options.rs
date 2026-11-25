@@ -439,7 +439,7 @@ impl CliOptions {
     }
 
     pub(super) fn plotms_phasecenter(
-        &self,
+        &mut self,
         value: &str,
         without_calibration_or_overlays: bool,
     ) -> Result<MDirection, TaskFailure> {
@@ -474,7 +474,7 @@ impl CliOptions {
             || self.avgspw
             || self.avgbaseline
             || self.avgantenna
-            || self.scalar
+            || (self.scalar && time)
             || !matches!(self.iteraxis, None | Some(MsIterationAxis::Scan))
             || ((channels || time) && (self.iteraxis.is_some() || self.freqframe.is_some()))
         {
@@ -483,6 +483,8 @@ impl CliOptions {
             )
             .at("phasecenter"));
         }
+        // PlotMS ignores scalar for both raw and channel-only requests.
+        self.scalar = false;
         plotms_phasecenter::parse(value)
     }
 

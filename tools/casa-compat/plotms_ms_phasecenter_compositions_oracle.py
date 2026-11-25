@@ -12,6 +12,7 @@ from plotms_ms_columns_oracle import (
     casa, compare_figure, compare_text, copy_ms, fixture, opened, reference, request, rows, write_model,
 )
 from plotms_ms_reporting_frames_oracle import reporting_frequencies
+from record_casa_returns import make_cal_ms
 
 
 GALACTIC_RMS = 1.2e-5
@@ -61,6 +62,8 @@ def compare_phasecenter_compositions(root, native, phasecenter):
     snapshots = original | {'UVW': uvw}
     compare_polynomial_shift(root, native, vis, phasecenter, snapshots)
     compare_reductions(root, native, vis, shifted_centers['j2000'], phasecenter)
+    compare_polynomial_time_chunks(root, native, phasecenter)
+    compare_scalar_noop(root, native, vis, shifted_centers['j2000'], phasecenter)
     compare_scan_iteration(root, native, vis, phasecenter, snapshots)
     compare_reporting_frame(root, native, vis, phasecenter)
     compare_virtual_model(root, native, vis, phasecenter, snapshots)
@@ -120,6 +123,25 @@ def materialize_iterator(folder, vis, phasecenter, **options):
     return output
 
 
+def write_polynomial_field(vis):
+    with opened(vis / 'FIELD', True) as table:
+        coefficients = {}
+        table.putcell('NUM_POLY', 0, 1)
+        for name in ('PHASE_DIR', 'DELAY_DIR', 'REFERENCE_DIR'):
+            constant = table.getcell(name, 0)
+            assert constant.shape == (2, 1)
+            coefficients[name] = np.concatenate((constant, [[3e-8], [-5e-8]]), axis=1)
+            table.putcell(name, 0, coefficients[name])
+    return coefficients
+
+
+def unchanged_polynomial_field(vis, coefficients):
+    with opened(vis / 'FIELD') as table:
+        assert table.getcell('NUM_POLY', 0) == 1
+        for name, values in coefficients.items():
+            np.testing.assert_array_equal(table.getcell(name, 0), values)
+
+
 def compare_polynomial_shift(root, native, vis, phasecenter, snapshots):
     work = root / 'polynomial'
     work.mkdir()
@@ -129,14 +151,7 @@ def compare_polynomial_shift(root, native, vis, phasecenter, snapshots):
         times = table.getcol('TIME')
         scans = np.where(times < np.unique(times)[3], 1, 2).astype(np.int32)
         table.putcol('SCAN_NUMBER', scans)
-    with opened(source / 'FIELD', True) as table:
-        coefficients = {}
-        table.putcell('NUM_POLY', 0, 1)
-        for name in ('PHASE_DIR', 'DELAY_DIR', 'REFERENCE_DIR'):
-            constant = table.getcell(name, 0)
-            assert constant.shape == (2, 1)
-            coefficients[name] = np.concatenate((constant, [[3e-8], [-5e-8]]), axis=1)
-            table.putcell(name, 0, coefficients[name])
+    coefficients = write_polynomial_field(source)
     # The wrapper's final FIELD update cannot read the whole mixed-shape column.
     shifted = materialize_iterator(work / 'shifted', source, phasecenter)
     base = request(source) | dict(xaxis='real', yaxis='imag', spw='0:1~3^2')
@@ -150,10 +165,7 @@ def compare_polynomial_shift(root, native, vis, phasecenter, snapshots):
     compare_figure(work, native, options, expected, ('Polynomial FIELD', 'Real', 'Imag:corrected'))
     compare_control_markers(work, 'polynomial', options, base | dict(vis=str(shifted)))
     unchanged_columns(source, snapshots | {'SCAN_NUMBER': scans})
-    with opened(source / 'FIELD') as table:
-        assert table.getcell('NUM_POLY', 0) == 1
-        for name, values in coefficients.items():
-            np.testing.assert_array_equal(table.getcell(name, 0), values)
+    unchanged_polynomial_field(source, coefficients)
 
 
 def compare_reductions(root, native, vis, shifted, phasecenter):
@@ -180,20 +192,109 @@ def compare_reductions(root, native, vis, shifted, phasecenter):
         if name == 'time':
             # The materialized MS already contains averaged samples. Take
             # the request's averaging header from a public unshifted export.
-            unshifted = root / 'time-unshifted.casa.txt'
-            assert reference(**base, **time, expformat='txt', plotfile=str(unshifted)) is None
-            materialized = expected.read_text().splitlines(keepends=True)
-            headers = [line for line in unshifted.read_text().splitlines(keepends=True) if line.startswith('#')]
-            assert [line for line in materialized if line.startswith('#')] == [
-                line for line in headers if not line.startswith(('# channel average:', '# time average:'))
-            ]
-            expected.write_text(''.join(headers + [line for line in materialized if not line.startswith('#')]))
+            headers = time_average_headers(root, base | time, expected)
+            expected.write_text(''.join(headers) + ''.join(' '.join(point) + '\n' for point in rows(expected)))
         assert native(**options, expformat='txt', plotfile=str(actual)) is None
         assert compare_text(actual, expected) == count
         expected_channels = ['0', '1'] if name == 'channel' else ['0', '1', '3']
         assert [p[2] for p in rows(expected)] == expected_channels * (count // len(expected_channels))
         compare_figure(root, native, options, expected, (name, 'Real', 'Imag'))
         compare_control_markers(root, name, options, control)
+
+
+def time_average_headers(root, options, materialized):
+    unshifted = root / 'time-unshifted.casa.txt'
+    assert reference(**options, expformat='txt', plotfile=str(unshifted)) is None
+    headers = lambda path: [line for line in path.read_text().splitlines(keepends=True) if line.startswith('#')]
+    result = headers(unshifted)
+    assert headers(materialized) == [
+        line for line in result if not line.startswith(('# channel average:', '# time average:'))
+    ]
+    return result
+
+
+def compare_polynomial_time_chunks(root, native, phasecenter):
+    work = root / 'time-chunks'
+    work.mkdir()
+    source = work / 'columns.ms'
+    make_cal_ms(str(source), channels=4, stokes='XX')
+    casa.clearcal(str(source), addmodel=True)
+    with opened(source, True) as table:
+        _, channel, row = np.indices(table.getcol('DATA').shape)
+        table.putcol('DATA', (1 + channel + row / 256).astype(np.complex64))
+        table.putcol('FLAG', channel == 2)
+        table.putcol('FLAG_ROW', np.zeros(table.nrows(), dtype=bool))
+        row = np.arange(table.nrows())
+        table.putcol('UVW', np.array([-30 - row / 16, 42 + row / 8, 4 + row / 32]))
+        sigma = (1 + row % 7 / 8).astype(np.float32)[None, :]
+        table.putcol('SIGMA', sigma)
+        table.putcol('WEIGHT', 1.0 / sigma**2)
+        times = table.getcol('TIME')
+        field = table.getcol('FIELD_ID') == 0
+        epochs, integrations = np.unique(times[field], return_inverse=True)
+        start = epochs[0]
+        times[field] = start + np.array([0, 10, 25, 40, 43, 58])[integrations]
+        table.putcol('TIME', times)
+        table.putcol('TIME_CENTROID', times)
+        missing = field & (times == start + 25) & (table.getcol('ANTENNA1') == 0) & (table.getcol('ANTENNA2') == 2)
+        assert np.count_nonzero(missing) == 1
+    # Keep a gap on A0&A2 at the start of the middle chunk. The unaligned
+    # path would also include the late 58 s integration in the middle average.
+    vis = work / 'selected' / source.name
+    vis.parent.mkdir()
+    with opened(source) as table:
+        selection = table.selectrows(np.flatnonzero(~missing).tolist())
+        try:
+            selection.copy(str(vis), deep=True, valuecopy=True).done()
+        finally:
+            selection.done()
+    coefficients = write_polynomial_field(vis)
+    with opened(vis) as table:
+        snapshots = {name: table.getcol(name) for name in ('DATA', 'UVW', 'TIME', 'FLAG', 'FLAG_ROW', 'SIGMA', 'WEIGHT')}
+    base = request(vis) | dict(xaxis='real', yaxis='imag', ydatacolumn='data', spw='0', antenna='A0&A1;A0&A2')
+    shifted = materialize_iterator(
+        work / 'shifted', vis, phasecenter, datacolumn='DATA', spw='0', field=base['field'],
+        antenna=base['antenna'], timeaverage=True, timebin='20', timespan='state',
+    )
+    control = base | dict(vis=str(shifted))
+    time = base | dict(averagedata=True, avgtime='20')
+    options = time | MARKERS | dict(transform=True, phasecenter=phasecenter,
+                                   title='Polynomial time chunks', plotrange=[-5, 5, -5, 5])
+    expected, actual = (work / f'time-chunks.{engine}.txt' for engine in ('casa', 'native'))
+    assert reference(**control, expformat='txt', plotfile=str(expected)) is None
+    points = rows(expected)
+    assert len(points) == 18
+    assert [p[2] for p in points] == ['0', '1', '3'] * 6
+    assert [p[6] for p in points[::3]] == ['1', '2'] * 3
+    np.testing.assert_allclose([float(p[9]) - start for p in points[::3]],
+                               [5, 5, 34, 41.5, 58, 58], rtol=0, atol=.00051)
+    # MSCache records vb->time()(0) for each buffer. The materialized table
+    # stores each baseline's own centroid, including the later A0&A2 epoch.
+    for offset in (0, 6, 12):
+        for point in points[offset:offset + 6]:
+            point[9] = points[offset][9]
+    headers = time_average_headers(work, time, expected)
+    expected.write_text(''.join(headers) + ''.join(' '.join(point) + '\n' for point in points))
+    assert native(**options, expformat='txt', plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 18
+    compare_figure(work, native, options, expected, ('Polynomial time chunks', 'Real', 'Imag'))
+    compare_control_markers(work, 'time-chunks', options, control)
+    unchanged_columns(vis, snapshots)
+    unchanged_polynomial_field(vis, coefficients)
+
+
+def compare_scalar_noop(root, native, vis, shifted, phasecenter):
+    base = request(vis) | dict(xaxis='real', yaxis='imag', ydatacolumn='data', spw='0:0~3')
+    for name, reduction, count in (('scalar-raw', {}, 18), ('scalar-channel', dict(avgchannel='2'), 12)):
+        controls = base | reduction | dict(vis=str(shifted), averagedata=True, scalar=True)
+        options = controls | MARKERS | dict(vis=str(vis), transform=True, phasecenter=phasecenter,
+                                            title=name, plotrange=[-5, 5, -5, 5])
+        expected, actual = (root / f'{name}.{engine}.txt' for engine in ('casa', 'native'))
+        assert reference(**controls, expformat='txt', plotfile=str(expected)) is None
+        assert native(**options, expformat='txt', plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        compare_figure(root, native, options, expected, (name, 'Real', 'Imag'))
+        compare_control_markers(root, name, options, controls | dict(scalar=False))
 
 
 def compare_control_markers(root, name, options, control):

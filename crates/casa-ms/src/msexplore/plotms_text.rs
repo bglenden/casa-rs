@@ -173,6 +173,15 @@ fn write_header(
     } else {
         None
     };
+    if average.scalar
+        && average.avgtime.is_none()
+        && requested_channels.is_none()
+        && super::plotms_phasecenter::requested(task)?.is_some()
+    {
+        // PlotMS omits the header for a raw scalar no-op. A channel average
+        // still records the request even when it uses the vector reducer.
+        average.scalar = false;
+    }
     write_averaging_header(output, &average, requested_channels).map_err(io)?;
     if library.is_empty() {
         return Ok(());
