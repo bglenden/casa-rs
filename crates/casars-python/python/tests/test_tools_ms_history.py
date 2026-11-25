@@ -232,7 +232,14 @@ def test_ms_history_append_preserves_live_casa_reader(native_dataset):
     assert reader.getcell("MESSAGE", 0) == "seed"
     reader.unlock()
 
+    control = native_dataset / "HISTORY" / "table.dat"
+    manager = native_dataset / "HISTORY" / "table.f0"
+    control_inode = control.stat().st_ino
+    manager_inode = manager.stat().st_ino
+
     assert tools.ms().writehistory("native append", msname=path)
+    assert control.stat().st_ino != control_inode
+    assert manager.stat().st_ino == manager_inode
 
     assert reader.lock(write=False, nattempts=1)
     assert reader.getcol("MESSAGE").tolist() == ["seed", "native append"]

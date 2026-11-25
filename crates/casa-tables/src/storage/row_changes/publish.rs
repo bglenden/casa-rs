@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -125,11 +126,9 @@ impl StagedEdit<'_> {
     /// every target before changing any and restore the previous files if
     /// an ordinary I/O failure interrupts the update.
     pub(crate) fn publish(self) -> Result<(), StorageError> {
-        let staged = self.staged.path();
-        let mut files = fs::read_dir(staged)?.collect::<Result<Vec<_>, _>>()?;
+        let staging = self.staged.path();
+        let mut files = fs::read_dir(staging)?.collect::<Result<Vec<_>, _>>()?;
         files.sort_by_key(|file| file.file_name() == TABLE_CONTROL_FILE);
-        let backups = staged.join("originals");
-        fs::create_dir(&backups)?;
         let mut changes = Vec::with_capacity(self.extensions.len() + files.len());
         for extension in self.extensions {
             match extension {
@@ -165,15 +164,20 @@ impl StagedEdit<'_> {
             let staged = entry.path();
             let target = self.table.join(&name);
             let ssm_retained_end = self.ssm_retained_end.get(&name).copied();
+            // casacore reopens table.dat by name and publishes its own copy
+            // by rename, so readers can always open a complete descriptor.
+            let retain_manager = self.preserve_file_identity && name != TABLE_CONTROL_FILE;
+            let mut backup_name = OsString::from("original-");
+            backup_name.push(&name);
+            let backup = staging.join(backup_name);
             let original = match File::options()
-                .read(self.preserve_file_identity)
+                .read(retain_manager)
                 .write(true)
                 .open(&target)
             {
-                Ok(file) if self.preserve_file_identity => {
+                Ok(file) if retain_manager => {
                     // Retained casacore readers keep manager files open and
                     // resync through those handles after the lock changes.
-                    let backup = backups.join(&name);
                     fs::copy(&target, &backup)?;
                     changes.push(Update::Rewrite {
                         file,
@@ -184,7 +188,6 @@ impl StagedEdit<'_> {
                     continue;
                 }
                 Ok(file) => {
-                    let backup = backups.join(name);
                     fs::set_permissions(&staged, file.metadata()?.permissions())?;
                     fs::hard_link(&target, &backup)?;
                     Some(backup)
