@@ -264,6 +264,7 @@ def figures(root, vis, amplitude):
 
 
 def compare_independent_ordinates(root, native, vis, amplitude, bandpass, flagged):
+    from casars.tasks import TaskParameterError
     from plotms_ms_iterated_ordinates_oracle import compare_figures
 
     controls = dict(vis=str(vis), xaxis="channel", yaxis=["real", "real"],
@@ -304,7 +305,52 @@ def compare_independent_ordinates(root, native, vis, amplitude, bandpass, flagge
     assert clear[:24] == masked[:24], "Calibration changed the stored ordinate"
     assert [row[2:] for row in clear] == [row[2:] for row in masked]
     assert sum(a[1] != b[1] for a, b in zip(clear[24:], masked[24:], strict=True)) == 12
+    for name, options, message in (
+        ("overlay", dict(showatm=True), "independent ordinate columns"),
+        ("flagged-symbol", dict(customflaggedsymbol=[True, True],
+                               flaggedsymbolshape=["circle", "circle"]), "displaying flagged points"),
+    ):
+        path = root / f"calibrated-ordinate-{name}.txt"
+        try:
+            native(**(controls | options), plotfile=str(path), expformat="txt")
+        except TaskParameterError as error:
+            assert message in str(error) and "#1032" in str(error)
+        else:
+            raise AssertionError(f"PlotMS accepted calibrated ordinates with {name}")
+        assert not path.exists()
     verify_source(vis, before)
+
+
+def compare_independent_order(root, native, vis, amplitude, bandpass):
+    reordered = root / "ordinate-correlation.ms"
+    copy_ms(vis, reordered)
+    with opened(reordered, True) as table:
+        rows = np.flatnonzero((table.getcol("ANTENNA1") == 0) & (table.getcol("ANTENNA2") == 1))
+        first = int(rows[0])
+        assert not table.getcell("FLAG", first).any()
+        time = table.getcell("TIME", first)
+        table.putcell("FLAG_ROW", first, True)
+    before = snapshot(reordered)
+    controls = dict(vis=str(reordered), xaxis="channel", yaxis=["real", "real"],
+                    ydatacolumn=["data", "corrected"], antenna="A0&A1", spw="0:0~3",
+                    correlation="XX,YY", coloraxis="corr", showgui=False, expformat="txt",
+                    callib=[library_entry(amplitude), library_entry(bandpass, True)])
+    for name, changes, count in (
+        ("raw", {}, 192),
+        ("channel", dict(avgchannel="2"), 96),
+        ("scan", dict(avgchannel="2", iteraxis="scan", gridrows=2, exprange="all"), 96),
+    ):
+        options = controls | changes
+        expected, actual = (root / f"ordinate-correlation-{name}.{engine}.txt"
+                            for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        rows = [line.split() for line in expected.read_text().splitlines() if not line.startswith("#")]
+        assert [row[12] for row in rows[:4]] == ["XX", "YY", "XX", "YY"]
+        np.testing.assert_allclose([float(row[9]) for row in rows[:4]], time, rtol=0, atol=0.00051)
+        print(f"ordinate-correlation-{name}: {count} matching ordered coordinates", flush=True)
+    verify_source(reordered, before)
 
 
 def compare_independent_spectra(root, native, vis):
@@ -327,24 +373,33 @@ def compare_independent_spectra(root, native, vis):
         flags[0, 2:4] = True
         table.putcell("FLAG", first, flags)
     before = snapshot(vis)
-    controls = dict(vis=str(vis), xaxis="channel", yaxis=["real", "real"],
+    controls = dict(xaxis="channel", yaxis=["real", "real"],
                     ydatacolumn=["data", "corrected"], yaxislocation=["left", "right"],
                     antenna="A0&A1", spw="0:0~3", correlation="XX", avgchannel="2",
                     showgui=False, expformat="txt")
+    cases = [("False", vis, False, (1.06802, 13.0989)), ("True", vis, True, (1.06802, 10.8068))]
+    for column, corrected in (("WEIGHT_SPECTRUM", 31.0507), ("SIGMA_SPECTRUM", 12.2703)):
+        partial = vis.with_name(f"without-{column.lower()}.ms")
+        copy_ms(vis, partial)
+        with opened(partial, True) as table:
+            table.removecols([column])
+        cases.append((f"without-{column.lower()}", partial, True, (1.04923, corrected)))
     paired_rows = []
-    for calwt, corrected in ((False, 13.0989), (True, 10.8068)):
-        options = controls | dict(callib=library_entry(tsys, calwt))
-        stem = f"calibrated-ordinate-spectra-{calwt}"
+    for name, source, calwt, first_bin in cases:
+        start = snapshot(source)
+        options = controls | dict(vis=str(source), callib=library_entry(tsys, calwt))
+        stem = f"calibrated-ordinate-spectra-{name}"
         expected, actual = (root / f"{stem}.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**options, plotfile=str(expected)) is None
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == 46
         rows = [line.split() for line in expected.read_text().splitlines() if not line.startswith("#")]
         np.testing.assert_allclose([float(rows[0][1]), float(rows[23][1])],
-                                   [1.06802, corrected], rtol=1.2e-5)
+                                   first_bin, rtol=1.2e-5)
         assert [row[2:] for row in rows[:23]] == [row[2:] for row in rows[23:]]
         paired_rows.append(rows)
-        print(f"{stem}: 46 matching weighted coordinates with the flagged bin omitted", flush=True)
+        verify_source(source, start)
+        print(f"{stem}: 46 matching coordinates with the flagged bin omitted", flush=True)
     assert paired_rows[0][:23] == paired_rows[1][:23], "calwt changed the stored ordinate"
     verify_source(vis, before)
 
@@ -370,6 +425,7 @@ def main():
         with plotms_launcher(args.app_run):
             if args.only != "existing":
                 compare_independent_ordinates(root, native, vis, amplitude, bandpass, flagged)
+                compare_independent_order(root, native, vis, amplitude, bandpass)
                 spectral_dir = root / "ordinate-spectral"
                 spectral_dir.mkdir()
                 spectral = spectral_weight_fixture(spectral_dir, vis)

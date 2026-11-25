@@ -457,7 +457,7 @@ pub(crate) struct PlotWeights {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PreviewWeightSource {
     UnitFactors,
-    FromSigma,
+    FromSigma { channel_weighting: bool },
 }
 
 /// Errors returned while executing an apply plan.
@@ -595,8 +595,14 @@ pub(crate) fn evaluate_apply_rows(
 pub(crate) fn evaluate_plot_rows(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
+    channel_weighting: bool,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
-    evaluate_rows(ms, plan, false, PreviewWeightSource::FromSigma)
+    evaluate_rows(
+        ms,
+        plan,
+        false,
+        PreviewWeightSource::FromSigma { channel_weighting },
+    )
 }
 
 fn evaluate_rows(
@@ -654,9 +660,9 @@ fn for_each_apply_row(
     if !forward_model {
         columns.push(observed_column);
     }
-    let has_sigma_spectrum = if weight_source == PreviewWeightSource::FromSigma {
+    let first_row = plan.selected_rows.first().map(|row| row.row_index);
+    let has_sigma_spectrum = if matches!(weight_source, PreviewWeightSource::FromSigma { .. }) {
         columns.push("SIGMA");
-        let first_row = plan.selected_rows.first().map(|row| row.row_index);
         weights::has_spectrum(ms.main_table(), first_row, "SIGMA_SPECTRUM")?
     } else {
         false
@@ -664,6 +670,13 @@ fn for_each_apply_row(
     if has_sigma_spectrum {
         columns.push("SIGMA_SPECTRUM");
     }
+    let expand_sigma = matches!(
+        weight_source,
+        PreviewWeightSource::FromSigma {
+            channel_weighting: true
+        }
+    ) && !has_sigma_spectrum
+        && weights::has_spectrum(ms.main_table(), first_row, "WEIGHT_SPECTRUM")?;
     let read_error = |source| ApplyExecutionError::MutateMeasurementSet {
         path: ms_path.clone(),
         source: MsError::from(source),
@@ -749,9 +762,12 @@ fn for_each_apply_row(
         } else {
             data
         };
-        let plot_weights = sigma_slots
+        let mut plot_weights = sigma_slots
             .map(|slots| read_plot_weights(read, slots))
             .transpose()?;
+        if expand_sigma && let Some(weights) = &mut plot_weights {
+            weights.spectrum = Some(weights::broadcast_spectrum(&weights.scalar, data.shape())?);
+        }
         if !availability::available(row, plan) {
             if plan.apply_mode == ApplyMode::Trial {
                 continue;
@@ -790,7 +806,7 @@ fn for_each_apply_row(
                     .as_ref()
                     .and_then(|weights| weights.spectrum.as_ref()),
                 has_weight_spectrum: if plot_weights.is_some() {
-                    has_sigma_spectrum
+                    has_sigma_spectrum || expand_sigma
                 } else {
                     any_calwt
                 },

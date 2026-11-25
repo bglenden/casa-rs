@@ -186,8 +186,9 @@ pub fn task_front_end_with_plot_payload(
 }
 
 /// Load transient PlotMS calibration from the user's callibrary entries.
+/// The final argument requests channel weighting for independent ordinates.
 pub type PlotMsCalibrationLoader =
-    fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
+    fn(&MeasurementSet, &MsSelection, &[String], bool) -> Result<PlotMsCalibration, TaskFailure>;
 
 /// Iterator references for averaging virtual model cells. Both slot
 /// slices are indexed by input selection slot and contain slots in that same
@@ -281,7 +282,9 @@ fn run_task(
             })
             .transpose()?;
         let iterated_averaging = options.supports_averaged_ordinate_iteration();
-        let calibrated_ordinates = calibration.is_some() && options.supports_calibrated_ordinates();
+        let calibrated_ordinates = calibration.is_some()
+            && atmosphere.is_none()
+            && options.supports_calibrated_ordinates();
         if options.iteraxis.is_some()
             && options.y_axis2.is_some()
             && ((options.plotms_averaging_active() && !iterated_averaging)
@@ -330,7 +333,9 @@ fn run_task(
             .into_iter()
             .flatten()
             .any(MsAxis::is_row_identifier);
-        if calibration.is_none() && (columns.is_some() || row_identifier_axes) {
+        let uncalibrated_columns =
+            calibration.is_none() && (columns.is_some() || row_identifier_axes);
+        if uncalibrated_columns {
             if let Some(columns) = columns {
                 plotms_columns::check_averaging(
                     options.plotms_averaging_active(),
@@ -346,12 +351,16 @@ fn run_task(
                     columns,
                 )?;
             }
+        }
+        if uncalibrated_columns || calibrated_ordinates {
             let symbols = task.value("customflaggedsymbol");
             let ordinate_count =
                 1 + usize::from(options.y_axis2.is_some()) + options.additional_ordinates.len();
             if (0..ordinate_count)
                 .any(|index| super::calibration::figure::shows_flagged(symbols, index))
-                && !columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns))
+                && (calibrated_ordinates
+                    || !columns
+                        .is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
             {
                 return Err(TaskFailure::validation(
                     "displaying flagged points for this MeasurementSet column plot is pending #1032",
@@ -512,7 +521,9 @@ fn run_visibility_plot(
     let calibrated = calibration
         .as_ref()
         .map(|(load, _)| {
-            let mut input = load(&ms, &options.selection, library)?;
+            let channel_weighting = options.secondary_y_data_column.is_some()
+                && options.avgchannel.is_some_and(|width| width > 1);
+            let mut input = load(&ms, &options.selection, library, channel_weighting)?;
             input.x_data_column = options.x_data_column;
             Ok::<_, TaskFailure>(input)
         })

@@ -42,6 +42,7 @@ pub(super) fn write_export(
     write_header(&mut writer, task, &task.path("vis")?, library)?;
     let index = task.integer("plotindex")?;
     let verbose = task.flag("verbose")?;
+    let channel_major = library.is_empty() || ordinates.len() > 1;
     let mut metadata = Metadata::new(ms).map_err(io)?;
     metadata.averaged_baselines = task.flag("averagedata")? && task.flag("avgbaseline")?;
     match payload {
@@ -54,7 +55,7 @@ pub(super) fn write_export(
                 &plot.series,
                 ordinates,
                 verbose,
-                library.is_empty(),
+                channel_major,
             )
             .map_err(io)?;
             if let Some(curves) = overlays.first() {
@@ -80,7 +81,7 @@ pub(super) fn write_export(
                     &plot.series,
                     ordinates,
                     verbose,
-                    library.is_empty(),
+                    channel_major,
                 )
                 .map_err(io)?;
                 if let Some(curves) = overlays.get(panel) {
