@@ -296,6 +296,29 @@ pub(crate) enum AttachedFieldEphemeris {
 }
 
 impl AttachedFieldEphemeris {
+    pub(crate) fn distance_metres(&self, mjd: f64) -> MsResult<f64> {
+        let casacore_au = Unit::new("AU").expect("astronomical unit").val().factor;
+        match self {
+            Self::Inertial(series) => {
+                let sample = evaluate(series, mjd)
+                    .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+                let [x, y, z] = sample.geocentric_position_metres;
+                // MSFieldColumns::rho takes the length of the interpolated
+                // Cartesian position in casacore's astronomical units.
+                Ok(x.hypot(y).hypot(z) * (casacore_au / AU_METRES))
+            }
+            Self::Apparent(series) => series
+                .distance_au(mjd)
+                .map_err(|error| MsError::InvalidInput(error.to_string()))?
+                .map(|distance| distance * casacore_au)
+                .ok_or_else(|| {
+                    MsError::InvalidInput(format!(
+                        "MJD {mjd} is outside the apparent ephemeris interpolation range"
+                    ))
+                }),
+        }
+    }
+
     pub(crate) fn radial_velocity(
         &self,
         mjd: f64,
@@ -338,15 +361,11 @@ impl AttachedFieldEphemeris {
         offset: [f64; 2],
         exclude_last: bool,
     ) -> Result<MDirection, MsError> {
+        if exclude_last {
+            self.check_observation_epoch(mjd)?;
+        }
         match self {
-            Self::Inertial(series) => {
-                if exclude_last && series.times_mjd().last().is_some_and(|&last| mjd >= last) {
-                    return Err(MsError::InvalidInput(format!(
-                        "UTC MJD {mjd} is outside the ephemeris interpolation range"
-                    )));
-                }
-                reference_direction(series, mjd, offset)
-            }
+            Self::Inertial(series) => reference_direction(series, mjd, offset),
             Self::Apparent(series) => {
                 let sample = series
                     .direction_at(mjd)
@@ -362,6 +381,17 @@ impl AttachedFieldEphemeris {
                 )?)
             }
         }
+    }
+
+    pub(crate) fn check_observation_epoch(&self, mjd: f64) -> MsResult<()> {
+        if let Self::Inertial(series) = self
+            && series.times_mjd().last().is_some_and(|&last| mjd >= last)
+        {
+            return Err(MsError::InvalidInput(format!(
+                "UTC MJD {mjd} is outside the ephemeris interpolation range"
+            )));
+        }
+        Ok(())
     }
 }
 

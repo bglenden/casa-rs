@@ -380,6 +380,11 @@ pub enum MsAxis {
     Frequency,
     /// Velocity derived from spectral metadata.
     Velocity,
+    /// Radial velocity in km/s from the selected FIELD's attached ephemeris.
+    RadialVelocity,
+    /// Distance in kilometres from the attached ephemeris's reference point.
+    #[serde(rename = "rho")]
+    EphemerisDistance,
     /// UV distance `sqrt(u^2 + v^2)` in meters.
     UvDistance,
     /// U coordinate in meters.
@@ -478,6 +483,8 @@ impl MsAxis {
             Self::Channel => "channel",
             Self::Frequency => "frequency",
             Self::Velocity => "velocity",
+            Self::RadialVelocity => "radial_velocity",
+            Self::EphemerisDistance => "rho",
             Self::UvDistance => "uv_distance",
             Self::U => "u",
             Self::V => "v",
@@ -530,6 +537,8 @@ impl MsAxis {
             Self::Channel => "Channel",
             Self::Frequency => "Frequency",
             Self::Velocity => "Velocity",
+            Self::RadialVelocity => "Radial Velocity",
+            Self::EphemerisDistance => "Distance (rho)",
             Self::UvDistance => "UV Distance",
             Self::U => "U",
             Self::V => "V",
@@ -582,6 +591,8 @@ impl MsAxis {
             "chan" | "channel" => Ok(Self::Channel),
             "freq" | "frequency" => Ok(Self::Frequency),
             "velocity" | "vel" => Ok(Self::Velocity),
+            "radial velocity" | "radialvelocity" | "radial_velocity" => Ok(Self::RadialVelocity),
+            "distance (rho)" | "distance" | "rho" => Ok(Self::EphemerisDistance),
             "uvdist" | "uv_distance" | "uv-distance" => Ok(Self::UvDistance),
             "u" => Ok(Self::U),
             "v" => Ok(Self::V),
@@ -678,6 +689,10 @@ impl MsAxis {
             self,
             Self::AntennaAzimuth | Self::AntennaElevation | Self::AntennaParallacticAngle
         )
+    }
+
+    fn is_ephemeris(self) -> bool {
+        matches!(self, Self::RadialVelocity | Self::EphemerisDistance)
     }
 
     fn uses_channel_bins(self) -> bool {
@@ -1997,6 +2012,7 @@ impl MsPlotSpec {
                 && !y_axis.is_interval_or_wavelength()
                 && !y_axis.is_row_identifier()
                 && !y_axis.is_antenna_horizontal()
+                && !y_axis.is_ephemeris()
                 && !(pointing && (y_axis.is_pointing() || y_axis == MsAxis::Time))
             {
                 return Err(format!(
@@ -4300,14 +4316,28 @@ fn build_generic_visibility_scatter(
     {
         return Err("This PlotMS antenna horizontal axis combination is pending (#1032)".into());
     }
+    let ephemeris_ordinate = spec.y_axes.iter().copied().any(MsAxis::is_ephemeris);
+    if ephemeris_ordinate
+        && (calibration.is_none_or(|input| input.rows.is_some())
+            || !matches!(
+                (spec.x_axis, spec.y_axes.as_slice()),
+                (MsAxis::Channel, [MsAxis::RadialVelocity])
+                    | (MsAxis::Time, [MsAxis::EphemerisDistance])
+            )
+            || uses_extended_averaging(spec)
+            || spec.averaging.avgchannel.is_some_and(|width| width > 1)
+            || spec.iteration.iteraxis.is_some())
+    {
+        return Err("This PlotMS ephemeris axis combination is pending (#1032)".into());
+    }
     let metadata_pair = if pointing.is_some() {
         Some(plotms_ordinates::PointDimensions {
             channel: false,
             baseline: true,
         })
-    } else if array_horizontal {
+    } else if array_horizontal || ephemeris_ordinate {
         Some(plotms_ordinates::PointDimensions {
-            channel: true,
+            channel: spec.x_axis == MsAxis::Channel,
             baseline: false,
         })
     } else if needs_row_axes {
@@ -4373,6 +4403,7 @@ fn build_generic_visibility_scatter(
     let use_iterator_order = needs_row_axes
         || array_horizontal
         || antenna_horizontal
+        || ephemeris_ordinate
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
@@ -4545,6 +4576,7 @@ fn build_generic_visibility_scatter(
         VisibilityScatterTiming::checkpoint("load_aux_columns", &mut checkpoint_started);
     }
     let derived_engine = if antenna_horizontal
+        || ephemeris_ordinate
         || spec.x_axis.uses_derived_geometry()
         || spec
             .y_axes
@@ -4557,21 +4589,29 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
-    let array_geometry_axis = if array_horizontal {
+    if ephemeris_ordinate
+        && !derived_engine.as_ref().is_some_and(|engine| {
+            (0..field.row_count()).any(|field_id| engine.field_moves(field_id))
+        })
+    {
+        return Err("ephemeris data is not available for this MeasurementSet".into());
+    }
+    let buffer_geometry_axis = if array_horizontal || ephemeris_ordinate {
         Some(spec.y_axis())
     } else if plotms_row_axes::uses_mixed_row_geometry(spec) {
         Some(MsAxis::Elevation)
     } else {
         None
     };
-    let mean_antenna_position = array_geometry_axis
+    let mean_antenna_position = buffer_geometry_axis
+        .filter(|axis| axis.uses_derived_geometry())
         .map(|_| plotms_row_axes::mean_antenna_position(ms))
         .transpose()?;
     let antenna_axes = antenna_horizontal
         .then(|| plotms_row_axes::AntennaAxes::read(ms, spec.y_axis()))
         .transpose()?;
     let geometry_dedup_required = !use_ordinate_masks
-        && array_geometry_axis.is_none()
+        && buffer_geometry_axis.is_none()
         && (spec.x_axis.uses_derived_geometry()
             || spec
                 .y_axes
@@ -4706,7 +4746,7 @@ fn build_generic_visibility_scatter(
         show_flagged.then(|| ("flagged".into(), "Flagged".into(), "flagged".into()));
     let mut ordinate_points = (use_ordinate_masks || metadata_pair.is_some())
         .then(plotms_ordinates::CollapsedPointMask::default);
-    let mut array_geometry_value = None;
+    let mut buffer_geometry_value = None;
     let antenna_visits = antenna_axes
         .as_ref()
         .map(|axes| axes.visits(&buffer_starts));
@@ -4937,18 +4977,22 @@ fn build_generic_visibility_scatter(
             uvw: row_uvw_value,
             observatory_geometry: use_ordinate_masks,
         };
-        if let Some((axis, position)) = array_geometry_axis.zip(mean_antenna_position.as_ref())
+        if let Some(axis) = buffer_geometry_axis
             && buffer_starts[row_slot]
         {
-            array_geometry_value = Some(plotms_row_axes::array_horizontal_value(
-                derived_engine
-                    .as_ref()
-                    .expect("array horizontal geometry engine"),
-                axis,
-                row_time_value,
-                field_id_value,
-                position.clone(),
-            )?);
+            let engine = derived_engine.as_ref().expect("buffer geometry engine");
+            buffer_geometry_value = Some(match &mean_antenna_position {
+                Some(position) => plotms_row_axes::array_horizontal_value(
+                    engine,
+                    axis,
+                    row_time_value,
+                    field_id_value,
+                    position.clone(),
+                )?,
+                None => {
+                    plotms_row_axes::ephemeris_value(engine, axis, row_time_value, field_id_value)?
+                }
+            });
         }
         let antenna_geometry = antenna_axes
             .as_ref()
@@ -5116,8 +5160,8 @@ fn build_generic_visibility_scatter(
                     if antenna_horizontal && axis == spec.y_axis() {
                         return Ok(antenna_geometry);
                     }
-                    if array_geometry_axis == Some(axis) {
-                        return Ok(array_geometry_value);
+                    if buffer_geometry_axis == Some(axis) {
+                        return Ok(buffer_geometry_value);
                     }
                     if let Some(values) = pointing_values
                         && let Some(value) = values[axis_slot]
@@ -5378,6 +5422,7 @@ fn build_generic_visibility_scatter(
                 if needs_row_axes
                     || array_horizontal
                     || antenna_horizontal
+                    || ephemeris_ordinate
                     || pointing.is_some()
                     || raw_symbols.is_some()
                     || phase_shift.is_some()
@@ -7729,6 +7774,8 @@ fn axis_label(axis: MsAxis) -> String {
         MsAxis::Channel => "Channel".to_string(),
         MsAxis::Frequency => "Frequency (Hz)".to_string(),
         MsAxis::Velocity => "Velocity (km/s)".to_string(),
+        MsAxis::RadialVelocity => "Radial Velocity (km/s)".to_string(),
+        MsAxis::EphemerisDistance => "Distance (rho) (km)".to_string(),
         MsAxis::Azimuth => "Azimuth (deg)".to_string(),
         MsAxis::Elevation => "Elevation (deg)".to_string(),
         MsAxis::HourAngle => "Hour Angle (hours)".to_string(),

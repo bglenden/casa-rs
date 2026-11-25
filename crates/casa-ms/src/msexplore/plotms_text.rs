@@ -415,6 +415,7 @@ pub(super) fn name(axis: MsAxis) -> &'static str {
         MsAxis::Channel => "Channel",
         MsAxis::Frequency => "Frequency",
         MsAxis::Velocity => "Velocity",
+        MsAxis::RadialVelocity | MsAxis::EphemerisDistance => axis.display_name(),
         MsAxis::Scan => "Scan",
         MsAxis::Field => "Field",
         MsAxis::SpectralWindow => "Spw",

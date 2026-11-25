@@ -50,7 +50,7 @@ def rows(path):
     return [line.split() for line in path.read_text().splitlines() if not line.startswith("#")]
 
 
-def compare_figure(root, native, controls, expected, labels):
+def compare_figure(root, native, controls, expected, labels, *, reference_task=reference):
     from casars import _plot_document
 
     capture = []
@@ -66,7 +66,7 @@ def compare_figure(root, native, controls, expected, labels):
     for output in outputs:
         output.parent.mkdir(exist_ok=True)
     figure = dict(controls, expformat="png", width=500, height=360, dpi=100)
-    assert reference(**figure, plotfile=str(outputs[0])) is None
+    assert reference_task(**figure, plotfile=str(outputs[0])) is None
     with patch.object(_plot_document, "render_document", record):
         assert native(**figure, plotfile=str(outputs[1])) is None
     [(title, xlabel, ylabel, points, xlim, ylim)] = capture

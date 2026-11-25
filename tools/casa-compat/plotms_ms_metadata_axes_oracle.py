@@ -502,10 +502,39 @@ def compare_same_epoch_antenna_geometry(root, native):
           "CASA reuses the first field's coordinates in a joint selection", flush=True)
 
 
-def compare_ephemeris_axes(root, native):
+def casa_ephemeris_export(app_run, options, *, expect_refusal=False):
+    import json
+    import subprocess
+    import sys
+
+    # A pinned CASA PlotMS session can retain stale ephemeris state across
+    # exports. Run each reference invocation in a fresh session.
+    command = """
+import json
+from pathlib import Path
+import sys
+from grpc import RpcError, StatusCode
+sys.path.insert(0, sys.argv[1])
+from plotms_calibration_oracle import plotms_launcher, reference
+with plotms_launcher(Path(sys.argv[2]) if sys.argv[2] else None):
+    try:
+        assert reference(**json.loads(sys.argv[3])) is None
+    except RpcError as error:
+        assert sys.argv[4] == "refuse" and error.code() == StatusCode.INVALID_ARGUMENT
+    else:
+        assert sys.argv[4] == "export"
+"""
+    subprocess.run([sys.executable, "-c", command, str(Path(__file__).resolve().parent),
+                    str(app_run.resolve()) if app_run else "", json.dumps(options),
+                    "refuse" if expect_refusal else "export"], check=True)
+
+
+def compare_ephemeris_axes(root, native, app_run):
     from casars.tasks import TaskExecutionError, TaskParameterError
     from gaincal_oracle import ephemeris_observation
-    from grpc import RpcError, StatusCode
+
+    def fresh_reference(**options):
+        return casa_ephemeris_export(app_run, options)
 
     work = root / "ephemeris-axes"
     work.mkdir()
@@ -526,7 +555,7 @@ def compare_ephemeris_axes(root, native):
             xaxis=x, yaxis=y, antenna="A0&A1;A0&A2", spw="0:1~3", title=title, expformat="txt",
         )
         expected, actual = (case / f"{name}.{engine}.txt" for engine in ("casa", "native"))
-        assert reference(**options, plotfile=str(expected)) is None
+        assert fresh_reference(**options, plotfile=str(expected)) is None
         selected = rows(expected)
         assert len(selected) == count
         assert len({point[9] for point in selected}) == 6
@@ -544,21 +573,20 @@ def compare_ephemeris_axes(root, native):
         np.testing.assert_allclose(actual_values, expected_values, rtol=0, atol=tolerance)
         assert np.unique(actual_values).size == np.unique(expected_values).size
         print(f"{name}: {count} matching ephemeris coordinates and metadata", flush=True)
-        compare_figure(case, native, options, expected, (title, xlabel, ylabel))
+        compare_figure(case, native, options, expected, (title, xlabel, ylabel),
+                       reference_task=fresh_reference)
         verify_source(vis, before)
 
     fixed = controls(source) | dict(xaxis="channel", yaxis="Radial Velocity", expformat="txt")
-    for engine, plotms in (("casa", reference), ("native", native)):
-        output = work / f"fixed-field.{engine}.txt"
-        try:
-            plotms(**fixed, plotfile=str(output))
-        except RpcError as error:
-            assert engine == "casa" and error.code() == StatusCode.INVALID_ARGUMENT
-        except (TaskExecutionError, TaskParameterError) as error:
-            assert engine == "native" and "ephemeris data is not available" in str(error)
-        else:
-            raise AssertionError(f"{engine} exported a moving ephemeris axis for a fixed MS")
-        assert not output.exists()
+    expected, actual = (work / f"fixed-field.{engine}.txt" for engine in ("casa", "native"))
+    casa_ephemeris_export(app_run, fixed | dict(plotfile=str(expected)), expect_refusal=True)
+    try:
+        native(**fixed, plotfile=str(actual))
+    except (TaskExecutionError, TaskParameterError) as error:
+        assert "ephemeris data is not available" in str(error)
+    else:
+        raise AssertionError("Native exported a moving ephemeris axis for a fixed MS")
+    assert not expected.exists() and not actual.exists()
     print("fixed-field: both tasks require ephemeris data before export", flush=True)
 
 
@@ -1248,7 +1276,7 @@ def main():
         if args.only in (None, "antenna-horizontal-same-epoch"):
             compare_same_epoch_antenna_geometry(root, native)
         if args.only in (None, "ephemeris-axes"):
-            compare_ephemeris_axes(root, native)
+            compare_ephemeris_axes(root, native, args.app_run)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
