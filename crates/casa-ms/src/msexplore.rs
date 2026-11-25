@@ -5933,7 +5933,10 @@ fn build_generic_visibility_scatter_with_averaging(
     let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
     let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
-    let selected_uvw = selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?;
+    let selected_uvw = (spec.x_axis.uses_uvw()
+        || spec.y_axes.iter().copied().any(MsAxis::uses_uvw))
+    .then(|| selected_uvw_values(ms.main_table(), "UVW", &row_numbers))
+    .transpose()?;
     let derived_engine = if spec.x_axis.uses_derived_geometry()
         || spec
             .y_axes
@@ -6351,7 +6354,9 @@ fn build_generic_visibility_scatter_with_averaging(
 
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
-        let row_uvw_value = selected_uvw[row_slot];
+        let row_uvw_value = selected_uvw
+            .as_ref()
+            .map_or([0.0; 3], |values| values[row_slot]);
         let (time_group, representative_slot) = time_bins.map_or((None, row_slot), |bins| {
             let group = bins.group(row_slot);
             (Some(group), bins.first_row_slot(group))
