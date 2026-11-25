@@ -2973,6 +2973,13 @@ pub(crate) fn build_calibrated_plotms_payload(
     calibration: &PlotMsCalibration,
     secondary_y_data_column: Option<MsDataColumn>,
 ) -> Result<MsPlotPayload, String> {
+    if spec
+        .plots
+        .iter()
+        .any(plotms_row_axes::uses_time_row_averaging)
+    {
+        return Err("averaged PlotMS Row coordinates with a callibrary are pending (#1032)".into());
+    }
     let input = PlotMsInput {
         row_order: &calibration.row_order,
         starts_visibility_buffer: &[],
@@ -3019,8 +3026,10 @@ fn build_uncalibrated_plotms_payload(
     let vector_span_models = needs_model_references
         && !spw_average
         && plot.is_some_and(|plot| plot.averaging.avgscan || plot.averaging.avgfield);
+    let averaged_row_numbers = plot.is_some_and(plotms_row_axes::uses_time_row_averaging);
     let direct_time_projection = !extended_derived
         && (vector_span_models
+            || averaged_row_numbers
             || plot.is_some_and(|plot| {
                 plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
             }));
@@ -3065,6 +3074,7 @@ fn build_uncalibrated_plotms_payload(
                     || direct_time_projection,
                 time_spw,
                 needs_model_references,
+                averaged_row_numbers,
             )
             .map_err(|error| error.to_string())
         })
@@ -5538,6 +5548,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let visibility_columns =
         plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
     let time_bins = calibration.and_then(|input| input.time_bins);
+    let averaged_row_numbers = time_bins.and_then(PlotTimeGroups::row_numbers);
     let extended_derived = calibration.is_some_and(|input| input.extended_derived);
     let weighted_time_uvw = time_bins.is_some() && plotms_columns::uses_weighted_time_uvw(spec);
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
@@ -5584,6 +5595,7 @@ fn build_generic_visibility_scatter_with_averaging(
         && time_bins.is_some()
         && !extended_derived
         && (vector_span_models
+            || averaged_row_numbers.is_some()
             || plotms_columns::uses_direct_vector_time_projection(
                 spec,
                 calibration.and_then(|input| input.x_data_column),
@@ -6578,6 +6590,9 @@ fn build_generic_visibility_scatter_with_averaging(
                             push_time_interval_sample(accumulator, row_interval_value);
                         }
                         match spec.x_axis {
+                            MsAxis::Row if averaged_row_numbers.is_some() => {
+                                series_used = true;
+                            }
                             MsAxis::Time
                                 if calibration.is_some() && spec.averaging.avgtime.is_some() =>
                             {
@@ -6950,6 +6965,8 @@ fn build_generic_visibility_scatter_with_averaging(
                         })
                     } else if axis == MsAxis::Time && (time_bins.is_some() || scalar_intervals) {
                         planned_time
+                    } else if axis == MsAxis::Row {
+                        Some(*averaged_row_numbers?.get(group?)? as f64)
                     } else if weighted_time_uvw && axis.uses_uvw_metres() {
                         group
                             .and_then(|group| time_uvws.as_ref()?.get(&group))
