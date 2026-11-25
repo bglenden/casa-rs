@@ -80,6 +80,9 @@ pub use convolution::{SpectrumConvolution, convolve_spectra, transform_baseline_
 use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 pub use input_view::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use main_arrays::MainArrayBlock;
+pub use regrid::{
+    ToolGridPhaseCentre, ToolSpectralWindow, tool_channel_frequencies, tool_spectral_grid_frame,
+};
 pub(crate) use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;
 pub use single_dish_polarization::{SingleDishPolarizationAverage, ensure_stokes_i_polarization};

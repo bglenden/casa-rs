@@ -12175,3 +12175,11 @@ channels with 0.75 MHz effective bandwidth and 1.2 MHz resolution,
 and a 3 MHz total for two bins. Casa-rs writes the summed 1.5 MHz effective
 bandwidth per bin, retains 2.2 MHz resolution, and reports the same 3 MHz
 total (#1030).
+
+## Frequency-grid verbosity can change the observatory position
+
+CASA 6.7.6.14 `ms.cvelfreqs()` reads the observatory position in both modes
+but assigns it to the frequency-conversion frame only with `verbose=True`.
+For a TOPO to BARY conversion this changes the computed grid when logging
+is disabled. Casa-rs uses the observatory position with either verbosity
+setting (#1030).

@@ -5,8 +5,12 @@ mod axis;
 mod interpolate;
 mod partition;
 mod shift;
+mod tool_grid;
 
 pub(super) use partition::{Partitions, write_spectrum};
+pub use tool_grid::{
+    ToolGridPhaseCentre, ToolSpectralWindow, tool_channel_frequencies, tool_spectral_grid_frame,
+};
 
 use std::collections::BTreeMap;
 

@@ -148,7 +148,7 @@ const METHODS: &[Method] = &[
             param("verbose", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
     method("done", &[], R::Bool, Yes),
     method(
