@@ -83,9 +83,8 @@ def check_pinned(path, expected):
                    for index in range(len(expected))]
         fields = tuple(ocr(image, region) for region in regions)
         assert fields == expected, (path, fields, expected)
-        last_header = regions[-1][3]
-        assert TITLE in ocr(image, (0, last_header + 11, WIDTH, last_header + 61)), path
-        gap = np.asarray(image.crop((0, last_header + 2, WIDTH, last_header + 23)).convert("RGB"))
+        assert TITLE in ocr(image, (0, 100, WIDTH, 150)), path
+        gap = np.asarray(image.crop((0, 91, WIDTH, 112)).convert("RGB"))
         assert np.all(gap == 255), path
 
 
