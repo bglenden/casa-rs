@@ -239,6 +239,7 @@ impl TimeAverage {
             self.seconds,
             self.max_uvw_distance,
             &[0],
+            None,
         ))
     }
 }

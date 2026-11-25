@@ -42,15 +42,17 @@ pub(crate) struct TimeGroup {
     pub(crate) first: TimeSample,
     pub(crate) rows: Vec<TimeInputRow>,
     pub(crate) row_in_chunk: usize,
+    input_chunk_first: usize,
     completed_before: Option<usize>,
 }
 
 impl TimeGroup {
-    fn new(first: TimeSample, row: TimeInputRow) -> Self {
+    fn new(first: TimeSample, row: TimeInputRow, input_chunk_first: usize) -> Self {
         Self {
             first,
             rows: vec![row],
             row_in_chunk: 0,
+            input_chunk_first,
             completed_before: None,
         }
     }
@@ -78,6 +80,7 @@ pub(super) fn plan(
     selected: &[ResolvedMsSelectionRow],
     options: TimeAverageOptions,
     order: MainRowOrder,
+    chunk_interval: Option<f64>,
 ) -> Result<Vec<TimeGroup>, MsTransformError> {
     let input_path = input.path().unwrap_or_else(|| Path::new("<memory>"));
     let table_error = |source| MsTransformError::MutateMeasurementSet {
@@ -181,6 +184,7 @@ pub(super) fn plan(
         options.interval_seconds,
         options.max_uvw_distance,
         &spectral_windows,
+        chunk_interval,
     ))
 }
 
@@ -201,7 +205,7 @@ pub(crate) struct PlotTimeGroups {
     row_numbers: Option<Vec<usize>>,
     buffers: Vec<Range<usize>>,
     input_buffer_first_slots: Vec<usize>,
-    model_phase_reference_slots: Option<Vec<usize>>,
+    phase_reference_slots: Option<Vec<usize>>,
 }
 
 impl PlotTimeGroups {
@@ -243,8 +247,8 @@ impl PlotTimeGroups {
     }
 
     /// The first selected row of each input chunk supplies its phase center.
-    pub(crate) fn model_phase_reference_slots(&self) -> Option<&[usize]> {
-        self.model_phase_reference_slots.as_deref()
+    pub(crate) fn phase_reference_slots(&self) -> Option<&[usize]> {
+        self.phase_reference_slots.as_deref()
     }
 }
 
@@ -255,7 +259,7 @@ pub(crate) fn selected_plot_time_groups(
     options: TimeAverageOptions,
     collect_buffers: bool,
     combine_spectral_windows: bool,
-    collect_model_phase_references: bool,
+    phase_references: PlotTimePhaseReferences,
     collect_row_numbers: bool,
 ) -> Result<PlotTimeGroups, MsTransformError> {
     let order = if combine_spectral_windows {
@@ -263,7 +267,10 @@ pub(crate) fn selected_plot_time_groups(
     } else {
         MainRowOrder::Transform
     };
-    let groups = plan(ms, rows, options, order)?;
+    let chunk_interval = (phase_references == PlotTimePhaseReferences::TimeAveragedShift)
+        .then_some(options.interval_seconds);
+    let groups = plan(ms, rows, options, order, chunk_interval)?;
+    let collect_phase_references = phase_references != PlotTimePhaseReferences::None;
     let buffers = if collect_buffers {
         plot_time_buffers(&groups)
     } else {
@@ -278,10 +285,11 @@ pub(crate) fn selected_plot_time_groups(
     let mut first_row_slots = Vec::with_capacity(groups.len());
     let mut input_buffer_first_slots = vec![0; if collect_buffers { rows.len() } else { 0 }];
     let mut row_numbers = collect_row_numbers.then(|| Vec::with_capacity(groups.len()));
-    let mut model_phase_reference_slots =
-        collect_model_phase_references.then(|| vec![0; rows.len()]);
+    let mut phase_reference_slots = collect_phase_references.then(|| vec![0; rows.len()]);
     let mut chunk_heads = BTreeMap::<TimeChunk, TimeSample>::new();
-    if collect_model_phase_references {
+    if collect_phase_references {
+        // AveragingTvi2 retains the phase-center cache across the time
+        // boundaries inside an iterator partition.
         for group in &groups {
             let first = group.first;
             chunk_heads
@@ -305,16 +313,14 @@ pub(crate) fn selected_plot_time_groups(
             numbers.push(group.row_in_chunk);
         }
         let phase_reference =
-            collect_model_phase_references.then(|| row_slots[&chunk_heads[&group.first.chunk].row]);
+            collect_phase_references.then(|| row_slots[&chunk_heads[&group.first.chunk].row]);
         for row in group.rows {
             let slot = row_slots[&row.physical];
             group_by_row_slot[slot] = index;
             if collect_buffers {
                 input_buffer_first_slots[slot] = row_slots[&row.buffer_first];
             }
-            if let (Some(slots), Some(reference)) =
-                (&mut model_phase_reference_slots, phase_reference)
-            {
+            if let (Some(slots), Some(reference)) = (&mut phase_reference_slots, phase_reference) {
                 slots[slot] = reference;
             }
         }
@@ -325,15 +331,24 @@ pub(crate) fn selected_plot_time_groups(
         row_numbers,
         buffers,
         input_buffer_first_slots,
-        model_phase_reference_slots,
+        phase_reference_slots,
     })
+}
+
+/// Select the phase-reference metadata and input time chunking used by PlotMS.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlotTimePhaseReferences {
+    None,
+    VirtualModel,
+    TimeAveragedShift,
 }
 
 fn plot_time_buffers(groups: &[TimeGroup]) -> Vec<Range<usize>> {
     let mut offset = 0;
     groups
         .chunk_by(|left, right| {
-            left.first.chunk == right.first.chunk && left.completed_before == right.completed_before
+            left.input_chunk_first == right.input_chunk_first
+                && left.completed_before == right.completed_before
         })
         .map(|buffer| {
             let start = offset;
@@ -348,6 +363,7 @@ pub(crate) fn group_baselines(
     timebin: f64,
     max_uvw_distance: f64,
     spectral_windows: &[i32],
+    chunk_interval: Option<f64>,
 ) -> Vec<TimeGroup> {
     samples.sort_unstable_by(|left, right| {
         left.chunk
@@ -364,13 +380,18 @@ pub(crate) fn group_baselines(
     let mut finished = Vec::new();
     let mut baselines = BTreeMap::<([i32; 2], i32), usize>::new();
     let mut active: Vec<TimeGroup> = Vec::new();
-    let mut chunk = None;
+    let mut chunk_first: Option<TimeSample> = None;
     let mut buffer_start: Option<TimeSample> = None;
     for sample in samples {
-        if chunk != Some(sample.chunk) {
+        if chunk_first.is_none_or(|first| {
+            first.chunk != sample.chunk
+                // MSInterval starts each time chunk at its first timestamp less 0.01 s.
+                || chunk_interval.is_some_and(|width| sample.time - (first.time - 0.01) >= width)
+        }) {
             finished.append(&mut active);
             baselines.clear();
-            chunk = Some(sample.chunk);
+            chunk_first = Some(sample);
+            buffer_start = None;
         }
         let first = buffer_start
             .filter(|start| start.chunk == sample.chunk && start.time == sample.time)
@@ -389,10 +410,14 @@ pub(crate) fn group_baselines(
         let slot = *baselines
             .entry((sample.antenna_pair, spw))
             .or_insert(active.len());
+        let input_chunk_first = chunk_first.expect("input time chunk").row;
         if slot == active.len() {
-            active.push(TimeGroup::new(sample, row));
+            active.push(TimeGroup::new(sample, row, input_chunk_first));
         } else if active[slot].exceeds(&sample, max_time, max_uvw_squared) {
-            let mut complete = std::mem::replace(&mut active[slot], TimeGroup::new(sample, row));
+            let mut complete = std::mem::replace(
+                &mut active[slot],
+                TimeGroup::new(sample, row, input_chunk_first),
+            );
             complete.completed_before = Some(first.row);
             finished.push(complete);
         } else {
@@ -403,8 +428,8 @@ pub(crate) fn group_baselines(
     let mut previous = None;
     let mut row = 0;
     for group in &mut finished {
-        if previous != Some(group.first.chunk) {
-            previous = Some(group.first.chunk);
+        if previous != Some(group.input_chunk_first) {
+            previous = Some(group.input_chunk_first);
             row = 0;
         }
         group.row_in_chunk = row;

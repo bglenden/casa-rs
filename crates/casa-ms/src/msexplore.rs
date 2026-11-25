@@ -76,7 +76,9 @@ use crate::spectral_selection::{
 use crate::subtables::SubTable;
 use crate::subtables::data_description::MsDataDescription;
 use crate::subtables::polarization::MsPolarization;
-use crate::transform::{PlotTimeGroups, TimeAverageOptions, TimeUvwAverage, WeightKind};
+use crate::transform::{
+    PlotTimeGroups, PlotTimePhaseReferences, TimeAverageOptions, TimeUvwAverage, WeightKind,
+};
 use crate::{MeasurementSet, MeasurementSetSummaryOutputFormat, MsSelection};
 
 pub use plotms_spw::MsScatterPlotMsAverageSpw;
@@ -3131,8 +3133,11 @@ fn build_uncalibrated_plotms_payload(
         && !spw_average
         && plot.is_some_and(|plot| plot.averaging.avgscan || plot.averaging.avgfield);
     let averaged_row_numbers = plot.is_some_and(plotms_row_axes::uses_time_row_averaging);
+    let time_phase_shift =
+        columns.phasecenter.is_some() && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
     let direct_time_projection = !extended_derived
-        && (vector_span_models
+        && (time_phase_shift
+            || vector_span_models
             || averaged_row_numbers
             || plot.is_some_and(plotms_columns::uses_averaged_geometry_coordinates)
             || plot.is_some_and(plotms_columns::uses_spectral_reporting_time_grid)
@@ -3184,7 +3189,13 @@ fn build_uncalibrated_plotms_payload(
                     || extended_derived
                     || direct_time_projection,
                 time_spw,
-                needs_model_references,
+                if time_phase_shift {
+                    PlotTimePhaseReferences::TimeAveragedShift
+                } else if needs_model_references {
+                    PlotTimePhaseReferences::VirtualModel
+                } else {
+                    PlotTimePhaseReferences::None
+                },
                 averaged_row_numbers,
             )
             .map_err(|error| error.to_string())
@@ -3254,7 +3265,7 @@ fn build_uncalibrated_plotms_payload(
         .as_ref()
         .and_then(|groups| {
             Some(cli::PlotMsModelReferences {
-                phase_slots: groups.model_phase_reference_slots()?,
+                phase_slots: groups.phase_reference_slots()?,
                 recipe_slots: groups.input_buffer_first_slots(),
                 spectral_windows,
             })
@@ -4429,7 +4440,7 @@ fn build_generic_visibility_scatter(
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
     let mut phase_shift = calibration
         .and_then(|input| input.phasecenter.as_ref())
-        .map(plotms_phasecenter::PhaseCenterShift::new);
+        .map(|target| plotms_phasecenter::PhaseCenterShift::new(ms, target));
     let channel_derived = calibration.is_some_and(|input| {
         input.rows.is_none() && plotms_columns::uses_channel_derived(spec, input.x_data_column)
     });
@@ -4468,25 +4479,30 @@ fn build_generic_visibility_scatter(
                     .iter()
                     .copied()
                     .any(MsAxis::is_interval_or_wavelength));
-    let (row_numbers, buffer_starts) = if use_iterator_order {
+    let (row_numbers, buffer_starts, phase_reference_rows) = if use_iterator_order {
         let descriptions = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
         let ordered = crate::transform::selected_plotms_integration_order(
             ms,
             row_numbers.into_iter().zip(descriptions),
             false,
-            false,
+            phase_shift.is_some(),
         )
         .map_err(|error| error.to_string())?;
-        (ordered.rows, ordered.starts_visibility_buffer)
+        (
+            ordered.rows,
+            ordered.starts_visibility_buffer,
+            ordered.phase_reference_rows,
+        )
     } else {
-        (row_numbers, Vec::new())
+        (row_numbers, Vec::new(), Vec::new())
     };
     let selected_row_count = row_numbers.len();
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("resolve_selected_rows", &mut checkpoint_started);
     }
 
-    let needs_spectral_coordinates = spec.x_axis.uses_spectral_coordinates()
+    let needs_spectral_coordinates = (phase_shift.is_some() && spec.transforms.freqframe.is_some())
+        || spec.x_axis.uses_spectral_coordinates()
         || spec
             .y_axes
             .iter()
@@ -4812,7 +4828,13 @@ fn build_generic_visibility_scatter(
         .into_iter()
         .flatten()
         .chain((0..ordinary_rows).map(|row_slot| (row_slot, None)));
+    let mut phase_reference_time = 0.0;
     for (visit_index, (row_slot, antenna_visit)) in visits.enumerate() {
+        // The visibility iterator uses the first selected epoch of a chunk
+        // for a polynomial FIELD direction throughout that chunk.
+        if phase_reference_rows.get(row_slot) == row_numbers.get(row_slot) {
+            phase_reference_time = selected_times[row_slot];
+        }
         if let Some(mask) = &mut ordinate_points {
             mask.begin_row(row_slot, buffer_starts[row_slot]);
         }
@@ -4870,6 +4892,7 @@ fn build_generic_visibility_scatter(
                 ms,
                 field_id_value,
                 spw_row,
+                phase_reference_time,
                 selected_uvw[row_slot],
                 &mut visibility_grids,
             )?
@@ -5844,10 +5867,14 @@ fn build_generic_visibility_scatter_with_averaging(
     let visibility_columns =
         plotms_ordinates::VisibilityColumns::prepare(ms, spec, &row_numbers, calibration)?;
     let time_bins = calibration.and_then(|input| input.time_bins);
+    let mut phase_shift = calibration
+        .and_then(|input| input.phasecenter.as_ref())
+        .map(|target| plotms_phasecenter::PhaseCenterShift::new(ms, target));
     let averaged_row_numbers = time_bins.and_then(PlotTimeGroups::row_numbers);
     let extended_derived = calibration.is_some_and(|input| input.extended_derived);
     let weighted_time_uvw = time_bins.is_some()
-        && (plotms_columns::uses_weighted_time_uvw(spec)
+        && (phase_shift.is_some()
+            || plotms_columns::uses_weighted_time_uvw(spec)
             || plotms_columns::uses_weighted_spw_time_u(spec));
     let time_geometry =
         time_bins.is_some() && plotms_columns::uses_averaged_geometry_coordinates(spec);
@@ -5895,12 +5922,13 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_antenna_channels = time_antenna && average_channels;
     let vector_span_models = !spw_average
         && (spec.averaging.avgscan || spec.averaging.avgfield)
-        && time_bins.is_some_and(|groups| groups.model_phase_reference_slots().is_some())
+        && time_bins.is_some_and(|groups| groups.phase_reference_slots().is_some())
         && calibration.is_some_and(|input| input.models.is_some());
     let direct_time_projection = uncalibrated
         && time_bins.is_some()
         && !extended_derived
-        && (vector_span_models
+        && (phase_shift.is_some()
+            || vector_span_models
             || averaged_row_numbers.is_some()
             || time_geometry
             || time_reporting_axes
@@ -5980,7 +6008,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
     let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
-    let selected_uvw = (spec.x_axis.uses_uvw()
+    let selected_uvw = (phase_shift.is_some()
+        || spec.x_axis.uses_uvw()
         || spec.y_axes.iter().copied().any(MsAxis::uses_uvw))
     .then(|| selected_uvw_values(ms.main_table(), "UVW", &row_numbers))
     .transpose()?;
@@ -6636,7 +6665,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 ));
             }
             None
-        } else if spw_average {
+        } else if spw_average || !needs_spectral_coordinates {
             None
         } else {
             load_spectrum()?
@@ -7348,6 +7377,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut converted_time_frequencies = HashMap::new();
     let mut time_spectral_engine = None;
     let x_projection_axis = visibility_columns.projection_axis(0, spec.x_axis);
+    let mut shifted_time_row = None;
     if paged_iteration {
         panel_order.sort_by_key(|key| panels[key].iteration_rank);
     }
@@ -7434,6 +7464,40 @@ fn build_generic_visibility_scatter_with_averaging(
                     continue;
                 };
                 let channel_start = representative.chan_start;
+                // The phase-shifting TVI is above AveragingTvi2. Use the
+                // averaged baseline before projecting its complex visibilities.
+                let shifted_time = if let Some(shift) = &mut phase_shift {
+                    let group = group.ok_or("Missing PlotMS phasecenter time group")?;
+                    let bins = time_bins.expect("phasecenter time groups");
+                    let slot = bins.first_row_slot(group);
+                    let uvw = match shifted_time_row {
+                        Some((previous, uvw)) if previous == group => uvw,
+                        _ => {
+                            let ddid = usize::try_from(selected_data_desc_ids[slot])
+                                .map_err(|_| "Invalid DATA_DESC_ID for PlotMS phasecenter")?;
+                            let spw = data_description
+                                .spectral_window_id(ddid)
+                                .map_err(|error| error.to_string())?;
+                            let spw = usize::try_from(spw)
+                                .map_err(|_| "Invalid SPECTRAL_WINDOW_ID for PlotMS phasecenter")?;
+                            let reference = bins
+                                .phase_reference_slots()
+                                .expect("phasecenter time reference slots")[slot];
+                            let uvw = shift.prepare_row(
+                                ms,
+                                selected_field_ids[slot],
+                                spw,
+                                selected_times[reference],
+                                time_uvws.as_ref().expect("phasecenter averaged UVW")[&group],
+                            )?;
+                            shifted_time_row = Some((group, uvw));
+                            uvw
+                        }
+                    };
+                    Some((uvw, shift.phase(channel_start)?))
+                } else {
+                    None
+                };
                 let statistics = time_statistics
                     .as_ref()
                     .and_then(|statistics| statistics.get(&(group?, representative.corr)));
@@ -7558,8 +7622,19 @@ fn build_generic_visibility_scatter_with_averaging(
                         Some(weight_amplitude(value, statistics?.weight))
                     } else if average_statistics && axis.is_weight_axis() {
                         statistics?.value(axis, channel_start)
+                    } else if let Some((_, phase)) = shifted_time
+                        && axis.is_visibility_math()
+                    {
+                        let samples = if x_axis {
+                            &accumulator.x_visibility
+                        } else {
+                            &accumulator.y_visibility
+                        };
+                        samples.project_shifted_time(axis, phase)
                     } else if weighted_time_uvw && axis.uses_uvw() {
-                        let uvw = *time_uvws.as_ref()?.get(&order?)?;
+                        let uvw = shifted_time
+                            .map(|(uvw, _)| uvw)
+                            .or_else(|| time_uvws.as_ref()?.get(&order?).copied())?;
                         let metres = uvw_metres_coordinate(axis, uvw);
                         if axis.uses_wavelengths() {
                             Some(metres_to_wavelengths(metres, wavelength_frequency?))
@@ -8255,21 +8330,12 @@ fn resolve_spectral_context(
     derived_engine: Option<&MsCalEngine>,
     plotms_rest_bin: Option<&ChannelBin>,
 ) -> Result<Option<SpectralContext>, String> {
-    let needs_spectral_coordinates = spec.x_axis.uses_spectral_coordinates()
-        || spec
-            .y_axes
-            .iter()
-            .copied()
-            .any(MsAxis::uses_spectral_coordinates);
-    if !needs_spectral_coordinates {
+    let Some(chan_freq) = chan_freq else {
         return Ok(None);
-    }
+    };
 
     let spw_index = usize::try_from(spw_id)
         .map_err(|_| format!("invalid DATA_DESCRIPTION::SPECTRAL_WINDOW_ID {spw_id}"))?;
-    let chan_freq = chan_freq.ok_or_else(|| {
-        "internal error: missing channel-frequency column for spectral axis".to_string()
-    })?;
     let source_channel_frequencies = chan_freq
         .get_frequencies(spw_index)
         .map_err(|error| error.to_string())?;

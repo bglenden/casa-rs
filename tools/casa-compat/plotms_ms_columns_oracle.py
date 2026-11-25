@@ -51,7 +51,7 @@ def rows(path):
 
 
 def compare_figure(root, native, controls, expected, labels, *,
-                   reference_task=reference, ordinate_atol=None):
+                   reference_task=reference, ordinate_atol=None, coordinate_rms=None):
     from casars import _plot_document
 
     capture = []
@@ -73,7 +73,13 @@ def compare_figure(root, native, controls, expected, labels, *,
     [(title, xlabel, ylabel, points, xlim, ylim)] = capture
     assert (title, xlabel, ylabel) == labels, (title, xlabel, ylabel)
     coordinates = np.array([point[:2] for point in rows(expected)], dtype=float)
-    np.testing.assert_allclose(points, coordinates, rtol=1.2e-5, atol=1e-7)
+    if coordinate_rms is None:
+        np.testing.assert_allclose(points, coordinates, rtol=1.2e-5, atol=1e-7)
+    else:
+        assert points.shape == coordinates.shape
+        error = np.linalg.norm(points - coordinates, axis=0)
+        limit = coordinate_rms * np.linalg.norm(coordinates, axis=0) + 1e-12
+        np.testing.assert_array_less(error, limit)
     if ordinate_atol is not None:
         np.testing.assert_allclose(points[:, 1], coordinates[:, 1], rtol=0, atol=ordinate_atol)
     if controls["xaxis"] == "time":

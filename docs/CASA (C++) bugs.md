@@ -11185,6 +11185,29 @@ test compares them with pinned PlotMS on a separate MS written by the
 CASA `phaseshift` task. Both CASA paths use the same phase-shifting
 visibility iterator. The test also compares PNG export using the original
 MS and active transform in both public PlotMS tasks (#1032).
+
+The composition regression also uses pinned `mstransformer` for a FIELD
+table with both constant and polynomial directions. The `phaseshift`
+wrapper writes the shifted visibilities, then fails while reading the
+mixed-shape FIELD direction column for its final update. The visibility
+iterator uses the first selected epoch of each chunk to evaluate the
+polynomial.
+
+With `avgtime="20"` alone, the pinned iterator rotates each averaged
+baseline and its complex data. With `avgchannel="2"` alone, the channel
+reducer runs after the rotation. On the same four selected channels,
+combining the two averages with `phasecenter` fails in pinned PlotMS
+with `INVALID_ARGUMENT`, for both equal and independent X/Y visibility
+columns. casa-rs reports the refused combination before export.
+
+The time-and-phase iterator limits its input chunks to the time bin.
+An absent baseline at a chunk's first integration leaves that baseline
+with a separate centroid within the chunk. The regression compares its
+shifted coordinates using the materialized iterator and verifies the
+first-baseline epoch in verbose PlotMS output. The pinned time averager
+retains its polynomial phase direction across time chunks within the
+same field selection.
+
 [Pinned PlotMS iterator setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 [Pinned phase-shifting iterator](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/PhaseShiftingTVI.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 
