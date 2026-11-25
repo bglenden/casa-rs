@@ -285,10 +285,10 @@ pub fn initialize_hanning_scratch_holding(
             "the Hanning write lock does not protect physical MAIN",
         ));
     }
-    if rows.is_empty() || has_column(ms, CORRECTED) {
+    if has_column(ms, CORRECTED) {
         return Ok(());
     }
-    let whole_table = rows.iter().copied().eq(0..ms.row_count());
+    let whole_table = !rows.is_empty() && rows.iter().copied().eq(0..ms.row_count());
     if whole_table && can_clone_tiled_observed(ms, observed) {
         scratch_columns::prepare_write_holding(ms, CORRECTED, true, lock)?;
         add_scratch_schema(ms, CORRECTED, observed)?;
@@ -314,7 +314,11 @@ pub fn initialize_hanning_scratch_holding(
         .into_iter()
         .filter(|&col| !has_column(ms, col))
         .collect::<Vec<_>>();
-    if missing.is_empty() {
+    if rows.is_empty() {
+        let (plan, _) = scratch_write_plan(ms, Vec::new(), &missing, observed, true, false, lock)?;
+        MeasurementSetWriteSession::mutate_selected_rows(ms, plan, Some(lock), invalid, |_, _| {
+            Ok(())
+        })?;
         return Ok(());
     }
     let mut selection =

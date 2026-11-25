@@ -400,3 +400,29 @@ def test_hanningsmooth_initializes_full_polarization_model(tmp_path, measures, w
             strict=True,
         )
         assert table.done()
+
+
+@pytest.mark.parametrize("mode", ["data", "corrected"])
+def test_hanningsmooth_errors_on_empty_view(native_dataset, tmp_path, writer_api, mode):
+    casa = pytest.importorskip("casatools")
+    path = str(tmp_path / "empty.ms")
+    table = casa.table()
+    assert table.open(str(native_dataset))
+    view = table.selectrows(np.array([], dtype=np.int64), path)
+    assert view.done()
+    assert table.done()
+    tool = writer_api.ms()
+    assert tool.open(path, nomodify=False)
+    assert tool.nrow() == 0
+    with pytest.raises(RuntimeError, match="zero selected rows"):
+        tool.hanningsmooth(mode)
+    assert tool.nrow() == 0
+    assert tool.done()
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(str(native_dataset))
+        for column in ("CORRECTED_DATA", "MODEL_DATA"):
+            assert (column in table.colnames()) == (mode == "corrected")
+            if mode == "corrected":
+                assert not any(table.iscelldefined(column, row) for row in range(table.nrows()))
+        assert table.done()

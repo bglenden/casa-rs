@@ -526,9 +526,7 @@ impl AttachedMs {
             || (0..main.table.row_count()).collect::<Vec<_>>(),
             |rows| rows.to_vec(),
         );
-        if rows.is_empty() {
-            return Ok(true);
-        }
+        let empty = rows.is_empty();
         let has = |name| {
             main.table
                 .schema()
@@ -553,7 +551,7 @@ impl AttachedMs {
             names.push(observed);
         }
         let targets = main.write_targets(&rows, &names)?;
-        let spectrum_anchor = if spectral {
+        let spectrum_anchor = if spectral && !empty {
             main.write_targets(&rows[..1], &["WEIGHT_SPECTRUM"])?.pop()
         } else {
             None
@@ -615,6 +613,11 @@ impl AttachedMs {
                 .expect("physical MAIN write lock was acquired");
             let mut ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
             let rows = target.rows.into_keys().collect::<Vec<_>>();
+            if empty && ms.spectral_window().map_err(runtime_error)?.row_count() == 0 {
+                return Err(runtime_error(
+                    "There are no valid spectral windows in the MeasurementSet",
+                ));
+            }
             if create_corrected {
                 casa_calibration::initialize_hanning_scratch_holding(
                     &mut ms,
@@ -623,6 +626,9 @@ impl AttachedMs {
                     lock,
                 )
                 .map_err(runtime_error)?;
+            }
+            if empty {
+                continue;
             }
             let visibilities = if create_corrected {
                 vec!["CORRECTED_DATA"]
@@ -644,7 +650,13 @@ impl AttachedMs {
         for (_, lock) in temporary {
             lock.release().map_err(runtime_error)?;
         }
-        Ok(true)
+        if empty {
+            Err(runtime_error(
+                "MSIter::construct - Input MeasurementSet.has zero selected rows",
+            ))
+        } else {
+            Ok(true)
+        }
     }
 
     pub(super) fn putdata_rows(&mut self, items: RecordValue) -> PyResult<bool> {
