@@ -52,7 +52,7 @@ pub(super) fn compose_rows<'a>(
     }
 }
 
-struct MetadataView {
+pub(super) struct MetadataView {
     path: PathBuf,
     links: Option<HashMap<SubtableId, PathBuf>>,
     _scratch: Option<TempDir>,
@@ -208,20 +208,7 @@ impl MetadataLink {
         &self,
         cached: Option<&Arc<MetadataSnapshot>>,
     ) -> MsResult<Arc<MetadataSnapshot>> {
-        self.verify_directory()?;
-        let view = {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-            if state.view.is_none() {
-                state.view = Some(Arc::new(MetadataView::new(
-                    &self.path,
-                    state.selected.as_deref(),
-                )?));
-            }
-            Arc::clone(state.view.as_ref().expect("metadata view exists"))
-        };
+        let view = self.working_view()?;
         if let Some(snapshot) = cached
             && snapshot
                 .view
@@ -234,9 +221,30 @@ impl MetadataLink {
         self.verify_directory()?;
         Ok(Arc::new(snapshot))
     }
+
+    pub(super) fn working_view(&self) -> MsResult<Arc<MetadataView>> {
+        self.verify_directory()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        if state.view.is_none() {
+            state.view = Some(Arc::new(MetadataView::new(
+                &self.path,
+                state.selected.as_deref(),
+            )?));
+        }
+        Ok(Arc::clone(
+            state.view.as_ref().expect("metadata view exists"),
+        ))
+    }
 }
 
 impl MetadataView {
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
     fn new(main: &Path, selected: Option<&[usize]>) -> MsResult<Self> {
         let concatenated = contains_concatenation(main)?;
         if selected.is_none() && !concatenated {

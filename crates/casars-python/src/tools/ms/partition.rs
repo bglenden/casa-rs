@@ -6,7 +6,7 @@ use casa_ms::{
     schema::main_table::OptionalMainColumn,
     selection::MsSelection,
     tool_history::append_tool_history,
-    tool_sort::check_named_sort_output,
+    tool_sort::check_named_output_path,
     transform::{
         LegacyMsTool, LegacyTimeOptions, MsTransformError, MsTransformRequest,
         MsTransformTaskOptions, MsTransformTiling, TimeAverageOptions, TransformDataColumn,
@@ -100,18 +100,15 @@ impl PyMsTool {
                 return Ok(false);
             }
             let link = ms.working_metadata_link();
-            let source = link.snapshot(None).map_err(runtime_error)?;
-            let input = source
-                .ms
-                .path()
-                .ok_or_else(|| runtime_error(format!("{operation} input has no path")))?;
+            let view = link.working_view().map_err(runtime_error)?;
+            let input = view.path();
             let output = (!outputms.is_empty())
                 .then(|| named_path(Path::new(&outputms), &ms.path, operation))
                 .transpose()?;
             let destination = output
                 .as_deref()
                 .map(|output| {
-                    check_named_sort_output(&source.ms, output).map_err(runtime_error)?;
+                    check_named_output_path(input, output).map_err(runtime_error)?;
                     SortedDestination::inspect(output, operation)
                 })
                 .transpose()?;
@@ -137,9 +134,11 @@ impl PyMsTool {
                 selection,
                 keep_flags: true,
             };
+            link.verify_directory().map_err(runtime_error)?;
             match mstransform_task(&request, &options) {
                 Err(MsTransformError::EmptySelection { .. }) => {
                     if let Some(field) = &request.selection.field {
+                        let source = link.snapshot(None).map_err(runtime_error)?;
                         source
                             .ms
                             .resolve_field_selector(field)

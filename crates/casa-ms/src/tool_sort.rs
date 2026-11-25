@@ -79,7 +79,16 @@ pub fn write_sorted_measurement_set(
 /// Reject a named output that would replace or be staged inside a backing
 /// subtable. A new direct child of the source MAIN remains allowed.
 pub fn check_named_sort_output(input: &MeasurementSet, output: &Path) -> MsResult<()> {
-    subtables::check_named_output(input.main_table(), output)
+    check_named_output_path(subtables::table_path(input.main_table())?, output)
+}
+
+/// Check a canonical named output against the persisted input and its linked tables.
+///
+/// # Errors
+///
+/// The output would overlap a source table, or a source table or link could not be opened.
+pub fn check_named_output_path(input: &Path, output: &Path) -> MsResult<()> {
+    subtables::check_named_output(input, output)
 }
 
 fn ordered_rows(table: &Table, names: &[&str]) -> MsResult<Vec<usize>> {
