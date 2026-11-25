@@ -248,18 +248,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (msfile = None, freqtol = None, dirtol = None, respectname = None), text_signature = "($self, msfile='', freqtol=[], dirtol=[], respectname=False)")]
-    fn testconcatenate(
-        &self,
-        msfile: Option<&Bound<'_, PyAny>>,
-        freqtol: Option<&Bound<'_, PyAny>>,
-        dirtol: Option<&Bound<'_, PyAny>>,
-        respectname: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("testconcatenate")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (fitsfile = None, column = None, field = None, spw = None, baseline = None, time = None, scan = None, uvrange = None, taql = None, writesyscal = None, multisource = None, combinespw = None, writestation = None, padwithflags = None, overwrite = None), text_signature = "($self, fitsfile='', column='corrected', field=[], spw=[], baseline=[], time='', scan=[], uvrange=[], taql='', writesyscal=False, multisource=False, combinespw=False, writestation=False, padwithflags=False, overwrite=False)")]
     fn tofits(
         &self,

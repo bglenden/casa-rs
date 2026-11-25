@@ -256,7 +256,7 @@ fn require_measurement_set(main: &Table) -> MsResult<()> {
     Ok(())
 }
 
-fn history_rows(
+pub(crate) fn history_rows(
     table: &Table,
     messages: &[String],
     cli_command: &str,
