@@ -385,6 +385,7 @@ pub(crate) use selected_cells::cell_read_buffer_bytes;
 use selected_cells::load_selected_rows_from_touched_cubes;
 mod selected_tiles;
 use selected_tiles::{SelectedTiles, copy_pixels};
+pub(crate) mod shape_append;
 mod shape_cube;
 mod spec;
 #[cfg(test)]

@@ -7,6 +7,8 @@ mod field;
 mod identity;
 mod layout;
 pub(crate) mod locking;
+mod main_rows;
+mod named_output;
 mod publication;
 mod source;
 mod spectral;
@@ -56,11 +58,61 @@ pub fn test_concatenate(
     publication::metadata_only(target, donor, request, retained)
 }
 
+/// Settings for a physical MeasurementSet concatenation.
+pub struct PhysicalConcatenation<'a> {
+    /// Metadata matching tolerances and HISTORY arguments.
+    pub metadata: TestConcatenation<'a>,
+    /// Scale donor weights and apply the reciprocal square root to sigmas.
+    pub weight_scale: f32,
+    /// CASA mode 0 through 3 controlling which of MAIN and POINTING are added.
+    pub handling: i32,
+    /// A separate table for remapped donor MAIN rows, if requested.
+    pub output: Option<&'a Path>,
+}
+
+/// Reconcile metadata and append the donor's physical MAIN and POINTING.
+///
+/// A named output receives donor MAIN rows only, with copies of the
+/// reconciled subtables. The attached MAIN is extended for an in-place call.
+///
+/// # Errors
+/// The inputs cannot be matched, locked, staged, or published.
+pub fn concatenate(
+    target: &Path,
+    donor: &Path,
+    request: &PhysicalConcatenation<'_>,
+    retained: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> MsResult<()> {
+    if !matches!(request.handling, 0..=3) {
+        return Err(MsError::InvalidInput(
+            "concatenation handling must be in 0..=3".into(),
+        ));
+    }
+    if request.weight_scale < 0.0 {
+        return Err(MsError::InvalidInput(
+            "concatenation weight scale must be nonnegative".into(),
+        ));
+    }
+    publication::physical(target, donor, request, retained)
+}
+
 struct MetadataPlan<'a> {
     changes: Vec<SubtableChange>,
+    row_map: MainRowMap,
     calibration: Vec<(&'a Table, Vec<RecordValue>)>,
     ephemerides: Vec<(PathBuf, String)>,
     add_ephemeris_column: bool,
+}
+
+struct MainRowMap {
+    antennas: Vec<usize>,
+    descriptions: Vec<spectral::DonorDescription>,
+    fields: Vec<i32>,
+    states: Vec<usize>,
+    attached_has_state: bool,
+    donor_has_state: bool,
+    observations: Vec<usize>,
+    processors: Vec<usize>,
 }
 
 struct SubtableChange {
@@ -107,6 +159,16 @@ impl<'a> MetadataPlan<'a> {
         )?;
         let mut plan = Self {
             changes: Vec::new(),
+            row_map: MainRowMap {
+                antennas: antennas.antenna_ids,
+                descriptions: spectral.donor_descriptions,
+                fields: fields.ids,
+                states: states.donor_ids,
+                attached_has_state: required_table(target, SubtableId::State)?.row_count() > 0,
+                donor_has_state: required_table(donor, SubtableId::State)?.row_count() > 0,
+                observations: observations.donor_ids,
+                processors: processors.donor_ids,
+            },
             calibration,
             ephemerides: fields.ephemerides,
             add_ephemeris_column: fields.add_ephemeris_column,

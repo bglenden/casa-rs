@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use casa_ms::tool_concatenate::{TestConcatenation, test_concatenate};
+use casa_ms::tool_concatenate::{
+    PhysicalConcatenation, TestConcatenation, concatenate, test_concatenate,
+};
 use casa_tables::table_cache_name;
 use casa_types::quanta::{
     Unit,
@@ -27,6 +29,62 @@ impl PyMsTool {
         dirtol: Option<Variant>,
         #[pyo3(from_py_with = strict_bool)] respectname: bool,
     ) -> PyResult<bool> {
+        self.run_concatenation(
+            py,
+            ConcatArgs {
+                msfile,
+                freqtol,
+                dirtol,
+                respectname,
+                physical: None,
+            },
+        )
+    }
+
+    /// Append another MeasurementSet or write its remapped rows to a separate table.
+    #[pyo3(signature = (msfile = String::new(), freqtol = None, dirtol = None, weightscale = 1.0, handling = 0, destmsfile = String::new(), respectname = false), text_signature = "($self, msfile='', freqtol=[], dirtol=[], weightscale=1.0, handling=0, destmsfile='', respectname=False)")]
+    #[allow(clippy::too_many_arguments)]
+    fn concatenate(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = donor_argument)] msfile: String,
+        freqtol: Option<Variant>,
+        dirtol: Option<Variant>,
+        weightscale: f32,
+        handling: i32,
+        #[pyo3(from_py_with = destination_argument)] destmsfile: String,
+        #[pyo3(from_py_with = strict_bool)] respectname: bool,
+    ) -> PyResult<bool> {
+        self.run_concatenation(
+            py,
+            ConcatArgs {
+                msfile,
+                freqtol,
+                dirtol,
+                respectname,
+                physical: Some((weightscale, handling, destmsfile)),
+            },
+        )
+    }
+}
+
+struct ConcatArgs {
+    msfile: String,
+    freqtol: Option<Variant>,
+    dirtol: Option<Variant>,
+    respectname: bool,
+    physical: Option<(f32, i32, String)>,
+}
+
+impl PyMsTool {
+    fn run_concatenation(&self, py: Python<'_>, args: ConcatArgs) -> PyResult<bool> {
+        let ConcatArgs {
+            msfile,
+            freqtol,
+            dirtol,
+            respectname,
+            physical,
+        } = args;
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_mut() else {
@@ -41,20 +99,30 @@ impl PyMsTool {
             let (frequency_hz, frequency_text) = tolerance(freqtol.as_ref(), "Hz", 1.0)?;
             let mas = std::f64::consts::PI / 648_000_000.0;
             let (direction_rad, direction_text) = tolerance(dirtol.as_ref(), "rad", mas)?;
-            let result = test_concatenate(
-                &ms.path,
-                &donor,
-                &TestConcatenation {
-                    frequency_hz,
-                    direction_rad,
-                    respect_name: respectname,
-                    frequency_text: &frequency_text,
-                    direction_text: &direction_text,
-                    donor_name: &msfile,
-                    attached_name: &ms.name,
-                },
-                &mut ms.write_locks,
-            );
+            let request = TestConcatenation {
+                frequency_hz,
+                direction_rad,
+                respect_name: respectname,
+                frequency_text: &frequency_text,
+                direction_text: &direction_text,
+                donor_name: &msfile,
+                attached_name: &ms.name,
+            };
+            let result = if let Some((weight_scale, handling, dest)) = &physical {
+                concatenate(
+                    &ms.path,
+                    &donor,
+                    &PhysicalConcatenation {
+                        metadata: request,
+                        weight_scale: *weight_scale,
+                        handling: *handling,
+                        output: (!dest.is_empty()).then(|| Path::new(dest)),
+                    },
+                    &mut ms.write_locks,
+                )
+            } else {
+                test_concatenate(&ms.path, &donor, &request, &mut ms.write_locks)
+            };
             result.map_err(runtime_error)?;
             ms.subtables = Default::default();
             metadata.invalidate_view().map_err(runtime_error)?;
@@ -68,6 +136,10 @@ impl PyMsTool {
 
 fn donor_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "msfile")
+}
+
+fn destination_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+    selection_text(value, "destmsfile")
 }
 
 fn tolerance(value: Option<&Variant>, unit: &str, default: f64) -> PyResult<(f64, String)> {

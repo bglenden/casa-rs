@@ -63,8 +63,9 @@ pub(crate) fn check_named_output(input: &Table, output: &Path) -> MsResult<()> {
     Ok(())
 }
 
-pub(super) fn copy_links(
+pub(crate) fn copy_links(
     input: &Table,
+    column_source: &Table,
     keywords: &mut RecordValue,
     copy: &mut Table,
     output: &Path,
@@ -85,7 +86,7 @@ pub(super) fn copy_links(
         held,
     };
     copies.rewrite(keywords, input_path, output)?;
-    copies.rewrite_columns(input, copy, input_path, output)
+    copies.rewrite_columns(column_source, copy, table_path(column_source)?, output)
 }
 
 struct Copies<'a> {

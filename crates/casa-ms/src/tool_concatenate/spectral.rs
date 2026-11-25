@@ -15,6 +15,13 @@ pub(super) struct SpectralRows {
     pub(super) polarizations: Vec<RecordValue>,
     pub(super) descriptions: Vec<RecordValue>,
     pub(super) window_ids: Vec<usize>,
+    pub(super) donor_descriptions: Vec<DonorDescription>,
+}
+
+pub(super) struct DonorDescription {
+    pub(super) id: i32,
+    pub(super) reverse: bool,
+    pub(super) polarization: usize,
 }
 
 pub(super) fn reconcile(
@@ -35,6 +42,7 @@ pub(super) fn reconcile(
         polarizations: Vec::new(),
         descriptions: Vec::new(),
         window_ids: vec![usize::MAX; incoming.len()],
+        donor_descriptions: Vec::new(),
     };
     let mut polarizations = target_pol.rows()?.iter().collect::<Vec<_>>();
     let incoming_polarizations = incoming_pol.rows()?;
@@ -43,7 +51,7 @@ pub(super) fn reconcile(
         let incoming_window = incoming
             .get(window)
             .ok_or_else(|| invalid_index("SPECTRAL_WINDOW", window, incoming.len()))?;
-        let (window_id, _) = match_window(
+        let (window_id, reverse) = match_window(
             &mut known,
             &mut rows.windows,
             incoming_spw,
@@ -69,6 +77,11 @@ pub(super) fn reconcile(
                 (index, None)
             }
         };
+        rows.donor_descriptions.push(DonorDescription {
+            id: row_id(description.unwrap_or(known_descriptions.len()))?,
+            reverse,
+            polarization,
+        });
         if description.is_none() {
             rows.descriptions.push(RecordValue::new(vec![
                 casa_types::RecordField::new(
@@ -208,7 +221,7 @@ fn descriptions(table: &Table) -> MsResult<Vec<(usize, usize)>> {
         .collect()
 }
 
-fn row_id(index: usize) -> MsResult<i32> {
+pub(super) fn row_id(index: usize) -> MsResult<i32> {
     i32::try_from(index).map_err(|_| MsError::InvalidInput("subtable row ID exceeds int32".into()))
 }
 
