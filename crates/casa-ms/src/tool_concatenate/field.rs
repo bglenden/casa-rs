@@ -45,6 +45,10 @@ pub(super) fn reconcile(
         .transpose()?
         .flatten();
     let target_reference = fixed_reference(target_field.table());
+    let target_ephemeris_column = target_field
+        .table()
+        .schema()
+        .is_some_and(|schema| schema.contains_column("EPHEMERIS_ID"));
     let mut output = FieldRows {
         additions: Vec::new(),
         matched: false,
@@ -53,10 +57,7 @@ pub(super) fn reconcile(
             .table()
             .schema()
             .is_some_and(|schema| schema.contains_column("EPHEMERIS_ID"))
-            && target_field
-                .table()
-                .schema()
-                .is_some_and(|schema| !schema.contains_column("EPHEMERIS_ID")),
+            && !target_ephemeris_column,
     };
     for (index, record) in donor_rows.iter().enumerate() {
         let entry = candidate(&donor_field, index, true)?;
@@ -163,7 +164,7 @@ pub(super) fn reconcile(
                 .ephemerides
                 .push((path.clone(), format!("EPHEM{next_eph}_{comment}")));
             record.upsert("EPHEMERIS_ID", integer(next_eph));
-        } else if existing_eph.is_some() || output.add_ephemeris_column {
+        } else if target_ephemeris_column || output.add_ephemeris_column {
             record.upsert("EPHEMERIS_ID", integer(-1));
         }
         known.push(entry);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use super::*;
 use crate::TableWriteLock;
+use crate::lock::WriteSyncCheckpoint;
 use crate::storage::column_changes::ColumnGroupPayload;
 use crate::storage::row_changes::{ReversibleEdit, Rows, StagedEdit};
 
@@ -100,12 +101,14 @@ impl CompressedComplexArray<'_> {
 }
 
 /// A staged append to one physical table, holding its write lock.
-pub struct PreparedRecordAppend {
+pub struct PreparedRecordAppend<'lock> {
     edit: ReversibleEdit,
-    lock: TableWriteLock,
+    lock: &'lock mut TableWriteLock,
+    original_sync: WriteSyncCheckpoint,
+    attempted_sync: bool,
 }
 
-impl PreparedRecordAppend {
+impl PreparedRecordAppend<'_> {
     /// Write the staged records, retaining the original files for rollback.
     ///
     /// # Errors
@@ -140,15 +143,27 @@ impl PreparedRecordAppend {
                 self.edit.preserve().display()
             )));
         }
-        self.lock.release()
+        self.lock
+            .restore_sync(self.original_sync, self.attempted_sync)
     }
 
-    /// Commit the changes, release the lock, and discard the backups.
+    /// Announce the new shape to casacore while keeping the lock and backups.
+    ///
+    /// Retain this append until every edit in the batch has been announced.
+    /// Dropping the append then discards its backups.
     ///
     /// # Errors
     /// Returns an error if the write could not be announced to other readers.
-    pub fn finish(self) -> Result<(), TableError> {
-        self.lock.release()
+    pub fn synchronize(&mut self) -> Result<(), TableError> {
+        self.synchronize_with(TableWriteLock::sync_recorded_write)
+    }
+
+    fn synchronize_with(
+        &mut self,
+        sync: impl FnOnce(&mut TableWriteLock) -> Result<(), TableError>,
+    ) -> Result<(), TableError> {
+        self.attempted_sync = true;
+        sync(self.lock)
     }
 }
 
@@ -218,11 +233,11 @@ impl Table {
     /// # Errors
     /// The table or lock is invalid, the schema cannot admit the rows,
     /// or a manager cannot prepare append changes.
-    pub fn prepare_record_append(
+    pub fn prepare_record_append<'lock>(
         &self,
         records: &[RecordValue],
-        lock: TableWriteLock,
-    ) -> Result<PreparedRecordAppend, TableError> {
+        lock: &'lock mut TableWriteLock,
+    ) -> Result<PreparedRecordAppend<'lock>, TableError> {
         let path = self.path().ok_or(TableError::PreparedRowRequiresSchema)?;
         if records.is_empty()
             || self.kind != TableKind::Plain
@@ -243,7 +258,13 @@ impl Table {
             defaults: &defaults,
         };
         let edit = StagedEdit::stage(path, dat, old, rows)?.prepare_publication(true)?;
-        Ok(PreparedRecordAppend { edit, lock })
+        let original_sync = lock.checkpoint_sync()?;
+        Ok(PreparedRecordAppend {
+            edit,
+            lock,
+            original_sync,
+            attempted_sync: false,
+        })
     }
 
     fn record_append_defaults(&self, records: &[RecordValue]) -> Result<RecordValue, TableError> {
@@ -410,5 +431,73 @@ impl Table {
             edit(self, &path, dat, old)
         })();
         self.finish_write_operation(auto_unlock, result)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod prepared_append_tests {
+    use super::*;
+
+    fn record(value: i32) -> RecordValue {
+        RecordValue::new(vec![casa_types::RecordField::new(
+            "id",
+            Value::Scalar(casa_types::ScalarValue::Int32(value)),
+        )])
+    }
+
+    fn make_table(path: &Path) -> (Table, TableWriteLock) {
+        let schema =
+            TableSchema::new(vec![ColumnSchema::scalar("id", PrimitiveType::Int32)]).unwrap();
+        let mut table = Table::with_schema(schema);
+        table.add_row(record(4)).unwrap();
+        table
+            .save(TableOptions::new(path).with_data_manager(DataManagerKind::StandardStMan))
+            .unwrap();
+        let mut lock = TableWriteLock::acquire_to_reread(path, 1).unwrap();
+        lock.record_write();
+        lock.sync_recorded_write().unwrap();
+        (Table::open(TableOptions::new(path)).unwrap(), lock)
+    }
+
+    #[test]
+    fn failed_sync_of_one_append_restores_both_tables_and_their_published_counts() {
+        let root = tempfile::tempdir().unwrap();
+        let first = root.path().join("first");
+        let second = root.path().join("second");
+        let (a, mut a_lock) = make_table(&first);
+        let (b, mut b_lock) = make_table(&second);
+        let counters = [
+            a_lock.modify_counter().unwrap(),
+            b_lock.modify_counter().unwrap(),
+        ];
+        let mut edited_a = a.prepare_record_append(&[record(8)], &mut a_lock).unwrap();
+        let mut edited_b = b.prepare_record_append(&[record(9)], &mut b_lock).unwrap();
+        edited_a.publish().unwrap();
+        edited_b.publish().unwrap();
+        edited_a.synchronize().unwrap();
+        assert!(
+            edited_b
+                .synchronize_with(|lock| {
+                    lock.sync_recorded_write()?;
+                    Err(TableError::Storage("injected sync failure".into()))
+                })
+                .is_err()
+        );
+        edited_b.restore().unwrap();
+        edited_a.restore().unwrap();
+
+        for (path, lock, old_counter) in [
+            (&first, a_lock, counters[0]),
+            (&second, b_lock, counters[1]),
+        ] {
+            let recorded = crate::lock::read_sync_data_from_table_dir(path)
+                .unwrap()
+                .unwrap();
+            assert_eq!(recorded.nrrow, 1);
+            assert_eq!(Some(recorded.modify_counter), old_counter);
+            lock.release().unwrap();
+            let reopened = Table::open(TableOptions::new(path)).unwrap();
+            assert_eq!(reopened.rows().unwrap(), &[record(4)]);
+        }
     }
 }

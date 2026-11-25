@@ -1,21 +1,22 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Concatenate optional weather, calibration, and Earth-orientation rows.
 
-use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
 
-use casa_tables::{Table, TableOptions, add_directory};
+use casa_tables::Table;
 use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::{MeasurementSet, MsError, MsResult, SubtableId};
 
-pub(super) fn reconcile(
-    target: &MeasurementSet,
+pub(super) fn reconcile<'a>(
+    target: &'a MeasurementSet,
     donor: &MeasurementSet,
+    extra: [&'a BTreeMap<&str, Table>; 2],
     antenna_ids: &[usize],
     spectral_window_ids: &[usize],
     remap_spectral_windows: bool,
     observation_ids: &[usize],
-) -> MsResult<Vec<(PathBuf, Vec<RecordValue>)>> {
+) -> MsResult<Vec<(&'a Table, Vec<RecordValue>)>> {
     let mut changes = Vec::new();
     for (id, name) in [
         (Some(SubtableId::SysCal), "SYSCAL"),
@@ -24,19 +25,18 @@ pub(super) fn reconcile(
         (None, "PHASE_CAL"),
         (None, "EARTH_ORIENTATION"),
     ] {
-        let Some(target_table) = linked_table(target, id, name)? else {
+        let Some(target_table) = linked_table(target, extra[0], id, name) else {
             continue;
         };
         if target_table.row_count() == 0 {
             continue;
         }
-        let Some(donor_table) = linked_table(donor, id, name)? else {
+        let Some(donor_table) = linked_table(donor, extra[1], id, name) else {
             continue;
         };
         if donor_table.row_count() == 0 {
             continue;
         }
-        let target_path = target_table.path().expect("existing subtable").to_owned();
         let mut records = donor_table.rows()?.to_vec();
         for record in &mut records {
             if name == "EARTH_ORIENTATION" {
@@ -54,29 +54,21 @@ pub(super) fn reconcile(
                 )?;
             }
         }
-        changes.push((target_path, records));
+        changes.push((target_table, records));
     }
     Ok(changes)
 }
 
-fn linked_table(
-    ms: &MeasurementSet,
+fn linked_table<'a>(
+    ms: &'a MeasurementSet,
+    extra: &'a BTreeMap<&str, Table>,
     id: Option<SubtableId>,
     name: &str,
-) -> MsResult<Option<Table>> {
-    let path = match id {
-        Some(id) => ms.subtable(id).and_then(Table::path).map(Path::to_owned),
-        None => match ms.main_table().keywords().get(name) {
-            Some(Value::TableRef(value)) => {
-                let main = ms.main_table().path().expect("existing MeasurementSet");
-                Some(add_directory(value, main))
-            }
-            _ => None,
-        },
-    };
-    path.map(|path| Table::open(TableOptions::new(path)))
-        .transpose()
-        .map_err(Into::into)
+) -> Option<&'a Table> {
+    match id {
+        Some(id) => ms.subtable(id),
+        None => extra.get(name),
+    }
 }
 
 fn remap(

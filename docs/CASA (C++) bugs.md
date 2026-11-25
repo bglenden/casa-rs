@@ -11977,3 +11977,21 @@ default direction tolerance so the donor field is added. CASA errors
 when it reaches the HISTORY step, after persisting the additional
 attached FIELD row. Casa-rs checks the donor and stages its HISTORY
 append before publishing the attached metadata changes (#1030).
+
+## A partial FEED match can discard a donor feed during concatenation
+
+In CASA 6.7.6.14, place feed IDs 17 and 0 for an antenna at attached
+FEED rows 0 and 4. Place donor feed IDs 0 and 19 for the same antenna
+at donor FEED rows 0 and 4. CASA matches donor row 0 to attached row 4,
+then treats donor row 4 as matched. The result appends a duplicate feed
+0 and loses feed 19. CASA can also test the wrong antenna when matching
+reordered antennas. Casa-rs compares feeds using the mapped antenna
+and records donor and attached row numbers separately (#1030).
+
+## Concatenating distinct MeasurementSets can change their shared FIELD table
+
+Point the attached MeasurementSet's FIELD keyword at the donor's FIELD
+and call `ms.testconcatenate()` with default tolerances in CASA 6.7.6.14.
+The tool appends a field to the linked table, which also adds it to the
+donor. Casa-rs checks the physical destinations against both inputs and
+refuses changes to a table used by the other input (#1030).

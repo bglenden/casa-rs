@@ -6,13 +6,17 @@ mod calibration;
 mod field;
 mod identity;
 mod layout;
+pub(crate) mod locking;
 mod publication;
 mod source;
 mod spectral;
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
-use casa_tables::Table;
+use casa_tables::{Table, TableWriteLock};
 use casa_types::RecordValue;
 
 use crate::{MeasurementSet, MsError, MsResult, SubtableId};
@@ -47,13 +51,14 @@ pub fn test_concatenate(
     target: &Path,
     donor: &Path,
     request: &TestConcatenation<'_>,
+    retained: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> MsResult<()> {
-    publication::metadata_only(target, donor, request)
+    publication::metadata_only(target, donor, request, retained)
 }
 
-struct MetadataPlan {
+struct MetadataPlan<'a> {
     changes: Vec<SubtableChange>,
-    calibration: Vec<(PathBuf, Vec<RecordValue>)>,
+    calibration: Vec<(&'a Table, Vec<RecordValue>)>,
     ephemerides: Vec<(PathBuf, String)>,
     add_ephemeris_column: bool,
 }
@@ -65,10 +70,11 @@ struct SubtableChange {
     removed: Vec<usize>,
 }
 
-impl MetadataPlan {
+impl<'a> MetadataPlan<'a> {
     fn reconcile(
-        target: &MeasurementSet,
+        target: &'a MeasurementSet,
         donor: &MeasurementSet,
+        calibration_tables: [&'a BTreeMap<&str, Table>; 2],
         frequency_hz: f64,
         direction_rad: f64,
         respect_name: bool,
@@ -93,6 +99,7 @@ impl MetadataPlan {
         let calibration = calibration::reconcile(
             target,
             donor,
+            calibration_tables,
             &antennas.antenna_ids,
             &spectral.window_ids,
             !spectral.windows.is_empty(),

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use casa_ms::tool_concatenate::{TestConcatenation, test_concatenate};
@@ -42,7 +41,6 @@ impl PyMsTool {
             let (frequency_hz, frequency_text) = tolerance(freqtol.as_ref(), "Hz", 1.0)?;
             let mas = std::f64::consts::PI / 648_000_000.0;
             let (direction_rad, direction_text) = tolerance(dirtol.as_ref(), "rad", mas)?;
-            let retained: BTreeSet<_> = std::mem::take(&mut ms.write_locks).into_keys().collect();
             let result = test_concatenate(
                 &ms.path,
                 &donor,
@@ -55,8 +53,8 @@ impl PyMsTool {
                     donor_name: &msfile,
                     attached_name: &ms.name,
                 },
+                &mut ms.write_locks,
             );
-            ms.retain_tables(retained)?;
             result.map_err(runtime_error)?;
             ms.subtables = Default::default();
             metadata.invalidate_view().map_err(runtime_error)?;

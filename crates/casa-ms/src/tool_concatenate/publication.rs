@@ -2,7 +2,7 @@
 //! Stage and publish concatenation's small table updates together.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,117 +11,144 @@ use casa_tables::{
     TableWriteLock,
     publication::{
         check_write_access, copy_locked_table_tree, exchange_directories,
-        lock_table_tree_for_replacement,
+        lock_table_tree_for_replacement_with_held,
     },
 };
 use casa_types::{PrimitiveType, RecordValue, ScalarValue, Value};
 use rayon::prelude::*;
 use tempfile::TempDir;
 
-use super::{MetadataPlan, SubtableChange, TestConcatenation, required_table};
+use super::{
+    MetadataPlan, SubtableChange, TestConcatenation,
+    locking::{InputTables, WriteGuards, held_reader},
+    required_table,
+};
 use crate::tool_history::history_rows;
-use crate::{MeasurementSet, MsError, MsResult, SubtableId};
+use crate::{MsError, MsResult, SubtableId};
 
 pub(super) fn metadata_only(
     target: &Path,
     donor: &Path,
     request: &TestConcatenation<'_>,
+    retained: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> MsResult<()> {
     let target = target.canonicalize().map_err(io)?;
     let donor = donor.canonicalize().map_err(io)?;
     if target.starts_with(&donor) || donor.starts_with(&target) {
-        return Err(MsError::InvalidInput(
-            "concatenation requires separate input MeasurementSets".into(),
-        ));
+        return Err(io("concatenation requires separate input MeasurementSets"));
     }
-    let mut roots = [&target, &donor];
-    roots.sort_unstable();
-    let mut held = Vec::with_capacity(roots.len());
-    for path in roots {
-        check_write_access(&path.join("table.dat")).map_err(io)?;
-        held.push(TableWriteLock::acquire_to_reread(path, 1)?);
+    for root in [&target, &donor] {
+        check_write_access(&root.join("table.dat")).map_err(io)?;
     }
+    let mut held = WriteGuards::new(retained);
+    held.acquire(BTreeSet::from([target.clone(), donor.clone()]))?;
     let (attached, incoming) = rayon::join(
-        || MeasurementSet::open_concatenation_metadata(&target, false),
-        || MeasurementSet::open_concatenation_metadata(&donor, true),
+        || InputTables::capture(&target),
+        || InputTables::capture(&donor),
     );
     let attached = attached?;
     let incoming = incoming?;
-    super::layout::check(&attached, &incoming)?;
+    let mut leaf_writers = attached.write_paths(true);
+    leaf_writers.extend(incoming.write_paths(false));
+    held.acquire(leaf_writers)?;
+    attached.validate()?;
+    incoming.validate()?;
+
+    let (target_ms, donor_ms) = rayon::join(|| attached.open(false), || incoming.open(true));
+    let target_ms = target_ms?;
+    let donor_ms = donor_ms?;
+    let _donor_ephemerides = incoming.hold_ephemerides()?;
+    let target_calibration = open_calibration(&attached.calibration, false)?;
+    let donor_calibration = open_calibration(&incoming.calibration, true)?;
+    super::layout::check(&target_ms, &donor_ms)?;
     let plan = MetadataPlan::reconcile(
-        &attached,
-        &incoming,
+        &target_ms,
+        &donor_ms,
+        [&target_calibration, &donor_calibration],
         request.frequency_hz,
         request.direction_rad,
         request.respect_name,
     )?;
-    let mut paths = BTreeSet::new();
-    let targets = plan
-        .changes
-        .iter()
-        .map(|change| {
-            let table = required_table(&attached, change.table)?;
-            let live = check_target(table, &mut paths)?;
-            Ok((change, table, live))
+
+    let mut requests = BTreeMap::new();
+    for change in &plan.changes {
+        let table = required_table(&target_ms, change.table)?;
+        let path = output_path(table, &incoming, &target)?;
+        let replacement = !change.updated.is_empty()
+            || !change.removed.is_empty()
+            || (change.table == SubtableId::Field
+                && (plan.add_ephemeris_column || !plan.ephemerides.is_empty()));
+        let request = if replacement {
+            EditRequest::Replace(Box::new(StagedTable::prepare_change(
+                path.clone(),
+                change,
+                &plan,
+                &held.guards,
+            )?))
+        } else {
+            EditRequest::Append(table, matching_fields(table, &change.appended))
+        };
+        insert_edit(&mut requests, path, request)?;
+    }
+    for (table, records) in &plan.calibration {
+        let path = output_path(table, &incoming, &target)?;
+        insert_edit(
+            &mut requests,
+            path,
+            EditRequest::Append(table, matching_fields(table, records)),
+        )?;
+    }
+    let history = required_table(&donor_ms, SubtableId::History)?;
+    let history_path = output_path(history, &attached, &donor)?;
+    let logs = prepare_history(history, request)?;
+    insert_edit(
+        &mut requests,
+        history_path,
+        EditRequest::Append(history, Cow::Owned(logs)),
+    )?;
+
+    // Canonical paths are distinct. Iterate the map to borrow each guard
+    // once and hold it across all fallible edits and synchronization.
+    let work = held
+        .guards
+        .iter_mut()
+        .filter_map(|(path, guard)| requests.remove(path).map(|request| (guard, request)))
+        .collect::<Vec<_>>();
+    if !requests.is_empty() {
+        return Err(io("concatenation edit is missing its captured write lock"));
+    }
+    let edits = work
+        .into_par_iter()
+        .map(|(guard, edit)| match edit {
+            EditRequest::Append(table, rows) => Ok(TableEdit::Append(
+                table.prepare_record_append(&rows, guard)?,
+            )),
+            EditRequest::Replace(staged) => Ok(TableEdit::Replace(*staged, guard)),
         })
         .collect::<MsResult<Vec<_>>>()?;
-    let history = required_table(&incoming, SubtableId::History)?;
-    let history_path = check_target(history, &mut paths)?;
-    let (edits, history) = rayon::join(
-        || {
-            targets
-                .into_par_iter()
-                .map(|(change, table, live)| prepare_change(change, table, live, &plan))
-                .collect::<MsResult<Vec<_>>>()
-        },
-        || prepare_history(history, &history_path, request),
-    );
-    let mut edits = edits?;
-    edits.push(history?);
-    for (path, records) in &plan.calibration {
-        let table = Table::open(TableOptions::new(path))?;
-        let live = check_target(&table, &mut paths)?;
-        let lock = TableWriteLock::acquire_to_reread(&live, 1)?;
-        let records = matching_fields(&table, records);
-        edits.push(TableEdit::Append(
-            table.prepare_record_append(&records, lock)?,
-        ));
-    }
-    let publication = edits
-        .par_iter_mut()
-        .map(TableEdit::publish)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .collect::<MsResult<()>>();
-    if let Err(error) = publication {
-        let failures = edits
-            .into_iter()
-            .rev()
-            .filter_map(|edit| edit.restore().err());
-        let failures: Vec<_> = failures.map(|error| error.to_string()).collect();
-        return if failures.is_empty() {
-            Err(error)
-        } else {
-            Err(io(format!(
-                "{error}; recovery errors: {}",
-                failures.join(", ")
-            )))
-        };
-    }
-    edits
-        .into_par_iter()
-        .map(TableEdit::finish)
-        .collect::<Vec<_>>()
-        .into_iter()
+    attached.validate()?;
+    incoming.validate()?;
+    publish_batch(edits)
+}
+
+fn open_calibration(
+    links: &BTreeMap<&'static str, PathBuf>,
+    donor: bool,
+) -> MsResult<BTreeMap<&'static str, Table>> {
+    links
+        .iter()
+        .map(|(&name, path)| {
+            let table = if donor {
+                held_reader(path)?
+            } else {
+                Table::open(TableOptions::new(path))?
+            };
+            Ok((name, table))
+        })
         .collect()
 }
 
-fn prepare_history(
-    table: &Table,
-    path: &Path,
-    request: &TestConcatenation<'_>,
-) -> MsResult<TableEdit> {
-    let lock = TableWriteLock::acquire_to_reread(path, 1)?;
+fn prepare_history(table: &Table, request: &TestConcatenation<'_>) -> MsResult<Vec<RecordValue>> {
     let message = format!(
         "Subtables from {} appended to those from {}",
         request.donor_name,
@@ -134,68 +161,102 @@ fn prepare_history(
         request.direction_text,
         u8::from(request.respect_name),
     );
-    let logs = history_rows(table, &[message], &command, "ms::testconcatenate()", "ms")?;
-    Ok(TableEdit::Append(table.prepare_record_append(&logs, lock)?))
+    history_rows(table, &[message], &command, "ms::testconcatenate()", "ms")
 }
 
-fn prepare_change(
-    change: &SubtableChange,
-    table: &Table,
-    live: PathBuf,
-    plan: &MetadataPlan,
-) -> MsResult<TableEdit> {
-    let requires_copy = !change.updated.is_empty()
-        || !change.removed.is_empty()
-        || (change.table == SubtableId::Field
-            && (plan.add_ephemeris_column || !plan.ephemerides.is_empty()));
-    if requires_copy {
-        let mut staged = StagedTable::prepare(live)?;
-        let mut lock = TableWriteLock::acquire_to_reread(&staged.private, 1)?;
-        lock.record_write();
-        staged.write(change, plan)?;
-        lock.release()?;
-        staged.lock_staged()?;
-        Ok(TableEdit::Replace(staged))
-    } else {
-        let lock = TableWriteLock::acquire_to_reread(&live, 1)?;
-        let records = matching_fields(table, &change.appended);
-        Ok(TableEdit::Append(
-            table.prepare_record_append(&records, lock)?,
-        ))
+fn output_path(table: &Table, opposite: &InputTables, own_root: &Path) -> MsResult<PathBuf> {
+    let path = table.path().ok_or_else(|| io("a subtable has no path"))?;
+    if path == own_root || opposite.contains(path) {
+        return Err(io(format!(
+            "concatenation would change a shared table at {}",
+            path.display()
+        )));
+    }
+    check_write_access(&path.join("table.dat")).map_err(io)?;
+    Ok(path.to_path_buf())
+}
+
+enum EditRequest<'a> {
+    Append(&'a Table, Cow<'a, [RecordValue]>),
+    Replace(Box<StagedTable>),
+}
+
+fn insert_edit<'a>(
+    edits: &mut BTreeMap<PathBuf, EditRequest<'a>>,
+    path: PathBuf,
+    edit: EditRequest<'a>,
+) -> MsResult<()> {
+    use std::collections::btree_map::Entry;
+    match edits.entry(path) {
+        Entry::Occupied(entry) => Err(io(format!("several edits share {}", entry.key().display()))),
+        Entry::Vacant(entry) => {
+            entry.insert(edit);
+            Ok(())
+        }
     }
 }
 
-fn check_target(table: &Table, paths: &mut BTreeSet<PathBuf>) -> MsResult<PathBuf> {
-    let live = table
-        .path()
-        .ok_or_else(|| io("a subtable has no path"))?
-        .canonicalize()
-        .map_err(io)?;
-    if !paths.insert(live.clone()) {
-        return Err(io(format!("several changes share {}", live.display())));
+fn publish_batch(mut edits: Vec<TableEdit<'_>>) -> MsResult<()> {
+    let publish = edits
+        .par_iter_mut()
+        .map(TableEdit::publish)
+        .collect::<Vec<_>>();
+    let result: MsResult<()> = publish
+        .into_iter()
+        .collect::<MsResult<()>>()
+        .and_then(|()| {
+            edits
+                .par_iter_mut()
+                .map(TableEdit::synchronize)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .collect()
+        });
+    if let Err(error) = result {
+        let failures: Vec<_> = edits
+            .into_iter()
+            .rev()
+            .filter_map(|edit| edit.restore().err())
+            .map(|error| error.to_string())
+            .collect();
+        return if failures.is_empty() {
+            Err(error)
+        } else {
+            Err(io(format!(
+                "{error}; recovery errors: {}",
+                failures.join(", ")
+            )))
+        };
     }
-    check_write_access(&live.join("table.dat")).map_err(io)?;
-    Ok(live)
+    edits.into_par_iter().for_each(TableEdit::finish);
+    Ok(())
 }
 
-enum TableEdit {
-    Append(PreparedRecordAppend),
-    Replace(StagedTable),
+enum TableEdit<'a> {
+    Append(PreparedRecordAppend<'a>),
+    Replace(StagedTable, &'a mut TableWriteLock),
 }
 
-impl TableEdit {
+impl TableEdit<'_> {
     fn publish(&mut self) -> MsResult<()> {
         match self {
             Self::Append(append) => Ok(append.publish()?),
-            Self::Replace(edit) => edit.publish(),
+            Self::Replace(edit, original) => edit.publish(original),
+        }
+    }
+
+    fn synchronize(&mut self) -> MsResult<()> {
+        match self {
+            Self::Append(append) => Ok(append.synchronize()?),
+            Self::Replace(..) => Ok(()),
         }
     }
 
     fn restore(self) -> MsResult<()> {
         match self {
             Self::Append(append) => Ok(append.restore()?),
-            Self::Replace(edit) if edit.published => {
-                if let Err(error) = edit.restore() {
+            Self::Replace(edit, original) if edit.published => {
+                if let Err(error) = edit.restore(original) {
                     return Err(io(format!(
                         "{error}; original subtable retained at {}",
                         edit.directory.keep().display()
@@ -203,14 +264,13 @@ impl TableEdit {
                 }
                 Ok(())
             }
-            Self::Replace(_) => Ok(()),
+            Self::Replace(..) => Ok(()),
         }
     }
 
-    fn finish(self) -> MsResult<()> {
-        match self {
-            Self::Append(append) => Ok(append.finish()?),
-            Self::Replace(_) => Ok(()),
+    fn finish(self) {
+        if let Self::Replace(mut edit, original) = self {
+            *original = edit.staged.take().expect("replacement table lock");
         }
     }
 }
@@ -219,13 +279,18 @@ struct StagedTable {
     live: PathBuf,
     private: PathBuf,
     directory: TempDir,
-    original: Vec<TableWriteLock>,
+    _nested_locks: Vec<TableWriteLock>,
     staged: Option<TableWriteLock>,
     published: bool,
 }
 
 impl StagedTable {
-    fn prepare(live: PathBuf) -> MsResult<Self> {
+    fn prepare_change(
+        live: PathBuf,
+        change: &SubtableChange,
+        plan: &MetadataPlan<'_>,
+        held: &BTreeMap<PathBuf, TableWriteLock>,
+    ) -> MsResult<Self> {
         if !matches!(
             Table::immediate_part_names(&live, &live)?,
             TablePartNames::Plain(_)
@@ -235,7 +300,7 @@ impl StagedTable {
                 live.display()
             )));
         }
-        let original = lock_table_tree_for_replacement(&live)?;
+        let nested_locks = lock_table_tree_for_replacement_with_held(&live, held)?;
         let directory = tempfile::Builder::new()
             .prefix(".casa-rs-ms-concat-")
             .tempdir_in(live.parent().expect("physical table parent"))
@@ -243,17 +308,23 @@ impl StagedTable {
         let private = directory.path().join("table");
         copy_locked_table_tree(&live, &private).map_err(io)?;
         require_owned_payload(&private)?;
-        Ok(Self {
+        let mut staged = Self {
             live,
             private,
             directory,
-            original,
+            _nested_locks: nested_locks,
             staged: None,
             published: false,
-        })
+        };
+        let mut lock = TableWriteLock::acquire_to_reread(&staged.private, 1)?;
+        lock.record_write();
+        staged.write(change, plan)?;
+        lock.release()?;
+        staged.lock_staged()?;
+        Ok(staged)
     }
 
-    fn write(&self, change: &SubtableChange, plan: &MetadataPlan) -> MsResult<()> {
+    fn write(&self, change: &SubtableChange, plan: &MetadataPlan<'_>) -> MsResult<()> {
         let mut table = Table::open(TableOptions::new(&self.private))?;
         if change.table == SubtableId::Field {
             if plan.add_ephemeris_column {
@@ -271,7 +342,7 @@ impl StagedTable {
             }
             for (source, name) in &plan.ephemerides {
                 let source = source.canonicalize().map_err(io)?;
-                let _locks = lock_table_tree_for_replacement(&source)?;
+                let _reader = held_reader(&source)?;
                 copy_locked_table_tree(&source, &self.private.join(name)).map_err(io)?;
             }
         }
@@ -306,8 +377,8 @@ impl StagedTable {
         Ok(())
     }
 
-    fn publish(&mut self) -> MsResult<()> {
-        if !self.original[0].matches_table_path(&self.live) {
+    fn publish(&mut self, original: &TableWriteLock) -> MsResult<()> {
+        if !original.matches_table_path(&self.live) {
             return Err(io(format!(
                 "{} changed during concatenation",
                 self.live.display()
@@ -315,7 +386,7 @@ impl StagedTable {
         }
         exchange_directories(&self.private, &self.live).map_err(io)?;
         self.published = true;
-        if !self.original[0].matches_table_path(&self.private)
+        if !original.matches_table_path(&self.private)
             || !self
                 .staged
                 .as_ref()
@@ -327,15 +398,20 @@ impl StagedTable {
                 self.live.display()
             )));
         }
+        self.staged
+            .as_mut()
+            .expect("staged table lock")
+            .follow_directory_rename(&self.live)?;
         Ok(())
     }
 
-    fn restore(&self) -> MsResult<()> {
-        if !self
-            .staged
-            .as_ref()
-            .expect("staged table lock")
-            .matches_table_path(&self.live)
+    fn restore(&self, original: &TableWriteLock) -> MsResult<()> {
+        if !original.matches_table_path(&self.private)
+            || !self
+                .staged
+                .as_ref()
+                .expect("staged table lock")
+                .matches_table_path(&self.live)
         {
             return Err(io(format!(
                 "{} changed after publication",
@@ -388,6 +464,6 @@ fn require_owned_payload(path: &Path) -> MsResult<()> {
     Ok(())
 }
 
-fn io(error: impl std::fmt::Display) -> MsError {
+pub(super) fn io(error: impl std::fmt::Display) -> MsError {
     MsError::InvalidInput(error.to_string())
 }

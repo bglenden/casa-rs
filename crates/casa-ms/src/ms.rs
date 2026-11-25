@@ -127,50 +127,36 @@ impl MeasurementSet {
     }
 
     /// Open only the descriptors used by the metadata phase of concatenation.
-    pub(crate) fn open_concatenation_metadata(path: &Path, donor: bool) -> MsResult<Self> {
+    pub(crate) fn open_concatenation_metadata(
+        path: &Path,
+        links: Vec<(SubtableId, PathBuf)>,
+        donor: bool,
+    ) -> MsResult<Self> {
         use rayon::prelude::*;
 
         let main = Table::open(TableOptions::new(path))?;
-        let mut ids = vec![
-            SubtableId::Antenna,
-            SubtableId::DataDescription,
-            SubtableId::Feed,
-            SubtableId::Field,
-            SubtableId::Observation,
-            SubtableId::Polarization,
-            SubtableId::Processor,
-            SubtableId::Source,
-            SubtableId::SpectralWindow,
-            SubtableId::State,
-            SubtableId::SysCal,
-            SubtableId::Weather,
-        ];
-        if donor {
-            ids.push(SubtableId::History);
-        }
-        let tables = ids
+        let tables = links
             .into_par_iter()
-            .map(|id| {
-                let Some(path) = subtable_path_from_main(&main, path, id) else {
-                    return Ok(None);
+            .map(|(id, path)| {
+                let table = if donor && id != SubtableId::History {
+                    crate::tool_concatenate::locking::held_reader(&path)?
+                } else {
+                    Table::open(TableOptions::new(&path))?
                 };
-                let table = Table::open(TableOptions::new(&path))?;
                 if !matches!(
                     id,
                     SubtableId::History | SubtableId::SysCal | SubtableId::Weather
                 ) {
                     table.rows()?;
                 }
-                Ok::<_, MsError>(Some((id, path, table)))
+                Ok::<_, MsError>((id, path, table))
             })
-            .collect::<Vec<_>>();
+            .collect::<MsResult<Vec<_>>>()?;
         let mut subtables = HashMap::new();
         let mut subtable_paths = HashMap::new();
-        for table in tables {
-            if let Some((id, path, table)) = table? {
-                subtables.insert(id, table);
-                subtable_paths.insert(id, path);
-            }
+        for (id, path, table) in tables {
+            subtables.insert(id, table);
+            subtable_paths.insert(id, path);
         }
         Ok(Self {
             main,

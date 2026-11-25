@@ -314,3 +314,89 @@ def test_missing_donor_history_preserves_attached_metadata(native_dataset, tmp_p
     assert tool.done()
     for reader in (tools, pinned_casa()):
         assert counts(reader, attached, names) == before
+
+
+def test_ordinary_donor_field_gets_the_missing_ephemeris_id(native_dataset, tmp_path, concat_api):
+    attached, donor = copy_inputs(native_dataset, tmp_path)
+    tab = tools.table()
+    assert tab.open(str(attached / "FIELD"), nomodify=False)
+    assert tab.addcols({"EPHEMERIS_ID": {"valueType": "int"}})
+    assert tab.putcell("EPHEMERIS_ID", 0, -1)
+    assert tab.done()
+    tool = concat_api.ms()
+    assert tool.open(str(attached), nomodify=False)
+    assert tool.testconcatenate(str(donor))
+    assert tool.done()
+    for api in (tools, pinned_casa()):
+        tab = api.table()
+        assert tab.open(str(attached / "FIELD"))
+        np.testing.assert_array_equal(tab.getcol("EPHEMERIS_ID"), [-1, -1])
+        assert tab.done()
+
+
+def install_partial_feeds(api, attached, donor):
+    table = api.table()
+    for path, extra_id in ((attached, 0), (donor, 19)):
+        assert table.open(str(path / "FEED"), nomodify=False)
+        original = {name: table.getcell(name, 0) for name in table.colnames() if table.iscelldefined(name, 0)}
+        extra_row = table.nrows()
+        assert table.addrows(1)
+        for name, value in original.items():
+            assert table.putcell(name, extra_row, extra_id if name == "FEED_ID" else value)
+        if path == attached:
+            assert table.putcell("FEED_ID", 0, 17)
+        assert table.done()
+
+
+def test_partial_feed_match_preserves_the_unmatched_donor_row(native_dataset, tmp_path):
+    attached, donor = copy_inputs(native_dataset, tmp_path)
+    install_partial_feeds(tools, attached, donor)
+    tool = tools.ms()
+    assert tool.open(str(attached), nomodify=False)
+    assert tool.testconcatenate(str(donor), "1Hz", "1mas")
+    assert tool.done()
+    for api in (tools, pinned_casa()):
+        table = api.table()
+        assert table.open(str(attached / "FEED"))
+        np.testing.assert_array_equal(
+            table.getcol("FEED_ID")[table.getcol("ANTENNA_ID") == 0], [17, 0, 19],
+        )
+        assert table.done()
+
+
+def test_shared_donor_subtable_is_rejected_before_any_publication(native_dataset, tmp_path):
+    attached, donor = copy_inputs(native_dataset, tmp_path)
+    tab = tools.table()
+    assert tab.open(str(attached), nomodify=False)
+    assert tab.putkeyword("FIELD", f"Table: {donor / 'FIELD'}")
+    assert tab.done()
+    names = ("FIELD", "SOURCE", "HISTORY")
+    before = [counts(tools, path, names) for path in (attached, donor)]
+    tool = tools.ms()
+    assert tool.open(str(attached), nomodify=False)
+    with pytest.raises(RuntimeError, match="shared table"):
+        tool.testconcatenate(str(donor))
+    assert tool.done()
+    for api in (tools, pinned_casa()):
+        assert [counts(api, path, names) for path in (attached, donor)] == before
+
+
+def test_locked_attachment_keeps_untouched_and_replaced_table_locks(ephemeris_dataset, tmp_path):
+    from test_tools_ms_addephemeris import assert_external_write_refused
+
+    dataset, _ = ephemeris_dataset
+    attached, donor = copy_inputs(dataset, tmp_path)
+    tab = tools.table()
+    assert tab.open(str(attached / "FIELD"), nomodify=False)
+    assert tab.removecols("EPHEMERIS_ID")
+    assert tab.done()
+    rmtree(attached / "FIELD" / "EPHEM0_TEST.tab")
+    tool = tools.ms()
+    assert tool.open(str(attached), nomodify=False, lock=True)
+    assert_external_write_refused(attached / "POINTING")
+    assert tool.testconcatenate(str(donor))
+    assert_external_write_refused(attached / "POINTING")
+    assert_external_write_refused(attached / "FIELD")
+    assert tool.done()
+    for api in (tools, pinned_casa()):
+        assert counts(api, attached, ("FIELD", "POINTING")) == [2, 12]

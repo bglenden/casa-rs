@@ -138,8 +138,7 @@ struct Feed {
 
 impl Feed {
     fn matches(&self, incoming: &Self) -> bool {
-        self.antenna == incoming.antenna
-            && self.window == incoming.window
+        self.window == incoming.window
             && self.id == incoming.id
             && self.receptors == incoming.receptors
             && self.position_m == incoming.position_m
@@ -242,16 +241,20 @@ fn merge_feeds(
         .enumerate()
         .filter(|(_, row)| row.antenna == old_id)
         .collect::<Vec<_>>();
-    let mut matched = Vec::new();
+    let mut matched_target = Vec::new();
+    let mut matched_donor = Vec::new();
     if known_antenna && known.iter().filter(|row| row.antenna == new_id).count() == incoming.len() {
-        for (_, feed) in &incoming {
+        for &(donor_index, feed) in &incoming {
             if let Some(index) = known
                 .iter()
                 .enumerate()
-                .rfind(|(index, row)| !matched.contains(index) && row.matches(feed))
+                .rfind(|(index, row)| {
+                    row.antenna == new_id && !matched_target.contains(index) && row.matches(feed)
+                })
                 .map(|(index, _)| index)
             {
-                matched.push(index);
+                matched_target.push(index);
+                matched_donor.push(donor_index);
                 if known[index].include_interval(feed, target)? {
                     if let Some(added) = index.checked_sub(target.row_count()) {
                         result.feeds[added] = known[index].record.clone();
@@ -270,9 +273,9 @@ fn merge_feeds(
             }
         }
     }
-    if matched.len() < incoming.len() {
+    if matched_donor.len() < incoming.len() {
         for (index, feed) in incoming {
-            if matched.contains(&index) {
+            if matched_donor.contains(&index) {
                 continue;
             }
             let mut feed = feed.clone();
