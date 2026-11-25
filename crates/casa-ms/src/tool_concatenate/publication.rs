@@ -124,20 +124,20 @@ fn concatenate(
         history_path,
         EditRequest::Append(history, Cow::Owned(logs)),
     )?;
-    if let Some(mode) = physical.filter(|mode| mode.handling % 2 == 0 && named.is_none()) {
-        if let Some(rows) = main_rows::prepare(
+    if let Some(mode) = physical.filter(|mode| mode.handling % 2 == 0 && named.is_none())
+        && let Some(rows) = main_rows::prepare(
             &target_ms,
             &donor_ms,
             target_ms.main_table(),
             &plan,
             mode.weight_scale,
-        )? {
-            insert_edit(
-                &mut requests,
-                target.clone(),
-                EditRequest::Main(target_ms.main_table(), rows),
-            )?;
-        }
+        )?
+    {
+        insert_edit(
+            &mut requests,
+            target.clone(),
+            EditRequest::Main(target_ms.main_table(), Box::new(rows)),
+        )?;
     }
     let named_held = named
         .as_ref()
@@ -337,7 +337,7 @@ fn output_path(table: &Table, opposite: &InputTables, own_root: &Path) -> MsResu
 
 enum EditRequest<'a> {
     Append(&'a Table, Cow<'a, [RecordValue]>),
-    Main(&'a Table, MainAppend),
+    Main(&'a Table, Box<MainAppend>),
     Replace(Box<StagedTable>),
 }
 

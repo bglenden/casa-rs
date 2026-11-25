@@ -230,3 +230,67 @@ def test_optional_spectra_follow_reversed_channels(native_dataset, tmp_path):
         np.testing.assert_allclose(table.getcell("SIGMA_SPECTRUM", original), sigma[:, ::-1] / np.sqrt(2), rtol=1e-7)
         np.testing.assert_array_equal(table.getcell("FLAG_CATEGORY", original), flags[:, ::-1, :])
         assert table.close()
+
+
+def copy_empty_main(incoming, output):
+    table = pinned_casa().table()
+    assert table.open(str(incoming))
+    selection = table.query("ROWID() < 0")
+    empty = selection.copy(str(output), deep=True, valuecopy=True)
+    assert empty.close()
+    assert selection.close()
+    assert table.close()
+
+
+def test_empty_main_donor_appends_no_rows(native_dataset, tmp_path):
+    first, incoming = copy_inputs(native_dataset, tmp_path)
+    donor = tmp_path / "empty.ms"
+    copy_empty_main(incoming, donor)
+
+    m = tools.ms()
+    assert m.open(str(first), nomodify=False)
+    original = m.nrow()
+    assert m.concatenate(str(donor), "1Hz", "1mas")
+    assert m.nrow() == original
+    assert m.close()
+    for reader in (tools, pinned_casa()):
+        assert counts(reader, first, (".",)) == [original]
+        assert counts(reader, donor, (".",)) == [0]
+
+
+def test_can_append_to_empty_main(native_dataset, tmp_path, concat_api):
+    original, donor = copy_inputs(native_dataset, tmp_path)
+    first = tmp_path / "empty.ms"
+    copy_empty_main(original, first)
+    m = concat_api.ms()
+    assert m.open(str(first), nomodify=False)
+    assert m.nrow() == 0
+    assert m.concatenate(str(donor), "1Hz", "1mas")
+    assert m.close()
+    for reader in (tools, pinned_casa()):
+        assert counts(reader, first, (".", "POINTING")) == counts(reader, original, (".",)) + [24]
+        expected = main_cells(tools, donor, 1)
+        actual = main_cells(reader, first, 1)
+        for column, value in actual.items():
+            np.testing.assert_array_equal(value, expected[column])
+
+
+def test_named_output_retains_donor_keywords(native_dataset, tmp_path, concat_api):
+    first, donor = copy_inputs(native_dataset, tmp_path)
+    output = tmp_path / "result.ms"
+    for path, note in ((first, "original"), (donor, "incoming")):
+        def seed(table):
+            assert table.putkeyword("PROJECT_NOTE", note)
+            assert table.putcolkeyword("DATA", "PROJECT_NOTE", note)
+        change_table(path, seed)
+
+    m = concat_api.ms()
+    assert m.open(str(first), nomodify=False)
+    assert m.concatenate(str(donor), "1Hz", "1mas", destmsfile=str(output))
+    assert m.close()
+    for reader in (tools, pinned_casa()):
+        tab = reader.table()
+        assert tab.open(str(output))
+        assert tab.getkeyword("PROJECT_NOTE") == "incoming"
+        assert tab.getcolkeyword("DATA", "PROJECT_NOTE") == "incoming"
+        assert tab.close()

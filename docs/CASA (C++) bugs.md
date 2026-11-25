@@ -12039,3 +12039,12 @@ directory. CASA can append donor POINTING rows to the attached MS before
 it reports that the output cannot be replaced. Casa-rs checks the
 destination before writing and retains the previous table edits for
 rollback until the output is published (#1030).
+
+## Concatenating a donor with no MAIN rows can abort CASA
+
+In CASA 6.7.6.14, call `ms.concatenate()` with an empty donor MAIN
+created by deep-copying an empty row selection of a valid MeasurementSet.
+The scan-offset calculation takes the minimum of the empty SCAN_NUMBER
+column. The uncaught casacore ArrayError aborts the process after CASA
+has started reconciling subtables. Casa-rs completes the requested
+metadata reconciliation and appends zero visibility rows (#1030).

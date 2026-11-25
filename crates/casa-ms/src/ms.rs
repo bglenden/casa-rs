@@ -1265,9 +1265,17 @@ pub(crate) fn measurement_set_main_table_bindings(main: &Table) -> HashMap<Strin
 }
 
 fn main_visibility_cell_shape(main: &Table) -> Option<(usize, usize)> {
-    let row = main.rows().ok()?.first()?;
+    if main.row_count() == 0 {
+        return None;
+    }
     for column in ["DATA", "MODEL_DATA", "CORRECTED_DATA"] {
-        let Some(Value::Array(array)) = row.get(column) else {
+        let Ok(column) = main.column_accessor(column) else {
+            continue;
+        };
+        let Ok(cells) = column.array_cells_owned_uncached(&[0]) else {
+            continue;
+        };
+        let Some(Some(array)) = cells.first() else {
             continue;
         };
         let shape = array.shape();

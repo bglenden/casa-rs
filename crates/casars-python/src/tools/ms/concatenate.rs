@@ -116,7 +116,7 @@ impl PyMsTool {
                         metadata: request,
                         weight_scale: *weight_scale,
                         handling: *handling,
-                        output: (!dest.is_empty()).then(|| Path::new(dest)),
+                        output: (!dest.is_empty()).then_some(Path::new(dest)),
                     },
                     &mut ms.write_locks,
                 )

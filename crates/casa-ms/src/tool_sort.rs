@@ -43,7 +43,6 @@ pub fn write_sorted_measurement_set(
     keywords.remove("SORTED_TABLE");
     subtables::copy_links(
         main,
-        main,
         &mut keywords,
         &mut ordered,
         staged_output,

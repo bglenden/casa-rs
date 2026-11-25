@@ -386,17 +386,20 @@ fn array_names(
         if destination.row_count() != 0
             && contains(destination, name)
             && contains(source, name)
-            && destination
-                .column_accessor(name)?
-                .array_cell_is_defined_uncached(0)?
-            && source
-                .column_accessor(name)?
-                .array_cell_is_defined_uncached(0)?
+            && first_array_is_defined(destination, name)?
+            && first_array_is_defined(source, name)?
         {
             columns.push(name);
         }
     }
     Ok(columns)
+}
+
+fn first_array_is_defined(table: &Table, column: &str) -> MsResult<bool> {
+    let value = table
+        .column_accessor(column)?
+        .array_cells_owned_uncached(&[0])?;
+    Ok(value.first().is_some_and(Option::is_some))
 }
 
 fn polarization_swaps(

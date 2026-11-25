@@ -354,7 +354,7 @@ fn splice_shape_header(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue};
+    use casa_types::{ArrayValue, PrimitiveType, RecordValue};
 
     use super::*;
     use crate::{
@@ -362,28 +362,59 @@ mod tests {
         TableWriteLock,
     };
 
-    fn table(path: &Path, entries: &[Option<Vec<i32>>]) {
+    fn table(path: &Path, entries: &[Option<Vec<f32>>]) {
+        use super::super::{
+            StreamedTiledShapeCubeLayout, StreamedTiledShapeValueType, StreamingTiledShapeWriter,
+            install_streamed_tiled_shape_column,
+        };
         let schema = TableSchema::new(vec![ColumnSchema::array_variable(
             "VALUES",
-            PrimitiveType::Int32,
+            PrimitiveType::Float32,
             Some(1),
         )])
         .unwrap();
-        let mut table = Table::with_schema(schema);
-        for entry in entries {
-            let fields = entry.as_ref().map(|array| {
-                RecordField::new(
-                    "VALUES",
-                    Value::Array(ArrayValue::from_i32_vec(array.clone())),
-                )
-            });
-            table
-                .add_row(RecordValue::new(fields.into_iter().collect()))
-                .unwrap();
-        }
+        let options = TableOptions::new(path).with_data_manager(DataManagerKind::TiledShapeStMan);
+        Table::with_schema(schema).save(options).unwrap();
+        let mut table = Table::open(TableOptions::new(path)).unwrap();
         table
-            .save(TableOptions::new(path).with_data_manager(DataManagerKind::TiledShapeStMan))
+            .append_rows_in_place(entries.len(), &RecordValue::default())
             .unwrap();
+        let base = path.join("values.tmp");
+        let headers = path.join("table.f0");
+        let (_, header) = read_tiled_header(&headers).unwrap();
+        let mut counts = [1, 2].map(|size| {
+            entries
+                .iter()
+                .flatten()
+                .filter(|cell| cell.len() == size)
+                .count()
+        });
+        counts[0] += entries.iter().filter(|entry| entry.is_none()).count();
+        let layouts = counts
+            .into_iter()
+            .enumerate()
+            .filter(|(_, rows)| *rows != 0)
+            .map(|(axis, rows)| {
+                StreamedTiledShapeCubeLayout::new(vec![axis + 1], rows, vec![axis + 1, 1])
+            })
+            .collect();
+        let mut writer = StreamingTiledShapeWriter::create(
+            &base,
+            StreamedTiledShapeValueType::Float32,
+            layouts,
+            4096,
+            header.big_endian,
+        )
+        .unwrap();
+        for cell in entries {
+            if let Some(values) = cell {
+                writer.push_f32_row(&[values.len()], values).unwrap();
+            } else {
+                writer.push_undefined_row().unwrap();
+            }
+        }
+        fs::remove_file(headers).unwrap();
+        install_streamed_tiled_shape_column(path, 0, "VALUES", writer.finish().unwrap()).unwrap();
     }
 
     #[test]
@@ -391,8 +422,8 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let target = scratch.path().join("target");
         let donor = scratch.path().join("donor");
-        table(&target, &[Some(vec![7]), None]);
-        table(&donor, &[None, Some(vec![1, 2]), Some(vec![3]), None]);
+        table(&target, &[Some(vec![7.0]), None]);
+        table(&donor, &[None, Some(vec![1.0, 2.0]), Some(vec![3.0]), None]);
         let mut guard = TableWriteLock::acquire_to_reread(&target, 1).unwrap();
         let reader = Table::open_with_lock_attempts(
             TableOptions::new(&donor),
@@ -429,14 +460,14 @@ mod tests {
         assert_eq!(
             rows,
             [
-                Some(vec![7]),
+                Some(vec![7.0]),
                 None,
                 None,
-                Some(vec![1, 2]),
-                Some(vec![3]),
+                Some(vec![1.0, 2.0]),
+                Some(vec![3.0]),
                 None
             ]
-            .map(|cell| cell.map(ArrayValue::from_i32_vec))
+            .map(|cell| cell.map(ArrayValue::from_f32_vec))
         );
         assert_eq!(fs::read(&existing_data).unwrap(), existing_bytes);
         append.restore().unwrap();

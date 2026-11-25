@@ -15,7 +15,7 @@ use tempfile::TempDir;
 
 use super::{MetadataPlan, PhysicalConcatenation, main_rows, publication::io};
 use crate::ms::{measurement_set_main_table_bindings, measurement_set_table_options};
-use crate::tool_sort::{check_named_table_output, subtables::copy_links};
+use crate::tool_sort::{check_named_table_output, subtables::copy_concatenation_links};
 use crate::{MeasurementSet, MsResult};
 
 pub(super) struct NamedOutput {
@@ -93,17 +93,7 @@ impl NamedOutput {
         let staged = self.workspace.path().join("output.ms");
         let mut empty = Table::with_schema(schema.clone());
         empty.set_info(main.info().clone());
-        let mut keywords = attached.main_table().keywords().clone();
-        keywords.remove("SORTED_TABLE");
-        copy_links(
-            attached.main_table(),
-            main,
-            &mut keywords,
-            &mut empty,
-            &staged,
-            held,
-        )?;
-        *empty.keywords_mut() = keywords;
+        copy_concatenation_links(attached.main_table(), main, &mut empty, &staged, held)?;
         empty.save_with_bindings(
             measurement_set_table_options(&staged),
             &measurement_set_main_table_bindings(main),

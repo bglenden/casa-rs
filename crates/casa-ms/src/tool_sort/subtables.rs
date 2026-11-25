@@ -63,9 +63,8 @@ pub(crate) fn check_named_output(input: &Table, output: &Path) -> MsResult<()> {
     Ok(())
 }
 
-pub(crate) fn copy_links(
+pub(super) fn copy_links(
     input: &Table,
-    column_source: &Table,
     keywords: &mut RecordValue,
     copy: &mut Table,
     output: &Path,
@@ -86,7 +85,93 @@ pub(crate) fn copy_links(
         held,
     };
     copies.rewrite(keywords, input_path, output)?;
-    copies.rewrite_columns(column_source, copy, table_path(column_source)?, output)
+    copies.rewrite_columns(input, copy, input_path, output)
+}
+
+/// Keep the donor's ordinary keywords and carry over independently copied
+/// table links from the reconciled attached MS.
+pub(crate) fn copy_concatenation_links(
+    attached: &Table,
+    donor: &Table,
+    output_table: &mut Table,
+    output: &Path,
+    held: &BTreeSet<PathBuf>,
+) -> MsResult<()> {
+    let attached_path = table_path(attached)?;
+    let donor_path = table_path(donor)?;
+    let mut copies = Copies {
+        by_output: BTreeMap::new(),
+        copying: Vec::new(),
+        held,
+    };
+    let mut keywords = donor.keywords().clone();
+    keywords.remove("SORTED_TABLE");
+    overlay_copied_links(
+        &mut copies,
+        &mut keywords,
+        attached.keywords(),
+        attached_path,
+        donor_path,
+        output,
+    )?;
+    *output_table.keywords_mut() = keywords;
+    for column in donor
+        .schema()
+        .into_iter()
+        .flat_map(|schema| schema.columns())
+    {
+        let name = column.name();
+        let mut keywords = donor.column_keywords(name).cloned().unwrap_or_default();
+        if let Some(attached_keywords) = attached.column_keywords(name) {
+            overlay_copied_links(
+                &mut copies,
+                &mut keywords,
+                attached_keywords,
+                attached_path,
+                donor_path,
+                output,
+            )?;
+        } else {
+            anchor_links(&mut keywords, donor_path);
+        }
+        output_table.set_column_keywords(name, keywords);
+    }
+    Ok(())
+}
+
+fn anchor_links(keywords: &mut RecordValue, input: &Path) {
+    for field in keywords.fields_mut() {
+        if let Value::TableRef(link) = &mut field.value {
+            *link = add_directory(link, input).to_string_lossy().into_owned();
+        }
+    }
+}
+
+fn overlay_copied_links(
+    copies: &mut Copies<'_>,
+    output_keys: &mut RecordValue,
+    attached: &RecordValue,
+    attached_path: &Path,
+    donor_path: &Path,
+    output: &Path,
+) -> MsResult<()> {
+    anchor_links(output_keys, donor_path);
+    let mut links = RecordValue::new(
+        attached
+            .fields()
+            .iter()
+            .filter(|field| matches!(&field.value, Value::TableRef(_)))
+            .cloned()
+            .collect(),
+    );
+    for field in links.fields() {
+        output_keys.remove(&field.name);
+    }
+    copies.rewrite(&mut links, attached_path, output)?;
+    for field in links.fields() {
+        output_keys.upsert(&field.name, field.value.clone());
+    }
+    Ok(())
 }
 
 struct Copies<'a> {
