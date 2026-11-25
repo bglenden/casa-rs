@@ -9,6 +9,7 @@ from casars import tools
 from test_tools_ms_putdata import writer_api
 from test_tools_ms_visibility_ifraxis import baseline_fixture
 from test_tools_msmetadata import measures, native_dataset
+from test_tools_simulator import configure
 
 
 OBSERVED = np.array([0, 2, 8, 20], dtype=np.complex64) + 1j
@@ -369,4 +370,33 @@ def test_hanningsmooth_leaves_two_channel_data_unchanged(native_dataset, tmp_pat
         assert table.open(path)
         for name, values in zip(columns, before):
             np.testing.assert_array_equal(table.getcol(name), values, strict=True)
+        assert table.done()
+
+
+def test_hanningsmooth_initializes_full_polarization_model(tmp_path, measures, writer_api):
+    casa = pytest.importorskip("casatools")
+    path = str(tmp_path / "four-polarizations.ms")
+    simulator = tools.simulator()
+    assert simulator.open(path)
+    configure(simulator, stokes="RR RL LR LL")
+    assert simulator.observe("F", "L", starttime="0s", stoptime="30s")
+    assert simulator.close()
+    write_input(casa, path)
+
+    tool = writer_api.ms()
+    assert tool.open(path, nomodify=False)
+    assert tool.hanningsmooth()
+    assert tool.done()
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(path)
+        model = np.broadcast_to(
+            np.array([1, 0, 0, 1], dtype=np.complex128)[:, None], (4, 4),
+        )
+        np.testing.assert_array_equal(table.getcell("MODEL_DATA", 0), model, strict=True)
+        np.testing.assert_array_equal(
+            table.getcell("CORRECTED_DATA", 0),
+            np.broadcast_to(SMOOTHED.astype(np.complex128), (4, 4)),
+            strict=True,
+        )
         assert table.done()

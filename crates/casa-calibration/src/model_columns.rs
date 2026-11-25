@@ -3,8 +3,9 @@
 
 mod compression;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
+use std::path::Path;
 
 use casa_ms::schema::main_table::{
     OptionalMainColumn, VisibilityDataColumn, initial_model_visibility,
@@ -17,7 +18,10 @@ use casa_ms::write_session::{
     MeasurementSetWriteSession, maximum_visibility_cell_elements,
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection};
-use casa_tables::TableWriteLock;
+use casa_tables::{
+    RequiredScalarColumnValues, StreamedTiledShapeColumn, StreamedTiledShapeCubeLayout,
+    StreamedTiledShapeValueType, StreamingTiledShapeWriter, TableWriteLock, TileLayoutPlanner,
+};
 use casa_types::{ArrayValue, Complex32, PrimitiveType};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
@@ -294,6 +298,17 @@ pub fn initialize_hanning_scratch_holding(
             CORRECTED.name(),
             "TiledCORRECTED_DATA",
         )?;
+        if !has_column(ms, MODEL) {
+            let staging = tempfile::tempdir_in(lock.path()).map_err(invalid)?;
+            let model = stream_hanning_model(ms, rows, observed, &staging.path().join("MODEL"))?;
+            scratch_columns::prepare_write_holding(ms, MODEL, true, lock)?;
+            add_scratch_schema(ms, MODEL, observed)?;
+            lock.record_write();
+            ms.main_table_mut()
+                .prepare_write()
+                .add_streamed_tiled_shape_column(MODEL.name(), model)?;
+        }
+        return Ok(());
     }
     let missing = [CORRECTED, MODEL]
         .into_iter()
@@ -311,6 +326,87 @@ pub fn initialize_hanning_scratch_holding(
             .retain(|row| selected.contains(&row.row_index));
     }
     reset_holding(ms, selection, &missing, observed, true, false, lock)
+}
+
+fn stream_hanning_model(
+    ms: &MeasurementSet,
+    rows: &[usize],
+    observed: &str,
+    temporary: &Path,
+) -> MsResult<StreamedTiledShapeColumn> {
+    let table = ms.main_table();
+    let shapes = table
+        .column_accessor(observed)?
+        .array_shapes_uncached(rows)?
+        .into_iter()
+        .map(|shape| {
+            let Some([correlations, channels]) = shape.as_deref() else {
+                return Err(invalid("observed data must have a defined rank-2 shape"));
+            };
+            Ok([*correlations, *channels])
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    let mut rows_per_shape = BTreeMap::<_, usize>::new();
+    for &shape in &shapes {
+        *rows_per_shape.entry(shape).or_default() += 1;
+    }
+    let layouts = rows_per_shape
+        .into_iter()
+        .map(|(shape, count)| {
+            let tiles = TileLayoutPlanner::repository_default()
+                .plan_column(&shape, count, std::mem::size_of::<Complex32>())
+                .map_err(invalid)?;
+            Ok(StreamedTiledShapeCubeLayout::new(
+                shape.to_vec(),
+                count,
+                tiles.tile_shape().to_vec(),
+            ))
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    let mut scalar = table.required_scalar_columns_owned_for_rows(&["DATA_DESC_ID"], rows)?;
+    let Some(RequiredScalarColumnValues::Int32(descriptions)) = scalar.remove("DATA_DESC_ID")
+    else {
+        return Err(invalid("DATA_DESC_ID must be Int32"));
+    };
+    let dd = ms.data_description()?;
+    let pol_ids = (0..dd.row_count())
+        .map(|row| dd.polarization_id(row))
+        .collect::<MsResult<Vec<_>>>()?;
+    let polarizations = model_polarizations(ms)?;
+    let big_endian = table
+        .stored_endian_format()?
+        .is_none_or(casa_tables::EndianFormat::is_big_endian);
+    let resources = MeasurementSetWriteResources::from_system_memory(1).map_err(invalid)?;
+    let mut writer = StreamingTiledShapeWriter::create(
+        temporary,
+        StreamedTiledShapeValueType::Complex32,
+        layouts,
+        resources.available_bytes,
+        big_endian,
+    )
+    .map_err(invalid)?;
+    let mut models = HashMap::new();
+    for (shape, description) in shapes.into_iter().zip(descriptions) {
+        let pol = *pol_ids
+            .get(description as usize)
+            .ok_or_else(|| invalid("invalid DATA_DESC_ID"))?;
+        let values = polarizations
+            .get(&pol)
+            .ok_or_else(|| invalid("invalid POLARIZATION_ID"))?;
+        if values.len() != shape[0] {
+            return Err(invalid("POLARIZATION does not agree with DATA"));
+        }
+        let cell = models.entry((shape, pol)).or_insert_with(|| {
+            values
+                .iter()
+                .copied()
+                .cycle()
+                .take(shape[0] * shape[1])
+                .collect::<Vec<_>>()
+        });
+        writer.push_complex32_row(&shape, cell).map_err(invalid)?;
+    }
+    writer.finish().map_err(invalid)
 }
 
 fn can_clone_tiled_observed(ms: &MeasurementSet, observed: &str) -> bool {
