@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "bf2f27aa0e0373b0f9d9314415d963c21829a188",
+  "source_revision": "bf2f27aa0e0373b0f9d9314415d963c21829a188",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only ephemeris-axes --work <new-dir> --native-bin <msexplore>",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "Channel versus Radial Velocity and Time versus Distance (rho) on an attached Uranus ephemeris, using two selected baselines and XX. Each CASA reference export runs in its own session. Additional XX/YY cases mask an integration and a channel, and keep a channel clear on only one baseline and correlation. The radial-velocity polynomial FIELD case shares the attached Uranus table. A fixed-field MS provides the refusal control.",
+  "result": "passed",
+  "baseline_result": "The native public task refuses the unsupported radial velocity axis.",
+  "text_exports": 5,
+  "points": 61,
+  "figures": 4,
+  "rendered_coordinates": 43,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "refusal_cases": 1
+}
