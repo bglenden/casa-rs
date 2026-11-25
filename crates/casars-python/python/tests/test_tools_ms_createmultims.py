@@ -205,6 +205,7 @@ def test_failed_attachment_restores_input_output_and_previous_tool(native_datase
     bad, _ = members(native_dataset, tmp_path / "parts")
     table = pinned_casa().table()
     assert table.open(str(bad), nomodify=False)
+    assert table.removekeyword("MS_VERSION")
     assert table.putkeyword("MS_VERSION", 1.0)
     assert table.done()
     output = tmp_path / "out.ms"
