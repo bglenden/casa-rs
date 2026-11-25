@@ -11,6 +11,7 @@ use casa_ms::tool_iteration::{
 };
 use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
+use casa_ms::transform::{HanningDataColumn, smooth_ms_hanning};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames, TableWriteLock};
 use casa_types::RecordValue;
@@ -23,6 +24,7 @@ use super::attachment_info::{TableFiles, TableStamp};
 use super::iteration::VisibilityIteration;
 use super::metadata_link::{MetadataLink, MetadataSnapshot, compose_rows};
 use super::owned_record::visibility_record;
+use super::selection_indices::selection_text;
 use super::subtable_queries::Subtables;
 use super::vi1::Vi1Iteration;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -402,6 +404,21 @@ impl VisibilityMain {
 
 #[pymethods]
 impl PyMsTool {
+    #[pyo3(signature = (datacolumn = HanningDataColumn::Corrected), text_signature = "($self, datacolumn='corrected')")]
+    fn hanningsmooth(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = hanning_column)] datacolumn: HanningDataColumn,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            match attached.as_mut().filter(|ms| ms.writable) {
+                Some(ms) => ms.hanning_rows(datacolumn),
+                None => Ok(false),
+            }
+        })
+    }
+
     #[pyo3(signature = (items = None, ifraxis = false, ifraxisgap = 0, increment = 1, average = false), text_signature = "($self, items=[], ifraxis=False, ifraxisgap=0, increment=1, average=False)")]
     fn getdata(
         &self,
@@ -501,6 +518,106 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    fn hanning_rows(&mut self, mode: HanningDataColumn) -> PyResult<bool> {
+        let link = self.working_metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        let main = self.visibility.current_main(&self.path)?;
+        let rows = self.selected_rows.as_ref().map_or_else(
+            || (0..main.table.row_count()).collect::<Vec<_>>(),
+            |rows| rows.to_vec(),
+        );
+        if rows.is_empty() {
+            return Ok(true);
+        }
+        let has = |name| {
+            main.table
+                .schema()
+                .is_some_and(|schema| schema.contains_column(name))
+        };
+        let observed = if has("FLOAT_DATA") {
+            "FLOAT_DATA"
+        } else {
+            "DATA"
+        };
+        let mut names = vec!["FLAG", "WEIGHT"];
+        if has("WEIGHT_SPECTRUM") {
+            names.push("WEIGHT_SPECTRUM");
+        }
+        if mode != HanningDataColumn::Corrected || !has("CORRECTED_DATA") {
+            names.push(observed);
+        }
+        if mode != HanningDataColumn::Observed && has("CORRECTED_DATA") {
+            names.push("CORRECTED_DATA");
+        }
+        let targets = main.write_targets(&rows, &names)?;
+        let mut temporary = BTreeMap::new();
+        let mut written = BTreeSet::new();
+        for target in &targets {
+            if !target
+                .names
+                .iter()
+                .map(String::as_str)
+                .eq(names.iter().copied())
+            {
+                return Err(runtime_error(
+                    "cannot smooth renamed visibility columns in this view (#1030)",
+                ));
+            }
+            if !self.write_locks.contains_key(&target.path) {
+                let lock =
+                    TableWriteLock::acquire_to_reread(&target.path, 0).map_err(runtime_error)?;
+                temporary.insert(target.path.clone(), lock);
+            }
+            written.insert(target.path.clone());
+        }
+        link.verify_directory().map_err(runtime_error)?;
+        main.verify_write_layout(&BTreeSet::new())?;
+        let current =
+            |layout: &VisibilityMain| layout.verify_write_layout(&BTreeSet::new()).is_ok();
+        let modern = self
+            .visibility
+            .iteration
+            .as_ref()
+            .and_then(|cursor| cursor.layout.as_deref())
+            .is_some_and(current);
+        let legacy = self
+            .legacy_selection
+            .iteration
+            .as_ref()
+            .is_some_and(|cursor| current(&cursor.main));
+        let vi1 = self
+            .visibility
+            .vi1
+            .as_ref()
+            .is_some_and(|cursor| current(&cursor.main));
+        let grid = self
+            .legacy_selection
+            .axes
+            .baseline_read
+            .as_ref()
+            .is_some_and(|read| read.has_current_descriptor());
+        self.visibility.main = None;
+        for target in targets {
+            let lock = self
+                .write_locks
+                .get_mut(&target.path)
+                .or_else(|| temporary.get_mut(&target.path))
+                .expect("physical MAIN write lock was acquired");
+            let mut ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
+            if mode == HanningDataColumn::Corrected {
+                casa_calibration::initialize_hanning_scratch_holding(&mut ms, lock)
+                    .map_err(runtime_error)?;
+            }
+            let rows = target.rows.into_keys().collect::<Vec<_>>();
+            smooth_ms_hanning(&mut ms, &rows, mode, lock).map_err(runtime_error)?;
+        }
+        self.refresh_written_readers(&main, &written, [modern, legacy, vi1, grid])?;
+        for (_, lock) in temporary {
+            lock.release().map_err(runtime_error)?;
+        }
+        Ok(true)
+    }
+
     pub(super) fn putdata_rows(&mut self, items: RecordValue) -> PyResult<bool> {
         if items.fields().is_empty()
             || self
@@ -702,12 +819,39 @@ impl AttachedMs {
                 .write_part(&mut ms, lock, part)
                 .map_err(runtime_error)?;
         }
+        self.refresh_written_readers(
+            main,
+            &written,
+            [
+                refresh_cursor,
+                refresh_legacy_cursor,
+                refresh_vi1,
+                refresh_legacy_grid,
+            ],
+        )?;
+        for (_, lock) in temporary {
+            lock.release().map_err(runtime_error)?;
+        }
+        Ok(())
+    }
+
+    fn refresh_written_readers(
+        &mut self,
+        main: &VisibilityMain,
+        written: &BTreeSet<PathBuf>,
+        [
+            refresh_cursor,
+            refresh_legacy_cursor,
+            refresh_vi1,
+            refresh_legacy_grid,
+        ]: [bool; 4],
+    ) -> PyResult<()> {
         if refresh_cursor || refresh_legacy_grid || refresh_legacy_cursor || refresh_vi1 {
             // Refresh data read bindings and the stamps changed by our own
             // write without accepting a different saved view projection.
-            main.verify_write_layout(&written)?;
+            main.verify_write_layout(written)?;
             let refreshed = Arc::new(VisibilityMain::open(&self.path)?);
-            main.verify_write_layout(&written)?;
+            main.verify_write_layout(written)?;
             if refresh_cursor && let Some(iteration) = self.visibility.iteration.as_mut() {
                 iteration.layout = Some(Arc::clone(&refreshed));
             }
@@ -724,9 +868,6 @@ impl AttachedMs {
             {
                 read.refresh_descriptor(refreshed);
             }
-        }
-        for (_, lock) in temporary {
-            lock.release().map_err(runtime_error)?;
         }
         Ok(())
     }
@@ -1087,6 +1228,17 @@ impl AttachedMs {
         link.verify_directory().map_err(runtime_error)?;
         Ok(reply)
     }
+}
+
+fn hanning_column(value: &Bound<'_, PyAny>) -> PyResult<HanningDataColumn> {
+    let text = selection_text(value, "datacolumn")?;
+    Ok(if text.eq_ignore_ascii_case("data") {
+        HanningDataColumn::Observed
+    } else if text.eq_ignore_ascii_case("all") {
+        HanningDataColumn::Both
+    } else {
+        HanningDataColumn::Corrected
+    })
 }
 
 fn requested_items(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {

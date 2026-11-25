@@ -18,6 +18,21 @@ use super::visibility_columns::VisibilityColumns;
 const COEFFICIENTS: [f32; 3] = [0.25, 0.5, 0.25];
 
 pub(super) fn smooth(value: &mut ArrayValue, flag_shape: &[usize]) -> Result<(), TableError> {
+    smooth_visibility(value, flag_shape, false)
+}
+
+pub(super) fn smooth_tool_cell(
+    value: &mut ArrayValue,
+    flag_shape: &[usize],
+) -> Result<(), TableError> {
+    smooth_visibility(value, flag_shape, true)
+}
+
+fn smooth_visibility(
+    value: &mut ArrayValue,
+    flag_shape: &[usize],
+    average_edges: bool,
+) -> Result<(), TableError> {
     if flag_shape.len() != 2 || value.shape() != flag_shape {
         return Err(TableError::Schema(
             "visibility and FLAG must have matching [corr, chan] shapes for Hanning smoothing"
@@ -25,8 +40,8 @@ pub(super) fn smooth(value: &mut ArrayValue, flag_shape: &[usize]) -> Result<(),
         ));
     }
     match value {
-        ArrayValue::Complex32(array) => smooth_values(array),
-        ArrayValue::Float32(array) => smooth_values(array),
+        ArrayValue::Complex32(array) => smooth_values(array, average_edges),
+        ArrayValue::Float32(array) => smooth_values(array, average_edges),
         _ => {
             return Err(TableError::Schema(
                 "visibility arrays must hold Complex32 or Float32".into(),
@@ -36,20 +51,24 @@ pub(super) fn smooth(value: &mut ArrayValue, flag_shape: &[usize]) -> Result<(),
     Ok(())
 }
 
-fn smooth_values<T>(array: &mut ArrayD<T>)
+fn smooth_values<T>(array: &mut ArrayD<T>, average_edges: bool)
 where
     T: Copy + Add<Output = T> + Mul<f32, Output = T>,
 {
-    apply_interior(array, |[left, center, right]| {
-        left * COEFFICIENTS[0] + center * COEFFICIENTS[1] + right * COEFFICIENTS[2]
-    });
+    apply_interior(
+        array,
+        |[left, center, right]| {
+            left * COEFFICIENTS[0] + center * COEFFICIENTS[1] + right * COEFFICIENTS[2]
+        },
+        average_edges.then_some(|[left, right]| left * 0.5 + right * 0.5),
+    );
 }
 
 pub(super) fn flag(value: &mut ArrayValue) {
     let ArrayValue::Bool(flags) = value else {
         unreachable!("FLAG has already been validated")
     };
-    apply_interior(flags, |[left, center, right]| left || center || right);
+    apply_interior(flags, |[left, center, right]| left || center || right, None);
     let channels = flags.len_of(Axis(1));
     if channels > 0 {
         flags.index_axis_mut(Axis(1), 0).fill(true);
@@ -57,12 +76,22 @@ pub(super) fn flag(value: &mut ArrayValue) {
     }
 }
 
-fn apply_interior<T: Copy>(array: &mut ArrayD<T>, filter: impl Fn([T; 3]) -> T) {
+fn apply_interior<T: Copy>(
+    array: &mut ArrayD<T>,
+    filter: impl Fn([T; 3]) -> T,
+    edges: Option<fn([T; 2]) -> T>,
+) {
     let channels = array.len_of(Axis(1));
     if channels < 3 {
         return;
     }
     for mut row in array.lanes_mut(Axis(1)) {
+        let endpoints = edges.map(|edge| {
+            [
+                edge([row[0], row[1]]),
+                edge([row[channels - 2], row[channels - 1]]),
+            ]
+        });
         let mut left = row[0];
         let mut center = row[1];
         for channel in 1..channels - 1 {
@@ -71,7 +100,45 @@ fn apply_interior<T: Copy>(array: &mut ArrayD<T>, filter: impl Fn([T; 3]) -> T) 
             left = center;
             center = right;
         }
+        if let Some([first, last]) = endpoints {
+            row[0] = first;
+            row[channels - 1] = last;
+        }
     }
+}
+
+pub(super) fn tool_weight(
+    value: &mut ArrayValue,
+    flag_shape: &[usize],
+    spectrum: bool,
+) -> Result<(), TableError> {
+    let ArrayValue::Float32(weights) = value else {
+        return Err(TableError::Schema("Hanning weights must be Float32".into()));
+    };
+    if spectrum {
+        if weights.shape() != flag_shape || flag_shape.len() != 2 {
+            return Err(TableError::Schema("WEIGHT_SPECTRUM must match FLAG".into()));
+        }
+        apply_interior(
+            weights,
+            |values| {
+                if values.contains(&0.0) {
+                    return 0.0;
+                }
+                let [left, center, right] = values.map(f64::from);
+                (1.0 / (1.0 / (16.0 * left) + 1.0 / (4.0 * center) + 1.0 / (16.0 * right))) as f32
+            },
+            Some(|_| 0.0),
+        );
+    } else {
+        if flag_shape.len() != 2 || weights.shape() != &flag_shape[..1] {
+            return Err(TableError::Schema(
+                "WEIGHT must have one value per correlation".into(),
+            ));
+        }
+        weights.map_inplace(|weight| *weight = (f64::from(*weight) * 8.0 / 3.0) as f32);
+    }
+    Ok(())
 }
 
 pub(super) fn statistics(

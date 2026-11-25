@@ -173,7 +173,9 @@ pub use model::{
     CalibrationParameterFamily, CalibrationSubtableSummary, CalibrationTableSummary,
     CalibrationValidationIssue, TimeCoverageSummary,
 };
-pub use model_columns::{delete_calibration_model, reset_calibration_set};
+pub use model_columns::{
+    delete_calibration_model, initialize_hanning_scratch_holding, reset_calibration_set,
+};
 pub use plan::{
     ApplyCalibrationTablePlan, ApplyCalibrationTableSpec, ApplyChannelSelection,
     ApplyInterpolationMode, ApplyMode, ApplyPlan, ApplyPlanError, ApplyPlanRequest,

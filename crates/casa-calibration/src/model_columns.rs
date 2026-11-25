@@ -252,13 +252,47 @@ fn reset(
     clear_virtual: bool,
     mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
+    reset_holding(ms, selected, columns, create, clear_virtual, &mut lock)?;
+    Ok(lock)
+}
+
+/// Initialize scratch data needed by the legacy Hanning tool when corrected
+/// samples are absent. Preserve existing model samples.
+///
+/// # Errors
+/// The caller's MAIN lock is stale, or a required column cannot be filled.
+pub fn initialize_hanning_scratch_holding(
+    ms: &mut MeasurementSet,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
+    check_main_lock(ms, lock)?;
+    if has_column(ms, CORRECTED) {
+        return Ok(());
+    }
+    let missing = if has_column(ms, MODEL) {
+        &[CORRECTED][..]
+    } else {
+        &[CORRECTED, MODEL][..]
+    };
+    let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
+    reset_holding(ms, all, missing, true, false, lock)
+}
+
+fn reset_holding(
+    ms: &mut MeasurementSet,
+    selected: ResolvedMsSelection,
+    columns: &[VisibilityDataColumn],
+    create: bool,
+    clear_virtual: bool,
+    lock: &mut TableWriteLock,
+) -> MsResult<()> {
     let (plan, destinations) = scratch_write_plan(
         ms,
         selected.row_indices().collect(),
         columns,
         create,
         clear_virtual,
-        &mut lock,
+        lock,
     )?;
     let batch_rows = plan.batch_rows().max(1);
     let polarizations = if columns.contains(&MODEL) {
@@ -271,15 +305,20 @@ fn reset(
         .iter()
         .filter_map(|(&spw, selection)| Some((spw, calibration_channel_span(selection)?)))
         .collect::<BTreeMap<_, _>>();
-    let mut session =
-        MeasurementSetWriteSession::start_selected_row_mutation_holding(ms, plan, lock)
-            .map_err(invalid)?;
-    for rows in selected.selected_rows.chunks(batch_rows) {
-        let batch = reset_batch(ms, rows, &destinations, &ranges, &polarizations)?;
-        session.write_mutation_batch(ms, batch).map_err(invalid)?;
-    }
-    let (_, lock) = session.finish_mutation_holding().map_err(invalid)?;
-    Ok(lock)
+    MeasurementSetWriteSession::mutate_selected_rows(
+        ms,
+        plan,
+        Some(lock),
+        invalid,
+        |session, ms| {
+            for rows in selected.selected_rows.chunks(batch_rows) {
+                let batch = reset_batch(ms, rows, &destinations, &ranges, &polarizations)?;
+                session.write_mutation_batch(ms, batch).map_err(invalid)?;
+            }
+            Ok(())
+        },
+    )?;
+    Ok(())
 }
 
 pub(crate) fn scratch_write_plan(

@@ -219,8 +219,8 @@ const METHODS: &[Method] = &[
     method(
         "hanningsmooth",
         &[param("datacolumn", K::Text, Text("corrected"))],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method("ismultims", &[], R::Any, Yes),
     method("iswritable", &[], R::Any, Yes),

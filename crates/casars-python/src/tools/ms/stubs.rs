@@ -178,12 +178,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (datacolumn = None), text_signature = "($self, datacolumn='corrected')")]
-    fn hanningsmooth(&self, datacolumn: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("hanningsmooth")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (fitsfile), text_signature = "($self, fitsfile)")]
     fn listfits(&self, fitsfile: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         stub("listfits")
