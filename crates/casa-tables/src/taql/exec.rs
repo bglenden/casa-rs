@@ -177,6 +177,26 @@ pub(super) fn select_row_indices(
     sel: &SelectStatement,
     table: &crate::Table,
 ) -> Result<Vec<usize>, TaqlError> {
+    select_rows_impl(sel, table, false)
+}
+
+/// Evaluate a row-view selection. A GROUP BY keeps one source row per group
+/// instead of constructing a new table of aggregate columns.
+///
+/// # Errors
+/// A query expression is invalid or a referenced cell cannot be read.
+pub fn select_view_rows(
+    sel: &SelectStatement,
+    table: &crate::Table,
+) -> Result<Vec<usize>, TaqlError> {
+    select_rows_impl(sel, table, true)
+}
+
+fn select_rows_impl(
+    sel: &SelectStatement,
+    table: &crate::Table,
+    project_groups: bool,
+) -> Result<Vec<usize>, TaqlError> {
     let row_count = table.row_count();
     let style = sel.style;
 
@@ -210,6 +230,19 @@ pub(super) fn select_row_indices(
     // 1b. JOIN — nested-loop join against same table (self-join)
     if !sel.joins.is_empty() {
         row_indices = execute_joins(&row_indices, &sel.joins, table, style)?;
+    }
+
+    if project_groups && !sel.group_by.is_empty() {
+        let groups = group_rows(&row_indices, &sel.group_by, table, style)?;
+        row_indices.clear();
+        for group in groups {
+            if let Some(having) = &sel.having
+                && !eval_aggregate_expr(having, &group, table, style)?.to_bool()?
+            {
+                continue;
+            }
+            row_indices.push(group[0]);
+        }
     }
 
     // 2. ORDER BY

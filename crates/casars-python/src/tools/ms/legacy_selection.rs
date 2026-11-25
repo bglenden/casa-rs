@@ -4,14 +4,14 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use casa_ms::selection::MsSelectionIndices;
-use casa_ms::selection::taql_selection::select_projected_scalar_rows;
+use casa_ms::SubtableId;
+use casa_ms::selection::taql_selection::{select_legacy_rows, select_projected_scalar_rows};
 use casa_ms::subtables::{
     MsDataDescription, MsPolarization, MsSpectralWindow, linked_subtable_row,
 };
-use casa_ms::{MsSelection, SubtableId};
 use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 use casa_types::{RecordField, RecordValue};
+use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
@@ -229,28 +229,31 @@ impl AttachedMs {
         let table = refreshed.as_ref().unwrap_or(&self.main);
         let fast = select_projected_scalar_rows(table, &text, physical_rows.as_deref())
             .map_err(runtime_error)?;
-        let rows = if let Some(rows) = fast {
-            rows
+        let (rows, giving) = if let Some(rows) = fast {
+            (rows, None)
         } else {
             let snapshot = working
                 .snapshot_relative_rows(previous)
                 .map_err(runtime_error)?;
-            let ms = &snapshot.ms;
-            let selection = MsSelection {
-                msselect: Some(text),
-                ..MsSelection::default()
-            };
-            let parsed = ms
-                .parse_ms_tool_selection(&selection, &mut MsSelectionIndices::default())
-                .map_err(runtime_error)?;
-            parsed.select_rows(ms).map_err(runtime_error)?
+            select_legacy_rows(&snapshot.ms, &text).map_err(runtime_error)?
         };
-        let nonempty = !rows.is_empty();
-        self.legacy_selection.rows = Some(
-            rows.into_iter()
-                .map(|row| previous.map_or(row, |previous| previous[row]))
-                .collect(),
-        );
+        let selected = rows
+            .into_iter()
+            .map(|row| previous.map_or(row, |previous| previous[row]))
+            .collect::<Arc<[usize]>>();
+        if let Some(giving) = giving {
+            if giving.output_type.is_some() {
+                return Err(PyNotImplementedError::new_err(
+                    "ms.selecttaqlold GIVING with an explicit output type is not implemented in casa-rs (#1030)",
+                ));
+            }
+            let target = std::path::absolute(giving.table_name).map_err(runtime_error)?;
+            let output = compose_rows(outer.as_deref(), Some(&selected)).expect("row projection");
+            working.verify_directory().map_err(runtime_error)?;
+            super::super::table::save_ms_query_selection(table, &self.sources, &output, &target)?;
+        }
+        let nonempty = !selected.is_empty();
+        self.legacy_selection.rows = Some(selected);
         Ok(nonempty)
     }
 
@@ -321,10 +324,14 @@ impl AttachedMs {
                 ids.retain(|&id| {
                     (0..antennas).contains(&(id / 1000)) && (0..antennas).contains(&(id % 1000))
                 });
-                Some(format!(
-                    "(ANTENNA1 * 1000 + ANTENNA2) IN [{ids}]",
-                    ids = int_list(&ids)
-                ))
+                Some(if ids.is_empty() {
+                    "False".into()
+                } else {
+                    format!(
+                        "(ANTENNA1 * 1000 + ANTENNA2) IN [{ids}]",
+                        ids = int_list(&ids)
+                    )
+                })
             }
             RecordSelector::Times => {
                 let values = real_items(&field)?;
@@ -337,7 +344,11 @@ impl AttachedMs {
                     .map(real_literal)
                     .collect::<Vec<_>>()
                     .join(",");
-                Some(format!("TIME IN [{values}]"))
+                Some(if values.is_empty() {
+                    "False".into()
+                } else {
+                    format!("TIME IN [{values}]")
+                })
             }
             range => legacy_range_predicate(range, &field)?,
         };

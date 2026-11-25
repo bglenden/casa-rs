@@ -169,6 +169,33 @@ fn save_select_result(
     })
 }
 
+/// Persist a reference using the original MS as its parent, so a temporary
+/// selector projection does not become the on-disk dependency.
+pub(in crate::tools) fn save_ms_query_selection(
+    source: &Table,
+    protected: &[PathBuf],
+    rows: &[usize],
+    target: &Path,
+) -> PyResult<()> {
+    let save = || {
+        let path = source
+            .path()
+            .ok_or_else(|| Fail::Runtime("missing source table name".into()))?;
+        for input in std::iter::once(path).chain(protected.iter().map(PathBuf::as_path)) {
+            refuse_nested(target, input)?;
+        }
+        check_target(target)?;
+        if used_by_another_process(target) {
+            return Err(Fail::Runtime(format!(
+                "Table {} is open in another process",
+                target.display()
+            )));
+        }
+        save_select_result(source, rows, &[], target)
+    };
+    save().map_err(PyErr::from)
+}
+
 fn persist_mutating_table(
     table: &mut Table,
     stmt: &taql::Statement,

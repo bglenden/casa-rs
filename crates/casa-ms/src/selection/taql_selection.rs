@@ -2,7 +2,7 @@
 //! Bind casacore's MSCAL selection functions to the shared MS row grammars.
 
 use casa_tables::taql::ast::{
-    BinaryOp, Expr, InSetElement, IndexElement, Literal, SelectStatement, UnaryOp,
+    BinaryOp, Expr, GivingClause, InSetElement, IndexElement, Literal, SelectStatement, UnaryOp,
 };
 use casa_tables::taql::{self, IndexStyle, RecordExpressionType, Statement, TaqlError, TaqlResult};
 use casa_tables::{ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableError};
@@ -145,11 +145,37 @@ pub fn select_projected_scalar_rows(
     expression: &str,
     source_rows: Option<&[usize]>,
 ) -> MsResult<Option<Vec<usize>>> {
-    let statement = taql::parse(&format!("SELECT * WHERE ({expression})")).map_err(taql_error)?;
+    let statement = taql::parse(&format!("SELECT * WHERE {expression}")).map_err(taql_error)?;
     let Statement::Select(select) = statement else {
         return Ok(None);
     };
     select_simple_rows(table, &select, None, source_rows)
+}
+
+/// Evaluate a legacy selector query against the ordered legacy row view.
+///
+/// The trailing WHERE, sorting, and row limit expressions run together so
+/// that ordering and limits apply to view-relative row numbers.
+///
+/// # Errors
+/// The selection syntax is invalid or the query cannot run on MAIN.
+pub fn select_legacy_rows(
+    ms: &MeasurementSet,
+    expression: &str,
+) -> MsResult<(Vec<usize>, Option<GivingClause>)> {
+    let statement = selection_query(ms, &format!("SELECT * WHERE {expression}"), None)?;
+    let Statement::Select(select) = statement else {
+        return Err(MsError::InvalidInput(
+            "expected a TaQL row selection".into(),
+        ));
+    };
+    if select.giving_expr.is_some() || (select.having.is_some() && select.group_by.is_empty()) {
+        return Err(MsError::InvalidInput(
+            "invalid clause for a TaQL row selection".into(),
+        ));
+    }
+    let rows = taql::exec::select_view_rows(&select, ms.main_table()).map_err(taql_error)?;
+    Ok((rows, select.giving))
 }
 
 fn select_simple_rows(

@@ -1193,14 +1193,14 @@ fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
     );
     assert!(extra.is_err());
 
-    // Empty slice (start > end in Glish, or end <= start in Python) returns empty Array without panic.
+    // Casacore rejects decreasing bounds in its default Glish Slicer.
     let glish_ctx = EvalContext {
         row: &row,
         row_index: 0,
         style: ast::IndexStyle::Glish,
         measures: None,
     };
-    match eval_array_index(
+    let error = eval_array_index(
         &one_d,
         None,
         &[ast::IndexElement::Slice {
@@ -1210,14 +1210,8 @@ fn single_element_slice_keeps_shape_and_c_order_array_converts_column_major() {
         }],
         &glish_ctx,
     )
-    .unwrap()
-    {
-        ExprValue::Array(a) => {
-            assert_eq!(a.shape, vec![0]);
-            assert!(a.data.is_empty());
-        }
-        other => panic!("expected empty Array, got {other:?}"),
-    }
+    .unwrap_err();
+    assert!(error.to_string().contains("Slicer error"));
 
     // Negative step out-of-range clamps cleanly under end-exclusive slicing.
     let five = make_1d_array(vec![10, 20, 30, 40, 50]);

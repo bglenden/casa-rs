@@ -347,6 +347,10 @@ impl AttachedMs {
     pub(super) fn synchronize_metadata_selection(&mut self) -> PyResult<()> {
         if self.exact_time_metadata.is_some() {
             self.publish_selected_rows(self.selected_rows.clone())?;
+        } else {
+            // CASA's setNewSel also resets the MSSelector when the same
+            // modern row view can be reused.
+            self.legacy_selection = Default::default();
         }
         Ok(())
     }

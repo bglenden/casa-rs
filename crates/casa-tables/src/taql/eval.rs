@@ -1218,6 +1218,21 @@ fn resolve_slice(
     let len_i = dim_len as i64;
     let to_idx = |v| relative_array_index(v, len_i, style);
 
+    if style == ast::IndexStyle::Glish {
+        let first = start.map_or(0, to_idx);
+        let last = end.map_or(len_i - 1, to_idx);
+        if step < 0 || !(0..len_i).contains(&first) || !(first..len_i).contains(&last) {
+            return Err(TaqlError::TypeError {
+                message: format!(
+                    "Slicer error: invalid bounds or stride for axis of length {dim_len}"
+                ),
+            });
+        }
+        return Ok((first as usize..=last as usize)
+            .step_by(step as usize)
+            .collect());
+    }
+
     let mut result = Vec::new();
     if style.is_end_inclusive() {
         if step > 0 {

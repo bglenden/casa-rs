@@ -11603,3 +11603,11 @@ table and then raises `NullTable::getColumn - Table object is empty`.
 The out-of-date HISTORY handle prevents the first message from being saved.
 casa-rs opens the linked table before appending the message. CASA can read
 and append to the resulting subtable (#1030).
+
+## An MS TaQL output can erase an unrelated directory
+
+In CASA 6.7.6.14, `ms.selecttaqlold('True GIVING "output.ms"')`
+overwrites an existing directory containing ordinary files. A mistyped
+output path can therefore destroy unrelated data. casa-rs uses the table
+query destination checks and leaves a nonempty non-table directory and the
+legacy row selection intact when publication is refused (#1030).
