@@ -109,6 +109,51 @@ def test_vi1_keeps_its_writable_reference_cursor_across_other_iterators(
     assert reader.done()
 
 
+def test_vi1_row_numbers_use_the_last_position_of_duplicate_reference_rows(
+    baseline_fixture, writer_api,
+):
+    _, view, original = baseline_fixture
+    path = view("vi1-duplicates.ms", [0, 0, 1, 5])
+    reader = writer_api.ms()
+    assert reader.open(path)
+    assert reader.niterinit(adddefaultsortcolumns=False)
+    actual = reader.ngetdata(["rows", "time", "data", "flag"])
+    np.testing.assert_array_equal(actual["rows"], np.array([1, 1, 2, 3]), strict=True)
+    for name in ("time", "data", "flag"):
+        np.testing.assert_array_equal(actual[name], original[name][..., [0, 0, 1, 5]],
+                                      strict=True)
+    assert reader.done()
+
+
+def test_vi1_first_buffer_uses_a_matching_full_table_sort_cache(
+    baseline_fixture, native_dataset, writer_api,
+):
+    _, view, original = baseline_fixture
+    physical = np.arange(len(original["time"]) - 1, -1, -1, dtype=np.int64)
+    path = view("vi1-reversed.ms", physical)
+    reader = writer_api.ms()
+    assert reader.open(path)
+    assert reader.niterinit(maxrows=1, adddefaultsortcolumns=False)
+    uncached = reader.ngetdata(["rows", "data"])
+    time_order = np.argsort(original["time"][physical], kind="stable")
+    np.testing.assert_array_equal(uncached["rows"], time_order[:2], strict=True)
+    np.testing.assert_array_equal(uncached["data"], original["data"][..., physical[time_order[:2]]],
+                                  strict=True)
+    assert reader.done()
+
+    assert reader.open(str(native_dataset), nomodify=False)
+    assert reader.iterinitold(["TIME"], adddefaultsortcolumns=False)
+    assert reader.done()
+
+    assert reader.open(path)
+    assert reader.niterinit(maxrows=1, adddefaultsortcolumns=False)
+    cached = reader.ngetdata(["rows", "data"])
+    ordered = np.argsort(original["time"], kind="stable")[:2]
+    np.testing.assert_array_equal(cached["rows"], len(physical) - 1 - ordered, strict=True)
+    np.testing.assert_array_equal(cached["data"], original["data"][..., ordered], strict=True)
+    assert reader.done()
+
+
 def test_vi1_uninitialized_and_missing_column_are_python_errors(baseline_fixture, native_dataset):
     reader = tools.ms()
     assert not reader.niterend()

@@ -14,7 +14,6 @@ use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 pub(super) struct Vi1Iteration {
     cursor: Vi1ToolIteration,
     pub(super) main: Arc<VisibilityMain>,
-    selected: Option<Arc<[usize]>>,
 }
 
 #[pymethods]
@@ -80,9 +79,7 @@ impl PyMsTool {
             let vi1 = ms.visibility.vi1.as_ref().expect("VI1 was installed");
             link.verify_directory().map_err(runtime_error)?;
             vi1.main.verify_iterator_layout()?;
-            let result =
-                vi1.main
-                    .read_vi1_rows(vi1.cursor.rows(), vi1.selected.as_deref(), &items)?;
+            let result = vi1.main.read_vi1_rows(&vi1.cursor, &items)?;
             link.verify_directory().map_err(runtime_error)?;
             Ok::<_, PyErr>(result)
         })?;
@@ -117,13 +114,9 @@ impl AttachedMs {
         link.verify_directory().map_err(runtime_error)?;
         let selected = link.selected_rows().map_err(runtime_error)?;
         let main = self.visibility.current_main(&self.path)?;
-        let cursor = main.vi1_cursor(selected.as_deref(), interval, maxrows, defaults)?;
+        let cursor = main.vi1_cursor(selected, interval, maxrows, defaults)?;
         link.verify_directory().map_err(runtime_error)?;
-        self.visibility.vi1 = Some(Vi1Iteration {
-            cursor,
-            main,
-            selected,
-        });
+        self.visibility.vi1 = Some(Vi1Iteration { cursor, main });
         Ok(())
     }
 }

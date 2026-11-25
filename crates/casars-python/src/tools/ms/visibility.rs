@@ -166,12 +166,12 @@ impl VisibilityState {
 impl VisibilityMain {
     pub(super) fn vi1_cursor(
         &self,
-        selected: Option<&[usize]>,
+        selected: Option<Arc<[usize]>>,
         interval: f64,
         maxrows: i64,
         defaults: bool,
     ) -> PyResult<Vi1ToolIteration> {
-        Vi1ToolIteration::new(
+        let cursor = Vi1ToolIteration::new(
             &self.table,
             self.reference.as_ref(),
             selected,
@@ -179,21 +179,23 @@ impl VisibilityMain {
             maxrows,
             defaults,
         )
-        .map_err(runtime_error)
+        .map_err(runtime_error)?;
+        if !self.plain {
+            self.verify_write_layout(&BTreeSet::new())?;
+        }
+        Ok(cursor)
     }
 
     pub(super) fn read_vi1_rows(
         &self,
-        rows: &[usize],
-        selected: Option<&[usize]>,
+        cursor: &Vi1ToolIteration,
         items: &[String],
     ) -> PyResult<CasaValue> {
         let record = tool_visibility::read_vi1_visibility(
             &self.table,
             &self.members,
             self.reference.as_ref(),
-            rows,
-            selected,
+            cursor,
             items,
         )
         .map_err(runtime_error)?;

@@ -9,9 +9,9 @@ use ndarray::{Axis, Ix2};
 
 use super::{VisibilityRead, VisibilityReadOptions, input};
 use crate::error::MsResult;
+use crate::tool_iteration::Vi1ToolIteration;
 
-/// Read a VI1 buffer from logical MAIN rows. The optional view maps the row
-/// ids returned in the record back to positions within the selected MS.
+/// Read a VI1 buffer with row IDs relative to its captured MeasurementSet.
 ///
 /// # Errors
 /// Returns an error for an unsupported field or a missing or invalid column.
@@ -19,8 +19,7 @@ pub fn read_vi1_visibility(
     main: &Table,
     members: &[Table],
     reference: Option<&PlainReferenceRead>,
-    rows: &[usize],
-    view: Option<&[usize]>,
+    cursor: &Vi1ToolIteration,
     items: &[String],
 ) -> MsResult<RecordValue> {
     let names = items
@@ -31,6 +30,7 @@ pub fn read_vi1_visibility(
     if names.is_empty() {
         return Ok(record);
     }
+    let rows = cursor.rows();
     let mut reader = VisibilityRead::new(
         main,
         members,
@@ -58,7 +58,7 @@ pub fn read_vi1_visibility(
             "antenna1" | "antenna2" | "time" => {
                 read_scalar(&mut reader, &name.to_ascii_uppercase())?
             }
-            "rows" => row_numbers(rows, view)?,
+            "rows" => ArrayValue::from_i64_vec(cursor.row_numbers()?),
             "weight" => parallel_hand_weights(&reader)?,
             _ => {
                 return Err(input(format!(
@@ -77,21 +77,6 @@ fn read_scalar(reader: &mut VisibilityRead<'_>, name: &str) -> MsResult<ArrayVal
         Some(RequiredScalarColumnValues::Float64(values)) => Ok(ArrayValue::from_f64_vec(values)),
         _ => Err(input(format!("invalid VI1 scalar column {name}"))),
     }
-}
-
-fn row_numbers(rows: &[usize], view: Option<&[usize]>) -> MsResult<ArrayValue> {
-    let numbers = if let Some(view) = view {
-        rows.iter()
-            .map(|row| {
-                view.binary_search(row)
-                    .map(|number| number as i64)
-                    .map_err(|_| input("VI1 buffer refers to a row outside its selected view"))
-            })
-            .collect::<MsResult<_>>()?
-    } else {
-        rows.iter().map(|&row| row as i64).collect()
-    };
-    Ok(ArrayValue::from_i64_vec(numbers))
 }
 
 fn parallel_hand_weights(reader: &VisibilityRead<'_>) -> MsResult<ArrayValue> {
