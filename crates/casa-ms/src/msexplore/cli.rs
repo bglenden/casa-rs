@@ -409,9 +409,8 @@ fn run_visibility_plot(
             ));
         }
     }
-    let output = options.plot_output.as_deref();
     super::task_contract::refuse_unwritable_outputs(
-        &[("plotfile", output)],
+        &[("plotfile", options.plot_output.as_deref())],
         options.overwrite,
         "set overwrite=True to replace it",
     )
@@ -434,49 +433,18 @@ fn run_visibility_plot(
         calibration.is_some(),
         pointing.is_some(),
     );
-    let mut prefer_float_data = false;
-    if calibration.is_none()
+    let prefer_float_data = if calibration.is_none()
         && let Some(columns) = &mut axis_columns
     {
-        let axes = [options.x_axis, options.y_axis, options.y_axis2];
-        let (adjusted, use_float) = plotms_columns::resolve_storage_columns(
+        options.resolve_visibility_storage(
             &ms,
-            *columns,
-            axes,
-            options.plotms_averaging_active(),
-            options.supports_effective_float_averaging(),
-        )?;
-        if let Some((storage, axis)) = options.derived_average_storage(*columns, adjusted) {
-            plotms_columns::check_averaged_derived_storage(
-                &ms,
-                storage,
-                axis,
-                implicit_derived_model,
-            )?;
-        }
-        prefer_float_data = use_float;
-        if phasecenter.is_some()
-            && use_float
-            && axes.into_iter().zip(adjusted).any(|(axis, column)| {
-                axis.is_some_and(MsAxis::is_visibility_math)
-                    && matches!(column, MsDataColumn::Data | MsDataColumn::Float)
-            })
-        {
-            return Err(TaskFailure::validation(
-                "PlotMS phasecenter with MeasurementSet FLOAT_DATA is pending (#1032)",
-            )
-            .at("phasecenter"));
-        }
-        if adjusted != *columns {
-            let [x, y, secondary_y] = adjusted;
-            options.data_column = y;
-            options.x_data_column = (x != y).then_some(x);
-            if options.secondary_y_data_column.is_some() {
-                options.secondary_y_data_column = Some(secondary_y);
-            }
-            *columns = adjusted;
-        }
-    }
+            columns,
+            implicit_derived_model,
+            phasecenter.is_some(),
+        )?
+    } else {
+        false
+    };
     let averaging = options.plotms_averaging_active();
     for (axis, column) in &mut options.additional_ordinates {
         let ([resolved], _) = plotms_columns::resolve_storage_columns(
@@ -505,6 +473,7 @@ fn run_visibility_plot(
         })
         .transpose()?;
     let show = task.flag("showgui")?;
+    let output = options.plot_output.as_deref();
     let is_text = super::plotms_text::requests_text(task, output)?;
     let text_file = output.filter(|_| is_text);
     let figure_file = output.filter(|_| !is_text);
