@@ -883,6 +883,105 @@ def time_average_fixture(root):
     return vis, integration
 
 
+def compare_time_averaged_statistics(root, native):
+    from casars.tasks import TaskParameterError
+    from plotms_callibrary_oracle import snapshot, verify_source
+
+    work = root / "time-visibility-statistics"
+    work.mkdir()
+    vis, integrations = time_average_fixture(work)
+    fallback = work / "without-spectra.ms"
+    copy_ms(vis, fallback)
+    even = integrations % 2 == 0
+    with opened(vis, True) as table:
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        channel = np.arange(shape[1])[None, :, None]
+        spectra = (
+            ("WEIGHT_SPECTRUM", (1 + 2 * channel) * np.where(even, 3, 1)),
+            ("SIGMA_SPECTRUM", np.where((channel % 2 == 0) ^ even, 1, .5)),
+        )
+        for name, values in spectra:
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            table.putcol(name, np.broadcast_to(values.astype(np.float32), shape).copy())
+        flags = table.getcol("FLAG")
+        flags[0, 0, :] = ~even
+        flags[0, 2, :] = True
+        table.putcol("FLAG", flags)
+    with opened(fallback, True) as table:
+        table.putcol("FLAG", flags)
+    before = {source: snapshot(source) for source in (vis, fallback)}
+
+    base = request(vis) | dict(xaxis="real", xdatacolumn="data", ydatacolumn="data", spw="0:0~3",
+                               avgtime="20", avgchannel="2", expformat="txt")
+    observed = [17 / 9, 2.6]
+    no_spectra = [7 / 3, 2.6]
+    cases = (
+        ("observed-weight", dict(yaxis="wtsp"), (0, 1), observed, (9, 5)),
+        ("corrected-weight", dict(yaxis="wtsp", ydatacolumn="corrected"), (0, 1), observed, (15, 28)),
+        ("observed-sigma", dict(yaxis="sigmasp"), (0, 1), observed, (1 / 3, 1 / np.sqrt(5))),
+        ("mixed-sigma", dict(yaxis="sigmasp", ydatacolumn="corrected"),
+         (0, 1), observed, (1 / 3, 1 / np.sqrt(5))),
+        ("corrected-sigma", dict(yaxis="sigmasp", xdatacolumn="corrected", ydatacolumn="corrected"),
+         (0, 1), (14, 15), (1 / np.sqrt(15), 1 / np.sqrt(28))),
+        ("row-weight-fallback", dict(vis=str(fallback), yaxis="wtsp", ydatacolumn="corrected"),
+         (0, 1), no_spectra, (11, 10)),
+        ("row-sigma-fallback", dict(vis=str(fallback), yaxis="sigmasp"),
+         (0, 1), no_spectra, (1 / np.sqrt(6), 1 / np.sqrt(5))),
+        ("time-only-weight", dict(yaxis="wtsp", avgchannel=""), (0, 1, 3), (1, 2.6, 2.6), (4, 5, 5)),
+        ("time-channel-weighted-amplitude", dict(yaxis="wt*amp"),
+         (0, 1), observed, (119 / 9, 18.2)),
+        ("time-weighted-amplitude", dict(xaxis="amp", yaxis="wt*amp", avgchannel=""),
+         (0, 1, 3), (1, 2.6, 2.6), (14 / 3, 2.6 * 14 / 3, 2.6 * 14 / 3)),
+        ("channel-weighted-amplitude", dict(xaxis="amp", yaxis="wt*amp", avgtime=""),
+         (0, 1, 0, 1), (1, 1, 3, 3), (3, 3, 12, 12)),
+        ("raw-weighted-amplitude", dict(xaxis="amp", yaxis="wt*amp", ydatacolumn="corrected",
+                                        avgtime="", avgchannel=""),
+         (0, 1, 3, 1, 3), (1, 1, 1, 3, 3), (10, 10, 10, 270, 270)),
+        ("raw-weighted-abscissa", dict(xaxis="wt*amp", yaxis="amp", ydatacolumn="corrected",
+                                      avgtime="", avgchannel=""),
+         (0, 1, 3, 1, 3), (1, 1, 1, 27, 27), (10, 10, 10, 30, 30)),
+    )
+    for name, changes, channels, x, y in cases:
+        options = base | changes
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [int(point[2]) for point in selected] == list(channels) * 3
+        assert {point[12] for point in selected} == {"XX"}
+        coordinates = np.array([point[:2] for point in selected], dtype=float)
+        np.testing.assert_allclose(coordinates, np.tile(np.column_stack((x, y)), (3, 1)), rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(selected)
+        print(f"{name}: {len(selected)} matching weighted visibility/statistic coordinates", flush=True)
+
+    for mode, axis, options in (
+        ("antenna", "wtsp", dict(avgantenna=True, avgchannel="", antenna="A0&A1;A0&A2")),
+        ("baseline", "wtsp", dict(avgbaseline=True)),
+        ("spectral-window", "sigmasp", dict(avgspw=True)),
+        ("scalar", "wt*amp", dict(scalar=True)),
+    ):
+        expected, actual = (work / f"{mode}-weight-refusal.{engine}.txt" for engine in ("casa", "native"))
+        controls = base | options | dict(yaxis=axis)
+        try:
+            reference(**controls, plotfile=str(expected))
+        except Exception as error:
+            assert callable(getattr(error, "details", None)) and error.details() == "plot parameters failed", error
+        else:
+            raise AssertionError(f"CASA accepted {mode} weight averaging")
+        try:
+            native(**controls, plotfile=str(actual))
+        except TaskParameterError as error:
+            assert "Selected averaging does not yet support Weight and Sigma axes." in str(error), error
+        else:
+            raise AssertionError(f"casa-rs accepted {mode} weight averaging")
+        assert not expected.exists() and not actual.exists()
+    for source, previous in before.items():
+        verify_source(source, previous)
+    print("weight statistics: four paired averaging refusals before export", flush=True)
+
+
 def compare_time_averaged_columns(root, native):
     work = root / "time-averaged-columns"
     work.mkdir()
@@ -1795,6 +1894,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
+    parser.add_argument("--only", choices=("time-statistics",))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1806,6 +1906,9 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
+        if args.only == "time-statistics":
+            compare_time_averaged_statistics(root, native)
+            return
         vis, source = fixture(root)
         compare(root, vis, native)
         with opened(vis) as table:
@@ -1819,6 +1922,7 @@ def main():
         compare_multiple_ordinates(root, vis, native)
         compare_averaged_columns(root, native)
         compare_time_averaged_columns(root, native)
+        compare_time_averaged_statistics(root, native)
         compare_combined_averaged_columns(root, native)
         compare_time_scan_field_columns(root, native)
         compare_baseline_averaged_columns(root, native)
