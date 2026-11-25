@@ -197,8 +197,6 @@ def compare_antenna_ordinate_list_spans(root, native, source, masked_spectra, *,
 
 
 def compare_antenna_span_edges(root, native, source, controls, start):
-    from casars.tasks import TaskParameterError
-
     short, complex_data = (root / f"list-span-{name}.ms" for name in ("short", "complex"))
     copy_ms(source, short)
     copy_ms(source, complex_data)
@@ -216,16 +214,7 @@ def compare_antenna_span_edges(root, native, source, controls, start):
     np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
                                [float(point[0]) for point in rows(expected)], rtol=0, atol=.00051)
     print("vector-short-span-control: 18 matching uncolored coordinates", flush=True)
-    for axis in ("scan", "field"):
-        output = root / f"vector-short-span-{axis}.native.txt"
-        try:
-            native(**short_controls, coloraxis=axis, plotfile=str(output))
-        except TaskParameterError as error:
-            assert "#1032" in str(error), error
-        else:
-            raise AssertionError(f"PlotMS accepted pending vector antenna spans colored by {axis}")
-        assert not output.exists()
-        print(f"vector-short-span-{axis}: pending color grouping refusal verified", flush=True)
+    compare_averaged_color_groups(root, native, short_controls)
 
     with opened(complex_data, True) as table:
         late = table.getcol("TIME") >= start + 29
@@ -247,6 +236,89 @@ def compare_antenna_span_edges(root, native, source, controls, start):
             assert native(**options, plotfile=str(actual)) is None
             assert compare_text(actual, expected) == 18
             print(f"{name}: 18 matching independent coordinates in retained groups", flush=True)
+
+
+def compare_averaged_color_groups(root, native, controls):
+    from casars.tasks import _plotms_plot
+    from matplotlib.colors import to_hex, to_rgb
+    from PIL import Image
+    from unittest.mock import patch
+
+    with opened(Path(controls["vis"]) / "FIELD") as fields:
+        field_names = fields.getcol("NAME")
+    configure = _plotms_plot.configure
+    collision = root / "list-span-palette-collision.ms"
+    copy_ms(Path(controls["vis"]), collision)
+    with opened(collision, True) as table:
+        scans = table.getcol("SCAN_NUMBER")
+        scans[scans == 7] = 11
+        table.putcol("SCAN_NUMBER", scans)
+    cases = (
+        ("spanned-scan", "scan", True, controls, "-1", "7", {"-1": "#0091a0", "7": "#6600e0"}),
+        ("retained-scan", "scan", False, controls, "1", "7", {"1": "#e00066", "7": "#6600e0"}),
+        ("spanned-field", "field", True, controls, "-1", "7", {"0": "#202020", "1": "#e00066"}),
+        ("retained-field", "field", False, controls, "1", "7", {"0": "#202020", "1": "#e00066"}),
+        ("scan-palette-collision", "scan", False, controls | dict(vis=str(collision)),
+         "1", "11", {"1": "#202020", "11": "#e00066"}),
+    )
+    for case, color_axis, span, base, early_scan, late_scan, palette in cases:
+        options = base | {"coloraxis": color_axis, f"avg{color_axis}": span}
+        metadata_index = 3 if color_axis == "scan" else 4
+        axis_title = color_axis.title()
+        tag = f"vector-{case}-color"
+        expected, actual = (root / f"{tag}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == 18
+        assert {tuple(point[3:5]) for point in selected} == {(early_scan, "0"), (late_scan, "1")}
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 18
+        np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                                   [float(point[0]) for point in selected], rtol=0, atol=.00051)
+        labels = {index: f"{axis_title} {index}" + (f": {field_names[int(index)]}" if color_axis == "field" else "")
+                  for index in palette}
+        figure_options = options | dict(
+            expformat="png", width=600, height=400, dpi=100, showlegend=True,
+            customsymbol=[True] * 3, symbolsize=[7] * 3, symbolshape=["square"] * 3,
+            symboloutline=[False] * 3,
+        )
+        figures = []
+
+        def capture(figure, axes, document, arguments):
+            configure(figure, axes, document, arguments)
+            found = set()
+            for axis in figure.axes:
+                for line in axis.lines:
+                    ordinate = int(line.get_gid().split("-", 1)[0])
+                    label = line.get_label()
+                    index = next(value for value, name in labels.items() if name == label)
+                    assert to_hex(line.get_markerfacecolor()) == palette[index]
+                    expected_rows = [point for point in selected[ordinate * 6:(ordinate + 1) * 6]
+                                     if point[metadata_index] == index]
+                    coords = np.array([point[:2] for point in expected_rows], dtype=float)
+                    assert len(coords) == 3
+                    actual = line.get_xydata()
+                    np.testing.assert_allclose(actual[:, 0], coords[:, 0], rtol=0, atol=.00051)
+                    np.testing.assert_allclose(actual[:, 1], coords[:, 1], rtol=1.2e-5, atol=1e-7)
+                    found.add((ordinate, index))
+            assert found == {(ordinate, index) for ordinate in range(3) for index in palette}
+            legend = figure.axes[0].get_legend()
+            assert sorted(item.get_text() for item in legend.get_texts()) == sorted(labels.values())
+            figures.append(figure)
+
+        pinned, rendered = (root / f"{tag}.{engine}.png" for engine in ("casa", "native"))
+        assert reference(**figure_options, plotfile=str(pinned)) is None
+        with patch.object(_plotms_plot, "configure", side_effect=capture):
+            assert native(**figure_options, plotfile=str(rendered)) is None
+        assert len(figures) == 1
+        for path in (pinned, rendered):
+            with Image.open(path) as image:
+                pixels = np.asarray(image.convert("RGB"), dtype=np.int16)
+            for hue in palette.values():
+                rgb = np.array(to_rgb(hue)) * 255
+                matches = np.max(np.abs(pixels - rgb), axis=-1) < 15
+                assert np.count_nonzero(matches) > 100, (path, hue)
+        print(f"{tag}: 18 paired coordinates, final group labels and marker colors", flush=True)
 
 
 def main():

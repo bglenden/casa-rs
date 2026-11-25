@@ -560,6 +560,7 @@ impl PanelStyle {
                 axis.upper = self.limits[offset + 1];
             }
         }
+        let averaged_colors = super::plotms_averaged_colors::palette(series);
         for (index, (layer, source)) in layers.iter_mut().zip(series).enumerate() {
             let (x_scale, y_scale) = (
                 if self.frequency_axis(&layer.x_axis_id) {
@@ -591,7 +592,9 @@ impl PanelStyle {
             layer.data = Some(PlotLayerData::Points { x, y });
             layer.payload_strategy = PlotPayloadStrategy::BinaryArrays;
             layer.style = Some(PlotLayerStyle {
-                color: None,
+                color: averaged_colors
+                    .get(source.color_group.as_str())
+                    .map(|color| (*color).into()),
                 marker: Some("o".into()),
                 line_style: None,
             });

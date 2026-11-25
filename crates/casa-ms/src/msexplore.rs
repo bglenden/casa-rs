@@ -28,6 +28,7 @@ mod atmosphere;
 mod calibration;
 pub mod cli;
 mod plotms_atmosphere;
+mod plotms_averaged_colors;
 mod plotms_columns;
 mod plotms_figure;
 mod plotms_iteration;
@@ -6118,6 +6119,15 @@ fn build_generic_visibility_scatter_with_averaging(
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
     let spans_scan_or_field = spec.averaging.avgscan || spec.averaging.avgfield;
+    let averaged_antenna_color = (time_antenna
+        && spans_scan_or_field
+        && matches!(spec.color_by, MsColorAxis::Scan | MsColorAxis::Field))
+    .then_some(spec.color_by);
+    let input_color = if averaged_antenna_color.is_some() {
+        MsColorAxis::None
+    } else {
+        spec.color_by
+    };
     let scalar_spans = (scalar_intervals && spans_scan_or_field)
         .then(|| {
             plotms_ordinates::ScalarSpanPlan::new(
@@ -6972,7 +6982,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         sigma_spectrum_samples.clear();
                     }
                     let (group_key, group_label) = visibility_group(
-                        spec.color_by,
+                        input_color,
                         representative_field,
                         &field,
                         spw_id,
@@ -7506,6 +7516,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 plotms_averaged_ids: averaged_ids.clone(),
             };
             let mut output = make_output(series.label, series.color_group);
+            let mut color_outputs = BTreeMap::new();
             let mut flagged_output =
                 show_flagged.then(|| make_output("Flagged".into(), "flagged".into()));
             let mut points = series.points.into_iter().map(|(key, point)| {
@@ -7769,6 +7780,23 @@ fn build_generic_visibility_scatter_with_averaging(
                         .expect("flagged visibility has a display layer")
                 } else if symbols.is_some_and(|symbols| !symbols.unflagged) {
                     continue;
+                } else if let Some(axis) = averaged_antenna_color {
+                    let Some(MsScatterPlotMsAverageIds::ScanFieldAndAntenna(ids)) = &averaged_ids
+                    else {
+                        return Err("Missing scan and field IDs for averaged antenna colors".into());
+                    };
+                    let &(scan, field_id, _) = order
+                        .and_then(|index| ids.get(index))
+                        .ok_or("Missing reduced row for an averaged antenna color")?;
+                    let id = if axis == MsColorAxis::Scan {
+                        scan
+                    } else {
+                        field_id
+                    };
+                    color_outputs.entry(id).or_insert_with(|| {
+                        let (key, label) = plotms_averaged_colors::group(axis, id, &field);
+                        make_output(label, key)
+                    })
                 } else {
                     &mut output
                 };
@@ -7816,6 +7844,7 @@ fn build_generic_visibility_scatter_with_averaging(
             if !output.points.is_empty() {
                 series_entries.push(output);
             }
+            series_entries.extend(color_outputs.into_values());
             if let Some(output) = flagged_output.filter(|output| !output.points.is_empty()) {
                 series_entries.push(output);
             }
