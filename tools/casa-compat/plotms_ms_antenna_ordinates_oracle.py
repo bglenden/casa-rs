@@ -349,8 +349,17 @@ def compare_averaged_color_groups(root, native, controls):
             for index, hue in palette.items():
                 rgb = np.array(to_rgb(hue)) * 255
                 matches = np.max(np.abs(pixels - rgb), axis=-1) < 15
-                size = np.count_nonzero(matches)
-                assert (size > 100 if index in visible else 0 < size < 100), (path, hue, size)
+                if index in visible:
+                    assert np.count_nonzero(matches) > 100, (path, hue)
+                else:
+                    y, x = np.where(matches)
+                    if path == pinned:
+                        left, top, right, bottom = (457, 40, 535, 78)
+                    else:
+                        legend = figures[0].axes[0].get_legend()
+                        left, bottom, right, top = legend.get_window_extent().extents
+                        top, bottom = pixels.shape[0] - top, pixels.shape[0] - bottom
+                    assert x.size and np.all((left <= x) & (x <= right) & (top <= y) & (y <= bottom)), (path, hue)
                 if case == "scan-palette-collision" and index == "11":
                     # Pink is the earlier timestamp even though retained scans
                     # enter the cache in numeric order on this fixture.
