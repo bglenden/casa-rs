@@ -4431,6 +4431,13 @@ fn build_generic_visibility_scatter(
     } else {
         coordinate_mask
     };
+    let metadata_pair = metadata_pair.map(|mut dimensions| {
+        dimensions.baseline |= matches!(
+            spec.iteration.iteraxis,
+            Some(MsIterationAxis::Antenna | MsIterationAxis::Baseline)
+        );
+        dimensions
+    });
     if metadata_pair.is_some() && calibration.is_some_and(|input| input.rows.is_some()) {
         return Err(
             "PlotMS metadata-only row identifiers with a callibrary are pending (#1032)".into(),
@@ -5583,6 +5590,7 @@ fn build_generic_visibility_scatter(
                     || pointing.is_some()
                     || raw_symbols.is_some()
                     || phase_shift.is_some()
+                    || paged_iteration
                     || row_iteration.is_some()
                     || channel_derived
                     || channel_only_visibility
@@ -6128,7 +6136,10 @@ fn build_generic_visibility_scatter_with_averaging(
     let iteraxis = spec.iteration.iteraxis;
     let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
     let paged_iteration = iterated_ordinate_list
-        || (spw_average && iteraxis.is_some_and(MsIterationAxis::supports_averaged_ordinates));
+        || (spw_average
+            && iteraxis.is_some_and(|axis| {
+                axis == MsIterationAxis::SpectralWindow || axis.supports_averaged_ordinates()
+            }));
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
     let use_spectral_weights = calibration.is_some()

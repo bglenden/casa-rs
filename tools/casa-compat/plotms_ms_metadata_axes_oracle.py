@@ -381,6 +381,13 @@ def compare_array_horizontal_axes(root, native):
     assert {(point[2], point[12]) for point in xx} == {("1", "XX"), ("3", "XX")}
     assert {(point[2], point[12]) for point in yy} == {("1", "YY"), ("2", "YY"), ("3", "YY")}
 
+    options = base | dict(yaxis="elevation", iteraxis="antenna")
+    left, first, second = compare_case(work, native, "array-antenna-iteration", options, "Antenna",
+                                      ("A0@P0", "A1@P1", "A2@P2"), [47, 23, 24])
+    assert {tuple(point[5:7]) for point in left} == {("0", "1"), ("0", "2")}
+    assert {tuple(point[5:7]) for point in first} == {("0", "1")}
+    assert {tuple(point[5:7]) for point in second} == {("0", "2")}
+
     compare_metadata_flag_modes(work, native, base | dict(yaxis="elevation"), "array-symbols",
                                 (24, 36, 12), ("Marked metadata", "Channel", "Elevation (deg)"))
 

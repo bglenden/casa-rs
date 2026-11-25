@@ -171,14 +171,19 @@ def compare_axes(root, native):
     offset = dict(field='', rowindex=1, colindex=0)
     compare_case(root, native, 'scan-offset', base | offset | dict(iteraxis='scan'), 'Scan',
                  ('1', '2', '3', '4', '5'), [3, 3, 3, 1, 2], check_current=True)
-    compare_case(root, native, 'field-offset', base | offset | dict(vis=str(reversed_vis), iteraxis='field'),
-                 'Field', ('FLUX', 'PHASE'), [6, 6])
+    compare_case(root, native, 'field-offset', base | offset | dict(vis=str(reversed_vis), iteraxis='field',
+                 correlation='XX,YY', spw='0:1~3'),
+                 'Field', ('FLUX', 'PHASE'), [30, 30])
     compare_case(root, native, 'corr-offset', base | offset | dict(vis=str(reversed_vis), iteraxis='corr',
                  correlation='XX,YY', spw='0:1~3'), 'Corr', ('XX', 'YY'), [24, 36])
     win = make_fixture(root, integrations=2)
     spw = base | dict(vis=str(win), field='', spw='0:1,1:1', iteraxis='spw')
     compare_case(root, native, 'spw', spw, 'Spw', ('0', '1'), [2, 2])
     compare_case(root, native, 'spw-averaged', spw | dict(averagedata=True, avgspw=True), 'Spw', ('0',), [2])
+    with opened(win, True) as table:
+        table.putcol('SCAN_NUMBER', 2 - table.getcol('DATA_DESC_ID'))
+    compare_case(root, native, 'spw-averaged-reversed', spw | dict(averagedata=True, avgspw=True),
+                 'Spw', ('0', '1'), [2, 2])
     triad = base | dict(antenna='A0&A1;A0&A2;A1&A2')
     compare_case(root, native, 'antenna', triad | dict(iteraxis='antenna'),
                  'Antenna', ('A0@P0', 'A1@P1', 'A2@P2'), [12, 12, 12])
