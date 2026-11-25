@@ -289,7 +289,9 @@ impl<'a> RefTable<'a> {
 
     /// Stage this reference table with its parent link relative to
     /// the intended publication path. The staged directory must be moved
-    /// to that destination before opening it.
+    /// to that destination before opening it. A saved reference parent is
+    /// flattened to its physical root, with its visible column names preserved.
+    /// Hold the root's write lock and verify the source descriptors while staging.
     ///
     /// # Errors
     /// The parent has no persisted path, or the staged descriptor cannot be written.
@@ -298,6 +300,31 @@ impl<'a> RefTable<'a> {
         staging: crate::table::TableOptions,
         destination: &Path,
     ) -> Result<(), TableError> {
+        if self.parent.is_reference_table()? {
+            let names = self
+                .layout
+                .column_names
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let projection = self
+                .parent
+                .reference_write_projection(&self.layout.row_map, &names)?
+                .ok_or_else(|| {
+                    TableError::Storage("reference parent changed while staging".into())
+                })?;
+            let root = Table::open(crate::table::TableOptions::new(projection.path))?;
+            let mut layout =
+                RefLayout::from_rows_and_columns(&root, projection.rows, &projection.columns)?;
+            layout.column_names = self.layout.column_names.clone();
+            layout.column_name_map = layout
+                .column_names
+                .iter()
+                .cloned()
+                .zip(projection.columns)
+                .collect();
+            return layout.save(&root, &staging, destination);
+        }
         self.layout.save(self.parent, &staging, destination)
     }
 }
@@ -620,6 +647,53 @@ mod tests {
             .scalar_cells_owned_for_rows(&[3, 0, 1, 2])
             .unwrap();
         assert_eq!(values, [1, 4, 1, 3].map(|id| Some(ScalarValue::Int32(id))));
+    }
+
+    #[test]
+    fn staged_reference_keeps_renamed_columns_and_does_not_depend_on_the_input_view() {
+        use crate::storage::table_control::{
+            TableDatResult, read_table_dat_dispatch, write_ref_table_dat,
+        };
+        use crate::table::TableOptions;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root.tbl");
+        let input = dir.path().join("input.tbl");
+        let stage = root.join("stage");
+        let output = root.join("SORTED_TABLE");
+        test_table().save(TableOptions::new(&root)).unwrap();
+        let parent = Table::open(TableOptions::new(&root)).unwrap();
+        parent
+            .select_rows_and_columns(&[4, 1, 3], &["id".into()])
+            .unwrap()
+            .save(TableOptions::new(&input))
+            .unwrap();
+        let control = input.join("table.dat");
+        let TableDatResult::Ref(mut reference) = read_table_dat_dispatch(&control).unwrap() else {
+            panic!("expected a reference descriptor");
+        };
+        reference.column_names = vec!["row_id".into()];
+        reference.column_name_map = vec![("row_id".into(), "id".into())];
+        write_ref_table_dat(&control, &reference).unwrap();
+
+        let view = Table::open(TableOptions::new(&input)).unwrap();
+        let lock = crate::TableWriteLock::acquire(&root, 1).unwrap();
+        view.select_rows(&[2, 0, 2])
+            .unwrap()
+            .save_for_destination(TableOptions::new(&stage), &output)
+            .unwrap();
+        std::fs::rename(stage, &output).unwrap();
+        lock.release().unwrap();
+        std::fs::rename(&input, dir.path().join("moved.tbl")).unwrap();
+        let saved = Table::open(TableOptions::new(&output)).unwrap();
+        assert_eq!(saved.root_row_numbers().unwrap(), [3, 4, 3]);
+        assert!(saved.column_accessor("id").is_err());
+        let values = saved
+            .column_accessor("row_id")
+            .unwrap()
+            .scalar_cells_owned_for_rows(&[0, 1, 2])
+            .unwrap();
+        assert_eq!(values, [3, 4, 3].map(|id| Some(ScalarValue::Int32(id))));
     }
 
     #[test]

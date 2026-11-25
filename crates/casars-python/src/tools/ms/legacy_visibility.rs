@@ -231,13 +231,25 @@ impl AttachedMs {
             Some(rows) => stride.into_iter().map(|row| rows[row]).collect(),
             None => stride,
         };
-        let snapshot = items
+        let positioned = self.legacy_selection.positioned_iteration();
+        let snapshot = if items
             .iter()
             .any(|name| name.eq_ignore_ascii_case("axis_info"))
-            .then(|| link.snapshot(None))
-            .transpose()
-            .map_err(runtime_error)?;
-        let main = self.visibility.current_main(&self.path)?;
+        {
+            if let Some(snapshot) = positioned.and_then(|iteration| iteration.metadata.as_ref()) {
+                Some(Arc::clone(snapshot))
+            } else {
+                Some(link.snapshot(None).map_err(runtime_error)?)
+            }
+        } else {
+            None
+        };
+        let main = if let Some(iteration) = positioned {
+            iteration.main.verify_iterator_layout()?;
+            Arc::clone(&iteration.main)
+        } else {
+            self.visibility.current_main(&self.path)?
+        };
         let options = VisibilityReadOptions {
             average: options.average,
             baseline_gap: options.baseline_gap,

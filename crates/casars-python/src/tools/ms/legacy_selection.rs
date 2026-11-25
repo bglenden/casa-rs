@@ -34,6 +34,7 @@ pub(super) struct LegacySelection {
     pub(super) axes: LegacyAxes,
     pub(super) baselines: Option<Vec<(i32, i32)>>,
     pub(super) iteration: Option<LegacyIteration>,
+    positioned: bool,
 }
 
 impl LegacySelection {
@@ -45,11 +46,16 @@ impl LegacySelection {
         self.rows.clone()
     }
 
-    pub(super) fn set_iterator_rows(&mut self, rows: Option<Arc<[usize]>>) {
-        if self.rows != rows {
+    pub(super) fn positioned_iteration(&self) -> Option<&LegacyIteration> {
+        self.iteration.as_ref().filter(|_| self.positioned)
+    }
+
+    pub(super) fn set_iterator_rows(&mut self, rows: Option<Arc<[usize]>>, positioned: bool) {
+        if self.rows != rows || self.positioned != positioned {
             self.axes.baseline_read = None;
         }
         self.rows = rows;
+        self.positioned = positioned;
     }
 
     pub(super) fn channel_count(&self) -> usize {
@@ -159,7 +165,8 @@ impl AttachedMs {
             && let Some(initial) = &self.legacy_selection.initial
             && initial.descriptions == [id]
         {
-            self.legacy_selection.rows = initial.rows.clone();
+            self.legacy_selection
+                .set_iterator_rows(initial.rows.clone(), false);
             return Ok(true);
         }
         let working = self.working_metadata_link();
@@ -216,7 +223,7 @@ impl AttachedMs {
             channels,
             rows: rows.clone(),
         });
-        self.legacy_selection.rows = rows;
+        self.legacy_selection.set_iterator_rows(rows, false);
         self.legacy_selection.axes = LegacyAxes::default();
         self.legacy_selection.baselines = None;
         Ok(same_shape)
@@ -325,7 +332,8 @@ impl AttachedMs {
             super::super::table::save_ms_query_selection(table, &self.sources, &output, &target)?;
         }
         let nonempty = !selected.is_empty();
-        self.legacy_selection.rows = Some(selected);
+        self.legacy_selection
+            .set_iterator_rows(Some(selected), false);
         Ok(nonempty)
     }
 
@@ -375,7 +383,8 @@ impl AttachedMs {
                     }
                     // The legacy selector interprets explicit rows relative to
                     // its base table and preserves user order and duplicates.
-                    self.legacy_selection.rows = Some(selected.into());
+                    self.legacy_selection
+                        .set_iterator_rows(Some(selected.into()), false);
                 }
                 return Ok(());
             }

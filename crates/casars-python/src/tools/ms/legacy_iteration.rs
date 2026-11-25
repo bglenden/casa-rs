@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Position the legacy selector on groups without changing the modern view.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use casa_ms::tool_iteration::{LegacyIterationOptions, LegacyToolIteration};
@@ -8,7 +9,8 @@ use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
 
 use super::legacy_selection::deprecation;
-use super::visibility::requested_strings;
+use super::metadata_link::MetadataSnapshot;
+use super::visibility::{VisibilityMain, requested_strings};
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 
 mod cache;
@@ -17,6 +19,8 @@ pub(super) struct LegacyIteration {
     cursor: LegacyToolIteration,
     restore_rows: Option<Arc<[usize]>>,
     working_rows: Option<Arc<[usize]>>,
+    pub(super) main: Arc<VisibilityMain>,
+    pub(super) metadata: Option<Arc<MetadataSnapshot>>,
 }
 
 #[derive(Clone, Copy)]
@@ -105,15 +109,43 @@ impl AttachedMs {
             max_rows,
             defaults,
         };
-        let Some(cursor) = main.legacy_iteration(options)? else {
+        let source = self.legacy_sort_source(&main)?;
+        let Some(mut cursor) = main.legacy_iteration(options)? else {
             return Ok(false);
         };
         link.verify_directory().map_err(runtime_error)?;
-        self.cache_legacy_iteration(&link, &main, working_rows.as_deref(), &cursor)?;
+        let metadata = (!main.plain)
+            .then(|| link.snapshot(None))
+            .transpose()
+            .map_err(runtime_error)?;
+        let modern_current = source.is_some()
+            && self
+                .visibility
+                .iteration
+                .as_ref()
+                .and_then(|iteration| iteration.layout.as_ref())
+                .is_some_and(|layout| layout.verify_write_layout(&BTreeSet::new()).is_ok());
+        let published = source
+            .map(|source| self.cache_legacy_iteration(&link, &main, source, options, &mut cursor))
+            .transpose()?
+            .flatten();
+        let main = if let Some(root) = published {
+            let written = BTreeSet::from([root]);
+            let refreshed = self.visibility.current_main(&self.path)?;
+            main.verify_write_layout(&written)?;
+            if modern_current && let Some(iteration) = &mut self.visibility.iteration {
+                iteration.layout = Some(Arc::clone(&refreshed));
+            }
+            refreshed
+        } else {
+            main
+        };
         self.legacy_selection.iteration = Some(LegacyIteration {
             cursor,
             restore_rows,
             working_rows,
+            main,
+            metadata,
         });
         Ok(true)
     }
@@ -129,15 +161,15 @@ impl AttachedMs {
                 "legacy iterator working selection changed; call iterinitold again",
             ));
         }
-        let (rows, found) = match movement {
-            Move::Origin => (Some(Arc::from(iteration.cursor.rewind())), true),
+        let (rows, positioned, found) = match movement {
+            Move::Origin => (Some(Arc::from(iteration.cursor.rewind())), true, true),
             Move::Next => match iteration.cursor.advance() {
-                Some(rows) => (Some(Arc::from(rows)), true),
-                None => (iteration.restore_rows.clone(), false),
+                Some(rows) => (Some(Arc::from(rows)), true, true),
+                None => (iteration.restore_rows.clone(), false, false),
             },
-            Move::End => (iteration.restore_rows.clone(), true),
+            Move::End => (iteration.restore_rows.clone(), false, true),
         };
-        self.legacy_selection.set_iterator_rows(rows);
+        self.legacy_selection.set_iterator_rows(rows, positioned);
         Ok(found)
     }
 }

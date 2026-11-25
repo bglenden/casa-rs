@@ -14,6 +14,7 @@ use crate::schema::main_table::{OPTIONAL_COLUMNS, REQUIRED_COLUMNS};
 use crate::tool_visibility::read_reference_scalars;
 
 /// The source selection and grouping parameters for a legacy MS cursor.
+#[derive(Clone, Copy)]
 pub struct LegacyIterationOptions<'a> {
     /// Working-view row positions selected by the legacy selector.
     pub selected: Option<&'a [usize]>,

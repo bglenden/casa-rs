@@ -52,6 +52,17 @@ impl PyMsTool {
             let link = ms.working_metadata_link();
             let base = link.selected_rows().map_err(runtime_error)?;
             let rows = compose_rows(base.as_deref(), ms.legacy_selection.rows());
+            if let Some(iteration) = ms.legacy_selection.positioned_iteration() {
+                link.verify_directory().map_err(runtime_error)?;
+                iteration.main.verify_iterator_layout()?;
+                return ms.visibility.range_from_main(
+                    &iteration.main,
+                    &link,
+                    rows.as_deref(),
+                    &request,
+                    ms.legacy_selection.visibility_options(),
+                );
+            }
             ms.visibility.range_for_rows(
                 &ms.path,
                 &link,

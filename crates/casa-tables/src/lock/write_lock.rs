@@ -214,6 +214,32 @@ pub struct TableWriteLock {
 }
 
 impl TableWriteLock {
+    /// Inspect the last published modification counter before reading data.
+    ///
+    /// This call takes no lock. A caller that later acquires a write lock
+    /// must compare the captured counter with [`Self::modify_counter`]
+    /// before acting on a previously read snapshot.
+    ///
+    /// # Errors
+    /// Returns an error when the lock file's synchronization data cannot
+    /// be read.
+    pub fn read_modify_counter(table_dir: &Path) -> Result<Option<u32>, TableError> {
+        #[cfg(unix)]
+        {
+            super::read_sync_data_from_table_dir(table_dir)
+                .map(|sync| sync.map(|sync| sync.modify_counter))
+                .map_err(|error| TableError::LockIo {
+                    path: table_dir.display().to_string(),
+                    message: error.to_string(),
+                })
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = table_dir;
+            Ok(None)
+        }
+    }
+
     /// Whether another process still has the table open, even without a
     /// read or write lock. Check this before removing a locked table.
     pub fn is_multi_used(&self) -> bool {
