@@ -11625,6 +11625,23 @@ baseline coordinate array for a negative gap, then indexes that array.
 Casa-rs treats a negative gap as zero and fills the baseline and
 integration axes (#1030).
 
+## Absent visibility columns can abort legacy MS reads
+
+On CASA 6.7.6.14, `ms.getdataold('corrected_data', average=True)`
+can segfault when CORRECTED_DATA is absent. Reading
+`obs_residual_data` with DATA present and MODEL_DATA absent can also
+abort because the subtraction uses incompatible shapes. Casa-rs returns
+an empty array of the requested product's type, as CASA does for an
+unaveraged read of an absent CORRECTED_DATA column (#1030).
+
+## An unknown legacy polarization can leave empty visibility axes
+
+On CASA 6.7.6.14, `ms.selectpolarizationold('bogus')` returns false but
+leaves conversion enabled with an uninitialized converter. The next
+visibility read can have no correlation samples while its labels still
+identify the recorded correlations. Casa-rs returns false and keeps the
+initialized visibility axes usable (#1030).
+
 ## PlotMS exits when adding an atmospheric curve to two visibility ordinates
 
 CASA 6.7.6.14 with casaplotms 2.9.1 terminates its PlotMS process with signal 11 for `xaxis='frequency'`, `yaxis=['real','imag']`, `ydatacolumn=['model','corrected']`, `spw='0:0;3;6'` and `showatm=True` on the paired weather fixture. The public task reports a closed RPC connection and leaves no TXT export. The same failure occurs with two stored ordinates. [Pinned overlay setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Plots/PlotMSPlot.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)

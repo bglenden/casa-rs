@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Baseline and integration axes for the public MS visibility record.
 
+use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::f64::consts::{PI, TAU};
@@ -12,10 +13,36 @@ use casa_types::measures::{EpochRef, MEpoch, MeasFrame, MeasuresProvider};
 use casa_types::{ArrayValue, RecordField, RecordValue, Value};
 use ndarray::ArrayD;
 
-use super::{averaging, input, shaped, vector, visibility_product};
+use super::{averaging, input, shaped, typed_scalar_column, vector, visibility_product};
 use crate::subtables::measured_columns::{TimeColumn, antenna_position};
 use crate::subtables::{FieldDirectionColumn, MetadataDirection, SubTable};
 use crate::{MeasurementSet, MsResult};
+
+pub(super) fn rows_by_time<'a>(main: &Table, rows: &'a [usize]) -> MsResult<Cow<'a, [usize]>> {
+    if rows.len() < 2 {
+        return Ok(Cow::Borrowed(rows));
+    }
+    let values = main
+        .column_accessor("TIME")?
+        .scalar_cells_owned_for_rows(rows)?;
+    let RequiredScalarColumnValues::Float64(times) = typed_scalar_column("TIME", values)? else {
+        return Err(input("TIME must contain a double"));
+    };
+    if times.iter().any(|time| !time.is_finite()) {
+        return Err(input("TIME contains a nonfinite value"));
+    }
+    if times.is_sorted() {
+        return Ok(Cow::Borrowed(rows));
+    }
+    let mut ordered = times
+        .into_iter()
+        .zip(rows.iter().copied())
+        .collect::<Vec<_>>();
+    ordered.sort_by(|(left, _), (right, _)| left.partial_cmp(right).unwrap());
+    Ok(Cow::Owned(
+        ordered.into_iter().map(|(_, row)| row).collect(),
+    ))
+}
 
 pub(super) struct BaselineGrid {
     baselines: BTreeMap<(i32, i32), usize>,

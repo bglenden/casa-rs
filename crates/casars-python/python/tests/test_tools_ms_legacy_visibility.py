@@ -10,7 +10,7 @@ from test_tools_ms_visibility_ifraxis import baseline_fixture
 from test_tools_msmetadata import measures, native_dataset
 
 
-@pytest.mark.parametrize("rows, increment", [([0, 3, 2, 0], 1), ([19, 13, 0, 6, 2, 11, 3, 8], 2)])
+@pytest.mark.parametrize("rows, increment", [([0, 3, 2, 0], 1), ([19, 13, 0, 6, 2, 11, 3, 8, 7], 2)])
 def test_legacy_visibility_keeps_row_order_and_baseline_slots(
     native_dataset, baseline_fixture, rows, increment
 ):
@@ -104,6 +104,7 @@ def test_legacy_visibility_argument_forms_and_labels(native_dataset):
                 reader.selectchannelold(value)
         assert reader.selectchannelold(np.int64(2))
         assert reader.selectchannelold(2**32 + 2)
+        assert reader.getdataold("axis_info")["axis_info"]["freq_axis"]["chan_freq"].shape == (2, 1)
         assert reader.selectpolarizationold("ll")
         labels = reader.getdataold("axis_info")["axis_info"]["corr_axis"]
         np.testing.assert_array_equal(labels, np.array(["ll"]), strict=True)
@@ -120,6 +121,37 @@ def test_legacy_negative_baseline_gap_uses_zero_gaps(native_dataset):
     regular = reader.getdataold(request, ifraxis=True, ifraxisgap=0)
     negative = reader.getdataold(request, ifraxis=True, ifraxisgap=-2)
     same_visibility(negative, regular)
+    assert reader.done()
+
+
+def test_legacy_read_of_missing_visibility_columns(native_dataset):
+    request = ["corrected_data", "corrected_amplitude", "model_data", "model_real",
+               "ratio_data", "residual_data", "float_data", "unknown", "avgdata"]
+    expected = {
+        name: np.array([], dtype=np.complex128 if name.endswith("_data") else np.float64)
+        for name in request[:6]
+    }
+    for api in (pinned_casa(), tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        same_visibility(reader.getdataold(request), expected)
+        assert reader.done()
+
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    missing = np.array([], dtype=np.complex128)
+    same_visibility(reader.getdataold(["obs_residual_data"]), {"obs_residual_data": missing})
+    same_visibility(reader.getdataold(["corrected_data"], average=True), {"corrected_data": missing})
+    assert reader.getdataold("data")["data"].size > 0
+    assert reader.done()
+
+
+def test_legacy_unrecognized_polarization_leaves_the_reader_usable(native_dataset):
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    previous = reader.getdataold(["data", "axis_info"])
+    assert reader.selectpolarizationold("bogus") is False
+    same_visibility(reader.getdataold(["data", "axis_info"]), previous)
     assert reader.done()
 
 

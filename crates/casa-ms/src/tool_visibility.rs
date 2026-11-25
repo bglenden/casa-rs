@@ -26,7 +26,7 @@ mod projection;
 mod write_record;
 mod write_rows;
 use averaging::RowAverage;
-use baseline_axis::BaselineGrid;
+use baseline_axis::{BaselineGrid, rows_by_time};
 use channel_axis::axis_info;
 use channel_axis::{ChannelWeightKind, ChannelWeights};
 pub use channel_axis::{LegacyVisibilityAxes, VisibilityChannels};
@@ -327,32 +327,6 @@ pub fn tool_baseline_pairs(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect())
-}
-
-fn rows_by_time<'a>(main: &Table, rows: &'a [usize]) -> MsResult<Cow<'a, [usize]>> {
-    if rows.len() < 2 {
-        return Ok(Cow::Borrowed(rows));
-    }
-    let values = main
-        .column_accessor("TIME")?
-        .scalar_cells_owned_for_rows(rows)?;
-    let RequiredScalarColumnValues::Float64(times) = typed_scalar_column("TIME", values)? else {
-        return Err(input("TIME must contain a double"));
-    };
-    if times.iter().any(|time| !time.is_finite()) {
-        return Err(input("TIME contains a nonfinite value"));
-    }
-    if times.is_sorted() {
-        return Ok(Cow::Borrowed(rows));
-    }
-    let mut ordered = times
-        .into_iter()
-        .zip(rows.iter().copied())
-        .collect::<Vec<_>>();
-    ordered.sort_by(|(left, _), (right, _)| left.partial_cmp(right).unwrap());
-    Ok(Cow::Owned(
-        ordered.into_iter().map(|(_, row)| row).collect(),
-    ))
 }
 
 pub(crate) struct VisibilityRead<'a> {
@@ -963,13 +937,23 @@ impl<'a> VisibilityRead<'a> {
         let mut reduction = None;
         let mut float_cells = None;
         for (prefix, source, uses_model) in COMPLEX_PRODUCTS {
-            if self.legacy && (!has_column(source) || (uses_model && !has_model)) {
-                continue;
-            }
             let requested = PRODUCT_NAMES.map(|name| {
                 let key = format!("{prefix}{name}");
                 (names.contains(&key) && !fields.contains_key(&key)).then_some(key)
             });
+            if self.legacy && (!has_column(source) || (uses_model && !has_model)) {
+                for (item, key) in PRODUCT_NAMES.into_iter().zip(requested) {
+                    if let Some(key) = key {
+                        let empty = if item == "data" {
+                            ArrayValue::Complex32(vector(Vec::new()))
+                        } else {
+                            ArrayValue::Float32(vector(Vec::new()))
+                        };
+                        fields.insert(key, Value::Array(empty));
+                    }
+                }
+                continue;
+            }
             let mut raw_aliases = aliases.remove(&format!("{prefix}data"));
             let explicit = requested.iter().any(Option::is_some);
             if !explicit && raw_aliases.is_none() {
