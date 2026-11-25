@@ -214,6 +214,25 @@ pub(super) fn array_horizontal_value(
     value.map_err(|error| error.to_string())
 }
 
+pub(super) fn ephemeris_value(
+    engine: &MsCalEngine,
+    axis: MsAxis,
+    time: f64,
+    field_id: i32,
+) -> Result<f64, String> {
+    let field = usize::try_from(field_id)
+        .map_err(|_| format!("invalid FIELD_ID {field_id} for {axis} axis"))?;
+    let value = engine
+        .field_ephemeris_scalar(field, time, |ephemeris, time_utc| match axis {
+            MsAxis::RadialVelocity => ephemeris.radial_velocity(time_utc).map(|value| value.ms()),
+            MsAxis::EphemerisDistance => ephemeris.distance_metres(time_utc),
+            _ => unreachable!("only ephemeris axes use attached ephemeris samples"),
+        })
+        .map_err(|error| error.to_string())?;
+    // In an MS with an ephemeris, MSFieldColumns gives zero for a fixed field.
+    Ok(value.unwrap_or_default() / 1000.0)
+}
+
 pub(super) fn validate(spec: &MsPlotSpec) -> Result<(), String> {
     if !requested(spec) {
         return Ok(());

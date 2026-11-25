@@ -502,6 +502,145 @@ def compare_same_epoch_antenna_geometry(root, native):
           "CASA reuses the first field's coordinates in a joint selection", flush=True)
 
 
+def casa_ephemeris_export(app_run, options, *, expect_refusal=False):
+    import json
+    import subprocess
+    import sys
+
+    # A pinned CASA PlotMS session can retain stale ephemeris state across
+    # exports. Run each reference invocation in a fresh session.
+    command = """
+import json
+from pathlib import Path
+import sys
+from grpc import RpcError, StatusCode
+sys.path.insert(0, sys.argv[1])
+from plotms_calibration_oracle import plotms_launcher, reference
+with plotms_launcher(Path(sys.argv[2]) if sys.argv[2] else None):
+    try:
+        assert reference(**json.loads(sys.argv[3])) is None
+    except RpcError as error:
+        assert sys.argv[4] == "refuse" and error.code() == StatusCode.INVALID_ARGUMENT
+    else:
+        assert sys.argv[4] == "export"
+"""
+    subprocess.run([sys.executable, "-c", command, str(Path(__file__).resolve().parent),
+                    str(app_run.resolve()) if app_run else "", json.dumps(options),
+                    "refuse" if expect_refusal else "export"], check=True)
+
+
+def add_ephemeris_field_polynomial(vis):
+    with opened(vis / "FIELD", True) as table:
+        for column in ("PHASE_DIR", "DELAY_DIR", "REFERENCE_DIR"):
+            direction = table.getcell(column, 0)
+            table.putcell(column, 0, np.column_stack((direction[:, 0], [1e-10, -2e-10])))
+        table.putcell("NUM_POLY", 0, 1)
+
+
+def flag_ephemeris_samples(vis):
+    with opened(vis, True) as table:
+        times = table.getcol("TIME")
+        antenna2 = table.getcol("ANTENNA2")
+        selected = ((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+                    & np.isin(antenna2, [1, 2]))
+        ordered = np.unique(times[selected])
+        assert len(ordered) == 6
+        flags = table.getcol("FLAG")
+        flags[:, :, selected & (times == ordered[0])] = True
+        flags[:, 2, selected & (times == ordered[1])] = True
+        third = selected & (times == ordered[2])
+        flags[:, 1, third] = True
+        flags[1, 1, third & (antenna2 == 2)] = False
+        table.putcol("FLAG", flags)
+    return ordered[1:]
+
+
+def compare_ephemeris_axes(root, native, app_run):
+    from casars.tasks import TaskExecutionError, TaskParameterError
+    from gaincal_oracle import ephemeris_observation
+
+    def fresh_reference(**options):
+        return casa_ephemeris_export(app_run, options)
+
+    work = root / "ephemeris-axes"
+    work.mkdir()
+    source, *_ = make_fixture(work)
+    title = "Uranus ephemeris coordinates"
+    cases = (
+        ("channel-radial-velocity", "channel", "Radial Velocity", 18,
+         [27.4322, 27.4352], "Channel", "Radial Velocity (km/s)"),
+        ("time-distance", "time", "Distance (rho)", 6,
+         [2.90480e9, 2.90483e9], "Time (MJD seconds)", "Distance (rho) (km)"),
+    )
+    variants = [(case, mode) for mode in ("plain", "masked") for case in cases]
+    variants.append((cases[0], "polynomial"))
+    for (name, x, y, count, anchors, xlabel, ylabel), mode in variants:
+        if mode != "plain":
+            name += f"-{mode}"
+        masked = mode == "masked"
+        if masked:
+            count = 14 if x == "channel" else 5
+        case = work / name
+        case.mkdir()
+        vis, _ = ephemeris_observation(case, source, offset=(0.002, -0.004))
+        if mode == "polynomial":
+            add_ephemeris_field_polynomial(vis)
+        ordered = flag_ephemeris_samples(vis) if masked else None
+        before = snapshot(vis)
+        options = controls(vis) | dict(
+            xaxis=x, yaxis=y, antenna="A0&A1;A0&A2", spw="0:1~3", title=title, expformat="txt",
+        )
+        if masked:
+            options["correlation"] = "XX,YY"
+        expected, actual = (case / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert fresh_reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == count
+        assert len({point[9] for point in selected}) == (5 if masked else 6)
+        assert {point[6] for point in selected} == {"1"}
+        channels = [int(point[2]) for point in selected]
+        if masked:
+            assert {point[9] for point in selected} == {f"{time:.3f}" for time in ordered}
+            assert channels == ([1, 3] + [1, 2, 3] * 4 if x == "channel" else [1] * 5)
+            if x == "channel":
+                assert (channels[2:5], [point[12] for point in selected[2:5]]) == (
+                    [1, 2, 3], ["XX", "YY", "XX"],
+                )
+        else:
+            assert {point[12] for point in selected} == {"XX"}
+            assert channels == ([1, 2, 3] if x == "channel" else [1]) * 6
+            np.testing.assert_allclose([float(selected[0][1]), float(selected[-1][1])],
+                                       anchors, rtol=1.2e-5)
+        assert float(selected[0][1]) < float(selected[-1][1])
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        actual_values = np.asarray([float(point[1]) for point in rows(actual)])
+        expected_values = np.asarray([float(point[1]) for point in selected])
+        np.testing.assert_array_equal(actual_values, expected_values)
+        print(f"{name}: {count} matching ephemeris coordinates and metadata", flush=True)
+        if mode != "polynomial":
+            compare_figure(case, native, options, expected, (title, xlabel, ylabel),
+                           reference_task=fresh_reference,
+                           ordinate_atol=5.001e-5 if x == "channel" else 5000.001)
+        else:
+            with opened(vis / "FIELD") as table:
+                assert table.getcell("NUM_POLY", 0) == 1
+                np.testing.assert_array_equal(table.getcell("PHASE_DIR", 0)[:, 1], [1e-10, -2e-10])
+        verify_source(vis, before)
+
+    fixed = controls(source) | dict(xaxis="channel", yaxis="Radial Velocity", expformat="txt")
+    expected, actual = (work / f"fixed-field.{engine}.txt" for engine in ("casa", "native"))
+    casa_ephemeris_export(app_run, fixed | dict(plotfile=str(expected)), expect_refusal=True)
+    try:
+        native(**fixed, plotfile=str(actual))
+    except (TaskExecutionError, TaskParameterError) as error:
+        assert "ephemeris data is not available" in str(error)
+    else:
+        raise AssertionError("Native exported a moving ephemeris axis for a fixed MS")
+    assert not expected.exists() and not actual.exists()
+    print("fixed-field: both tasks require ephemeris data before export", flush=True)
+
+
 def compare_flags_and_calibration(root, native, vis):
     base = controls(vis) | dict(xaxis="uwave", expformat="txt")
 
@@ -1163,7 +1302,8 @@ def main():
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes",
                                            "averaged-coordinates", "array-horizontal-axes",
-                                           "antenna-horizontal-axes", "antenna-horizontal-same-epoch"))
+                                           "antenna-horizontal-axes", "antenna-horizontal-same-epoch",
+                                           "ephemeris-axes"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1186,6 +1326,8 @@ def main():
             compare_antenna_horizontal_axes(root, native)
         if args.only in (None, "antenna-horizontal-same-epoch"):
             compare_same_epoch_antenna_geometry(root, native)
+        if args.only in (None, "ephemeris-axes"):
+            compare_ephemeris_axes(root, native, args.app_run)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)

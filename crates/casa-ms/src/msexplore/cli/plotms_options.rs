@@ -370,7 +370,15 @@ impl CliOptions {
         Ok(())
     }
 
-    fn validate_horizontal_controls(&self, task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
+    fn validate_geometry_controls(&self, task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
+        if self.y_axis.is_some_and(MsAxis::is_ephemeris) {
+            let symbols = raw_symbol_visibility(task);
+            if symbols.flagged || !symbols.unflagged {
+                return Err(TaskFailure::validation(
+                    "PlotMS flag-symbol filtering with ephemeris axes is pending (#1032)",
+                ));
+            }
+        }
         let antenna_horizontal = [self.x_axis, self.y_axis, self.y_axis2]
             .into_iter()
             .flatten()
@@ -532,6 +540,8 @@ pub(super) fn options_from_plotms(
             && [x_axis, y_axis].contains(&MsAxis::WeightSpectrum))
         || plotms_row_axes::array_horizontal_pair(x_axis, y_axis)
         || y_axis.is_antenna_horizontal()
+        || x_axis.is_ephemeris()
+        || y_axis.is_ephemeris()
         // PlotMS falls back to scalar SIGMA for undefined spectral cells;
         // the raw explorer deliberately requires the requested stored cell.
         || x_axis == MsAxis::SigmaSpectrum
@@ -653,6 +663,6 @@ pub(super) fn options_from_plotms(
         plot_format,
     };
     options.validate_plotms_weight_averaging()?;
-    options.validate_horizontal_controls(task)?;
+    options.validate_geometry_controls(task)?;
     Ok((options, visibility_document))
 }

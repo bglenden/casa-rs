@@ -50,7 +50,8 @@ def rows(path):
     return [line.split() for line in path.read_text().splitlines() if not line.startswith("#")]
 
 
-def compare_figure(root, native, controls, expected, labels):
+def compare_figure(root, native, controls, expected, labels, *,
+                   reference_task=reference, ordinate_atol=None):
     from casars import _plot_document
 
     capture = []
@@ -66,13 +67,15 @@ def compare_figure(root, native, controls, expected, labels):
     for output in outputs:
         output.parent.mkdir(exist_ok=True)
     figure = dict(controls, expformat="png", width=500, height=360, dpi=100)
-    assert reference(**figure, plotfile=str(outputs[0])) is None
+    assert reference_task(**figure, plotfile=str(outputs[0])) is None
     with patch.object(_plot_document, "render_document", record):
         assert native(**figure, plotfile=str(outputs[1])) is None
     [(title, xlabel, ylabel, points, xlim, ylim)] = capture
     assert (title, xlabel, ylabel) == labels, (title, xlabel, ylabel)
     coordinates = np.array([point[:2] for point in rows(expected)], dtype=float)
     np.testing.assert_allclose(points, coordinates, rtol=1.2e-5, atol=1e-7)
+    if ordinate_atol is not None:
+        np.testing.assert_allclose(points[:, 1], coordinates[:, 1], rtol=0, atol=ordinate_atol)
     if controls["xaxis"] == "time":
         np.testing.assert_allclose(points[:, 0], coordinates[:, 0], rtol=0, atol=0.00051)
     visible = points[np.isfinite(points).all(axis=1)]

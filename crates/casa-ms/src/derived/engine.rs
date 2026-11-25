@@ -231,6 +231,14 @@ impl MsCalEngine {
         Ok(engine)
     }
 
+    /// Prepare FIELD scalar sampling, for which the ephemeris remains
+    /// available on rows whose directions are supplied by polynomials.
+    pub(crate) fn for_ephemeris_scalars(ms: &MeasurementSet) -> MsResult<Self> {
+        let mut engine = Self::new(ms)?;
+        engine.field_motions = crate::ephemeris::scalar_field_motions(ms)?;
+        Ok(engine)
+    }
+
     /// Whether `field_id` follows an attached ephemeris
     /// ([`Self::with_field_ephemerides`]), readable or not.
     #[must_use]
@@ -447,6 +455,27 @@ impl MsCalEngine {
         let Some((ephemeris, offset)) = self.field_series(field_id)? else {
             return Ok(None);
         };
+        let mjd = self.field_ephemeris_mjd_utc(field_id, time_mjd_sec)?;
+        ephemeris.reference_direction(mjd, offset, true).map(Some)
+    }
+
+    /// Evaluate a scalar from the attached ephemeris at the FIELD column's
+    /// interpolation epoch. A fixed field has no attached value.
+    pub(crate) fn field_ephemeris_scalar(
+        &self,
+        field_id: usize,
+        time_mjd_sec: f64,
+        evaluate: impl FnOnce(&AttachedFieldEphemeris, f64) -> MsResult<f64>,
+    ) -> MsResult<Option<f64>> {
+        let Some((ephemeris, _)) = self.field_series(field_id)? else {
+            return Ok(None);
+        };
+        let mjd = self.field_ephemeris_mjd_utc(field_id, time_mjd_sec)?;
+        ephemeris.check_observation_epoch(mjd)?;
+        evaluate(ephemeris, mjd).map(Some)
+    }
+
+    fn field_ephemeris_mjd_utc(&self, field_id: usize, time_mjd_sec: f64) -> MsResult<f64> {
         let origin = self
             .field_reference_epochs
             .get(field_id)
@@ -461,8 +490,7 @@ impl MsCalEngine {
         };
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let mjd = epoch.convert_to(EpochRef::UTC, &frame)?.value().as_mjd();
-        ephemeris.reference_direction(mjd, offset, true).map(Some)
+        Ok(epoch.convert_to(EpochRef::UTC, &frame)?.value().as_mjd())
     }
 
     fn sampled_ephemeris_direction_j2000(

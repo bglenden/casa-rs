@@ -4769,6 +4769,19 @@ CASA selections for all 30 plotted points and their identities
 (`plotms_ms_metadata_axes_oracle.py --only antenna-horizontal-same-epoch`).
 The same joint-cache issue was observed for Ant-Azimuth and Ant-ParAngle.
 
+## PlotMS can refuse a second ephemeris export in one session
+
+- Date noted: 2026-11-24
+- Status: casa-rs uses the current static request for each export (#1032)
+- Affected code: the pinned casaplotms 2.9.1 public task and application
+
+With CASA 6.7.6.14, exporting Channel/Radial Velocity to TXT and then
+requesting a PNG with the same selected Uranus MeasurementSet produced
+`INVALID_ARGUMENT` with no PNG. The same PNG request succeeds when it
+is the session's first export. Time/Distance (rho) has the same
+session dependence. The paired test starts a fresh reference session
+for each export so each comparison uses the requested data and axes.
+
 ## `spw` "no match" warnings refuse the expression
 
 - Date noted: 2026-11-02
