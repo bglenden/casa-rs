@@ -1972,7 +1972,9 @@ impl MsPlotSpec {
         if !requested {
             return Ok(());
         }
-        if uses_extended_averaging(self) || self.averaging.avgchannel.is_some_and(|width| width > 1)
+        if (uses_extended_averaging(self)
+            && !plotms_columns::uses_averaged_geometry_coordinates(self))
+            || self.averaging.avgchannel.is_some_and(|width| width > 1)
         {
             return Err(
                 "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
@@ -2814,6 +2816,14 @@ fn build_msexplore_payload_internal(
     {
         return Err("Time-averaged PlotMS UV distance ordinates with a callibrary or direct msexplore are pending (#1032)".into());
     }
+    if calibration.and_then(|input| input.time_bins).is_none()
+        && spec
+            .plots
+            .iter()
+            .any(plotms_columns::uses_averaged_geometry_coordinates)
+    {
+        return Err("Time-averaged PlotMS interval and wavelength axes with a callibrary or direct msexplore are pending (#1032)".into());
+    }
     let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
     let header_lines = resolve_page_header_lines(ms, spec)?;
     if spec.plots.len() == 1 {
@@ -3030,6 +3040,7 @@ fn build_uncalibrated_plotms_payload(
     let direct_time_projection = !extended_derived
         && (vector_span_models
             || averaged_row_numbers
+            || plot.is_some_and(plotms_columns::uses_averaged_geometry_coordinates)
             || plot.is_some_and(|plot| {
                 plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
             }));
@@ -5553,6 +5564,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let weighted_time_uvw = time_bins.is_some()
         && (plotms_columns::uses_weighted_time_uvw(spec)
             || plotms_columns::uses_weighted_spw_time_u(spec));
+    let time_geometry =
+        time_bins.is_some() && plotms_columns::uses_averaged_geometry_coordinates(spec);
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
     let spw_average = uncalibrated && plotms_columns::uses_spectral_window_average(spec);
     let time_spw = spw_average && time_bins.is_some();
@@ -5598,6 +5611,7 @@ fn build_generic_visibility_scatter_with_averaging(
         && !extended_derived
         && (vector_span_models
             || averaged_row_numbers.is_some()
+            || time_geometry
             || plotms_columns::uses_direct_vector_time_projection(
                 spec,
                 calibration.and_then(|input| input.x_data_column),
@@ -5842,6 +5856,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut bin_buffers = visibility_columns.buffers();
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
     let mut time_uvws = weighted_time_uvw.then(HashMap::<(usize, i32, i32), TimeUvwAverage>::new);
+    let mut wavelength_spectra =
+        (time_geometry && weighted_time_uvw).then(HashMap::<i32, Vec<f64>>::new);
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut averaged_rows = std::collections::BTreeSet::new();
@@ -6197,10 +6213,14 @@ fn build_generic_visibility_scatter_with_averaging(
                     has_unflagged_visibility: unflagged,
                 });
             } else {
+                let integration = plotms_time_baselines::Integration {
+                    time: row_time_value,
+                    interval: row_interval_value,
+                };
                 time_bounds
                     .entry(group)
-                    .or_insert_with(|| plotms_ordinates::VisibilityTimeBounds::new(row_time_value))
-                    .observe(row_time_value, unflagged);
+                    .or_insert_with(|| plotms_ordinates::VisibilityTimeBounds::new(integration))
+                    .observe(integration, unflagged);
             }
         }
         if let Some(group) = group.filter(|_| scalar_average || spw_average) {
@@ -6236,9 +6256,7 @@ fn build_generic_visibility_scatter_with_averaging(
         } else {
             None
         };
-        let spectral_context = if spw_average {
-            None
-        } else {
+        let load_spectrum = || {
             resolve_spectral_context(
                 spec,
                 spw_id,
@@ -6247,7 +6265,29 @@ fn build_generic_visibility_scatter_with_averaging(
                 row_time_value,
                 chan_freq.as_ref(),
                 derived_engine.as_ref(),
-            )?
+            )
+        };
+        let spectral_context = if let Some(spectra) = &mut wavelength_spectra {
+            use std::collections::hash_map::Entry;
+            let frequencies = match spectra.entry(selected_data_desc_ids[row_slot]) {
+                Entry::Occupied(entry) => entry.into_mut(),
+                Entry::Vacant(entry) => entry.insert(
+                    load_spectrum()?
+                        .ok_or("Missing frequency grid for PlotMS wavelength coordinates")?
+                        .channel_frequencies_hz,
+                ),
+            };
+            if frequencies.len() != chan_count {
+                return Err(format!(
+                    "SPECTRAL_WINDOW row {spw_id} reported {} channel frequencies for {chan_count} data channels",
+                    frequencies.len()
+                ));
+            }
+            None
+        } else if spw_average {
+            None
+        } else {
+            load_spectrum()?
         };
 
         let baseline_tokens = if time_antenna {
@@ -6611,7 +6651,9 @@ fn build_generic_visibility_scatter_with_averaging(
                                 accumulator.any_flag_row |= flag_row_value;
                                 series_used = true;
                             }
-                            axis if weighted_time_uvw && axis.uses_uvw_metres() => {
+                            axis if (weighted_time_uvw && axis.uses_uvw())
+                                || axis == MsAxis::Interval =>
+                            {
                                 series_used = true;
                             }
                             MsAxis::Channel | MsAxis::Frequency if spw_average => {
@@ -6671,7 +6713,9 @@ fn build_generic_visibility_scatter_with_averaging(
                                 accumulator.any_flag_row |= flag_row_value;
                                 series_used = true;
                             }
-                            axis if weighted_time_uvw && axis.uses_uvw_metres() => {
+                            axis if (weighted_time_uvw && axis.uses_uvw())
+                                || axis == MsAxis::Interval =>
+                            {
                                 series_used = true;
                             }
                             axis if !axis.is_visibility_math() => {
@@ -6778,18 +6822,18 @@ fn build_generic_visibility_scatter_with_averaging(
             .filter_map(|(group, antenna, other)| Some((plan.output_group(group)?, antenna, other)))
             .collect();
     }
-    let buffer_times = time_bins
+    let buffer_integrations = time_bins
         .filter(|_| extended_derived || direct_time_projection)
         .map(|groups| {
-            // PlotMS caches the first averaged baseline's time for the whole buffer.
+            // PlotMS caches the first averaged baseline's integration for the whole buffer.
             groups
                 .buffers()
                 .iter()
                 .flat_map(|buffer| {
-                    let time = time_bounds
+                    let integration = time_bounds
                         .get(&buffer.start)
-                        .map(plotms_ordinates::VisibilityTimeBounds::buffer_midpoint);
-                    std::iter::repeat_n(time, buffer.len())
+                        .map(plotms_ordinates::VisibilityTimeBounds::buffer_integration);
+                    std::iter::repeat_n(integration, buffer.len())
                 })
                 .collect::<Vec<_>>()
         });
@@ -6960,8 +7004,8 @@ fn build_generic_visibility_scatter_with_averaging(
                             .map(|(start, end)| start + (end - start) / 2.0)
                     } else if let Some(plan) = &time_baseline_plan {
                         plan.center(group)
-                    } else if let Some(times) = &buffer_times {
-                        times[group]
+                    } else if let Some(integrations) = &buffer_integrations {
+                        integrations[group].map(|integration| integration.time)
                     } else {
                         time_bounds
                             .get(&group)
@@ -6981,10 +7025,20 @@ fn build_generic_visibility_scatter_with_averaging(
                         planned_time
                     } else if axis == MsAxis::Row {
                         Some(*averaged_row_numbers?.get(group?)? as f64)
-                    } else if weighted_time_uvw && axis.uses_uvw_metres() {
-                        order
-                            .and_then(|order| time_uvws.as_ref()?.get(&order))
-                            .map(|&uvw| uvw_metres_coordinate(axis, uvw))
+                    } else if axis == MsAxis::Interval {
+                        Some(buffer_integrations.as_ref()?[group?]?.interval)
+                    } else if weighted_time_uvw && axis.uses_uvw() {
+                        let uvw = *time_uvws.as_ref()?.get(&order?)?;
+                        let metres = uvw_metres_coordinate(axis, uvw);
+                        if axis.uses_wavelengths() {
+                            let slot = time_bins?.first_row_slot(group?);
+                            let ddid = selected_data_desc_ids[slot];
+                            let spectrum = wavelength_spectra.as_ref()?.get(&ddid)?;
+                            let frequency_hz = *spectrum.get(representative.chan_start)?;
+                            Some(metres_to_wavelengths(metres, frequency_hz))
+                        } else {
+                            Some(metres)
+                        }
                     } else if scalar_visibility && axis.is_visibility_math() {
                         let samples = if x_axis {
                             &accumulator.x_visibility
@@ -7774,15 +7828,18 @@ fn uvw_coordinate(
     bin: &ChannelBin,
     spectrum: Option<&SpectralContext>,
 ) -> Option<f64> {
-    const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
-
     let metres = uvw_metres_coordinate(axis, uvw);
     if axis.uses_wavelengths() {
         let frequency_hz = spectrum?.channel_frequencies_hz.get(bin.start)?;
-        Some(metres / SPEED_OF_LIGHT_M_S * frequency_hz)
+        Some(metres_to_wavelengths(metres, *frequency_hz))
     } else {
         Some(metres)
     }
+}
+
+fn metres_to_wavelengths(metres: f64, frequency_hz: f64) -> f64 {
+    const SPEED_OF_LIGHT_M_S: f64 = 299_792_458.0;
+    metres / SPEED_OF_LIGHT_M_S * frequency_hz
 }
 
 fn uvw_metres_coordinate(axis: MsAxis, [u, v, w]: [f64; 3]) -> f64 {
