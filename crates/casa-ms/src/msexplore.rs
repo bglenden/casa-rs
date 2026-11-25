@@ -2013,6 +2013,8 @@ impl MsPlotSpec {
                 && !y_axis.is_row_identifier()
                 && !y_axis.is_antenna_horizontal()
                 && !y_axis.is_ephemeris()
+                && !(self.y_axes.len() == 1
+                    && plotms_row_axes::metadata_coordinate_pair(self.x_axis, y_axis).is_some())
                 && !(pointing && (y_axis.is_pointing() || y_axis == MsAxis::Time))
             {
                 return Err(format!(
@@ -4330,6 +4332,10 @@ fn build_generic_visibility_scatter(
     {
         return Err("This PlotMS ephemeris axis combination is pending (#1032)".into());
     }
+    let coordinate_mask = plotms_row_axes::unaveraged_coordinate_mask(
+        spec,
+        calibration.is_some_and(|input| input.rows.is_none()),
+    )?;
     let metadata_pair = if pointing.is_some() {
         Some(plotms_ordinates::PointDimensions {
             channel: false,
@@ -4343,7 +4349,7 @@ fn build_generic_visibility_scatter(
     } else if needs_row_axes {
         plotms_row_axes::metadata_pair(spec)
     } else {
-        None
+        coordinate_mask
     };
     if metadata_pair.is_some() && calibration.is_some_and(|input| input.rows.is_some()) {
         return Err(
@@ -4396,7 +4402,9 @@ fn build_generic_visibility_scatter(
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
     let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
-    let paged_iteration = iterated_ordinate_list || plotms_row_axes::uses_scan_row_iteration(spec);
+    let paged_iteration = iterated_ordinate_list
+        || plotms_row_axes::uses_scan_row_iteration(spec)
+        || coordinate_mask.is_some() && spec.iteration.iteraxis == Some(MsIterationAxis::Scan);
     let calibrated_ordinate_list = calibration
         .is_some_and(|input| input.rows.is_some() && input.secondary_y_data_column.is_some());
     let order_ordinate_list = iterated_ordinate_list || calibrated_ordinate_list;
@@ -4404,6 +4412,7 @@ fn build_generic_visibility_scatter(
         || array_horizontal
         || antenna_horizontal
         || ephemeris_ordinate
+        || coordinate_mask.is_some()
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
@@ -4599,6 +4608,8 @@ fn build_generic_visibility_scatter(
     }
     let buffer_geometry_axis = if array_horizontal || ephemeris_ordinate {
         Some(spec.y_axis())
+    } else if coordinate_mask.is_some() && spec.x_axis == MsAxis::Elevation {
+        Some(spec.x_axis)
     } else if plotms_row_axes::uses_mixed_row_geometry(spec) {
         Some(MsAxis::Elevation)
     } else {
@@ -5424,6 +5435,7 @@ fn build_generic_visibility_scatter(
                     || array_horizontal
                     || antenna_horizontal
                     || ephemeris_ordinate
+                    || coordinate_mask.is_some()
                     || pointing.is_some()
                     || raw_symbols.is_some()
                     || phase_shift.is_some()

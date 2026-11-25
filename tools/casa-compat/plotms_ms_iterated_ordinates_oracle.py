@@ -44,7 +44,8 @@ def compare_text_pages(root, native, name, controls, masks, *, flagged_correlati
     return [np.array([point[:2] for point in section], dtype=float).reshape(-1, 2) for section in sections]
 
 
-def compare_figures(root, native, name, controls, pages, file_tags, sides, *, shared_right=None):
+def compare_figures(root, native, name, controls, pages, file_tags, sides, *,
+                    shared_right=None, ordinate_atol=None):
     from casars import _plot_document
 
     captured = []
@@ -91,6 +92,9 @@ def compare_figures(root, native, name, controls, pages, file_tags, sides, *, sh
                     np.testing.assert_array_equal(axis.get_ylim(), shared_right)
                 for line, index in zip(lines, order, strict=True):
                     np.testing.assert_allclose(line, layers[index], rtol=1.2e-5, atol=1e-7)
+                    if ordinate_atol is not None:
+                        np.testing.assert_allclose(line[:, 1], layers[index][:, 1],
+                                                   rtol=0, atol=ordinate_atol)
                     if controls["xaxis"] == "time":
                         np.testing.assert_allclose(line[:, 0], layers[index][:, 0], rtol=0, atol=.00051)
     print(f"{name}: matched rendered coordinates, sides and {len(names)} filenames", flush=True)

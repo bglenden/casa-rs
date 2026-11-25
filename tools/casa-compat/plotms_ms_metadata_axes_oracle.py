@@ -688,6 +688,7 @@ def compare_static_metadata_coordinates(root, native):
             np.testing.assert_allclose(float(selected[0][0]), 82.90598, rtol=1.2e-5)
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == count
+        assert [point[1] for point in rows(actual)] == [point[1] for point in selected]
         print(f"{name}: {count} matching ordered metadata coordinates and masks", flush=True)
 
         iteration = options | dict(iteraxis="scan", exprange="all", xlabel=xlabel)
@@ -696,12 +697,14 @@ def compare_static_metadata_coordinates(root, native):
         assert rows(expected) == selected
         assert native(**(iteration | dict(gridrows=2)), plotfile=str(actual)) is None
         assert compare_text(actual, expected) == count
+        assert [point[1] for point in rows(actual)] == [point[1] for point in selected]
         values = np.array([point[:2] for point in selected], dtype=float)
         pages = [[(scan, coordinates)] for scan, coordinates in zip(
             ("11", "19"), np.split(values, [counts[0]]), strict=True,
         )]
         compare_figures(work, native, f"{name}-pages", iteration, pages,
-                        ["Scan11", "Scan19_2"], [("left", ylabel, [0])])
+                        ["Scan11", "Scan19_2"], [("left", ylabel, [0])],
+                        ordinate_atol=0.00051 if y == "time" else 5.001e-10)
     verify_source(vis, before)
 
 
