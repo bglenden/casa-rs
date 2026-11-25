@@ -44,6 +44,46 @@ impl VisibilityPolarization {
         }
     }
 
+    /// Select recorded correlations in the requested order, or convert them
+    /// when the first selected data description lacks a requested type.
+    pub fn legacy_selected(
+        descriptions: &[(i32, Vec<i32>)],
+        types: Vec<StokesType>,
+    ) -> Option<Self> {
+        if types.is_empty() {
+            return None;
+        }
+        let matches = descriptions
+            .iter()
+            .map(|(id, codes)| {
+                let indices = types
+                    .iter()
+                    .map(|kind| codes.iter().position(|&code| code == kind.code()))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(ToolCorrelationSelection {
+                    description_id: *id,
+                    indices,
+                    types: types.clone(),
+                })
+            })
+            .collect::<Option<Vec<_>>>();
+        Some(if let Some(matches) = matches {
+            Self::stored(matches)
+        } else {
+            let plans = descriptions
+                .iter()
+                .map(|(id, codes)| (*id, Conversion::new(codes, &types)))
+                .collect();
+            Self {
+                project: Projection::Converted {
+                    plans,
+                    types,
+                    recorded: None,
+                },
+            }
+        })
+    }
+
     /// Convert the selected rows to the requested Stokes or correlation types.
     /// # Errors
     /// The DATA_DESCRIPTION or POLARIZATION rows cannot be read.
@@ -170,6 +210,30 @@ impl VisibilityPolarization {
             return Err(input("Stokes projection is missing"));
         };
         project_rows(flags, ids, types.len(), plans, Conversion::append_flags)
+    }
+
+    pub(super) fn legacy_weight(
+        &self,
+        values: ArrayValue,
+        ids: &[i32],
+        sigma: bool,
+    ) -> MsResult<ArrayValue> {
+        let Projection::Converted { types, plans, .. } = &self.project else {
+            return Ok(values);
+        };
+        let ArrayValue::Float32(values) = values else {
+            return Err(input(
+                "polarization projection requires Float WEIGHT or SIGMA",
+            ));
+        };
+        project_rows(&values, ids, types.len(), plans, |plan, samples, output| {
+            if sigma {
+                plan.append_sigmas(samples, output)
+            } else {
+                plan.append_weights(samples, output)
+            }
+        })
+        .map(ArrayValue::Float32)
     }
 
     pub(super) fn averaging_inputs(

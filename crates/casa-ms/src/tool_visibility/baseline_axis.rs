@@ -23,6 +23,7 @@ pub(super) struct BaselineGrid {
     times: Vec<f64>,
     first_rows: Vec<usize>,
     row_count: usize,
+    legacy: bool,
     // The final source row for each occupied slot, ordered in Fortran layout.
     occupied: Vec<(usize, usize)>,
 }
@@ -46,6 +47,22 @@ impl BaselineGrid {
         columns: &HashMap<String, RequiredScalarColumnValues>,
         selection: Option<&[(i32, i32)]>,
         gap: i32,
+    ) -> MsResult<Self> {
+        Self::build(columns, selection, gap, false)
+    }
+
+    pub(super) fn legacy(
+        columns: &HashMap<String, RequiredScalarColumnValues>,
+        gap: i32,
+    ) -> MsResult<Self> {
+        Self::build(columns, None, gap, true)
+    }
+
+    fn build(
+        columns: &HashMap<String, RequiredScalarColumnValues>,
+        selection: Option<&[(i32, i32)]>,
+        gap: i32,
+        legacy: bool,
     ) -> MsResult<Self> {
         let (time, first, second) = baseline_columns(columns)?;
         if first.len() != time.len() || second.len() != time.len() {
@@ -85,19 +102,36 @@ impl BaselineGrid {
         }
 
         let mut order = (0..time.len()).collect::<Vec<_>>();
-        order.sort_unstable_by(|&left, &right| {
-            // Finite times, including signed zero, use numeric ordering.
-            time[left]
-                .partial_cmp(&time[right])
-                .unwrap()
-                .then(left.cmp(&right))
-        });
+        let descriptions = if legacy {
+            let RequiredScalarColumnValues::Int32(descriptions) = &columns["DATA_DESC_ID"] else {
+                return Err(input("DATA_DESC_ID must contain an integer"));
+            };
+            Some(descriptions)
+        } else {
+            order.sort_unstable_by(|&left, &right| {
+                // Finite times, including signed zero, use numeric ordering.
+                time[left]
+                    .partial_cmp(&time[right])
+                    .unwrap()
+                    .then(left.cmp(&right))
+            });
+            None
+        };
         let mut times = Vec::new();
         let mut first_rows = Vec::new();
         let mut occupied = Vec::with_capacity(order.len());
         let mut time_start = 0_usize;
+        let mut descriptions_at_time = HashMap::new();
         for row in order {
-            if times.last() != Some(&time[row]) {
+            let new_time = times.last() != Some(&time[row]);
+            let description = descriptions.map(|ids| ids[row]);
+            if new_time {
+                descriptions_at_time.clear();
+            }
+            let prior_slot = description.and_then(|id| descriptions_at_time.get(&id).copied());
+            if let Some(slot) = prior_slot {
+                time_start = slot;
+            } else if new_time || description.is_some() {
                 time_start = times
                     .len()
                     .checked_mul(baseline_count)
@@ -105,6 +139,9 @@ impl BaselineGrid {
                     .ok_or_else(|| input("baseline grid exceeds the supported length"))?;
                 times.push(time[row]);
                 first_rows.push(row);
+                if let Some(description) = description {
+                    descriptions_at_time.insert(description, time_start);
+                }
             }
             if let Some(&baseline) = baselines.get(&row_baselines[row]) {
                 occupied.push((time_start + baseline, row));
@@ -112,12 +149,19 @@ impl BaselineGrid {
         }
         occupied.sort_unstable_by_key(|&(slot, row)| (slot, Reverse(row)));
         occupied.dedup_by_key(|entry| entry.0);
+        if legacy {
+            // Metadata for each slot comes from its first populated baseline.
+            for (slot, row) in occupied.iter().rev() {
+                first_rows[slot / baseline_count] = *row;
+            }
+        }
         Ok(Self {
             baselines,
             baseline_count,
             times,
             first_rows,
             row_count: time.len(),
+            legacy,
             occupied,
         })
     }
@@ -183,17 +227,37 @@ impl BaselineGrid {
         average: bool,
     ) -> MsResult<(RecordValue, RecordValue)> {
         let antenna = ms.antenna()?;
+        let prefix = if self.legacy && antenna.row_count() != 0 {
+            let first = antenna.name(0)?;
+            let last = antenna.name(antenna.row_count() - 1)?;
+            first
+                .chars()
+                .zip(last.chars())
+                .take_while(|(a, b)| a == b)
+                .map(|(character, _)| character.len_utf8())
+                .sum::<usize>()
+        } else {
+            0
+        };
         let mut metadata = HashMap::new();
         let mut labels = filled(self.baseline_count, String::new())?;
         let mut shorts = filled(self.baseline_count, String::new())?;
-        let mut lengths = filled(self.baseline_count, 0.0)?;
+        let mut lengths = filled(self.baseline_count, if self.legacy { -1.0 } else { 0.0 })?;
         for (&(first, second), &slot) in &self.baselines {
             let first = usize::try_from(first).map_err(|_| input("negative antenna ID"))?;
             let second = usize::try_from(second).map_err(|_| input("negative antenna ID"))?;
             for id in [first, second] {
                 if let std::collections::hash_map::Entry::Vacant(entry) = metadata.entry(id) {
                     let name = antenna.name(id)?;
-                    let short = name.char_indices().rev().nth(1).map_or(0, |(i, _)| i);
+                    let short = if self.legacy {
+                        if prefix > 1 && name.is_char_boundary(prefix) {
+                            prefix
+                        } else {
+                            0
+                        }
+                    } else {
+                        name.char_indices().rev().nth(1).map_or(0, |(i, _)| i)
+                    };
                     let short = name[short..].to_owned();
                     entry.insert((name, short, antenna.position(id)?));
                 }
@@ -209,8 +273,15 @@ impl BaselineGrid {
                 .sum::<f64>()
                 .sqrt();
         }
+        let numbers = if self.legacy {
+            ArrayValue::Int32(vector(
+                self.baselines.keys().map(|&(a, b)| a * 1000 + b).collect(),
+            ))
+        } else {
+            self.numbers()?
+        };
         let ifr = RecordValue::new(vec![
-            RecordField::new("ifr_number", Value::Array(self.numbers()?)),
+            RecordField::new("ifr_number", Value::Array(numbers)),
             RecordField::new("ifr_name", Value::Array(ArrayValue::String(vector(labels)))),
             RecordField::new(
                 "ifr_shortname",
@@ -240,8 +311,13 @@ impl BaselineGrid {
         };
         let times = self.integration_times(average);
         let mut axis = RecordValue::new(vec![coordinate("MJDseconds", times.clone())]);
+        let midnight_source = if self.legacy {
+            self.times.first()
+        } else {
+            times.get(1).or_else(|| times.first())
+        };
         if names.contains("ut")
-            && let Some(time) = times.get(1).or_else(|| times.first())
+            && let Some(time) = midnight_source
         {
             let midnight = (time / DAY).trunc() * DAY;
             axis.push(coordinate(
@@ -349,7 +425,7 @@ impl BaselineGrid {
                 ("flag_sum", _) => {}
                 ("flag", _) if reduced_flags => {}
                 ("ifr_number", Value::Array(ArrayValue::Int32(values))) => {
-                    if average {
+                    if average && !self.legacy {
                         *values = ids(values.iter().copied().collect());
                     }
                 }
@@ -363,12 +439,20 @@ impl BaselineGrid {
                     *values = ids(self.first_rows.iter().map(|&row| values[row]).collect());
                 }
                 ("antenna1" | "antenna2", Value::Array(ArrayValue::Int32(values))) => {
-                    *values = self.scatter(values, true)?;
-                    if average {
-                        *values = ids(values.iter().copied().collect());
+                    if self.legacy {
+                        let mut antennas = filled(self.baseline_count, -1)?;
+                        for (&(first, second), &slot) in &self.baselines {
+                            antennas[slot] = if name == "antenna1" { first } else { second };
+                        }
+                        *values = vector(antennas);
+                    } else {
+                        *values = self.scatter(values, true, 0)?;
+                        if average {
+                            *values = ids(values.iter().copied().collect());
+                        }
                     }
                 }
-                ("sigma", _) if average => {}
+                ("sigma" | "weight", _) if average && (name == "sigma" || self.legacy) => {}
                 (name, _) if average && visibility_product(name) => {}
                 (_, Value::Array(array)) if !array.is_empty() => {
                     self.scatter_array(array)?;
@@ -381,20 +465,25 @@ impl BaselineGrid {
 
     fn scatter_array(&self, array: &mut ArrayValue) -> MsResult<()> {
         match array {
-            ArrayValue::Bool(values) => *values = self.scatter(values, false)?,
-            ArrayValue::Float32(values) => *values = self.scatter(values, false)?,
-            ArrayValue::Float64(values) => *values = self.scatter(values, false)?,
-            ArrayValue::Complex32(values) => *values = self.scatter(values, false)?,
-            ArrayValue::Complex64(values) => *values = self.scatter(values, false)?,
+            ArrayValue::Bool(values) => *values = self.scatter(values, false, self.legacy)?,
+            ArrayValue::Float32(values) => *values = self.scatter(values, false, 0.0)?,
+            ArrayValue::Float64(values) => *values = self.scatter(values, false, 0.0)?,
+            ArrayValue::Complex32(values) => {
+                *values = self.scatter(values, false, Default::default())?
+            }
+            ArrayValue::Complex64(values) => {
+                *values = self.scatter(values, false, Default::default())?
+            }
             _ => return Err(input("unexpected type for baseline-axis array")),
         }
         Ok(())
     }
 
-    fn scatter<T: Copy + Default>(
+    fn scatter<T: Copy>(
         &self,
         array: &ArrayD<T>,
         first_time: bool,
+        fill: T,
     ) -> MsResult<ArrayD<T>> {
         let Some((&rows, cell_shape)) = array.shape().split_last() else {
             return Err(input("visibility array has no row axis"));
@@ -407,13 +496,13 @@ impl BaselineGrid {
         let cell_width = element_count(cell_shape)?;
         let mut shape = cell_shape.to_vec();
         shape.push(self.baseline_count);
-        if !first_time && self.times.len() > 1 {
+        if !first_time && (self.legacy || self.times.len() > 1) {
             shape.push(self.times.len());
         }
         let memory = array
             .as_slice_memory_order()
             .ok_or_else(|| input("visibility block is not contiguous"))?;
-        let mut output = filled(element_count(&shape)?, T::default())?;
+        let mut output = filled(element_count(&shape)?, fill)?;
         for &(slot, row) in &self.occupied {
             if first_time && slot >= self.baseline_count {
                 break;
@@ -437,7 +526,12 @@ impl BaselineGrid {
         let memory = flags
             .as_slice_memory_order()
             .ok_or_else(|| input("FLAG block is not contiguous"))?;
-        let mut output = filled(element_count(&shape)?, 0_i64)?;
+        let count_base = if self.legacy {
+            self.time_count() as i64
+        } else {
+            0
+        };
+        let mut output = filled(element_count(&shape)?, count_base)?;
         for &(slot, row) in &self.occupied {
             let dest = slot % self.baseline_count * width;
             let source = row * width;
@@ -445,7 +539,7 @@ impl BaselineGrid {
                 .iter_mut()
                 .zip(&memory[source..source + width])
             {
-                *count += i64::from(flag);
+                *count += i64::from(flag) - i64::from(self.legacy);
             }
         }
         shaped(&shape, output)

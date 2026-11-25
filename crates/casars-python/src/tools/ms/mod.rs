@@ -7,6 +7,7 @@ mod attachment_info;
 mod history;
 mod iteration;
 mod legacy_selection;
+mod legacy_visibility;
 mod lister;
 pub(super) mod metadata_link;
 mod owned_record;

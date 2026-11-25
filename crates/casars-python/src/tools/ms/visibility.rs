@@ -91,7 +91,7 @@ impl VisibilityState {
         Ok(())
     }
 
-    fn main(&mut self, path: &Path) -> PyResult<&VisibilityMain> {
+    pub(super) fn main(&mut self, path: &Path) -> PyResult<&VisibilityMain> {
         let current = self.main.as_ref().is_some_and(|main| {
             main.publication
                 .iter()
@@ -300,7 +300,7 @@ impl VisibilityMain {
         self.read_rows(&rows, items, metadata, options)
     }
 
-    fn read_rows(
+    pub(super) fn read_rows(
         &self,
         rows: &[usize],
         items: &[String],
@@ -342,6 +342,7 @@ impl PyMsTool {
             polarization: None,
             time_measures: None,
             iterator_read: false,
+            legacy_axes: None,
         };
         let reply = py.detach(|| -> PyResult<CasaValue> {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
@@ -945,36 +946,38 @@ pub(super) fn requested_strings(
 }
 
 fn increment_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    integer_argument(value, "increment")
+    integer_argument(value, "increment", "ms_getdata")
 }
 
 fn gap_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    integer_argument(value, "ifraxisgap")
+    integer_argument(value, "ifraxisgap", "ms_getdata")
 }
 
 fn nchan_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    channel_argument(value, "nchan")
+    channel_argument(value, "nchan", "ms_selectchannel")
 }
 
 fn start_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    channel_argument(value, "start")
+    channel_argument(value, "start", "ms_selectchannel")
 }
 
 fn width_argument(value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    channel_argument(value, "width")
+    channel_argument(value, "width", "ms_selectchannel")
 }
 
 fn channel_increment(value: &Bound<'_, PyAny>) -> PyResult<i64> {
-    channel_argument(value, "inc")
+    channel_argument(value, "inc", "ms_selectchannel")
 }
 
-fn channel_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i64> {
+pub(super) fn channel_argument(
+    value: &Bound<'_, PyAny>,
+    name: &str,
+    method: &str,
+) -> PyResult<i64> {
     if missing_selection_integer(value)? {
-        Err(PySystemError::new_err(
-            "<built-in function ms_selectchannel> returned a result with an exception set",
-        ))
+        Err(integer_binding_error(method))
     } else {
-        integer_argument(value, name)
+        integer_argument(value, name, method)
     }
 }
 
@@ -988,18 +991,30 @@ pub(super) fn missing_selection_integer(value: &Bound<'_, PyAny>) -> PyResult<bo
     value.is_instance(&value.py().import("numpy")?.getattr("bool_")?)
 }
 
-fn integer_argument(value: &Bound<'_, PyAny>, name: &str) -> PyResult<i64> {
+pub(super) fn integer_argument(
+    value: &Bound<'_, PyAny>,
+    name: &str,
+    method: &str,
+) -> PyResult<i64> {
     if value.is_none() {
-        return Err(PySystemError::new_err(
-            "<built-in function ms_getdata> returned a result with an exception set",
-        ));
+        return Err(integer_binding_error(method));
     }
     value
         .extract::<i64>()
         .map_err(|_| PyTypeError::new_err(format!("argument _{name} must be an integer")))
 }
 
-fn sampled_rows(initial_count: usize, count: usize, increment: i64) -> PyResult<Vec<usize>> {
+fn integer_binding_error(method: &str) -> PyErr {
+    PySystemError::new_err(format!(
+        "<built-in function {method}> returned a result with an exception set"
+    ))
+}
+
+pub(super) fn sampled_rows(
+    initial_count: usize,
+    count: usize,
+    increment: i64,
+) -> PyResult<Vec<usize>> {
     // CASA sizes the stride selection using the count before implicit data
     // description selection, then applies it to the current row view.
     if increment > 1 && (increment as u32 as usize) <= initial_count {

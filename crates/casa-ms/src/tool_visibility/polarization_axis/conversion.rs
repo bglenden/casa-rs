@@ -126,6 +126,18 @@ impl Conversion {
         Ok(())
     }
 
+    pub(super) fn append_sigmas(&self, samples: &[f32], output: &mut Vec<f32>) -> MsResult<()> {
+        for product in self.products(samples.len())? {
+            let variance = product
+                .noise
+                .iter()
+                .map(|&(index, square)| square * samples[index].powi(2))
+                .sum::<f32>();
+            output.push(variance.sqrt());
+        }
+        Ok(())
+    }
+
     fn products(&self, count: usize) -> MsResult<&[Product]> {
         if count != self.input_count {
             return Err(input(
