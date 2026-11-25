@@ -24,6 +24,7 @@ mod stubs;
 mod subtable_queries;
 mod summary;
 pub(crate) mod surface;
+mod vi1;
 mod visibility;
 
 use std::collections::btree_map::Entry;

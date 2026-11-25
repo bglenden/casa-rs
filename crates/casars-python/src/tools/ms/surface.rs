@@ -327,9 +327,9 @@ const METHODS: &[Method] = &[
             param("average", K::Bool, Bool(false)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("niterend", &[], R::Any, No),
+    method("niterend", &[], R::Any, Yes),
     method(
         "niterinit",
         &[
@@ -339,10 +339,10 @@ const METHODS: &[Method] = &[
             param("adddefaultsortcolumns", K::Bool, Bool(true)),
         ],
         R::Any,
-        No,
+        Yes,
     ),
-    method("niternext", &[], R::Any, No),
-    method("niterorigin", &[], R::Any, No),
+    method("niternext", &[], R::Any, Yes),
+    method("niterorigin", &[], R::Any, Yes),
     method(
         "nrow",
         &[param("selected", K::Bool, Bool(false))],

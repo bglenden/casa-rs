@@ -13,6 +13,8 @@ use crate::tool_visibility::read_reference_scalars;
 
 mod legacy;
 pub use legacy::{LegacyIterationOptions, LegacyToolIteration};
+mod vi1;
+pub use vi1::Vi1ToolIteration;
 
 /// A snapshot of the selected MAIN rows in iteration order.
 ///
