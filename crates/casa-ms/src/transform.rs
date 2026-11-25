@@ -1327,6 +1327,7 @@ fn mstransform_staged(
             request,
             antenna_id_map,
             grammar == RowGrammar::Transform,
+            splitting.then_some(selected_rows.as_slice()),
         )?;
         (field_id_map, row_id_maps)
     } else {
@@ -2217,12 +2218,14 @@ fn mstransform_staged(
                 continuum::mean_noise(&mut weight, spectra_cells.weight, &flags, channels);
                 continuum::mean_noise(&mut sigma, spectra_cells.sigma, &flags, channels);
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
-            } else if legacy && !averaging_time {
-                if let Some(bin) = bins.first().filter(|bin| splitting && bin.len() > 1) {
+            } else if splitting && !averaging_time {
+                if let Some(bin) = bins.first().filter(|bin| bin.len() > 1) {
                     let width = bin[0].abs_diff(bin[bin.len() - 1]) + 1;
                     legacy_split::scale_channel_noise(&visibility, width, &mut weight, &mut sigma)
                         .map_err(mutation_error)?;
                 }
+                legacy_split::align_row_noise(&visibility, &mut weight, &mut sigma)
+                    .map_err(mutation_error)?;
             } else if grammar == RowGrammar::Transform
                 && !task_average
                 && !averaging_time
@@ -2396,14 +2399,13 @@ fn mstransform_staged(
         regrid.write_metadata(request, &compact_metadata)?;
     } else if combined_grid.is_some() {
         // The combined grid was written with the compact spectral metadata.
-    } else if splitting && widths.values().any(|&width| width > 1) {
-        update_spectral_window_metadata(&compact_metadata.channel_bins, &request.output_ms)?;
-    } else if average_metadata.is_some() || normalized_width(request.width) == 1 {
+    } else if splitting || average_metadata.is_some() || normalized_width(request.width) == 1 {
         spectral_metadata::write_channel_selection(
             &request.output_ms,
             &compact_metadata.spw_map,
             &channel_selection,
             average_metadata.as_ref(),
+            splitting.then_some(&widths),
         )?;
     } else {
         update_spectral_window_metadata(&compact_metadata.channel_bins, &request.output_ms)?;

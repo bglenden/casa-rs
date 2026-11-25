@@ -160,3 +160,34 @@ pub(super) fn scale_channel_noise(
     }
     Ok(())
 }
+
+/// Split persists weights from sigma, except when CORRECTED_DATA is written as DATA.
+pub(super) fn align_row_noise(
+    columns: &VisibilityColumns,
+    weight: &mut ArrayValue,
+    sigma: &mut ArrayValue,
+) -> Result<(), TableError> {
+    let (ArrayValue::Float32(weight), ArrayValue::Float32(sigma)) = (weight, sigma) else {
+        return Err(TableError::Schema(
+            "WEIGHT and SIGMA must hold Float32".into(),
+        ));
+    };
+    if columns.corrected_becomes_data() {
+        for (sigma, &weight) in sigma.iter_mut().zip(weight.iter()) {
+            *sigma = if weight > 0.0 {
+                (1.0 / f64::from(weight).sqrt()) as f32
+            } else {
+                f32::MAX
+            };
+        }
+    } else {
+        for (weight, &sigma) in weight.iter_mut().zip(sigma.iter()) {
+            *weight = if sigma > 0.0 {
+                (1.0 / f64::from(sigma).powi(2)) as f32
+            } else {
+                f32::EPSILON
+            };
+        }
+    }
+    Ok(())
+}

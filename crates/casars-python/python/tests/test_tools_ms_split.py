@@ -157,6 +157,79 @@ def test_split_keeps_missing_state_ids_when_the_state_table_is_empty(native_data
         assert table.close()
 
 
+def test_split_default_weights_follow_observed_sigma(native_dataset, tmp_path, concat_api):
+    def seed(table):
+        for row in range(table.nrows()):
+            assert table.putcell("SIGMA", row, np.array([2, 4], dtype=np.float32))
+            assert table.putcell("WEIGHT", row, np.array([10, 40], dtype=np.float32))
+
+    change_table(native_dataset, seed)
+    output = tmp_path / "split.ms"
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output))
+    assert ms.close()
+    table = tools.table()
+    assert table.open(str(output))
+    np.testing.assert_array_equal(table.getcell("SIGMA", 0), [2, 4])
+    np.testing.assert_array_equal(table.getcell("WEIGHT", 0), [0.25, 0.0625])
+    assert table.close()
+
+
+def test_split_descending_window_preserves_channel_geometry(native_dataset, tmp_path, concat_api):
+    def seed(table):
+        columns = {
+            "CHAN_FREQ": [1.403e9, 1.402e9, 1.401e9, 1.400e9],
+            "CHAN_WIDTH": [-1e6] * 4,
+            "RESOLUTION": [1.2e6] * 4,
+            "EFFECTIVE_BW": [0.75e6] * 4,
+        }
+        for name, values in columns.items():
+            assert table.putcell(name, 0, np.array(values))
+
+    change_table(native_dataset / "SPECTRAL_WINDOW", seed)
+    output = tmp_path / "split.ms"
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output), step=[2])
+    assert ms.close()
+    table = tools.table()
+    assert table.open(str(output / "SPECTRAL_WINDOW"))
+    assert table.getcell("NUM_CHAN", 0) == 2
+    np.testing.assert_array_equal(table.getcell("CHAN_FREQ", 0), [1.4025e9, 1.4005e9])
+    assert table.getcell("REF_FREQUENCY", 0) == 1.4005e9
+    np.testing.assert_array_equal(table.getcell("CHAN_WIDTH", 0), [-2e6, -2e6])
+    np.testing.assert_array_equal(table.getcell("RESOLUTION", 0), [2.2e6, 2.2e6])
+    assert table.getcell("TOTAL_BANDWIDTH", 0) == 3e6
+    effective = 1.5e6 if concat_api is tools else 2.2e6
+    np.testing.assert_array_equal(table.getcell("EFFECTIVE_BW", 0), [effective] * 2)
+    assert table.close()
+
+
+@pytest.mark.parametrize("step", [1, 2])
+def test_split_compacts_referenced_states_without_intent(native_dataset, tmp_path, concat_api, step):
+    change_table(
+        native_dataset / "STATE",
+        lambda table: copy_first_row(table, OBS_MODE="TARGET_ON_SOURCE"),
+    )
+    change_table(native_dataset, lambda table: table.putcol(
+        "STATE_ID", np.ones(table.nrows(), dtype=np.int32),
+    ))
+    output = tmp_path / "split.ms"
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output), step=[step])
+    assert ms.close()
+    table = tools.table()
+    assert table.open(str(output))
+    np.testing.assert_array_equal(table.getcol("STATE_ID"), 0)
+    assert table.close()
+    assert table.open(str(output / "STATE"))
+    assert table.nrows() == 1
+    assert table.getcell("OBS_MODE", 0) == "TARGET_ON_SOURCE"
+    assert table.close()
+
+
 def test_split_time_uses_flags_on_the_selected_correlation(native_dataset, tmp_path, concat_api):
     epochs = []
 

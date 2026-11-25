@@ -12164,3 +12164,14 @@ The CASA 6.7.6.14 `ms.split(field=[0], step=[5])` path maps the only
 input `STATE_ID` of `-1` to output row zero, even when the STATE subtable
 is empty. Casa-rs retains `-1`, the missing-state marker. The output
 STATE table remains empty (#1030).
+
+## Split can replace effective bandwidth with spectral resolution
+
+For a channel selection or average, CASA 6.7.6.14 computes each output
+channel's effective bandwidth for the total bandwidth, then writes the
+resolution array into the EFFECTIVE_BW column. For descending 1 MHz
+channels with 0.75 MHz effective bandwidth and 1.2 MHz resolution,
+`ms.split(step=[2])` reports 2.2 MHz effective bandwidth per output bin
+and a 3 MHz total for two bins. Casa-rs writes the summed 1.5 MHz effective
+bandwidth per bin, retains 2.2 MHz resolution, and reports the same 3 MHz
+total (#1030).

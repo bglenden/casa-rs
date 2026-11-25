@@ -196,6 +196,7 @@ pub(super) fn reindex_selected_row_ids(
     request: &MsTransformRequest,
     antenna: Option<BTreeMap<i32, i32>>,
     reindex_array: bool,
+    split_rows: Option<&[usize]>,
 ) -> Result<RowIdMaps, MsTransformError> {
     let observation = request
         .selection
@@ -218,17 +219,21 @@ pub(super) fn reindex_selected_row_ids(
             reindex_table(input, request, SubtableId::Observation, selected)
         })
         .transpose()?;
-    let state = request
-        .selection
-        .intent
-        .as_deref()
-        .filter(|text| !text.trim().is_empty())
-        .map(|text| {
-            let selected = parse_state_selector(input, text)
-                .map_err(|source| metadata_error(request, source))?;
-            reindex_table(input, request, SubtableId::State, selected)
-        })
-        .transpose()?;
+    let state = if let Some(rows) = split_rows {
+        reindex_split_states(input, request, rows)?
+    } else {
+        request
+            .selection
+            .intent
+            .as_deref()
+            .filter(|text| !text.trim().is_empty())
+            .map(|text| {
+                let selected = parse_state_selector(input, text)
+                    .map_err(|source| metadata_error(request, source))?;
+                reindex_table(input, request, SubtableId::State, selected)
+            })
+            .transpose()?
+    };
     let array = request
         .selection
         .array
@@ -243,6 +248,40 @@ pub(super) fn reindex_selected_row_ids(
         state,
         array,
     })
+}
+
+fn reindex_split_states(
+    input: &MeasurementSet,
+    request: &MsTransformRequest,
+    rows: &[usize],
+) -> Result<Option<BTreeMap<i32, i32>>, MsTransformError> {
+    let Some(table) = input
+        .subtable(SubtableId::State)
+        .filter(|table| table.row_count() > 0)
+    else {
+        return Ok(None);
+    };
+    let main = input.main_table();
+    let values = main
+        .column_accessor("STATE_ID")
+        .and_then(|column| column.scalar_cells_owned_for_rows(rows))
+        .map_err(|error| metadata_error(request, MsError::from(error)))?;
+    let states = values
+        .iter()
+        .zip(rows)
+        .map(|(value, &row)| scalar_i32(value.as_ref(), "STATE_ID", row))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let selected = states
+        .iter()
+        .copied()
+        .filter(|&id| id >= 0)
+        .collect::<Vec<_>>();
+    if selected.iter().copied().eq(0..table.row_count() as i32) {
+        return Ok(None);
+    }
+    let mut map = reindex_table(input, request, SubtableId::State, selected)?;
+    map.extend(states.into_iter().filter(|&id| id < 0).map(|id| (id, id)));
+    Ok(Some(map))
 }
 
 fn reindex_table(
