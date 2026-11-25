@@ -29,6 +29,7 @@ mod housekeeping;
 mod keyword_value;
 mod new_column;
 mod query;
+pub(super) use query::save_ms_query_selection;
 mod read;
 mod registry;
 mod row;

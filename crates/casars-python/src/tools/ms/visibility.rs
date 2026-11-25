@@ -103,6 +103,37 @@ impl VisibilityState {
         }
         Ok(self.main.as_deref().expect("MAIN table was opened"))
     }
+
+    pub(super) fn range_for_rows(
+        &mut self,
+        path: &Path,
+        link: &MetadataLink,
+        requested_rows: Option<&[usize]>,
+        request: &ToolRangeRequest,
+    ) -> PyResult<CasaValue> {
+        link.verify_directory().map_err(runtime_error)?;
+        if requested_rows.is_some_and(<[usize]>::is_empty) {
+            return Ok(CasaValue::empty_record());
+        }
+        self.main(path)?;
+        let main = self.main.as_ref().expect("MAIN was opened");
+        let all_rows;
+        let rows = if let Some(rows) = requested_rows {
+            rows
+        } else {
+            all_rows = (0..main.table.row_count()).collect::<Vec<_>>();
+            &all_rows
+        };
+        let reference = main.reference.as_ref();
+        let owner = reference.map_or(&main.table, PlainReferenceRead::parent);
+        let record = request
+            .read(&main.table, &main.members, reference, rows, |ids| {
+                self.range_subtables.read_range(owner, ids)
+            })
+            .map_err(runtime_error)?;
+        link.verify_directory().map_err(runtime_error)?;
+        Ok(visibility_record(record))
+    }
 }
 
 impl VisibilityMain {
@@ -536,32 +567,8 @@ impl AttachedMs {
 
     pub(super) fn visibility_range(&mut self, request: &ToolRangeRequest) -> PyResult<CasaValue> {
         let link = self.metadata_link();
-        link.verify_directory().map_err(runtime_error)?;
-        if self
-            .selected_rows
-            .as_deref()
-            .is_some_and(<[usize]>::is_empty)
-        {
-            return Ok(CasaValue::empty_record());
-        }
-        self.visibility.main(&self.path)?;
-        let main = self.visibility.main.as_ref().expect("MAIN was opened");
-        let all_rows;
-        let rows = if let Some(rows) = self.selected_rows.as_deref() {
-            rows
-        } else {
-            all_rows = (0..main.table.row_count()).collect::<Vec<_>>();
-            &all_rows
-        };
-        let reference = main.reference.as_ref();
-        let owner = reference.map_or(&main.table, PlainReferenceRead::parent);
-        let record = request
-            .read(&main.table, &main.members, reference, rows, |ids| {
-                self.visibility.range_subtables.read_range(owner, ids)
-            })
-            .map_err(runtime_error)?;
-        link.verify_directory().map_err(runtime_error)?;
-        Ok(visibility_record(record))
+        self.visibility
+            .range_for_rows(&self.path, &link, self.selected_rows.as_deref(), request)
     }
 
     pub(super) fn initialize_public_iteration(

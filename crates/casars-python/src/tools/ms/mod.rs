@@ -6,6 +6,7 @@
 mod attachment_info;
 mod history;
 mod iteration;
+mod legacy_selection;
 mod lister;
 pub(super) mod metadata_link;
 mod owned_record;
@@ -68,6 +69,7 @@ struct AttachedMs {
     is_multi_ms: bool,
     sources: Vec<PathBuf>,
     selected_rows: Option<Arc<[usize]>>,
+    legacy_selection: legacy_selection::LegacySelection,
     selection_state: selection_indices::SelectionState,
     visibility: visibility::VisibilityState,
     metadata: OnceLock<Arc<metadata_link::MetadataLink>>,
@@ -107,6 +109,7 @@ impl AttachedMs {
             is_multi_ms,
             sources,
             selected_rows: None,
+            legacy_selection: legacy_selection::LegacySelection::default(),
             selection_state: selection_indices::SelectionState::default(),
             visibility: visibility::VisibilityState::default(),
             metadata: OnceLock::new(),

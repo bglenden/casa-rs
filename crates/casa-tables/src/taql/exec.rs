@@ -177,6 +177,26 @@ pub(super) fn select_row_indices(
     sel: &SelectStatement,
     table: &crate::Table,
 ) -> Result<Vec<usize>, TaqlError> {
+    select_rows_impl(sel, table, false)
+}
+
+/// Evaluate a row-view selection. A GROUP BY keeps one source row per group
+/// instead of constructing a new table of aggregate columns.
+///
+/// # Errors
+/// A query expression is invalid or a referenced cell cannot be read.
+pub fn select_view_rows(
+    sel: &SelectStatement,
+    table: &crate::Table,
+) -> Result<Vec<usize>, TaqlError> {
+    select_rows_impl(sel, table, true)
+}
+
+fn select_rows_impl(
+    sel: &SelectStatement,
+    table: &crate::Table,
+    project_groups: bool,
+) -> Result<Vec<usize>, TaqlError> {
     let row_count = table.row_count();
     let style = sel.style;
 
@@ -212,6 +232,21 @@ pub(super) fn select_row_indices(
         row_indices = execute_joins(&row_indices, &sel.joins, table, style)?;
     }
 
+    if project_groups && !sel.group_by.is_empty() {
+        let groups = group_rows(&row_indices, &sel.group_by, table, style)?;
+        row_indices.clear();
+        for group in groups {
+            if let Some(having) = &sel.having
+                && !eval_aggregate_expr(having, &group, table, style)?.to_bool()?
+            {
+                continue;
+            }
+            if let Some(&last) = group.last() {
+                row_indices.push(last);
+            }
+        }
+    }
+
     // 2. ORDER BY
     if !sel.order_by.is_empty() {
         sort_rows(&mut row_indices, &sel.order_by, table, style)?;
@@ -224,6 +259,10 @@ pub(super) fn select_row_indices(
     // 3. DISTINCT
     if sel.distinct {
         deduplicate_rows(&mut row_indices, &sel.columns, table, style)?;
+    }
+
+    if project_groups {
+        return apply_view_limits(row_indices, sel.offset.as_ref(), sel.limit.as_ref());
     }
 
     // 4. OFFSET
@@ -243,6 +282,37 @@ pub(super) fn select_row_indices(
     }
 
     Ok(row_indices)
+}
+
+/// Apply casacore's signed row-view OFFSET and LIMIT to selected row indices.
+/// A zero limit preserves the rows after the offset.
+///
+/// # Errors
+/// An offset or limit is not a constant integer expression.
+pub fn apply_view_limits(
+    mut rows: Vec<usize>,
+    offset: Option<&Expr>,
+    limit: Option<&Expr>,
+) -> Result<Vec<usize>, TaqlError> {
+    let count = rows.len() as i64;
+    let from_end = |value: i64| {
+        if value < 0 {
+            (count + value).max(0)
+        } else {
+            value
+        }
+    };
+    let offset = offset.map(eval_const_int).transpose()?.unwrap_or(0);
+    let limit = limit.map(eval_const_int).transpose()?.unwrap_or(0);
+    let start = from_end(offset).min(count);
+    let end = if limit == 0 {
+        count
+    } else {
+        start.saturating_add(from_end(limit)).min(count)
+    };
+    rows.truncate(end as usize);
+    rows.drain(..start as usize);
+    Ok(rows)
 }
 
 pub(super) fn select_columns_expr_list(

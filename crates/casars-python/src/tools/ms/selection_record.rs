@@ -32,7 +32,10 @@ impl PyMsTool {
     }
 }
 
-fn selection_record(py: Python<'_>, items: Option<&Bound<'_, PyDict>>) -> PyResult<RecordValue> {
+pub(super) fn selection_record(
+    py: Python<'_>,
+    items: Option<&Bound<'_, PyDict>>,
+) -> PyResult<RecordValue> {
     let Some(items) = items.filter(|items| !items.is_empty()) else {
         return Ok(RecordValue::default());
     };
@@ -95,7 +98,7 @@ fn selection_record(py: Python<'_>, items: Option<&Bound<'_, PyDict>>) -> PyResu
     casa_record(py, Some(&converted))
 }
 
-enum RecordSelector {
+pub(super) enum RecordSelector {
     ScalarIds,
     Rows,
     IfrNumber,
@@ -106,7 +109,7 @@ enum RecordSelector {
 }
 
 impl RecordSelector {
-    fn from_label(label: &str) -> Option<Self> {
+    pub(super) fn from_label(label: &str) -> Option<Self> {
         Some(match label {
             "ANTENNA1" | "ANTENNA2" | "ARRAY_ID" | "FEED1" | "FEED2" | "FIELD_ID"
             | "SCAN_NUMBER" | "DATA_DESC_ID" => Self::ScalarIds,
@@ -249,7 +252,14 @@ fn ensure_vector(shape: &[usize], field: &RecordField) -> PyResult<()> {
     Ok(())
 }
 
-fn integer_items(field: &RecordField) -> PyResult<Vec<i32>> {
+pub(super) fn integer_items(field: &RecordField) -> PyResult<Vec<i32>> {
+    integer_items_as(field, |value| value as i32)
+}
+
+pub(super) fn integer_items_as<T>(
+    field: &RecordField,
+    convert: impl Fn(i64) -> T,
+) -> PyResult<Vec<T>> {
     macro_rules! integers {
         ($values:expr) => {{
             ensure_vector($values.shape(), field)?;
@@ -257,17 +267,17 @@ fn integer_items(field: &RecordField) -> PyResult<Vec<i32>> {
                 .view()
                 .reversed_axes()
                 .iter()
-                .map(|&value| value as i32)
+                .map(|&value| convert(i64::from(value)))
                 .collect()
         }};
     }
     Ok(match &field.value {
-        Value::Scalar(ScalarValue::UInt8(value)) => vec![i32::from(*value)],
-        Value::Scalar(ScalarValue::UInt16(value)) => vec![i32::from(*value)],
-        Value::Scalar(ScalarValue::UInt32(value)) => vec![*value as i32],
-        Value::Scalar(ScalarValue::Int16(value)) => vec![i32::from(*value)],
-        Value::Scalar(ScalarValue::Int32(value)) => vec![*value],
-        Value::Scalar(ScalarValue::Int64(value)) => vec![*value as i32],
+        Value::Scalar(ScalarValue::UInt8(value)) => vec![convert(i64::from(*value))],
+        Value::Scalar(ScalarValue::UInt16(value)) => vec![convert(i64::from(*value))],
+        Value::Scalar(ScalarValue::UInt32(value)) => vec![convert(i64::from(*value))],
+        Value::Scalar(ScalarValue::Int16(value)) => vec![convert(i64::from(*value))],
+        Value::Scalar(ScalarValue::Int32(value)) => vec![convert(i64::from(*value))],
+        Value::Scalar(ScalarValue::Int64(value)) => vec![convert(*value)],
         Value::Array(ArrayValue::UInt8(values)) => integers!(values),
         Value::Array(ArrayValue::UInt16(values)) => integers!(values),
         Value::Array(ArrayValue::UInt32(values)) => integers!(values),
@@ -278,7 +288,7 @@ fn integer_items(field: &RecordField) -> PyResult<Vec<i32>> {
     })
 }
 
-fn real_items(field: &RecordField) -> PyResult<Vec<f64>> {
+pub(super) fn real_items(field: &RecordField) -> PyResult<Vec<f64>> {
     Ok(match &field.value {
         Value::Scalar(ScalarValue::Float32(value)) => vec![f64::from(*value)],
         Value::Scalar(ScalarValue::Float64(value)) => vec![*value],

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read-only metadata attached to an MS tool's current selection.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
@@ -38,6 +39,18 @@ pub(in crate::tools) struct MetadataSnapshot {
 }
 
 type SourceAndRows = (Arc<MetadataSnapshot>, Option<Arc<[usize]>>);
+
+pub(super) fn compose_rows<'a>(
+    base: Option<&'a [usize]>,
+    relative: Option<&'a [usize]>,
+) -> Option<Cow<'a, [usize]>> {
+    match (base, relative) {
+        (Some(base), Some(relative)) => {
+            Some(Cow::Owned(relative.iter().map(|&row| base[row]).collect()))
+        }
+        (base, relative) => relative.or(base).map(Cow::Borrowed),
+    }
+}
 
 struct MetadataView {
     path: PathBuf,
@@ -148,12 +161,7 @@ impl MetadataLink {
     /// separately for callers that can project selected rows directly.
     pub(super) fn source_and_rows(&self) -> MsResult<SourceAndRows> {
         self.verify_directory()?;
-        let rows = self
-            .state
-            .lock()
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?
-            .selected
-            .clone();
+        let rows = self.selected_rows()?;
         let snapshot = if rows.is_some() {
             Arc::new(MetadataSnapshot::open(&self.path)?)
         } else {
@@ -161,6 +169,29 @@ impl MetadataLink {
         };
         self.verify_directory()?;
         Ok((snapshot, rows))
+    }
+
+    pub(super) fn selected_rows(&self) -> MsResult<Option<Arc<[usize]>>> {
+        self.state
+            .lock()
+            .map(|state| state.selected.clone())
+            .map_err(|error| MsError::InvalidInput(error.to_string()))
+    }
+
+    pub(super) fn snapshot_relative_rows(
+        &self,
+        rows: Option<&[usize]>,
+    ) -> MsResult<Arc<MetadataSnapshot>> {
+        let Some(rows) = rows else {
+            return self.snapshot(None);
+        };
+        self.verify_directory()?;
+        let working = self.selected_rows()?;
+        let rows = compose_rows(working.as_deref(), Some(rows));
+        let view = Arc::new(MetadataView::new(&self.path, rows.as_deref())?);
+        let snapshot = MetadataSnapshot::from_view(view)?;
+        self.verify_directory()?;
+        Ok(Arc::new(snapshot))
     }
 
     pub(in crate::tools) fn snapshot(
@@ -309,12 +340,17 @@ impl AttachedMs {
         }
         self.selected_rows = rows;
         self.exact_time_metadata = None;
+        self.legacy_selection = Default::default();
         Ok(())
     }
 
     pub(super) fn synchronize_metadata_selection(&mut self) -> PyResult<()> {
         if self.exact_time_metadata.is_some() {
             self.publish_selected_rows(self.selected_rows.clone())?;
+        } else {
+            // CASA's setNewSel also resets the MSSelector when the same
+            // modern row view can be reused.
+            self.legacy_selection = Default::default();
         }
         Ok(())
     }

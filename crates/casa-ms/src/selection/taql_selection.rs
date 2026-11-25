@@ -2,7 +2,7 @@
 //! Bind casacore's MSCAL selection functions to the shared MS row grammars.
 
 use casa_tables::taql::ast::{
-    BinaryOp, Expr, InSetElement, IndexElement, Literal, SelectStatement, UnaryOp,
+    BinaryOp, Expr, GivingClause, InSetElement, IndexElement, Literal, SelectStatement, UnaryOp,
 };
 use casa_tables::taql::{self, IndexStyle, RecordExpressionType, Statement, TaqlError, TaqlResult};
 use casa_tables::{ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableError};
@@ -29,7 +29,7 @@ pub(super) fn select_rows(
                 .map(|row| row.into_iter().collect())
                 .map_err(taql_error);
         }
-        if let Some(rows) = select_simple_rows(ms, select, rows_per_block)? {
+        if let Some(rows) = select_simple_rows(ms.main_table(), select, rows_per_block, None)? {
             return Ok(rows);
         }
     }
@@ -134,10 +134,73 @@ impl ScalarComparison {
     }
 }
 
+/// Rows selected by a legacy TaQL expression and its optional named output.
+pub struct LegacyTaqlSelection {
+    /// Row indices relative to the input selector's ordered projection.
+    pub rows: Vec<usize>,
+    /// Optional result destination and table type.
+    pub giving: Option<GivingClause>,
+}
+
+/// Try a scalar TaQL predicate, row limits, and named output on an ordered
+/// MAIN projection. A more general query returns `None` for the full planner.
+///
+/// # Errors
+/// The expression has invalid syntax or a selected scalar cell cannot be read.
+pub fn select_projected_scalar_rows(
+    table: &Table,
+    expression: &str,
+    source_rows: Option<&[usize]>,
+) -> MsResult<Option<LegacyTaqlSelection>> {
+    let statement = taql::parse(&format!("SELECT * WHERE {expression}")).map_err(taql_error)?;
+    let Statement::Select(mut select) = statement else {
+        return Ok(None);
+    };
+    let giving = select.giving.take();
+    let offset = select.offset.take();
+    let limit = select.limit.take();
+    let Some(rows) = select_simple_rows(table, &select, None, source_rows)? else {
+        return Ok(None);
+    };
+    let rows = if offset.is_some() || limit.is_some() {
+        taql::exec::apply_view_limits(rows, offset.as_ref(), limit.as_ref()).map_err(taql_error)?
+    } else {
+        rows
+    };
+    Ok(Some(LegacyTaqlSelection { rows, giving }))
+}
+
+/// Evaluate a legacy selector query against the ordered legacy row view.
+///
+/// The trailing WHERE, sorting, and row limit expressions run together so
+/// that ordering and limits apply to view-relative row numbers.
+///
+/// # Errors
+/// The selection syntax is invalid or the query cannot run on MAIN.
+pub fn select_legacy_rows(ms: &MeasurementSet, expression: &str) -> MsResult<LegacyTaqlSelection> {
+    let statement = selection_query(ms, &format!("SELECT * WHERE {expression}"), None)?;
+    let Statement::Select(select) = statement else {
+        return Err(MsError::InvalidInput(
+            "expected a TaQL row selection".into(),
+        ));
+    };
+    if select.giving_expr.is_some() || (select.having.is_some() && select.group_by.is_empty()) {
+        return Err(MsError::InvalidInput(
+            "invalid clause for a TaQL row selection".into(),
+        ));
+    }
+    let rows = taql::exec::select_view_rows(&select, ms.main_table()).map_err(taql_error)?;
+    Ok(LegacyTaqlSelection {
+        rows,
+        giving: select.giving,
+    })
+}
+
 fn select_simple_rows(
-    ms: &MeasurementSet,
+    table: &Table,
     select: &SelectStatement,
     rows_per_block: Option<usize>,
+    source_rows: Option<&[usize]>,
 ) -> MsResult<Option<Vec<usize>>> {
     let SelectStatement {
         columns,
@@ -161,8 +224,7 @@ fn select_simple_rows(
     if !(columns.is_empty() && joins.is_empty() && group_by.is_empty() && order_by.is_empty()) {
         return Ok(None);
     }
-    let table = ms.main_table();
-    let row_count = table.row_count();
+    let row_count = source_rows.map_or(table.row_count(), <[usize]>::len);
     if let Expr::Literal(Literal::Bool(include)) = predicate {
         return Ok(Some(if *include {
             (0..row_count).collect()
@@ -170,7 +232,8 @@ fn select_simple_rows(
             Vec::new()
         }));
     }
-    if let Some((axis, lower, upper)) = projected_uvw_range(predicate, *style)
+    if source_rows.is_none()
+        && let Some((axis, lower, upper)) = projected_uvw_range(predicate, *style)
         && table
             .schema()
             .and_then(|schema| schema.column("UVW"))
@@ -218,15 +281,21 @@ fn select_simple_rows(
     let mut selected_rows = Vec::new();
     for start in (0..row_count).step_by(rows_per_block) {
         let end = start.saturating_add(rows_per_block).min(row_count);
-        let rows = (start..end).collect::<Vec<_>>();
-        let mut columns = table.required_scalar_columns_owned_for_rows(&[name], &rows)?;
+        let direct_rows;
+        let source = if let Some(source_rows) = source_rows {
+            &source_rows[start..end]
+        } else {
+            direct_rows = (start..end).collect::<Vec<_>>();
+            &direct_rows
+        };
+        let mut columns = table.required_scalar_columns_owned_for_rows(&[name], source)?;
         match (&comparison, columns.remove(name)) {
             (
                 ScalarComparison::Integer { literal, compare },
                 Some(RequiredScalarColumnValues::Int32(values)),
             ) => {
                 selected_rows.extend(
-                    rows.into_iter().zip(values).filter_map(|(row, value)| {
+                    (start..end).zip(values).filter_map(|(row, value)| {
                         compare(i64::from(value), *literal).then_some(row)
                     }),
                 );
@@ -235,7 +304,7 @@ fn select_simple_rows(
                 ScalarComparison::IntegerSet(set),
                 Some(RequiredScalarColumnValues::Int32(values)),
             ) => {
-                selected_rows.extend(rows.into_iter().zip(values).filter_map(|(row, value)| {
+                selected_rows.extend((start..end).zip(values).filter_map(|(row, value)| {
                     set.binary_search(&i64::from(value)).is_ok().then_some(row)
                 }));
             }
@@ -244,7 +313,7 @@ fn select_simple_rows(
                 Some(RequiredScalarColumnValues::Bool(values)),
             ) => {
                 selected_rows.extend(
-                    rows.into_iter()
+                    (start..end)
                         .zip(values)
                         .filter_map(|(row, value)| (value == *expected).then_some(row)),
                 );
