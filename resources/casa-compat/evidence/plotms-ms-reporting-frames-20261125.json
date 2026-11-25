@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "ad2148f7a44da4c97cd36f5b95e32c66427a8ac9",
+  "source_revision": "ad2148f7a44da4c97cd36f5b95e32c66427a8ac9",
+  "baseline_revision": "c9d836c503705c41359023faec28ef2b13bd53e7",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only <reporting-frames|reporting-wavelengths|averaged-reporting-epochs|static-metadata-coordinates> --work <new-dir> --native-bin <msexplore>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Two-window VLA spectral and strided wavelength fixtures and the selected ALMA Channel/Frequency metadata fixture.",
+  "result": "passed",
+  "baseline_result": "Plotted LSRK/BARY frequencies agree with pinned measures, but verbose export retains stored TOPO frequencies. Inactive Velocity uses the arithmetic window centre, and transformed wavelengths and Channel/Frequency are refused.",
+  "frequency_and_velocity_reporting_points": 186,
+  "wavelength_reporting_points": 25,
+  "channel_frequency_reporting_points": 14,
+  "directly_paired_points": 86,
+  "active_png_pairs": 20,
+  "reporting_frequency_absolute_tolerance_hz": 100,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
