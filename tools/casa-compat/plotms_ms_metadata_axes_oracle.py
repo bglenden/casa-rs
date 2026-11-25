@@ -360,8 +360,6 @@ def compare_array_horizontal_axes(root, native):
     for name, settings, count, correlations, refusal in (
         ("array-correlation-iteration", dict(iteraxis="corr", correlation="XX,YY", gridcols=2, exprange="all"),
          60, {"XX", "YY"}, "correlation iteration with array horizontal axes"),
-        ("array-flagged-symbols", dict(customflaggedsymbol=True, flaggedsymbolshape="circle"),
-         36, {"XX"}, "flag-symbol filtering with array horizontal axes"),
     ):
         options = base | dict(yaxis="elevation") | settings
         expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
@@ -377,6 +375,9 @@ def compare_array_horizontal_axes(root, native):
             raise AssertionError(f"casa-rs accepted {name} and could export a partial result")
         assert not list(work.glob(f"{name}.native*.txt"))
         print(f"{name}: pinned CASA result and native refusal before export", flush=True)
+
+    compare_metadata_flag_modes(work, native, base | dict(yaxis="elevation"), "array-symbols",
+                                (24, 36, 12), ("Marked metadata", "Channel", "Elevation (deg)"))
 
     poln = base | dict(xaxis="poln", yaxis="amp", correlation="XX,YY")
     expected, actual = (work / f"poln-amplitude.{engine}.txt" for engine in ("casa", "native"))
@@ -1080,21 +1081,55 @@ def compare_metadata_pairs(root, native, source):
 
 
 def check_metadata_flagged_symbols(work, native, base):
-    from casars.tasks import TaskParameterError
+    compare_metadata_flag_modes(work, native, base | dict(xaxis="channel", yaxis="row"),
+                                "row-symbols", (32, 36, 4), ("Marked metadata", "Channel", "Row"))
 
-    controls = base | dict(xaxis="channel", yaxis="row", customflaggedsymbol=True)
-    expected = work / "flagged-symbols.casa.txt"
-    actual = work / "flagged-symbols.native.txt"
-    assert reference(**controls, plotfile=str(expected), expformat="txt") is None
-    assert len(rows(expected)) == 36
-    assert {point[1] for point in rows(expected)} == {str(row) for row in range(12)}
-    try:
-        native(**controls, plotfile=str(actual), expformat="txt")
-    except TaskParameterError as error:
-        assert "displaying flagged points" in str(error) and "#1032" in str(error)
-    else:
-        raise AssertionError("Metadata flag symbols were accepted without exporting flagged points")
-    assert not actual.exists()
+
+def compare_metadata_flag_modes(work, native, base, name, counts, labels):
+    from plotms_ms_columns_oracle import compare_flagged_figure
+
+    vis = Path(base["vis"])
+    before = snapshot(vis)
+    base = base | dict(title=labels[0], expformat="txt")
+    marker_color = "dd2255"
+    marked = base | dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
+                         flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
+                         flaggedsymbolfill="fill", flaggedsymboloutline=False)
+    modes = {
+        "clear": base,
+        "both": marked,
+        "flagged": marked | dict(customsymbol=True, symbolshape="nosymbol"),
+    }
+    selected = {}
+    for (mode, options), count in zip(modes.items(), counts, strict=True):
+        expected, actual = (work / f"{name}-{mode}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected[mode] = {tuple(point) for point in rows(expected)}
+        assert len(selected[mode]) == count
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}-{mode}: {count} matching selected metadata coordinates", flush=True)
+    assert selected["clear"].isdisjoint(selected["flagged"])
+    assert selected["clear"] | selected["flagged"] == selected["both"]
+    compare_flagged_figure(work, native, f"{name}-both", marked, marker_color, labels=labels,
+                           is_flagged=lambda point: tuple(point) in selected["flagged"])
+    verify_source(vis, before)
+
+
+def compare_selected_metadata_flag_symbols(root, native):
+    identifiers = root / "flagged-row-identifiers"
+    identifiers.mkdir()
+    feed = make_feed_selection_fixture(identifiers)
+    source, _, _ = make_row_axes_fixture(identifiers, feed)
+    compare_metadata_pairs(identifiers, native, source)
+
+    horizontal = root / "flagged-array-coordinates"
+    horizontal.mkdir()
+    vis, _ = make_horizontal_fixture(horizontal)
+    base = controls(vis) | dict(xaxis="channel", yaxis="elevation", antenna="A0&A1;A0&A2",
+                               field="", spw="0:1~3", correlation="XX")
+    compare_metadata_flag_modes(horizontal, native, base, "array-symbols",
+                                (24, 36, 12), ("Marked metadata", "Channel", "Elevation (deg)"))
 
 
 def compare_pointing_axes(root, native):
@@ -1395,7 +1430,8 @@ def main():
     parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes",
                                            "averaged-coordinates", "array-horizontal-axes",
                                            "antenna-horizontal-axes", "antenna-horizontal-same-epoch",
-                                           "ephemeris-axes", "static-metadata-coordinates"))
+                                           "ephemeris-axes", "static-metadata-coordinates",
+                                           "metadata-flag-symbols"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1422,6 +1458,8 @@ def main():
             compare_ephemeris_axes(root, native, args.app_run)
         if args.only in (None, "static-metadata-coordinates"):
             compare_static_metadata_coordinates(root, native)
+        if args.only == "metadata-flag-symbols":
+            compare_selected_metadata_flag_symbols(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
