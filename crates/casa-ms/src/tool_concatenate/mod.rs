@@ -2,6 +2,7 @@
 //! Reconcile persisted MS subtables for the Python concatenation methods.
 
 mod antenna;
+mod auxiliary;
 mod calibration;
 mod field;
 mod identity;
@@ -10,8 +11,10 @@ pub(crate) mod locking;
 mod main_rows;
 mod named_output;
 mod publication;
+mod scan;
 mod source;
 mod spectral;
+mod virtual_rows;
 
 use std::{
     collections::BTreeMap,
@@ -94,6 +97,37 @@ pub fn concatenate(
         ));
     }
     publication::physical(target, donor, request, retained)
+}
+
+/// Settings for preparing a donor MeasurementSet for virtual concatenation.
+pub struct VirtualConcatenation<'a> {
+    /// Metadata matching tolerances and HISTORY arguments.
+    pub metadata: TestConcatenation<'a>,
+    /// Scale the incoming visibility weights and sigmas.
+    pub weight_scale: f32,
+    /// Optional scan bookkeeping shared across successive calls.
+    pub scan_file: Option<&'a Path>,
+    /// Physical row numbers in an attached working selection, if any.
+    pub attached_rows: Option<&'a [usize]>,
+}
+
+/// Reconcile attached metadata and rewrite the donor IDs and visibilities
+/// for use in a subsequent concatenation of the two MeasurementSets.
+///
+/// # Errors
+/// An input or auxiliary file is invalid, or an edit cannot be published.
+pub fn virtual_concatenate(
+    target: &Path,
+    donor: &Path,
+    request: &VirtualConcatenation<'_>,
+    retained: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> MsResult<()> {
+    if request.weight_scale < 0.0 {
+        return Err(MsError::InvalidInput(
+            "concatenation weight scale must be nonnegative".into(),
+        ));
+    }
+    publication::virtual_concat(target, donor, request, retained)
 }
 
 struct MetadataPlan<'a> {

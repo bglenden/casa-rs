@@ -8,7 +8,11 @@ use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn};
 use rayon::prelude::*;
 
-use super::{MainRowMap, MetadataPlan, required_table, spectral::row_id};
+use super::{
+    MainRowMap, MetadataPlan, required_table,
+    scan::{ScanBounds, ScanOffsets},
+    spectral::row_id,
+};
 use crate::write_session::VisibilityWriteDestination;
 use crate::{MeasurementSet, MsError, MsResult, SubtableId, subtables::get_array};
 
@@ -52,13 +56,13 @@ impl MainAppend {
 }
 
 #[derive(Clone, Copy)]
-struct RowOrder {
-    first: i32,
-    second: i32,
-    description: i32,
+pub(super) struct RowOrder {
+    pub(super) first: i32,
+    pub(super) second: i32,
+    pub(super) description: i32,
     polarization: usize,
-    flipped: bool,
-    reverse: bool,
+    pub(super) flipped: bool,
+    pub(super) reverse: bool,
 }
 
 pub(super) fn prepare(
@@ -82,16 +86,11 @@ pub(super) fn prepare(
         }
     });
     let mut scalars = scalars?;
-    let order = row_orders(source.row_count(), &scalars, map)?;
-    let kernels = ArrayTransform {
-        polarizations: polarization_swaps(donor, &order)?,
-        any_flipped: order.iter().any(|row| row.flipped),
-        any_reversed: order.iter().any(|row| row.reverse),
-        scale: if scale > 0.0 { scale } else { 1.0 },
-    };
+    let order = row_orders(source.row_count(), &scalars, map, true)?;
+    let kernels = ArrayTransform::new(donor, &order, scale)?;
     let array_names = array_names(attached.main_table(), source, destination)?;
     let channel_selection = if array_names.contains(&"MODEL_DATA") {
-        Some(model_channel_selection(attached, plan)?)
+        Some(model_channel_selection(attached, Some(plan))?)
     } else {
         None
     };
@@ -105,7 +104,12 @@ pub(super) fn prepare(
         .into_iter()
         .filter(|name| !encoded.columns().any(|column| name == &column))
         .collect::<Vec<_>>();
-    let scans = scan_offsets(attached_scan?.as_ref(), &scalars, &map.observations)?;
+    let bounds = attached_scan?
+        .as_ref()
+        .map(ScanBounds::from_main)
+        .transpose()?
+        .unwrap_or_default();
+    let scans = bounds.offsets(&scalars, &map.observations)?;
     let rows = (0..source.row_count()).collect::<Vec<_>>();
     let arrays = materialized
         .par_iter()
@@ -143,13 +147,18 @@ pub(super) fn prepare(
     }))
 }
 
-type ScalarColumns = HashMap<String, Vec<Option<ScalarValue>>>;
+pub(super) type ScalarColumns = HashMap<String, Vec<Option<ScalarValue>>>;
 
-fn scalar_columns(table: &Table, columns: &[&str]) -> MsResult<ScalarColumns> {
+pub(super) fn scalar_columns(table: &Table, columns: &[&str]) -> MsResult<ScalarColumns> {
     Ok(table.scalar_columns_owned(columns)?)
 }
 
-fn row_orders(rows: usize, scalar: &ScalarColumns, map: &MainRowMap) -> MsResult<Vec<RowOrder>> {
+pub(super) fn row_orders(
+    rows: usize,
+    scalar: &ScalarColumns,
+    map: &MainRowMap,
+    reorder: bool,
+) -> MsResult<Vec<RowOrder>> {
     (0..rows)
         .map(|row| {
             let a = row_id(*lookup(
@@ -167,12 +176,13 @@ fn row_orders(rows: usize, scalar: &ScalarColumns, map: &MainRowMap) -> MsResult
                 integer(scalar, "DATA_DESC_ID", row)?,
                 "DATA_DESC_ID",
             )?;
+            let flipped = reorder && a > b;
             Ok(RowOrder {
-                first: a.min(b),
-                second: a.max(b),
+                first: if flipped { b } else { a },
+                second: if flipped { a } else { b },
                 description: description.id,
                 polarization: description.polarization,
-                flipped: a > b,
+                flipped,
                 reverse: description.reverse,
             })
         })
@@ -189,12 +199,11 @@ fn append_scalars(
 ) -> MsResult<()> {
     let old_observation = integer(scalar, "OBSERVATION_ID", row)?;
     let observation = sparse_id(&map.observations, old_observation)?;
-    let mut scan = integer(scalar, "SCAN_NUMBER", row)?;
-    if observation != old_observation {
-        let offset = scans.offsets.get(&observation).unwrap_or(&scans.default);
-        scan = i32::try_from(i64::from(scan) + offset)
-            .map_err(|_| invalid("concatenated SCAN_NUMBER exceeds int32"))?;
-    }
+    let scan = scans.remap(
+        old_observation,
+        observation,
+        integer(scalar, "SCAN_NUMBER", row)?,
+    )?;
     let (feed1, feed2) = if order.flipped {
         ("FEED2", "FEED1")
     } else {
@@ -238,7 +247,7 @@ fn append_scalars(
     Ok(())
 }
 
-fn integer(columns: &ScalarColumns, name: &str, row: usize) -> MsResult<i32> {
+pub(super) fn integer(columns: &ScalarColumns, name: &str, row: usize) -> MsResult<i32> {
     match columns.get(name).and_then(|cells| cells.get(row)) {
         Some(Some(ScalarValue::Int32(value))) => Ok(*value),
         _ => Err(invalid(format!(
@@ -247,14 +256,14 @@ fn integer(columns: &ScalarColumns, name: &str, row: usize) -> MsResult<i32> {
     }
 }
 
-fn lookup<'a, T>(indices: &'a [T], id: i32, column: &str) -> MsResult<&'a T> {
+pub(super) fn lookup<'a, T>(indices: &'a [T], id: i32, column: &str) -> MsResult<&'a T> {
     usize::try_from(id)
         .ok()
         .and_then(|id| indices.get(id))
         .ok_or_else(|| invalid(format!("MAIN {column} index {id} is outside its subtable")))
 }
 
-fn sparse_id(indices: &[usize], id: i32) -> MsResult<i32> {
+pub(super) fn sparse_id(indices: &[usize], id: i32) -> MsResult<i32> {
     // Older MeasurementSets can use zero with an empty PROCESSOR subtable.
     // CASA remaps only IDs found in the observation and processor maps.
     match usize::try_from(id)
@@ -266,7 +275,7 @@ fn sparse_id(indices: &[usize], id: i32) -> MsResult<i32> {
     }
 }
 
-fn optional_id(indices: &[usize], id: i32, column: &str) -> MsResult<i32> {
+pub(super) fn optional_id(indices: &[usize], id: i32, column: &str) -> MsResult<i32> {
     if id == -1 {
         Ok(id)
     } else {
@@ -274,73 +283,20 @@ fn optional_id(indices: &[usize], id: i32, column: &str) -> MsResult<i32> {
     }
 }
 
-struct ScanOffsets {
-    offsets: BTreeMap<i32, i64>,
-    default: i64,
-}
-
-fn scan_offsets(
-    attached: Option<&ScalarColumns>,
-    donor: &ScalarColumns,
-    observation_map: &[usize],
-) -> MsResult<ScanOffsets> {
-    let min_donor = (0..donor["SCAN_NUMBER"].len())
-        .map(|row| integer(donor, "SCAN_NUMBER", row))
-        .try_fold(i32::MAX, |minimum, scan| {
-            Ok::<_, MsError>(minimum.min(scan?))
-        })?;
-    let counterpart: BTreeSet<_> = observation_map.iter().copied().collect();
-    let mut order = Vec::new();
-    let mut observations = BTreeMap::<i32, (i32, i32)>::new();
-    let mut max_scan = 0;
-    if let Some(attached) = attached {
-        for row in 0..attached["SCAN_NUMBER"].len() {
-            use std::collections::btree_map::Entry;
-            let observation = integer(attached, "OBSERVATION_ID", row)?;
-            let scan = integer(attached, "SCAN_NUMBER", row)?;
-            max_scan = max_scan.max(scan);
-            match observations.entry(observation) {
-                Entry::Vacant(entry) => {
-                    order.push(observation);
-                    entry.insert((scan, scan));
-                }
-                Entry::Occupied(mut entry) => {
-                    let (min, max) = entry.get_mut();
-                    *min = (*min).min(scan);
-                    *max = (*max).max(scan);
-                }
-            }
-        }
-    }
-    let mut offsets = BTreeMap::new();
-    let mut previous_max = None;
-    for id in order {
-        let (min, max) = observations[&id];
-        let shared = usize::try_from(id).is_ok_and(|id| counterpart.contains(&id));
-        let shift = match previous_max.filter(|_| shared) {
-            Some(previous) => i64::from(previous) + 1 - i64::from(min_donor),
-            None => i64::from(min) - 1,
-        };
-        offsets.insert(id, shift.max(0));
-        previous_max = Some(max);
-    }
-    Ok(ScanOffsets {
-        offsets,
-        default: (i64::from(max_scan) + 1 - i64::from(min_donor)).max(0),
-    })
-}
-
-fn model_channel_selection(attached: &MeasurementSet, plan: &MetadataPlan<'_>) -> MsResult<Value> {
+pub(super) fn model_channel_selection(
+    attached: &MeasurementSet,
+    plan: Option<&MetadataPlan<'_>>,
+) -> MsResult<Value> {
     use crate::subtables::{SubTable, get_i32};
     let windows = attached.spectral_window()?;
     let mut channel_count = (0..windows.table().row_count())
         .map(|row| get_i32(windows.table(), row, "NUM_CHAN"))
         .collect::<MsResult<Vec<_>>>()?;
-    if let Some(change) = plan
-        .changes
-        .iter()
-        .find(|change| change.table == SubtableId::SpectralWindow)
-    {
+    if let Some(change) = plan.and_then(|plan| {
+        plan.changes
+            .iter()
+            .find(|change| change.table == SubtableId::SpectralWindow)
+    }) {
         for row in &change.appended {
             let Some(Value::Scalar(ScalarValue::Int32(channels))) = row.get("NUM_CHAN") else {
                 return Err(invalid("SPECTRAL_WINDOW has no channel count"));
@@ -358,7 +314,7 @@ fn model_channel_selection(attached: &MeasurementSet, plan: &MetadataPlan<'_>) -
     Ok(Value::Array(ArrayValue::Int32(selection)))
 }
 
-fn array_names(
+pub(super) fn array_names(
     attached: &Table,
     source: &Table,
     destination: &Table,
@@ -456,7 +412,7 @@ fn polarization_swaps(
         .collect()
 }
 
-struct ArrayTransform {
+pub(super) struct ArrayTransform {
     polarizations: BTreeMap<usize, Vec<usize>>,
     any_flipped: bool,
     any_reversed: bool,
@@ -464,13 +420,27 @@ struct ArrayTransform {
 }
 
 impl ArrayTransform {
-    fn changes(&self, name: &str) -> bool {
+    pub(super) fn new(donor: &MeasurementSet, order: &[RowOrder], scale: f32) -> MsResult<Self> {
+        Ok(Self {
+            polarizations: polarization_swaps(donor, order)?,
+            any_flipped: order.iter().any(|row| row.flipped),
+            any_reversed: order.iter().any(|row| row.reverse),
+            scale: if scale > 0.0 { scale } else { 1.0 },
+        })
+    }
+
+    pub(super) fn changes(&self, name: &str) -> bool {
         (self.any_flipped && name != "FLOAT_DATA")
             || (self.any_reversed && channel_axis(name))
             || (self.scale != 1.0 && weight_column(name))
     }
 
-    fn apply(&self, name: &str, row: RowOrder, mut value: ArrayValue) -> MsResult<ArrayValue> {
+    pub(super) fn apply(
+        &self,
+        name: &str,
+        row: RowOrder,
+        mut value: ArrayValue,
+    ) -> MsResult<ArrayValue> {
         if name == "UVW" {
             if row.flipped {
                 let ArrayValue::Float64(uvw) = &mut value else {

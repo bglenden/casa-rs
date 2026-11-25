@@ -39,8 +39,8 @@ mod reference_writes;
 mod root_rows;
 mod row_changes;
 pub use row_changes::{
-    ColumnAddition, CompressedComplexArray, EncodedArrayAppend, ManagerAddition,
-    PreparedRecordAppend, RecordAppendOptions,
+    ColumnAddition, CompressedComplexArray, EncodedArrayAppend, ManagerAddition, PreparedTableEdit,
+    RecordAppendOptions,
 };
 mod streamed_scalar;
 mod structure;

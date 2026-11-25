@@ -12058,3 +12058,18 @@ success and reads back `0+0j` in the appended cells because the new row
 scales remain zero. Casa-rs chooses a scale and offset for each new cell,
 writes both physical scalar columns and preserves the configured policy
 for subsequent writes (#1030).
+
+## Virtual concatenation can scale sigma from the weight spectrum
+
+In CASA 6.7.6.14, call `ms.virtconcatenate()` without reversing a baseline
+and with `weightscale=4`. With WEIGHT_SPECTRUM equal to 4 and SIGMA_SPECTRUM
+equal to 2, CASA updates the weight to 16 and writes sigma 8 by scaling
+the updated weight. Casa-rs scales the original sigma and writes 1 (#1030).
+
+## Virtual concatenation can overwrite a truncated auxiliary scan file
+
+Give `ms.virtconcatenate()` in CASA 6.7.6.14 an auxiliary file that declares
+two observation ranges and contains only one. CASA warns, discards the
+partial scan data, and rewrites the file after changing the MeasurementSets.
+Casa-rs reports the invalid auxiliary file and preserves it and both
+MeasurementSets (#1030).

@@ -123,16 +123,16 @@ impl CompressedComplexArray<'_> {
     }
 }
 
-/// A staged append to one physical table, holding its write lock.
-pub struct PreparedRecordAppend<'lock> {
+/// A staged edit to one physical table, holding its write lock.
+pub struct PreparedTableEdit<'lock> {
     edit: ReversibleEdit,
     lock: &'lock mut TableWriteLock,
     original_sync: WriteSyncCheckpoint,
     attempted_sync: bool,
 }
 
-impl PreparedRecordAppend<'_> {
-    /// Write the staged records, retaining the original files for rollback.
+impl PreparedTableEdit<'_> {
+    /// Write the staged changes, retaining the original files for rollback.
     ///
     /// # Errors
     /// The table identity or one of the table writes failed. Call
@@ -140,7 +140,7 @@ impl PreparedRecordAppend<'_> {
     pub fn publish(&mut self) -> Result<(), TableError> {
         if !self.lock.matches_table_path(self.lock.path()) {
             return Err(TableError::Storage(format!(
-                "{} was replaced before the append",
+                "{} was replaced before publication",
                 self.lock.path().display()
             )));
         }
@@ -148,7 +148,7 @@ impl PreparedRecordAppend<'_> {
         self.edit.apply().map_err(Into::into)
     }
 
-    /// Roll back this append and discard its staging files on success.
+    /// Roll back this edit and discard its staging files on success.
     ///
     /// # Errors
     /// On recovery failure, returns the path to the retained backups.
@@ -252,7 +252,7 @@ impl Table {
     /// Stage distinct appended records without changing existing table files.
     ///
     /// The caller must open this table after acquiring its write lock. Use
-    /// [`PreparedRecordAppend::publish`] to apply the changes and keep the
+    /// [`PreparedTableEdit::publish`] to apply the changes and keep the
     /// prior files while other operations in the batch are published.
     ///
     /// # Errors
@@ -262,7 +262,7 @@ impl Table {
         &self,
         records: &[RecordValue],
         lock: &'lock mut TableWriteLock,
-    ) -> Result<PreparedRecordAppend<'lock>, TableError> {
+    ) -> Result<PreparedTableEdit<'lock>, TableError> {
         self.prepare_record_append_with_options(records, RecordAppendOptions::default(), lock)
     }
 
@@ -304,21 +304,11 @@ impl Table {
         records: &[RecordValue],
         options: RecordAppendOptions<'_>,
         lock: &'lock mut TableWriteLock,
-    ) -> Result<PreparedRecordAppend<'lock>, TableError> {
-        let path = self.path().ok_or(TableError::PreparedRowRequiresSchema)?;
-        if records.is_empty()
-            || self.kind != TableKind::Plain
-            || self.holds_unflushed_changes()
-            || !lock.matches_table_path(path)
-        {
-            return Err(TableError::Storage(
-                "preparing an append requires a clean, locked plain table and records".into(),
-            ));
+    ) -> Result<PreparedTableEdit<'lock>, TableError> {
+        if records.is_empty() {
+            return Err(TableError::Storage("no records to append".into()));
         }
-        let mut dat = crate::storage::table_control::read_table_dat(
-            &path.join(crate::storage::TABLE_CONTROL_FILE),
-        )?;
-        let old = self.require_persisted_rows(path, &dat)?;
+        let (path, mut dat, old) = self.staged_edit_snapshot(lock)?;
         let encoded = options.encoded_arrays.map(|encoded| &encoded.0);
         if let Some(encoded) = encoded {
             encoded.validate(path, old, records.len())?;
@@ -356,12 +346,85 @@ impl Table {
         };
         let edit = StagedEdit::stage(path, dat, old, rows)?.prepare_publication(true)?;
         let original_sync = lock.checkpoint_sync()?;
-        Ok(PreparedRecordAppend {
+        Ok(PreparedTableEdit {
             edit,
             lock,
             original_sync,
             attempted_sync: false,
         })
+    }
+
+    /// Stage replacements for existing physical columns without changing
+    /// the row count or unrelated storage managers. The input vectors are
+    /// in table row order. Column keywords can be included in the same edit.
+    ///
+    /// # Errors
+    /// The table cannot be locked, a column or keyword target is unknown, a
+    /// cell disagrees with the schema, or its storage cannot be rewritten.
+    pub fn prepare_column_replacement<'lock>(
+        &self,
+        columns: &std::collections::BTreeMap<String, Vec<Option<Value>>>,
+        column_keyword: Option<(&str, &str, &Value)>,
+        lock: &'lock mut TableWriteLock,
+    ) -> Result<PreparedTableEdit<'lock>, TableError> {
+        let (path, mut dat, old) = self.staged_edit_snapshot(lock)?;
+        let schema = self.schema().ok_or(TableError::PreparedRowRequiresSchema)?;
+        for (name, values) in columns {
+            let column = schema
+                .column(name)
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: name.clone(),
+                })?;
+            if values.len() as u64 != old {
+                return Err(TableError::Storage(format!(
+                    "column {name} has {} replacement cells for {old} rows",
+                    values.len()
+                )));
+            }
+            for (row, value) in values.iter().enumerate() {
+                super::columns::validate_cell_against_schema_column(row, column, value.as_ref())?;
+            }
+        }
+        if let Some((name, key, value)) = column_keyword {
+            let column = dat
+                .table_desc
+                .columns
+                .iter_mut()
+                .find(|column| column.col_name == name)
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: name.into(),
+                })?;
+            column.keywords.upsert(key, value.clone());
+        }
+        let rows = Rows::ReplaceColumns(columns);
+        let edit = StagedEdit::stage(path, dat, old, rows)?.prepare_publication(true)?;
+        let original_sync = lock.checkpoint_sync()?;
+        Ok(PreparedTableEdit {
+            edit,
+            lock,
+            original_sync,
+            attempted_sync: false,
+        })
+    }
+
+    fn staged_edit_snapshot(
+        &self,
+        lock: &TableWriteLock,
+    ) -> Result<(&Path, crate::storage::TableDatContents, u64), TableError> {
+        let path = self.path().ok_or(TableError::PreparedRowRequiresSchema)?;
+        if self.kind != TableKind::Plain
+            || self.holds_unflushed_changes()
+            || !lock.matches_table_path(path)
+        {
+            return Err(TableError::Storage(
+                "preparing an edit requires a clean, locked plain table".into(),
+            ));
+        }
+        let dat = crate::storage::table_control::read_table_dat(
+            &path.join(crate::storage::TABLE_CONTROL_FILE),
+        )?;
+        let old = self.require_persisted_rows(path, &dat)?;
+        Ok((path, dat, old))
     }
 
     fn record_append_defaults(&self, records: &[RecordValue]) -> Result<RecordValue, TableError> {
@@ -554,6 +617,66 @@ mod prepared_append_tests {
         lock.record_write();
         lock.sync_recorded_write().unwrap();
         (Table::open(TableOptions::new(path)).unwrap(), lock)
+    }
+
+    #[test]
+    fn prepared_scalar_replacement_preserves_its_neighbors_and_can_roll_back() {
+        use casa_types::RecordField;
+        use std::collections::BTreeMap;
+
+        let root = tempfile::tempdir().unwrap();
+        for manager in [
+            DataManagerKind::StandardStMan,
+            DataManagerKind::IncrementalStMan,
+        ] {
+            let path = root.path().join(format!("{manager:?}"));
+            let schema = TableSchema::new(vec![
+                ColumnSchema::scalar("id", PrimitiveType::Int32),
+                ColumnSchema::scalar("keep", PrimitiveType::Float64),
+            ])
+            .unwrap();
+            let mut table = Table::with_schema(schema);
+            for id in 0..24 {
+                table
+                    .add_row(RecordValue::new(vec![
+                        RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+                        RecordField::new(
+                            "keep",
+                            Value::Scalar(ScalarValue::Float64(f64::from(id) / 2.0)),
+                        ),
+                    ]))
+                    .unwrap();
+            }
+            table
+                .save(TableOptions::new(&path).with_data_manager(manager))
+                .unwrap();
+            let mut guard = TableWriteLock::acquire_to_reread(&path, 1).unwrap();
+            let table = Table::open(TableOptions::new(&path)).unwrap();
+            let before = table.scalar_columns_owned(&["id", "keep"]).unwrap();
+            let replacement = BTreeMap::from([(
+                "id".to_owned(),
+                (3..27)
+                    .map(|id| Some(Value::Scalar(ScalarValue::Int32(id))))
+                    .collect(),
+            )]);
+            let mut staged = table
+                .prepare_column_replacement(&replacement, None, &mut guard)
+                .unwrap();
+            staged.publish().unwrap();
+            staged.synchronize().unwrap();
+            let reopen = || {
+                Table::open(TableOptions::new(&path))
+                    .unwrap()
+                    .scalar_columns_owned(&["id", "keep"])
+                    .unwrap()
+            };
+            let after = reopen();
+            assert_eq!(after["id"][0], Some(ScalarValue::Int32(3)));
+            assert_eq!(after["id"][23], Some(ScalarValue::Int32(26)));
+            assert_eq!(after["keep"], before["keep"]);
+            staged.restore().unwrap();
+            assert_eq!(reopen(), before);
+        }
     }
 
     #[test]

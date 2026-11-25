@@ -298,7 +298,7 @@ pub use table::{
     ColumnOverrides, CompressedComplexArray, DataManagerKind, EncodedArrayAppend, EndianFormat,
     GeneratedArrayColumn, GeneratedArrayValueRun, GeneratedScalarColumn, GeneratedScalarValueRun,
     IncrementalCorruption, IncrementalLayoutCheck, ManagerAddition, PlainReferenceRead,
-    PreparedRecordAppend, PreparedRowAppender, PreparedTableRow, PreparedTableRowMut, QueryResult,
+    PreparedRowAppender, PreparedTableEdit, PreparedTableRow, PreparedTableRowMut, QueryResult,
     RecordAppendOptions, RecordColumnCell, RecordColumnIter, RequiredScalarColumnDestination,
     RequiredScalarColumnValues, RequiredScalarColumnValuesMut, RowRange,
     STREAMING_SCALAR_COLUMN_BUFFER_BYTES, SelectedArray1DCells, SelectedArray1DCellsMut,

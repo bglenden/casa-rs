@@ -235,13 +235,13 @@ fn participates(id: SubtableId, donor: bool) -> bool {
 }
 
 #[cfg(unix)]
-fn same_identity(left: &Metadata, right: &Metadata) -> bool {
+pub(super) fn same_identity(left: &Metadata, right: &Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
     left.dev() == right.dev() && left.ino() == right.ino()
 }
 
 #[cfg(not(unix))]
-fn same_identity(left: &Metadata, right: &Metadata) -> bool {
+pub(super) fn same_identity(left: &Metadata, right: &Metadata) -> bool {
     left.created().ok() == right.created().ok()
 }
 
