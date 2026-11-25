@@ -65,13 +65,21 @@ def compare_uv(root, native):
     work = root / "uv"
     work.mkdir()
     vis = work / "tracks.ms"
-    make_cal_ms(str(vis), channels=8, scan_seconds=100, integration_seconds=10)
+    make_cal_ms(str(vis), channels=8, scan_seconds=600, integration_seconds=10)
     with opened(vis, True) as table:
         time = table.getcol("TIME")
         slot = np.searchsorted(np.unique(time), time)
         a1, a2 = (table.getcol(name) for name in ("ANTENNA1", "ANTENNA2"))
         uvw = np.array([30 + slot + 20 * a1, -70 + slot * 2 - 12 * a2, 100 + slot])
         table.putcol("UVW", uvw.astype(float))
+        flags = table.getcol("FLAG")
+        affected = (a1 == 0) & (a2 == 1)
+        flags[0, 1:4, affected] = True
+        flags[1, 4:7, affected & (slot % 3 == 0)] = True
+        table.putcol("FLAG", flags)
+        weight = np.array([1 + slot % 3, 2 + 2 * (slot % 3)], dtype=np.float32)
+        table.putcol("WEIGHT", weight)
+        table.putcol("SIGMA", 1 / np.sqrt(weight))
     base = dict(vis=str(vis), field="FLUX", antenna="A0&A1;A1&A2", spw="0:1~6",
                 correlation="XX", showgui=False, overwrite=True, verbose=False,
                 customsymbol=True, symbolshape="square", symbolsize=5,
@@ -84,6 +92,13 @@ def compare_uv(root, native):
         ("u-and-distance", dict(xaxis="u", yaxis="uvdist"), False),
         ("averaged-metres", dict(xaxis="u", yaxis="v", averagedata=True,
                                  avgchannel="3", avgtime="30"), True),
+        ("averaged-multicolor", dict(xaxis="u", yaxis="v", averagedata=True, avgchannel="3",
+                                     avgtime="30", correlation="XX,YY", coloraxis="corr"), True),
+        ("averaged-wavelengths", dict(xaxis="uwave", yaxis="vwave", averagedata=True,
+                                      avgtime="30", correlation="XX,YY"), True),
+        ("time-channel-wavelengths", dict(xaxis="uwave", yaxis="vwave", averagedata=True,
+                                          avgchannel="3", avgtime="30", correlation="XX,YY"), True),
+        ("autoscaling", dict(xaxis="u", yaxis="v", antenna="*&*", customsymbol=False), True),
     ):
         request = base | extra
         expected, actual = (work / f"{label}-{engine}.txt" for engine in ("casa", "native"))
@@ -120,15 +135,53 @@ def compare_uv(root, native):
         )
         if mirrored:
             assert axis.get_xlim() == axis.get_ylim()
+        for name, limits in zip(("xaxis", "yaxis"), (axis.get_xlim(), axis.get_ylim()), strict=True):
+            if request[name] in ("u", "v", "uwave", "vwave"):
+                assert limits[0] == -limits[1]
+        if request.get("coloraxis") == "corr":
+            assert {artist.get_label() for artist in axis.lines} == {"XX", "YY"}
+        if label == "autoscaling":
+            assert len(points) == 600 and len(rendered) == 1200
+            assert all(abs(artist.get_markersize() * axis.figure.dpi / 72 - 6) < 1e-9
+                       for artist in axis.lines)
         for path in (reference_png, native_png):
             with Image.open(path) as image:
                 assert image.size == (620, 480)
                 pixels = np.asarray(image.convert("RGB"))
-                mark = np.all(pixels == [221, 34, 85], axis=2)
+                if request.get("coloraxis") == "corr":
+                    continue
+                rgb = [0, 0, 255] if label == "autoscaling" else [221, 34, 85]
+                mark = np.all(pixels == rgb, axis=2)
                 assert np.any(mark)
                 if mirrored:
                     assert np.any(mark[:, :310]) and np.any(mark[:, 310:])
         print(f"{label}: {len(points)} matching selected coordinates and rendered PNG", flush=True)
+
+    compare_uv_correlation_pages(work, native, base)
+
+
+def compare_uv_correlation_pages(root, native, base):
+    request = base | dict(xaxis="u", yaxis="v", correlation="XX,YY", iteraxis="corr",
+                          gridcols=2, exprange="all", verbose=True)
+    expected, actual = (root / f"corr-panels-{engine}.txt" for engine in ("casa", "native"))
+    reference(**request, expformat="txt", plotfile=str(expected))
+    native(**request, expformat="txt", plotfile=str(actual))
+    selected = rows(expected)
+    assert {point[12] for point in selected} == {"XX", "YY"}
+    assert compare_text(actual, expected) == len(selected)
+    files = []
+    for engine, task in (("casa", reference), ("native", native)):
+        task(**request, expformat="png", width=620, height=480, dpi=100,
+             plotfile=str(root / f"corr-panels-{engine}.png"))
+        [image] = root.glob(f"corr-panels-{engine}_*.png")
+        with Image.open(image) as exported:
+            assert exported.size == (620, 480)
+            pixels = np.asarray(exported.convert("RGB"))
+            mark = np.all(pixels == [221, 34, 85], axis=2)
+            assert mark[:, :310].any() and mark[:, 310:].any()
+        files.append(image.name.replace(engine, ""))
+    assert files[0] == files[1]
+    print(f"correlation-panels: {len(selected)} matching coordinates and both rendered panels", flush=True)
 
 
 def main():

@@ -691,24 +691,39 @@ impl PanelStyle {
         if let Some(curves) = overlays {
             self.append_curves(panel, writer, axes, layers, curves)?;
         }
-        self.uv_bounds(axes, series);
+        self.uv_bounds(axes, layers, series);
         Ok(())
     }
 
-    fn uv_bounds(&self, axes: &mut [PlotDocumentAxis], series: &[MsScatterSeries]) {
-        if !self.x_axis.is_uv_plane_axis()
-            || series.is_empty()
-            || !series.iter().all(|entry| entry.y_axis.is_uv_plane_axis())
-        {
-            return;
-        }
+    fn uv_bounds(
+        &self,
+        axes: &mut [PlotDocumentAxis],
+        layers: &[PlotDocumentLayer],
+        series: &[MsScatterSeries],
+    ) {
+        let signed = |axis: &PlotDocumentAxis| {
+            if axis.id == "x" {
+                self.x_axis.is_uv_plane_axis()
+            } else {
+                layers.iter().zip(series).any(|(layer, entry)| {
+                    layer.y_axis_id == axis.id && entry.y_axis.is_uv_plane_axis()
+                })
+            }
+        };
         let extent = |axis: &PlotDocumentAxis| axis.lower.abs().max(axis.upper.abs());
-        let square = self.limits == [0.0; 4];
-        let maximum = axes.iter().map(extent).fold(0.0, f64::max);
-        for axis in axes {
+        let common = (self.limits == [0.0; 4]
+            && self.x_axis.is_uv_plane_axis()
+            && axes.iter().any(|axis| axis.id != "x" && signed(axis)))
+        .then(|| {
+            axes.iter()
+                .filter(|axis| signed(axis))
+                .map(extent)
+                .fold(0.0, f64::max)
+        });
+        for axis in axes.iter_mut().filter(|axis| signed(axis)) {
             let offset = if axis.id == "x" { 0 } else { 2 };
             if self.limits[offset..offset + 2] == [0.0; 2] {
-                let limit = if square { maximum } else { extent(axis) };
+                let limit = common.unwrap_or_else(|| extent(axis));
                 let limit = limit.max(1.0) * 1.05;
                 axis.lower = -limit;
                 axis.upper = limit;

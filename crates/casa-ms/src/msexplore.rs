@@ -2085,7 +2085,8 @@ impl MsPlotSpec {
         }
         if (uses_extended_averaging(self)
             && !plotms_columns::uses_averaged_geometry_coordinates(self))
-            || self.averaging.avgchannel.is_some_and(|width| width > 1)
+            || (self.averaging.avgchannel.is_some_and(|width| width > 1)
+                && !self.has_uvw_coordinate_axes())
         {
             return Err(
                 "averaged PlotMS interval and wavelength coordinates are pending (#1032)".into(),
@@ -2107,6 +2108,10 @@ impl MsPlotSpec {
             return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
         }
         Ok(())
+    }
+
+    fn has_uvw_coordinate_axes(&self) -> bool {
+        self.x_axis.uses_uvw() && self.y_axes.iter().copied().all(MsAxis::uses_uvw)
     }
 
     /// Check that a staged flag edit fits this plot: a single-y scatter plot
@@ -4404,8 +4409,9 @@ fn build_generic_visibility_scatter(
     let array_horizontal = calibration.is_some_and(|input| input.rows.is_none())
         && spec.y_axes.len() == 1
         && plotms_row_axes::array_horizontal_pair(spec.x_axis, spec.y_axis());
-    let correlation_metadata_panels =
-        array_horizontal && spec.iteration.iteraxis == Some(MsIterationAxis::Correlation);
+    let correlation_metadata_panels = (array_horizontal
+        || (spec.x_axis.uses_uvw() && matches!(spec.y_axes.as_slice(), [axis] if axis.uses_uvw())))
+        && spec.iteration.iteraxis == Some(MsIterationAxis::Correlation);
     let antenna_horizontal = spec
         .y_axes
         .iter()
@@ -5975,10 +5981,11 @@ fn build_generic_visibility_scatter_with_averaging(
             || plotms_columns::uses_weighted_time_uvw(spec)
             || plotms_columns::uses_weighted_spw_time_u(spec));
     let collapsed_uv = weighted_time_uvw
-        && spec.x_axis.uses_uvw_metres()
-        && spec.y_axes.iter().copied().all(MsAxis::uses_uvw_metres)
-        && spec.color_by != MsColorAxis::Correlation
+        && spec.has_uvw_coordinate_axes()
+        && spec.y_axes.len() == 1
         && spec.iteration.iteraxis != Some(MsIterationAxis::Correlation);
+    let uv_channels =
+        collapsed_uv && (spec.x_axis.uses_wavelengths() || spec.y_axis().uses_wavelengths());
     let time_geometry =
         time_bins.is_some() && plotms_columns::uses_averaged_geometry_coordinates(spec);
     let time_reporting_axes =
@@ -6291,6 +6298,7 @@ fn build_generic_visibility_scatter_with_averaging(
 
     let mut selected_channel_bins = HashMap::new();
     let mut uv_selections = HashMap::new();
+    let mut clear_uv_channels = std::collections::HashSet::new();
     let mut panel_order = Vec::<String>::new();
     let mut panels = std::collections::BTreeMap::<String, AveragedPanelAccumulator>::new();
     let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
@@ -6663,6 +6671,17 @@ fn build_generic_visibility_scatter_with_averaging(
                 &selected_correlations,
                 ranges.map(Vec::as_slice),
             );
+            if uv_channels {
+                for bin in channel_bins.iter() {
+                    if bin.channels().any(|channel| {
+                        selected_correlations
+                            .iter()
+                            .any(|&(corr, _)| !flags[(corr, channel)])
+                    }) {
+                        clear_uv_channels.insert((group, bin.ordinal));
+                    }
+                }
+            }
             if let (Some(statistics), Some(kinds)) = (&mut time_statistics, time_weight_kinds) {
                 let spectra = [weight_grid(kinds.row_weight), weight_grid(kinds.row_sigma)];
                 for &(corr, _) in &selected_correlations {
@@ -6851,7 +6870,11 @@ fn build_generic_visibility_scatter_with_averaging(
                 let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(_))
                     && endpoint == 1
                     && (antenna_average || spw_antenna || antenna1_value != antenna2_value);
-                let bin_count = if collapsed_uv { 1 } else { channel_bins.len() };
+                let bin_count = if collapsed_uv && !uv_channels {
+                    1
+                } else {
+                    channel_bins.len()
+                };
                 for bin in channel_bins.iter().take(bin_count) {
                     let antenna_weight = antenna_channels.then(|| {
                         if skip_flagged_row {
@@ -7009,6 +7032,18 @@ fn build_generic_visibility_scatter_with_averaging(
                     } else {
                         sigma_spectrum_samples.clear();
                     }
+                    let color_correlation =
+                        if collapsed_uv && input_color == MsColorAxis::Correlation {
+                            let index = plotms_row_axes::averaged_uvw_cache_index(
+                                time_bins.expect("collapsed UV uses time groups"),
+                                group.expect("collapsed UV uses an averaged group"),
+                                bin_count,
+                                if uv_channels { bin.ordinal } else { 0 },
+                            );
+                            &selected_correlations[index % selected_correlations.len()].1
+                        } else {
+                            corr_label
+                        };
                     let (group_key, group_label) = visibility_group(
                         input_color,
                         representative_field,
@@ -7018,7 +7053,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         representative_scan,
                         antenna1_value,
                         antenna2_value,
-                        Some(corr_label),
+                        Some(color_correlation),
                     );
                     let point_key = build_averaging_point_key(
                         AveragingPointKeyInputs {
@@ -7603,7 +7638,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 None => points.next(),
             });
             for (group, order, spectral_channel, channel_ordinal, accumulator) in ordered {
-                if !accumulator.has_usable_weight() {
+                if !collapsed_uv && !accumulator.has_usable_weight() {
                     continue;
                 }
                 let Some(mut representative) = accumulator.representative.clone() else {
@@ -7619,12 +7654,19 @@ fn build_generic_visibility_scatter_with_averaging(
                     {
                         continue;
                     }
+                    if uv_channels && !clear_uv_channels.contains(&(group, channel_ordinal)) {
+                        continue;
+                    }
                     let time = time_bins.expect("collapsed UV uses a buffer plan");
-                    let buffers = time.buffers();
-                    let buffer = &buffers[buffers.partition_point(|buffer| buffer.end <= group)];
-                    let index = group - buffer.start;
                     let ddid = selected_data_desc_ids[time.first_row_slot(group)] as usize;
                     let (correlations, channels) = &uv_selections[&ddid];
+                    let (bins, channel) = if uv_channels {
+                        (channels.len(), channel_ordinal)
+                    } else {
+                        (1, 0)
+                    };
+                    let index =
+                        plotms_row_axes::averaged_uvw_cache_index(time, group, bins, channel);
                     let channel = &channels[index % channels.len()];
                     representative.corr = correlations[index % correlations.len()];
                     representative.chan_start = channel.start;

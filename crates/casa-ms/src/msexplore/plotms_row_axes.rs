@@ -15,6 +15,17 @@ use crate::observation_io::{Feeds, read_feeds};
 use crate::subtables::get_string;
 use crate::{MeasurementSet, SubtableId};
 
+pub(super) fn averaged_uvw_cache_index(
+    groups: &crate::transform::PlotTimeGroups,
+    group: usize,
+    bins: usize,
+    channel: usize,
+) -> usize {
+    let buffers = groups.buffers();
+    let buffer = &buffers[buffers.partition_point(|buffer| buffer.end <= group)];
+    (group - buffer.start) * bins + channel
+}
+
 pub(super) fn requested(spec: &MsPlotSpec) -> bool {
     spec.x_axis.is_row_identifier() || spec.y_axes.iter().copied().any(MsAxis::is_row_identifier)
 }

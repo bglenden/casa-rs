@@ -125,7 +125,7 @@ def configure(figure, panel_axes, document, options):
         for line in axis.lines:
             layer = layers.get(line.get_gid())
             if layer is not None:
-                counts[_symbol_group(axis, layer)] += len(line.get_xdata(orig=True))
+                counts[_symbol_group(axis, layer)] += layer["source_sample_count"]
     for axis in figure.axes:
         for line in axis.lines:
             layer = layers.get(line.get_gid())
