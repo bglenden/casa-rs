@@ -5980,8 +5980,8 @@ fn build_generic_visibility_scatter_with_averaging(
         && (phase_shift.is_some()
             || plotms_columns::uses_weighted_time_uvw(spec)
             || plotms_columns::uses_weighted_spw_time_u(spec));
-    let collapsed_uv = weighted_time_uvw
-        && spec.has_uvw_coordinate_axes()
+    let metadata_uvw = weighted_time_uvw && spec.has_uvw_coordinate_axes();
+    let collapsed_uv = metadata_uvw
         && spec.y_axes.len() == 1
         && spec.iteration.iteraxis != Some(MsIterationAxis::Correlation);
     let uv_channels =
@@ -6689,16 +6689,22 @@ fn build_generic_visibility_scatter_with_averaging(
                 }
             }
             if let (Some(time_uvws), Some(kinds)) = (&mut time_uvws, time_weight_kinds) {
-                let weight = selected_correlations
-                    .iter()
-                    .map(|(corr, _)| match kinds.row_weight {
-                        WeightKind::Calibrated => weight_values[*corr],
-                        WeightKind::Observed => f64::from(crate::transform::weight_from_sigma(
-                            sigma_values[*corr] as f32,
-                        )),
-                        WeightKind::Unit => 1.0,
-                    })
-                    .sum();
+                let weight = if metadata_uvw {
+                    // PlotMS requests no visibility column for coordinate-only
+                    // pairs, so each unmasked input integration contributes once.
+                    1.0
+                } else {
+                    selected_correlations
+                        .iter()
+                        .map(|(corr, _)| match kinds.row_weight {
+                            WeightKind::Calibrated => weight_values[*corr],
+                            WeightKind::Observed => f64::from(crate::transform::weight_from_sigma(
+                                sigma_values[*corr] as f32,
+                            )),
+                            WeightKind::Unit => 1.0,
+                        })
+                        .sum()
+                };
                 let _ = time_uvws
                     .entry((group, antenna1_value, antenna2_value))
                     .or_default()
