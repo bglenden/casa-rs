@@ -12119,3 +12119,23 @@ its own baseline, and normalizes spectral weights within each integration.
 The time-bin calculations are checked against the shared CASA averager
 through `ms.split()` and against analytic fixtures. Casa-rs publishes the
 output after the write completes (#1030).
+
+## Split can write HISTORY to the input when output is omitted
+
+CASA 6.7.6.14 opens a scratch output for `ms.split()`, then passes the
+original empty output name to the HISTORY writer. That writer appends to
+the attached input's HISTORY. Casa-rs discards the unnamed scratch result
+without changing the input. Named outputs retain the split HISTORY row
+(#1030).
+
+When a named split uses an attached working selection, CASA 6.7.6.14
+records the generated scratch table in HISTORY. Casa-rs records the
+attached input's path so that the provenance survives scratch cleanup
+(#1030).
+
+## Split can leave a partial output after a time and channel stride error
+
+With a positive time bin and a channel selection such as `0:0~3^2`, CASA
+6.7.6.14 can create the output before raising the unsupported-combination
+error. Casa-rs raises the same error and preserves any existing output
+(#1030).

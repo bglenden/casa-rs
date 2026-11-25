@@ -215,7 +215,7 @@ pub(super) fn reindex_selected_row_ids(
                         .any(|&(first, last)| (first..=last).contains(&id))
                 })
                 .collect::<Vec<_>>();
-            reindex_table(request, SubtableId::Observation, selected)
+            reindex_table(input, request, SubtableId::Observation, selected)
         })
         .transpose()?;
     let state = request
@@ -226,7 +226,7 @@ pub(super) fn reindex_selected_row_ids(
         .map(|text| {
             let selected = parse_state_selector(input, text)
                 .map_err(|source| metadata_error(request, source))?;
-            reindex_table(request, SubtableId::State, selected)
+            reindex_table(input, request, SubtableId::State, selected)
         })
         .transpose()?;
     let array = request
@@ -246,6 +246,7 @@ pub(super) fn reindex_selected_row_ids(
 }
 
 fn reindex_table(
+    input: &MeasurementSet,
     request: &MsTransformRequest,
     id: SubtableId,
     selected: Vec<i32>,
@@ -253,7 +254,7 @@ fn reindex_table(
     let name = id.name();
     let rows = selected.iter().map(|&row| row as usize).collect::<Vec<_>>();
     rewrite_selected_table_rows(
-        &request.input_ms.join(name),
+        super::subtable_copy::input_subtable_path(input, id)?,
         &request.output_ms.join(name),
         &rows,
         |_, row| Ok(row),
@@ -306,7 +307,7 @@ pub(super) fn reindex_fields_and_sources(
     if selected.is_some() || sources_changed {
         let name = SubtableId::Field.name();
         rewrite_selected_table_rows(
-            &request.input_ms.join(name),
+            super::subtable_copy::input_subtable_path(input, SubtableId::Field)?,
             &request.output_ms.join(name),
             &field_rows,
             |index, mut row| {
@@ -399,7 +400,12 @@ fn reindex_sources(
         let name = SubtableId::Source.name();
         let rows = selected.keys().copied().collect::<Vec<_>>();
         rewrite_selected_table_rows(
-            &request.input_ms.join(name),
+            source
+                .path()
+                .ok_or_else(|| MsTransformError::SpectralMetadata {
+                    path: request.input_ms.display().to_string(),
+                    reason: "missing persisted SOURCE subtable".into(),
+                })?,
             &request.output_ms.join(name),
             &rows,
             |index, mut row| {
@@ -458,7 +464,7 @@ pub(super) fn reindex_antenna_subtables(
         let name = SubtableId::Antenna.name();
         let rows = ids.iter().map(|&id| id as usize).collect::<Vec<_>>();
         rewrite_selected_table_rows(
-            &request.input_ms.join(name),
+            super::subtable_copy::input_subtable_path(input, SubtableId::Antenna)?,
             &request.output_ms.join(name),
             &rows,
             |_, row| Ok(row),

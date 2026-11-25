@@ -51,6 +51,7 @@ mod hanning;
 mod hanning_tool;
 pub use hanning_tool::{HanningColumns, HanningDataColumn, smooth_ms_hanning};
 mod input_view;
+mod legacy_split;
 mod legacy_time;
 mod main_arrays;
 mod multi_ms;
@@ -143,8 +144,8 @@ pub struct MsTransformTaskOptions {
     /// Explicit visibility columns for callers that accept arbitrary combinations.
     /// Ordinary task surfaces select a predefined combination on the request.
     pub visibility_columns: Option<Vec<OptionalMainColumn>>,
-    /// Preserve the metadata and noise columns expected by the Python partition tool.
-    pub legacy_partition: Option<LegacyTimeOptions>,
+    /// Match the legacy Python MeasurementSet tool's output conventions.
+    pub legacy_tool: Option<LegacyMsTool>,
     /// Create and fill weight and sigma spectra even when the input has none.
     pub use_weight_spectrum: bool,
     /// CASA task preference for the output's array storage.
@@ -181,6 +182,15 @@ pub struct MsTransformTaskOptions {
     pub multi_ms: Option<MsTransformMultiMsOptions>,
     /// Computed arrays to read in place of stored input values.
     pub input_view: Option<Arc<dyn TransformInputView>>,
+}
+
+/// Materialization behavior for the public legacy MeasurementSet tools.
+#[derive(Debug, Clone, Copy)]
+pub enum LegacyMsTool {
+    /// Preserve the input subtable IDs.
+    Partition(LegacyTimeOptions),
+    /// Compact subtable IDs while keeping partial channel bins.
+    Split(LegacyTimeOptions),
 }
 
 /// Additional chunk boundaries used by the legacy MeasurementSet tools.
@@ -657,6 +667,12 @@ fn mstransform_staged(
         Some(SpectrumOperator::Baseline(_)) => selection_metadata::MainRowOrder::Baseline,
         None => selection_metadata::MainRowOrder::Transform,
     };
+    let legacy_time = match options.legacy_tool {
+        Some(LegacyMsTool::Partition(time) | LegacyMsTool::Split(time)) => Some(time),
+        None => None,
+    };
+    let legacy = legacy_time.is_some();
+    let splitting = matches!(options.legacy_tool, Some(LegacyMsTool::Split(_)));
     let convolving = matches!(order, selection_metadata::MainRowOrder::SingleDish);
     let hanning = options.hanning && operation.is_none();
     let started_at = Instant::now();
@@ -704,6 +720,17 @@ fn mstransform_staged(
                 selector: request.spw.clone(),
                 reason: source.to_string(),
             })?;
+    if splitting
+        && options.time_averaging.is_some()
+        && spw_selection
+            .channel_list()
+            .first()
+            .is_some_and(|range| range.step > 1)
+    {
+        return Err(MsTransformError::Spectrum(
+            "Simultaneous time and channel averaging is not handled.".into(),
+        ));
+    }
     let view_factory = options.input_view.as_deref();
     let mut visibility = VisibilityColumns::resolve(
         &input,
@@ -712,7 +739,7 @@ fn mstransform_staged(
         &request.input_ms,
         view_factory,
     )?;
-    if options.legacy_partition.is_some() {
+    if legacy {
         visibility.promote_singleton_visibility();
     }
     let TransformSelection {
@@ -739,6 +766,7 @@ fn mstransform_staged(
         .map(|options| ContinuumFit::new(&input, &channel_selection, options))
         .transpose()?;
     let task_average = grammar == RowGrammar::Transform
+        && !legacy
         && (normalized_width(request.width) > 1 || options.channel_widths.is_some());
     let widths = channel_widths_by_spw(
         &channel_selection,
@@ -888,7 +916,7 @@ fn mstransform_staged(
     let time_groups = options
         .time_averaging
         .map(|time| {
-            if let Some(legacy) = options.legacy_partition {
+            if let Some(legacy) = legacy_time {
                 let dimensions = transform_array_dimensions(
                     &input,
                     &selected_ddids,
@@ -930,7 +958,7 @@ fn mstransform_staged(
             starts_visibility_buffer: Vec::new(),
             phase_reference_rows: Vec::new(),
         }
-    } else if options.legacy_partition.is_some() {
+    } else if legacy {
         selection_metadata::OrderedMainRows {
             rows: selected_rows,
             descriptions: selected_ddids,
@@ -1060,7 +1088,7 @@ fn mstransform_staged(
             Some(SpectralOperation { kernel: SpectrumOperator::Baseline(kernel), .. })
                 if kernel.reads_spectral_weights()
         );
-    let mut spectra = if options.legacy_partition.is_some() {
+    let mut spectra = if legacy {
         SpectrumProjection::partition(input.main_table(), first_selected_row, averaging_time)
     } else {
         SpectrumProjection::resolve(
@@ -1143,7 +1171,7 @@ fn mstransform_staged(
         &visibility,
         grammar,
         &spectra,
-        options.legacy_partition.is_some(),
+        legacy,
     )?;
     maybe_log_transform_progress(
         "materialize_selected_main",
@@ -1156,11 +1184,11 @@ fn mstransform_staged(
         metadata_path,
         &request.output_ms,
         &mut output_main,
-        options.legacy_partition.is_some(),
+        legacy,
     )?;
     if grammar == RowGrammar::Transform
         && (task_average || !matches!(request.spw.as_str(), "" | "*"))
-        && options.legacy_partition.is_none()
+        && !legacy
     {
         flag_commands::rewrite(
             &input,
@@ -1206,7 +1234,7 @@ fn mstransform_staged(
             (&spw_selection, None)
         };
         compact_spectral_subtables(
-            &request.input_ms,
+            &input,
             &request.output_ms,
             metadata_bins.as_ref().unwrap_or(&channel_bins),
             &ddid_to_spw,
@@ -1218,7 +1246,7 @@ fn mstransform_staged(
         preserve_spectral_ids(&input, request, &channel_bins, &ddid_to_spw)?
     };
     if let Some(correlations) = correlations.as_ref() {
-        correlations.write_polarizations(request)?;
+        correlations.write_polarizations(&input, request)?;
     }
     if let Some(grid) = &combined_grid {
         combine::write_metadata(request, grid, &mut compact_metadata)?;
@@ -1288,7 +1316,7 @@ fn mstransform_staged(
             )
         })
         .transpose()?;
-    if tile.is_none() && options.legacy_partition.is_some() {
+    if tile.is_none() && legacy {
         tile = Some(output_layout::partition_tiling(
             &input,
             &visibility,
@@ -1470,7 +1498,7 @@ fn mstransform_staged(
             && !averaging_time
             && !read_spectral_weights
             && combination.is_none()
-            && options.legacy_partition.is_none()
+            && !legacy
         {
             input_block.resolve_buffer_spectra(
                 row_spectrum_names,
@@ -2065,6 +2093,12 @@ fn mstransform_staged(
                 continuum::mean_noise(&mut weight, spectra_cells.weight, &flags, channels);
                 continuum::mean_noise(&mut sigma, spectra_cells.sigma, &flags, channels);
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
+            } else if legacy && !averaging_time {
+                if let Some(bin) = bins.first().filter(|bin| splitting && bin.len() > 1) {
+                    let width = bin[0].abs_diff(bin[bin.len() - 1]) + 1;
+                    legacy_split::scale_channel_noise(&visibility, width, &mut weight, &mut sigma)
+                        .map_err(mutation_error)?;
+                }
             } else if grammar == RowGrammar::Transform
                 && !task_average
                 && !averaging_time
@@ -2072,7 +2106,7 @@ fn mstransform_staged(
                 && !hanning
                 && combination.is_none()
                 && regrid.is_none()
-                && options.legacy_partition.is_none()
+                && !legacy
             {
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
             }
@@ -2095,8 +2129,7 @@ fn mstransform_staged(
             for &name in &spectra.output {
                 let transformed = match name {
                     "WEIGHT_SPECTRUM"
-                        if grammar == RowGrammar::Transform
-                            && (options.legacy_partition.is_none() || averaging_time) =>
+                        if grammar == RowGrammar::Transform && (!legacy || averaging_time) =>
                     {
                         task_weight.take()
                     }
@@ -2230,6 +2263,8 @@ fn mstransform_staged(
         regrid.write_metadata(request, &compact_metadata)?;
     } else if combined_grid.is_some() {
         // The combined grid was written with the compact spectral metadata.
+    } else if splitting && widths.values().any(|&width| width > 1) {
+        update_spectral_window_metadata(&compact_metadata.channel_bins, &request.output_ms)?;
     } else if average_metadata.is_some() || normalized_width(request.width) == 1 {
         spectral_metadata::write_channel_selection(
             &request.output_ms,
@@ -3582,7 +3617,7 @@ fn preserve_spectral_ids(
 }
 
 fn compact_spectral_subtables(
-    input_ms: &Path,
+    input: &MeasurementSet,
     output_ms: &Path,
     channel_bins: &BTreeMap<i32, Vec<Vec<usize>>>,
     ddid_to_spw: &BTreeMap<i32, i32>,
@@ -3612,7 +3647,7 @@ fn compact_spectral_subtables(
         .collect::<BTreeMap<_, _>>();
 
     rewrite_table_rows_with_variable_arrays(
-        &input_ms.join(SubtableId::SpectralWindow.name()),
+        subtable_copy::input_subtable_path(input, SubtableId::SpectralWindow)?,
         &output_ms.join(SubtableId::SpectralWindow.name()),
         &selected_spws
             .iter()
@@ -3635,8 +3670,9 @@ fn compact_spectral_subtables(
         .enumerate()
         .map(|(new_id, old_id)| (*old_id, new_id as i32))
         .collect::<BTreeMap<_, _>>();
+    let descriptions = subtable_copy::input_subtable_path(input, SubtableId::DataDescription)?;
     rewrite_selected_table_rows(
-        &input_ms.join(SubtableId::DataDescription.name()),
+        descriptions,
         &output_ms.join(SubtableId::DataDescription.name()),
         &ordered_ddids
             .iter()
@@ -3646,10 +3682,7 @@ fn compact_spectral_subtables(
             let old_ddid = old_row as i32;
             let old_spw = ddid_to_spw.get(&old_ddid).copied().ok_or_else(|| {
                 MsTransformError::SpectralMetadata {
-                    path: input_ms
-                        .join(SubtableId::DataDescription.name())
-                        .display()
-                        .to_string(),
+                    path: descriptions.display().to_string(),
                     reason: format!("DATA_DESCRIPTION row {old_ddid} has no SPW mapping"),
                 }
             })?;

@@ -22,6 +22,7 @@ mod scan_summary;
 mod selection_indices;
 mod selection_record;
 mod sort;
+mod split;
 mod statistics;
 mod statwt;
 mod stubs;
