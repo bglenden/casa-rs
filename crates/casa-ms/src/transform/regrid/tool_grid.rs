@@ -8,21 +8,19 @@ use casa_tables::{
     RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
     Table,
 };
-use casa_types::measures::direction::MDirection;
 use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::frequency_conversion::PreparedFrequencyConversion;
 use casa_types::measures::position::MPosition;
 use casa_types::measures::{MeasFrame, MeasuresProvider};
 
-use crate::derived::engine::MsCalEngine;
 use crate::spectral_selection::combine_windows;
 use crate::subtables::measured_columns::antenna_position;
 use crate::subtables::{
-    FieldDirectionColumn, MsDataDescription, MsField, epoch_reference, get_i32, get_string,
-    linked_subtable_row,
+    FieldDirectionColumn, MetadataDirection, MsDataDescription, MsField, epoch_reference,
+    get_string, linked_subtable_row,
 };
-use crate::{MeasurementSet, SubtableId};
+use crate::{MsError, MsResult, SubtableId};
 
 use super::super::{MsRegridOptions, MsTransformError};
 use super::{
@@ -44,14 +42,14 @@ pub enum ToolGridPhaseCentre {
     /// Use the selected FIELD direction and any attached ephemeris.
     Field(usize),
     /// Use a direction measure explicitly supplied by the caller.
-    Direction(MDirection),
+    Direction(MetadataDirection),
 }
 
 /// The persisted tables that supply a spectral query's observation geometry.
 pub struct ToolGridFrameTables<'a> {
-    /// The attached physical MAIN table.
+    /// The attached MAIN table, which can itself be a persisted view.
     pub main: &'a Table,
-    /// The first row in the current tool view, as a physical MAIN row.
+    /// The first row of the current selection, in the attached MAIN's row order.
     pub first_row: usize,
     /// Linked ANTENNA tables in view order.
     pub antenna: &'a [Table],
@@ -61,49 +59,30 @@ pub struct ToolGridFrameTables<'a> {
     pub observation: &'a [Table],
 }
 
-/// Construct the frame for a fixed or explicitly supplied phase centre.
-///
-/// Returns `None` when a FIELD polynomial, ephemeris, or measure offset
-/// needs the general spectral frame evaluator.
+/// Build the spectral grid frame at the requested epoch and working observatory.
 ///
 /// # Errors
 ///
-/// The field or observatory tables cannot be read or contain invalid rows.
+/// The working MAIN row or linked field and observatory measures cannot be read.
 pub fn tool_grid_frame_at_epoch(
     tables: ToolGridFrameTables<'_>,
     epoch: &MEpoch,
     phase: &ToolGridPhaseCentre,
     measures: Arc<dyn MeasuresProvider>,
-) -> Result<Option<MeasFrame>, MsTransformError> {
-    let direction = match phase {
-        ToolGridPhaseCentre::Direction(direction) => direction.clone(),
-        ToolGridPhaseCentre::Field(id) => {
-            let (table, row) =
-                linked_subtable_row(tables.field, *id, SubtableId::Field).map_err(ms_error)?;
-            let field = MsField::new(table);
-            if field.num_poly(row).map_err(ms_error)? > 0
-                || field
-                    .ephemeris_id(row)
-                    .map_err(ms_error)?
-                    .is_some_and(|id| id >= 0)
-            {
-                return Ok(None);
-            }
-            let phase = field
-                .metadata_direction_at_seconds(row, FieldDirectionColumn::Phase, 0.0)
-                .map_err(ms_error)?;
-            if phase.offset.is_some() {
-                return Ok(None);
-            }
-            phase.direction
-        }
-    };
+) -> MsResult<MeasFrame> {
     let telescope = if tables.observation.iter().any(|table| table.row_count() > 0) {
-        let id = get_i32(tables.main, tables.first_row, "OBSERVATION_ID").map_err(ms_error)?;
+        let column = "OBSERVATION_ID";
+        let mut values = tables
+            .main
+            .required_scalar_columns_owned_for_rows(&[column], &[tables.first_row])?;
+        let Some(RequiredScalarColumnValues::Int32(ids)) = values.remove(column) else {
+            return Err(MsError::InvalidInput(
+                "MAIN OBSERVATION_ID is not Int32".into(),
+            ));
+        };
         let (observation, row) =
-            linked_subtable_row(tables.observation, id as usize, SubtableId::Observation)
-                .map_err(ms_error)?;
-        Some(get_string(observation, row, "TELESCOPE_NAME").map_err(ms_error)?)
+            linked_subtable_row(tables.observation, ids[0] as usize, SubtableId::Observation)?;
+        Some(get_string(observation, row, "TELESCOPE_NAME")?)
     } else {
         None
     };
@@ -113,60 +92,30 @@ pub fn tool_grid_frame_at_epoch(
     {
         Some(position) => position,
         None => {
-            let (antenna, row) =
-                linked_subtable_row(tables.antenna, 0, SubtableId::Antenna).map_err(ms_error)?;
-            antenna_position(antenna, row).map_err(ms_error)?
+            let (antenna, row) = linked_subtable_row(tables.antenna, 0, SubtableId::Antenna)?;
+            antenna_position(antenna, row)?
         }
     };
-    Ok(Some(
-        MeasFrame::new()
-            .with_epoch(epoch.clone())
-            .with_direction(direction)
-            .with_position(position)
-            .with_measures(measures),
-    ))
-}
-
-/// Evaluate the observatory frame for a FIELD with time-dependent measure metadata.
-///
-/// # Errors
-///
-/// Malformed row metadata or missing position, epoch, or phase data.
-pub fn tool_spectral_grid_frame(
-    input: &MeasurementSet,
-    epoch: &MEpoch,
-    phase: &ToolGridPhaseCentre,
-    source_frame: bool,
-    measures: Arc<dyn MeasuresProvider>,
-) -> Result<MeasFrame, MsTransformError> {
-    let engine = MsCalEngine::with_measures(input, Arc::clone(&measures)).map_err(ms_error)?;
-    let seconds = epoch
-        .convert_to(
-            engine.time_reference(),
-            &MeasFrame::default().with_measures(measures),
-        )
-        .map_err(ms_error)?
-        .value()
-        .as_mjd()
-        * 86_400.0;
-    match phase {
-        ToolGridPhaseCentre::Field(field) => {
-            let mut frame = engine
-                .spectral_frame_observatory(seconds, *field)
-                .map_err(ms_error)?;
-            if source_frame
-                && let Some(velocity) = engine
-                    .attached_radial_velocity(seconds, *field)
-                    .map_err(ms_error)?
-            {
+    let mut frame = MeasFrame::new()
+        .with_epoch(epoch.clone())
+        .with_position(position)
+        .with_measures(measures);
+    let direction = match phase {
+        ToolGridPhaseCentre::Direction(direction) => direction.resolve_offset(&frame)?,
+        ToolGridPhaseCentre::Field(id) => {
+            let (table, row) = linked_subtable_row(tables.field, *id, SubtableId::Field)?;
+            let field = MsField::new(table);
+            // MSFieldColumns receives the raw numeric seconds of the query epoch.
+            let seconds = epoch.value().as_mjd() * 86_400.0;
+            let direction =
+                field.metadata_direction_at_seconds(row, FieldDirectionColumn::Phase, seconds)?;
+            if let Some(velocity) = field.metadata_radial_velocity_at_seconds(row, seconds)? {
                 frame = frame.with_radial_velocity(velocity);
             }
-            Ok(frame)
+            direction.resolve_offset(&frame)?
         }
-        ToolGridPhaseCentre::Direction(direction) => engine
-            .spectral_frame_observatory_direction(seconds, direction.clone())
-            .map_err(ms_error),
-    }
+    };
+    Ok(frame.with_direction(direction))
 }
 
 /// Return the earliest working epoch for the requested fields and windows.
@@ -279,7 +228,8 @@ pub fn tool_grid_reference_epoch(
 /// A single window retains its native channel order. Multiple windows use the
 /// shared overlap calculation before the resulting axis is regridded. A frame
 /// is requested only for real frequency conversion and must describe the
-/// requested observation epoch, position, and phase centre.
+/// requested observation epoch, position, and phase centre. A moving FIELD still
+/// needs a valid phase sample when the requested frequency reference is unchanged.
 ///
 /// # Errors
 ///
@@ -289,6 +239,7 @@ pub fn tool_channel_frequencies(
     windows: Vec<ToolSpectralWindow>,
     options: &MsRegridOptions,
     budget_bytes: usize,
+    validate_moving_field: bool,
     frame: impl FnOnce() -> Result<MeasFrame, Box<MsTransformError>>,
 ) -> Result<Vec<f64>, MsTransformError> {
     let Some(first) = windows.first() else {
@@ -324,6 +275,8 @@ pub fn tool_channel_frequencies(
             *width = shift.shift_frequency_hz(converted_width);
             *centre = shift.shift_frequency_hz(conversion.convert_hz(*centre));
         }
+    } else if validate_moving_field {
+        frame().map_err(|error| *error)?;
     }
     let limit = GridBudget::new(budget_bytes, false).maximum_output_channels(centres.len())?;
     Ok(axis::output_axis(options, &centres, &widths, limit)?.centres_hz)

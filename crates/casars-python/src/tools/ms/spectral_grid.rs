@@ -3,16 +3,17 @@
 use std::sync::Arc;
 
 use casa_ms::selection::MsSelectionIoBudget;
-use casa_ms::subtables::{MsSpectralWindow, linked_subtable_row};
+use casa_ms::subtables::{MetadataDirection, MsField, MsSpectralWindow, linked_subtable_row};
 use casa_ms::transform::{
     MsRegridOptions, MsTransformError, ToolGridFrameTables, ToolGridPhaseCentre,
     ToolSpectralWindow, tool_channel_frequencies, tool_grid_frame_at_epoch,
-    tool_grid_reference_epoch, tool_spectral_grid_frame,
+    tool_grid_reference_epoch,
 };
 use casa_ms::{MsError, MsResult, SubtableId};
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
+use casa_types::measures::frequency::FrequencyRef;
 use casa_types::quanta::Quantity;
 use numpy::{PyArray1, PyUntypedArray};
 use pyo3::exceptions::{PySystemError, PyTypeError};
@@ -78,23 +79,29 @@ impl PyMsTool {
             link.verify_directory().map_err(runtime_error)?;
             let grid_tables = ms
                 .subtables
-                .spectral_grid_tables(&ms.main, !options.outframe.is_empty())
+                .spectral_grid_tables(&ms.main)
                 .map_err(runtime_error)?;
             let mut windows = Vec::with_capacity(spwids.len());
             for &id in &spwids {
-                let (table, row) = linked_subtable_row(
+                let (table, row) = match linked_subtable_row(
                     &grid_tables.windows,
                     id as usize,
                     SubtableId::SpectralWindow,
-                )
-                .map_err(runtime_error)?;
+                ) {
+                    Ok(row) => row,
+                    Err(MsError::InvalidIndex { .. }) if spwids.len() > 1 => {
+                        return Ok(Vec::new());
+                    }
+                    Err(error) => return Err(runtime_error(error)),
+                };
                 let window = MsSpectralWindow::new(table);
+                let code = window.meas_freq_ref(row).map_err(runtime_error)?;
+                let reference = FrequencyRef::from_casacore_code(code)
+                    .ok_or_else(|| runtime_error(format!("Invalid MEAS_FREQ_REF {code}")))?;
                 windows.push(ToolSpectralWindow {
                     centres_hz: window.chan_freq(row).map_err(runtime_error)?,
                     widths_hz: window.chan_width(row).map_err(runtime_error)?,
-                    reference: window
-                        .reference_frequency_reference(row)
-                        .map_err(runtime_error)?,
+                    reference,
                 });
             }
             let epoch = if obstime.is_empty() {
@@ -116,97 +123,101 @@ impl PyMsTool {
                 Variant::Numbers(ids) => ids.first().map(|&id| id as i32),
                 _ => None,
             };
-            let phase = if empty_phase || numeric_phase.is_some() {
+            let (phase, validate_moving_field) = if empty_phase || numeric_phase.is_some() {
                 let id = numeric_phase.unwrap_or_else(|| fieldids.first().copied().unwrap_or(0));
-                let row = linked_subtable_row(&grid_tables.fields, id as usize, SubtableId::Field);
-                if let Err(error) = row {
-                    return if empty_phase {
-                        Err(runtime_error(error))
-                    } else {
-                        Ok(Vec::new())
-                    };
-                }
-                ToolGridPhaseCentre::Field(id as usize)
+                let (table, row) = match linked_subtable_row(
+                    &grid_tables.fields,
+                    id as usize,
+                    SubtableId::Field,
+                ) {
+                    Ok(row) => row,
+                    Err(error) if empty_phase => return Err(runtime_error(error)),
+                    Err(_) => return Ok(Vec::new()),
+                };
+                let field = MsField::new(table);
+                let moving = field.num_poly(row).map_err(runtime_error)? > 0
+                    || field
+                        .ephemeris_id(row)
+                        .map_err(runtime_error)?
+                        .is_some_and(|id| id >= 0);
+                (ToolGridPhaseCentre::Field(id as usize), moving)
             } else {
                 let provider = ms.spectral_query_measures().map_err(runtime_error)?;
-                let Some(direction) = measures::direction(phase, &provider).ok().flatten() else {
+                let Some(direction) = grid_direction(phase, &provider) else {
                     return Ok(Vec::new());
                 };
-                ToolGridPhaseCentre::Direction(direction)
+                (ToolGridPhaseCentre::Direction(direction), false)
             };
             let budget = MsSelectionIoBudget::from_system_memory(1, size_of::<f64>(), None)
                 .map_err(runtime_error)?
                 .available_bytes;
-            let centres = tool_channel_frequencies(windows, &options, budget, || {
-                let source_error = |error| MsTransformError::OpenMeasurementSet {
-                    path: ms.path.display().to_string(),
-                    source: error,
-                };
-                let measures = ms.spectral_query_measures().map_err(source_error)?;
-                let selected = link.selected_rows().map_err(source_error)?;
-                let refreshed_main;
-                let main = if let Some(rows) = &ms.plain_rows
-                    && selected.is_none()
-                    && rows
-                        .count(&ms.path)
-                        .map_err(MsError::from)
-                        .map_err(source_error)?
-                        != ms.main.row_count()
-                {
-                    refreshed_main = Table::open(TableOptions::new(&ms.path))
-                        .map_err(MsError::from)
-                        .map_err(source_error)?;
-                    &refreshed_main
-                } else {
-                    &ms.main
-                };
-                let geometry_ids = [
-                    SubtableId::Observation,
-                    SubtableId::Antenna,
-                    SubtableId::DataDescription,
-                ];
-                let count = if epoch.is_some() { 2 } else { 3 };
-                let geometry = ms
-                    .subtables
-                    .spectral_grid_geometry(main, &geometry_ids[..count])
-                    .map_err(source_error)?;
-                let epoch = match epoch {
-                    Some(epoch) => epoch,
-                    None => tool_grid_reference_epoch(
-                        main,
-                        selected.as_deref(),
-                        &geometry[&SubtableId::DataDescription],
-                        &spwids,
-                        &fieldids,
-                        ms.plain_rows.is_some(),
-                    )?,
-                };
-                let tables = ToolGridFrameTables {
-                    main,
-                    first_row: selected
+            let centres =
+                tool_channel_frequencies(windows, &options, budget, validate_moving_field, || {
+                    let source_error = |error| MsTransformError::OpenMeasurementSet {
+                        path: ms.path.display().to_string(),
+                        source: error,
+                    };
+                    let measures = ms.spectral_query_measures().map_err(source_error)?;
+                    let selected = link.selected_rows().map_err(source_error)?;
+                    let refreshed_main;
+                    let main = if let Some(rows) = &ms.plain_rows
+                        && selected.is_none()
+                        && rows
+                            .count(&ms.path)
+                            .map_err(MsError::from)
+                            .map_err(source_error)?
+                            != ms.main.row_count()
+                    {
+                        refreshed_main = Table::open(TableOptions::new(&ms.path))
+                            .map_err(MsError::from)
+                            .map_err(source_error)?;
+                        &refreshed_main
+                    } else {
+                        &ms.main
+                    };
+                    if selected
                         .as_deref()
-                        .and_then(|rows| rows.first())
-                        .copied()
-                        .unwrap_or(0),
-                    antenna: &geometry[&SubtableId::Antenna],
-                    field: &grid_tables.fields,
-                    observation: &geometry[&SubtableId::Observation],
-                };
-                if let Some(frame) =
-                    tool_grid_frame_at_epoch(tables, &epoch, &phase, Arc::clone(&measures))?
-                {
-                    return Ok(frame);
-                }
-                let (source, _) = link.source_and_rows().map_err(source_error)?;
-                tool_spectral_grid_frame(
-                    &source.ms,
-                    &epoch,
-                    &phase,
-                    options.outframe.eq_ignore_ascii_case("SOURCE"),
-                    measures,
-                )
-                .map_err(Box::new)
-            });
+                        .map_or(main.row_count() == 0, <[usize]>::is_empty)
+                    {
+                        return Err(Box::new(MsTransformError::Spectrum(
+                            "No working MAIN rows".into(),
+                        )));
+                    }
+                    let geometry_ids = [
+                        SubtableId::Observation,
+                        SubtableId::Antenna,
+                        SubtableId::DataDescription,
+                    ];
+                    let count = if epoch.is_some() { 2 } else { 3 };
+                    let geometry = ms
+                        .subtables
+                        .spectral_grid_geometry(main, &geometry_ids[..count])
+                        .map_err(source_error)?;
+                    let epoch = match epoch {
+                        Some(epoch) => epoch,
+                        None => tool_grid_reference_epoch(
+                            main,
+                            selected.as_deref(),
+                            &geometry[&SubtableId::DataDescription],
+                            &spwids,
+                            &fieldids,
+                            ms.plain_rows.is_some(),
+                        )?,
+                    };
+                    let tables = ToolGridFrameTables {
+                        main,
+                        first_row: selected
+                            .as_deref()
+                            .and_then(|rows| rows.first())
+                            .copied()
+                            .unwrap_or(0),
+                        antenna: &geometry[&SubtableId::Antenna],
+                        field: &grid_tables.fields,
+                        observation: &geometry[&SubtableId::Observation],
+                    };
+                    tool_grid_frame_at_epoch(tables, &epoch, &phase, measures)
+                        .map_err(|error| Box::new(source_error(error)))
+                });
             link.verify_directory().map_err(runtime_error)?;
             match centres {
                 Ok(centres) => Ok(centres),
@@ -226,6 +237,31 @@ impl PyMsTool {
         }
         Ok(PyArray1::from_vec(py, centres))
     }
+}
+
+fn grid_direction(
+    value: &Variant,
+    provider: &Arc<dyn MeasuresProvider>,
+) -> Option<MetadataDirection> {
+    if let Variant::Record(record) = value
+        && let Some(offset) = record.get("offset")
+    {
+        let mut components = (**record).clone();
+        components.remove("offset");
+        let offset = grid_direction(offset, provider)?;
+        let direction = measures::direction(&Variant::Record(components.into()), provider)
+            .ok()
+            .flatten()?;
+        return Some(MetadataDirection {
+            direction,
+            offset: Some(Box::new(offset)),
+        });
+    }
+    let direction = measures::direction(value, provider).ok().flatten()?;
+    Some(MetadataDirection {
+        direction,
+        offset: None,
+    })
 }
 
 fn axis_argument(mode: &str, value: Option<Variant>) -> String {

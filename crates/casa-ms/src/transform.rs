@@ -82,7 +82,7 @@ pub use input_view::{PreparedTransformInputView, TransformInputColumns, Transfor
 use main_arrays::MainArrayBlock;
 pub use regrid::{
     ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow, tool_channel_frequencies,
-    tool_grid_frame_at_epoch, tool_grid_reference_epoch, tool_spectral_grid_frame,
+    tool_grid_frame_at_epoch, tool_grid_reference_epoch,
 };
 pub(crate) use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;

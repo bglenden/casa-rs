@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use casa_tables::Table;
 use casa_tables::table_measures::{MeasOffsetDesc, MeasRefDesc, TableMeasDesc};
+use casa_tables::{ColumnType, Table};
+use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use casa_types::measures::{EpochRef, direction_from_record};
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
@@ -26,6 +27,20 @@ impl MetadataDirection {
         }
     }
 
+    pub(crate) fn resolve_offset(&self, frame: &MeasFrame) -> MsResult<MDirection> {
+        let Some(offset) = &self.offset else {
+            return Ok(self.direction.clone());
+        };
+        let reference = self.direction.refer();
+        let offset = offset
+            .resolve_offset(frame)?
+            .convert_to(reference, frame)?
+            .cosines();
+        let direction = self.direction.cosines();
+        let sum = std::array::from_fn(|axis| direction[axis] + offset[axis]);
+        Ok(MDirection::from_cosines(sum, reference))
+    }
+
     fn from_offset_record(record: &RecordValue) -> MsResult<Self> {
         let mut components = record.clone();
         let offset = match components.remove("offset") {
@@ -48,6 +63,23 @@ fn reference_value(
     row: usize,
     element: usize,
 ) -> MsResult<ScalarValue> {
+    let missing = || {
+        MsError::InvalidInput(format!(
+            "Missing measure reference value in {column} row {row}"
+        ))
+    };
+    if table
+        .schema()
+        .and_then(|schema| schema.column(column))
+        .is_some_and(|definition| *definition.column_type() == ColumnType::Scalar)
+    {
+        return table
+            .column_accessor(column)?
+            .scalar_cells_owned_for_rows(&[row])?
+            .pop()
+            .flatten()
+            .ok_or_else(missing);
+    }
     let value = table.cell_accessor(row, column)?.value()?;
     let scalar = match value {
         Some(Value::Scalar(value)) => Some(value.clone()),

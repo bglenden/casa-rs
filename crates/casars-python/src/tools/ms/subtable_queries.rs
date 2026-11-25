@@ -38,20 +38,11 @@ pub(super) struct SpectralGridTables<'a> {
 }
 
 impl Subtables {
-    pub(super) fn spectral_grid_tables(
-        &self,
-        main: &Table,
-        refresh_field: bool,
-    ) -> MsResult<SpectralGridTables<'_>> {
+    pub(super) fn spectral_grid_tables(&self, main: &Table) -> MsResult<SpectralGridTables<'_>> {
         let windows = self.spectral_window.read_using(CellReads::Published, || {
             MeasurementSet::linked_subtable_paths(main, SubtableId::SpectralWindow)
         })?;
-        let field_reads = if refresh_field {
-            CellReads::Published
-        } else {
-            CellReads::Descriptor
-        };
-        let fields = self.field.read_using(field_reads, || {
+        let fields = self.field.read_using(CellReads::Published, || {
             MeasurementSet::linked_subtable_paths(main, SubtableId::Field)
         })?;
         Ok(SpectralGridTables { windows, fields })
