@@ -453,6 +453,55 @@ def compare_antenna_horizontal_axes(root, native):
         np.testing.assert_array_equal(table.getcol("RECEPTOR_ANGLE"), angles)
 
 
+def compare_same_epoch_antenna_geometry(root, native):
+    work = root / "antenna-horizontal-same-epoch"
+    work.mkdir()
+    source, _ = make_horizontal_fixture(work)
+    vis = work / "same-epoch.ms"
+    with opened(source) as table:
+        fields = table.getcol("FIELD_ID")
+        times = table.getcol("TIME")
+        first, second = [min(times[fields == field]) for field in (0, 1)]
+        keep = ((fields == 0) & (times == first)) | ((fields == 1) & (times == second))
+        selected = table.selectrows(np.flatnonzero(keep).tolist())
+        try:
+            selected.copy(str(vis), deep=True, valuecopy=True).close()
+        finally:
+            selected.close()
+    with opened(vis, True) as table:
+        for column in ("TIME", "TIME_CENTROID"):
+            table.putcol(column, np.full(table.nrows(), first))
+    before = snapshot(vis)
+    options = controls(vis) | dict(xaxis="channel", yaxis="ant-elevation", field="",
+                                   antenna="A0&A1;A0&A2", spw="0:1~3", expformat="txt")
+    expected, actual = (work / f"together.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    assert native(**options, plotfile=str(actual)) is None
+    joint_casa, joint_native = rows(expected), rows(actual)
+    assert len(joint_casa) == len(joint_native) == 30
+    assert {point[9] for point in joint_native} == {f"{first:.3f}"}
+    isolated = []
+    cached = []
+    for field in ("0", "1"):
+        separate = work / f"field-{field}.casa.txt"
+        assert reference(**(options | dict(field=field)), plotfile=str(separate)) is None
+        selected = rows(separate)
+        native_field = [point for point in joint_native if point[4] == field]
+        assert len(native_field) == len(selected) == 15
+        for actual_point, expected_point in zip(native_field, selected, strict=True):
+            assert (actual_point[0], actual_point[2:]) == (expected_point[0], expected_point[2:])
+        isolated.append([float(point[1]) for point in selected])
+        cached.append([float(point[1]) for point in joint_casa if point[4] == field])
+        np.testing.assert_allclose([float(point[1]) for point in native_field], isolated[-1],
+                                   rtol=1.2e-5, atol=1e-7)
+    np.testing.assert_allclose([values[0] for values in isolated], [82.98457, 75.14170],
+                               rtol=1.2e-5)
+    np.testing.assert_array_equal(cached, [isolated[0], isolated[0]])
+    verify_source(vis, before)
+    print("equal-time-fields: 30 native points agree with the separate CASA selections; "
+          "CASA reuses the first field's coordinates in a joint selection", flush=True)
+
+
 def compare_flags_and_calibration(root, native, vis):
     base = controls(vis) | dict(xaxis="uwave", expformat="txt")
 
@@ -1114,7 +1163,7 @@ def main():
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes",
                                            "averaged-coordinates", "array-horizontal-axes",
-                                           "antenna-horizontal-axes"))
+                                           "antenna-horizontal-axes", "antenna-horizontal-same-epoch"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1135,6 +1184,8 @@ def main():
             compare_array_horizontal_axes(root, native)
         if args.only in (None, "antenna-horizontal-axes"):
             compare_antenna_horizontal_axes(root, native)
+        if args.only in (None, "antenna-horizontal-same-epoch"):
+            compare_same_epoch_antenna_geometry(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
