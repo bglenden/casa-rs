@@ -230,7 +230,7 @@ def compare_averaged_coordinates(root, native):
 
 
 def compare_wavelength_frame_selection(work, native):
-    from casars.tasks import TaskParameterError
+    from casars.tasks import TaskExecutionError
     from plotms_ms_spw_average_oracle import make_fixture as make_spw_fixture
 
     topo = make_spw_fixture(work)
@@ -260,7 +260,7 @@ def compare_wavelength_frame_selection(work, native):
                                [10 * float(row[10]) * 1e9 / SPEED_OF_LIGHT for row in points], rtol=1.2e-5)
     try:
         native(**selection, plotfile=str(actual))
-    except TaskParameterError as error:
+    except TaskExecutionError as error:
         assert "different native spectral frames require reporting-frame transforms (#1032)" in str(error)
     else:
         raise AssertionError("An unconverted mixed-frame wavelength export would use the wrong frequency")
