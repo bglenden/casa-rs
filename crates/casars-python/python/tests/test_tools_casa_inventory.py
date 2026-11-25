@@ -76,7 +76,7 @@ IMPLEMENTED["ms"] = {
     "iterorigin", "iteroriginold", "listhistory", "lister",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name",
     "ngetdata", "niterend", "niterinit", "niternext", "niterorigin", "nrow", "nrowold",
-    "open", "putdataold", "range", "rangeold", "reset", "select", "selectinit", "selectinitold", "selectold",
+    "open", "partition", "putdataold", "range", "rangeold", "reset", "select", "selectinit", "selectinitold", "selectold",
     "selectchannelold", "selectpolarizationold", "selecttaql", "sort",
     "statistics", "statisticsold", "statwt", "summary", "testconcatenate", "timesort", "uvsub", "virtconcatenate",
     "writehistory", "writehistory_batch",
