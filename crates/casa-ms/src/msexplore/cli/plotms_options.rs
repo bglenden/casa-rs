@@ -387,18 +387,21 @@ impl CliOptions {
     }
 
     fn supports_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
+        let raw = !self.plotms_averaging_active();
         let reductions = [self.avgtime.is_some(), self.avgantenna, self.avgspw];
         let unbinned_reduction = reductions.into_iter().filter(|&enabled| enabled).count() == 1
             && !(self.avgscan || self.avgfield || self.avgbaseline)
             && self.avgchannel.is_none_or(|width| width <= 1)
             && self.freqframe.is_none();
-        self.x_axis.is_some_and(MsAxis::is_visibility_math)
+        self.x_axis
+            .is_some_and(|axis| axis.is_visibility_math() || (raw && axis == MsAxis::Channel))
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis2.is_none()
             && (!self.plotms_extended_averaging() || unbinned_reduction)
             && (!self.scalar || self.avgchannel.is_none_or(|width| width <= 1))
             && self.iteraxis.is_none()
-            && self.color_by == MsColorAxis::None
+            && (self.color_by == MsColorAxis::None
+                || (raw && matches!(self.color_by, MsColorAxis::Scan | MsColorAxis::Correlation)))
             && columns[..2]
                 .iter()
                 .all(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
@@ -668,6 +671,16 @@ fn requested_ordinates(
 }
 
 /// Translate the CASA PlotMS spellings to the existing MS exploration request.
+fn plotms_symbol_size(task: &TaskInvocation<'_>) -> Result<Option<u32>, TaskFailure> {
+    // PlotMS applies size lists to the individual ordinate artists.
+    if matches!(task.value("symbolsize"), Some(ParameterValue::Array(_))) {
+        return Ok(None);
+    }
+    Ok(task
+        .optional_number("symbolsize")?
+        .map(|value| value as u32))
+}
+
 pub(super) fn options_from_plotms(
     task: &TaskInvocation<'_>,
     visibility_document: bool,
@@ -834,9 +847,7 @@ pub(super) fn options_from_plotms(
         title: text("title")?,
         xlabel: text("xlabel")?,
         ylabel: text("ylabel")?,
-        symbol_size: task
-            .optional_number("symbolsize")?
-            .map(|value| value as u32),
+        symbol_size: plotms_symbol_size(task)?,
         showlegend: task.flag("showlegend")?,
         legendposition: text("legendposition")?
             .map_or(Ok(MsLegendPosition::UpperRight), |value| {

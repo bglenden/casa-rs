@@ -4858,8 +4858,9 @@ fn build_generic_visibility_scatter(
 
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
-    let flagged_series =
-        show_flagged.then(|| ("flagged".into(), "Flagged".into(), "flagged".into()));
+    // Colorized PlotMS plots use the group's symbol for both visible masks.
+    let flagged_series = (show_flagged && spec.color_by == MsColorAxis::None)
+        .then(|| ("flagged".into(), "Flagged".into(), "flagged".into()));
     let mut ordinate_points = (use_ordinate_masks || metadata_pair.is_some())
         .then(plotms_ordinates::CollapsedPointMask::default);
     let mut projected_flags = Vec::new();
@@ -5415,11 +5416,10 @@ fn build_generic_visibility_scatter(
                         let (key, label) = group_for(point_row_slot, correlation);
                         visibility_columns.series_identity(spec, *y_index, &key, &label)
                     });
-                    let display_series = if displayed_flagged {
-                        flagged_series.as_ref()
-                    } else {
-                        projected_series.as_ref()
-                    };
+                    let display_series = flagged_series
+                        .as_ref()
+                        .filter(|_| displayed_flagged)
+                        .or(projected_series.as_ref());
                     let (series_key, series_label, color_group) = display_series.map_or(
                         (series_key, series_label, color_group),
                         |(key, label, color)| (key, label, color),
