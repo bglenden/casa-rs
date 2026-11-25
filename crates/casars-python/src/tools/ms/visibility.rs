@@ -104,7 +104,7 @@ impl VisibilityState {
         Ok(self.main.as_deref().expect("MAIN table was opened"))
     }
 
-    fn current_main(&mut self, path: &Path) -> PyResult<Arc<VisibilityMain>> {
+    pub(super) fn current_main(&mut self, path: &Path) -> PyResult<Arc<VisibilityMain>> {
         self.main(path)?;
         Ok(Arc::clone(
             self.main.as_ref().expect("MAIN table was opened"),
@@ -202,7 +202,7 @@ impl VisibilityMain {
         Ok(())
     }
 
-    fn verify_write_layout(&self, written: &BTreeSet<PathBuf>) -> PyResult<()> {
+    pub(super) fn verify_write_layout(&self, written: &BTreeSet<PathBuf>) -> PyResult<()> {
         if self.publication.iter().all(|source| {
             source.files.same_descriptor(source.stamp)
                 || (!written.is_empty()
@@ -520,7 +520,7 @@ impl AttachedMs {
             .iteration
             .as_ref()
             .is_some_and(|iteration| iteration.layout.is_some());
-        self.write_visibility_record(&link, &main, record, refresh_cursor)?;
+        self.write_visibility_records(&link, &main, &[record], refresh_cursor)?;
         Ok(true)
     }
 
@@ -542,35 +542,45 @@ impl AttachedMs {
         if self.legacy_selection.axes.needs_write_projection() {
             return Ok(false);
         }
-        let record = tool_visibility::VisibilityWriteRecord::new(
-            &main.table,
-            rows,
-            items,
-            tool_visibility::VisibilityWriteOptions::default(),
-        )
-        .map_err(runtime_error)?;
-        if record.column_names().len() != 0 {
-            self.write_visibility_record(&link, &main, record, false)?;
+        let baseline = self
+            .legacy_selection
+            .axes
+            .baseline_read
+            .as_ref()
+            .and_then(|read| read.write_grid(base.as_deref(), &self.legacy_selection));
+        let records =
+            tool_visibility::VisibilityWriteRecord::new_legacy(&main.table, rows, items, baseline)
+                .map_err(runtime_error)?;
+        if !records.is_empty() {
+            self.write_visibility_records(&link, &main, &records, false)?;
         }
         Ok(true)
     }
 
-    fn write_visibility_record(
+    fn write_visibility_records(
         &mut self,
         link: &MetadataLink,
         main: &VisibilityMain,
-        record: tool_visibility::VisibilityWriteRecord<'_>,
+        records: &[tool_visibility::VisibilityWriteRecord<'_>],
         refresh_cursor: bool,
     ) -> PyResult<()> {
-        let names = record.column_names().collect::<Vec<_>>();
-        let targets = main.write_targets(record.rows(), &names)?;
+        let mut targets = Vec::new();
+        for record in records {
+            let names = record.column_names().collect::<Vec<_>>();
+            targets.extend(
+                main.write_targets(record.rows(), &names)?
+                    .into_iter()
+                    .map(|target| (record, target)),
+            );
+        }
         let mut written = BTreeSet::new();
         let mut temporary = BTreeMap::new();
-        for target in &targets {
+        for (_, target) in &targets {
             if refresh_cursor {
                 written.insert(target.path.clone());
             }
-            if !self.write_locks.contains_key(&target.path) {
+            if !self.write_locks.contains_key(&target.path) && !temporary.contains_key(&target.path)
+            {
                 let lock =
                     TableWriteLock::acquire_to_reread(&target.path, 0).map_err(runtime_error)?;
                 temporary.insert(target.path.clone(), lock);
@@ -580,16 +590,16 @@ impl AttachedMs {
         main.verify_write_layout(&BTreeSet::new())?;
         let prepared = targets
             .into_iter()
-            .map(|target| {
+            .map(|(record, target)| {
                 let ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
                 let part = record
                     .prepare_part(&ms, target.rows.into_iter().collect(), target.names)
                     .map_err(runtime_error)?;
-                Ok((target.path, ms, part))
+                Ok((record, target.path, ms, part))
             })
             .collect::<PyResult<Vec<_>>>()?;
         self.visibility.main = None;
-        for (path, mut ms, part) in prepared {
+        for (record, path, mut ms, part) in prepared {
             let lock = self
                 .write_locks
                 .get_mut(&path)

@@ -244,6 +244,10 @@ impl BaselineGrid {
             .map(|&(slot, source)| (slot % self.baseline_count, source))
     }
 
+    pub(super) fn occupied_slots(&self) -> &[(usize, usize)] {
+        &self.occupied
+    }
+
     fn axis_entries(&self) -> impl Iterator<Item = ((i32, i32), usize)> + '_ {
         self.explicit_axis.iter().flatten().copied().chain(
             self.baselines

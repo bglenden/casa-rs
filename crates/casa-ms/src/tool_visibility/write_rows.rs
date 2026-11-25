@@ -19,6 +19,9 @@ use crate::write_session::{
 };
 use crate::{MeasurementSet, MsError, MsResult};
 
+mod legacy;
+pub use legacy::LegacyVisibilityWriteGrid;
+
 /// The baseline-axis layout established by `getdata` for a visibility write.
 #[derive(Clone, Copy, Default)]
 pub struct VisibilityWriteOptions<'a> {

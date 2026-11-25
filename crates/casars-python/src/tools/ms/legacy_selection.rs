@@ -39,6 +39,10 @@ impl LegacySelection {
         self.rows.as_deref()
     }
 
+    pub(super) fn shared_rows(&self) -> Option<Arc<[usize]>> {
+        self.rows.clone()
+    }
+
     pub(super) fn channel_count(&self) -> usize {
         self.initial.as_ref().map_or(0, |initial| initial.channels)
     }

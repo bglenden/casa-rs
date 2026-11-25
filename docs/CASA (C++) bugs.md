@@ -11450,6 +11450,19 @@ casa-rs rejects the sampled baseline-axis record before
 mutation. A fresh read with `increment=1` supplies a complete writable
 grid (#1030).
 
+## Legacy baseline writes can modify omitted rows and discard the first row
+
+Read a baseline-axis record with `ms.getdataold(..., ifraxis=True,
+increment=2)` and write it with `ms.putdataold()`. CASA 6.7.6.14 can
+write the first contiguous rows instead of the rows selected by the
+stride. Its baseline-axis FLAG_ROW, WEIGHT, and SIGMA writeback also
+skips the first row because the inverse mapping tests `row > 0`.
+On the stock fixture the first physical WEIGHT and SIGMA cells become
+zero even though the supplied baseline record contains nonzero values.
+Casa-rs writes only the occupied slots of the captured row projection,
+including physical row zero, and rejects a baseline record after that
+projection changes (#1030).
+
 ## Observed MS statistics take inverse squares of the stored weights
 
 For weighted observed `DATA` and `FLOAT_DATA` statistics, CASA 6.7.6.14's
