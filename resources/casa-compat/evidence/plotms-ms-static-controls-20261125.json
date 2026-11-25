@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "90540c4b3dd39805d1c629345fe41f495030e937",
+  "source_revision": "90540c4b3dd39805d1c629345fe41f495030e937",
+  "provider_source_revision": "3f072bee80e8f6f757e6caf78aea21fa285e2766",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_static_controls_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "scope": "Public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on the fixed Columns MS. One selected export and one mocked Matplotlib display. Five default-only controls, both invalid index diagnostics, no DISPLAY, disabled selection and disabled averaging.",
+  "result": "passed",
+  "native_default_only_refusals": 5,
+  "paired_invalid_index_cases": 2,
+  "headless_coordinates": 12,
+  "unfiltered_coordinates": 1800,
+  "disabled_averaging_coordinates": 12,
+  "mocked_figure_displays": 1
+}
