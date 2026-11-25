@@ -186,8 +186,9 @@ pub fn task_front_end_with_plot_payload(
 }
 
 /// Load transient PlotMS calibration from the user's callibrary entries.
+/// The final argument requests channel weighting for independent ordinates.
 pub type PlotMsCalibrationLoader =
-    fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
+    fn(&MeasurementSet, &MsSelection, &[String], bool) -> Result<PlotMsCalibration, TaskFailure>;
 
 /// Iterator references for averaging virtual model cells. Both slot
 /// slices are indexed by input selection slot and contain slots in that same
@@ -281,11 +282,14 @@ fn run_task(
             })
             .transpose()?;
         let iterated_averaging = options.supports_averaged_ordinate_iteration();
+        let calibrated_ordinates = calibration.is_some()
+            && atmosphere.is_none()
+            && options.supports_calibrated_ordinates();
         if options.iteraxis.is_some()
             && options.y_axis2.is_some()
             && ((options.plotms_averaging_active() && !iterated_averaging)
                 || options.has_mixed_ordinate_dimensions()
-                || calibration.is_some()
+                || (calibration.is_some() && !calibrated_ordinates)
                 || atmosphere.is_some())
         {
             return Err(TaskFailure::validation(
@@ -307,7 +311,10 @@ fn run_task(
                 ));
             }
         }
-        if calibration.is_some() && options.secondary_y_data_column.is_some() {
+        if calibration.is_some()
+            && options.secondary_y_data_column.is_some()
+            && !calibrated_ordinates
+        {
             return Err(TaskFailure::validation(
                 "independent ordinate columns with a MeasurementSet callibrary are pending #1032",
             ));
@@ -321,40 +328,13 @@ fn run_task(
                 "MeasurementSet FLOAT_DATA with a callibrary is pending #1032",
             ));
         }
-        let columns = options.plotms_axis_columns();
-        let row_identifier_axes = [options.x_axis, options.y_axis]
-            .into_iter()
-            .flatten()
-            .any(MsAxis::is_row_identifier);
-        if calibration.is_none() && (columns.is_some() || row_identifier_axes) {
-            if let Some(columns) = columns {
-                plotms_columns::check_averaging(
-                    options.plotms_averaging_active(),
-                    options.plotms_extended_averaging()
-                        && options.secondary_y_data_column.is_some()
-                        && !iterated_averaging
-                        && !options.plotms_independent_average(
-                            atmosphere.is_none()
-                                && (options.avgspw || !options.additional_ordinates.is_empty()),
-                        ),
-                    options.supports_channel_derived(columns)
-                        || options.supports_extended_derived(columns),
-                    columns,
-                )?;
-            }
-            let symbols = task.value("customflaggedsymbol");
-            let ordinate_count =
-                1 + usize::from(options.y_axis2.is_some()) + options.additional_ordinates.len();
-            if (0..ordinate_count)
-                .any(|index| super::calibration::figure::shows_flagged(symbols, index))
-                && !columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns))
-            {
-                return Err(TaskFailure::validation(
-                    "displaying flagged points for this MeasurementSet column plot is pending #1032",
-                )
-                .at("customflaggedsymbol"));
-            }
-        }
+        options.validate_plotms_columns(
+            task,
+            calibration.is_some(),
+            calibrated_ordinates,
+            atmosphere.is_some(),
+            iterated_averaging,
+        )?;
         if visibility_document {
             return run_visibility_plot(
                 task,
@@ -508,19 +488,15 @@ fn run_visibility_plot(
     let calibrated = calibration
         .as_ref()
         .map(|(load, _)| {
-            let mut input = load(&ms, &options.selection, library)?;
+            let channel_weighting = options.secondary_y_data_column.is_some()
+                && options.avgchannel.is_some_and(|width| width > 1);
+            let mut input = load(&ms, &options.selection, library, channel_weighting)?;
             input.x_data_column = options.x_data_column;
             Ok::<_, TaskFailure>(input)
         })
         .transpose()?;
     let show = task.flag("showgui")?;
-    let format = task.text("expformat")?.filter(|ext| !ext.is_empty());
-    let is_text = output.is_some_and(|path| {
-        format
-            .as_deref()
-            .or_else(|| path.extension().and_then(std::ffi::OsStr::to_str))
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
-    });
+    let is_text = super::plotms_text::requests_text(task, output)?;
     let text_file = output.filter(|_| is_text);
     let figure_file = output.filter(|_| !is_text);
     let mut plots = Vec::new();
@@ -528,7 +504,9 @@ fn run_visibility_plot(
         let spec = build_explore_spec(&options, pointing.is_some(), true)
             .map_err(TaskFailure::validation)?;
         let payload = match &calibrated {
-            Some(input) => build_calibrated_plotms_payload(&ms, &spec, input),
+            Some(input) => {
+                build_calibrated_plotms_payload(&ms, &spec, input, options.secondary_y_data_column)
+            }
             None => build_uncalibrated_plotms_payload(
                 &ms,
                 &spec,
@@ -571,7 +549,7 @@ fn run_visibility_plot(
                 show,
                 &overlays,
                 axis_columns
-                    .filter(|_| calibrated.is_none())
+                    .filter(|_| calibrated.is_none() || options.secondary_y_data_column.is_some())
                     .map(|columns| super::plotms_figure::VisibilityAxisColumns {
                         base: columns,
                         secondary_axis: options.y_axis2,
@@ -591,7 +569,11 @@ fn run_visibility_plot(
                 path,
                 library,
                 &overlays,
-                &spec.plots[0].y_axes,
+                super::plotms_text::ExportAxes {
+                    ordinates: &spec.plots[0].y_axes,
+                    channel_major: calibrated.is_none()
+                        || options.secondary_y_data_column.is_some(),
+                },
             )?;
         }
     }

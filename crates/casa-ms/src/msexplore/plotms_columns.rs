@@ -313,7 +313,7 @@ pub(super) fn weight_kinds(
     let first = active.next();
     let all = first.is_some_and(|first| first.is_derived() || active.any(|column| column != first));
     let has_observed = all && has("DATA");
-    let has_corrected = all && has("CORRECTED_DATA");
+    let has_corrected = all && (has("CORRECTED_DATA") || input.rows.is_some());
     let primary = if has_observed {
         MsDataColumn::Data
     } else if has_corrected {

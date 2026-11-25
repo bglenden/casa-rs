@@ -457,7 +457,7 @@ pub(crate) struct PlotWeights {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PreviewWeightSource {
     UnitFactors,
-    FromSigma,
+    FromSigma { channel_weighting: bool },
 }
 
 /// Errors returned while executing an apply plan.
@@ -595,8 +595,14 @@ pub(crate) fn evaluate_apply_rows(
 pub(crate) fn evaluate_plot_rows(
     ms: &MeasurementSet,
     plan: &ApplyPlan,
+    channel_weighting: bool,
 ) -> Result<HashMap<usize, EvaluatedApplyRow>, ApplyExecutionError> {
-    evaluate_rows(ms, plan, false, PreviewWeightSource::FromSigma)
+    evaluate_rows(
+        ms,
+        plan,
+        false,
+        PreviewWeightSource::FromSigma { channel_weighting },
+    )
 }
 
 fn evaluate_rows(
@@ -654,26 +660,21 @@ fn for_each_apply_row(
     if !forward_model {
         columns.push(observed_column);
     }
-    let has_sigma_spectrum = if weight_source == PreviewWeightSource::FromSigma {
-        columns.push("SIGMA");
-        let first_row = plan.selected_rows.first().map(|row| row.row_index);
-        weights::has_spectrum(ms.main_table(), first_row, "SIGMA_SPECTRUM")?
-    } else {
-        false
+    let plot_weight_columns = match weight_source {
+        PreviewWeightSource::UnitFactors => None,
+        PreviewWeightSource::FromSigma { channel_weighting } => Some(weights::plot_weight_columns(
+            ms.main_table(),
+            plan.selected_rows.first().map(|row| row.row_index),
+            &mut columns,
+            channel_weighting,
+        )?),
     };
-    if has_sigma_spectrum {
-        columns.push("SIGMA_SPECTRUM");
-    }
     let read_error = |source| ApplyExecutionError::MutateMeasurementSet {
         path: ms_path.clone(),
         source: MsError::from(source),
     };
     let mut readers = PreviewReaders::new(ms.main_table(), &columns).map_err(read_error)?;
     let data_index = (!forward_model).then_some(1);
-    let sigma_slots = columns
-        .iter()
-        .position(|&name| name == "SIGMA")
-        .map(|slot| (slot, has_sigma_spectrum.then_some(slot + 1)));
     let batch_rows = preview_batch_rows(plan, &correlation_types_by_ddid);
     let mut arrays = Vec::new();
     let mut geometry_cache = RowGeometryCache::default();
@@ -749,8 +750,8 @@ fn for_each_apply_row(
         } else {
             data
         };
-        let plot_weights = sigma_slots
-            .map(|slots| read_plot_weights(read, slots))
+        let plot_weights = plot_weight_columns
+            .map(|columns| columns.read(read, data.shape()))
             .transpose()?;
         if !availability::available(row, plan) {
             if plan.apply_mode == ApplyMode::Trial {
@@ -789,11 +790,8 @@ fn for_each_apply_row(
                 original_weight_spectrum: plot_weights
                     .as_ref()
                     .and_then(|weights| weights.spectrum.as_ref()),
-                has_weight_spectrum: if plot_weights.is_some() {
-                    has_sigma_spectrum
-                } else {
-                    any_calwt
-                },
+                has_weight_spectrum: plot_weight_columns
+                    .map_or(any_calwt, weights::PlotWeightColumns::has_spectrum),
                 preserved_corrected_data: None,
                 preserved_weight_spectrum: None,
                 channel_grid: None,
@@ -932,19 +930,6 @@ fn shared_channel_flags(flags: &ArrayValue) -> Option<ArrayValue> {
         }
     }
     Some(ArrayValue::Bool(flags))
-}
-
-fn read_plot_weights<'a>(
-    read_array: impl Fn(usize) -> Result<&'a ArrayValue, ApplyExecutionError>,
-    (scalar, spectrum): (usize, Option<usize>),
-) -> Result<PlotWeights, ApplyExecutionError> {
-    let read = |slot, name| weights::from_sigma(read_array(slot)?.clone(), name);
-    Ok(PlotWeights {
-        scalar: read(scalar, "SIGMA")?,
-        spectrum: spectrum
-            .map(|slot| read(slot, "SIGMA_SPECTRUM"))
-            .transpose()?,
-    })
 }
 
 /// Plan and execute calibration application against an on-disk MeasurementSet.

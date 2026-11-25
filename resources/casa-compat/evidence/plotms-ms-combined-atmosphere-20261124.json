@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "1ea9e9a24e2b8843d31048c2731308665264fec8",
+  "source_revision": "1ea9e9a24e2b8843d31048c2731308665264fec8",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --only combined --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Static atmospheric overlays for two independent visibility ordinates with a virtual model and sparse selected channels, and after spectral-window averaging. Includes atmosphere and sky precedence and image-only controls.",
+  "result": "passed",
+  "text_exports": 4,
+  "directly_paired_exports": 3,
+  "points": 104,
+  "component_reference_points": 36,
+  "maximum_overlay_nrms": 2.75128e-05
+}
