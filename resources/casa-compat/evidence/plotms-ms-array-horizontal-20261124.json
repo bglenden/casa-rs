@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "0f6649e2cb413b62e9f853ef36e54a6dac819209",
+  "source_revision": "0f6649e2cb413b62e9f853ef36e54a6dac819209",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only array-horizontal-axes --work <new-dir> --native-bin <msexplore>",
+  "scope": "Channel versus array azimuth, elevation, hour angle and parallactic angle on the reversed two-field metadata MS. The selection contains two baselines, one fully flagged channel and one channel clear only on the second baseline. A first equatorial antenna exercises the array mount.",
+  "result": "passed",
+  "baseline_result": "Main routes the compound antenna expression through the legacy selector and refuses it.",
+  "text_exports": 5,
+  "points": 120,
+  "figures": 2,
+  "rendered_coordinates": 48,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "refusal_cases": 1
+}
