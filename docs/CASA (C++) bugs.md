@@ -11211,6 +11211,21 @@ same field selection.
 [Pinned PlotMS iterator setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 [Pinned phase-shifting iterator](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/PhaseShiftingTVI.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 
+## PlotMS can close its server on text export from an offset row
+
+In CASA 6.7.6.14 with casaplotms 2.9.1, put a Channel versus Amp
+MeasurementSet plot in a two-by-two grid with `rowindex=1`,
+`colindex=0` and `iteraxis="scan"`. The pinned PNG places the first
+two scans in the lower row and advances the other scans to the next
+page. The equivalent TXT call terminates the server and reports
+`UNAVAILABLE` with a closed socket. Field and correlation iteration
+show the same offset behavior.
+
+casa-rs writes the selected coordinates to text. The paired test uses
+the centered CASA grid to compare the numeric text and the active
+offset CASA PNGs to check pagination and placement (#1032).
+[Pinned export action](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Actions/ActionExport.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+
 ## PlotMS SPW averaging can repeat the first window's channel selection
 
 In CASA 6.7.6.14 with casaplotms 2.9.1, select `spw="0:0,1:2"`

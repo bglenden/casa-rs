@@ -307,6 +307,7 @@ def make_horizontal_fixture(work):
 
 def compare_array_horizontal_axes(root, native):
     from casars.tasks import TaskParameterError
+    from plotms_ms_iteration_axes_oracle import compare_case
 
     work = root / "array-horizontal-axes"
     work.mkdir()
@@ -376,19 +377,16 @@ def compare_array_horizontal_axes(root, native):
     name = "array-correlation-iteration"
     options = base | dict(yaxis="elevation", iteraxis="corr", correlation="XX,YY",
                           gridcols=2, exprange="all")
-    expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
-    assert reference(**options, plotfile=str(expected)) is None
-    selected = rows(expected)
-    assert len(selected) == 60 and {row[12] for row in selected} == {"XX", "YY"}
-    assert {row[2] for row in selected} == {"1", "2", "3"}
-    try:
-        native(**options, plotfile=str(actual))
-    except TaskParameterError as error:
-        assert "correlation iteration with array horizontal axes" in str(error) and "#1032" in str(error)
-    else:
-        raise AssertionError("casa-rs accepted array correlation iteration and could export a partial result")
-    assert not list(work.glob(f"{name}.native*.txt"))
-    print(f"{name}: pinned CASA result and native refusal before export", flush=True)
+    xx, yy = compare_case(work, native, name, options, "Corr", ("XX", "YY"), [24, 36])
+    assert {(point[2], point[12]) for point in xx} == {("1", "XX"), ("3", "XX")}
+    assert {(point[2], point[12]) for point in yy} == {("1", "YY"), ("2", "YY"), ("3", "YY")}
+
+    options = base | dict(yaxis="elevation", iteraxis="antenna")
+    left, first, second = compare_case(work, native, "array-antenna-iteration", options, "Antenna",
+                                      ("A0@P0", "A1@P1", "A2@P2"), [47, 23, 24])
+    assert {tuple(point[5:7]) for point in left} == {("0", "1"), ("0", "2")}
+    assert {tuple(point[5:7]) for point in first} == {("0", "1")}
+    assert {tuple(point[5:7]) for point in second} == {("0", "2")}
 
     compare_metadata_flag_modes(work, native, base | dict(yaxis="elevation"), "array-symbols",
                                 (24, 36, 12), ("Marked metadata", "Channel", "Elevation (deg)"))

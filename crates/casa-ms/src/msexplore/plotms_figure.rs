@@ -54,14 +54,7 @@ pub(super) fn prepare(
     if let Some(columns) = columns {
         label_and_group_ordinates(task, &mut document, payload, [x, y], second, columns)?;
     }
-    if let Some(grid) = grid
-        && second.is_none()
-        && grid.iteraxis == MsIterationAxis::Scan
-        && ([x, y] == [MsAxis::Time, MsAxis::Row]
-            || x.is_pointing()
-            || y.is_pointing()
-            || plotms_row_axes::metadata_coordinate_pair(x, y).is_some())
-    {
+    if let Some(grid) = grid {
         label_iteration_panels(task, &mut document, grid)?;
     }
     document.show_legend = task.flag("showlegend")?;
@@ -181,7 +174,6 @@ fn label_and_group_ordinates(
             for (panel, plot) in document.panels.iter_mut().zip(&grid.panels) {
                 group(&mut panel.axes, &mut panel.layers, &plot.series);
             }
-            label_iteration_panels(task, document, grid)?;
             if task.flag("xsharedaxis")? {
                 unite_panel_bounds(document, "x");
             }
@@ -205,7 +197,11 @@ fn label_iteration_panels(
     let iteration = iteration_name(grid.iteraxis);
     for (panel, plot) in document.panels.iter_mut().zip(&grid.panels) {
         let label = iteration_value(grid.iteraxis, plot);
-        panel.title = format!("{title} {iteration}: {label}");
+        panel.title = if grid.iteraxis == MsIterationAxis::Time {
+            format!("{title} : {label}")
+        } else {
+            format!("{title} {iteration}: {label}")
+        };
         panel.title_font_size = (font > 0).then(|| font.to_string());
     }
     Ok(())
@@ -608,11 +604,6 @@ fn paginate(
         let labels = grid.panels[start..end]
             .iter()
             .map(|panel| iteration_value(grid.iteraxis, panel));
-        if offset != 0 {
-            for (panel, scan) in document.panels.iter_mut().zip(labels.clone()) {
-                panel.title = format!("{} Scan: {scan}", document.title);
-            }
-        }
         let axis = if reuse_first_canvas {
             ""
         } else {
@@ -670,14 +661,14 @@ pub(super) fn requested_grid(task: &TaskInvocation<'_>) -> Result<[u32; 2], Task
 pub(super) fn static_grid(
     task: &TaskInvocation<'_>,
     iterated: bool,
-    offset_scan_grid: bool,
+    offset_grid: bool,
 ) -> Result<Option<PlotLayout>, TaskFailure> {
     let [rows, columns] = requested_grid(task)?;
     let [row, column] = requested_position(task)?;
     if row >= rows || column >= columns {
         return Err(TaskFailure::validation("row/col index out of range"));
     }
-    if iterated && [row, column] != [0, 0] && !offset_scan_grid {
+    if iterated && [row, column] != [0, 0] && !offset_grid {
         return Err(TaskFailure::validation(
             "nondefault grid placement with PlotMS iteration is pending #1032",
         ));

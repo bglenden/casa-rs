@@ -31,7 +31,8 @@
         "paired",
         "ms-static-grid-placement",
         "ms-iterated-visibility-ordinates",
-        "ms-averaged-iterated-visibility-ordinates"
+        "ms-averaged-iterated-visibility-ordinates",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "pages"
@@ -44,7 +45,8 @@
         "paired",
         "ms-static-grid-placement",
         "ms-iterated-grid-start",
-        "ms-averaged-iterated-visibility-ordinates"
+        "ms-averaged-iterated-visibility-ordinates",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "pages"
@@ -52,10 +54,11 @@
       "status": "Implemented"
     },
     "rowindex": {
-      "scope": "Choose the zero-based row of a single noniterated MeasurementSet visibility plot.",
+      "scope": "Choose the zero-based row for a noniterated MeasurementSet visibility plot or the opening cell of a supported iteration. A five-scan page can start in the lower row of a two-by-two grid.",
       "evidence": [
         "ms-static-grid-placement",
-        "remaining"
+        "remaining",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "pages"
@@ -63,11 +66,12 @@
       "status": "Partial"
     },
     "colindex": {
-      "scope": "Choose the zero-based column of a single noniterated MeasurementSet visibility plot. A Time versus observed amplitude scan sequence can start in the right cell of a one-row two-column grid.",
+      "scope": "Choose the zero-based column for a noniterated MeasurementSet visibility plot or the opening cell of a supported iteration. A Time versus observed amplitude sequence can start in the right cell of a one-row two-column grid.",
       "evidence": [
         "ms-static-grid-placement",
         "remaining",
-        "ms-iterated-grid-start"
+        "ms-iterated-grid-start",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "pages"
@@ -125,7 +129,8 @@
         "ms-static-metadata-coordinates",
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
-        "ms-phasecenter-compositions"
+        "ms-phasecenter-compositions",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "coordinates"
@@ -243,7 +248,8 @@
         "ms-pointing-list-controls",
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
-        "ms-phasecenter-compositions"
+        "ms-phasecenter-compositions",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "coordinates"
@@ -450,7 +456,8 @@
         "ms-per-antenna-export",
         "ms-compound-selection",
         "ms-antenna-time-window-correlation-shapes",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "selection"
@@ -745,7 +752,8 @@
         "ms-baseline-visibility-ordinate-lists",
         "ms-virtual-antenna-baseline-models",
         "ms-time-averaged-statistics",
-        "ms-combined-spw-baseline-antenna-ids"
+        "ms-combined-spw-baseline-antenna-ids",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "averaging"
@@ -770,7 +778,8 @@
         "ms-time-averaged-statistics",
         "ms-time-antenna-spw-flag-symbols",
         "ms-antenna-time-window-correlation-shapes",
-        "ms-combined-spw-baseline-antenna-ids"
+        "ms-combined-spw-baseline-antenna-ids",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "averaging"
@@ -796,7 +805,8 @@
         "ms-time-averaged-statistics",
         "ms-time-antenna-spw-flag-symbols",
         "ms-effective-float-averages",
-        "ms-combined-spw-baseline-antenna-ids"
+        "ms-combined-spw-baseline-antenna-ids",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "averaging"
@@ -939,7 +949,7 @@
       ]
     },
     "iteraxis": {
-      "scope": "The axis over which to iterate. Unaveraged MeasurementSet correlation, scan and field panels can each have multiple visibility ordinates. Static correlation, scan and field panels also accept supported channel and ordinary time-averaged visibility ordinate lists. Supported SPW averages with stored and virtual ordinates can iterate by scan, field and correlation. Scan iteration supports the channel-axis DATA and CORRECTED ordinate pair with a callibrary. Scan iteration supports unaveraged Time and Row metadata coordinates. The Channel/Frequency and Elevation/Time metadata pairs also support scan iteration. Scan iteration also preserves the raw antenna direction coordinates in each selected scan panel.",
+      "scope": "The axis over which to iterate. Unaveraged MeasurementSet correlation, scan and field panels can each have multiple visibility ordinates. Static correlation, scan and field panels also accept supported channel and ordinary time-averaged visibility ordinate lists. Supported SPW averages with stored and virtual ordinates can iterate by scan, field and correlation. Scan iteration supports the channel-axis DATA and CORRECTED ordinate pair with a callibrary. Scan iteration supports unaveraged Time and Row metadata coordinates. The Channel/Frequency and Elevation/Time metadata pairs also support scan iteration. Scan iteration also preserves the raw antenna direction coordinates in each selected scan panel. Unaveraged panels also iterate by antenna, baseline, time and spectral window. Antenna iteration includes both endpoints of each selected baseline. Spectral-window iteration after an unbinned spectral-window reduction uses the output window. Channel versus array Elevation uses an independent collapsed flag mask for each selected correlation.",
       "evidence": [
         "paired",
         "ms-iterated-grid-start",
@@ -950,7 +960,8 @@
         "ms-unaveraged-row-axes",
         "ms-static-metadata-coordinates",
         "ms-pointing-sample-masks-and-pages",
-        "ms-phasecenter-compositions"
+        "ms-phasecenter-compositions",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "pages"
@@ -1346,7 +1357,8 @@
       "scope": "Name of plot file to save automatically",
       "evidence": [
         "paired",
-        "ms-per-antenna-export"
+        "ms-per-antenna-export",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "export"
@@ -1366,7 +1378,8 @@
         "ms-pointing-list-controls",
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
-        "ms-phasecenter-compositions"
+        "ms-phasecenter-compositions",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "export"
@@ -1386,14 +1399,15 @@
       "status": "Implemented"
     },
     "exprange": {
-      "scope": "Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. MeasurementSet TXT export includes the visible first-page panels. PNG exports the current page or each page with its iteration labels and page number. Supported averaged visibility lists use the same first-page TXT and multipage PNG behavior. Iterated spectral-window visibility averages use the static PlotMS page filenames.",
+      "scope": "Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. MeasurementSet TXT export includes the visible first-page panels. PNG exports the current page or each page with its iteration labels and page number. Supported averaged visibility lists use the same first-page TXT and multipage PNG behavior. Iterated spectral-window visibility averages use the static PlotMS page filenames. Pinned TXT can close the server when row zero is empty. Native exports the selected first-page capacity, compared with the centered CASA numeric control, and matches the offset CASA PNG pages.",
       "evidence": [
         "paired",
         "ms-static-grid-placement",
         "ms-iterated-grid-start",
         "ms-iterated-visibility-ordinates",
         "ms-averaged-iterated-visibility-ordinates",
-        "ms-spw-iteration-and-ordinate-order"
+        "ms-spw-iteration-and-ordinate-order",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "behaviors": [
         "pages"
@@ -1638,11 +1652,12 @@
       "id": "presentation",
       "title": "Render the shared plot document",
       "status": "Partial",
-      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs.",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time.",
       "evidence": [
         "paired",
         "calibration-controls",
-        "ms-raw-flag-symbols"
+        "ms-raw-flag-symbols",
+        "ms-iteration-axes-and-offset-pages"
       ],
       "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
     },
@@ -3288,6 +3303,22 @@
         "https://github.com/bglenden/casa-rs/pull/2311",
         "https://github.com/bglenden/casa-rs/pull/2207",
         "https://github.com/bglenden/casa-rs/pull/2271"
+      ]
+    },
+    "ms-iteration-axes-and-offset-pages": {
+      "kind": "Same-input MeasurementSet iteration axes and offset pages",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Two-by-two MeasurementSet grids with a lower-row offset, five scans, reversed Field and Corr data, centered Spw, Antenna, Baseline and Time panels, and Channel versus array Elevation by correlation.",
+      "result": "Match 374 ordered TXT coordinates and 386 distinct rendered coordinates. The 15 PNG pairs cover current and full offset pages, ordered labels, occupied cells and 500 by 360 dimensions. Pinned row-offset TXT closes the plot server, so the numeric reference uses centered exports. Array Elevation retains 24 XX and 36 YY coordinates with independent correlation masks. Reversed Field preserves channel-major order. Array Elevation by antenna retains 94 samples across the two selected baselines. Reversed scan order still produces reduced SPW panels in ascending window order. Time filenames label six integrations to four fractional-second digits. Vector baseline averaging turns antenna iteration off and SPW averaging gives one output window. Invalid placement and contradictory antenna/baseline averages preserve paired refusals and leave no output.",
+      "casa_version": "6.7.6.14",
+      "revision": "63981363ba31b2ebef6970a09e209bb05d14a8f0",
+      "source_revision": "63981363ba31b2ebef6970a09e209bb05d14a8f0",
+      "command": "casa-python tools/casa-compat/plotms_ms_iteration_axes_oracle.py --work <new-dir> --native-bin <msexplore> and casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only array-horizontal-axes --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-iteration-axes-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2313",
+        "https://github.com/bglenden/casa-rs/pull/2205",
+        "https://github.com/bglenden/casa-rs/pull/2292"
       ]
     }
   }
