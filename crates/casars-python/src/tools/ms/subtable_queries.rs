@@ -31,6 +31,20 @@ pub(super) struct Subtables {
 }
 
 impl Subtables {
+    pub(super) fn spectral_grid_tables(
+        &self,
+        main: &Table,
+        refresh_field: bool,
+    ) -> MsResult<(Ref<'_, [Table]>, Ref<'_, [Table]>)> {
+        let windows = self.spectral_window.read_using(true, || {
+            MeasurementSet::linked_subtable_paths(main, SubtableId::SpectralWindow)
+        })?;
+        let fields = self.field.read_using(refresh_field, || {
+            MeasurementSet::linked_subtable_paths(main, SubtableId::Field)
+        })?;
+        Ok((windows, fields))
+    }
+
     pub(super) fn read_range(
         &self,
         main: &Table,

@@ -20,7 +20,7 @@ def test_cvelfreqs_projects_the_requested_channel_axis(native_dataset, concat_ap
     assert defaults.dtype == np.float64
     np.testing.assert_array_equal(defaults, original)
     expected = (original[::2] + original[1::2]) / 2
-    for width in (2, 2.9):
+    for width in (2, 2.9, "2.9"):
         actual = ms.cvelfreqs(spwids=np.array([0], dtype=np.int32), width=width, verbose=False)
         np.testing.assert_array_equal(actual, expected)
     np.testing.assert_array_equal(ms.cvelfreqs(width=[2], verbose=False), original)
@@ -32,6 +32,11 @@ def test_cvelfreqs_projects_the_requested_channel_axis(native_dataset, concat_ap
         ms.cvelfreqs(spwids=[99], verbose=False)
     with pytest.raises(SystemError):
         ms.cvelfreqs(spwids=(0,), verbose=False)
+    with pytest.raises(SystemError):
+        ms.cvelfreqs(nchan=None, verbose=False)
+    with pytest.raises(TypeError, match="argument _nchan must be an integer"):
+        ms.cvelfreqs(nchan=2.5, verbose=False)
+    np.testing.assert_array_equal(ms.cvelfreqs(nchan=np.int32(2), verbose=False), original[:2])
     assert ms.close()
     assert ms.cvelfreqs(verbose=False).shape == (0,)
     assert table.open(str(native_dataset / "SPECTRAL_WINDOW"))

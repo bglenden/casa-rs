@@ -5,12 +5,12 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
-use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::frequency_conversion::PreparedFrequencyConversion;
 use casa_types::measures::position::MPosition;
+use casa_types::measures::{MeasFrame, MeasuresProvider};
 
 use crate::derived::engine::{MsCalEngine, detect_epoch_reference};
 use crate::spectral_selection::combine_windows;
@@ -69,6 +69,7 @@ pub fn tool_grid_frame_at_epoch(
     tables: ToolGridFrameTables<'_>,
     epoch: &MEpoch,
     phase: &ToolGridPhaseCentre,
+    measures: Arc<dyn MeasuresProvider>,
 ) -> Result<Option<MeasFrame>, MsTransformError> {
     let direction = match phase {
         ToolGridPhaseCentre::Direction(direction) => direction.clone(),
@@ -106,7 +107,6 @@ pub fn tool_grid_frame_at_epoch(
         linked_subtable_row(tables.antenna, 0, SubtableId::Antenna).map_err(ms_error)?;
     let [x, y, z] = MsAntenna::new(antenna).position(row).map_err(ms_error)?;
     let fallback = MPosition::new_itrf(x, y, z);
-    let measures = crate::open_measures_runtime().map_err(ms_error)?;
     let position =
         MPosition::casa_array_reference(telescope.as_deref(), Some(&fallback), measures.as_ref());
     Ok(Some(
@@ -128,8 +128,8 @@ pub fn tool_spectral_grid_frame(
     epoch: &MEpoch,
     phase: &ToolGridPhaseCentre,
     source_frame: bool,
+    measures: Arc<dyn MeasuresProvider>,
 ) -> Result<MeasFrame, MsTransformError> {
-    let measures = crate::open_measures_runtime().map_err(ms_error)?;
     let engine = MsCalEngine::with_measures(input, Arc::clone(&measures)).map_err(ms_error)?;
     let seconds = epoch
         .convert_to(
