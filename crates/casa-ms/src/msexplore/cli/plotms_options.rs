@@ -352,6 +352,21 @@ impl CliOptions {
             || self.avgantenna
             || self.avgspw
     }
+
+    fn validate_plotms_weight_averaging(&self) -> Result<(), TaskFailure> {
+        if (self.avgbaseline || self.avgantenna || self.avgspw || self.scalar)
+            && [self.x_axis, self.y_axis, self.y_axis2]
+                .into_iter()
+                .flatten()
+                .chain(self.additional_ordinates.iter().map(|&(axis, _)| axis))
+                .any(MsAxis::is_weight_axis)
+        {
+            return Err(TaskFailure::validation(
+                "Selected averaging does not yet support Weight and Sigma axes.",
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn raw_symbol_visibility(task: &TaskInvocation<'_>) -> RawSymbolVisibility {
@@ -587,16 +602,6 @@ pub(super) fn options_from_plotms(
         plot_output,
         plot_format,
     };
-    if (options.avgbaseline || options.avgantenna || options.avgspw || options.scalar)
-        && [Some(x_axis), Some(y_axis), y_axis2]
-            .into_iter()
-            .flatten()
-            .chain(options.additional_ordinates.iter().map(|&(axis, _)| axis))
-            .any(MsAxis::is_weight_axis)
-    {
-        return Err(TaskFailure::validation(
-            "Selected averaging does not yet support Weight and Sigma axes.",
-        ));
-    }
+    options.validate_plotms_weight_averaging()?;
     Ok((options, visibility_document))
 }
