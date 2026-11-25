@@ -1006,7 +1006,7 @@ def compare_time_averaged_flag_symbols(root, native):
             values[:, :, later] *= 1j
             table.putcol(name, values)
         flags = np.zeros_like(table.getcol("FLAG"))
-        flags[:, 2, ~later] = True
+        flags[:, 2, :] = ~later ^ (integration >= 4)
         flags[:, 3, :] = True
         table.putcol("FLAG", flags)
     before = snapshot(vis)
@@ -1044,6 +1044,8 @@ def compare_time_averaged_flag_symbols(root, native):
                 for slot in (0, 2):
                     np.testing.assert_allclose([float(value) for value in points[slot][:2]],
                                                first, rtol=1.2e-5)
+                if not scalar:
+                    np.testing.assert_allclose([float(value) for value in points[-2][:2]], [1, 10])
             assert native(**options, plotfile=str(actual), expformat="txt") is None
             assert compare_text(actual, expected) == len(points)
             print(f"{name}: {len(points)} matching time-averaged coordinates and flags", flush=True)
@@ -1069,6 +1071,7 @@ def compare_reduced_flag_symbols(root, native):
         flags[:, 2, first_window & first_baseline] = True
         flags[:, 3, :] = True
         table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", first_window & first_baseline)
         for name in ("DATA", "CORRECTED_DATA"):
             values = table.getcol(name)
             values *= np.where(first_baseline, 1, 2)
