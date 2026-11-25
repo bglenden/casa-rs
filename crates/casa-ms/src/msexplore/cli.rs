@@ -281,11 +281,12 @@ fn run_task(
             })
             .transpose()?;
         let iterated_averaging = options.supports_averaged_ordinate_iteration();
+        let calibrated_ordinates = calibration.is_some() && options.supports_calibrated_ordinates();
         if options.iteraxis.is_some()
             && options.y_axis2.is_some()
             && ((options.plotms_averaging_active() && !iterated_averaging)
                 || options.has_mixed_ordinate_dimensions()
-                || calibration.is_some()
+                || (calibration.is_some() && !calibrated_ordinates)
                 || atmosphere.is_some())
         {
             return Err(TaskFailure::validation(
@@ -307,7 +308,10 @@ fn run_task(
                 ));
             }
         }
-        if calibration.is_some() && options.secondary_y_data_column.is_some() {
+        if calibration.is_some()
+            && options.secondary_y_data_column.is_some()
+            && !calibrated_ordinates
+        {
             return Err(TaskFailure::validation(
                 "independent ordinate columns with a MeasurementSet callibrary are pending #1032",
             ));
@@ -528,7 +532,9 @@ fn run_visibility_plot(
         let spec = build_explore_spec(&options, pointing.is_some(), true)
             .map_err(TaskFailure::validation)?;
         let payload = match &calibrated {
-            Some(input) => build_calibrated_plotms_payload(&ms, &spec, input),
+            Some(input) => {
+                build_calibrated_plotms_payload(&ms, &spec, input, options.secondary_y_data_column)
+            }
             None => build_uncalibrated_plotms_payload(
                 &ms,
                 &spec,
@@ -571,7 +577,7 @@ fn run_visibility_plot(
                 show,
                 &overlays,
                 axis_columns
-                    .filter(|_| calibrated.is_none())
+                    .filter(|_| calibrated.is_none() || options.secondary_y_data_column.is_some())
                     .map(|columns| super::plotms_figure::VisibilityAxisColumns {
                         base: columns,
                         secondary_axis: options.y_axis2,

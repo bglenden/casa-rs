@@ -2804,7 +2804,8 @@ fn build_msexplore_payload_internal(
             input.secondary_y_data_column.is_some() || !input.additional_ordinates.is_empty()
         }),
         calibration.is_some_and(|input| input.pointing.is_some()),
-        calibration.is_some_and(|input| input.rows.is_none()),
+        calibration
+            .is_some_and(|input| input.rows.is_none() || input.secondary_y_data_column.is_some()),
     )?;
     if calibration.and_then(|input| input.time_bins).is_none()
         && spec.plots.iter().any(|plot| {
@@ -2970,6 +2971,7 @@ pub(crate) fn build_calibrated_plotms_payload(
     ms: &MeasurementSet,
     spec: &MsExploreSpec,
     calibration: &PlotMsCalibration,
+    secondary_y_data_column: Option<MsDataColumn>,
 ) -> Result<MsPlotPayload, String> {
     let input = PlotMsInput {
         row_order: &calibration.row_order,
@@ -2980,7 +2982,7 @@ pub(crate) fn build_calibrated_plotms_payload(
         rows: Some(&calibration.rows),
         models: None,
         x_data_column: calibration.x_data_column,
-        secondary_y_data_column: None,
+        secondary_y_data_column,
         additional_ordinates: &[],
         weight_axis_columns: [None; 3],
         prefer_float_data: false,
@@ -8157,7 +8159,7 @@ fn visibility_group(
 }
 
 fn iterates_plotms_ordinates(spec: &MsPlotSpec, input: Option<&PlotMsInput<'_>>) -> bool {
-    input.is_some_and(|input| input.rows.is_none())
+    input.is_some_and(|input| input.rows.is_none() || input.secondary_y_data_column.is_some())
         && spec.iteration.iteraxis.is_some()
         && spec.secondary_y_axis().is_some()
 }

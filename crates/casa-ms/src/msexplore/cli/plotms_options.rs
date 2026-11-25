@@ -81,6 +81,21 @@ impl CliOptions {
                     && self.supports_visibility_ordinate_averaging(false)))
     }
 
+    pub(super) fn supports_calibrated_ordinates(&self) -> bool {
+        self.secondary_y_data_column.is_some()
+            && self.additional_ordinates.is_empty()
+            && self.x_axis == Some(MsAxis::Channel)
+            && !self.has_mixed_ordinate_dimensions()
+            && !self.plotms_extended_averaging()
+            && !self.scalar
+            && self.freqframe.is_none()
+            && matches!(self.iteraxis, None | Some(MsIterationAxis::Scan))
+            && [Some(self.data_column), self.secondary_y_data_column]
+                .into_iter()
+                .flatten()
+                .all(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
+    }
+
     pub(super) fn supports_visibility_ordinate_averaging(&self, ordinary_only: bool) -> bool {
         let spans = self.avgscan || self.avgfield;
         let time_average = self.avgtime.is_some()
