@@ -692,7 +692,8 @@
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
         "ms-phasecenter-compositions",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-averaged-scan-field-colors"
       ],
       "behaviors": [
         "averaging"
@@ -719,7 +720,8 @@
         "ms-scalar-spanned-virtual-models",
         "ms-vector-spanned-virtual-models",
         "ms-virtual-spw-model-spans",
-        "ms-two-spw-visibility-ordinates"
+        "ms-two-spw-visibility-ordinates",
+        "ms-averaged-scan-field-colors"
       ],
       "behaviors": [
         "averaging"
@@ -744,7 +746,8 @@
         "ms-scalar-spanned-virtual-models",
         "ms-vector-spanned-virtual-models",
         "ms-virtual-spw-model-spans",
-        "ms-two-spw-visibility-ordinates"
+        "ms-two-spw-visibility-ordinates",
+        "ms-averaged-scan-field-colors"
       ],
       "behaviors": [
         "averaging"
@@ -791,7 +794,8 @@
         "ms-time-antenna-spw-flag-symbols",
         "ms-antenna-time-window-correlation-shapes",
         "ms-combined-spw-baseline-antenna-ids",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-averaged-scan-field-colors"
       ],
       "behaviors": [
         "averaging"
@@ -1099,11 +1103,12 @@
       "status": "Partial"
     },
     "coloraxis": {
-      "scope": "Selects data axis for colorizing. Coloring vector per-antenna visibility ordinate lists by a spanned scan or field is pending under #1032. Raw MeasurementSet visibility plots color the displayed clear and flagged samples by their selected scan or correlation. Without a color group, the custom flagged marker is visible as its own style. Distinct visible group colors also apply when the clear marker is customized.",
+      "scope": "Selects data axis for colorizing. Vector per-antenna time averages across scan or field boundaries use final reduced IDs to color the independent ordinates and their shared category legend. Raw MeasurementSet visibility plots color the displayed clear and flagged samples by their selected scan or correlation. Without a color group, the custom flagged marker is visible as its own style. Distinct visible group colors also apply when the clear marker is customized.",
       "evidence": [
         "paired",
         "ms-spanned-antenna-visibility-ordinate-lists",
-        "ms-marker-groups-and-connector-controls"
+        "ms-marker-groups-and-connector-controls",
+        "ms-averaged-scan-field-colors"
       ],
       "behaviors": [
         "presentation"
@@ -1712,7 +1717,7 @@
       "id": "presentation",
       "title": "Render the shared plot document",
       "status": "Partial",
-      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time. Static MeasurementSet iteration supports common per-side limits and shared grid labels. Time displays UTC clock and date ticks, and Channel bins label their averaging. Static fonts, grids and legend placement are paired with the pinned task. MeasurementSet figures apply independent marker styles to each ordinate and distinguish all three mesh categories. Connector controls preserve the same unconnected MeasurementSet figure as CASA. Static MeasurementSet headers use the selected table metadata and remain above the title on later exports.",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time. Static MeasurementSet iteration supports common per-side limits and shared grid labels. Time displays UTC clock and date ticks, and Channel bins label their averaging. Static fonts, grids and legend placement are paired with the pinned task. MeasurementSet figures apply independent marker styles to each ordinate and distinguish all three mesh categories. Connector controls preserve the same unconnected MeasurementSet figure as CASA. Static MeasurementSet headers use the selected table metadata and remain above the title on later exports. Static per-antenna vector time lists use final Scan or Field membership and the shared palette across ordinates.",
       "evidence": [
         "paired",
         "calibration-controls",
@@ -1720,7 +1725,8 @@
         "ms-iteration-axes-and-offset-pages",
         "ms-axis-ranges-clock-labels-and-style",
         "ms-marker-groups-and-connector-controls",
-        "ms-page-header-metadata"
+        "ms-page-header-metadata",
+        "ms-averaged-scan-field-colors"
       ],
       "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
     },
@@ -3446,6 +3452,22 @@
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2318",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Actions/ActionExport.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362"
+      ]
+    },
+    "ms-averaged-scan-field-colors": {
+      "kind": "Same-input MeasurementSet final averaged scan and field color groups",
+      "state": "passed",
+      "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Three independent real DATA/CORRECTED/MODEL ordinates with per-antenna time averaging. Toggle each scan and field span independently while coloring the final scan or field. Test one scan palette collision and retain the prior scalar, vector, channel and boundary controls.",
+      "result": "Five new cases each match 18 ordered coordinates, two categories and the palette across all three artists. Spanned Scan -1 and Scan 7 use teal and purple. Field 0 and Field 1 use charcoal and pink. Complementary controls retain the original IDs. Equal numeric palette indices use final cache order. All 13 previous span pairs and their channel-binned PNG control pass, for a total of 270 TXT coordinates and six PNG pairs.",
+      "casa_version": "6.7.6.14",
+      "revision": "9db09d3817046f2f93eadd6a9fb1129121535060",
+      "source_revision": "9db09d3817046f2f93eadd6a9fb1129121535060",
+      "command": "casa-python tools/casa-compat/plotms_ms_antenna_ordinates_oracle.py --only spans --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-averaged-scan-field-colors-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2319",
+        "https://github.com/bglenden/casa-rs/pull/2268",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/PlotMSIndexer.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362"
       ]
     }
   }

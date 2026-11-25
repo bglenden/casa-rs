@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "9db09d3817046f2f93eadd6a9fb1129121535060",
+  "source_revision": "9db09d3817046f2f93eadd6a9fb1129121535060",
+  "baseline_revision": "74df88680b08c066cbac7768e26472053e8de885",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_antenna_ordinates_oracle.py --only spans --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Three independent real DATA/CORRECTED/MODEL ordinates with per-antenna time averaging. Toggle each scan and field span independently while coloring the final scan or field. Test one scan palette collision and retain the prior scalar, vector, channel and boundary controls.",
+  "result": "passed",
+  "baseline_result": "Native refuses the two vector span requests colored by the spanned dimension and cycles extra colors for retained scan and field groups across three ordinates.",
+  "matched_text_coordinates": 270,
+  "new_text_coordinates": 90,
+  "png_pairs": 6,
+  "new_png_pairs": 5
+}
