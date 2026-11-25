@@ -142,6 +142,16 @@ fn retargeting_a_saved_view_preserves_cross_endian_visibility_cells() {
         std::fs::write(&bdf, encoded_cross_shorts(big_endian)).unwrap();
         let source = root.path().join("lazy");
         binding(&source, &bdf, big_endian, &[CROSS], 6);
+        let control = source.join("table.dat");
+        let mut descriptor = read_table_dat(&control).unwrap();
+        descriptor
+            .table_desc
+            .columns
+            .iter_mut()
+            .find(|column| column.col_name == "DATA")
+            .unwrap()
+            .data_manager_group = "DeclaredDataGroup".into();
+        write_table_dat(&control, &descriptor).unwrap();
         let read = |table: &Table| {
             table
                 .column_accessor("DATA")
