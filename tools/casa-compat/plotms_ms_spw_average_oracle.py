@@ -26,7 +26,8 @@ from plotms_ms_columns_oracle import (
 )
 
 
-def make_fixture(root, name="two-windows", *, antenna_count=2, channel_count=4, integrations=2):
+def make_fixture(root, name="two-windows", *, antenna_count=2, channel_count=4, integrations=2,
+                 stokes="XX YY"):
     vis = root / f"{name}.ms"
     ms, me = simulator(), measures()
     ms.open(str(vis))
@@ -38,7 +39,7 @@ def make_fixture(root, name="two-windows", *, antenna_count=2, channel_count=4, 
                  coordsystem="local", referencelocation=me.observatory("VLA"))
     for name, frequency in (("W0", "90GHz"), ("W1", "100GHz")):
         ms.setspwindow(spwname=name, freq=frequency, deltafreq="1MHz", freqresolution="1MHz",
-                       nchannels=channel_count, stokes="XX YY")
+                       nchannels=channel_count, stokes=stokes)
     ms.setfeed(mode="perfect X Y")
     ms.setfield(sourcename="FLUX", sourcedirection=me.direction("J2000", "12h00m00s", "40d00m00s"))
     ms.setauto(autocorrwt=0.0)
