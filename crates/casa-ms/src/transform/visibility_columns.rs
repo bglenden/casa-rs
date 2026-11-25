@@ -34,12 +34,13 @@ impl VisibilityColumns {
     pub(super) fn resolve(
         input: &MeasurementSet,
         selection: TransformDataColumn,
+        explicit: Option<&[OptionalMainColumn]>,
         path: &Path,
         view: Option<&dyn TransformInputView>,
     ) -> Result<Self, MsTransformError> {
         use OptionalMainColumn::{CorrectedData, Data, FloatData, LagData, ModelData};
 
-        let (sources, rename_to_data): (&[OptionalMainColumn], bool) = match selection {
+        let default: (&[OptionalMainColumn], bool) = match selection {
             TransformDataColumn::Data => (&[Data], false),
             TransformDataColumn::CorrectedData => (&[CorrectedData], true),
             TransformDataColumn::ModelData => (&[ModelData], true),
@@ -52,6 +53,9 @@ impl VisibilityColumns {
                 (&[Data, CorrectedData, ModelData, FloatData, LagData], false)
             }
         };
+        let (sources, rename_to_data) = explicit.map_or(default, |columns| {
+            (columns, matches!(columns, [CorrectedData | ModelData]))
+        });
         let contains = |column: OptionalMainColumn| {
             view.is_some_and(|view| view.provides(input, column.name()))
                 || input
@@ -68,7 +72,7 @@ impl VisibilityColumns {
             if contains(source) {
                 let output = if rename_to_data { Data } else { source };
                 columns.push(VisibilityCopy { source, output });
-            } else if selection != TransformDataColumn::All {
+            } else if explicit.is_some() || selection != TransformDataColumn::All {
                 return Err(missing(source));
             }
         }
@@ -80,6 +84,15 @@ impl VisibilityColumns {
 
     pub(super) fn copies(&self) -> &[VisibilityCopy] {
         &self.0
+    }
+
+    pub(super) fn promote_singleton_visibility(&mut self) {
+        use OptionalMainColumn::{CorrectedData, Data, ModelData};
+        if let [copy] = self.0.as_mut_slice()
+            && matches!(copy.source, CorrectedData | ModelData)
+        {
+            copy.output = Data;
+        }
     }
 
     pub(super) fn contains_output(&self, name: &str) -> bool {

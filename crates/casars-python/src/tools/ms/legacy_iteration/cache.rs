@@ -99,7 +99,7 @@ impl AttachedMs {
         if reusable_cache(&main, &captured.table, &output, options, cursor)? {
             return Ok(None);
         }
-        let destination = SortedDestination::inspect(&output)?;
+        let destination = SortedDestination::inspect(&output, "sorted")?;
         let _output_locks = if destination.is_table() {
             lock_table_tree_for_replacement_with_held(&output, &self.write_locks)
                 .map_err(runtime_error)?
@@ -127,7 +127,7 @@ impl AttachedMs {
         captured.verify_write_layout(&BTreeSet::new())?;
         let replaced_table = destination.is_table();
         let existed = output.exists();
-        destination.publish(staged, &output)?;
+        destination.publish(staged, &output, "sorted")?;
         main.keywords_mut().upsert(
             "SORT_COLUMNS",
             Value::Array(ArrayValue::String(

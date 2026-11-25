@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Route bounded column projections to the physical members of a concatenation.
+//! Route bounded column projections to the physical backing tables.
 
 use super::table_control::ConcatTableDatContents;
 use super::*;
@@ -104,37 +104,52 @@ impl CompositeStorage {
         Ok(values)
     }
 
-    pub(crate) fn load_array_shapes_for_concat(
+    pub(crate) fn load_array_shapes_for_projection(
         &self,
         table_path: &Path,
         column: &str,
         rows: &[usize],
     ) -> Result<Option<Vec<Option<Vec<usize>>>>, StorageError> {
-        let TableDatResult::Concat(concat) =
-            read_table_dat_dispatch(&table_path.join(TABLE_CONTROL_FILE))?
-        else {
+        let layout = read_table_dat_dispatch(&table_path.join(TABLE_CONTROL_FILE))?;
+        if matches!(layout, TableDatResult::Plain(_)) {
             return Ok(None);
-        };
-        let shapes = self.load_concat_rows(table_path, &concat, rows, |path, selected| {
-            let table = read_table_dat_dispatch(&path.join(TABLE_CONTROL_FILE))?;
-            match table {
-                TableDatResult::Plain(table_dat) => {
-                    let metadata = RetainedTableReadMetadata::open(path, table_dat)?;
-                    self.plain_array_cell_shapes_uncached(path, &metadata, column, selected)
-                }
-                TableDatResult::Concat(_) => self
-                    .load_array_shapes_for_concat(path, column, selected)?
-                    .ok_or_else(|| {
-                        StorageError::FormatMismatch(format!(
-                            "array shapes unavailable for {column}"
-                        ))
-                    }),
-                TableDatResult::Ref(_) => Err(StorageError::FormatMismatch(
-                    "metadata-only shapes are unavailable on a reference table".to_string(),
-                )),
+        }
+        self.load_array_shapes_in_layout(table_path, layout, column, rows)
+            .map(Some)
+    }
+
+    fn load_array_shapes_in_layout(
+        &self,
+        table_path: &Path,
+        layout: TableDatResult,
+        column: &str,
+        rows: &[usize],
+    ) -> Result<Vec<Option<Vec<usize>>>, StorageError> {
+        match layout {
+            TableDatResult::Plain(table_dat) => {
+                let metadata = RetainedTableReadMetadata::open(table_path, table_dat)?;
+                self.plain_array_cell_shapes_uncached(table_path, &metadata, column, rows)
             }
-        })?;
-        Ok(Some(shapes))
+            TableDatResult::Concat(concat) => {
+                self.load_concat_rows(table_path, &concat, rows, |path, selected| {
+                    let layout = read_table_dat_dispatch(&path.join(TABLE_CONTROL_FILE))?;
+                    self.load_array_shapes_in_layout(path, layout, column, selected)
+                })
+            }
+            TableDatResult::Ref(reference) => {
+                if !reference.column_names.iter().any(|name| name == column) {
+                    return Ok(vec![None; rows.len()]);
+                }
+                let parent = add_directory_for_link(&reference.parent_relative_path, table_path);
+                let layout = read_table_dat_dispatch(&parent.join(TABLE_CONTROL_FILE))?;
+                self.load_array_shapes_in_layout(
+                    &parent,
+                    layout,
+                    reference.parent_column(column),
+                    &reference.parent_rows(rows)?,
+                )
+            }
+        }
     }
 }
 

@@ -78,7 +78,7 @@ impl TableImpl {
         }
         if source.read_metadata.get().is_none()
             && let Some(shapes) =
-                CompositeStorage.load_array_shapes_for_concat(&source.path, column, rows)?
+                CompositeStorage.load_array_shapes_for_projection(&source.path, column, rows)?
         {
             return Ok(shapes);
         }

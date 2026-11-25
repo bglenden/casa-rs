@@ -564,6 +564,21 @@ mod tests {
             arrays[3],
             Some(ArrayValue::Float32(Array1::from_vec(vec![0.0]).into_dyn()))
         );
+        let reference_path = directory.path().join("reference");
+        result
+            .select_rows(&[2, 1, 0])
+            .unwrap()
+            .save(TableOptions::new(&reference_path))
+            .unwrap();
+        let reference = Table::open(TableOptions::new(reference_path)).unwrap();
+        assert_eq!(
+            reference
+                .column_accessor("samples")
+                .unwrap()
+                .array_shapes_uncached(&[1, 0, 1, 2])
+                .unwrap(),
+            [None, Some(vec![3]), None, Some(vec![1])]
+        );
     }
 
     #[test]

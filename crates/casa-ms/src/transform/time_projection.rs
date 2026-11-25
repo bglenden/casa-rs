@@ -123,7 +123,7 @@ impl<'a> TimeProjection<'a> {
             for (offset, (group, row)) in block.into_iter().enumerate() {
                 if group != active_group {
                     std::mem::take(&mut accumulator)
-                        .finish()
+                        .finish(plans[active_group].group)
                         .materialize(&mut output, &mut coordinates);
                     active_group = group;
                 }
@@ -139,7 +139,7 @@ impl<'a> TimeProjection<'a> {
         }
         if !plans.is_empty() {
             accumulator
-                .finish()
+                .finish(plans[active_group].group)
                 .materialize(&mut output, &mut coordinates);
         }
         Ok((output, coordinates))
@@ -202,7 +202,12 @@ impl<'a> TimeProjection<'a> {
         raw: &mut MainArrayBlock,
         scalars: &[Vec<Option<ScalarValue>>; 4],
     ) -> Result<(), MsTransformError> {
-        let TimeGroupRead { channels, axes, .. } = *plan;
+        let TimeGroupRead {
+            channels,
+            axes,
+            group,
+        } = *plan;
+        let legacy = group.legacy_geometry.is_some();
         let require = |value: Option<ArrayValue>, column| {
             value.ok_or_else(|| missing_column_error(self.input_path, row.physical, column))
         };
@@ -243,7 +248,7 @@ impl<'a> TimeProjection<'a> {
             )));
         };
         let average = accumulator.visibility.get_or_insert_with(|| {
-            TimeVisibilityAverage::new(self.visibility, (correlations, channel_count))
+            TimeVisibilityAverage::new(self.visibility, (correlations, channel_count), legacy)
         });
         let (flag_row, row_weight) = average
             .add(TimeVisibilityRow {
@@ -270,7 +275,7 @@ impl<'a> TimeProjection<'a> {
         accumulator
             .coordinates
             .get_or_insert_with(|| TimeCoordinatesAverage::new(position))
-            .add(position, row_weight);
+            .add(position, row_weight, legacy);
         if let Some(cells) = raw.categories[offset]
             .take()
             .filter(|value| !value.is_empty())
@@ -325,7 +330,7 @@ impl<'a> TimeProjection<'a> {
 }
 
 impl TimeGroupAccumulator {
-    fn finish(self) -> AveragedMainRow {
+    fn finish(self, group: &TimeGroup) -> AveragedMainRow {
         AveragedMainRow {
             data: self
                 .visibility
@@ -334,7 +339,7 @@ impl TimeGroupAccumulator {
             coordinates: self
                 .coordinates
                 .expect("a time bin contains row coordinates")
-                .finish(),
+                .finish(group),
             categories: self.categories,
         }
     }

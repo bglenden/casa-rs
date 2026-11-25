@@ -89,6 +89,61 @@ pub(super) fn copy_links(
     copies.rewrite_columns(input, copy, input_path, output)
 }
 
+/// Copy the remaining table and column links after the standard subtables
+/// have been installed under their MeasurementSet names.
+pub(crate) fn copy_additional_links(
+    input: &Path,
+    copy: &mut Table,
+    output: &Path,
+    by_output: BTreeMap<PathBuf, PathBuf>,
+) -> MsResult<()> {
+    let mut copies = Copies {
+        by_output,
+        copying: Vec::new(),
+        held: &BTreeSet::new(),
+    };
+    let standard = SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(SubtableId::ALL_OPTIONAL);
+    let mut extra = RecordValue::new(
+        copy.keywords()
+            .fields()
+            .iter()
+            .filter(|field| {
+                matches!(&field.value, Value::TableRef(_))
+                    && !standard.clone().any(|id| id.name() == field.name)
+            })
+            .cloned()
+            .collect(),
+    );
+    for field in extra.fields() {
+        copy.keywords_mut().remove(&field.name);
+    }
+    copies.rewrite(&mut extra, input, output)?;
+    for field in extra.fields() {
+        copy.keywords_mut().upsert(&field.name, field.value.clone());
+    }
+    let column_links: Vec<_> = copy
+        .schema()
+        .into_iter()
+        .flat_map(|schema| schema.columns())
+        .filter_map(|column| {
+            let name = column.name();
+            let record = copy.column_keywords(name)?;
+            record
+                .fields()
+                .iter()
+                .any(|field| matches!(&field.value, Value::TableRef(_)))
+                .then(|| (name.to_owned(), record.clone()))
+        })
+        .collect();
+    for (name, mut record) in column_links {
+        copies.rewrite(&mut record, input, output)?;
+        copy.set_column_keywords(&name, record);
+    }
+    Ok(())
+}
+
 /// Keep the donor's ordinary keywords and carry over independently copied
 /// table links from the reconciled attached MS.
 pub(crate) fn copy_concatenation_links(

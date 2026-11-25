@@ -1,28 +1,60 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use casa_tables::{Table, TableOptions, add_directory, lexical_absolute, strip_directory};
+use casa_tables::{
+    Table, TableOptions, TablePartNames, add_directory, lexical_absolute, strip_directory,
+};
 use casa_types::Value;
 
-use super::{MsTransformError, SubtableId};
+use super::{MeasurementSet, MsTransformError, SubtableId};
 
 pub(super) fn copy_subtables(
-    input_path: &Path,
+    input: &MeasurementSet,
     metadata_path: &Path,
     output_path: &Path,
     main: &mut Table,
+    copy_external_links: bool,
 ) -> Result<(), MsTransformError> {
+    fs::create_dir_all(output_path).map_err(|error| copy_error(output_path, error))?;
+    let mut copied = BTreeMap::new();
     for id in SubtableId::ALL_REQUIRED
         .iter()
         .chain(SubtableId::ALL_OPTIONAL)
     {
-        let source = input_path.join(id.name());
-        if source.exists() {
-            copy_dir_recursive(&source, &output_path.join(id.name()))
-                .map_err(|error| copy_error(output_path, error))?;
+        let Some(table) = input.subtable(*id) else {
+            continue;
+        };
+        let Some(source) = table.path() else {
+            continue;
+        };
+        let destination = output_path.join(id.name());
+        copy_attached_subtable(source, output_path, &destination)?;
+        if copy_external_links {
+            copied.insert(
+                destination,
+                source
+                    .canonicalize()
+                    .map_err(|error| copy_error(output_path, error))?,
+            );
         }
+        main.keywords_mut()
+            .upsert(id.name(), Value::TableRef(id.name().into()));
+    }
+
+    if copy_external_links {
+        return crate::tool_sort::subtables::copy_additional_links(
+            metadata_path,
+            main,
+            output_path,
+            copied,
+        )
+        .map_err(|error| MsTransformError::PrepareOutput {
+            path: output_path.display().to_string(),
+            reason: error.to_string(),
+        });
     }
 
     // CASA copies CALDEVICE, SYSPOWER and ASDM metadata alongside the
@@ -76,9 +108,12 @@ fn copy_attached_subtable(
     .map_err(table_error)?;
     #[cfg(not(unix))]
     let table = Table::open(options).map_err(table_error)?;
-    if table.is_reference_table().map_err(table_error)? {
-        // A reference descriptor still names the input backing table. Write
-        // its selected rows to an independent output table.
+    if !matches!(
+        Table::immediate_part_names(&source, &source).map_err(table_error)?,
+        TablePartNames::Plain(_)
+    ) {
+        // Reference and concatenated descriptors still name backing tables.
+        // Write their selected rows to an independent output table.
         table
             .deep_copy(TableOptions::new(destination))
             .map_err(table_error)
@@ -120,21 +155,5 @@ pub(super) fn attached_subtable_name(
 }
 
 pub(super) fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &destination_path)?;
-        } else if file_type.is_symlink() {
-            let target = fs::read_link(&source_path)?;
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(target, &destination_path)?;
-        }
-    }
-    Ok(())
+    casa_tables::publication::copy_locked_table_tree(&source.canonicalize()?, destination)
 }

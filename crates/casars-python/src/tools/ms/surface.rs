@@ -410,8 +410,8 @@ const METHODS: &[Method] = &[
             param("intent", K::Text, Text("")),
             param("obs", K::Text, Text("")),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "putdata",

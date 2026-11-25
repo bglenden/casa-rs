@@ -42,6 +42,7 @@ pub(crate) struct TimeGroup {
     pub(crate) first: TimeSample,
     pub(crate) rows: Vec<TimeInputRow>,
     pub(crate) row_in_chunk: usize,
+    pub(super) legacy_geometry: Option<(f64, f64)>,
     input_chunk_first: usize,
     completed_before: Option<usize>,
 }
@@ -52,7 +53,24 @@ impl TimeGroup {
             first,
             rows: vec![row],
             row_in_chunk: 0,
+            legacy_geometry: None,
             input_chunk_first,
+            completed_before: None,
+        }
+    }
+
+    pub(super) fn legacy(
+        first: TimeSample,
+        rows: Vec<TimeInputRow>,
+        row_in_chunk: usize,
+        geometry: (f64, f64),
+    ) -> Self {
+        Self {
+            first,
+            rows,
+            row_in_chunk,
+            legacy_geometry: Some(geometry),
+            input_chunk_first: first.row,
             completed_before: None,
         }
     }
@@ -522,7 +540,7 @@ impl TimeCoordinatesAverage {
         }
     }
 
-    pub(super) fn add(&mut self, sample: TimeCoordinates, scalar_weight: f64) {
+    pub(super) fn add(&mut self, sample: TimeCoordinates, scalar_weight: f64, legacy: bool) {
         let Some((reset, weight)) = self.uvw.add(sample.uvw, sample.flag_row, scalar_weight) else {
             return;
         };
@@ -530,26 +548,39 @@ impl TimeCoordinatesAverage {
             self.exposure = 0.0;
             self.centroid_offset = 0.0;
         }
-        self.exposure += sample.exposure;
+        self.exposure += sample.exposure * if legacy { scalar_weight } else { 1.0 };
         self.centroid_offset += (sample.centroid - self.first.time) * weight;
         self.last = sample;
     }
 
-    pub(super) fn finish(self) -> TimeCoordinates {
-        let (time, interval) = centered_time_and_interval(
-            (self.first.time, self.first.interval),
-            (self.last.time, self.last.interval),
-        );
+    pub(super) fn finish(self, group: &TimeGroup) -> TimeCoordinates {
+        let (time, interval) = group.legacy_geometry.unwrap_or_else(|| {
+            centered_time_and_interval(
+                (self.first.time, self.first.interval),
+                (self.last.time, self.last.interval),
+            )
+        });
         let normalization = self.uvw.normalization();
+        let flagged = group.legacy_geometry.is_some() && !self.uvw.has_unflagged;
         TimeCoordinates {
             time,
-            centroid: self.first.time + self.centroid_offset / normalization,
+            centroid: if flagged {
+                time
+            } else {
+                self.first.time + self.centroid_offset / normalization
+            },
             interval,
-            exposure: self.exposure,
-            uvw: self.uvw.mean(),
-            // The time iterator uses its row flag during accumulation and
-            // clears it on output. The selected cell flags carry through.
-            flag_row: false,
+            exposure: if group.legacy_geometry.is_some() {
+                self.exposure * group.rows.len() as f64 / normalization
+            } else {
+                self.exposure
+            },
+            uvw: if flagged {
+                self.last.uvw
+            } else {
+                self.uvw.mean()
+            },
+            flag_row: flagged,
         }
     }
 }
@@ -605,6 +636,7 @@ pub(super) struct TimeVisibilityAverage {
     floating: bool,
     lag_only: bool,
     lags: Option<LagVisibilityAverage>,
+    legacy: bool,
 }
 
 /// LAG_DATA has no channel correspondence. A whole correlation is usable
@@ -683,7 +715,7 @@ pub(super) struct AveragedTimeVisibilities {
 }
 
 impl TimeVisibilityAverage {
-    pub(super) fn new(columns: &VisibilityColumns, shape: (usize, usize)) -> Self {
+    pub(super) fn new(columns: &VisibilityColumns, shape: (usize, usize), legacy: bool) -> Self {
         use OptionalMainColumn::{CorrectedData, Data, FloatData, LagData, ModelData};
         let has = |name| columns.copies().iter().any(|copy| copy.source == name);
         let observed = has(Data);
@@ -723,6 +755,7 @@ impl TimeVisibilityAverage {
             floating,
             lag_only,
             lags: None,
+            legacy,
         }
     }
 
@@ -742,19 +775,51 @@ impl TimeVisibilityAverage {
         let shape = [self.shape.0, self.shape.1];
         let weight = InputStatistic::from_cells(row.weight, row.spectra.weight, shape, "WEIGHT")?;
         let sigma = InputStatistic::from_cells(row.sigma, row.spectra.sigma, shape, "SIGMA")?;
+        let legacy_totals = (self.legacy && row.spectra.weight.is_some()).then(|| {
+            (0..shape[0])
+                .map(|corr| {
+                    (0..shape[1])
+                        .map(|chan| f64::from(weight.value(corr, chan)))
+                        .sum::<f64>()
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut legacy_row_weight = 0.0;
         let changes = Array2::from_shape_fn(self.shape, |(corr, chan)| {
             let i = [corr, chan];
-            let flagged = flags[i];
+            let weights = if self.legacy {
+                let scalar = if self.corrected {
+                    weight.scalar(corr).max(f32::EPSILON)
+                } else if sigma.scalar(corr) >= f32::EPSILON {
+                    weight_from_sigma(sigma.scalar(corr))
+                } else {
+                    0.0
+                };
+                let relative = legacy_totals.as_ref().map_or(1.0, |totals| {
+                    let total = totals[corr];
+                    if total > 0.0 {
+                        f64::from(weight.value(corr, chan)) / total
+                    } else {
+                        1.0
+                    }
+                });
+                [(f64::from(scalar) * relative) as f32; 3]
+            } else {
+                [
+                    weight_from_sigma(sigma.value(corr, chan)),
+                    weight.value(corr, chan),
+                    1.0,
+                ]
+            };
+            let flagged = flags[i] || (self.legacy && (weights[0] <= 0.0 || weights[0].is_nan()));
             let was_flagged = self.flags[i];
-            let include = was_flagged || !flagged;
+            let include = !flagged || (was_flagged && !self.legacy);
             let reset = was_flagged && !flagged;
-            let weights = [
-                weight_from_sigma(sigma.value(corr, chan)),
-                weight.value(corr, chan),
-                1.0,
-            ];
             if include {
                 self.flags[i] = flagged;
+                if self.legacy {
+                    legacy_row_weight += f64::from(weights[0]);
+                }
                 if reset {
                     self.sum_weights[i] = weights;
                 } else {
@@ -805,6 +870,9 @@ impl TimeVisibilityAverage {
                 }
             }
         }
+        if self.legacy {
+            return Ok((legacy_row_weight == 0.0, legacy_row_weight));
+        }
         let adjusted_weight = if self.corrected {
             row_weight(row.weight, |weight| weight)
         } else if self.observed || self.floating {
@@ -832,8 +900,28 @@ impl TimeVisibilityAverage {
         let sigma = self
             .sum_weights
             .map(|sum| sigma_from_weight(sum[output_variance as usize]));
-        let scalar_weight = self.mean_weight(output_weight);
-        let scalar_sigma = self.mean_weight(output_variance).mapv(sigma_from_weight);
+        let (scalar_weight, scalar_sigma) = if self.legacy {
+            let valid = self.flags.iter().any(|&flagged| !flagged);
+            let mut channels = Vec::with_capacity(self.shape.1);
+            let weight = Array1::from_shape_fn(self.shape.0, |corr| {
+                if !valid {
+                    return 0.0;
+                }
+                channels.clear();
+                channels.extend(self.sum_weights.row(corr).iter().map(|weights| weights[0]));
+                // casacore partialMedians selects the lower middle channel.
+                let middle = (channels.len() - 1) / 2;
+                let (_, median, _) = channels.select_nth_unstable_by(middle, f32::total_cmp);
+                (*median).max(f32::EPSILON)
+            });
+            let sigma = weight.mapv(sigma_from_weight);
+            (weight, sigma)
+        } else {
+            (
+                self.mean_weight(output_weight),
+                self.mean_weight(output_variance).mapv(sigma_from_weight),
+            )
+        };
         let values = self
             .columns
             .into_iter()
@@ -847,7 +935,7 @@ impl TimeVisibilityAverage {
                             finish_visibility(array, &self.sum_weights, column.weight, false);
                         }
                         ArrayValue::Float32(array) => {
-                            finish_visibility(array, &self.sum_weights, column.weight, true)
+                            finish_visibility(array, &self.sum_weights, column.weight, !self.legacy)
                         }
                         _ => {}
                     }

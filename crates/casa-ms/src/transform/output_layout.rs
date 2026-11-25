@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Output storage geometry used by the CASA MeasurementSet transform.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use casa_tables::StreamedTiledShapeValueType as ValueType;
+use casa_tables::{StreamedTiledShapeValueType as ValueType, Table, TableOptions};
+use casa_types::{ArrayValue, ScalarValue, Value};
 
 use crate::MeasurementSet;
 use crate::ms::{casa_interferometer_count, casa_visibility_tile_shape};
 use crate::selection::SpwSelection;
 use crate::write_session::MeasurementSetArrayColumnPlan;
 
+use super::visibility_columns::VisibilityColumns;
 use super::{
     CorrelationSelection, MsTransformError, MsTransformTiling, TransformChannelSelection,
     selected_spw_order,
@@ -20,6 +22,7 @@ pub(super) struct OutputTiling {
     visibility: [usize; 3],
     scalar_noise: [usize; 2],
     uvw: [usize; 2],
+    fixed_visibility: bool,
 }
 
 pub(super) fn resolve_tiling(
@@ -38,7 +41,7 @@ pub(super) fn resolve_tiling(
 ) -> Result<OutputTiling, MsTransformError> {
     let error = |reason| MsTransformError::Spectrum(reason);
     let visibility = match mode {
-        MsTransformTiling::Explicit(tile) => tile,
+        MsTransformTiling::Explicit(tile) | MsTransformTiling::Fixed(tile) => tile,
         MsTransformTiling::Standard | MsTransformTiling::FastMosaic => {
             let id = tile_window
                 .or_else(|| selected_spw_order(channels, spw).into_iter().next())
@@ -74,27 +77,121 @@ pub(super) fn resolve_tiling(
             if corr == 0 || chan == 0 {
                 return Err(error("The tile layout needs a nonempty visibility.".into()));
             }
-            let telescope = input.observation().ok().and_then(|table| {
-                table
-                    .table()
-                    .cell_accessor(0, "TELESCOPE_NAME")
-                    .ok()
-                    .and_then(|cell| cell.scalar().ok().cloned())
-            });
-            let telescope = match telescope.as_ref() {
-                Some(casa_types::ScalarValue::String(value)) => value.as_str(),
-                _ => "",
-            };
+            let telescope = telescope_name(input);
             if matches!(mode, MsTransformTiling::FastMosaic) {
-                let rows = casa_interferometer_count(telescope);
+                let rows = casa_interferometer_count(&telescope);
                 [corr, (131_072 / corr / rows).clamp(1, chan), rows]
             } else {
-                casa_visibility_tile_shape(corr, chan, telescope)
+                casa_visibility_tile_shape(corr, chan, &telescope)
                     .try_into()
                     .expect("rank-three tile")
             }
         }
     };
+    make_tiling(visibility, matches!(mode, MsTransformTiling::Fixed(_)))
+}
+
+pub(super) fn partition_tiling(
+    input: &MeasurementSet,
+    visibility: &VisibilityColumns,
+    channels: &BTreeMap<i32, TransformChannelSelection>,
+    descriptions: &[i32],
+) -> Result<OutputTiling, MsTransformError> {
+    let failure = |error: casa_tables::TableError| MsTransformError::Spectrum(error.to_string());
+    let main = input.main_table();
+    let column = if main
+        .schema()
+        .is_some_and(|schema| schema.contains_column("DATA"))
+    {
+        "DATA"
+    } else {
+        visibility.copies()[0].source.name()
+    };
+    let backing = if main.data_manager_info().is_empty() {
+        main.simple_reference_root()
+            .map_err(failure)?
+            .map(|root| Table::open(TableOptions::new(root)))
+            .transpose()
+            .map_err(failure)?
+    } else {
+        None
+    };
+    let layout = backing.as_ref().unwrap_or(main);
+    let manager = layout.data_manager_info().iter().find(|manager| {
+        manager.dm_type.starts_with("Tiled") && manager.columns.iter().any(|name| name == column)
+    });
+    if let Some(manager) = manager
+        && let Some(spec) = layout.data_manager_spec(manager.seq_nr).map_err(failure)?
+        && let Some(Value::Record(cubes)) = spec.get("HYPERCUBES")
+    {
+        let mut largest = None;
+        let mut largest_elements = 0;
+        for cube in cubes.fields() {
+            let Value::Record(cube) = &cube.value else {
+                continue;
+            };
+            let Some(Value::Array(ArrayValue::Int32(shape))) = cube.get("TileShape") else {
+                continue;
+            };
+            let [corr, chan, rows] = shape.as_slice().unwrap_or(&[]) else {
+                continue;
+            };
+            let dimensions = [*corr, *chan, *rows].map(|axis| usize::try_from(axis).unwrap_or(0));
+            let elements = dimensions.into_iter().fold(1usize, usize::saturating_mul);
+            if elements > largest_elements {
+                largest = Some(dimensions);
+                largest_elements = elements;
+            }
+        }
+        if let Some(tile) = largest {
+            return make_tiling(tile, true);
+        }
+    }
+    let failure = |error: crate::MsError| MsTransformError::Spectrum(error.to_string());
+    let data_descriptions = input.data_description().map_err(failure)?;
+    let polarizations = input.polarization().map_err(failure)?;
+    let mut correlations = 0;
+    for description in descriptions.iter().copied().collect::<BTreeSet<_>>() {
+        let polarization = data_descriptions
+            .polarization_id(description as usize)
+            .map_err(failure)?;
+        correlations = correlations.max(
+            polarizations
+                .num_corr(polarization as usize)
+                .map_err(failure)?,
+        );
+    }
+    let channels = channels
+        .values()
+        .map(|window| window.channels.len())
+        .max()
+        .unwrap_or(0);
+    if correlations <= 0 || channels == 0 {
+        return Err(MsTransformError::Spectrum(
+            "The tile layout needs a nonempty visibility.".into(),
+        ));
+    }
+    let tile = casa_visibility_tile_shape(correlations as usize, channels, &telescope_name(input));
+    make_tiling(tile.try_into().expect("rank-three tile"), true)
+}
+
+fn telescope_name(input: &MeasurementSet) -> String {
+    match input.observation().ok().and_then(|obs| {
+        obs.table()
+            .cell_accessor(0, "TELESCOPE_NAME")
+            .ok()
+            .and_then(|cell| cell.scalar().ok().cloned())
+    }) {
+        Some(ScalarValue::String(name)) => name,
+        _ => String::new(),
+    }
+}
+
+fn make_tiling(
+    visibility: [usize; 3],
+    fixed_visibility: bool,
+) -> Result<OutputTiling, MsTransformError> {
+    let error = |reason| MsTransformError::Spectrum(reason);
     let [corr, chan, rows] = visibility;
     let max_extent = i32::MAX as usize;
     let noise_rows = chan
@@ -110,6 +207,7 @@ pub(super) fn resolve_tiling(
         visibility,
         scalar_noise: [corr, noise_rows],
         uvw: [3, uvw_rows],
+        fixed_visibility,
     })
 }
 
@@ -133,18 +231,19 @@ impl OutputTiling {
                 ValueType::Float64 | ValueType::Complex32 => 8,
             };
             for shape in &mut column.shapes {
-                shape.tile_shape = match column.name.as_str() {
-                    "UVW" | "WEIGHT" | "SIGMA" | "FLAG_CATEGORY" => {
-                        resolve_extensible_tile(&default, &shape.cell_shape)
-                    }
+                shape.tile_shape = if self.fixed_visibility
+                    || matches!(
+                        column.name.as_str(),
+                        "UVW" | "WEIGHT" | "SIGMA" | "FLAG_CATEGORY"
+                    ) {
+                    resolve_extensible_tile(&default, &shape.cell_shape)
+                } else {
                     // CASA explicitly assigns a 1 MiB visibility tile to
-                    // each shape when the first plane of that shape is written.
-                    _ => {
-                        let corr = shape.cell_shape[0];
-                        let chan = shape.cell_shape[1];
-                        let rows = (1_048_576 / corr / chan / bytes).max(1);
-                        vec![corr, chan, rows]
-                    }
+                    // each shape when mstransform writes its first plane.
+                    let corr = shape.cell_shape[0];
+                    let chan = shape.cell_shape[1];
+                    let rows = (1_048_576 / corr / chan / bytes).max(1);
+                    vec![corr, chan, rows]
                 };
                 for (tile, &cell) in shape.tile_shape.iter_mut().zip(&shape.cell_shape) {
                     *tile = (*tile).min(cell);

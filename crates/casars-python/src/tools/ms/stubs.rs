@@ -168,29 +168,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outputms = None, field = None, spw = None, baseline = None, timebin = None, time = None, scan = None, uvrange = None, taql = None, whichcol = None, tileshape = None, subarray = None, combine = None, intent = None, obs = None), text_signature = "($self, outputms='', field=[], spw=[], baseline=[], timebin=[], time='', scan=[], uvrange=[], taql='', whichcol='DATA', tileshape=[], subarray=[], combine='', intent='', obs='')")]
-    fn partition(
-        &self,
-        outputms: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-        spw: Option<&Bound<'_, PyAny>>,
-        baseline: Option<&Bound<'_, PyAny>>,
-        timebin: Option<&Bound<'_, PyAny>>,
-        time: Option<&Bound<'_, PyAny>>,
-        scan: Option<&Bound<'_, PyAny>>,
-        uvrange: Option<&Bound<'_, PyAny>>,
-        taql: Option<&Bound<'_, PyAny>>,
-        whichcol: Option<&Bound<'_, PyAny>>,
-        tileshape: Option<&Bound<'_, PyAny>>,
-        subarray: Option<&Bound<'_, PyAny>>,
-        combine: Option<&Bound<'_, PyAny>>,
-        intent: Option<&Bound<'_, PyAny>>,
-        obs: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("partition")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outframe = None, mode = None, restfreq = None, interpolation = None, start = None, center = None, bandwidth = None, chanwidth = None, hanning = None), text_signature = "($self, outframe='LSRK', mode='chan', restfreq=-3e+30, interpolation='LINEAR', start=-3e+30, center=-3e+30, bandwidth=-1.0, chanwidth=-1.0, hanning=True)")]
     fn regridspw(
         &self,
