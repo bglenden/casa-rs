@@ -305,6 +305,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-dev-tools"
+version = "0.27.0"
+dependencies = [
+ "casa-logging",
+ "casa-measures-tools",
+ "casa-ms",
+ "casa-simulation",
+ "casa-types",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "casa-fft"
 version = "0.27.0"
 dependencies = [
@@ -614,6 +630,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-parity"
+version = "0.27.0"
+
+[[package]]
+name = "casa-perf-suite"
+version = "0.27.0"
+dependencies = [
+ "casa-coordinates",
+ "casa-images",
+ "casa-lattices",
+ "casa-measures-data",
+ "casa-tables",
+ "casa-test-support",
+ "casa-types",
+ "ndarray",
+ "pkg-config",
+ "tempfile",
+]
+
+[[package]]
 name = "casa-provider-contracts"
 version = "0.27.0"
 dependencies = [
@@ -708,9 +744,7 @@ dependencies = [
  "casa-coordinates",
  "casa-images",
  "casa-lattices",
- "casa-logging",
  "casa-measures-data",
- "casa-ms",
  "casa-tables",
  "casa-types",
  "cc",
@@ -763,6 +797,27 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "casacore-interop"
+version = "0.27.0"
+dependencies = [
+ "casa-aipsio",
+ "casa-coordinates",
+ "casa-images",
+ "casa-lattices",
+ "casa-logging",
+ "casa-measures-data",
+ "casa-ms",
+ "casa-tables",
+ "casa-test-support",
+ "casa-types",
+ "ndarray",
+ "pkg-config",
+ "sofars",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]

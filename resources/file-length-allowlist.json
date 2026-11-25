@@ -45,11 +45,11 @@
     "crates/casa-tables/src/taql/functions.rs",
     "crates/casa-tables/src/taql/meas_udf.rs",
     "crates/casa-tables/src/taql/parser.rs",
-    "crates/casa-test-support/src/measures_interop.rs",
-    "crates/casa-test-support/tests/images_perf_vs_cpp.rs",
-    "crates/casa-test-support/tests/measures_interop.rs",
     "crates/casa-types/src/measures/direction.rs",
     "crates/casa-vla/src/importer.rs",
-    "crates/casa-vla/src/record.rs"
+    "crates/casa-vla/src/record.rs",
+    "dev/casa-test-support/src/measures_interop.rs",
+    "suites/casacore-interop/tests/measures_interop.rs",
+    "suites/perf/tests/images_perf_vs_cpp.rs"
   ]
 }

@@ -33,9 +33,13 @@ members = [
     "crates/casa-simulation",
     "crates/casa-atmosphere",
     "crates/casa-measures-data",
-    "crates/casa-test-support",
     "crates/casa-ms",
     "crates/casa-observation",
+    "dev/casa-test-support",
+    "dev/casa-dev-tools",
+    "suites/casacore-interop",
+    "suites/casa-parity",
+    "suites/perf",
 ]
 
 [workspace.package]
@@ -82,6 +86,10 @@ opt-level = 2
 [profile.test.package.casa-atmosphere]
 opt-level = 3
 [profile.test.package.casa-test-support]
+opt-level = 2
+[profile.test.package.casacore-interop]
+opt-level = 2
+[profile.test.package.casa-perf-suite]
 opt-level = 2
 
 # Imaging end-to-end tests (T1 tier) must finish within about ten minutes on

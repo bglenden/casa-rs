@@ -2,7 +2,10 @@
 
 Status: retired
 Date: 2026-08-31
-Truth class: normative
+Amended: 2026-11-25, clean-sheet module reorganization: share numerical
+`uvcontsub` row fitter in `casa-numerics` with caller policy in
+`casa-imaging-operator` and `casa-mstransform`.
+Truth class: historical
 Supersedes:
 Superseded by: ADR-0016 decision 11
 
@@ -25,8 +28,11 @@ subtraction, composed before independent channel-local line imaging. It fits
 each row and correlation over the fit channels with CASA's min/max frequency
 basis, subtracts the fit on the application channels, keeps the input flags
 and weights, and claims no propagated fit covariance. It is a visibility
-transform, not a joint reconstruction, and is never described as one. It
-lives in `casa-imaging-operator` (`fit_and_subtract_continuum`).
+transform, not a joint reconstruction, and is never described as one. Its
+shared numerical polynomial row fitter targets `casa-numerics`, while
+imaging channel-selection policy lives in `casa-imaging-operator`
+(`fit_and_subtract_continuum`) and MS transform policy lives in
+`casa-mstransform`.
 
 A joint continuum-plus-line solver would be a new capability with its own
 scientific contract and a new ADR (ADR-0016 decision 11).

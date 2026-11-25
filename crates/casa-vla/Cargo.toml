@@ -32,7 +32,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 
 [build-dependencies]
 pkg-config = "0.3"

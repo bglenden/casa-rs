@@ -222,7 +222,7 @@ fn t55_full_dataset_clark_timing() {
 #[ignore = "requires explicit real T55 MS, fresh artifact root, memory ceiling, and production measures"]
 fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
     real_clark_worker_cases(
-        "tools/perf/imager/workloads/t55-clark-cube-development.json",
+        "suites/perf/imager/workloads/t55-clark-cube-development.json",
         "refim_point_withline.ms",
         128,
         8,

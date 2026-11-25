@@ -2375,6 +2375,7 @@ pub fn discover_casa_python() -> Option<PathBuf> {
 
     candidates.into_iter().find(|program| {
         Command::new(program)
+            .current_dir(casa_test_support::test_log_dir())
             .arg("-c")
             .arg("import casatasks")
             .output()
@@ -2452,6 +2453,7 @@ bandpass(
 )
 "#;
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_CAL_MS", &ms_path)
         .env("CASA_RS_CAL_OUT", output_dir)
         .arg("-c")
@@ -2532,6 +2534,7 @@ gaincal(
 "#;
     let caltable = output_dir.join("phase.gcal");
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_CAL_MS", &ms_path)
         .env("CASA_RS_CALTABLE", &caltable)
         .env("CASA_RS_CAL_FIELD", field)
@@ -2606,6 +2609,7 @@ applycal(
 )
 "#;
     let output = Command::new(&python)
+        .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_APPLY_MS", ms_path)
         .env("CASA_RS_APPLY_FIELD", field)
         .env("CASA_RS_APPLY_SPW", spw)
@@ -2657,6 +2661,7 @@ applycal(
 )
 "#;
     let output = Command::new(&python)
+        .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_APPLY_MS", ms_path)
         .env("CASA_RS_APPLY_FIELD", field)
         .env("CASA_RS_APPLY_SPW", spw)
@@ -2712,6 +2717,7 @@ applycal(
 )
 "#;
     let mut command = Command::new(&python);
+    command.current_dir(casa_test_support::test_log_dir());
     let gaintables_json = serde_json::to_string(
         &caltables
             .iter()
@@ -2793,6 +2799,7 @@ gaincal(
     )
     .expect("serialize gaincal prior gaintables");
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_GAIN_MS", ms_path)
         .env("CASA_RS_GAIN_CALTABLE", &caltable)
         .env("CASA_RS_GAIN_FIELD", options.field)
@@ -2863,6 +2870,7 @@ gaincal(
 )
 "#;
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_FLUXSCALE_MS", &ms_copy)
         .env("CASA_RS_FLUXSCALE_GCAL", &gain_table)
         .env("CASA_RS_FLUXSCALE_REFERENCE", reference_field)
@@ -2918,6 +2926,7 @@ result = fluxscale(
 print(json.dumps(normalize(result), sort_keys=True))
 "#;
     let output = Command::new(&python)
+        .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_FLUXSCALE_MS", ms_path)
         .env("CASA_RS_FLUXSCALE_INPUT", caltable)
         .env("CASA_RS_FLUXSCALE_OUTPUT", fluxtable)
@@ -2982,6 +2991,7 @@ bandpass(
     )
     .expect("serialize bandpass prior gaintables");
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_BANDPASS_MS", ms_path)
         .env("CASA_RS_BANDPASS_CALTABLE", &caltable)
         .env("CASA_RS_BANDPASS_FIELD", field)
@@ -3054,6 +3064,7 @@ bandpass(
     )
     .expect("serialize BPOLY prior gaintables");
     let output = Command::new(&python)
+        .current_dir(output_dir)
         .env("CASA_RS_BPOLY_MS", ms_path)
         .env("CASA_RS_BPOLY_CALTABLE", &caltable)
         .env("CASA_RS_BPOLY_FIELD", field)
@@ -3103,6 +3114,7 @@ result = calstat(
 print(json.dumps(normalize(result), sort_keys=True))
 "#;
     let output = Command::new(&python)
+        .current_dir(casa_test_support::test_log_dir())
         .env("CASA_RS_CALSTAT_TABLE", caltable)
         .env("CASA_RS_CALSTAT_AXIS", axis)
         .env("CASA_RS_CALSTAT_DATACOLUMN", datacolumn)
