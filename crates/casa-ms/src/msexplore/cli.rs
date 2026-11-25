@@ -392,23 +392,7 @@ fn run_visibility_plot(
     let pointing =
         super::plotms_pointing::PointingAxes::from_task(task, [options.x_axis, options.y_axis])?;
     if let Some(axes) = &pointing {
-        let supported_axis = |axis: Option<MsAxis>| {
-            axis.is_some_and(|axis| axis.is_pointing() || axis == MsAxis::Time)
-        };
-        if !supported_axis(options.x_axis)
-            || !supported_axis(options.y_axis)
-            || options.y_axis2.is_some()
-            || options.plotms_averaging_active()
-            || options.iteraxis.is_some()
-            || calibration.is_some()
-            || atmosphere.is_some()
-            || plotms_options::raw_symbol_visibility(task).flagged
-        {
-            return Err(TaskFailure::validation(
-                "PlotMS pointing currently supports unaveraged Time, Ant-Ra and Ant-Dec pairs without iteration, a callibrary, overlays or flagged symbols (#1032)",
-            ));
-        }
-        options.add_pointing_ordinates(axes);
+        options.prepare_pointing_axes(task, axes, calibration.is_some() || atmosphere.is_some())?;
     }
     super::task_contract::refuse_unwritable_outputs(
         &[("plotfile", options.plot_output.as_deref())],

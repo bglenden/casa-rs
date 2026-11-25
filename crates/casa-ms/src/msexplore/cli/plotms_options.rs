@@ -66,7 +66,45 @@ impl CliOptions {
         ])
     }
 
-    pub(super) fn add_pointing_ordinates(&mut self, pointing: &PointingAxes) {
+    pub(super) fn prepare_pointing_axes(
+        &mut self,
+        task: &TaskInvocation<'_>,
+        pointing: &PointingAxes,
+        has_calibration_or_overlays: bool,
+    ) -> Result<(), TaskFailure> {
+        let x = self.x_axis.expect("PlotMS resolves the primary X axis");
+        let y = self.y_axis.expect("PlotMS resolves the primary Y axis");
+        let metadata_axis =
+            |axis: MsAxis| axis.is_pointing() || matches!(axis, MsAxis::Time | MsAxis::Channel);
+        let metadata_pair = metadata_axis(x) && metadata_axis(y);
+        let real_pair = x.is_pointing() && y == MsAxis::Real;
+        let single_metadata_pair = metadata_pair && pointing.len() == 1;
+        let averaging = self.plotms_averaging_active();
+        if !(metadata_pair || real_pair)
+            || self.y_axis2.is_some()
+            || has_calibration_or_overlays
+            || raw_symbol_visibility(task).flagged
+            || (self.iteraxis.is_some()
+                && !(self.iteraxis == Some(MsIterationAxis::Scan) && single_metadata_pair))
+            || (averaging
+                && (!single_metadata_pair
+                    || self.avgscan
+                    || self.avgfield
+                    || self.avgbaseline
+                    || self.avgantenna
+                    || self.avgspw
+                    || self.scalar))
+        {
+            return Err(TaskFailure::validation(
+                "This PlotMS pointing axis, averaging, iteration, callibrary, overlay or flag-symbol combination is pending (#1032)",
+            ));
+        }
+        if averaging {
+            // CASA's metadata-only iterator requests no visibility column. It reports
+            // the requested averaging in the export but retains the selected raw grid.
+            self.avgtime = None;
+            self.avgchannel = None;
+        }
         if pointing.len() > 1 {
             self.y_axis2 = self.y_axis;
             self.secondary_y_data_column = Some(self.data_column);
@@ -75,6 +113,7 @@ impl CliOptions {
                     .map(|_| (self.y_axis.expect("pointing ordinate"), self.data_column)),
             );
         }
+        Ok(())
     }
 
     pub(super) fn figure_axis_columns<'a>(

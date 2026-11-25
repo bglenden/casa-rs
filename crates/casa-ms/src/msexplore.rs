@@ -4359,7 +4359,8 @@ fn build_generic_visibility_scatter(
     )?;
     let metadata_pair = if pointing.is_some() {
         Some(plotms_ordinates::PointDimensions {
-            channel: false,
+            channel: spec.x_axis.uses_channel_bins()
+                || spec.y_axes.iter().any(|axis| axis.uses_channel_bins()),
             baseline: true,
         })
     } else if array_horizontal || ephemeris_ordinate {
@@ -4425,7 +4426,8 @@ fn build_generic_visibility_scatter(
     let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
     let paged_iteration = iterated_ordinate_list
         || plotms_row_axes::uses_scan_row_iteration(spec)
-        || coordinate_mask.is_some() && spec.iteration.iteraxis == Some(MsIterationAxis::Scan);
+        || (coordinate_mask.is_some() || pointing.is_some())
+            && spec.iteration.iteraxis == Some(MsIterationAxis::Scan);
     let calibrated_ordinate_list = calibration
         .is_some_and(|input| input.rows.is_some() && input.secondary_y_data_column.is_some());
     let order_ordinate_list = iterated_ordinate_list || calibrated_ordinate_list;
