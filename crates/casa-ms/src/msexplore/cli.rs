@@ -328,44 +328,13 @@ fn run_task(
                 "MeasurementSet FLOAT_DATA with a callibrary is pending #1032",
             ));
         }
-        let columns = options.plotms_axis_columns();
-        let row_identifier_axes = [options.x_axis, options.y_axis]
-            .into_iter()
-            .flatten()
-            .any(MsAxis::is_row_identifier);
-        let uncalibrated_columns =
-            calibration.is_none() && (columns.is_some() || row_identifier_axes);
-        if uncalibrated_columns && let Some(columns) = columns {
-            plotms_columns::check_averaging(
-                options.plotms_averaging_active(),
-                options.plotms_extended_averaging()
-                    && options.secondary_y_data_column.is_some()
-                    && !iterated_averaging
-                    && !options.plotms_independent_average(
-                        atmosphere.is_none()
-                            && (options.avgspw || !options.additional_ordinates.is_empty()),
-                    ),
-                options.supports_channel_derived(columns)
-                    || options.supports_extended_derived(columns),
-                columns,
-            )?;
-        }
-        if uncalibrated_columns || calibrated_ordinates {
-            let symbols = task.value("customflaggedsymbol");
-            let ordinate_count =
-                1 + usize::from(options.y_axis2.is_some()) + options.additional_ordinates.len();
-            if (0..ordinate_count)
-                .any(|index| super::calibration::figure::shows_flagged(symbols, index))
-                && (calibrated_ordinates
-                    || !columns
-                        .is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
-            {
-                return Err(TaskFailure::validation(
-                    "displaying flagged points for this MeasurementSet column plot is pending #1032",
-                )
-                .at("customflaggedsymbol"));
-            }
-        }
+        options.validate_plotms_columns(
+            task,
+            calibration.is_some(),
+            calibrated_ordinates,
+            atmosphere.is_some(),
+            iterated_averaging,
+        )?;
         if visibility_document {
             return run_visibility_plot(
                 task,
@@ -527,13 +496,7 @@ fn run_visibility_plot(
         })
         .transpose()?;
     let show = task.flag("showgui")?;
-    let format = task.text("expformat")?.filter(|ext| !ext.is_empty());
-    let is_text = output.is_some_and(|path| {
-        format
-            .as_deref()
-            .or_else(|| path.extension().and_then(std::ffi::OsStr::to_str))
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
-    });
+    let is_text = super::plotms_text::requests_text(task, output)?;
     let text_file = output.filter(|_| is_text);
     let figure_file = output.filter(|_| !is_text);
     let mut plots = Vec::new();

@@ -96,6 +96,51 @@ impl CliOptions {
                 .all(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
     }
 
+    pub(super) fn validate_plotms_columns(
+        &self,
+        task: &TaskInvocation<'_>,
+        has_callibrary: bool,
+        calibrated_ordinates: bool,
+        has_atmosphere: bool,
+        iterated_averaging: bool,
+    ) -> Result<(), TaskFailure> {
+        let columns = self.plotms_axis_columns();
+        let row_identifier_axes = [self.x_axis, self.y_axis]
+            .into_iter()
+            .flatten()
+            .any(MsAxis::is_row_identifier);
+        let uncalibrated_columns = !has_callibrary && (columns.is_some() || row_identifier_axes);
+        if uncalibrated_columns && let Some(columns) = columns {
+            plotms_columns::check_averaging(
+                self.plotms_averaging_active(),
+                self.plotms_extended_averaging()
+                    && self.secondary_y_data_column.is_some()
+                    && !iterated_averaging
+                    && !self.plotms_independent_average(
+                        !has_atmosphere && (self.avgspw || !self.additional_ordinates.is_empty()),
+                    ),
+                self.supports_channel_derived(columns) || self.supports_extended_derived(columns),
+                columns,
+            )?;
+        }
+        if uncalibrated_columns || calibrated_ordinates {
+            let symbols = task.value("customflaggedsymbol");
+            let ordinate_count =
+                1 + usize::from(self.y_axis2.is_some()) + self.additional_ordinates.len();
+            if (0..ordinate_count).any(|index| calibration::figure::shows_flagged(symbols, index))
+                && (calibrated_ordinates
+                    || !columns
+                        .is_some_and(|columns| self.supports_raw_visibility_symbols(columns)))
+            {
+                return Err(TaskFailure::validation(
+                    "displaying flagged points for this MeasurementSet column plot is pending #1032",
+                )
+                .at("customflaggedsymbol"));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn supports_visibility_ordinate_averaging(&self, ordinary_only: bool) -> bool {
         let spans = self.avgscan || self.avgfield;
         let time_average = self.avgtime.is_some()

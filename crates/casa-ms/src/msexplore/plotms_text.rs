@@ -26,6 +26,19 @@ pub(super) struct ExportAxes<'a> {
     pub channel_major: bool,
 }
 
+pub(super) fn requests_text(
+    task: &TaskInvocation<'_>,
+    output: Option<&Path>,
+) -> Result<bool, TaskFailure> {
+    let format = task.text("expformat")?.filter(|ext| !ext.is_empty());
+    Ok(output.is_some_and(|path| {
+        format
+            .as_deref()
+            .or_else(|| path.extension().and_then(std::ffi::OsStr::to_str))
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
+    }))
+}
+
 pub(super) fn write_export(
     task: &TaskInvocation<'_>,
     ms: &MeasurementSet,
