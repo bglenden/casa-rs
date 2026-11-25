@@ -1184,19 +1184,18 @@ fn like_match_recursive(text: &[u8], pattern: &[u8]) -> bool {
 /// - `0-based` (Python/`base0`): use as-is (negative indices count from end).
 fn to_zero_based(idx: i64, len: usize, style: ast::IndexStyle) -> Result<usize, TaqlError> {
     let len_i = len as i64;
-    let actual = if idx < 0 {
-        len_i + idx
-    } else if style.is_one_based() {
-        idx - 1
-    } else {
-        idx
-    };
+    let actual = relative_array_index(idx, len_i, style);
     if actual < 0 || actual >= len_i {
         return Err(TaqlError::TypeError {
             message: format!("array index {idx} out of bounds (length {len})"),
         });
     }
     Ok(actual as usize)
+}
+
+fn relative_array_index(idx: i64, len: i64, style: ast::IndexStyle) -> i64 {
+    let shifted = idx - i64::from(idx >= 0 && style.is_one_based());
+    if shifted < 0 { len + shifted } else { shifted }
 }
 
 /// Resolve a slice (`start:end[:step]`) to a Vec of 0-based indices.
@@ -1217,8 +1216,7 @@ fn resolve_slice(
         return Ok(Vec::new());
     }
     let len_i = dim_len as i64;
-    let offset = if style.is_one_based() { 1 } else { 0 };
-    let to_idx = |v: i64| if v < 0 { len_i + v } else { v - offset };
+    let to_idx = |v| relative_array_index(v, len_i, style);
 
     let mut result = Vec::new();
     if style.is_end_inclusive() {

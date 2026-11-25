@@ -383,7 +383,7 @@ fn legacy_range_predicate(
             real_literal(upper)
         ),
         RecordSelector::Uvw(axis) => {
-            let column = format!("UVW[{}]", axis - 1);
+            let column = format!("UVW[{axis}]");
             format!(
                 "{column} >= {} && {column} <= {}",
                 real_literal(lower),
@@ -393,7 +393,7 @@ fn legacy_range_predicate(
         RecordSelector::UvDistance => {
             let lo = real_literal(lower * lower);
             let hi = real_literal(upper * upper);
-            let distance = "(sqr(UVW[0]) + sqr(UVW[1]))";
+            let distance = "(sqr(UVW[1]) + sqr(UVW[2]))";
             format!(
                 "({distance} >= {lo} || near({distance}, {lo})) && ({distance} <= {hi} || near({distance}, {hi}))"
             )

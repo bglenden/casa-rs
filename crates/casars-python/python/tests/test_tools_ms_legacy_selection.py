@@ -66,7 +66,7 @@ def test_legacy_record_selects_numeric_columns_and_uvw(native_dataset):
     table = casa.table()
     assert table.open(str(native_dataset))
     time = table.getcol("TIME")
-    u, v, _ = table.getcol("UVW")
+    u, v, w = table.getcol("UVW")
     antenna1, antenna2 = table.getcol("ANTENNA1"), table.getcol("ANTENNA2")
     assert table.done()
     distance = np.hypot(u, v)
@@ -87,5 +87,37 @@ def test_legacy_record_selects_numeric_columns_and_uvw(native_dataset):
             assert tool.selectinitold(reset=True)
             assert tool.selectold(record) is bool(expected.any()), record
             assert tool.nrowold(True) == np.count_nonzero(expected), record
+        assert tool.selectinitold(reset=True)
+        assert tool.selecttaqlold(f"UVW[0] <= {float(np.median(w))}")
+        assert tool.nrowold(True) == np.count_nonzero(w <= np.median(w))
         assert tool.nrow(True) == len(time)
+        assert tool.done()
+
+
+def test_legacy_argument_forms_preserve_selection_after_errors(native_dataset):
+    for api in (pinned_casa(), tools):
+        tool = api.ms()
+        assert tool.open(str(native_dataset))
+        assert tool.selectinitold(np.int64(0))
+        assert tool.selectinitold(True)
+        assert tool.selectold({"rows": [3, 6, 3]})
+        assert tool.nrowold(True) == 3
+        for value in (1, None, np.bool_(True)):
+            with pytest.raises(TypeError):
+                tool.nrowold(value)
+        with pytest.raises(TypeError):
+            tool.selectinitold(1.5)
+        with pytest.raises(TypeError):
+            tool.selectold(None)
+        with pytest.raises(RuntimeError, match="positive integers"):
+            tool.selectinitold(None)
+        with pytest.raises(RuntimeError):
+            tool.selectold({"rows": [-1]})
+        for predicate in ("SCAN_NUMBER ==", "\t"):
+            with pytest.raises(RuntimeError):
+                tool.selecttaqlold(predicate)
+            assert tool.nrowold(True) == 3
+        assert tool.selecttaqlold("ROWID() == 2")
+        assert tool.nrowold(True) == 1
+        assert tool.nrow(True) == 30
         assert tool.done()
