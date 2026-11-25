@@ -524,6 +524,7 @@ fn finalize_series(
                 y_index: 0,
                 points: scatter_points,
                 plotms_metadata: Vec::new(),
+                plotms_reporting_frequencies_hz: Vec::new(),
                 plotms_averaged_ids: None,
                 provenance,
             }

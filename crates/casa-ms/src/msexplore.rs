@@ -2329,6 +2329,8 @@ pub struct MsScatterSeries {
     pub provenance: Vec<MsScatterPointRef>,
     /// Display metadata for PlotMS points, when available.
     pub plotms_metadata: Vec<MsScatterPlotMsMetadata>,
+    /// Frequencies in the PlotMS reporting frame, aligned with `points` when present.
+    pub plotms_reporting_frequencies_hz: Vec<f64>,
     /// Shared display IDs indexed by PlotMS averaging order.
     pub plotms_averaged_ids: Option<MsScatterPlotMsAverageIds>,
 }
@@ -2608,6 +2610,15 @@ fn compact_scatter_series(
                 points,
                 provenance,
                 plotms_metadata,
+                plotms_reporting_frequencies_hz: if entry.plotms_reporting_frequencies_hz.is_empty()
+                {
+                    Vec::new()
+                } else {
+                    indices
+                        .iter()
+                        .map(|&index| entry.plotms_reporting_frequencies_hz[index])
+                        .collect()
+                },
                 plotms_averaged_ids: entry.plotms_averaged_ids,
             })
         })
@@ -5053,11 +5064,14 @@ fn build_generic_visibility_scatter(
             spec,
             spw_id,
             chan_count,
-            field_id_value,
-            row_time_value,
+            (field_id_value, row_time_value),
             chan_freq.as_ref(),
             derived_engine.as_ref(),
+            calibration.and_then(|_| channel_bins.get(channel_bins.len() / 2)),
         )?;
+        let reporting_spectrum = spectral_context
+            .as_ref()
+            .filter(|_| calibration.is_some() && spec.transforms.freqframe.is_some());
 
         let mut row_contributed = false;
         let mut row_panels = std::collections::BTreeSet::<String>::new();
@@ -5344,11 +5358,19 @@ fn build_generic_visibility_scatter(
                                 points: Vec::new(),
                                 provenance: Vec::new(),
                                 plotms_metadata: Vec::new(),
+                                plotms_reporting_frequencies_hz: Vec::new(),
                                 plotms_averaged_ids: None,
                             });
                     let push_started = timing_enabled.then(Instant::now);
                     let x = pointing_values.get(*y_index).and_then(|pair| pair[0]);
                     series.points.push((x.unwrap_or(x_value), y_value));
+                    if let Some(spectrum) = reporting_spectrum {
+                        series.plotms_reporting_frequencies_hz.push(
+                            spectrum.mean_frequency_hz(point_bin).ok_or(
+                                "PlotMS reporting frequency is missing the selected channel",
+                            )?,
+                        );
+                    }
                     series.provenance.push(MsScatterPointRef {
                         row: row_numbers[point_row_slot],
                         corr: point_correlation,
@@ -6560,10 +6582,10 @@ fn build_generic_visibility_scatter_with_averaging(
                 spec,
                 spw_id,
                 chan_count,
-                field_id_value,
-                row_time_value,
+                (field_id_value, row_time_value),
                 chan_freq.as_ref(),
                 derived_engine.as_ref(),
+                calibration.and_then(|_| channel_bins.get(channel_bins.len() / 2)),
             )
         };
         let spectral_context = if let Some(spectra) = &mut wavelength_spectra {
@@ -7314,6 +7336,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 points: Vec::new(),
                 provenance: Vec::new(),
                 plotms_metadata: Vec::new(),
+                plotms_reporting_frequencies_hz: Vec::new(),
                 plotms_averaged_ids: averaged_ids.clone(),
             };
             let mut output = make_output(series.label, series.color_group);
@@ -7460,6 +7483,18 @@ fn build_generic_visibility_scatter_with_averaging(
                 output.points.push((x_value, y_value));
                 output.provenance.push(representative);
                 if calibration.is_some() {
+                    if spec.transforms.freqframe.is_some() {
+                        let reporting_frequency = if x_projection_axis == MsAxis::Frequency {
+                            Some(x_value)
+                        } else if y_projection_axis == MsAxis::Frequency {
+                            Some(y_value)
+                        } else {
+                            None
+                        };
+                        output
+                            .plotms_reporting_frequencies_hz
+                            .extend(reporting_frequency);
+                    }
                     output.plotms_metadata.push(MsScatterPlotMsMetadata {
                         channel: spectral_channel
                             .map_or(accumulator.display_channel, |channel| channel.number),
@@ -8015,6 +8050,22 @@ struct SpectralContext {
     doppler_ref: DopplerRef,
 }
 
+impl SpectralContext {
+    fn mean_frequency_hz(&self, bin: &ChannelBin) -> Option<f64> {
+        mean_selected_frequency_hz(&self.channel_frequencies_hz, bin)
+    }
+}
+
+fn mean_selected_frequency_hz(frequencies_hz: &[f64], bin: &ChannelBin) -> Option<f64> {
+    let mut sum = 0.0;
+    let mut count = 0;
+    for channel in bin.channels() {
+        sum += frequencies_hz.get(channel)?;
+        count += 1;
+    }
+    (count != 0).then(|| sum / f64::from(count))
+}
+
 fn parse_frequency_frame(value: Option<&str>) -> Result<Option<FrequencyRef>, String> {
     value
         .map(str::trim)
@@ -8044,10 +8095,10 @@ fn resolve_spectral_context(
     spec: &MsPlotSpec,
     spw_id: i32,
     chan_count: usize,
-    field_id_value: i32,
-    row_time_value: f64,
+    (field_id_value, row_time_value): (i32, f64),
     chan_freq: Option<&ChanFreqColumn<'_>>,
     derived_engine: Option<&MsCalEngine>,
+    plotms_rest_bin: Option<&ChannelBin>,
 ) -> Result<Option<SpectralContext>, String> {
     let needs_spectral_coordinates = spec.x_axis.uses_spectral_coordinates()
         || spec
@@ -8109,8 +8160,6 @@ fn resolve_spectral_context(
             })
             .collect::<Result<Vec<_>, _>>()?
     };
-    let center_frequency_hz =
-        channel_frequencies_hz.iter().copied().sum::<f64>() / channel_frequencies_hz.len() as f64;
     let rest_frequency_hz = spec
         .transforms
         .restfreq
@@ -8118,7 +8167,15 @@ fn resolve_spectral_context(
         .map(parse_rest_frequency_hz)
         .transpose()
         .map_err(|error| error.to_string())?
-        .unwrap_or(center_frequency_hz);
+        .unwrap_or_else(|| {
+            // The public PlotMS task defaults to the middle selected buffer channel.
+            // The msexplore request defaults to the arithmetic centre of the window.
+            plotms_rest_bin
+                .and_then(|bin| mean_selected_frequency_hz(&channel_frequencies_hz, bin))
+                .unwrap_or_else(|| {
+                    channel_frequencies_hz.iter().sum::<f64>() / channel_frequencies_hz.len() as f64
+                })
+        });
     let doppler_ref = parse_velocity_definition(&spec.transforms.veldef)?;
     Ok(Some(SpectralContext {
         channel_frequencies_hz,
@@ -8332,28 +8389,15 @@ fn compute_axis_value(
         axis if axis.uses_uvw() => Ok(uvw_coordinate(axis, row.uvw, channel_bin, spectral_context)),
         MsAxis::Channel => Ok(Some(channel_bin.display_channel() as f64)),
         MsAxis::Frequency => {
-            let Some(spectral_context) = spectral_context else {
-                return Ok(None);
-            };
-            if spectral_context.channel_frequencies_hz.is_empty()
-                || channel_bin.end > spectral_context.channel_frequencies_hz.len()
-            {
-                return Ok(None);
-            }
-            let bin = &spectral_context.channel_frequencies_hz[channel_bin.start..channel_bin.end];
-            Ok(Some(bin.iter().copied().sum::<f64>() / bin.len() as f64))
+            Ok(spectral_context.and_then(|spectrum| spectrum.mean_frequency_hz(channel_bin)))
         }
         MsAxis::Velocity => {
             let Some(spectral_context) = spectral_context else {
                 return Ok(None);
             };
-            if spectral_context.channel_frequencies_hz.is_empty()
-                || channel_bin.end > spectral_context.channel_frequencies_hz.len()
-            {
+            let Some(mean_frequency_hz) = spectral_context.mean_frequency_hz(channel_bin) else {
                 return Ok(None);
-            }
-            let bin = &spectral_context.channel_frequencies_hz[channel_bin.start..channel_bin.end];
-            let mean_frequency_hz = bin.iter().copied().sum::<f64>() / bin.len() as f64;
+            };
             Ok(Some(
                 velocity_ms_from_frequency_hz(
                     mean_frequency_hz,
@@ -9410,6 +9454,7 @@ mod tests {
             y_index: 0,
             points: points.to_vec(),
             plotms_metadata: Vec::new(),
+            plotms_reporting_frequencies_hz: Vec::new(),
             plotms_averaged_ids: None,
             provenance: (0..points.len())
                 .map(|offset| scatter_point_ref(row_base + offset))
@@ -10436,6 +10481,7 @@ mod tests {
             y_index: 0,
             points: (0..5).map(|index| (index as f64, index as f64)).collect(),
             plotms_metadata: Vec::new(),
+            plotms_reporting_frequencies_hz: Vec::new(),
             plotms_averaged_ids: None,
             provenance: (0..5)
                 .map(|index| MsScatterPointRef {
@@ -10491,6 +10537,7 @@ mod tests {
                     y_index: 0,
                     points: (0..5).map(|index| (index as f64, index as f64)).collect(),
                     plotms_metadata: Vec::new(),
+                    plotms_reporting_frequencies_hz: Vec::new(),
                     plotms_averaged_ids: None,
                     provenance: (0..5)
                         .map(|index| MsScatterPointRef {
@@ -10508,6 +10555,7 @@ mod tests {
                     y_index: 0,
                     points: (5..10).map(|index| (index as f64, index as f64)).collect(),
                     plotms_metadata: Vec::new(),
+                    plotms_reporting_frequencies_hz: Vec::new(),
                     plotms_averaged_ids: None,
                     provenance: (5..10)
                         .map(|index| MsScatterPointRef {

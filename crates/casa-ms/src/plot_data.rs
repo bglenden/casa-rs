@@ -299,6 +299,7 @@ mod tests {
                 y_index: 0,
                 points: vec![(1.0, 3.0), (2.0, 4.0)],
                 plotms_metadata: Vec::new(),
+                plotms_reporting_frequencies_hz: Vec::new(),
                 plotms_averaged_ids: None,
                 provenance: vec![
                     MsScatterPointRef {

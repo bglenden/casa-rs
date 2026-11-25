@@ -1229,4 +1229,10 @@ pub(super) fn order_series(series: &mut MsScatterSeries) {
             .map(|&index| series.plotms_metadata[index])
             .collect();
     }
+    if !series.plotms_reporting_frequencies_hz.is_empty() {
+        series.plotms_reporting_frequencies_hz = order
+            .iter()
+            .map(|&index| series.plotms_reporting_frequencies_hz[index])
+            .collect();
+    }
 }
