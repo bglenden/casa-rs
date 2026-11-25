@@ -32,12 +32,17 @@ pub(super) struct Subtables {
     polarization: Subtable,
 }
 
+pub(super) struct SpectralGridTables<'a> {
+    pub(super) windows: Ref<'a, [Table]>,
+    pub(super) fields: Ref<'a, [Table]>,
+}
+
 impl Subtables {
     pub(super) fn spectral_grid_tables(
         &self,
         main: &Table,
         refresh_field: bool,
-    ) -> MsResult<(Ref<'_, [Table]>, Ref<'_, [Table]>)> {
+    ) -> MsResult<SpectralGridTables<'_>> {
         let windows = self.spectral_window.read_using(CellReads::Published, || {
             MeasurementSet::linked_subtable_paths(main, SubtableId::SpectralWindow)
         })?;
@@ -49,7 +54,7 @@ impl Subtables {
         let fields = self.field.read_using(field_reads, || {
             MeasurementSet::linked_subtable_paths(main, SubtableId::Field)
         })?;
-        Ok((windows, fields))
+        Ok(SpectralGridTables { windows, fields })
     }
 
     pub(super) fn read_range(

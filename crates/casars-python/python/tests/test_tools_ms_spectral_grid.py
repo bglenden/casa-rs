@@ -69,7 +69,6 @@ def test_cvelfreqs_keeps_observatory_position_independent_of_verbosity(native_da
     np.testing.assert_allclose(results[1], results[0], rtol=0, atol=0.05)
 
 
-
 @pytest.mark.parametrize("writer", ["casa", "casa-rs"])
 def test_cvelfreqs_reads_implicit_epoch_from_persisted_reference(native_dataset, writer):
     casa = pinned_casa()
@@ -91,7 +90,6 @@ def test_cvelfreqs_reads_implicit_epoch_from_persisted_reference(native_dataset,
         assert ms.done()
         axes.append(axis)
     np.testing.assert_allclose(axes[1], axes[0], rtol=0, atol=0.05)
-
 
 
 @pytest.mark.parametrize("writer", ["casa", "casa-rs"])
@@ -122,4 +120,52 @@ def test_cvelfreqs_reads_updated_metadata_on_the_same_attachment(native_dataset,
         np.testing.assert_allclose(updated, expected, rtol=0, atol=0.05)
         np.testing.assert_array_equal(ms.cvelfreqs(**params), updated)
         previous = updated
+    assert ms.done()
+
+
+def test_cvelfreqs_prefers_an_appended_earlier_epoch(native_dataset):
+    casa = pinned_casa()
+    reference = casa.ms()
+    native = tools.ms()
+    path = str(native_dataset)
+    assert reference.open(path)
+    assert native.open(path)
+    params = dict(outframe="BARY", nchan=2, verbose=True)
+    previous = native.cvelfreqs(**params)
+    np.testing.assert_allclose(previous, reference.cvelfreqs(**params), rtol=0, atol=0.05)
+
+    table = casa.table()
+    assert table.open(path, nomodify=False)
+    row = table.nrows()
+    copied = {column: table.getcell(column, 0) for column in table.colnames()
+              if table.iscelldefined(column, 0)}
+    copied["TIME"] -= 14 * 86400.0
+    assert table.addrows(1)
+    for column, value in copied.items():
+        assert table.putcell(column, row, value)
+    assert table.done()
+
+    expected = reference.cvelfreqs(**params)
+    assert np.max(np.abs(previous - expected)) > 1.0
+    np.testing.assert_allclose(native.cvelfreqs(**params), expected, rtol=0, atol=0.05)
+    assert native.nrow() == row + 1
+    assert native.done() and reference.done()
+
+
+def test_cvelfreqs_keeps_an_empty_reference_attached(native_dataset):
+    path = str(native_dataset.with_name("empty.ms"))
+    table = tools.table()
+    assert table.open(str(native_dataset))
+    assert table.selectrows(np.array([], dtype=np.int64), path).done()
+    assert table.done()
+    assert table.open(str(native_dataset / "SPECTRAL_WINDOW"))
+    expected = table.getcell("CHAN_FREQ", 0)
+    assert table.done()
+
+    ms = tools.ms()
+    assert ms.open(path)
+    np.testing.assert_array_equal(ms.cvelfreqs(verbose=False), expected, strict=True)
+    np.testing.assert_array_equal(ms.cvelfreqs(outframe="BARY", verbose=False),
+                                  np.empty(0, dtype=np.float64), strict=True)
+    assert ms.nrow() == 0
     assert ms.done()

@@ -289,7 +289,7 @@ pub fn tool_channel_frequencies(
     windows: Vec<ToolSpectralWindow>,
     options: &MsRegridOptions,
     budget_bytes: usize,
-    frame: impl FnOnce() -> Result<MeasFrame, MsTransformError>,
+    frame: impl FnOnce() -> Result<MeasFrame, Box<MsTransformError>>,
 ) -> Result<Vec<f64>, MsTransformError> {
     let Some(first) = windows.first() else {
         return Ok(Vec::new());
@@ -308,7 +308,7 @@ pub fn tool_channel_frequencies(
             .map_err(|_| invalid_choice("outframe", &options.outframe))?
     };
     if target != source || source_frame {
-        let frame = frame()?;
+        let frame = frame().map_err(|error| *error)?;
         let conversion =
             PreparedFrequencyConversion::from_measure_references(source, target, &frame, &frame)
                 .map_err(ms_error)?;

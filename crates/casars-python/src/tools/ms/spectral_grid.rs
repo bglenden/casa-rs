@@ -9,7 +9,8 @@ use casa_ms::transform::{
     ToolSpectralWindow, tool_channel_frequencies, tool_grid_frame_at_epoch,
     tool_grid_reference_epoch, tool_spectral_grid_frame,
 };
-use casa_ms::{MsResult, SubtableId};
+use casa_ms::{MsError, MsResult, SubtableId};
+use casa_tables::{Table, TableOptions};
 use casa_types::measures::MeasuresProvider;
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::quanta::Quantity;
@@ -75,15 +76,18 @@ impl PyMsTool {
             log_grid = true;
             let link = ms.working_metadata_link();
             link.verify_directory().map_err(runtime_error)?;
-            let (spectral_tables, fields) = ms
+            let grid_tables = ms
                 .subtables
                 .spectral_grid_tables(&ms.main, !options.outframe.is_empty())
                 .map_err(runtime_error)?;
             let mut windows = Vec::with_capacity(spwids.len());
             for &id in &spwids {
-                let (table, row) =
-                    linked_subtable_row(&spectral_tables, id as usize, SubtableId::SpectralWindow)
-                        .map_err(runtime_error)?;
+                let (table, row) = linked_subtable_row(
+                    &grid_tables.windows,
+                    id as usize,
+                    SubtableId::SpectralWindow,
+                )
+                .map_err(runtime_error)?;
                 let window = MsSpectralWindow::new(table);
                 windows.push(ToolSpectralWindow {
                     centres_hz: window.chan_freq(row).map_err(runtime_error)?,
@@ -114,7 +118,7 @@ impl PyMsTool {
             };
             let phase = if empty_phase || numeric_phase.is_some() {
                 let id = numeric_phase.unwrap_or_else(|| fieldids.first().copied().unwrap_or(0));
-                let row = linked_subtable_row(&fields, id as usize, SubtableId::Field);
+                let row = linked_subtable_row(&grid_tables.fields, id as usize, SubtableId::Field);
                 if let Err(error) = row {
                     return if empty_phase {
                         Err(runtime_error(error))
@@ -140,6 +144,22 @@ impl PyMsTool {
                 };
                 let measures = ms.spectral_query_measures().map_err(source_error)?;
                 let selected = link.selected_rows().map_err(source_error)?;
+                let refreshed_main;
+                let main = if let Some(rows) = &ms.plain_rows
+                    && selected.is_none()
+                    && rows
+                        .count(&ms.path)
+                        .map_err(MsError::from)
+                        .map_err(source_error)?
+                        != ms.main.row_count()
+                {
+                    refreshed_main = Table::open(TableOptions::new(&ms.path))
+                        .map_err(MsError::from)
+                        .map_err(source_error)?;
+                    &refreshed_main
+                } else {
+                    &ms.main
+                };
                 let geometry_ids = [
                     SubtableId::Observation,
                     SubtableId::Antenna,
@@ -148,12 +168,12 @@ impl PyMsTool {
                 let count = if epoch.is_some() { 2 } else { 3 };
                 let geometry = ms
                     .subtables
-                    .spectral_grid_geometry(&ms.main, &geometry_ids[..count])
+                    .spectral_grid_geometry(main, &geometry_ids[..count])
                     .map_err(source_error)?;
                 let epoch = match epoch {
                     Some(epoch) => epoch,
                     None => tool_grid_reference_epoch(
-                        &ms.main,
+                        main,
                         selected.as_deref(),
                         &geometry[&SubtableId::DataDescription],
                         &spwids,
@@ -162,14 +182,14 @@ impl PyMsTool {
                     )?,
                 };
                 let tables = ToolGridFrameTables {
-                    main: &ms.main,
+                    main,
                     first_row: selected
                         .as_deref()
                         .and_then(|rows| rows.first())
                         .copied()
                         .unwrap_or(0),
                     antenna: &geometry[&SubtableId::Antenna],
-                    field: &fields,
+                    field: &grid_tables.fields,
                     observation: &geometry[&SubtableId::Observation],
                 };
                 if let Some(frame) =
@@ -185,6 +205,7 @@ impl PyMsTool {
                     options.outframe.eq_ignore_ascii_case("SOURCE"),
                     measures,
                 )
+                .map_err(Box::new)
             });
             link.verify_directory().map_err(runtime_error)?;
             match centres {
