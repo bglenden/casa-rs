@@ -3,10 +3,12 @@
 
 use std::collections::HashMap;
 
-use casa_types::{Complex32, Complex64};
+use casa_types::Complex64;
 use ndarray::ArrayView2;
 
-use super::plotms_ordinates::{AveragedVisibility, VisibilityAverageShapes};
+use super::plotms_ordinates::{
+    AveragedVisibility, TransformedVectorSample, VisibilityAverageShapes,
+};
 use super::{
     AveragedSeriesAccumulator, AveragingBaselineToken, AveragingPointKey, AveragingTimeKey,
     ChannelBin, FloatGrid, MsAverageSpec, plotms_columns,
@@ -298,13 +300,17 @@ impl TimeBaselinePlan {
         series: &mut AveragedSeriesAccumulator,
         retain_baselines: bool,
     ) {
+        enum Sample {
+            SpectralWindow(TransformedVectorSample),
+            Baseline(Complex64),
+        }
         let mean = |samples: &AveragedVisibility| {
             if retain_baselines {
                 samples
                     .transformed_vector_sample()
-                    .map(|(value, _)| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                    .map(Sample::SpectralWindow)
             } else {
-                samples.vector_mean()
+                samples.vector_mean().map(Sample::Baseline)
             }
         };
         for (mut key, mut point) in std::mem::take(&mut series.points) {
@@ -338,15 +344,12 @@ impl TimeBaselinePlan {
                 (&mut output.x_visibility, x),
                 (&mut output.y_visibility, Some(y)),
             ] {
-                if let Some(sample) = sample {
-                    if retain_baselines {
-                        output.add_normalized_vector_sample(
-                            Complex32::new(sample.re as f32, sample.im as f32),
-                            weight as f32,
-                        );
-                    } else {
-                        output.add_weighted_value(sample, weight);
+                match sample {
+                    Some(Sample::SpectralWindow(sample)) => {
+                        output.add_normalized_vector_sample(sample, weight as f32, false);
                     }
+                    Some(Sample::Baseline(value)) => output.add_weighted_value(value, weight),
+                    None => {}
                 }
             }
         }
@@ -366,21 +369,16 @@ impl TimeBaselinePlan {
             else {
                 continue;
             };
-            let Some((y, channel_weight)) = point.y_visibility.transformed_vector_sample() else {
+            let Some(y) = point.y_visibility.transformed_vector_sample() else {
                 continue;
             };
-            let x = point
-                .x_visibility
-                .transformed_vector_sample()
-                .map(|(value, _)| value);
-            let weight = channel_weight
+            let x = point.x_visibility.transformed_vector_sample();
+            let weight = y
+                .channel_weight
                 .map(f64::from)
                 .or(point.combined_primary_weight);
             let weight = plotms_columns::baseline_weight(weight.unwrap_or(1.0)) as f32;
-            for (antenna, x, y) in [
-                (first, x, y),
-                (second, x.map(|value| value.conj()), y.conj()),
-            ] {
+            for (antenna, conjugate) in [(first, false), (second, true)] {
                 let key = AveragingPointKey {
                     time_key: AveragingTimeKey::Group(group),
                     baseline: AveragingBaselineToken::Antenna(antenna),
@@ -393,9 +391,13 @@ impl TimeBaselinePlan {
                     output.numeric_axis_samples = point.numeric_axis_samples.clone();
                 }
                 if let Some(x) = x {
-                    output.x_visibility.add_normalized_vector_sample(x, weight);
+                    output
+                        .x_visibility
+                        .add_normalized_vector_sample(x, weight, conjugate);
                 }
-                output.y_visibility.add_normalized_vector_sample(y, weight);
+                output
+                    .y_visibility
+                    .add_normalized_vector_sample(y, weight, conjugate);
             }
         }
     }

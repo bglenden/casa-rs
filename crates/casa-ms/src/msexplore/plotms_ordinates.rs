@@ -386,6 +386,13 @@ struct TimeProjection {
     total_weights: [f32; 2],
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct TransformedVectorSample {
+    visibility: Complex32,
+    model: Option<(VisibilityColumnProjection, Complex32)>,
+    pub(super) channel_weight: Option<f32>,
+}
+
 impl TimeProjection {
     fn channel_sample(
         grid: &ComplexGrid,
@@ -766,24 +773,50 @@ impl AveragedVisibility {
         }
     }
 
-    pub(super) fn transformed_vector_sample(&self) -> Option<(Complex32, Option<f32>)> {
+    pub(super) fn transformed_vector_sample(&self) -> Option<TransformedVectorSample> {
         match &self.0 {
-            VisibilitySamples::TimeProjection(average) => Some((average.time_mean(0), None)),
+            VisibilitySamples::TimeProjection(average) => Some(TransformedVectorSample {
+                visibility: average.time_mean(0),
+                model: average
+                    .projection
+                    .map(|projection| (projection, average.time_mean(1))),
+                channel_weight: None,
+            }),
             VisibilitySamples::TimeChannelProjection(average) => {
-                let (_, [visibility, _], weight) = average.means_and_weight()?;
-                let value = Complex32::new(visibility.re as f32, visibility.im as f32);
-                Some((value, Some(weight)))
+                let (sample, [visibility, model], weight) = average.means_and_weight()?;
+                let narrow = |value: Complex64| Complex32::new(value.re as f32, value.im as f32);
+                Some(TransformedVectorSample {
+                    visibility: narrow(visibility),
+                    model: sample
+                        .projection
+                        .map(|projection| (projection, narrow(model))),
+                    channel_weight: Some(weight),
+                })
             }
             _ => None,
         }
     }
 
-    pub(super) fn add_normalized_vector_sample(&mut self, value: Complex32, weight: f32) {
+    pub(super) fn add_normalized_vector_sample(
+        &mut self,
+        sample: TransformedVectorSample,
+        weight: f32,
+        conjugate: bool,
+    ) {
+        let weighted = |value: Complex32| {
+            let value = if conjugate { value.conj() } else { value };
+            // Even the first endpoint adds its contribution to positive zero.
+            Complex32::default() + value * weight
+        };
+        let (projection, model, model_weight) = sample
+            .model
+            .map_or((None, Complex32::default(), 0.0), |(projection, model)| {
+                (Some(projection), weighted(model), weight)
+            });
         self.add_time_projection(TimeProjection {
-            projection: None,
-            // The antenna accumulator adds to positive zero, including at the first endpoint.
-            weighted_sums: [Complex32::default() + value * weight, Complex32::default()],
-            total_weights: [weight, 0.0],
+            projection,
+            weighted_sums: [weighted(sample.visibility), model],
+            total_weights: [weight, model_weight],
         });
     }
 
