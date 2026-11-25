@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "d4e48d2dda90e11e588c01a4c096e93ed26e668b",
+  "source_revision": "d4e48d2dda90e11e588c01a4c096e93ed26e668b",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --only channel-flag-symbols --work <new-dir> --native-bin <msexplore>; casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only metadata-flag-symbols --work <new-dir> --native-bin <msexplore>",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "Two-channel DATA/CORRECTED visibility averages, selected Channel/Row and Channel/array Elevation, each with clear-only, both and flagged-only symbols. Unequal SIGMA_SPECTRUM and WEIGHT_SPECTRUM distinguish the two visibility weights.",
+  "result": "passed",
+  "baseline_result": "Main refuses the flagged display modes on channel averages and both raw metadata examples.",
+  "text_exports": 13,
+  "points": 234,
+  "figures": 3,
+  "rendered_coordinates": 90,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "empty_text_exports": 4,
+  "empty_figures": 2
+}
