@@ -5528,7 +5528,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_baselines = collapse_baselines && time_bins.is_some();
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
-    let scalar_channels = (scalar_average || scalar_spw_time) && average_channels;
+    let scalar_operands =
+        scalar_average || scalar_spw_time || (extended_derived && scalar_antenna_time);
+    let scalar_channels = scalar_operands && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
     // The unbinned antenna reducer uses the selected visibility cube flags.
     let antenna_cube_flags = antenna_average
@@ -6306,9 +6308,18 @@ fn build_generic_visibility_scatter_with_averaging(
                         // masks every bin in the selection.
                         continue;
                     }
-                    let scalar_weight = antenna_weight.map_or(scalar_weight, |(_, weight)| {
-                        plotms_columns::baseline_weight(f64::from(weight))
-                    });
+                    let scalar_weight =
+                        if extended_derived && scalar_antenna_time && !scalar_channels {
+                            let weight =
+                                weight_spectrum_grid.as_ref().map_or(scalar_weight, |grid| {
+                                    grid.values[*corr_index * grid.chan_count + bin.start]
+                                });
+                            plotms_columns::baseline_weight(weight)
+                        } else {
+                            antenna_weight.map_or(scalar_weight, |(_, weight)| {
+                                plotms_columns::baseline_weight(f64::from(weight))
+                            })
+                        };
                     // Later channel and antenna reductions use the sums of
                     // weights from the vector time transform.
                     let primary_weight = primary_weight_grid
@@ -6450,16 +6461,19 @@ fn build_generic_visibility_scatter_with_averaging(
                             ] {
                                 if let Some(grid) = visibility_columns.grid(axis, &visibility_grids)
                                 {
-                                    series_used |= if scalar_average || scalar_spw_time {
+                                    series_used |= if scalar_operands {
                                         average.add_scalar_sample(
                                             grid,
                                             &flags,
-                                            scalar_weight,
-                                            scalar_channels.then_some([
-                                                axis_weight(axis),
-                                                time_model_weight
-                                                    .filter(|_| propagate_channel_weights),
-                                            ]),
+                                            plotms_ordinates::ScalarTimeSample {
+                                                row_weight: scalar_weight,
+                                                channel_spectra: scalar_channels.then_some([
+                                                    axis_weight(axis),
+                                                    time_model_weight
+                                                        .filter(|_| propagate_channel_weights),
+                                                ]),
+                                                conjugate,
+                                            },
                                             *corr_index,
                                             bin,
                                         )

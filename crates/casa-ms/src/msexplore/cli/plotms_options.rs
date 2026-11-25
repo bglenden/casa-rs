@@ -134,7 +134,14 @@ impl CliOptions {
 
     pub(super) fn supports_extended_derived(&self, [x, y, _]: [MsDataColumn; 3]) -> bool {
         let channel_average = self.avgchannel.is_some_and(|width| width > 1);
-        let supported_average = if self.avgbaseline {
+        let supported_average = if self.avgantenna || self.avgspw {
+            self.avgtime.is_some()
+                && !self.avgbaseline
+                && !(self.avgantenna && self.avgspw)
+                && !self.avgscan
+                && !self.avgfield
+                && self.freqframe.is_none()
+        } else if self.avgbaseline {
             self.scalar
         } else {
             self.avgtime.is_some()
@@ -162,8 +169,6 @@ impl CliOptions {
             && self.y_axis2.is_none()
             && self.iteraxis.is_none()
             && supported_average
-            && !self.avgantenna
-            && !self.avgspw
     }
 
     pub(super) fn derived_average_storage(
