@@ -1039,29 +1039,7 @@ impl<'a> VisibilityRead<'a> {
                 data
             };
             if !only_raw {
-                let ArrayValue::Complex32(complex) = &data else {
-                    return Err(input("visibility columns must contain Complex values"));
-                };
-                let projections: [fn(Complex32) -> f32; 4] = [
-                    |sample| sample.norm(),
-                    |sample| sample.arg(),
-                    |sample| sample.re,
-                    |sample| sample.im,
-                ];
-                let memory = complex
-                    .as_slice_memory_order()
-                    .ok_or_else(|| input("visibility block is not contiguous"))?;
-                for (name, project) in [amplitude, phase, real, imaginary]
-                    .into_iter()
-                    .zip(projections)
-                    .filter_map(|(key, project)| key.map(|key| (key, project)))
-                {
-                    let values = shaped(
-                        complex.shape(),
-                        memory.iter().copied().map(project).collect(),
-                    )?;
-                    fields.insert(name, Value::Array(ArrayValue::Float32(values)));
-                }
+                insert_visibility_components(fields, &data, [amplitude, phase, real, imaginary])?;
             }
             insert_array_aliases(
                 fields,
@@ -1185,6 +1163,35 @@ impl<'a> VisibilityRead<'a> {
             Ok(flags)
         }
     }
+}
+
+fn insert_visibility_components(
+    fields: &mut BTreeMap<String, Value>,
+    data: &ArrayValue,
+    names: [Option<String>; 4],
+) -> MsResult<()> {
+    let ArrayValue::Complex32(complex) = data else {
+        return Err(input("visibility columns must contain Complex values"));
+    };
+    let projections: [fn(Complex32) -> f32; 4] = [
+        |sample| sample.norm(),
+        |sample| sample.arg(),
+        |sample| sample.re,
+        |sample| sample.im,
+    ];
+    let memory = complex
+        .as_slice_memory_order()
+        .ok_or_else(|| input("visibility block is not contiguous"))?;
+    for (name, project) in names.into_iter().zip(projections) {
+        if let Some(name) = name {
+            let values = shaped(
+                complex.shape(),
+                memory.iter().copied().map(project).collect(),
+            )?;
+            fields.insert(name, Value::Array(ArrayValue::Float32(values)));
+        }
+    }
+    Ok(())
 }
 
 fn row_flag_sums(flags: &ArrayD<bool>, empty: bool) -> MsResult<ArrayD<i64>> {
