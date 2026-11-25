@@ -476,8 +476,14 @@ pub(super) fn options_from_plotms(
     };
     let secondary_y_data_column =
         (y_axis2 == Some(y_axis) || secondary_y != data_column).then_some(secondary_y);
+    let avgtime = average_text("avgtime")?
+        .map(|value| number::<f64>(&value))
+        .transpose()
+        .map_err(TaskFailure::validation)?;
     let document_axes = x_axis.is_visibility_math()
         || y_axis.is_visibility_math()
+        || (avgtime.is_some_and(|interval| interval != 0.0)
+            && [x_axis, y_axis].contains(&MsAxis::WeightSpectrum))
         // PlotMS falls back to scalar SIGMA for undefined spectral cells;
         // the raw explorer deliberately requires the requested stored cell.
         || x_axis == MsAxis::SigmaSpectrum
@@ -543,11 +549,7 @@ pub(super) fn options_from_plotms(
             .transpose()
             .map_err(TaskFailure::validation)?
             .filter(|&width| !document_axes || width != 0),
-        avgtime: average_text("avgtime")?
-            .map(|value| number::<f64>(&value))
-            .transpose()
-            .map_err(TaskFailure::validation)?
-            .filter(|&interval| !document_axes || interval != 0.0),
+        avgtime: avgtime.filter(|&interval| !document_axes || interval != 0.0),
         avgscan: average("avgscan")?,
         avgfield: average("avgfield")?,
         avgbaseline: average("avgbaseline")?,

@@ -929,6 +929,11 @@ def compare_time_averaged_statistics(root, native):
          (0, 1), no_spectra, (11, 10)),
         ("row-sigma-fallback", dict(vis=str(fallback), yaxis="sigmasp"),
          (0, 1), no_spectra, (1 / np.sqrt(6), 1 / np.sqrt(5))),
+        ("mixed-weighted-amplitude-fallback",
+         dict(vis=str(fallback), xaxis="wt*amp", yaxis="sigmasp", ydatacolumn="corrected"),
+         (0, 1), (24.5, 27.3), (1 / np.sqrt(6), 1 / np.sqrt(5))),
+        ("weight-spectrum-abscissa", dict(xaxis="wtsp", xdatacolumn="corrected", yaxis="amp"),
+         (0, 1), (15, 28), observed),
         ("time-only-weight", dict(yaxis="wtsp", avgchannel=""), (0, 1, 3), (1, 2.6, 2.6), (4, 5, 5)),
         ("time-channel-weighted-amplitude", dict(yaxis="wt*amp"),
          (0, 1), observed, (119 / 9, 18.2)),
@@ -959,6 +964,21 @@ def compare_time_averaged_statistics(root, native):
     title = "Time and channel weighted amplitude"
     compare_figure(work, native, base | dict(yaxis="wt*amp", title=title),
                    work / "time-channel-weighted-amplitude.casa.txt", (title, "Real", "Wt*Amp"))
+    title = "Time and weight spectrum"
+    default_time = base | dict(xaxis="time", xdatacolumn="", yaxis="wtsp", title=title)
+    expected, actual = (work / f"time-weight-spectrum.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**default_time, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert [int(point[2]) for point in selected] == [0, 1] * 3
+    assert [float(point[1]) for point in selected] == [9, 5] * 3
+    for point in selected:
+        assert float(point[0]) == float(point[9])
+    assert native(**default_time, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    np.testing.assert_allclose([float(point[0]) for point in rows(actual)],
+                               [float(point[0]) for point in selected], rtol=0, atol=0.00051)
+    print("time-weight-spectrum: six matching default Time/WtSp coordinates and time anchors", flush=True)
+    compare_figure(work, native, default_time, expected, (title, "Time (MJD seconds)", "Weight Spectrum"))
     for mode, axis, options in (
         ("antenna", "wtsp", dict(avgantenna=True, avgchannel="", antenna="A0&A1;A0&A2")),
         ("baseline", "wtsp", dict(avgbaseline=True)),

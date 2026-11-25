@@ -1911,7 +1911,6 @@ impl MsPlotSpec {
                 | MsAxis::Frequency
                 | MsAxis::Velocity
                 | MsAxis::Amplitude
-                | MsAxis::WeightedAmplitude
                 | MsAxis::Phase
                 | MsAxis::Real
                 | MsAxis::Imaginary
@@ -1922,6 +1921,7 @@ impl MsPlotSpec {
         );
         if !supported_x
             && !self.x_axis.is_interval_or_wavelength()
+            && !(self.x_axis.is_weight_axis() && self.x_axis.uses_channel_bins())
             && !self.x_axis.is_row_identifier()
             && !(pointing && self.x_axis.is_pointing())
         {
@@ -5679,6 +5679,9 @@ fn build_generic_visibility_scatter_with_averaging(
         }
         visibility_weight_kinds
             .is_some_and(|kinds| kinds.uses_for_ordinates(kind, additional_ordinates))
+            || (average_statistics
+                && time_weight_kinds
+                    .is_some_and(|kinds| kinds.row_weight == kind || kinds.row_sigma == kind))
             || channel_first_kinds.is_some_and(|kinds| kinds.row_weight == kind)
             || ((time_baselines || time_antenna || time_spw)
                 && time_weight_kinds.is_some_and(|kinds| kinds.row_weight == kind))

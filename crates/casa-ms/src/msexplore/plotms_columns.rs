@@ -68,7 +68,7 @@ pub(super) fn uses_time_statistics(spec: &MsPlotSpec) -> bool {
         && !spec.averaging.scalar
         && std::iter::once(spec.x_axis)
             .chain(spec.y_axes.iter().copied())
-            .any(MsAxis::is_weight_axis)
+            .any(|axis| axis.is_weight_axis() && axis.uses_channel_bins())
 }
 
 pub(super) fn supports_ordinary_time_axes(spec: &MsPlotSpec) -> bool {
