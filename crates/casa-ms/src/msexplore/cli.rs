@@ -280,10 +280,10 @@ fn run_task(
                 options.plotms_phasecenter(&value, calibration.is_none() && atmosphere.is_none())
             })
             .transpose()?;
+        let iterated_averaging = options.supports_averaged_ordinate_iteration();
         if options.iteraxis.is_some()
             && options.y_axis2.is_some()
-            && ((options.plotms_averaging_active()
-                && !options.supports_averaged_ordinate_iteration())
+            && ((options.plotms_averaging_active() && !iterated_averaging)
                 || options.has_mixed_ordinate_dimensions()
                 || calibration.is_some()
                 || atmosphere.is_some())
@@ -332,8 +332,10 @@ fn run_task(
                     options.plotms_averaging_active(),
                     options.plotms_extended_averaging()
                         && options.secondary_y_data_column.is_some()
+                        && !iterated_averaging
                         && !options.plotms_independent_average(
-                            atmosphere.is_none() && !options.additional_ordinates.is_empty(),
+                            atmosphere.is_none()
+                                && (options.avgspw || !options.additional_ordinates.is_empty()),
                         ),
                     options.supports_channel_derived(columns)
                         || options.supports_extended_derived(columns),

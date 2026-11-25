@@ -5667,6 +5667,8 @@ fn build_generic_visibility_scatter_with_averaging(
 
     let iteraxis = spec.iteration.iteraxis;
     let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
+    let paged_iteration = iterated_ordinate_list
+        || (spw_average && iteraxis.is_some_and(MsIterationAxis::supports_averaged_ordinates));
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
     let use_spectral_weights = calibration.is_some()
@@ -6801,7 +6803,7 @@ fn build_generic_visibility_scatter_with_averaging(
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
-    if iterated_ordinate_list {
+    if paged_iteration {
         panel_order.sort_by_key(|key| panels[key].iteration_rank);
     }
     for panel_key in panel_order {
@@ -6954,7 +6956,12 @@ fn build_generic_visibility_scatter_with_averaging(
                 series_entries.push(output);
             }
         }
-        if time_weight_kinds.is_some() || collapse_baselines || scalar_average || antenna_average {
+        if time_weight_kinds.is_some()
+            || collapse_baselines
+            || scalar_average
+            || antenna_average
+            || spw_average
+        {
             series_entries.sort_by_key(|entry| entry.y_index);
         }
         if series_entries.is_empty() && !retain_empty_panel {
@@ -6995,7 +7002,7 @@ fn build_generic_visibility_scatter_with_averaging(
     }
 
     if let Some(iteraxis) = iteraxis {
-        let (gridrows, gridcols) = if iterated_ordinate_list {
+        let (gridrows, gridcols) = if paged_iteration {
             (spec.layout.gridrows, spec.layout.gridcols)
         } else {
             resolve_iterated_grid(

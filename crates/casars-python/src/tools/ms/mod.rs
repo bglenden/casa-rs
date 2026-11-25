@@ -4,6 +4,7 @@
 //! yet raises `NotImplementedError` naming #1030 (`stubs.rs`).
 
 mod attachment_info;
+mod history;
 mod iteration;
 mod lister;
 pub(super) mod metadata_link;
@@ -55,6 +56,10 @@ struct AttachedMs {
     path: PathBuf,
     directory: Metadata,
     main: Table,
+    main_files: attachment_info::TableFiles,
+    main_stamp: Option<attachment_info::TableStamp>,
+    #[cfg(unix)]
+    history_snapshot: Option<history::HistorySnapshot>,
     subtables: subtable_queries::Subtables,
     writable: bool,
     original_rows: usize,
@@ -77,6 +82,8 @@ impl AttachedMs {
         let directory = std::fs::metadata(&path).map_err(runtime_error)?;
         let sources =
             casa_calibration::visibility_model_source_paths(&path).map_err(runtime_error)?;
+        let main_files = attachment_info::TableFiles::new(&path);
+        let main_stamp = main_files.stamp();
         let main = Table::open(TableOptions::new(&path)).map_err(runtime_error)?;
         let original_rows = main.row_count();
         let is_multi_ms = main.info().sub_type == "CONCATENATED";
@@ -88,6 +95,10 @@ impl AttachedMs {
             path,
             directory,
             main,
+            main_files,
+            main_stamp,
+            #[cfg(unix)]
+            history_snapshot: None,
             subtables: subtable_queries::Subtables::default(),
             writable,
             original_rows,

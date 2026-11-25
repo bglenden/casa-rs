@@ -40,7 +40,7 @@ use super::{ColumnSources, RequiredScalarColumnData, StorageError};
 
 mod array_updates;
 mod bucket_reader;
-use bucket_reader::ReadBuckets;
+use bucket_reader::{LastBucket, ReadBuckets};
 mod append;
 mod column_writer;
 pub(crate) use append::stage_records;
@@ -48,10 +48,14 @@ pub(crate) use array_updates::save_ssm_array_rows_in_place;
 mod index;
 mod string_arrays;
 mod string_buckets;
+mod string_read;
 
 use string_buckets::StringBuckets;
+use string_read::{
+    read_fixed_ssm_string, read_ssm_string, read_ssm_string_array_value, read_ssm_string_bytes,
+};
 
-const SSM_HEADER_SIZE: u64 = 512;
+pub(super) const SSM_HEADER_SIZE: u64 = 512;
 pub(super) const DEFAULT_SSM_BUCKET_SIZE: u32 = 32768;
 
 /// File offset of bucket `bucket` of a file of `bucket_bytes`-byte buckets.
@@ -614,105 +618,6 @@ fn extract_scalar_from_ssm_bytes(
 }
 
 // ---------------------------------------------------------------------------
-// String bucket reader
-// ---------------------------------------------------------------------------
-
-const STRING_BUCKET_HEADER: usize = 16;
-
-fn read_ssm_string(
-    file: &mut File,
-    header: &SsmHeader,
-    bucket_nr: i32,
-    offset: i32,
-    length: i32,
-) -> Result<String, StorageError> {
-    let bytes = read_ssm_string_bytes(file, header, bucket_nr, offset, length)?;
-    String::from_utf8(bytes)
-        .map_err(|e| StorageError::FormatMismatch(format!("SSM string is not valid UTF-8: {e}")))
-}
-
-fn read_fixed_ssm_string(bytes: &[u8]) -> Result<String, StorageError> {
-    let len = bytes
-        .iter()
-        .position(|&byte| byte == 0)
-        .unwrap_or(bytes.len());
-    String::from_utf8(bytes[..len].to_vec()).map_err(|e| {
-        StorageError::FormatMismatch(format!("SSM fixed string is not valid UTF-8: {e}"))
-    })
-}
-
-/// Read `length` bytes from the SSM string bucket chain starting at
-/// `offset` in the data area of bucket `bucket_nr`: a string, or a string
-/// array's elements. Data longer than a bucket's rest continues at the
-/// start of the next bucket its header links (casacore's
-/// `SSMStringHandler::getData`).
-fn read_ssm_string_bytes(
-    file: &mut File,
-    header: &SsmHeader,
-    bucket_nr: i32,
-    offset: i32,
-    length: i32,
-) -> Result<Vec<u8>, StorageError> {
-    if length == 0 {
-        return Ok(Vec::new());
-    }
-    if bucket_nr < 0 || offset < 0 || length < 0 {
-        return Err(StorageError::FormatMismatch(format!(
-            "invalid SSM string locator bucket={} offset={} length={}",
-            bucket_nr, offset, length
-        )));
-    }
-
-    let mut result = Vec::with_capacity(length as usize);
-    let mut remaining = length as usize;
-    let mut cur_bucket = bucket_nr;
-    let mut cur_offset = offset as usize;
-
-    while remaining > 0 {
-        let bucket = read_bucket(file, header, cur_bucket as u32)?;
-        let data_start = STRING_BUCKET_HEADER + cur_offset;
-        let Some(available) = bucket.len().checked_sub(data_start) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "SSM string offset {cur_offset} is beyond bucket {cur_bucket}"
-            )));
-        };
-        let chunk = remaining.min(available);
-        result.extend_from_slice(&bucket[data_start..data_start + chunk]);
-        remaining -= chunk;
-
-        if remaining > 0 {
-            // String bucket metadata (nextBucket) is always canonical (BE)
-            // per C++ CanonicalConversion in SSMStringHandler.
-            let next_bucket = read_i32_be(&bucket[12..16]);
-            if next_bucket < 0 {
-                return Err(StorageError::FormatMismatch(
-                    "SSM string chain ended prematurely".to_string(),
-                ));
-            }
-            cur_bucket = next_bucket;
-            cur_offset = 0;
-        }
-    }
-
-    Ok(result)
-}
-
-fn read_ssm_string_array_value(
-    file: &mut File,
-    header: &SsmHeader,
-    bucket_nr: i32,
-    offset: i32,
-    length: i32,
-    fixed_shape: Option<&[i32]>,
-) -> Result<Option<Value>, StorageError> {
-    if length == 0 {
-        return Ok(None);
-    }
-    let block = read_ssm_string_bytes(file, header, bucket_nr, offset, length)?;
-    string_arrays::decode(&block, fixed_shape).map(Some)
-}
-
-// ---------------------------------------------------------------------------
 // Column data reader
 // ---------------------------------------------------------------------------
 
@@ -802,6 +707,7 @@ pub(crate) fn read_ssm_file_columns(
             };
 
             let mut per_row = Vec::with_capacity(nrrow);
+            let mut payload_buckets = LastBucket::default();
             for row_idx in 0..nrrow {
                 let base = row_idx * 3;
                 let bucket_nr = ref_values[base];
@@ -810,6 +716,7 @@ pub(crate) fn read_ssm_file_columns(
                 let value = read_ssm_string_array_value(
                     &mut file,
                     &header,
+                    &mut payload_buckets,
                     bucket_nr,
                     str_offset,
                     str_length,
@@ -992,8 +899,8 @@ pub(crate) fn read_ssm_scalar_column_rows(
         .collect();
     requests.sort_unstable_by_key(|&(row_index, _)| row_index);
 
-    let mut cached_bucket_nr = None;
-    let mut cached_bucket = Vec::new();
+    let mut data_buckets = LastBucket::default();
+    let mut payload_buckets = LastBucket::default();
     let mut values = vec![None; selected_rows.len()];
     let (elem_bytes, _) = canonical_element_size(col_desc.data_type);
 
@@ -1002,10 +909,7 @@ pub(crate) fn read_ssm_scalar_column_rows(
             index.find_bucket(row_index as u64).ok_or_else(|| {
                 StorageError::FormatMismatch(format!("SSM index has no bucket for row {row_index}"))
             })?;
-        if cached_bucket_nr != Some(bucket_nr) {
-            cached_bucket = read_bucket(&mut file, &header, bucket_nr)?;
-            cached_bucket_nr = Some(bucket_nr);
-        }
+        let cached_bucket = data_buckets.read(&mut file, &header, bucket_nr)?;
         let row_in_bucket = (row_index as u64 - start_row) as usize;
         let value = match col_desc.data_type {
             CasacoreDataType::TpBool => {
@@ -1033,7 +937,14 @@ pub(crate) fn read_ssm_scalar_column_rows(
                             StorageError::FormatMismatch(format!("invalid UTF-8: {err}"))
                         })?
                     } else {
-                        read_ssm_string(&mut file, &header, str_bucket, str_offset, str_length)?
+                        read_ssm_string(
+                            &mut file,
+                            &header,
+                            &mut payload_buckets,
+                            str_bucket,
+                            str_offset,
+                            str_length,
+                        )?
                     }
                 };
                 Value::Scalar(ScalarValue::String(string))
@@ -1786,6 +1697,8 @@ fn read_column_from_buckets(
             // pairs in a string bucket, one reference per row.
             let mut values = Vec::with_capacity(nrrow * nrelem);
             let fixed_width = max_length as usize;
+            let mut data_buckets = LastBucket::default();
+            let mut payload_buckets = LastBucket::default();
             for row in first_row..first_row + nrrow {
                 let (bucket_nr, start_row, _end_row) =
                     index.find_bucket(row as u64).ok_or_else(|| {
@@ -1793,7 +1706,7 @@ fn read_column_from_buckets(
                             "SSM index has no bucket for row {row}"
                         ))
                     })?;
-                let bucket = read_bucket(file, header, bucket_nr)?;
+                let bucket = data_buckets.read(file, header, bucket_nr)?;
                 let row_in_bucket = (row as u64 - start_row) as usize;
                 if fixed_width > 0 {
                     let row_width = fixed_width * nrelem;
@@ -1818,7 +1731,14 @@ fn read_column_from_buckets(
                         )
                         .map_err(|e| StorageError::FormatMismatch(format!("invalid UTF-8: {e}")))?
                     } else {
-                        read_ssm_string(file, header, str_bucket, str_offset, str_length)?
+                        read_ssm_string(
+                            file,
+                            header,
+                            &mut payload_buckets,
+                            str_bucket,
+                            str_offset,
+                            str_length,
+                        )?
                     };
                     values.push(s);
                 } else if str_length == 0 {
@@ -1826,8 +1746,14 @@ fn read_column_from_buckets(
                         values.push(String::new());
                     }
                 } else {
-                    let block =
-                        read_ssm_string_bytes(file, header, str_bucket, str_offset, str_length)?;
+                    let block = read_ssm_string_bytes(
+                        file,
+                        header,
+                        &mut payload_buckets,
+                        str_bucket,
+                        str_offset,
+                        str_length,
+                    )?;
                     let mut pos = 0usize;
                     for _ in 0..nrelem {
                         if pos + 4 > block.len() {

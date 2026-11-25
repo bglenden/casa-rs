@@ -192,7 +192,7 @@
       "status": "Partial"
     },
     "yaxis": {
-      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages.",
+      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates.",
       "evidence": [
         "paired",
         "ms-multiple-visibility-ordinates",
@@ -210,7 +210,9 @@
         "ms-channel-before-antenna-averages",
         "ms-channel-visibility-ordinate-lists",
         "ms-iterated-visibility-ordinates",
-        "ms-time-visibility-ordinate-lists"
+        "ms-time-visibility-ordinate-lists",
+        "ms-spw-iteration-and-ordinate-order",
+        "ms-two-spw-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -218,7 +220,7 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged and channel-only averaged visibility ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged, channel-only and ordinary vector or scalar time-averaged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and other mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA. A single stored corrected/model or observed/model expression can be plotted after channel averaging against Channel or Time. With Time as X, ordinary vector time averaging projects one observed or corrected residual or ratio after separately averaging the stored visibility and model operands. Float scalar projections retain signed amplitude differences and the full phase difference. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported channel-only and ordinary time-averaged model expressions use the selected virtual or default model when applicable.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged and channel-only averaged visibility ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged, channel-only and ordinary vector or scalar time-averaged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and other mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA. A single stored corrected/model or observed/model expression can be plotted after channel averaging against Channel or Time. With Time as X, ordinary vector time averaging projects one observed or corrected residual or ratio after separately averaging the stored visibility and model operands. Float scalar projections retain signed amplitude differences and the full phase difference. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported channel-only and ordinary time-averaged model expressions use the selected virtual or default model when applicable. Supported iterated SPW plots can use stored or selected virtual model ordinates independently. Two standalone SPW ordinates can select independent stored or virtual visibility columns.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -269,7 +271,9 @@
         "ms-iterated-visibility-ordinates",
         "ms-time-visibility-ordinate-lists",
         "ms-virtual-model-time-averages",
-        "ms-virtual-model-averaged-expressions"
+        "ms-virtual-model-averaged-expressions",
+        "ms-spw-iteration-and-ordinate-order",
+        "ms-two-spw-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -299,13 +303,15 @@
       "status": "Partial"
     },
     "yaxislocation": {
-      "scope": "Choose the left or right side. PlotMS groups more than two unaveraged or channel-only averaged MeasurementSet visibility ordinates by side. An omitted position defaults to left. A scalar location does not apply to an ordinate list. Unaveraged iterated MeasurementSet panels group their visibility ordinates by side.",
+      "scope": "Choose the left or right side. PlotMS groups more than two unaveraged or channel-only averaged MeasurementSet visibility ordinates by side. An omitted position defaults to left. A scalar location does not apply to an ordinate list. Unaveraged iterated MeasurementSet panels group their visibility ordinates by side. Supported iterated SPW visibility ordinates retain requested left and right sides. Two independent standalone SPW ordinates retain requested sides.",
       "evidence": [
         "paired",
         "ms-multiple-visibility-ordinates",
         "ms-channel-visibility-ordinate-lists",
         "ms-iterated-visibility-ordinates",
-        "ms-time-visibility-ordinate-lists"
+        "ms-time-visibility-ordinate-lists",
+        "ms-spw-iteration-and-ordinate-order",
+        "ms-two-spw-visibility-ordinates"
       ],
       "behaviors": [
         "coordinates"
@@ -480,7 +486,7 @@
       "status": "Implemented"
     },
     "avgchannel": {
-      "scope": "Average selected channels into bins. MeasurementSet data, corrected and model axes use the corresponding spectral weights when available, including lists of independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product. Channel-only corrected vector and scalar residuals and ratios project their stored complex operands after averaging with calibrated weights. Observed and model operands can use independent selected spectra before vector or scalar projection. A lone derived visibility ordinate uses the same separate stored operand spectra and observed-cube mask with a Channel or Time abscissa. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Complex channels can be averaged before per-antenna reduction. The per-antenna stage uses the transformed spectral weight and retains the output antenna identity and order. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Supported channel and channel/time residuals and ratios use selected virtual or default model operands. Channel-averaged visibility ordinate lists can produce static correlation, scan and field panels. Channel and time averages of independent stored ordinate lists can also span scans and fields. Supported channel and baseline averaging accepts lists of independent stored visibility ordinates. Supported per-antenna channel and time averaging accepts lists of independent stored visibility ordinates. Channel bins compose with independent stored visibility ordinate lists in spectral-window averages. Channel bins compose with per-antenna ordinate lists across scan and field boundaries. Scalar field-spanning residuals can use selected virtual model operands with channel bins. Supported vector field-spanning virtual models and residuals compose with masked channel bins. Channel and antenna or baseline averages can compose with selected virtual model cells. Channel and spectral-window averages can use selected virtual model cells. Channel averaging can compose with spanned time and spectral-window averages over virtual model cells.",
+      "scope": "Average selected channels into bins. MeasurementSet data, corrected and model axes use the corresponding spectral weights when available, including lists of independent ordinates. Channel averaging composes with ordinary vector time averaging. Vector baseline averaging can follow channel averaging at each integration. Vector time and channel averages can both precede the baseline reducer. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. A selected fully masked combined vector average exports an empty product. Channel-only corrected vector and scalar residuals and ratios project their stored complex operands after averaging with calibrated weights. Observed and model operands can use independent selected spectra before vector or scalar projection. A lone derived visibility ordinate uses the same separate stored operand spectra and observed-cube mask with a Channel or Time abscissa. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Complex channels can be averaged before per-antenna reduction. The per-antenna stage uses the transformed spectral weight and retains the output antenna identity and order. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Supported channel and channel/time residuals and ratios use selected virtual or default model operands. Channel-averaged visibility ordinate lists can produce static correlation, scan and field panels. Channel and time averages of independent stored ordinate lists can also span scans and fields. Supported channel and baseline averaging accepts lists of independent stored visibility ordinates. Supported per-antenna channel and time averaging accepts lists of independent stored visibility ordinates. Channel bins compose with independent stored visibility ordinate lists in spectral-window averages. Channel bins compose with per-antenna ordinate lists across scan and field boundaries. Scalar field-spanning residuals can use selected virtual model operands with channel bins. Supported vector field-spanning virtual models and residuals compose with masked channel bins. Channel and antenna or baseline averages can compose with selected virtual model cells. Channel and spectral-window averages can use selected virtual model cells. Channel averaging can compose with spanned time and spectral-window averages over virtual model cells. Channel averaging can compose with vector time and spectral-window averages in static iteration. Channel and time-averaged SPW plots support two independent visibility ordinates.",
       "evidence": [
         "paired",
         "ms-channel-columns",
@@ -523,7 +529,9 @@
         "ms-vector-spanned-virtual-models",
         "ms-virtual-antenna-baseline-models",
         "ms-virtual-spw-models",
-        "ms-virtual-spw-model-spans"
+        "ms-virtual-spw-model-spans",
+        "ms-spw-iteration-and-ordinate-order",
+        "ms-two-spw-visibility-ordinates"
       ],
       "behaviors": [
         "averaging"
@@ -531,7 +539,7 @@
       "status": "Partial"
     },
     "avgtime": {
-      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. A selected fully masked combined vector average exports an empty product. Ordinary vector time averaging can pair Time with one stored observed or corrected vector or scalar residual or ratio, using separate operand weights and the selected cube mask before projection. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Ordinary vector time averages can feed per-antenna reduction using the transformed weight spectrum and closed second-stage time intervals. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Ordinary vector and scalar time averaging also accepts lists of three or more independent stored visibility ordinates, with optional complex channel bins. Selected virtual models can be predicted before ordinary vector and scalar time averages, including optional channel bins and independent observed or corrected axes. Supported vector and scalar time residuals and ratios also use selected virtual or default model operands. Supported ordinary time-averaged visibility ordinate lists can produce static correlation, scan and field panels. Supported vector and scalar time averages of stored visibility ordinate lists can span scans and fields. Supported baseline and time averaging can retain three or more independent stored ordinate columns. Supported antenna and time averages accept independent stored visibility ordinate lists. Time and spectral-window averaging can compose with independent stored visibility ordinate lists and scan and field spans. Time and antenna averages can compose with independent stored ordinate lists across scans and fields. Scalar time averages across scans and fields can use selected virtual visibility model cells. Vector scan and field spans use the first selected row of each input chunk as the phase reference for selected virtual models. Supported per-antenna time averages can use selected virtual model cells. Ordinary time and spectral-window averages can compose over virtual model cells. Time and spectral-window averages over virtual model cells can cross selected scans or fields.",
+      "scope": "Average selected samples over the requested interval in seconds. Ordinary MeasurementSet vector time averaging can use two independent stored ordinate columns with a visibility, time, channel or frequency abscissa. Channel and time averaging can be combined for those axes. The baseline reducer can combine the visibility iterator’s vector time averages. Vector time and channel averages can both precede the baseline reducer. The ordinary scalar mode uses PlotMS visibility-buffer boundaries. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. A selected fully masked combined vector average exports an empty product. Ordinary vector time averaging can pair Time with one stored observed or corrected vector or scalar residual or ratio, using separate operand weights and the selected cube mask before projection. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. Time and channel averaging can compose before projecting a stored observed or corrected vector or scalar residual or ratio against Channel or Time, with the selected cube mask and separate operand sums. Observed spectra follow the weight-to-sigma conversion between stages. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Ordinary vector time averages can feed per-antenna reduction using the transformed weight spectrum and closed second-stage time intervals. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Ordinary stored visibility plots can use vector time and channel transforms with independent spectra, equal stored-model channel means and cube-flag masks. Ordinary vector and scalar time averaging also accepts lists of three or more independent stored visibility ordinates, with optional complex channel bins. Selected virtual models can be predicted before ordinary vector and scalar time averages, including optional channel bins and independent observed or corrected axes. Supported vector and scalar time residuals and ratios also use selected virtual or default model operands. Supported ordinary time-averaged visibility ordinate lists can produce static correlation, scan and field panels. Supported vector and scalar time averages of stored visibility ordinate lists can span scans and fields. Supported baseline and time averaging can retain three or more independent stored ordinate columns. Supported antenna and time averages accept independent stored visibility ordinate lists. Time and spectral-window averaging can compose with independent stored visibility ordinate lists and scan and field spans. Time and antenna averages can compose with independent stored ordinate lists across scans and fields. Scalar time averages across scans and fields can use selected virtual visibility model cells. Vector scan and field spans use the first selected row of each input chunk as the phase reference for selected virtual models. Supported per-antenna time averages can use selected virtual model cells. Ordinary time and spectral-window averages can compose over virtual model cells. Time and spectral-window averages over virtual model cells can cross selected scans or fields. Static iterated SPW averages can compose with supported vector and scalar time intervals. Two independent SPW ordinates compose with supported scalar and vector time averages.",
       "evidence": [
         "paired",
         "ms-time-columns",
@@ -578,7 +586,9 @@
         "ms-vector-spanned-virtual-models",
         "ms-virtual-antenna-baseline-models",
         "ms-virtual-spw-models",
-        "ms-virtual-spw-model-spans"
+        "ms-virtual-spw-model-spans",
+        "ms-spw-iteration-and-ordinate-order",
+        "ms-two-spw-visibility-ordinates"
       ],
       "behaviors": [
         "averaging"
@@ -586,7 +596,7 @@
       "status": "Partial"
     },
     "avgscan": {
-      "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar and vector per-antenna time averaging can span scans, fields or both. Each unselected span retains its barrier and exports use the averaged buffer identifiers. Supported vector time residuals can use a selected virtual model when spanning scans. Three or more independent stored visibility ordinates can share a scan-spanning vector or scalar time average. Supported spanned time and spectral-window averages accept independent stored visibility ordinate lists. Supported per-antenna time averages over scans can use independent stored visibility ordinate lists. Supported scalar time averages across scans can predict virtual model cells before averaging. Vector time spans can use virtual model cells with the selected iterator chunk's phase reference. Supported scan-spanning time and spectral-window averages can use virtual model cells.",
+      "scope": "Permit time bins to cross scan boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar and vector per-antenna time averaging can span scans, fields or both. Each unselected span retains its barrier and exports use the averaged buffer identifiers. Supported vector time residuals can use a selected virtual model when spanning scans. Three or more independent stored visibility ordinates can share a scan-spanning vector or scalar time average. Supported spanned time and spectral-window averages accept independent stored visibility ordinate lists. Supported per-antenna time averages over scans can use independent stored visibility ordinate lists. Supported scalar time averages across scans can predict virtual model cells before averaging. Vector time spans can use virtual model cells with the selected iterator chunk's phase reference. Supported scan-spanning time and spectral-window averages can use virtual model cells. Supported spanned time and spectral-window averages accept two independent stored ordinates.",
       "evidence": [
         "paired",
         "ms-scan-field-time-columns",
@@ -604,7 +614,8 @@
         "ms-spanned-antenna-visibility-ordinate-lists",
         "ms-scalar-spanned-virtual-models",
         "ms-vector-spanned-virtual-models",
-        "ms-virtual-spw-model-spans"
+        "ms-virtual-spw-model-spans",
+        "ms-two-spw-visibility-ordinates"
       ],
       "behaviors": [
         "averaging"
@@ -612,7 +623,7 @@
       "status": "Partial"
     },
     "avgfield": {
-      "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar and vector per-antenna time averaging can span scans, fields or both. Each unselected span retains its barrier and exports use the averaged buffer identifiers. Three or more independent stored visibility ordinates can share a field-spanning vector or scalar time average. Supported spanned time and spectral-window averages accept independent stored visibility ordinate lists. Supported per-antenna time averages over fields can use independent stored visibility ordinate lists. Supported scalar time averages across fields predict each selected virtual model independently before averaging. Vector time spans predict each selected virtual model using the input chunk's first field direction and time, using each input buffer's first model recipe and keeping each row's UVW. Supported field-spanning time and spectral-window averages can use virtual model cells.",
+      "scope": "Permit time bins to cross field boundaries. For two independent MeasurementSet visibility ordinates, vector averaging keeps the requested grouping and uses the first chronological integration for the bin metadata. Scan and field spans also apply to supported vector time-averaged derived expressions and their composition with channel averaging. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar and vector per-antenna time averaging can span scans, fields or both. Each unselected span retains its barrier and exports use the averaged buffer identifiers. Three or more independent stored visibility ordinates can share a field-spanning vector or scalar time average. Supported spanned time and spectral-window averages accept independent stored visibility ordinate lists. Supported per-antenna time averages over fields can use independent stored visibility ordinate lists. Supported scalar time averages across fields predict each selected virtual model independently before averaging. Vector time spans predict each selected virtual model using the input chunk's first field direction and time, using each input buffer's first model recipe and keeping each row's UVW. Supported field-spanning time and spectral-window averages can use virtual model cells. Supported spanned time and spectral-window averages accept two independent stored ordinates.",
       "evidence": [
         "paired",
         "ms-scan-field-time-columns",
@@ -628,7 +639,8 @@
         "ms-spanned-antenna-visibility-ordinate-lists",
         "ms-scalar-spanned-virtual-models",
         "ms-vector-spanned-virtual-models",
-        "ms-virtual-spw-model-spans"
+        "ms-virtual-spw-model-spans",
+        "ms-two-spw-visibility-ordinates"
       ],
       "behaviors": [
         "averaging"
@@ -674,7 +686,7 @@
       "status": "Partial"
     },
     "avgspw": {
-      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer. Ordinary vector time and SPW averages first reduce each baseline and window with the selected visibility spectra, then form closed PlotMS groups from the returned buffers. Vector time and SPW averages can also use complex channel bins after the visibility time transform and span scans or fields independently. Vector and scalar spectral-window averaging accepts independent stored visibility ordinate lists. Supported spectral-window averages predict selected virtual model cells using the input buffer recipe and correlation slots. Supported spectral-window averages with virtual models can span scans and fields in time.",
+      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer. Ordinary vector time and SPW averages first reduce each baseline and window with the selected visibility spectra, then form closed PlotMS groups from the returned buffers. Vector time and SPW averages can also use complex channel bins after the visibility time transform and span scans or fields independently. Vector and scalar spectral-window averaging accepts independent stored visibility ordinate lists. Supported spectral-window averages predict selected virtual model cells using the input buffer recipe and correlation slots. Supported spectral-window averages with virtual models can span scans and fields in time. Static scan, field and correlation iteration accepts supported SPW visibility averages and preserves the requested ordinate order. Standalone spectral-window averages support two independent stored or virtual visibility ordinates.",
       "evidence": [
         "paired",
         "ms-spw-average-coordinates",
@@ -683,7 +695,9 @@
         "ms-vector-spw-channel-spans",
         "ms-spw-visibility-ordinate-lists",
         "ms-virtual-spw-models",
-        "ms-virtual-spw-model-spans"
+        "ms-virtual-spw-model-spans",
+        "ms-spw-iteration-and-ordinate-order",
+        "ms-two-spw-visibility-ordinates"
       ],
       "behaviors": [
         "averaging"
@@ -691,7 +705,7 @@
       "status": "Partial"
     },
     "scalar": {
-      "scope": "Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. Ordinary scalar time averaging uses the first selected correlation’s row weight and reduces amplitude and phase separately for stored visibility axes. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar baseline averages accumulate weighted amplitudes and phases. They also compose with a preceding complex channel average and scalar time bins, including supported independent visibility and stored residual coordinates. Standalone per-antenna scalar averages use the same amplitude and phase components, including Real and Imag projections. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Supported scalar time or baseline residuals and ratios can use selected virtual or default model operands. Ordinary scalar time-averaged visibility ordinate lists can use supported static correlation, scan and field iteration. Scalar time averaging across scans and fields also supports independent stored visibility ordinate lists. Supported scalar baseline averaging can use lists of independent stored visibility ordinates with time and channel bins. Supported scalar per-antenna averaging can use three or more independent stored ordinate columns. Scalar spectral-window averaging accepts independent stored visibility ordinate lists. Scalar per-antenna time averages with independent stored ordinate lists can span scans and fields. Supported scalar time spans accept selected virtual model coordinates, residuals and ratios. Supported scalar per-antenna and baseline averages can use selected virtual model cells. Supported scalar spectral-window averages use the input buffer virtual-model recipe and chunk phase epoch. Supported scalar time and spectral-window averages use virtual models across scan and field spans.",
+      "scope": "Scalar averaging (False=vector averaging) Ordinary MeasurementSet channel-only averaging uses vector visibilities, and the text header retains the requested scalar control. Ordinary scalar time averaging uses the first selected correlation’s row weight and reduces amplitude and phase separately for stored visibility axes. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Ordinary scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Supported derived plots with channel and scalar time averaging reduce complex channels before reducing amplitude and phase in time. Stored visibility plots can use complex channel averaging followed by scalar time averaging with independent columns and two stored ordinates. Channel averaging followed by scalar time averaging also spans scans and fields, retaining the first field and reporting scan -1 when a bin combines scans. Scalar baseline averages accumulate weighted amplitudes and phases. They also compose with a preceding complex channel average and scalar time bins, including supported independent visibility and stored residual coordinates. Standalone per-antenna scalar averages use the same amplitude and phase components, including Real and Imag projections. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Supported scalar time or baseline residuals and ratios can use selected virtual or default model operands. Ordinary scalar time-averaged visibility ordinate lists can use supported static correlation, scan and field iteration. Scalar time averaging across scans and fields also supports independent stored visibility ordinate lists. Supported scalar baseline averaging can use lists of independent stored visibility ordinates with time and channel bins. Supported scalar per-antenna averaging can use three or more independent stored ordinate columns. Scalar spectral-window averaging accepts independent stored visibility ordinate lists. Scalar per-antenna time averages with independent stored ordinate lists can span scans and fields. Supported scalar time spans accept selected virtual model coordinates, residuals and ratios. Supported scalar per-antenna and baseline averages can use selected virtual model cells. Supported scalar spectral-window averages use the input buffer virtual-model recipe and chunk phase epoch. Supported scalar time and spectral-window averages use virtual models across scan and field spans. Supported static scan panels can show scalar time and spectral-window averages.",
       "evidence": [
         "paired",
         "ms-channel-columns",
@@ -721,7 +735,8 @@
         "ms-scalar-spanned-virtual-models",
         "ms-virtual-antenna-baseline-models",
         "ms-virtual-spw-models",
-        "ms-virtual-spw-model-spans"
+        "ms-virtual-spw-model-spans",
+        "ms-spw-iteration-and-ordinate-order"
       ],
       "behaviors": [
         "averaging"
@@ -812,12 +827,13 @@
       ]
     },
     "iteraxis": {
-      "scope": "The axis over which to iterate. Unaveraged MeasurementSet correlation, scan and field panels can each have multiple visibility ordinates. Static correlation, scan and field panels also accept supported channel and ordinary time-averaged visibility ordinate lists.",
+      "scope": "The axis over which to iterate. Unaveraged MeasurementSet correlation, scan and field panels can each have multiple visibility ordinates. Static correlation, scan and field panels also accept supported channel and ordinary time-averaged visibility ordinate lists. Supported SPW averages with stored and virtual ordinates can iterate by scan, field and correlation.",
       "evidence": [
         "paired",
         "ms-iterated-grid-start",
         "ms-iterated-visibility-ordinates",
-        "ms-averaged-iterated-visibility-ordinates"
+        "ms-averaged-iterated-visibility-ordinates",
+        "ms-spw-iteration-and-ordinate-order"
       ],
       "behaviors": [
         "pages"
@@ -1233,13 +1249,14 @@
       "status": "Implemented"
     },
     "exprange": {
-      "scope": "Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. MeasurementSet TXT export includes the visible first-page panels. PNG exports the current page or each page with its iteration labels and page number. Supported averaged visibility lists use the same first-page TXT and multipage PNG behavior.",
+      "scope": "Range of iteration plots to export, one plotfile per page. Multipage pdf exports are not supported. MeasurementSet TXT export includes the visible first-page panels. PNG exports the current page or each page with its iteration labels and page number. Supported averaged visibility lists use the same first-page TXT and multipage PNG behavior. Iterated spectral-window visibility averages use the static PlotMS page filenames.",
       "evidence": [
         "paired",
         "ms-static-grid-placement",
         "ms-iterated-grid-start",
         "ms-iterated-visibility-ordinates",
-        "ms-averaged-iterated-visibility-ordinates"
+        "ms-averaged-iterated-visibility-ordinates",
+        "ms-spw-iteration-and-ordinate-order"
       ],
       "behaviors": [
         "pages"
@@ -2784,6 +2801,34 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-virtual-spw-model-spans-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2276"
+      ]
+    },
+    "ms-spw-iteration-and-ordinate-order": {
+      "kind": "Paired static SPW iteration and requested visibility ordinate order",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Static scan, field and correlation iteration over spectral-window averaged stored or virtual visibility ordinates, and requested order for repeated model ordinates in noniterated SPW plots.",
+      "result": "Eight paired TXT exports match 52 iterated coordinates. Scan, field and correlation panels keep their selected values, identifiers, GHz grids and requested order, including scalar and vector time averages and time/channel compositions. Matplotlib matches four drawn coordinates on both axis sides, with two matching scan page names at 500 by 420 pixels. The standalone and scalar-time moving FIELD requests match ten additional TXT and rendered coordinates in Real then Imag order in two 500 by 360 PNGs. Reversed correlation slots leave XX on the first page. The five-scan single-MODEL control compares four first-page coordinates and two 500 by 420 PNG filenames, including the fifth scan on page two. The checked virtual fixture retains stored model cells of 19.",
+      "casa_version": "6.7.6.14",
+      "revision": "56375fbb922a89e5bdb073081479065e7bbe5670",
+      "source_revision": "56375fbb922a89e5bdb073081479065e7bbe5670",
+      "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only iteration --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-spw-iteration-and-ordinate-order-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2277"
+      ]
+    },
+    "ms-two-spw-visibility-ordinates": {
+      "kind": "Paired independent standalone MeasurementSet SPW ordinate pairs",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Two independently selected stored or virtual visibility ordinates in standalone SPW averages, with supported scalar/vector time, channel and scan/field compositions.",
+      "result": "Six paired TXT files match 34 selected coordinates in requested order and GHz units. The stored and virtual pairs match with spectral-window averaging alone and with vector time, scalar time, channel bins and the stored scan/field span control. The time/channel PNG pair matches eight Matplotlib coordinates on both sides and 500 by 360 dimensions. Stored MODEL_DATA remains 19.",
+      "casa_version": "6.7.6.14",
+      "revision": "9d83cd2392d70dec12d169dc2c46e5d3d1905111",
+      "source_revision": "9d83cd2392d70dec12d169dc2c46e5d3d1905111",
+      "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only two-ordinates --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-two-spw-visibility-ordinates-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2280"
       ]
     }
   }

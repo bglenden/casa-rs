@@ -74,7 +74,11 @@ impl CliOptions {
                 axis.is_visibility_math()
                     || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
             })
-            && self.supports_visibility_ordinate_averaging(true)
+            && (self.supports_visibility_ordinate_averaging(true)
+                || (self.avgspw
+                    && !self.avgscan
+                    && !self.avgfield
+                    && self.supports_visibility_ordinate_averaging(false)))
     }
 
     pub(super) fn supports_visibility_ordinate_averaging(&self, ordinary_only: bool) -> bool {
