@@ -4448,8 +4448,9 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    let mixed_row_geometry = plotms_row_axes::uses_mixed_row_geometry(spec);
     let geometry_dedup_required = !use_ordinate_masks
-        && !plotms_row_axes::uses_mixed_row_geometry(spec)
+        && !mixed_row_geometry
         && (spec.x_axis.uses_derived_geometry()
             || spec
                 .y_axes
@@ -4799,7 +4800,7 @@ fn build_generic_visibility_scatter(
             time: row_time_value,
             interval: selected_intervals.get(row_slot).copied(),
             uvw: row_uvw_value,
-            observatory_geometry: use_ordinate_masks,
+            observatory_geometry: use_ordinate_masks || mixed_row_geometry,
         };
         let spectral_context = resolve_spectral_context(
             spec,

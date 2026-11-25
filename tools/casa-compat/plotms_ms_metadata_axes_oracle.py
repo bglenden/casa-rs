@@ -370,6 +370,24 @@ def compare_unaveraged_row_axes(root, native, base):
     assert "# Real Elevation " in actual.read_text()
     print("row-and-elevation: 144 matching points with independent ordinate masks", flush=True)
 
+    separated = root / "separated-antennas.ms"
+    copy_ms(source, separated)
+    with opened(separated / "ANTENNA", True) as table:
+        # Moving A1 in longitude distinguishes observatory elevation from its
+        # topocentric elevation along the selected A1&A2 baseline.
+        x, y, z = table.getcell("POSITION", 1)
+        cosine, sine = np.cos(0.08), np.sin(0.08)
+        table.putcell("POSITION", 1, np.array([cosine * x - sine * y, sine * x + cosine * y, z]))
+    before_separated = snapshot(separated)
+    separated_controls = mixed | dict(vis=str(separated), antenna="A0&A1;A1&A2")
+    expected, actual = (root / f"row-observatory-elevation.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**separated_controls, plotfile=str(expected), expformat="txt") is None
+    assert native(**separated_controls, plotfile=str(actual), expformat="txt") is None
+    assert compare_text(actual, expected) == 144
+    assert {point[5] for point in rows(expected)[72:]} == {"0", "1"}
+    verify_source(separated, before_separated)
+    print("row-observatory-elevation: 144 matching points with two first-antenna positions", flush=True)
+
     two, _, _ = make_compound_selection_fixture(root)
     before_two = snapshot(two)
     scans = root / "two-scan-rows.ms"
