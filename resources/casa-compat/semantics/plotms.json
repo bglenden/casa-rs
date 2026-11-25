@@ -133,7 +133,8 @@
         "ms-reporting-frequency-and-wavelengths",
         "ms-phasecenter-compositions",
         "ms-iteration-axes-and-offset-pages",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "coordinates"
@@ -253,7 +254,8 @@
         "ms-reporting-frequency-and-wavelengths",
         "ms-phasecenter-compositions",
         "ms-iteration-axes-and-offset-pages",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "coordinates"
@@ -364,7 +366,8 @@
         "callibrary-independent-ordinates",
         "ms-pointing-list-controls",
         "ms-pointing-sample-masks-and-pages",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "coordinates"
@@ -1025,7 +1028,8 @@
       "evidence": [
         "paired",
         "ms-channel-metadata-flag-symbols",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1038,7 +1042,8 @@
         "paired",
         "ms-raw-flag-symbols",
         "ms-channel-metadata-flag-symbols",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1046,9 +1051,10 @@
       "status": "Partial"
     },
     "symbolsize": {
-      "scope": "Size of plotted unflagged symbols",
+      "scope": "Size of plotted unflagged symbols Accept independent positive size lists for MeasurementSet ordinates. The paired left circle and right square use sizes 7 and 13.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1059,7 +1065,8 @@
       "scope": "Color (name or hex code) of plotted unflagged symbols",
       "evidence": [
         "paired",
-        "ms-iterated-grid-start"
+        "ms-iterated-grid-start",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1067,9 +1074,10 @@
       "status": "Partial"
     },
     "symbolfill": {
-      "scope": "Fill type of plotted unflagged symbols",
+      "scope": "Fill type of plotted unflagged symbols Static MeasurementSet markers support solid and open fills and the distinct dense, alternating and sparse categories of mesh1, mesh2 and mesh3.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1079,7 +1087,8 @@
     "symboloutline": {
       "scope": "Outline plotted unflagged symbols",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1087,10 +1096,11 @@
       "status": "Partial"
     },
     "coloraxis": {
-      "scope": "Selects data axis for colorizing. Coloring vector per-antenna visibility ordinate lists by a spanned scan or field is pending under #1032.",
+      "scope": "Selects data axis for colorizing. Coloring vector per-antenna visibility ordinate lists by a spanned scan or field is pending under #1032. Raw MeasurementSet visibility plots color the displayed clear and flagged samples by their selected scan or correlation. Without a color group, the custom flagged marker is visible as its own style.",
       "evidence": [
         "paired",
-        "ms-spanned-antenna-visibility-ordinate-lists"
+        "ms-spanned-antenna-visibility-ordinate-lists",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1103,7 +1113,8 @@
         "paired",
         "ms-raw-flag-symbols",
         "ms-channel-metadata-flag-symbols",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1116,7 +1127,8 @@
         "paired",
         "ms-raw-flag-symbols",
         "ms-channel-metadata-flag-symbols",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1129,7 +1141,8 @@
         "paired",
         "ms-raw-flag-symbols",
         "ms-channel-metadata-flag-symbols",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1142,7 +1155,8 @@
         "paired",
         "ms-raw-flag-symbols",
         "ms-channel-metadata-flag-symbols",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1154,7 +1168,8 @@
       "evidence": [
         "paired",
         "ms-channel-metadata-flag-symbols",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1166,7 +1181,8 @@
       "evidence": [
         "paired",
         "ms-channel-metadata-flag-symbols",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1174,9 +1190,10 @@
       "status": "Partial"
     },
     "xconnector": {
-      "scope": "Set connector for data points (blank=\"none\"; \"line\",\"step\")",
+      "scope": "Set point connectors for calibration-table plots. Blank, line and step are accepted for MeasurementSets with the same unconnected points as pinned CASA.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1184,9 +1201,10 @@
       "status": "Partial"
     },
     "timeconnector": {
-      "scope": "Connect points by time rather than x-axis",
+      "scope": "Choose time order for an active calibration-table connector. On MeasurementSets the accepted flag leaves the selected unconnected points and their order unchanged.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-marker-groups-and-connector-controls"
       ],
       "behaviors": [
         "presentation"
@@ -1681,13 +1699,14 @@
       "id": "presentation",
       "title": "Render the shared plot document",
       "status": "Partial",
-      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time. Static MeasurementSet iteration supports common per-side limits and shared grid labels. Time displays UTC clock and date ticks, and Channel bins label their averaging. Static fonts, grids and legend placement are paired with the pinned task.",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time. Static MeasurementSet iteration supports common per-side limits and shared grid labels. Time displays UTC clock and date ticks, and Channel bins label their averaging. Static fonts, grids and legend placement are paired with the pinned task. MeasurementSet figures apply independent marker styles to each ordinate and distinguish all three mesh categories. Connector controls preserve the same unconnected MeasurementSet figure as CASA.",
       "evidence": [
         "paired",
         "calibration-controls",
         "ms-raw-flag-symbols",
         "ms-iteration-axes-and-offset-pages",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-marker-groups-and-connector-controls"
       ],
       "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
     },
@@ -3366,6 +3385,22 @@
         "https://github.com/bglenden/casa-rs/pull/2216",
         "https://github.com/bglenden/casa-rs/pull/2232",
         "https://github.com/bglenden/casa-rs/pull/2261"
+      ]
+    },
+    "ms-marker-groups-and-connector-controls": {
+      "kind": "Same-input static MeasurementSet marker styles, group masks and connector controls",
+      "state": "passed",
+      "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. An isolated square marker, two independent stored visibility ordinates, uncolored/scan/correlation clear and flagged groups, and reversed-time Phase on X with six connector modes.",
+      "result": "Match 295 ordered TXT coordinates and 15 PNG pairs. The selected square distinguishes solid, open and three mesh coverage patterns. The two ordinates use a named purple circle with black outline and a hex green square, of sizes 7 and 13. The three flag/colour cases each retain 30 clear and 6 flagged points and preserve the source FLAG cells. The six MeasurementSet connector cases each preserve 25 ordered samples, two correlation groups and an omitted flagged integration. Each engine's marker-only figure is unchanged across blank, line and step with and without timeconnector.",
+      "casa_version": "6.7.6.14",
+      "revision": "405b038aaa9616af56f3b1793ce6cc6dbe679797",
+      "source_revision": "405b038aaa9616af56f3b1793ce6cc6dbe679797",
+      "command": "casa-python tools/casa-compat/plotms_ms_marker_styles_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-marker-connectors-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2315",
+        "https://github.com/bglenden/casa-rs/pull/2196",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Plots/PlotMSPlot.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362#659"
       ]
     }
   }
