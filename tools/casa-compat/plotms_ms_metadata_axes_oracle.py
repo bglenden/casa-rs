@@ -203,6 +203,21 @@ def compare_averaged_coordinates(root, native):
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(expected_samples)
         print(f"{name}: {len(points)} matching averaged geometry coordinates", flush=True)
+    mixed = base | dict(xaxis="real", xdatacolumn="data", yaxis=["interval", "u"],
+                        ydatacolumn=["data", "data"], yaxislocation=["left", "right"], avgtime="20")
+    expected, actual = (work / f"mixed-time-geometry.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**mixed, plotfile=str(expected)) is None
+    points = rows(expected)
+    interval_points = rows(work / "averaged-interval.casa.txt")
+    wavelengths = rows(work / "averaged-uwave.casa.txt")
+    assert [row[2:] for row in points] == [row[2:] for row in interval_points + wavelengths]
+    expected_ordinates = [float(row[0]) for row in interval_points] + [
+        float(row[0]) / frequencies[int(row[2])] * SPEED_OF_LIGHT for row in wavelengths
+    ]
+    np.testing.assert_allclose([float(row[1]) for row in points], expected_ordinates, rtol=1.2e-5)
+    assert native(**mixed, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 20
+    print("mixed-time-geometry: 20 matching paired Interval and U ordinates", flush=True)
     for axis, label in (("interval", "Interval (s)"), ("uwave", "Uwave (λ)")):
         compare_figure(work, native, base | dict(xaxis=axis, avgtime="20"),
                        work / f"averaged-{axis}.casa.txt", (title, label, "Amp"))
@@ -211,6 +226,46 @@ def compare_averaged_coordinates(root, native):
         np.testing.assert_array_equal(table.getcol("UVW"), uvw)
         np.testing.assert_array_equal(table.getcol("INTERVAL"), intervals)
         np.testing.assert_array_equal(table.getcol("TIME"), timestamps)
+    compare_wavelength_frame_selection(work, native)
+
+
+def compare_wavelength_frame_selection(work, native):
+    from casars.tasks import TaskParameterError
+    from plotms_ms_spw_average_oracle import make_fixture as make_spw_fixture
+
+    topo = make_spw_fixture(work)
+    with opened(topo, True) as table:
+        uvw = np.zeros_like(table.getcol("UVW"))
+        uvw[0, :] = 10
+        table.putcol("UVW", uvw)
+    mixed = work / "mixed-native-frames.ms"
+    copy_ms(topo, mixed)
+    with opened(mixed / "SPECTRAL_WINDOW", True) as table:
+        np.testing.assert_array_equal(table.getcol("MEAS_FREQ_REF"), [5, 5])  # TOPO
+        table.putcell("MEAS_FREQ_REF", 1, 1)  # LSRK
+    selection = controls(topo) | dict(xaxis="uwave", spw="0:1,1:1", avgtime="20", expformat="txt")
+    expected, actual = (work / f"same-wavelength-frame.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**selection, plotfile=str(expected)) is None
+    assert native(**selection, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+
+    selection["vis"] = str(mixed)
+    expected, actual = (work / f"mixed-wavelength-frame.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**selection, plotfile=str(expected)) is None
+    points = rows(expected)
+    assert [row[11] for row in points] == ["0", "1"]
+    # CASA keeps the first window TOPO and converts the second window from LSRK.
+    np.testing.assert_allclose([float(row[10]) for row in points], [90.001, 100.003287289], rtol=0, atol=1e-6)
+    np.testing.assert_allclose([float(row[0]) for row in points],
+                               [10 * float(row[10]) * 1e9 / SPEED_OF_LIGHT for row in points], rtol=1.2e-5)
+    try:
+        native(**selection, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "different native spectral frames require reporting-frame transforms (#1032)" in str(error)
+    else:
+        raise AssertionError("An unconverted mixed-frame wavelength export would use the wrong frequency")
+    assert not actual.exists()
+    print("wavelength-frames: two paired same-frame points and one mixed-frame refusal", flush=True)
 
 
 def compare_flags_and_calibration(root, native, vis):

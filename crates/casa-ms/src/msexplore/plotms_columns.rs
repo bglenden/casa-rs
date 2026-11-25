@@ -93,13 +93,13 @@ pub(super) fn uses_direct_vector_time_projection(
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
-    let wavelength = uses_averaged_geometry_coordinates(spec);
-    let uvw = |axis: MsAxis| axis.uses_uvw_metres() || (wavelength && axis.uses_wavelengths());
+    let time_geometry = uses_averaged_geometry_coordinates(spec);
+    let uvw = |axis: MsAxis| axis.uses_uvw_metres() || (time_geometry && axis.uses_wavelengths());
     uses_unbinned_vector_time_averaging(spec)
         && ((uvw(spec.x_axis) && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math))
             || (spec.x_axis.is_visibility_math()
                 && ((spec.y_axes.len() == 1 && uvw(spec.y_axis()))
-                    || (wavelength && spec.y_axes.iter().copied().any(MsAxis::uses_wavelengths)))))
+                    || (time_geometry && spec.y_axes.iter().copied().any(uvw)))))
 }
 
 pub(super) fn uses_averaged_geometry_coordinates(spec: &MsPlotSpec) -> bool {

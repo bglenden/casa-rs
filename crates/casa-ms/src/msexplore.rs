@@ -2765,6 +2765,11 @@ fn build_msexplore_plot_payload_validated(
     point_budget: &mut PointBudget,
     calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
+    if calibration.and_then(|input| input.time_bins).is_none()
+        && plotms_columns::uses_averaged_geometry_coordinates(spec)
+    {
+        return Err("Time-averaged PlotMS interval and wavelength axes with a callibrary or direct msexplore are pending (#1032)".into());
+    }
     if spec.preset == Some(MsPlotPreset::AmplitudePhaseVsTimeStacked) {
         return build_stacked_amplitude_phase_time_page(ms, selection, spec, point_budget);
     }
@@ -2815,14 +2820,6 @@ fn build_msexplore_payload_internal(
         })
     {
         return Err("Time-averaged PlotMS UV distance ordinates with a callibrary or direct msexplore are pending (#1032)".into());
-    }
-    if calibration.and_then(|input| input.time_bins).is_none()
-        && spec
-            .plots
-            .iter()
-            .any(plotms_columns::uses_averaged_geometry_coordinates)
-    {
-        return Err("Time-averaged PlotMS interval and wavelength axes with a callibrary or direct msexplore are pending (#1032)".into());
     }
     let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
     let header_lines = resolve_page_header_lines(ms, spec)?;
@@ -5856,8 +5853,12 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut bin_buffers = visibility_columns.buffers();
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
     let mut time_uvws = weighted_time_uvw.then(HashMap::<(usize, i32, i32), TimeUvwAverage>::new);
-    let mut wavelength_spectra =
-        (time_geometry && weighted_time_uvw).then(HashMap::<i32, Vec<f64>>::new);
+    let time_wavelengths = time_geometry
+        && std::iter::once(spec.x_axis)
+            .chain(spec.y_axes.iter().copied())
+            .any(MsAxis::uses_wavelengths);
+    let mut wavelength_spectra = time_wavelengths.then(HashMap::<i32, Vec<f64>>::new);
+    let mut wavelength_frame = None;
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut averaged_rows = std::collections::BTreeSet::new();
@@ -6271,11 +6272,27 @@ fn build_generic_visibility_scatter_with_averaging(
             use std::collections::hash_map::Entry;
             let frequencies = match spectra.entry(selected_data_desc_ids[row_slot]) {
                 Entry::Occupied(entry) => entry.into_mut(),
-                Entry::Vacant(entry) => entry.insert(
-                    load_spectrum()?
-                        .ok_or("Missing frequency grid for PlotMS wavelength coordinates")?
-                        .channel_frequencies_hz,
-                ),
+                Entry::Vacant(entry) => {
+                    let window = usize::try_from(spw_id).map_err(|_| {
+                        format!("invalid DATA_DESCRIPTION::SPECTRAL_WINDOW_ID {spw_id}")
+                    })?;
+                    let frame = chan_freq
+                        .as_ref()
+                        .expect("wavelength coordinates use channel frequencies")
+                        .frequency_reference(window)
+                        .map_err(|error| error.to_string())?;
+                    if *wavelength_frame.get_or_insert(frame) != frame {
+                        return Err(
+                            "PlotMS averaged wavelength coordinates across different native spectral frames require reporting-frame transforms (#1032)"
+                                .into(),
+                        );
+                    }
+                    entry.insert(
+                        load_spectrum()?
+                            .ok_or("Missing frequency grid for PlotMS wavelength coordinates")?
+                            .channel_frequencies_hz,
+                    )
+                }
             };
             if frequencies.len() != chan_count {
                 return Err(format!(
