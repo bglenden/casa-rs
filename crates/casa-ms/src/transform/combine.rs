@@ -560,6 +560,7 @@ pub(super) fn read_batch(
                     group: &time_groups[pos],
                     channels: &channels[&ddid_to_spw[&description]].channels,
                     axes: correlations.and_then(|selection| selection.axes(description)),
+                    legacy_bins: None,
                 }
             })
             .collect::<Vec<_>>();

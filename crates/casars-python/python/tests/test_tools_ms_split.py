@@ -6,7 +6,7 @@ import pytest
 from casars import tools
 from test_tools_ms_concatenate import change_table
 from test_tools_ms_createmultims import pinned_casa
-from test_tools_ms_partition import two_fields
+from test_tools_ms_partition import copy_first_row, two_fields
 from test_tools_ms_testconcatenate import concat_api, counts
 from test_tools_msmetadata import measures, native_dataset
 
@@ -83,6 +83,43 @@ def test_split_retains_partial_bin_and_uses_nominal_width_for_noise(
         assert table.close()
         assert table.open(str(output / "SPECTRAL_WINDOW"))
         assert table.getcell("NUM_CHAN", 0) == 2
+        np.testing.assert_allclose(table.getcell("CHAN_FREQ", 0), [1.401e9, 1.403e9], rtol=1e-10)
+        for name in ("CHAN_WIDTH", "EFFECTIVE_BW", "RESOLUTION"):
+            np.testing.assert_array_equal(table.getcell(name, 0), [3e6, 1e6])
+        assert table.close()
+
+
+def test_split_weights_the_channel_average_and_zeros_flagged_bins(native_dataset, tmp_path, concat_api):
+    samples = np.array([[1, 3, 5, 7], [2, 4, 6, 8]], dtype=np.complex64)
+    flags = np.array([[False, False, True, True], [False, False, False, False]])
+    weights = np.array([[1, 3, 1, 3], [1, 3, 1, 3]], dtype=np.float32)
+
+    def seed(table):
+        if "WEIGHT_SPECTRUM" not in table.colnames():
+            desc = table.getcoldesc("DATA")
+            desc.update(valueType="float", dataManagerType="StandardStMan",
+                        dataManagerGroup="WEIGHT_SPECTRUM")
+            assert table.addcols({"WEIGHT_SPECTRUM": desc})
+        for row in range(table.nrows()):
+            assert table.putcell("DATA", row, samples)
+            assert table.putcell("FLAG", row, flags)
+            assert table.putcell("FLAG_ROW", row, row == 1)
+            assert table.putcell("WEIGHT_SPECTRUM", row, weights)
+
+    change_table(native_dataset, seed)
+    output = tmp_path / "weighted.ms"
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output), step=[2])
+    assert ms.close()
+    for reader in (tools, pinned_casa()):
+        table = reader.table()
+        assert table.open(str(output))
+        np.testing.assert_allclose(table.getcell("DATA", 0), [[2.5, 0], [3.5, 7.5]])
+        np.testing.assert_array_equal(table.getcell("FLAG", 0), [[False, True], [False, False]])
+        np.testing.assert_array_equal(table.getcell("WEIGHT_SPECTRUM", 0), [[4, 0], [4, 4]])
+        np.testing.assert_array_equal(table.getcell("DATA", 1), np.zeros((2, 2)))
+        np.testing.assert_array_equal(table.getcell("FLAG", 1), np.ones((2, 2), dtype=bool))
         assert table.close()
 
 
@@ -99,6 +136,39 @@ def test_split_selects_correlation_axis(native_dataset, tmp_path, concat_api):
         assert table.close()
         assert table.open(str(output / "POLARIZATION"))
         np.testing.assert_array_equal(table.getcell("CORR_TYPE", 0), [5])
+        assert table.close()
+
+def test_split_time_uses_flags_on_the_selected_correlation(native_dataset, tmp_path, concat_api):
+    epochs = []
+
+    def seed(table):
+        times = table.getcol("TIME")
+        epochs.append(float(np.min(times)))
+        for row, time in enumerate(times):
+            first = time == epochs[0]
+            flags = np.zeros((2, 4), dtype=bool)
+            flags[0, :] = not first
+            assert table.putcell("DATA", row, np.full((2, 4), 7 if first else 99, dtype=np.complex64))
+            assert table.putcell("FLAG", row, flags)
+            assert table.putcell("FLAG_ROW", row, False)
+            assert table.putcell("WEIGHT", row, np.ones(2, dtype=np.float32))
+            assert table.putcell("SIGMA", row, np.ones(2, dtype=np.float32))
+            assert table.putcell("EXPOSURE", row, 10.0)
+
+    change_table(native_dataset, seed)
+    output = tmp_path / "rr-time.ms"
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output), correlation="RR", timebin="120s")
+    assert ms.close()
+    for reader in (tools, pinned_casa()):
+        table = reader.table()
+        assert table.open(str(output))
+        assert table.nrows() == 10
+        assert table.getcol("DATA").shape == (1, 4, 10)
+        np.testing.assert_array_equal(table.getcol("DATA"), 7)
+        np.testing.assert_array_equal(table.getcol("TIME"), epochs[0])
+        np.testing.assert_array_equal(table.getcol("EXPOSURE"), 10)
         assert table.close()
 
 
@@ -122,3 +192,89 @@ def test_split_refuses_time_with_channel_stride_before_replacing_output(native_d
         ms.split(str(output), spw="0:0~3^2", timebin="120s")
     assert counts(tools, output, (".", "HISTORY")) == count
     assert ms.close()
+
+
+def test_split_refuses_repeated_channel_ranges_and_negative_width(native_dataset, tmp_path, concat_api):
+    output = tmp_path / "split.ms"
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output), spw="0:0~1;2~3", step=[1, 2]) is False
+    assert ms.split(str(output), spw="0", step=[2, -1]) is False
+    assert not output.exists()
+    with pytest.raises(RuntimeError, match="Cannot channel average with width < 1"):
+        ms.split(str(output), step=[-1])
+    assert output.exists() == (concat_api is not tools)
+    assert ms.close()
+
+
+def test_split_refuses_two_polarization_setups_for_one_window(native_dataset, tmp_path, concat_api):
+    change_table(native_dataset / "POLARIZATION", copy_first_row)
+    change_table(
+        native_dataset / "DATA_DESCRIPTION",
+        lambda table: copy_first_row(table, POLARIZATION_ID=1),
+    )
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    output = tmp_path / "split.ms"
+    assert ms.split(str(output), spw="0") is False
+    assert not output.exists()
+    assert ms.close()
+
+
+@pytest.mark.parametrize("step", [2, 2.9, [2.0], np.array([2], dtype=np.int32)])
+def test_split_accepts_scalar_and_numeric_vector_steps(native_dataset, tmp_path, concat_api, step):
+    output = tmp_path / "split.ms"
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output), step=step)
+    assert ms.close()
+    table = tools.table()
+    assert table.open(str(output))
+    assert table.getcell("DATA", 0).shape == (2, 2)
+    assert table.close()
+
+
+def test_split_rejects_unattached_tool(concat_api):
+    with pytest.raises(RuntimeError, match="Table column DATA_DESC_ID is unknown"):
+        concat_api.ms().split()
+
+
+def test_split_rejects_invalid_step_without_creating_output(native_dataset, tmp_path):
+    output = tmp_path / "split.ms"
+    ms = tools.ms()
+    assert ms.open(str(native_dataset))
+    with pytest.raises(SystemError, match="returned a result with an exception set"):
+        ms.split(str(output), step=(2,))
+    with pytest.raises(TypeError, match="argument _step must not be a string"):
+        ms.split(str(output), step="2")
+    assert not output.exists()
+    assert ms.close()
+
+
+def test_split_averages_complete_and_partial_channel_bins_before_time(native_dataset, tmp_path):
+    samples = np.array([[1, 2, 3, 4], [11, 12, 13, 14]], dtype=np.complex64)
+
+    def seed(table):
+        for row in range(table.nrows()):
+            assert table.putcell("DATA", row, samples)
+            assert table.putcell("FLAG", row, np.zeros((2, 4), dtype=bool))
+            assert table.putcell("FLAG_ROW", row, False)
+            assert table.putcell("WEIGHT", row, np.ones(2, dtype=np.float32))
+            assert table.putcell("SIGMA", row, np.ones(2, dtype=np.float32))
+
+    change_table(native_dataset, seed)
+    output = tmp_path / "split.ms"
+    ms = tools.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output), step=[3], timebin="120s")
+    assert ms.close()
+    for reader in (tools, pinned_casa()):
+        table = reader.table()
+        assert table.open(str(output))
+        assert table.nrows() == 10
+        data = table.getcol("DATA")
+        expected = np.array([[2, 4], [12, 14]])
+        np.testing.assert_allclose(data, np.broadcast_to(expected[:, :, None], data.shape))
+        np.testing.assert_allclose(table.getcol("WEIGHT"), 9, rtol=2e-7)
+        np.testing.assert_allclose(table.getcol("SIGMA"), 1 / 3, rtol=2e-7)
+        assert table.close()

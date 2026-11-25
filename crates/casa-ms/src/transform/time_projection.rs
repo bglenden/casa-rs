@@ -6,7 +6,7 @@ use std::path::Path;
 
 use casa_tables::{Table, TableError};
 use casa_types::{ArrayValue, ScalarValue};
-use ndarray::Array1;
+use ndarray::{Array1, Zip};
 
 use super::channel_average::SpectrumCells;
 use super::correlation_metadata::select_visibility_axes;
@@ -40,6 +40,7 @@ pub(super) struct TimeGroupRead<'a> {
     pub(super) group: &'a TimeGroup,
     pub(super) channels: &'a [usize],
     pub(super) axes: Option<&'a [usize]>,
+    pub(super) legacy_bins: Option<(&'a [Vec<usize>], usize)>,
 }
 
 #[derive(Default)]
@@ -206,6 +207,7 @@ impl<'a> TimeProjection<'a> {
             channels,
             axes,
             group,
+            legacy_bins,
         } = *plan;
         let legacy = group.legacy_geometry.is_some();
         let require = |value: Option<ArrayValue>, column| {
@@ -215,14 +217,14 @@ impl<'a> TimeProjection<'a> {
             select_projection(value, name, channels, axes, on_channels)
                 .map_err(|source| self.table_error(source))
         };
-        let flags = select(require(raw.flags[offset].take(), "FLAG")?, "FLAG", true)?;
-        let weight = select(
+        let mut flags = select(require(raw.flags[offset].take(), "FLAG")?, "FLAG", true)?;
+        let mut weight = select(
             require(raw.weights[offset].take(), "WEIGHT")?,
             "WEIGHT",
             false,
         )?;
-        let sigma = select(require(raw.sigmas[offset].take(), "SIGMA")?, "SIGMA", false)?;
-        let values = self
+        let mut sigma = select(require(raw.sigmas[offset].take(), "SIGMA")?, "SIGMA", false)?;
+        let mut values = self
             .visibility
             .copies()
             .iter()
@@ -240,8 +242,39 @@ impl<'a> TimeProjection<'a> {
                     .transpose()
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let weight_spectrum = self.select_spectrum(raw, row, offset, "WEIGHT_SPECTRUM", plan)?;
+        let mut weight_spectrum =
+            self.select_spectrum(raw, row, offset, "WEIGHT_SPECTRUM", plan)?;
         let sigma_spectrum = self.select_spectrum(raw, row, offset, "SIGMA_SPECTRUM", plan)?;
+        if let Some((bins, width)) = legacy_bins {
+            let averages = super::legacy_split::ChannelAverages::new(
+                &flags,
+                weight_spectrum.as_ref(),
+                bins,
+                false,
+            )
+            .map_err(|error| self.table_error(error))?;
+            for (column, value) in self.visibility.copies().iter().zip(&mut values) {
+                if column.source != OptionalMainColumn::LagData
+                    && let Some(cell) = value.take()
+                {
+                    *value = Some(
+                        averages
+                            .visibility(cell)
+                            .map_err(|error| self.table_error(error))?,
+                    );
+                }
+            }
+            let projected = averages.weight_spectrum();
+            flags = averages.flags();
+            weight_spectrum = projected;
+            super::legacy_split::scale_channel_noise(
+                self.visibility,
+                width,
+                &mut weight,
+                &mut sigma,
+            )
+            .map_err(|error| self.table_error(error))?;
+        }
         let &[correlations, channel_count] = flags.shape() else {
             return Err(self.table_error(TableError::Schema(
                 "FLAG must have correlation and channel axes".to_string(),
@@ -281,10 +314,13 @@ impl<'a> TimeProjection<'a> {
             .filter(|value| !value.is_empty())
         {
             let bins = accumulator.category_bins.get_or_insert_with(|| {
-                channels
-                    .iter()
-                    .map(|&channel| vec![channel])
-                    .collect::<Vec<_>>()
+                if let Some((bins, _)) = legacy_bins {
+                    bins.iter()
+                        .map(|bin| bin.iter().map(|&local| channels[local]).collect())
+                        .collect()
+                } else {
+                    channels.iter().map(|&channel| vec![channel]).collect()
+                }
             });
             let selected = select_visibility_axes(cells, axes, "FLAG_CATEGORY")
                 .and_then(|cells| transform_flag_category_channels(cells, bins))
@@ -408,8 +444,8 @@ fn include_categories(
             "FLAG_CATEGORY shapes differ during time averaging".to_string(),
         ));
     }
-    for (accumulator, &flag) in current.iter_mut().zip(&incoming) {
-        *accumulator &= flag;
-    }
+    Zip::from(current)
+        .and(&incoming)
+        .for_each(|accumulator, &flag| *accumulator &= flag);
     Ok(())
 }

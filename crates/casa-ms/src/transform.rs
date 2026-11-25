@@ -164,6 +164,7 @@ pub struct MsTransformTaskOptions {
     pub regrid: Option<MsRegridOptions>,
     /// Active per-selected-SPW widths, or a single width broadcast to each SPW.
     /// When absent, the task uses the scalar width in the request.
+    /// In legacy split mode, zero represents an invalid negative Python step.
     pub channel_widths: Option<Vec<usize>>,
     /// Average visibilities along each baseline within this time bin.
     pub time_averaging: Option<TimeAverageOptions>,
@@ -408,6 +409,10 @@ pub enum MsTransformError {
     /// Width vectors with more than one entry must cover the selected SPWs.
     #[error("Number of channel widths is different from the number of spw")]
     ChannelWidthCount,
+
+    /// A legacy split step is negative.
+    #[error("Cannot channel average with width < 1")]
+    InvalidSplitStep,
 
     /// The row selection failed.
     #[error("failed to select rows from MeasurementSet {path}: {source}")]
@@ -720,6 +725,18 @@ fn mstransform_staged(
                 selector: request.spw.clone(),
                 reason: source.to_string(),
             })?;
+    if splitting {
+        let mut windows = BTreeSet::new();
+        if spw_selection
+            .channel_list()
+            .iter()
+            .any(|range| !windows.insert(range.spw_id))
+        {
+            return Err(MsTransformError::EmptySelection {
+                path: request.input_ms.display().to_string(),
+            });
+        }
+    }
     if splitting
         && options.time_averaging.is_some()
         && spw_selection
@@ -774,6 +791,14 @@ fn mstransform_staged(
         request.width,
         options.channel_widths.as_deref(),
     )?;
+    if splitting
+        && options
+            .channel_widths
+            .as_ref()
+            .is_some_and(|widths| widths.contains(&0))
+    {
+        return Err(MsTransformError::InvalidSplitStep);
+    }
     let average_metadata = task_average.then(|| {
         channel_selection
             .iter()
@@ -828,6 +853,18 @@ fn mstransform_staged(
             None
         };
     let ddid_to_spw = data_description_spw_map(&input)?;
+    if splitting {
+        let mut seen = BTreeSet::new();
+        if ddid_to_spw
+            .values()
+            .filter(|spw| channel_selection.contains_key(spw))
+            .any(|spw| !seen.insert(spw))
+        {
+            return Err(MsTransformError::EmptySelection {
+                path: request.input_ms.display().to_string(),
+            });
+        }
+    }
     rows.retain(|row| {
         spw_selection.selects_row(row.data_desc_id)
             && channel_bins.contains_key(&row.spectral_window_id)
@@ -859,7 +896,7 @@ fn mstransform_staged(
         let flag_rows = flag_filter_read_plan(selected_rows.len(), budget, dimensions.values())
             .map_err(selection_error)?;
         (selected_rows, selected_ddids) =
-            keep_unflagged_rows(&input, &selected_rows, &selected_ddids, flag_rows)?;
+            keep_unflagged_rows(&input, &selected_rows, &selected_ddids, flag_rows, None)?;
         if options.time_averaging.is_some() || view_factory.is_some() {
             let kept = selected_rows.iter().copied().collect::<BTreeSet<_>>();
             rows.retain(|row| kept.contains(&row.row_index));
@@ -927,8 +964,19 @@ fn mstransform_staged(
                 )?;
                 let per_block = flag_filter_read_plan(rows.len(), budget, dimensions.values())
                     .map_err(selection_error)?;
-                let (valid, _) =
-                    keep_unflagged_rows(&input, &selected_rows, &selected_ddids, per_block)?;
+                let flag_axes = (splitting && (spw.contains(':') || correlations.is_some()))
+                    .then_some(SelectedFlagAxes {
+                        channels: &channel_selection,
+                        ddid_to_spw: &ddid_to_spw,
+                        correlations: correlations.as_ref(),
+                    });
+                let (valid, _) = keep_unflagged_rows(
+                    &input,
+                    &selected_rows,
+                    &selected_ddids,
+                    per_block,
+                    flag_axes.as_ref(),
+                )?;
                 let groups = legacy_time::plan(&input, &rows, valid, time, legacy)?;
                 if groups.is_empty() {
                     return Err(MsTransformError::EmptySelection {
@@ -1023,6 +1071,11 @@ fn mstransform_staged(
     })
     .transpose()?;
     let averaging_time = time_groups.is_some();
+    let legacy_channel_averaging = splitting
+        && !averaging_time
+        && channel_bins
+            .values()
+            .any(|bins| !bins_are_single_channel(bins));
     let combination = combined_grid
         .as_ref()
         .map(|grid| {
@@ -1435,6 +1488,17 @@ fn mstransform_staged(
             })
             .collect::<BTreeMap<i32, Vec<Vec<usize>>>>()
     });
+    let binned_time_channels = (splitting
+        && averaging_time
+        && channel_bins
+            .values()
+            .any(|bins| !bins_are_single_channel(bins)))
+    .then(|| {
+        channel_bins
+            .iter()
+            .map(|(&spw, bins)| (spw, (0..bins.len()).map(|channel| vec![channel]).collect()))
+            .collect::<BTreeMap<i32, Vec<Vec<usize>>>>()
+    });
     let mut spectrum_available = vec![false; row_spectrum_names.len()];
     let mut time_projection = time_groups.as_ref().map(|_| {
         TimeProjection::new(
@@ -1450,49 +1514,61 @@ fn mstransform_staged(
         let batch_end = (batch_start + batch_rows.max(1)).min(row_count);
         let input_rows = &output_input_rows[batch_start..batch_end];
         let mut combined_scalars = Vec::new();
-        let (mut input_block, mut group_times) =
-            if let (Some(grid), Some(groups)) = (&combined_grid, &combination) {
-                let result = combine::read_batch(
-                    grid,
-                    &groups[batch_start..batch_end],
-                    &input,
-                    (&selected_rows, &selected_ddids),
-                    (&channel_selection, &ddid_to_spw, correlations.as_ref()),
-                    (&visibility, &spectra.source, input_view, continuum.as_ref()),
-                    time_projection.as_mut().zip(time_groups.as_deref()),
-                )?;
-                combined_scalars = result.exposure_flags;
-                (result.arrays, result.coordinates)
-            } else if let (Some(projection), Some(groups)) = (&mut time_projection, &time_groups) {
-                let plans = groups[batch_start..batch_end]
-                    .iter()
-                    .map(|group| {
-                        let description = group.first.description;
-                        let spw = ddid_to_spw[&description];
-                        TimeGroupRead {
-                            group,
-                            channels: &channel_selection[&spw].channels,
-                            axes: correlations
-                                .as_ref()
-                                .and_then(|plan| plan.axes(description)),
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                projection.average_groups(&plans)?
-            } else {
-                let block = MainArrayBlock::read(
-                    input.main_table(),
-                    input_rows,
-                    &visibility,
-                    &spectra.source,
-                    input_view,
-                )
-                .map_err(|source| MsTransformError::MutateMeasurementSet {
-                    path: request.input_ms.display().to_string(),
-                    source: Box::new(source),
-                })?;
-                (block, Vec::new())
-            };
+        let (mut input_block, mut group_times) = if let (Some(grid), Some(groups)) =
+            (&combined_grid, &combination)
+        {
+            let result = combine::read_batch(
+                grid,
+                &groups[batch_start..batch_end],
+                &input,
+                (&selected_rows, &selected_ddids),
+                (&channel_selection, &ddid_to_spw, correlations.as_ref()),
+                (&visibility, &spectra.source, input_view, continuum.as_ref()),
+                time_projection.as_mut().zip(time_groups.as_deref()),
+            )?;
+            combined_scalars = result.exposure_flags;
+            (result.arrays, result.coordinates)
+        } else if let (Some(projection), Some(groups)) = (&mut time_projection, &time_groups) {
+            let plans = groups[batch_start..batch_end]
+                .iter()
+                .map(|group| {
+                    let description = group.first.description;
+                    let spw = ddid_to_spw[&description];
+                    TimeGroupRead {
+                        group,
+                        channels: &channel_selection[&spw].channels,
+                        axes: correlations
+                            .as_ref()
+                            .and_then(|plan| plan.axes(description)),
+                        legacy_bins: binned_time_channels.as_ref().and_then(|_| {
+                            let bins = &channel_bins[&spw];
+                            (!bins_are_single_channel(bins)).then(|| {
+                                let first = &bins[0];
+                                let width = first[0].abs_diff(first[first.len() - 1]) + 1;
+                                (
+                                    &local_channel_bins.as_ref().expect("time averaging")[&spw][..],
+                                    width,
+                                )
+                            })
+                        }),
+                    }
+                })
+                .collect::<Vec<_>>();
+            projection.average_groups(&plans)?
+        } else {
+            let block = MainArrayBlock::read(
+                input.main_table(),
+                input_rows,
+                &visibility,
+                &spectra.source,
+                input_view,
+            )
+            .map_err(|source| MsTransformError::MutateMeasurementSet {
+                path: request.input_ms.display().to_string(),
+                source: Box::new(source),
+            })?;
+            (block, Vec::new())
+        };
         let descriptions = &output_input_ddids[batch_start..batch_end];
         if grammar == RowGrammar::Transform
             && !averaging_time
@@ -1522,6 +1598,20 @@ fn mstransform_staged(
                 coordinates.flag_row = continuum::row_flag(flags.as_ref(), None);
             }
         }
+        let legacy_row_flags = if legacy_channel_averaging {
+            Some(
+                input
+                    .main_table()
+                    .column_accessor("FLAG_ROW")
+                    .and_then(|column| column.scalar_cells_owned_for_rows(input_rows))
+                    .map_err(|source| MsTransformError::MutateMeasurementSet {
+                        path: request.input_ms.display().to_string(),
+                        source: Box::new(source),
+                    })?,
+            )
+        } else {
+            None
+        };
         let mut input_row_flags = if let Some(projection) = &polarization {
             let row_flags = input
                 .main_table()
@@ -1635,7 +1725,7 @@ fn mstransform_staged(
                     reason: format!("MAIN row {row_index} references DATA_DESC_ID {ddid}, which has no DATA_DESCRIPTION row"),
                 }
             })?;
-            let bins = local_channel_bins.as_ref().unwrap_or(&channel_bins).get(&spw_id).ok_or_else(|| MsTransformError::InvalidSpw {
+            let bins = binned_time_channels.as_ref().or(local_channel_bins.as_ref()).unwrap_or(&channel_bins).get(&spw_id).ok_or_else(|| MsTransformError::InvalidSpw {
                 selector: request.spw.clone(),
                 reason: format!("selected row {row_index} maps to spectral window {spw_id}, but --spw does not include that SPW"),
             })?;
@@ -1688,6 +1778,23 @@ fn mstransform_staged(
                 sigma: source_spectrum("SIGMA_SPECTRUM")
                     .and_then(|index| row_spectra[index].as_ref()),
             };
+            let legacy_averages = if let Some(row_flags) = &legacy_row_flags
+                && !bins_are_single_channel(bins)
+            {
+                let flag_row =
+                    scalar_bool(row_flags[batch_offset].as_ref(), "FLAG_ROW", row_index)?;
+                Some(
+                    legacy_split::ChannelAverages::new(
+                        &flags,
+                        spectra_cells.weight,
+                        bins,
+                        flag_row,
+                    )
+                    .map_err(mutation_error)?,
+                )
+            } else {
+                None
+            };
             let projected_weights = if read_spectral_weights && !averaging_time {
                 let channels = &channel_selection[&spw_id].channels;
                 spectra_cells
@@ -1729,7 +1836,9 @@ fn mstransform_staged(
             } else {
                 None
             };
-            let mut transformed_flags = if let Some(averages) = &averages {
+            let mut transformed_flags = if let Some(averages) = &legacy_averages {
+                averages.flags()
+            } else if let Some(averages) = &averages {
                 averages.flags()
             } else {
                 transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
@@ -1834,6 +1943,8 @@ fn mstransform_staged(
                 let value = select_correlations(value, source)?;
                 let mut transformed = if column.source == OptionalMainColumn::LagData {
                     value
+                } else if let Some(averages) = &legacy_averages {
+                    averages.visibility(value).map_err(mutation_error)?
                 } else if let Some(averages) = &averages {
                     averages
                         .visibility(column.source, value)
@@ -2126,8 +2237,14 @@ fn mstransform_staged(
             )?;
             let (mut task_weight, mut task_sigma) =
                 task_spectra.map_or((None, None), |(weight, sigma)| (Some(weight), Some(sigma)));
+            let mut legacy_weight_spectrum = legacy_averages
+                .as_ref()
+                .map(legacy_split::ChannelAverages::weight_spectrum);
             for &name in &spectra.output {
                 let transformed = match name {
+                    "WEIGHT_SPECTRUM" if legacy_weight_spectrum.is_some() => {
+                        legacy_weight_spectrum.take().flatten()
+                    }
                     "WEIGHT_SPECTRUM"
                         if grammar == RowGrammar::Transform && (!legacy || averaging_time) =>
                     {
@@ -2848,11 +2965,44 @@ fn flag_filter_read_plan<'a>(
     Ok(MsReadPlan::new(rows, budget)?.rows_per_block)
 }
 
+struct SelectedFlagAxes<'a> {
+    channels: &'a BTreeMap<i32, TransformChannelSelection>,
+    ddid_to_spw: &'a BTreeMap<i32, i32>,
+    correlations: Option<&'a CorrelationSelection>,
+}
+
+impl SelectedFlagAxes<'_> {
+    fn all_flagged(&self, flags: &ArrayValue, ddid: i32) -> Result<bool, TableError> {
+        let ArrayValue::Bool(flags) = flags else {
+            return Err(TableError::Schema("FLAG must hold Bool".into()));
+        };
+        let flags = flags
+            .view()
+            .into_dimensionality::<ndarray::Ix2>()
+            .map_err(|_| {
+                TableError::Schema("FLAG must have correlation and channel axes".into())
+            })?;
+        let channels = &self.channels[&self.ddid_to_spw[&ddid]].channels;
+        let axes = self.correlations.and_then(|selection| selection.axes(ddid));
+        if channels.iter().any(|&chan| chan >= flags.ncols())
+            || axes.is_some_and(|axes| axes.iter().any(|&corr| corr >= flags.nrows()))
+        {
+            return Err(TableError::Schema(
+                "selected axes exceed the FLAG shape".into(),
+            ));
+        }
+        Ok((0..flags.nrows())
+            .filter(|corr| axes.is_none_or(|axes| axes.contains(corr)))
+            .all(|corr| channels.iter().all(|&chan| flags[[corr, chan]])))
+    }
+}
+
 fn keep_unflagged_rows(
     input: &MeasurementSet,
     rows: &[usize],
     descriptions: &[i32],
     rows_per_block: usize,
+    selection: Option<&SelectedFlagAxes<'_>>,
 ) -> Result<(Vec<usize>, Vec<i32>), MsTransformError> {
     let error = |source| MsTransformError::MutateMeasurementSet {
         path: input
@@ -2877,7 +3027,12 @@ fn keep_unflagged_rows(
             rows.iter().zip(descriptions).zip(flag_rows).zip(flags)
         {
             let flagged_row = scalar_bool(flag_row.as_ref(), "FLAG_ROW", row)?;
-            let flagged_samples = bool_array_all_true(flags.as_ref(), "FLAG", row)?;
+            let flagged_samples = match (selection, flags.as_ref()) {
+                (Some(selection), Some(flags)) => {
+                    selection.all_flagged(flags, ddid).map_err(error)?
+                }
+                _ => bool_array_all_true(flags.as_ref(), "FLAG", row)?,
+            };
             if !flagged_row && !flagged_samples {
                 kept_rows.push(row);
                 kept_descriptions.push(ddid);

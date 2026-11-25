@@ -4,9 +4,12 @@ use casa_ms::{
     selection::MsSelection,
     transform::{LegacyMsTool, LegacyTimeOptions, MsTransformTaskOptions},
 };
+use numpy::PyUntypedArray;
+use pyo3::exceptions::{PySystemError, PyTypeError};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyFloat, PyInt, PyList, PyString};
 
-use crate::convert::Variant;
+use crate::convert::{Variant, integer_vector};
 
 use super::partition::{
     all_if_minus_one, combine_argument, intent_argument, obs_argument, optional_expression,
@@ -26,7 +29,7 @@ impl PyMsTool {
         #[pyo3(from_py_with = output_argument)] outputms: String,
         field: Option<&Bound<'_, PyAny>>,
         spw: Option<&Bound<'_, PyAny>>,
-        step: Vec<i32>,
+        #[pyo3(from_py_with = step_argument)] step: Vec<i32>,
         baseline: Option<&Bound<'_, PyAny>>,
         timebin: Option<Variant>,
         #[pyo3(from_py_with = time_argument)] time: String,
@@ -62,8 +65,13 @@ impl PyMsTool {
         };
         let options = MsTransformTaskOptions {
             visibility_columns: visibility_columns(&whichcol)?,
-            channel_widths: (!step.is_empty())
-                .then(|| step.iter().map(|&width| width.max(1) as usize).collect()),
+            // CASA treats zero as the default width and validates negative steps
+            // after checking selection and the number of widths.
+            channel_widths: (!step.is_empty()).then(|| {
+                step.iter()
+                    .map(|&width| if width == 0 { 1 } else { width.max(0) as usize })
+                    .collect()
+            }),
             legacy_tool: Some(LegacyMsTool::Split(LegacyTimeOptions {
                 combine_observations: combine.to_ascii_lowercase().contains("obs"),
             })),
@@ -73,6 +81,30 @@ impl PyMsTool {
         };
         self.write_subms(py, outputms, spw, selection, options, Some(history))
     }
+}
+
+fn step_argument(value: &Bound<'_, PyAny>) -> PyResult<Vec<i32>> {
+    if value.is_instance_of::<PyString>() || value.is_instance_of::<PyBytes>() {
+        return Err(PyTypeError::new_err("argument _step must not be a string"));
+    }
+    let binding_error = || {
+        PySystemError::new_err(
+            "<built-in function ms_split> returned a result with an exception set",
+        )
+    };
+    if !value.is_instance_of::<PyList>()
+        && !value.is_instance_of::<PyUntypedArray>()
+        && !value.is_instance_of::<PyInt>()
+        && !value.is_instance_of::<PyFloat>()
+    {
+        return Err(binding_error());
+    }
+    let (widths, pending) =
+        integer_vector::flatten(value, "cyclic split step", "non-finite split step")?;
+    if pending {
+        return Err(binding_error());
+    }
+    Ok(widths.into_iter().map(|width| width as i32).collect())
 }
 
 fn correlation_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {

@@ -91,6 +91,9 @@ impl PyMsTool {
         py.detach(|| {
             let attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_ref() else {
+                if operation == "split" {
+                    return Err(runtime_error("Table column DATA_DESC_ID is unknown"));
+                }
                 return Ok(false);
             };
             if operation == "partition" && spw.contains(':') {

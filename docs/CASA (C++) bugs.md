@@ -12139,3 +12139,21 @@ With a positive time bin and a channel selection such as `0:0~3^2`, CASA
 6.7.6.14 can create the output before raising the unsupported-combination
 error. Casa-rs raises the same error and preserves any existing output
 (#1030).
+
+## Split can report averaged channels without averaging their visibilities
+
+For four input channels, CASA 6.7.6.14 can give `ms.split(step=[3],
+timebin="120s")` two output channel coordinates for bins of three and one
+channels, while reading the first two raw channel values. Casa-rs forms
+both channel bins within each integration before averaging in time.
+The output coordinates, flags, and visibilities describe the same bins
+(#1030).
+
+## Split can write an output while returning a step error
+
+With a tuple such as `step=(2,)`, the CASA 6.7.6.14 binding runs the
+split before Python raises `SystemError` for the pending conversion
+exception. A negative width also leaves a partial output before CASA raises
+`RuntimeError`. Casa-rs raises the corresponding error and preserves the
+destination. Scalar integers, numeric lists, and NumPy arrays still work
+(#1030).
