@@ -1636,7 +1636,7 @@
         "paired",
         "legacy-calibration"
       ],
-      "gap": "Remaining MeasurementSet plotting paths are open under #1032 and #215."
+      "gap": "The static MeasurementSet acceptance and release comparison are recorded in #1032. #215 tracks further PlotMS capability."
     },
     {
       "id": "selection",
@@ -1652,7 +1652,7 @@
         "ms-row-axes",
         "ms-static-display-and-refusals"
       ],
-      "gap": "Remaining MeasurementSet selection paths are open under #1032 and #215."
+      "gap": "The static MeasurementSet selector matrix is recorded in #1032. Additional calibration-table selectors and workflows are tracked in #215."
     },
     {
       "id": "coordinates",
@@ -1686,7 +1686,7 @@
         "ms-reporting-frequency-and-wavelengths",
         "ms-gapped-channel-frequencies"
       ],
-      "gap": "Sample masks for other mixed visibility and metadata axes, additional averaging modes and additional MS column forms are open. Interval reporting-frame transforms and additional interval or wavelength averaging compositions remain open."
+      "gap": "The paired MeasurementSet axis, flag and reporting-frame matrix is recorded in #1032. #215 tracks additional axis and column compositions."
     },
     {
       "id": "averaging",
@@ -1709,7 +1709,7 @@
         "ms-pointing-sample-masks-and-pages",
         "ms-gapped-channel-frequencies"
       ],
-      "gap": "Scalar combinations with other averaging controls, antenna and spectral-window averaging, fully masked exports, additional visibility averaging compositions, and additional flagged and weight coordinates remain under #1032."
+      "gap": "The static MeasurementSet averaging, flag, shape and empty-case matrix is recorded in #1032. #215 tracks additional compositions."
     },
     {
       "id": "pages",
@@ -1722,7 +1722,7 @@
         "ms-iterated-grid-start",
         "ms-static-display-and-refusals"
       ],
-      "gap": "Other offset iteration combinations, calibration-table placement, persistent pages and additional presentation modes remain open."
+      "gap": "Static offset, pagination and shared-axis cases are recorded in #1032. Persistent plot state and new calibration-table placement are outside that scope."
     },
     {
       "id": "presentation",
@@ -1739,7 +1739,7 @@
         "ms-page-header-metadata",
         "ms-averaged-scan-field-colors"
       ],
-      "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
+      "gap": "The static comparisons use semantic Matplotlib figure checks. Pixel-exact Qt reproduction and interactive flag editing are outside the #1032 scope."
     },
     {
       "id": "export",
@@ -1756,7 +1756,7 @@
         "ms-static-export-formats",
         "ms-static-display-and-refusals"
       ],
-      "gap": "More export, multi-plot state and interactive display forms remain open."
+      "gap": "Static MeasurementSet qualification covers separate files per page, one-page PDF and the five catalog formats. Combined multipage PDF and persistent plot state are outside the #1032 scope."
     },
     {
       "id": "advanced",
@@ -1774,7 +1774,7 @@
         "ms-static-display-and-refusals",
         "ms-gapped-channel-frequencies"
       ],
-      "gap": "Remaining shared PlotMS forms are tracked in #1032 and #215."
+      "gap": "The static MeasurementSet callibrary, transform and overlay matrix is recorded in #1032. #215 tracks further calibration-table-only workflows."
     }
   ],
   "decisions": [
@@ -1836,7 +1836,7 @@
     "remaining": {
       "kind": "Remaining calibration PlotMS workflow comparisons",
       "state": "planned",
-      "scope": "Shared PlotMS rendering, MeasurementSet workflows and interactive controls under #1032 and #215.",
+      "scope": "Additional calibration-table placement and transforms and work beyond the static MeasurementSet acceptance are tracked in #215.",
       "result": "Requires additional native behavior and paired evidence.",
       "links": []
     },
@@ -2030,7 +2030,7 @@
       "kind": "Same-input default MeasurementSet visibility model",
       "state": "passed",
       "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on the same complex MeasurementSets without a stored MODEL_DATA column.",
-      "result": "Seven paired text exports matched 78 selected points and exact source metadata, including unit parallel hands, zero cross-hands, residuals, corrected-only storage, a dangling pointer and a virtual model in another spectral window. One 500 by 360 pixel PNG matched 12 artist coordinates, labels and dimensions. A selected virtual recipe still reports pending support in #1032.",
+      "result": "Seven paired text exports matched 78 selected points and exact source metadata, including unit parallel hands, zero cross-hands, residuals, corrected-only storage, a dangling pointer and a virtual model in another spectral window. One 500 by 360 pixel PNG matched 12 artist coordinates, labels and dimensions. This earlier revision refused selected virtual recipes. Later virtual model comparisons cover them.",
       "casa_version": "6.7.6.14",
       "revision": "7ee7a82fb6b90dc584df075f27c0281d76f6bf31",
       "source_revision": "7ee7a82fb6b90dc584df075f27c0281d76f6bf31",
@@ -3179,7 +3179,7 @@
       "kind": "Paired averaged Interval and wavelength coordinates",
       "state": "passed",
       "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Vector time averaging of Interval, Uwave and Wwave with visible selected XX stored samples, two retained baselines, reversed input order, nonuniform intervals and flag masks, paired Interval/U ordinates and two same-frame windows.",
-      "result": "Seven TXT exports match 82 ordered samples with 20 s or 5 s time bins. The first baseline supplies the cache interval even when fully flagged, the visible wavelength points scale by the selected channel frequency, and DATA and CORRECTED use their respective statistical weights. Two 500 by 360 PNGs match all 20 rendered points with seconds and wavelength units. Input times, UVW, intervals, visibility data, weights and flags remain unchanged. The shared Interval/U plot with unequal weights matches in both ordinates. CASA puts TOPO and LSRK windows in one reporting frame; the native task explicitly refuses this mixture pending #1032.",
+      "result": "Seven TXT exports match 82 ordered samples with 20 s or 5 s time bins. The first baseline supplies the cache interval even when fully flagged, the visible wavelength points scale by the selected channel frequency, and DATA and CORRECTED use their respective statistical weights. Two 500 by 360 PNGs match all 20 rendered points with seconds and wavelength units. Input times, UVW, intervals, visibility data, weights and flags remain unchanged. The shared Interval/U plot with unequal weights matches in both ordinates. The tested revision refused mixed TOPO and LSRK windows. The later reporting-frame comparison covers the mixture.",
       "casa_version": "6.7.6.14",
       "revision": "bc67fb22499530269b187d9c438f5ab979687ee2",
       "source_revision": "bc67fb22499530269b187d9c438f5ab979687ee2",
@@ -3249,7 +3249,7 @@
       "kind": "Paired static MeasurementSet metadata grids and scan pages",
       "state": "passed",
       "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus Frequency and array Elevation versus Time on the reversed two-baseline MS, with both XX and YY and scans 11 and 19. The flag cube removes one integration and one additional channel and leaves five ordered integrations. One selected channel is clear only on the second baseline. The omitted integration contains a clear channel outside the selection.",
-      "result": "Four paired TXT exports match 38 ordered points and their selection metadata. The channel grid retains 14 points and the integration grid retains five. The ordinate values agree at printed precision. The four 500 by 420 scan PNGs match 19 coordinates, units, sides, local titles and filenames. Source visibility and flag cells are unchanged. The Frequency pages use an explicit right-hand ordinate. Both axis pairs export four matched empty TXT files in verbose and compact modes and two empty 500 by 360 PNGs when the selection contains only flagged cells. Channel/Frequency with active reporting frames remains pending consistent displayed and verbose frequencies (#1032).",
+      "result": "Four paired TXT exports match 38 ordered points and their selection metadata. The channel grid retains 14 points and the integration grid retains five. The ordinate values agree at printed precision. The four 500 by 420 scan PNGs match 19 coordinates, units, sides, local titles and filenames. Source visibility and flag cells are unchanged. The Frequency pages use an explicit right-hand ordinate. Both axis pairs export four matched empty TXT files in verbose and compact modes and two empty 500 by 360 PNGs when the selection contains only flagged cells. This earlier comparison used stored frequencies. The later reporting-frame comparison pairs active Channel/Frequency controls.",
       "casa_version": "6.7.6.14",
       "revision": "d116fa71fdd24c7ad473402ed4ffa68a2db3ac2d",
       "source_revision": "d116fa71fdd24c7ad473402ed4ffa68a2db3ac2d",
