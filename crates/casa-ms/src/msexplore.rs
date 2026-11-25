@@ -33,6 +33,7 @@ mod plotms_figure;
 mod plotms_iteration;
 mod plotms_model;
 mod plotms_ordinates;
+mod plotms_page_headers;
 mod plotms_phasecenter;
 mod plotms_pointing;
 mod plotms_row_axes;
@@ -2851,6 +2852,7 @@ struct RawSymbolVisibility {
 /// CASA row and channel selection, optionally with transient calibrated arrays.
 struct PlotMsInput<'a> {
     row_order: &'a [usize],
+    header_row: Option<usize>,
     starts_visibility_buffer: &'a [bool],
     time_bins: Option<&'a PlotTimeGroups>,
     extended_derived: bool,
@@ -2950,7 +2952,10 @@ fn build_msexplore_payload_internal(
         return Err("Time-averaged PlotMS UV distance ordinates with a callibrary or direct msexplore are pending (#1032)".into());
     }
     let mut point_budget = PointBudget::limited(spec.max_plot_points, allow_decimation);
-    let header_lines = resolve_page_header_lines(ms, spec)?;
+    let header_lines = match calibration {
+        Some(input) => plotms_page_headers::lines(ms, spec, input),
+        None => resolve_page_header_lines(ms, spec)?,
+    };
     if spec.plots.len() == 1 {
         let mut payload = build_msexplore_plot_payload_validated(
             ms,
@@ -3117,6 +3122,7 @@ pub(crate) fn build_calibrated_plotms_payload(
     }
     let input = PlotMsInput {
         row_order: &calibration.row_order,
+        header_row: calibration.row_order.first().copied(),
         starts_visibility_buffer: &[],
         extended_derived: false,
         time_bins: None,
@@ -3146,6 +3152,7 @@ fn build_uncalibrated_plotms_payload(
     let mut selected =
         crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
             .map_err(|error| error.to_string())?;
+    let header_row = selected.selected_rows.first().map(|row| row.row_index);
     let plot = spec.plots.first();
     let extended_derived = columns.extended_derived;
     let scalar_average = plot.is_some_and(plotms_columns::uses_scalar_visibility_average);
@@ -3319,6 +3326,7 @@ fn build_uncalibrated_plotms_payload(
     )?;
     let input = PlotMsInput {
         row_order: &row_order,
+        header_row,
         starts_visibility_buffer: &starts_visibility_buffer,
         time_bins: time_bins.as_ref(),
         extended_derived,

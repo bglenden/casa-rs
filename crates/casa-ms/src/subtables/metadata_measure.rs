@@ -107,10 +107,19 @@ fn reference_name(
 }
 
 pub(super) fn field_epoch_reference(table: &Table, row: usize) -> MsResult<EpochRef> {
-    let Some(desc) = TableMeasDesc::reconstruct(table, "TIME") else {
+    epoch_reference(table, "TIME", row, 0)
+}
+
+pub(crate) fn epoch_reference(
+    table: &Table,
+    column: &str,
+    row: usize,
+    element: usize,
+) -> MsResult<EpochRef> {
+    let Some(desc) = TableMeasDesc::reconstruct(table, column) else {
         return Ok(EpochRef::UTC);
     };
-    let name = reference_name(table, &desc, row, 0, |code| {
+    let name = reference_name(table, &desc, row, element, |code| {
         EpochRef::ALL
             .iter()
             .find(|kind| kind.casacore_code() == code)
