@@ -8,6 +8,8 @@ use casa_tables::TableWriteLock;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use crate::tools::casacore_path::expand_asdm_path;
+
 use super::selection_indices::selection_text;
 use super::{AttachedMs, PyMsTool, runtime_error};
 
@@ -55,7 +57,7 @@ impl AttachedMs {
         };
         let new_path = new_path?;
         if new_path.is_empty() || new_path == "/" {
-            return index.reference().map_err(runtime_error);
+            return index.reference(expand_asdm_path).map_err(runtime_error);
         }
 
         // CASA permits this explicit index retarget even on a nomodify
@@ -83,7 +85,9 @@ impl AttachedMs {
             .get(root.as_ref())
             .or(temporary.as_ref())
             .expect("ASDM index update holds its physical table lock");
-        let relocated = index.relocate(&new_path, lock).map_err(runtime_error)?;
+        let relocated = index
+            .relocate(&new_path, lock, expand_asdm_path)
+            .map_err(runtime_error)?;
         if let Some(lock) = temporary {
             lock.release().map_err(runtime_error)?;
         }

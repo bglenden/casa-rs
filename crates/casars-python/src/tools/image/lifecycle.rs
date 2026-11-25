@@ -4,10 +4,11 @@ use std::borrow::Cow;
 use std::path::{Component, Path, PathBuf};
 
 use casa_images::ImagePixelType;
-use casa_tables::{expand_casacore_path, lexical_absolute};
+use casa_tables::lexical_absolute;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::prelude::*;
 
+use crate::tools::casacore_path::expand_path;
 use crate::tools::{LogLine, emit};
 
 use super::PyImageTool;
@@ -15,7 +16,7 @@ use super::attachment::{self, AttachedImage};
 use super::handle::raised;
 
 pub(super) fn resolve_image_path<'a>(py: Python<'_>, name: &'a str) -> PyResult<Cow<'a, str>> {
-    let expanded = expand_casacore_path(name)
+    let expanded = expand_path(name)
         .ok_or_else(|| raised("Path::expandName: recursive environment variable"))?;
     if expanded
         .strip_prefix('~')

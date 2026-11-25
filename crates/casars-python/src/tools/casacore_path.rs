@@ -2,10 +2,18 @@
 
 use std::borrow::Cow;
 
-/// Expand casacore path variables and leading home-directory references.
+/// Expand casacore path variables and the current user's home directory.
 /// Returns `None` when repeated expansion exceeds casacore's limit.
-#[must_use]
-pub fn expand_casacore_path(name: &str) -> Option<Cow<'_, str>> {
+pub(crate) fn expand_path(name: &str) -> Option<Cow<'_, str>> {
+    expand(name, false)
+}
+
+/// Also resolve named home directories for ASDM index path display.
+pub(crate) fn expand_asdm_path(name: &str) -> Option<Cow<'_, str>> {
+    expand(name, true)
+}
+
+fn expand(name: &str, named_home: bool) -> Option<Cow<'_, str>> {
     if !name.starts_with('~') && !name.contains('$') {
         return Some(Cow::Borrowed(name));
     }
@@ -15,7 +23,9 @@ pub fn expand_casacore_path(name: &str) -> Option<Cow<'_, str>> {
     for _ in 0..25 {
         if let Some(tail) = path.strip_prefix('~') {
             let user = tail.split('/').next().unwrap_or_default();
-            if let Some(home) = home_directory(user).filter(|home| !home.is_empty()) {
+            if (user.is_empty() || named_home)
+                && let Some(home) = home_directory(user).filter(|home| !home.is_empty())
+            {
                 path = Cow::Owned(format!("{home}{}", &tail[user.len()..]));
             }
         }

@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use casa_aipsio::AipsIo;
 
 use super::{IndexHeader, StorageError, TYPE, invalid};
-use crate::{TableError, TableWriteLock, expand_casacore_path, publication};
+use crate::{TableError, TableWriteLock, publication};
 
 /// The index file for the lazy ASDM storage manager attached to a column.
 #[derive(Debug)]
@@ -72,9 +72,12 @@ impl AsdmBdfIndex {
 
     /// Read the stored directory containing the first file's BDF directory.
     ///
+    /// The caller provides variable and home-directory expansion for the
+    /// persisted paths. Pass an identity function to use literal paths.
+    ///
     /// # Errors
     /// The index cannot be read or its filename block is malformed.
-    pub fn reference(&self) -> Result<String, TableError> {
+    pub fn reference(&self, expand: PathExpansion) -> Result<String, TableError> {
         #[cfg(unix)]
         {
             let mut cached = self
@@ -85,13 +88,13 @@ impl AsdmBdfIndex {
                 && std::fs::metadata(&self.path)
                     .is_ok_and(|file| current.version == IndexVersion::from(&file))
             {
-                return Ok(reference_name(current.path.as_deref())?);
+                return Ok(reference_name(current.path.as_deref(), expand)?);
             }
             let input = File::open(&self.path).map_err(StorageError::from)?;
             let file = input.metadata().map_err(StorageError::from)?;
             let header = read_header(input, file.len())?.1;
             let path = header.bdfs.into_iter().next();
-            let result = reference_name(path.as_deref());
+            let result = reference_name(path.as_deref(), expand);
             *cached = Some(CachedName {
                 version: IndexVersion::from(&file),
                 path,
@@ -103,23 +106,34 @@ impl AsdmBdfIndex {
             let input = File::open(&self.path).map_err(StorageError::from)?;
             let size = input.metadata().map_err(StorageError::from)?.len();
             let (_, header) = read_header(input, size)?;
-            Ok(reference_name(header.bdfs.first().map(PathBuf::as_path))?)
+            Ok(reference_name(
+                header.bdfs.first().map(PathBuf::as_path),
+                expand,
+            )?)
         }
     }
 
     /// Replace the ASDM directory in the index's stored BDF paths.
     ///
     /// Hold the physical table's write lock and verify the current binding.
-    /// The files can be offline during this operation. The stage preserves the
+    /// The caller provides variable and home-directory expansion. The files
+    /// can be offline during this operation. The stage preserves the
     /// BDF endian marker, descriptor bytes, and mode of the existing index.
+    /// On Linux and macOS, a symbolic link keeps its binding and the update
+    /// is published to its captured referent.
     ///
     /// # Errors
     /// The lock or index is invalid, or the replacement cannot be published.
-    pub fn relocate(&self, replacement: &str, lock: &TableWriteLock) -> Result<String, TableError> {
+    pub fn relocate(
+        &self,
+        replacement: &str,
+        lock: &TableWriteLock,
+        expand: PathExpansion,
+    ) -> Result<String, TableError> {
         if !lock.matches_table_path(&self.table) {
             return Err(invalid("ASDM index write does not hold its physical table lock").into());
         }
-        let changed = self.replace_names(replacement)?;
+        let changed = self.replace_names(replacement, expand, lock)?;
         if changed {
             // Only the independent index changed. Like AsdmStMan::writeIndex,
             // this leaves the parent table descriptor and sync data untouched.
@@ -130,37 +144,81 @@ impl AsdmBdfIndex {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn replace_names(&self, replacement: &str) -> Result<bool, StorageError> {
+    fn replace_names(
+        &self,
+        replacement: &str,
+        expand: PathExpansion,
+        lock: &TableWriteLock,
+    ) -> Result<bool, StorageError> {
         let parent = publication::open_directory_identity(&self.table)?;
         publication::check_write_access(&self.path)?;
         let name = self.path.file_name().expect("ASDM index file name");
-        let original = publication::open_regular_directory_entry(&parent, name)?;
-        let identity = original.metadata()?;
-        let mut staged = publication::StagedDirectoryFile::new(&parent, &self.table)?;
-        if !write_index(original, staged.file_mut().try_clone()?, replacement)? {
-            return Ok(false);
+        let verify_table = || {
+            if lock.matches_table_path(&self.table) {
+                Ok(())
+            } else {
+                Err(invalid("ASDM table changed during index publication"))
+            }
+        };
+        match publication::open_regular_directory_entry(&parent, name) {
+            Ok(original) => replace_existing(
+                &self.path,
+                &parent,
+                original,
+                replacement,
+                expand,
+                verify_table,
+            ),
+            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+                let link = publication::open_symlink_directory_entry(&parent, name)?;
+                let linked = IndexVersion::from(&link.metadata()?).identity;
+                let target = self.path.canonicalize()?;
+                let directory = target
+                    .parent()
+                    .ok_or_else(|| invalid("missing ASDM index parent"))?;
+                let pinned = publication::open_directory_identity(directory)?;
+                let pinned_identity = IndexVersion::from(&pinned.metadata()?).identity;
+                let original = publication::open_regular_directory_entry(
+                    &pinned,
+                    target
+                        .file_name()
+                        .ok_or_else(|| invalid("missing ASDM index name"))?,
+                )?;
+                replace_existing(&target, &pinned, original, replacement, expand, || {
+                    verify_table()?;
+                    verify_index_link(&self.path, linked, &target, directory, pinned_identity)
+                })
+            }
+            Err(error) => Err(error.into()),
         }
-        staged.file_mut().set_permissions(identity.permissions())?;
-        publication::sync_publication_file(staged.file_mut())?;
-        staged.replace(name, &identity)?;
-        Ok(true)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-    fn replace_names(&self, replacement: &str) -> Result<bool, StorageError> {
+    fn replace_names(
+        &self,
+        replacement: &str,
+        expand: PathExpansion,
+        lock: &TableWriteLock,
+    ) -> Result<bool, StorageError> {
         let original = self.path.symlink_metadata()?;
         if !original.is_file() {
             return Err(invalid("ASDM index replacement needs a regular index file"));
         }
         publication::check_write_access(&self.path)?;
         let staged = tempfile::NamedTempFile::new_in(&self.table)?;
-        if !write_index(File::open(&self.path)?, staged.reopen()?, replacement)? {
+        if !write_index(
+            File::open(&self.path)?,
+            staged.reopen()?,
+            replacement,
+            expand,
+        )? {
             return Ok(false);
         }
         staged.as_file().set_permissions(original.permissions())?;
         publication::sync_publication_file(staged.as_file())?;
         let current = self.path.symlink_metadata()?;
-        if !current.is_file()
+        if !lock.matches_table_path(&self.table)
+            || !current.is_file()
             || current.len() != original.len()
             || current.modified()? != original.modified()?
         {
@@ -171,22 +229,80 @@ impl AsdmBdfIndex {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn replace_existing(
+    path: &Path,
+    parent: &File,
+    original: File,
+    replacement: &str,
+    expand: PathExpansion,
+    verify: impl FnOnce() -> Result<(), StorageError>,
+) -> Result<bool, StorageError> {
+    let identity = original.metadata()?;
+    let directory = path
+        .parent()
+        .ok_or_else(|| invalid("missing ASDM index parent"))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| invalid("missing ASDM index name"))?;
+    let mut staged = publication::StagedDirectoryFile::new(parent, directory)?;
+    if !write_index(
+        original.try_clone()?,
+        staged.file_mut().try_clone()?,
+        replacement,
+        expand,
+    )? {
+        return Ok(false);
+    }
+    staged.file_mut().set_permissions(identity.permissions())?;
+    publication::sync_publication_file(staged.file_mut())?;
+    verify()?;
+    staged.replace(name, &identity)?;
+    Ok(true)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn verify_index_link(
+    entry: &Path,
+    linked: (u64, u64),
+    target: &Path,
+    directory: &Path,
+    pinned_directory: (u64, u64),
+) -> Result<(), StorageError> {
+    if entry
+        .symlink_metadata()
+        .is_ok_and(|file| IndexVersion::from(&file).identity == linked)
+        && entry.canonicalize().is_ok_and(|path| path == target)
+        && directory
+            .symlink_metadata()
+            .is_ok_and(|dir| IndexVersion::from(&dir).identity == pinned_directory)
+    {
+        return Ok(());
+    }
+    Err(invalid("ASDM index link changed during publication"))
+}
+
 fn read_header(input: File, size: u64) -> Result<(AipsIo, IndexHeader), StorageError> {
     let mut io = AipsIo::new_read_only(input);
     let header = IndexHeader::read(&mut io, size)?;
     Ok((io, header))
 }
 
-fn write_index(input: File, output: File, replacement: &str) -> Result<bool, StorageError> {
+fn write_index(
+    input: File,
+    output: File,
+    replacement: &str,
+    expand: PathExpansion,
+) -> Result<bool, StorageError> {
     let size = input.metadata()?.len();
     let (io, header) = read_header(input, size)?;
     let Some(first) = header.bdfs.first() else {
         return Ok(false);
     };
-    let first = expanded_name(first)?;
-    let directory = expand_name(dirname(&first))?;
+    let first = expanded_name(first, expand)?;
+    let directory = expand_name(dirname(&first), expand)?;
     let binary_directory = basename(&directory);
-    expand_name(replacement)?;
+    expand_name(replacement, expand)?;
     let separator = if replacement.ends_with('/') { "" } else { "/" };
     let prefix = format!("{replacement}{separator}{binary_directory}/");
     // The validated prefix ends at the unchanged descriptor count. Copy
@@ -198,7 +314,7 @@ fn write_index(input: File, output: File, replacement: &str) -> Result<bool, Sto
     output.putstart("Block", header.block_version)?;
     output.put_u32(header.bdfs.len() as u32)?;
     for path in &header.bdfs {
-        let name = expanded_name(path)?;
+        let name = expanded_name(path, expand)?;
         let filename = basename(&name);
         if filename.is_empty() {
             return Err(invalid("ASDM BDF path has no filename"));
@@ -219,25 +335,27 @@ fn write_index(input: File, output: File, replacement: &str) -> Result<bool, Sto
     Ok(true)
 }
 
-fn reference_name(first: Option<&Path>) -> Result<String, StorageError> {
+fn reference_name(first: Option<&Path>, expand: PathExpansion) -> Result<String, StorageError> {
     let Some(first) = first else {
         return Ok(String::new());
     };
-    let name = expanded_name(first)?;
-    let directory = expand_name(dirname(&name))?;
+    let name = expanded_name(first, expand)?;
+    let directory = expand_name(dirname(&name), expand)?;
     Ok(dirname(&directory).to_owned())
 }
 
-fn expanded_name(path: &Path) -> Result<Cow<'_, str>, StorageError> {
+fn expanded_name(path: &Path, expand: PathExpansion) -> Result<Cow<'_, str>, StorageError> {
     expand_name(
         path.to_str()
             .ok_or_else(|| invalid("non-UTF-8 ASDM BDF path"))?,
+        expand,
     )
 }
 
-fn expand_name(name: &str) -> Result<Cow<'_, str>, StorageError> {
-    expand_casacore_path(name)
-        .ok_or_else(|| invalid("Path::expandName: recursive environment variable"))
+type PathExpansion = fn(&str) -> Option<Cow<'_, str>>;
+
+fn expand_name(name: &str, expand: PathExpansion) -> Result<Cow<'_, str>, StorageError> {
+    expand(name).ok_or_else(|| invalid("Path::expandName: recursive environment variable"))
 }
 
 // Match casacore Path's single trailing-separator removal without losing

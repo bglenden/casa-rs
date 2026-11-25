@@ -11501,7 +11501,11 @@ byte order, so a cross-endian index can decode the wrong visibility
 values. Casa-rs retains the endian flag and the original row descriptors.
 CASA also installs a non-UTF-8 bytes path before Python reports a
 `UnicodeDecodeError`. Casa-rs raises the error before changing the
-index (#1030).
+index. CASA truncates the original index before writing its replacement,
+so an interrupted write can leave the MeasurementSet without a readable
+index. Casa-rs stages the update and publishes it atomically. On Linux
+and macOS a symbolic link continues to point at the same referent
+(#1030).
 
 ## MS writes can reorder values read from saved views
 

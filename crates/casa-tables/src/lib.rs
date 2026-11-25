@@ -245,7 +245,6 @@
 //! cargo run -p casa-tables --example t_table
 //! ```
 
-mod casacore_path;
 mod concat_table;
 mod indexing;
 mod ref_table;
@@ -265,7 +264,6 @@ pub mod table_measures;
 pub mod table_quantum;
 pub mod taql;
 
-pub use casacore_path::expand_casacore_path;
 pub use concat_table::ConcatTable;
 pub use indexing::ColumnsIndex;
 #[cfg(unix)]
