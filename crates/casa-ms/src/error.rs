@@ -86,6 +86,10 @@ pub enum MsError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    /// The published MultiMS could not be reopened with the requested access.
+    #[error("{0}")]
+    MultiMsAttachment(String),
+
     /// A concurrent path change blocked rollback of a staged MultiMS.
     #[error("{cause}. MultiMS rollback failed: {restore}. Staging retained at {staging}")]
     MultiMsRecovery {

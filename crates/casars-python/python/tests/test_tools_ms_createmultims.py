@@ -176,6 +176,54 @@ def test_conflicting_paths_preserve_originals(native_dataset, tmp_path):
     assert not new.exists()
 
 
+def test_replacement_preserves_existing_output_on_which_member_depends(native_dataset, tmp_path, creator):
+    output = tmp_path / "out.ms"
+    copytree(native_dataset, output)
+    marker = output / "existing.txt"
+    marker.write_bytes(b"existing output data")
+    selected = tmp_path / "selected.ms"
+    table = pinned_casa().table()
+    assert table.open(str(output))
+    expected = table.getcell("DATA", 2)
+    view = table.selectrows([2, 0, 2], str(selected))
+    assert view.done()
+    assert table.done()
+    tool = creator.ms()
+    assert tool.open(str(native_dataset))
+    assert tool.createmultims(str(output), [str(selected)], []) is False
+    assert tool.name() == str(native_dataset)
+    assert tool.done()
+    assert marker.read_bytes() == b"existing output data"
+    for reader in (pinned_casa(), tools):
+        table = reader.table()
+        assert table.open(str(selected))
+        np.testing.assert_array_equal(table.getcell("DATA", 0), expected, strict=True)
+        assert table.done()
+
+
+def test_failed_attachment_restores_input_output_and_previous_tool(native_dataset, tmp_path):
+    bad, _ = members(native_dataset, tmp_path / "parts")
+    table = pinned_casa().table()
+    assert table.open(str(bad), nomodify=False)
+    assert table.putkeyword("MS_VERSION", 1.0)
+    assert table.done()
+    output = tmp_path / "out.ms"
+    copytree(native_dataset, output)
+    marker = output / "existing.txt"
+    marker.write_bytes(b"existing output")
+    tool = tools.ms()
+    assert tool.open(str(native_dataset), lock=True)
+    original_rows = tool.nrow()
+    with pytest.raises(RuntimeError, match="MSv2"):
+        tool.createmultims(str(output), [str(bad)], [])
+    assert tool.name() == str(native_dataset)
+    assert tool.nrow() == original_rows
+    assert tool.done()
+    assert bad.is_dir()
+    assert marker.read_bytes() == b"existing output"
+    assert not (output / "SUBMSS").exists()
+
+
 @pytest.mark.parametrize("layout", ["shape", "reorder"])
 def test_member_columns_with_different_shapes(native_dataset, tmp_path, creator, layout):
     casa = pinned_casa()
@@ -316,3 +364,56 @@ def test_subtable_copy_preserves_nested_multims(native_dataset, tmp_path, creato
             assert table.open(str(path))
             assert table.getcell("NAME", 0) == name
             assert table.done()
+
+
+def test_moved_member_preserves_relative_subtable_symlink(native_dataset, tmp_path):
+    first, second = members(native_dataset, tmp_path / "parts")
+    shared = first.parent / "shared"
+    shared.mkdir()
+    antenna = shared / "ANTENNA"
+    (first / "ANTENNA").rename(antenna)
+    (first / "ANTENNA").symlink_to("../shared/ANTENNA", target_is_directory=True)
+    output = tmp_path / "out.ms"
+    tool = tools.ms()
+    assert tool.createmultims(str(output), [str(first), str(second)], [])
+    assert tool.done()
+    relocated = output.rename(tmp_path / "relocated.ms")
+    linked = relocated / "SUBMSS" / first.name / "ANTENNA"
+    assert linked.is_symlink() and linked.resolve() == antenna.resolve()
+    for reader in (pinned_casa(), tools):
+        table = reader.table()
+        assert table.open(str(linked))
+        assert table.nrows() == 4
+        assert table.getcell("NAME", 0) == "A1"
+        assert table.done()
+
+
+def test_copies_full_joined_subtable_from_first_member(native_dataset, tmp_path, creator):
+    first, second = members(native_dataset, tmp_path / "parts")
+    third = second.with_name("third.ms")
+    copytree(native_dataset, third)
+    edit_antenna(creator, first, "FIRST")
+    edit_antenna(creator, second, "SECOND")
+    edit_antenna(creator, third, "THIRD")
+    inner = tmp_path / "inner.ms"
+    tool = creator.ms()
+    assert tool.createmultims(str(inner), [str(first), str(second)], ["ANTENNA"])
+    assert tool.done()
+    output = tmp_path / "out.ms"
+    assert tool.createmultims(str(output), [str(inner), str(third)], [], copysubtables=True)
+    assert tool.done()
+    relocated = output.rename(tmp_path / "relocated.ms")
+    part = relocated / "SUBMSS" / third.name
+    for reader in (pinned_casa(), tools):
+        table = reader.table()
+        assert table.open(str(part))
+        key = table.getkeyword("ANTENNA")
+        assert key.startswith("Table: ")
+        assert table.done()
+        assert table.open(key.removeprefix("Table: "))
+        assert table.nrows() == 8
+        assert (table.getcell("NAME", 0), table.getcell("NAME", 4)) == ("FIRST", "SECOND")
+        assert table.done()
+        assert table.open(str(part / "ANTENNA"))
+        assert table.getcell("NAME", 0) == "THIRD"
+        assert table.done()

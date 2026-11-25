@@ -13,6 +13,87 @@ use super::{Member, invalid};
 use crate::MsResult;
 
 pub(super) type Locations = BTreeMap<PathBuf, PathBuf>;
+pub(super) type FilesystemLinks = Vec<(PathBuf, PathBuf)>;
+
+/// Plan rewrites for symbolic entries whose lexical target would change.
+/// Do not follow a symbolic directory while walking the physical member.
+pub(super) fn filesystem_links(
+    member: &Member,
+    locations: &Locations,
+    output: &Path,
+) -> MsResult<FilesystemLinks> {
+    let mut directories = vec![member.physical.clone()];
+    let mut links = Vec::new();
+    while let Some(directory) = directories.pop() {
+        for entry in directory.read_dir().map_err(invalid)? {
+            let entry = entry.map_err(invalid)?;
+            let kind = entry.file_type().map_err(invalid)?;
+            let path = entry.path();
+            if kind.is_dir() {
+                directories.push(path);
+            } else if kind.is_symlink() {
+                let payload = path.read_link().map_err(invalid)?;
+                let old = lexical_absolute(&directory.join(&payload));
+                if old.starts_with(output)
+                    || path
+                        .canonicalize()
+                        .is_ok_and(|referent| referent.starts_with(output))
+                {
+                    return Err(invalid(format!(
+                        "MultiMS destination is used by {}",
+                        path.display()
+                    )));
+                }
+                let new = member
+                    .target
+                    .join(path.strip_prefix(&member.physical).unwrap());
+                let parent = new.parent().expect("staged link parent");
+                let referent = relocated_path(&member.physical, &member.target, &old, locations);
+                if lexical_absolute(&parent.join(&payload)) != referent {
+                    let stage = member.target.parent().expect("staged member parent");
+                    let payload = if referent.starts_with(stage) {
+                        relative_file_path(parent, &referent)
+                    } else {
+                        referent
+                    };
+                    links.push((new, payload));
+                }
+            }
+        }
+    }
+    Ok(links)
+}
+
+fn relative_file_path(mut from: &Path, target: &Path) -> PathBuf {
+    let mut path = PathBuf::new();
+    while !target.starts_with(from) {
+        path.push("..");
+        from = from.parent().expect("paths share the staging directory");
+    }
+    let suffix = target.strip_prefix(from).unwrap();
+    if path.as_os_str().is_empty() && suffix.as_os_str().is_empty() {
+        path.push(".");
+    } else {
+        path.push(suffix);
+    }
+    path
+}
+
+pub(super) fn apply_filesystem_links(links: FilesystemLinks) -> MsResult<()> {
+    for (path, target) in links {
+        #[cfg(unix)]
+        {
+            fs::remove_file(&path).map_err(invalid)?;
+            std::os::unix::fs::symlink(target, path).map_err(invalid)?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (path, target);
+            return Err(invalid("symbolic-link MultiMS input is unsupported"));
+        }
+    }
+    Ok(())
+}
 
 /// Return the top-level member containing the base when the entire
 /// reference chain moves into the private MultiMS stage.

@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use casa_tables::publication::{copy_locked_table_tree, lock_table_tree_for_replacement};
-use casa_tables::{Table, TableOptions, TablePartNames, add_directory, strip_directory};
+use casa_tables::{
+    Table, TableOptions, TablePartNames, TableWriteLock, add_directory, strip_directory,
+};
 use casa_types::{RecordValue, Value};
 
 use super::invalid;
@@ -14,13 +16,25 @@ use crate::MsResult;
 
 pub(super) fn validate_joins(tables: &[Table], names: &[String]) -> MsResult<()> {
     for name in names {
-        let mut subtables = Vec::with_capacity(tables.len());
+        let mut subtables = Vec::new();
         for table in tables {
-            let Some(Value::TableRef(link)) = table.keywords().get(name) else {
-                return Err(invalid(format!("MultiMS subtable {name} is missing")));
-            };
-            let path = add_directory(link, table.path().expect("persisted member"));
-            subtables.push(Table::open(TableOptions::new(path))?);
+            let path = table.path().expect("persisted member");
+            if let Some(Value::TableRef(link)) = table.keywords().get(name) {
+                if matches!(
+                    Table::immediate_part_names(path, path)?,
+                    TablePartNames::Plain(_)
+                ) {
+                    subtables.push(Table::open(TableOptions::new(add_directory(link, path)))?);
+                } else {
+                    let mut sources = Vec::new();
+                    linked_parts(path, name, 0, &mut sources)?;
+                    for source in sources {
+                        subtables.push(Table::open(TableOptions::new(source))?);
+                    }
+                }
+            } else {
+                return Err(missing_subtable(name));
+            }
         }
         let _ = Table::concat(subtables)?;
     }
@@ -31,7 +45,7 @@ pub(super) fn copy_from_first(
     first: &Table,
     target: &Path,
     omit: &[String],
-    held: &[casa_tables::TableWriteLock],
+    held: &[TableWriteLock],
     save_keywords: bool,
     stage: &Path,
 ) -> MsResult<()> {
@@ -50,7 +64,12 @@ pub(super) fn copy_from_first(
         held,
         by_target: BTreeMap::new(),
     };
-    copies.transfer(first.keywords(), output.keywords_mut())?;
+    let mut joins = BTreeSet::new();
+    joined_names(&copies.root, 0, &mut joins)?;
+    copies.transfer(first.keywords(), output.keywords_mut(), &joins)?;
+    for name in joins.iter().filter(|name| !omit.contains(name)) {
+        copies.copy_joined(name, output.keywords_mut())?;
+    }
     for column in first
         .schema()
         .into_iter()
@@ -59,7 +78,7 @@ pub(super) fn copy_from_first(
         let name = column.name();
         if let Some(keys) = first.column_keywords(name) {
             let mut target_keys = output.column_keywords(name).cloned().unwrap_or_default();
-            copies.transfer(keys, &mut target_keys)?;
+            copies.transfer(keys, &mut target_keys, &BTreeSet::new())?;
             output.set_column_keywords(name, target_keys);
         }
     }
@@ -74,17 +93,22 @@ struct SubtableCopies<'a> {
     source: &'a Path,
     target: &'a Path,
     omit: &'a [String],
-    held: &'a [casa_tables::TableWriteLock],
+    held: &'a [TableWriteLock],
     by_target: BTreeMap<PathBuf, PathBuf>,
 }
 
 impl SubtableCopies<'_> {
-    fn transfer(&mut self, source: &RecordValue, target: &mut RecordValue) -> MsResult<()> {
+    fn transfer(
+        &mut self,
+        source: &RecordValue,
+        target: &mut RecordValue,
+        joined: &BTreeSet<String>,
+    ) -> MsResult<()> {
         for field in source.fields() {
             let Value::TableRef(link) = &field.value else {
                 continue;
             };
-            if self.omit.iter().any(|name| name == &field.name) {
+            if self.omit.contains(&field.name) || joined.contains(&field.name) {
                 continue;
             }
             let declared = add_directory(link, self.source);
@@ -103,6 +127,33 @@ impl SubtableCopies<'_> {
                 Value::TableRef(strip_directory(&output, self.target)),
             );
         }
+        Ok(())
+    }
+
+    fn copy_joined(&self, name: &str, record: &mut RecordValue) -> MsResult<()> {
+        let mut paths = Vec::new();
+        linked_parts(self.source, name, 0, &mut paths)?;
+        let paths = paths
+            .into_iter()
+            .map(|path| path.canonicalize().map_err(invalid))
+            .collect::<MsResult<Vec<_>>>()?;
+        let mut locks = Vec::new();
+        for path in paths.iter().collect::<BTreeSet<_>>() {
+            locks.extend(self.lock_if_needed(path)?);
+        }
+        let tables = paths
+            .into_iter()
+            .map(|path| Table::open(TableOptions::new(path)))
+            .collect::<Result<Vec<_>, _>>()?;
+        // CASA assigns a separate table directory to the copied join.
+        // Keep the target's previous physical subtable beside it.
+        let output = tempfile::Builder::new()
+            .prefix("tab")
+            .tempdir_in(self.target)
+            .map_err(invalid)?;
+        Table::concat(tables)?.deep_copy(TableOptions::new(output.path()))?;
+        let output = output.keep();
+        record.upsert(name, Value::TableRef(strip_directory(&output, self.target)));
         Ok(())
     }
 
@@ -133,15 +184,7 @@ impl SubtableCopies<'_> {
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(invalid(error)),
         }
-        let _locks = if self
-            .held
-            .iter()
-            .any(|lock| lock.matches_table_path(&source))
-        {
-            Vec::new()
-        } else {
-            lock_table_tree_for_replacement(&source)?
-        };
+        let _locks = self.lock_if_needed(&source)?;
         if matches!(
             Table::immediate_part_names(&source, &source)?,
             TablePartNames::Plain(_)
@@ -153,6 +196,69 @@ impl SubtableCopies<'_> {
         self.by_target.insert(target.to_path_buf(), source);
         Ok(())
     }
+
+    fn lock_if_needed(&self, source: &Path) -> MsResult<Vec<TableWriteLock>> {
+        if self.held.iter().any(|lock| lock.matches_table_path(source)) {
+            Ok(Vec::new())
+        } else {
+            Ok(lock_table_tree_for_replacement(source)?)
+        }
+    }
+}
+
+fn missing_subtable(name: &str) -> crate::MsError {
+    invalid(format!("MultiMS subtable {name} is missing"))
+}
+
+fn joined_names(path: &Path, depth: usize, names: &mut BTreeSet<String>) -> MsResult<()> {
+    if depth >= 64 {
+        return Err(invalid("MultiMS subtable chain is too deep"));
+    }
+    match Table::immediate_part_names(path, path)? {
+        TablePartNames::Plain(_) => {}
+        TablePartNames::Reference(parent) => joined_names(&parent, depth + 1, names)?,
+        TablePartNames::Concatenation {
+            parts,
+            subtable_names,
+        } => {
+            names.extend(subtable_names);
+            if let Some(first) = parts.first() {
+                joined_names(first, depth + 1, names)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn linked_parts(path: &Path, name: &str, depth: usize, leaves: &mut Vec<PathBuf>) -> MsResult<()> {
+    if depth >= 64 {
+        return Err(invalid("MultiMS subtable chain is too deep"));
+    }
+    match Table::immediate_part_names(path, path)? {
+        TablePartNames::Plain(_) => {
+            let table = Table::open(TableOptions::new(path))?;
+            let Some(Value::TableRef(link)) = table.keywords().get(name) else {
+                return Err(missing_subtable(name));
+            };
+            leaves.push(add_directory(link, path));
+        }
+        TablePartNames::Reference(parent) => linked_parts(&parent, name, depth + 1, leaves)?,
+        TablePartNames::Concatenation {
+            parts,
+            subtable_names,
+        } => {
+            if subtable_names.iter().any(|joined| joined == name) {
+                for part in parts {
+                    linked_parts(&part, name, depth + 1, leaves)?;
+                }
+            } else if let Some(first) = parts.first() {
+                linked_parts(first, name, depth + 1, leaves)?;
+            } else {
+                return Err(missing_subtable(name));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn reference_root(path: &Path) -> MsResult<PathBuf> {

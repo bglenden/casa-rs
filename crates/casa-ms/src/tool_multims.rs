@@ -14,6 +14,7 @@ use casa_tables::publication::{
 use casa_tables::{Table, TableOptions, TablePartNames, TableWriteLock};
 use tempfile::TempDir;
 
+use crate::tool_sort::check_named_table_output;
 use crate::{MsError, MsResult};
 
 mod relocation;
@@ -35,6 +36,20 @@ pub fn create_multi_ms(
     joined_subtables: &[String],
     copy_subtables: Option<&[String]>,
 ) -> MsResult<()> {
+    create_multi_ms_then(output, inputs, joined_subtables, copy_subtables, || Ok(()))
+}
+
+/// Create a MultiMS and retain rollback state until the caller accepts it.
+///
+/// # Errors
+/// A MultiMS creation error or an error returned by the acceptance callback.
+pub fn create_multi_ms_then<T>(
+    output: &Path,
+    inputs: &[PathBuf],
+    joined_subtables: &[String],
+    copy_subtables: Option<&[String]>,
+    accept: impl FnOnce() -> MsResult<T>,
+) -> MsResult<T> {
     let output = output_path(output)?;
     let destination = Destination::open(&output)?;
     let workspace = tempfile::Builder::new()
@@ -66,7 +81,13 @@ pub fn create_multi_ms(
         .iter()
         .map(|&index| Table::open(TableOptions::new(&members[index].physical)))
         .collect::<Result<Vec<_>, _>>()?;
+    if matches!(&destination, Destination::Table(_)) {
+        for table in &original {
+            check_named_table_output(table, &output)?;
+        }
+    }
     let _ = Table::concat(original)?;
+    let mut published = None;
     let result = assemble(Assembly {
         members: &mut members,
         order: &order,
@@ -76,14 +97,35 @@ pub fn create_multi_ms(
         copy_subtables,
         locks: &locks,
         locations: &locations,
+        output: &output,
     })
-    .and_then(|()| destination.publish(&product, &output));
+    .and_then(|()| {
+        let new = product.symlink_metadata().map_err(invalid)?;
+        destination.publish(&product, &output)?;
+        published = Some(new);
+        destination.verify_publication(&product, &output, published.as_ref().unwrap())
+    });
+    let mut rollback_locks = Some(locks);
+    let result = result.and_then(|()| {
+        drop(rollback_locks.take());
+        let accepted = accept()?;
+        destination.verify_publication(&product, &output, published.as_ref().unwrap())?;
+        Ok(accepted)
+    });
     if let Err(error) = result {
         let mut failed = Vec::new();
-        for member in members.iter_mut().rev() {
-            if let Err(error) = member.restore() {
-                failed.push(error.to_string());
+        let restored_output = published.as_ref().map_or(Ok(()), |identity| {
+            destination.restore(&product, &output, identity)
+        });
+        match restored_output {
+            Ok(()) => {
+                for member in members.iter_mut().rev() {
+                    if let Err(error) = member.restore() {
+                        failed.push(error.to_string());
+                    }
+                }
             }
+            Err(error) => failed.push(error.to_string()),
         }
         if !failed.is_empty() {
             let recovery = workspace.keep();
@@ -102,8 +144,7 @@ pub fn create_multi_ms(
         }
         return Err(error);
     }
-    drop(locks);
-    Ok(())
+    result
 }
 
 struct Assembly<'a> {
@@ -115,6 +156,7 @@ struct Assembly<'a> {
     copy_subtables: Option<&'a [String]>,
     locks: &'a [TableWriteLock],
     locations: &'a relocation::Locations,
+    output: &'a Path,
 }
 
 fn assemble(stage: Assembly<'_>) -> MsResult<()> {
@@ -127,6 +169,7 @@ fn assemble(stage: Assembly<'_>) -> MsResult<()> {
         copy_subtables,
         locks,
         locations,
+        output,
     } = stage;
     fs::create_dir_all(product.join("SUBMSS")).map_err(invalid)?;
     let first_path = first.path().expect("persisted member");
@@ -138,7 +181,12 @@ fn assemble(stage: Assembly<'_>) -> MsResult<()> {
     for (member, &mode) in members.iter_mut().zip(&copy_modes) {
         let edit = relocation::MemberEdit::prepare(member, locations)?;
         let private_base = private_bases.contains(&member.physical);
-        member.stage(edit, mode, private_base, locations)?;
+        let links = if member.source == member.physical || mode != CopyMode::Move {
+            relocation::filesystem_links(member, locations, output)?
+        } else {
+            Vec::new()
+        };
+        member.stage(edit, mode, private_base, locations, links)?;
     }
     if let Some(omit) = copy_subtables {
         for (member, mode) in members.iter().zip(copy_modes) {
@@ -228,6 +276,7 @@ struct Member {
     source: PathBuf,
     physical: PathBuf,
     target: PathBuf,
+    identity: fs::Metadata,
     copied: bool,
     location: Option<PathBuf>,
     retired: Option<TempDir>,
@@ -240,13 +289,15 @@ impl Member {
         mode: CopyMode,
         private_base: bool,
         locations: &relocation::Locations,
+        links: relocation::FilesystemLinks,
     ) -> MsResult<()> {
         if self.source != self.physical && mode == CopyMode::Move {
             relocation::stage_alias(self, locations)?;
         } else if mode == CopyMode::Materialize {
             relocation::materialize_member(self, locations)?;
-        } else if mode != CopyMode::Move || private_base || !edit.is_empty() {
+        } else if mode != CopyMode::Move || private_base || !edit.is_empty() || !links.is_empty() {
             copy_locked_table_tree(&self.physical, &self.target).map_err(invalid)?;
+            relocation::apply_filesystem_links(links)?;
             relocation::privatize_descriptor(&self.target)?;
             edit.apply(&self.target)?;
         } else {
@@ -257,11 +308,12 @@ impl Member {
     }
 
     fn relocate(&mut self) -> MsResult<()> {
+        self.verify_location(&self.source)?;
         if !self.copied {
             match rename_without_replacing(&self.source, &self.target) {
                 Ok(()) => {
                     self.location = Some(self.target.clone());
-                    return Ok(());
+                    return self.verify_location(&self.target);
                 }
                 Err(error) if error.kind() == ErrorKind::CrossesDevices => {
                     copy_locked_table_tree(&self.physical, &self.target).map_err(invalid)?;
@@ -277,7 +329,20 @@ impl Member {
         rename_without_replacing(&self.source, &location).map_err(invalid)?;
         self.location = Some(location);
         self.retired = Some(retired);
-        Ok(())
+        self.verify_location(self.location.as_ref().unwrap())
+    }
+
+    fn verify_location(&self, location: &Path) -> MsResult<()> {
+        if same_entry(
+            &self.identity,
+            &location.symlink_metadata().map_err(invalid)?,
+        ) {
+            return Ok(());
+        }
+        Err(invalid(format!(
+            "MultiMS member changed: {}",
+            self.source.display()
+        )))
     }
 
     fn restore(&mut self) -> MsResult<()> {
@@ -308,8 +373,9 @@ fn plan_members(
     let mut members: Vec<Member> = Vec::new();
     let mut order = Vec::with_capacity(paths.len());
     for path in paths {
+        let identity = path.symlink_metadata().map_err(invalid)?;
         let physical = path.canonicalize().map_err(invalid)?;
-        let source = if path.symlink_metadata().map_err(invalid)?.is_symlink() {
+        let source = if identity.is_symlink() {
             output_path(path)?
         } else {
             physical.clone()
@@ -362,6 +428,7 @@ fn plan_members(
             source,
             physical,
             target,
+            identity,
             copied: false,
             location: None,
             retired: None,
@@ -394,25 +461,67 @@ impl Destination {
         }
     }
 
-    fn publish(self, product: &Path, output: &Path) -> MsResult<()> {
-        let before = match &self {
+    fn publish(&self, product: &Path, output: &Path) -> MsResult<()> {
+        let before = match self {
             Self::Absent => return rename_without_replacing(product, output).map_err(invalid),
             Self::Empty(before) | Self::Table(before) => before,
         };
         let current = output.symlink_metadata().map_err(invalid)?;
-        if !same_directory(before, &current) {
+        if !same_entry(before, &current) {
             return Err(invalid("MultiMS destination changed during creation"));
         }
         match self {
-            Self::Empty(_) => fs::rename(product, output).map_err(invalid),
-            Self::Table(_) => exchange_directories(product, output).map_err(invalid),
+            Self::Empty(_) | Self::Table(_) => {
+                exchange_directories(product, output).map_err(invalid)
+            }
             Self::Absent => unreachable!("handled above"),
+        }
+    }
+
+    fn verify_publication(
+        &self,
+        product: &Path,
+        output: &Path,
+        new: &fs::Metadata,
+    ) -> MsResult<()> {
+        self.verify_output(output, new)?;
+        match self {
+            Self::Absent => Ok(()),
+            Self::Empty(old) | Self::Table(old) => {
+                if !same_entry(old, &product.symlink_metadata().map_err(invalid)?)
+                    || (matches!(self, Self::Empty(_))
+                        && product.read_dir().map_err(invalid)?.next().is_some())
+                {
+                    return Err(invalid("MultiMS destination changed during creation"));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn verify_output(&self, output: &Path, identity: &fs::Metadata) -> MsResult<()> {
+        if same_entry(identity, &output.symlink_metadata().map_err(invalid)?) {
+            return Ok(());
+        }
+        Err(invalid(format!(
+            "published MultiMS directory changed: {}",
+            output.display()
+        )))
+    }
+
+    fn restore(&self, product: &Path, output: &Path, new: &fs::Metadata) -> MsResult<()> {
+        self.verify_output(output, new)?;
+        match self {
+            Self::Absent => rename_without_replacing(output, product).map_err(invalid),
+            Self::Empty(_) | Self::Table(_) => {
+                exchange_directories(product, output).map_err(invalid)
+            }
         }
     }
 }
 
-fn same_directory(before: &fs::Metadata, current: &fs::Metadata) -> bool {
-    if !current.is_dir() {
+fn same_entry(before: &fs::Metadata, current: &fs::Metadata) -> bool {
+    if before.file_type() != current.file_type() {
         return false;
     }
     #[cfg(unix)]
@@ -449,6 +558,59 @@ fn invalid(error: impl std::fmt::Display) -> MsError {
 mod tests {
     use super::*;
     use crate::{MeasurementSet, builder::MeasurementSetBuilder};
+
+    #[test]
+    fn restores_a_displaced_member_after_detecting_changed_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source");
+        let target = directory.path().join("stage");
+        let original = directory.path().join("original");
+        fs::create_dir(&source).unwrap();
+        let mut member = Member {
+            source: source.clone(),
+            physical: source.clone(),
+            target: target.clone(),
+            identity: source.symlink_metadata().unwrap(),
+            copied: false,
+            location: None,
+            retired: None,
+        };
+        // Reproduce the final state of a race between checking the input
+        // name and moving its directory entry.
+        fs::rename(&source, &original).unwrap();
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("unrelated"), b"keep").unwrap();
+        fs::rename(&source, &target).unwrap();
+        member.location = Some(target.clone());
+        assert!(member.verify_location(&target).is_err());
+        member.restore().unwrap();
+        assert!(original.is_dir());
+        assert_eq!(fs::read(source.join("unrelated")).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn restores_a_displaced_output_after_detecting_changed_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("output");
+        let product = directory.path().join("product");
+        let original = directory.path().join("original");
+        fs::create_dir(&output).unwrap();
+        fs::create_dir(&product).unwrap();
+        let expected = Destination::Table(output.symlink_metadata().unwrap());
+        let new = product.symlink_metadata().unwrap();
+        fs::rename(&output, &original).unwrap();
+        fs::create_dir(&output).unwrap();
+        fs::write(output.join("unrelated"), b"keep").unwrap();
+        exchange_directories(&product, &output).unwrap();
+        assert!(
+            expected
+                .verify_publication(&product, &output, &new)
+                .is_err()
+        );
+        expected.restore(&product, &output, &new).unwrap();
+        assert!(original.is_dir());
+        assert_eq!(fs::read(output.join("unrelated")).unwrap(), b"keep");
+    }
 
     #[test]
     fn failed_multims_copy_leaves_keywords_on_the_original_reference_base() {

@@ -11774,6 +11774,8 @@ symbolic-link member can also abort after the move, and a saved reference
 to an external sibling table can leave a published MultiMS with a broken
 parent link. Calling with a writable, permanently locked member already
 attached to the same tool can abort while flushing its moved subtables.
+An ANTENNA subtable linked by a relative symbolic link can be reported
+missing at reopen after CASA has moved its containing member.
 
 casa-rs refuses the destination or basename collision before moving
 members, keeps existing outputs until the new table is ready, and puts

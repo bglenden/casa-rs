@@ -9,7 +9,7 @@ use casa_types::{RecordValue, ScalarValue, Value};
 
 use crate::{MsError, MsResult, SubtableId};
 
-pub(super) fn check_named_output(input: &Table, output: &Path) -> MsResult<()> {
+pub(crate) fn check_named_output(input: &Table, output: &Path) -> MsResult<()> {
     let root = reference_root(table_path(input)?)?;
     let mut visited = BTreeSet::new();
     let mut pending = vec![(table_path(input)?.to_path_buf(), false)];
