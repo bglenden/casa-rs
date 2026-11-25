@@ -1446,7 +1446,8 @@ def main():
                                            "antenna-horizontal-axes", "antenna-horizontal-same-epoch",
                                            "ephemeris-axes", "static-metadata-coordinates",
                                            "metadata-flag-symbols", "pointing", "pointing-lists",
-                                           "pointing-partners", "pointing-averaging", "reporting-frames"))
+                                           "pointing-partners", "pointing-averaging", "reporting-frames",
+                                           "reporting-wavelengths"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1486,6 +1487,10 @@ def main():
             from plotms_ms_reporting_frames_oracle import compare_reporting_frames
 
             compare_reporting_frames(root / "reporting-frames", native)
+        if args.only in (None, "reporting-wavelengths"):
+            from plotms_ms_reporting_frames_oracle import compare_wavelength_reporting_frames
+
+            compare_wavelength_reporting_frames(root / "reporting-wavelengths", native)
         if args.only == "metadata-flag-symbols":
             compare_selected_metadata_flag_symbols(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):

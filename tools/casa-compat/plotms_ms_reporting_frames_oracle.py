@@ -11,6 +11,10 @@ from plotms_ms_layout_oracle import occupied_marker_cells
 from plotms_ms_spw_average_oracle import make_fixture
 
 LIGHT_SPEED_KM_S = 299_792.458
+SPECTRAL_LABELS = {
+    'frequency': 'Frequency (GHz)', 'velocity': 'Velocity (km/s)',
+    'uwave': 'Uwave (λ)', 'vwave': 'Vwave (λ)', 'wwave': 'Wwave (λ)', 'uvwave': 'UVwave (λ)',
+}
 
 
 def compare_reporting_frames(work, native):
@@ -67,6 +71,42 @@ def paired_inactive(work, native, name, options, count):
     return rows(expected)
 
 
+def compare_wavelength_reporting_frames(work, native):
+    work.mkdir()
+    vis = make_fixture(work)
+    with opened(vis, True) as table:
+        times = table.getcol('TIME')
+        assert len(np.unique(times)) == 2
+        later = times == max(times)
+        table.putcol('UVW', np.array([3 + 2 * later, 4 + 2 * later, -12 - 4 * later], dtype=float))
+        flags = table.getcol('FLAG')
+        flags[0, 1, 0] = True
+        table.putcol('FLAG', flags)
+    base = dict(vis=str(vis), yaxis='amp', ydatacolumn='data', antenna='A0&A1', spw='0:1~3^2',
+                correlation='XX', showgui=False, overwrite=True, freqframe='LSRK',
+                customsymbol=True, symbolshape='square', symbolsize=5, symbolcolor='dd2255',
+                symbolfill='fill', symboloutline=False)
+    me, qa = measures(), quanta()
+    assert me.doframe(me.observatory('VLA'))
+    assert me.doframe(me.direction('J2000', '12h00m00s', '40d00m00s'))
+    try:
+        for wavelength, metres in (('uwave', 'u'), ('vwave', 'v'), ('wwave', 'w'), ('uvwave', 'uvdist')):
+            for suffix, averaging, count in (('raw', {}, 3), ('time', dict(averagedata=True, avgtime='20'), 2)):
+                name = f'{wavelength}-{suffix}'
+                control = work / f'{name}-metres.casa.txt'
+                options = base | averaging
+                assert reference(**options, xaxis=metres, transform=False, expformat='txt', plotfile=str(control)) is None
+                points = rows(control)
+                assert len(points) == count
+                assert {int(point[2]) for point in points} == {1, 3}
+                freqs = reporting_frequencies(points, 'LSRK', me, qa)
+                values = np.asarray([float(point[0]) for point in points]) * freqs * 1e6 / LIGHT_SPEED_KM_S
+                check_active(work, native, name, options | dict(xaxis=wavelength), points, values, freqs)
+    finally:
+        me.done()
+        qa.done()
+
+
 def reporting_frequencies(points, frame, me, qa):
     converted = []
     for point in points:
@@ -101,26 +141,31 @@ def check_active(work, native, name, options, raw, coordinates, freqs):
     assert [p[1] for p in plotted] == [p[1] for p in raw]
     np.testing.assert_allclose([float(p[10]) for p in plotted], freqs, rtol=0, atol=1e-7)
     velocity = options['xaxis'] == 'velocity'
+    wavelength = options['xaxis'].endswith('wave')
     np.testing.assert_allclose([float(p[0]) for p in plotted], coordinates, rtol=0,
-                               atol=0.051 if velocity else 1e-7)
-    check_active_figure(native, actual, options, figure, coordinates, raw, velocity)
+                               atol=0.051 if velocity else (0.01 if wavelength else 1e-7))
+    check_active_figure(native, actual, options, figure, coordinates, raw)
     for path in (expected, actual):
         assert occupied_marker_cells(path, (1, 2)) == {(0, 0), (0, 1)}
     print(f'{name}: {len(raw)} selected coordinates and metadata agree with CASA measures', flush=True)
 
 
-def check_active_figure(native, output, options, figure, coordinates, raw, velocity):
+def check_active_figure(native, output, options, figure, coordinates, raw):
     from casars import _plot_document
 
     render = _plot_document.render_document
     captured = []
+    label = SPECTRAL_LABELS[options['xaxis']]
+    velocity = options['xaxis'] == 'velocity'
+    wavelength = options['xaxis'].endswith('wave')
 
     def record(*args, **kwargs):
         page, axis = render(*args, **kwargs)
-        assert axis.get_xlabel() == ('Velocity (km/s)' if velocity else 'Frequency (GHz)')
+        assert axis.get_xlabel() == label
         assert axis.get_ylabel() == 'Amp'
         points = axis.lines[0].get_xydata()
-        np.testing.assert_allclose(points[:, 0], coordinates, rtol=0, atol=1e-4 if velocity else 1e-7)
+        np.testing.assert_allclose(points[:, 0], coordinates, rtol=1.2e-5 if wavelength else 0,
+                                   atol=1e-4 if velocity else 1e-7)
         np.testing.assert_allclose(points[:, 1], [float(p[1]) for p in raw], rtol=1.2e-5)
         captured.append(len(points))
         return page, axis
