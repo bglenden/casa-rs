@@ -539,18 +539,24 @@ impl AttachedMs {
         if rows.is_empty() {
             return Ok(false);
         }
-        if self.legacy_selection.axes.needs_write_projection() {
-            return Ok(false);
-        }
-        let baseline = self
-            .legacy_selection
-            .axes
+        let axes = &self.legacy_selection.axes;
+        let baseline = axes
             .baseline_read
             .as_ref()
             .and_then(|read| read.write_grid(base.as_deref(), &self.legacy_selection));
-        let records =
-            tool_visibility::VisibilityWriteRecord::new_legacy(&main.table, rows, items, baseline)
-                .map_err(runtime_error)?;
+        let polarization = axes.polarization.clone();
+        let options = tool_visibility::LegacyVisibilityWriteOptions {
+            baseline,
+            channels: axes.channels,
+            polarization: polarization.as_deref(),
+            noncanonical_complex_polarization: axes.noncanonical_complex_polarization,
+        };
+        let Some(records) =
+            tool_visibility::VisibilityWriteRecord::new_legacy(&main.table, rows, items, options)
+                .map_err(runtime_error)?
+        else {
+            return Ok(false);
+        };
         if !records.is_empty() {
             self.write_visibility_records(&link, &main, &records, false)?;
         }

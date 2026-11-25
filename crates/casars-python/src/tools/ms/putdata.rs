@@ -4,7 +4,7 @@
 use casa_types::{ArrayValue, Complex32, RecordField, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use num_complex::Complex64;
-use numpy::{PyArray3, PyArrayDescrMethods, PyArrayMethods, PyUntypedArrayMethods};
+use numpy::{PyArrayDescrMethods, PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -67,10 +67,11 @@ fn write_legacy_record(value: &Bound<'_, PyAny>) -> PyResult<RecordValue> {
 
 fn packed_legacy_data(value: &Bound<'_, PyAny>) -> Option<ArrayValue> {
     let py = value.py();
-    if !value.get_type().is(py.get_type::<PyArray3<Complex32>>()) {
+    if !value.get_type().is(py.get_type::<PyArrayDyn<Complex32>>()) {
         return None;
     }
-    if let Ok(array) = value.cast::<PyArray3<Complex32>>()
+    if let Ok(array) = value.cast::<PyArrayDyn<Complex32>>()
+        && matches!(array.ndim(), 3 | 4)
         && array.dtype().is_native_byteorder() == Some(true)
         && array.is_fortran_contiguous()
     {
@@ -80,8 +81,11 @@ fn packed_legacy_data(value: &Bound<'_, PyAny>) -> Option<ArrayValue> {
             .ok()
             .map(ArrayValue::Complex32);
     }
-    let array = value.cast::<PyArray3<Complex64>>().ok()?;
-    if array.dtype().is_native_byteorder() != Some(true) || !array.is_fortran_contiguous() {
+    let array = value.cast::<PyArrayDyn<Complex64>>().ok()?;
+    if !matches!(array.ndim(), 3 | 4)
+        || array.dtype().is_native_byteorder() != Some(true)
+        || !array.is_fortran_contiguous()
+    {
         return None;
     }
     let reader = array.try_readonly().ok()?;

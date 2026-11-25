@@ -107,3 +107,74 @@ def test_legacy_writer_rejects_a_baseline_record_from_an_old_row_selection(
         writer.putdataold({"data": 2 * record["data"]})
     assert writer.done()
     assert_main_columns(casa, native_dataset, {"DATA": original["data"]})
+
+
+@pytest.mark.parametrize(("backend", "start"), [("casa", 0), ("native", 0), ("native", 1)])
+def test_legacy_writer_expands_flag_bins_without_touching_gaps_or_averaging_data(
+    baseline_fixture, native_dataset, backend, start,
+):
+    casa, _, original = baseline_fixture
+    writer = (casa if backend == "casa" else tools).ms()
+    rows = [0, 3, 6]
+    assert writer.open(str(native_dataset), nomodify=False)
+    # Overlap is processed in output-bin order. The final bin owns a shared sample.
+    assert writer.selectchannelold(2, start, 2, 1)
+    assert writer.selectold({"rows": rows})
+    flagged = np.ones((2, 2, len(rows)), dtype=bool)
+    flagged[:, 1, :] = False
+    samples = np.full(flagged.shape, 31 + 2j, dtype=np.complex64)
+    assert writer.putdataold({"data": samples, "flag": flagged}) is True
+    assert writer.done()
+
+    expected = original["flag"].copy()
+    expected[:, start, rows] = True
+    expected[:, start + 1:start + 3, rows] = False
+    assert_main_columns(casa, native_dataset, {"DATA": original["data"], "FLAG": expected})
+
+
+def test_legacy_writer_inverts_flag_dependencies_and_refuses_converted_visibilities(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, _, original = baseline_fixture
+    writer = writer_api.ms()
+    rows = [0, 3, 6]
+    assert writer.open(str(native_dataset), nomodify=False)
+    assert writer.selectpolarizationold(["I", "V"])
+    assert writer.selectold({"rows": rows})
+    selected = np.zeros((2, 4, len(rows)), dtype=bool)
+    selected[0, 0] = True
+    selected[1, 2] = True
+    assert writer.putdataold({"flag": selected}) is True
+    assert writer.putdataold({"data": np.full(selected.shape, 71, dtype=np.complex64)}) is False
+    assert writer.done()
+
+    expected = original["flag"].copy()
+    expected[:, :, rows] = np.any(selected, axis=0, keepdims=True)
+    assert_main_columns(casa, native_dataset, {"DATA": original["data"], "FLAG": expected})
+
+
+def test_legacy_writer_persists_float_data_with_selected_channels(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, _, original = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    descriptor = table.getcoldesc("DATA")
+    descriptor.update(valueType="float", dataManagerType="StandardStMan", dataManagerGroup="FLOAT_DATA")
+    assert table.addcols({"FLOAT_DATA": descriptor})
+    shape = original["flag"].shape
+    expected = np.arange(np.prod(shape), dtype=np.float64).reshape(shape, order="F")
+    assert table.putcol("FLOAT_DATA", expected)
+    assert table.done()
+
+    writer = writer_api.ms()
+    rows = [0, 2, 4]
+    assert writer.open(str(native_dataset), nomodify=False)
+    assert writer.selectchannelold(2, 1, 1, 2)
+    assert writer.selectold({"rows": rows})
+    replacement = np.full((2, 2, len(rows)), 377, dtype=np.float32)
+    assert writer.putdataold({"FLOAT_DATA": replacement}) is True
+    assert writer.done()
+    for bin, channel in enumerate((1, 3)):
+        expected[:, channel, rows] = replacement[:, bin]
+    assert_main_columns(casa, native_dataset, {"FLOAT_DATA": expected, "FLAG": original["flag"]})

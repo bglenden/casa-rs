@@ -4,7 +4,10 @@
 use casa_tables::Table;
 use casa_types::RecordValue;
 
-use super::{BaselineGrid, VisibilityWriteRecord, WriteColumn, WriteGrid, input, write_columns};
+use super::super::{VisibilityChannels, VisibilityPolarization};
+use super::{
+    BaselineGrid, Column, VisibilityWriteRecord, WriteColumn, WriteGrid, input, write_columns,
+};
 use crate::MsResult;
 
 /// The sampled row order and baseline layout returned by the last legacy read.
@@ -16,6 +19,19 @@ pub struct LegacyVisibilityWriteGrid<'a> {
     pub baseline_pairs: Option<&'a [(i32, i32)]>,
     /// Gap slots between ascending first-antenna groups.
     pub gap: i32,
+}
+
+/// The current channel and polarization write selection and last baseline read.
+#[derive(Clone, Copy)]
+pub struct LegacyVisibilityWriteOptions<'a, 'grid> {
+    /// The baseline-axis mapping used only by input fields with both baseline and time axes.
+    pub baseline: Option<LegacyVisibilityWriteGrid<'grid>>,
+    /// Selected physical channels, or the bins to expand for FLAG.
+    pub channels: Option<VisibilityChannels>,
+    /// The most recent stored correlation selection or Stokes conversion.
+    pub polarization: Option<&'a VisibilityPolarization>,
+    /// Whether complex data needs an unsupported correlation permutation.
+    pub noncanonical_complex_polarization: bool,
 }
 
 impl WriteGrid {
@@ -50,7 +66,7 @@ impl WriteGrid {
     }
 }
 
-impl VisibilityWriteRecord<'_> {
+impl<'a> VisibilityWriteRecord<'a> {
     /// Resolve legacy row-axis and baseline-axis fields against the rows they represent.
     ///
     /// # Errors
@@ -59,12 +75,35 @@ impl VisibilityWriteRecord<'_> {
         main: &Table,
         rows: Vec<usize>,
         items: RecordValue,
-        baseline: Option<LegacyVisibilityWriteGrid<'_>>,
-    ) -> MsResult<Vec<Self>> {
+        options: LegacyVisibilityWriteOptions<'a, '_>,
+    ) -> MsResult<Option<Vec<Self>>> {
+        let binned = options
+            .channels
+            .is_some_and(|selection| selection.width() > 1);
+        let derived = options
+            .polarization
+            .is_some_and(VisibilityPolarization::is_conversion);
+        let mut fields = Vec::with_capacity(items.fields().len());
+        for field in items.into_fields() {
+            let Some(column) = Column::from_legacy_name(&field.name) else {
+                continue;
+            };
+            if binned && column.is_visibility_data() {
+                continue;
+            }
+            if (derived && column.is_visibility_data())
+                || (options.noncanonical_complex_polarization && column.is_complex_data())
+            {
+                return Ok(None);
+            }
+            fields.push(field);
+        }
         let mut row_columns = Vec::new();
         let mut baseline_columns = Vec::new();
-        for field in write_columns(main, items)? {
+        for mut field in write_columns(main, RecordValue::new(fields), Column::from_legacy_name)? {
             let rank = field.column.cell_rank();
+            field.select_polarization = rank == 2;
+            field.channels = options.channels.filter(|_| rank == 2);
             match field.values.ndim().checked_sub(rank) {
                 Some(1) => row_columns.push(field),
                 Some(2) => baseline_columns.push(field),
@@ -78,11 +117,11 @@ impl VisibilityWriteRecord<'_> {
                 rows,
                 columns: row_columns,
                 grid: None,
-                polarization: None,
+                polarization: options.polarization,
             });
         }
         if !baseline_columns.is_empty() {
-            let saved = baseline.ok_or_else(|| {
+            let saved = options.baseline.ok_or_else(|| {
                 input("call getdataold with ifraxis=True before writing a baseline-axis record")
             })?;
             let (rows, grid) = WriteGrid::from_legacy_read(main, saved)?;
@@ -92,11 +131,11 @@ impl VisibilityWriteRecord<'_> {
                     rows,
                     columns: baseline_columns,
                     grid: Some(grid),
-                    polarization: None,
+                    polarization: options.polarization,
                 });
             }
         }
-        Ok(records)
+        Ok(Some(records))
     }
 }
 

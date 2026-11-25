@@ -4,7 +4,7 @@
 use casa_tables::Table;
 use casa_types::{ArrayValue, Complex32, RecordValue, ScalarValue, Value};
 
-use super::input;
+use super::{VisibilityChannels, input};
 use crate::MsResult;
 
 /// The stored columns accepted by the public MS tool's `putdata` method.
@@ -13,6 +13,7 @@ pub(super) enum Column {
     Data,
     CorrectedData,
     ModelData,
+    FloatData,
     Flag,
     FlagRow,
     Sigma,
@@ -25,6 +26,7 @@ impl Column {
             Self::Data => "DATA",
             Self::CorrectedData => "CORRECTED_DATA",
             Self::ModelData => "MODEL_DATA",
+            Self::FloatData => "FLOAT_DATA",
             Self::Flag => "FLAG",
             Self::FlagRow => "FLAG_ROW",
             Self::Sigma => "SIGMA",
@@ -34,7 +36,7 @@ impl Column {
 
     pub(super) fn cell_rank(self) -> usize {
         match self {
-            Self::Data | Self::CorrectedData | Self::ModelData | Self::Flag => 2,
+            Self::Data | Self::CorrectedData | Self::ModelData | Self::FloatData | Self::Flag => 2,
             Self::Sigma | Self::Weight => 1,
             Self::FlagRow => 0,
         }
@@ -53,10 +55,25 @@ impl Column {
         }
     }
 
+    pub(super) fn from_legacy_name(name: &str) -> Option<Self> {
+        if name.eq_ignore_ascii_case("FLOAT_DATA") {
+            return Some(Self::FloatData);
+        }
+        Self::from_name(name)
+    }
+
+    pub(super) fn is_complex_data(self) -> bool {
+        matches!(self, Self::Data | Self::CorrectedData | Self::ModelData)
+    }
+
+    pub(super) fn is_visibility_data(self) -> bool {
+        self.is_complex_data() || self == Self::FloatData
+    }
+
     pub(super) fn cell_bytes(self) -> usize {
         match self {
             Self::Data | Self::CorrectedData | Self::ModelData => size_of::<Complex32>(),
-            Self::Sigma | Self::Weight => size_of::<f32>(),
+            Self::Sigma | Self::Weight | Self::FloatData => size_of::<f32>(),
             Self::Flag | Self::FlagRow => size_of::<bool>(),
         }
     }
@@ -65,12 +82,18 @@ impl Column {
 pub(super) struct WriteColumn {
     pub(super) column: Column,
     pub(super) values: ArrayValue,
+    pub(super) select_polarization: bool,
+    pub(super) channels: Option<VisibilityChannels>,
 }
 
-pub(super) fn write_columns(main: &Table, items: RecordValue) -> MsResult<Vec<WriteColumn>> {
+pub(super) fn write_columns(
+    main: &Table,
+    items: RecordValue,
+    lookup: fn(&str) -> Option<Column>,
+) -> MsResult<Vec<WriteColumn>> {
     let mut columns = Vec::<WriteColumn>::new();
     for field in items.into_fields() {
-        let Some(column) = Column::from_name(&field.name) else {
+        let Some(column) = lookup(&field.name) else {
             continue;
         };
         if matches!(column, Column::CorrectedData | Column::ModelData)
@@ -100,7 +123,12 @@ pub(super) fn write_columns(main: &Table, items: RecordValue) -> MsResult<Vec<Wr
         if let Some(prior) = columns.iter_mut().find(|entry| entry.column == column) {
             prior.values = values;
         } else {
-            columns.push(WriteColumn { column, values });
+            columns.push(WriteColumn {
+                column,
+                values,
+                select_polarization: true,
+                channels: None,
+            });
         }
     }
     Ok(columns)
@@ -157,10 +185,10 @@ fn storage_precision(column: Column, array: ArrayValue) -> Option<ArrayValue> {
         (Column::Flag | Column::FlagRow, array) => {
             numeric_array!(array, Bool, |value| value != 0.0)
         }
-        (Column::Sigma | Column::Weight, ArrayValue::Float32(values)) => {
+        (Column::Sigma | Column::Weight | Column::FloatData, ArrayValue::Float32(values)) => {
             Some(ArrayValue::Float32(values))
         }
-        (Column::Sigma | Column::Weight, array) => {
+        (Column::Sigma | Column::Weight | Column::FloatData, array) => {
             numeric_array!(array, Float32, |value| value as f32)
         }
         (_, ArrayValue::Complex32(values)) => Some(ArrayValue::Complex32(values)),

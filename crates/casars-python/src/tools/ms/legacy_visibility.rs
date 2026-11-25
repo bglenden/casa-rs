@@ -21,8 +21,9 @@ use crate::convert::value::CasaValue;
 
 #[derive(Default)]
 pub(super) struct LegacyAxes {
-    channels: Option<VisibilityChannels>,
-    polarization: Option<VisibilityPolarization>,
+    pub(super) channels: Option<VisibilityChannels>,
+    pub(super) polarization: Option<Arc<VisibilityPolarization>>,
+    pub(super) noncanonical_complex_polarization: bool,
     labels: Option<Vec<String>>,
     pub(super) baseline_read: Option<LegacyBaselineRead>,
 }
@@ -32,19 +33,13 @@ impl LegacySelection {
         VisibilityReadOptions {
             baseline_pairs: self.baselines.as_deref(),
             channels: self.axes.channels,
-            polarization: self.axes.polarization.as_ref(),
+            polarization: self.axes.polarization.as_deref(),
             legacy_axes: Some(LegacyVisibilityAxes {
                 descriptions: self.descriptions(),
                 correlation_labels: self.axes.labels.as_deref(),
             }),
             ..VisibilityReadOptions::default()
         }
-    }
-}
-
-impl LegacyAxes {
-    pub(super) fn needs_write_projection(&self) -> bool {
-        self.channels.is_some() || self.polarization.is_some()
     }
 }
 
@@ -168,9 +163,11 @@ impl PyMsTool {
             }
             if !types.is_empty() {
                 let (description_count, codes) = ms.legacy_correlation_layout()?;
-                ms.legacy_selection.axes.polarization = Some(
-                    VisibilityPolarization::legacy_selected(description_count, &codes, types),
-                );
+                let polarization =
+                    VisibilityPolarization::legacy_selected(description_count, &codes, types);
+                ms.legacy_selection.axes.noncanonical_complex_polarization =
+                    polarization.legacy_noncanonical_complex_write(codes.len());
+                ms.legacy_selection.axes.polarization = Some(Arc::new(polarization));
             }
             ms.legacy_selection.axes.labels = Some(wanted);
             Ok(true)

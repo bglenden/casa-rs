@@ -6,7 +6,7 @@ use num_complex::{Complex32, Complex64};
 
 use super::{MsResult, input};
 
-pub(super) struct Conversion {
+pub(in crate::tool_visibility) struct Conversion {
     input_count: usize,
     outputs: Result<Vec<Product>, &'static str>,
     stokes: Option<[LinearCombination; 4]>,
@@ -106,6 +106,16 @@ impl Conversion {
             output.push(product.flags.iter().any(|&index| samples[index]));
         }
         Ok(())
+    }
+
+    pub(in crate::tool_visibility) fn flag_dependencies(
+        &self,
+        count: usize,
+    ) -> MsResult<impl ExactSizeIterator<Item = &[usize]>> {
+        Ok(self
+            .products(count)?
+            .iter()
+            .map(|product| product.flags.as_slice()))
     }
 
     pub(super) fn append_weights(&self, samples: &[f32], output: &mut Vec<f32>) -> MsResult<()> {

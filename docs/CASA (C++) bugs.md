@@ -11463,6 +11463,15 @@ Casa-rs writes only the occupied slots of the captured row projection,
 including physical row zero, and rejects a baseline record after that
 projection changes (#1030).
 
+## Legacy flag writes can abort on channel bins starting after channel zero
+
+In CASA 6.7.6.14, configure `ms.selectchannelold(2, 1, 2, 3)` and pass
+the resulting FLAG shape to `ms.putdataold()`. The legacy writer applies
+the starting channel a second time to an already sliced buffer and
+aborts. Casa-rs expands each bin into its selected physical channels
+once and keeps the channels between bins and outside the selection
+unchanged (#1030).
+
 ## Observed MS statistics take inverse squares of the stored weights
 
 For weighted observed `DATA` and `FLOAT_DATA` statistics, CASA 6.7.6.14's
