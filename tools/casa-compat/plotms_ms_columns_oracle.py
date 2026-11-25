@@ -1051,7 +1051,7 @@ def compare_time_averaged_flag_symbols(root, native):
                                labels=("Flagged visibility", "Amp", "Amp:corrected"),
                                is_flagged=lambda point: point[2] == "3")
     compare_empty_export(work, native, "time-all-flagged", base | dict(spw="0:3"),
-                         ("Flagged visibility", "Amp", "Amp:corrected"))
+                         ("Amp", "Amp:corrected"))
     verify_source(vis, before)
 
 
