@@ -122,7 +122,9 @@ def compare_ordinate_styles(root, native):
         assert to_hex(left.get_markeredgecolor()) == "#000000"
         assert to_hex(right.get_markerfacecolor()) != "#800080"
         if name == "scalar-style":
-            assert marker_pixels(right) == 13
+            # The scalar shape only programs the first ordinate. The other
+            # one retains PlotMS autoscaling, which selects six pixels here.
+            assert marker_pixels(right) == 6
             assert to_hex(right.get_markerfacecolor()) == to_hex(right.get_markeredgecolor()) == "#0000ff"
         for (_, line), points in zip(observed, np.split(source, 2), strict=True):
             np.testing.assert_allclose(line.get_xydata(), points, rtol=1.2e-5)
