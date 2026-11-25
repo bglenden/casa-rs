@@ -11611,3 +11611,12 @@ overwrites an existing directory containing ordinary files. A mistyped
 output path can therefore destroy unrelated data. casa-rs uses the table
 query destination checks and leaves a nonempty non-table directory and the
 legacy row selection intact when publication is refused (#1030).
+
+## Legacy MS TaQL can collapse the order of duplicate row IDs
+
+In CASA 6.7.6.14, selecting explicit rows `[3, 7, 8, 3]` with
+`ms.selectold()` followed by `ms.selecttaqlold('True ORDERBY ROWID() DESC')`
+reports original row numbers `[3, 3, 8, 7]`. Both occurrences of row 3
+sort together even though they occupy separate positions in the selector.
+casa-rs applies the same view-relative row IDs used by a WHERE predicate
+and returns `[3, 8, 7, 3]` (#1030).

@@ -241,7 +241,9 @@ fn select_rows_impl(
             {
                 continue;
             }
-            row_indices.push(group[0]);
+            if let Some(&last) = group.last() {
+                row_indices.push(last);
+            }
         }
     }
 
@@ -257,6 +259,10 @@ fn select_rows_impl(
     // 3. DISTINCT
     if sel.distinct {
         deduplicate_rows(&mut row_indices, &sel.columns, table, style)?;
+    }
+
+    if project_groups {
+        return apply_view_limits(sel, row_indices);
     }
 
     // 4. OFFSET
@@ -276,6 +282,25 @@ fn select_rows_impl(
     }
 
     Ok(row_indices)
+}
+
+fn apply_view_limits(
+    sel: &SelectStatement,
+    mut rows: Vec<usize>,
+) -> Result<Vec<usize>, TaqlError> {
+    let count = rows.len() as i64;
+    let from_end = |value| if value < 0 { (count + value).max(0) } else { value };
+    let offset = sel.offset.as_ref().map(eval_const_int).transpose()?.unwrap_or(0);
+    let limit = sel.limit.as_ref().map(eval_const_int).transpose()?.unwrap_or(0);
+    let start = from_end(offset).min(count);
+    let end = if limit == 0 {
+        count
+    } else {
+        start.saturating_add(from_end(limit)).min(count)
+    };
+    rows.truncate(end as usize);
+    rows.drain(..start as usize);
+    Ok(rows)
 }
 
 pub(super) fn select_columns_expr_list(

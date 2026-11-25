@@ -156,7 +156,10 @@ def test_legacy_taql_clauses_preserve_projection_order(native_dataset):
         assert reader.open(str(native_dataset))
         for query, expected in (
             ("True LIMIT 2 OFFSET 1", [7, 8]),
-            ("True ORDERBY ROWID() DESC", order[::-1]),
+            ("True ORDERBY ANTENNA2 DESC, ANTENNA1 DESC", [8, 3, 3, 7]),
+            ("True LIMIT -1 OFFSET 0", [3, 7, 8]),
+            ("True OFFSET -2", [8, 3]),
+            ("True LIMIT 0", order),
             ("True # trailing comment", order),
         ):
             assert reader.selectold({"rows": order})
@@ -203,13 +206,13 @@ def test_legacy_taql_giving_persists_an_ordered_reference(native_dataset, tmp_pa
     for api in (casa, tools):
         reader = api.ms()
         assert reader.open(str(native_dataset))
-        assert reader.selectold({"rows": order})
+        assert reader.selectold({"rows": [3, 7, 8, 3, 6]})
         grouping = "True GROUPBY ANTENNA1 ORDERBY ANTENNA1 DESC LIMIT 2"
         assert reader.selecttaqlold(grouping)
         grouped = reader.rangeold("rows")["rows"].copy()
         if api is casa:
             expected = grouped
-            assert len(expected) == 2
+            np.testing.assert_array_equal(expected, [8, 6])
         else:
             np.testing.assert_array_equal(grouped, expected, strict=True)
         assert reader.selectold({"rows": order})
@@ -236,4 +239,14 @@ def test_legacy_taql_giving_persists_an_ordered_reference(native_dataset, tmp_pa
         with pytest.raises(NotImplementedError, match=r"GIVING.*#1030"):
             reader.selecttaqlold(f'True GIVING "{tmp_path / "typed.ms"}" AS {kind}')
     np.testing.assert_array_equal(reader.rangeold("rows")["rows"], order)
+    assert reader.done()
+
+
+def test_legacy_taql_sort_assigns_each_duplicate_its_own_row_id(native_dataset):
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    order = [3, 7, 8, 3]
+    assert reader.selectold({"rows": order})
+    assert reader.selecttaqlold("True ORDERBY ROWID() DESC")
+    np.testing.assert_array_equal(reader.rangeold("rows")["rows"], order[::-1])
     assert reader.done()
