@@ -11,6 +11,8 @@ use super::legacy_selection::deprecation;
 use super::visibility::requested_strings;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 
+mod cache;
+
 pub(super) struct LegacyIteration {
     cursor: LegacyToolIteration,
     restore_rows: Option<Arc<[usize]>>,
@@ -94,7 +96,7 @@ impl AttachedMs {
         link.verify_directory().map_err(runtime_error)?;
         let working_rows = link.selected_rows().map_err(runtime_error)?;
         let restore_rows = self.legacy_selection.shared_rows();
-        let main = self.visibility.main(&self.path)?;
+        let main = self.visibility.current_main(&self.path)?;
         let options = LegacyIterationOptions {
             selected: restore_rows.as_deref(),
             working_rows: working_rows.as_deref(),
@@ -107,6 +109,7 @@ impl AttachedMs {
             return Ok(false);
         };
         link.verify_directory().map_err(runtime_error)?;
+        self.cache_legacy_iteration(&link, &main, working_rows.as_deref(), &cursor)?;
         self.legacy_selection.iteration = Some(LegacyIteration {
             cursor,
             restore_rows,

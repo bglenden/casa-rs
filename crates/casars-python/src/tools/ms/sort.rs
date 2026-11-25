@@ -183,14 +183,14 @@ fn sorted_output_path(path: &Path, source: &Path) -> PyResult<PathBuf> {
     Ok(path)
 }
 
-enum SortedDestination {
+pub(super) enum SortedDestination {
     Absent,
     Empty(fs::Metadata),
     Table(fs::Metadata),
 }
 
 impl SortedDestination {
-    fn inspect(path: &Path) -> PyResult<Self> {
+    pub(super) fn inspect(path: &Path) -> PyResult<Self> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Self::Absent),
@@ -209,7 +209,11 @@ impl SortedDestination {
         ))
     }
 
-    fn publish(self, staged: &Path, output: &Path) -> PyResult<()> {
+    pub(super) fn is_table(&self) -> bool {
+        matches!(self, Self::Table(_))
+    }
+
+    pub(super) fn publish(self, staged: &Path, output: &Path) -> PyResult<()> {
         let original = match &self {
             Self::Absent => return rename_without_replacing(staged, output).map_err(runtime_error),
             Self::Empty(original) | Self::Table(original) => original,
