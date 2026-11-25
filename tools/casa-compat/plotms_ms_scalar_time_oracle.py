@@ -427,7 +427,7 @@ def compare_average_shape_refusal(root, native, controls):
     assert not expected.exists() and not actual.exists()
 
 
-def compare_combined_scalar_time(root, native):
+def combined_scalar_time_fixture(root):
     source, integration, start = make_fixture(root)
     with opened(source, True) as table:
         shape = table.getcol("DATA").shape
@@ -440,6 +440,11 @@ def compare_combined_scalar_time(root, native):
             column[:, :4, :] = np.broadcast_to(np.asarray(values, dtype=np.complex64)[None, :, None],
                                                (shape[0], 4, shape[2]))
             table.putcol(name, column)
+    return source, integration, start
+
+
+def compare_combined_scalar_time(root, native):
+    source, integration, start = combined_scalar_time_fixture(root)
     masked, spectra, varying = (root / f"{name}.ms" for name in ("masked", "spectra", "varying"))
     for path in (masked, spectra, varying):
         copy_ms(source, path)

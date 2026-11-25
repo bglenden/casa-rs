@@ -10,7 +10,7 @@ use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
 use super::plotms_pointing::PointingAxes;
 use super::{
-    MsAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsScatterGridPayload,
+    MsAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsPlotSpec, MsScatterGridPayload,
     MsScatterPanelPayload, MsScatterSeries, plotms_row_axes, plotms_text,
 };
 use crate::plot_document::{
@@ -27,6 +27,12 @@ pub(super) struct VisibilityAxisColumns<'a> {
     pub(super) pointing: Option<&'a PointingAxes>,
 }
 
+pub(super) struct AxisPresentation<'a> {
+    pub(super) columns: Option<VisibilityAxisColumns<'a>>,
+    pub(super) spec: &'a MsPlotSpec,
+    pub(super) clock_reference: Option<i64>,
+}
+
 pub(super) fn prepare(
     task: &TaskInvocation<'_>,
     payload: &MsPlotPayload,
@@ -34,8 +40,13 @@ pub(super) fn prepare(
     output: Option<&Path>,
     show: bool,
     overlays: &[Vec<Curve>],
-    columns: Option<VisibilityAxisColumns<'_>>,
+    presentation: AxisPresentation<'_>,
 ) -> Result<Vec<PlotFigure>, TaskFailure> {
+    let AxisPresentation {
+        columns,
+        spec,
+        clock_reference,
+    } = presentation;
     let (x, y, second, grid) = match payload {
         MsPlotPayload::Scatter(plot) => (plot.x_axis, plot.y_axis, plot.secondary_y_axis, None),
         MsPlotPayload::ScatterGrid(grid) => (
@@ -54,8 +65,18 @@ pub(super) fn prepare(
     if let Some(columns) = columns {
         label_and_group_ordinates(task, &mut document, payload, [x, y], second, columns)?;
     }
+    if let Some(reference) = clock_reference {
+        prepare_clock_axes(&mut document, spec, reference);
+    }
     if let Some(grid) = grid {
         label_iteration_panels(task, &mut document, grid)?;
+        if task.flag("xselfscale")? {
+            unite_panel_bounds(&mut document, "x");
+        }
+        if task.flag("yselfscale")? {
+            unite_panel_bounds(&mut document, "y");
+            unite_panel_bounds(&mut document, "y-secondary");
+        }
     }
     document.show_legend = task.flag("showlegend")?;
     let limits = plot_limits(task.value("plotrange"))?;
@@ -110,6 +131,74 @@ pub(super) fn prepare(
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
     }
     Ok(figures)
+}
+
+pub(super) fn reference_midnight(times: impl Iterator<Item = f64>) -> Option<i64> {
+    times
+        .filter(|time| time.is_finite())
+        .reduce(f64::min)
+        .map(|time| ((time / 86_400.0).floor() * 86_400.0) as i64)
+}
+
+fn prepare_clock_axes(document: &mut PlotDocument, spec: &MsPlotSpec, reference: i64) {
+    let axes = std::iter::once((&mut document.axes, &document.layers)).chain(
+        document
+            .panels
+            .iter_mut()
+            .map(|panel| (&mut panel.axes, &panel.layers)),
+    );
+    for (axes, layers) in axes {
+        for axis in axes {
+            let x = axis.id == "x";
+            let clock = if x {
+                spec.x_axis == MsAxis::Time
+            } else {
+                axis.id == "y" && spec.y_axes.as_slice() == [MsAxis::Time]
+            };
+            if !clock {
+                continue;
+            }
+            axis.scale = PlotAxisScale::MjdSecondsClock {
+                reference_mjd_seconds: reference,
+            };
+            let values = layers.iter().filter_map(|layer| {
+                if x && layer.x_axis_id == axis.id {
+                    Some(&layer.x_values)
+                } else if !x && layer.y_axis_id == axis.id {
+                    Some(&layer.y_values)
+                } else {
+                    None
+                }
+            });
+            if let Some((lower, upper)) = plotms_clock_bounds(values.flatten().copied()) {
+                axis.lower = lower;
+                axis.upper = upper;
+            }
+        }
+    }
+}
+
+fn plotms_clock_bounds(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
+    let (lower, upper) = values
+        .filter(|value| value.is_finite())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| {
+            (low.min(value), high.max(value))
+        });
+    let span = upper - lower;
+    if span < 0.0 {
+        return None;
+    }
+    // PlotMS sets a time range before Qwt autoscales other axes.
+    let padding = if span == 0.0 {
+        2.0
+    } else if span < 1.0 {
+        span / 4.0
+    } else if span < 120.0 {
+        1.0
+    } else {
+        0.0
+    };
+    Some((lower - padding, upper + padding))
 }
 
 fn label_and_group_ordinates(
@@ -174,13 +263,6 @@ fn label_and_group_ordinates(
             for (panel, plot) in document.panels.iter_mut().zip(&grid.panels) {
                 group(&mut panel.axes, &mut panel.layers, &plot.series);
             }
-            if task.flag("xsharedaxis")? {
-                unite_panel_bounds(document, "x");
-            }
-            if task.flag("ysharedaxis")? {
-                unite_panel_bounds(document, "y");
-                unite_panel_bounds(document, "y-secondary");
-            }
         }
         _ => {}
     }
@@ -211,12 +293,21 @@ fn unite_panel_bounds(document: &mut PlotDocument, axis_id: &str) {
     let bounds = document
         .panels
         .iter()
+        .filter(|panel| {
+            panel.layers.iter().any(|layer| {
+                !layer.x_values.is_empty()
+                    && (layer.x_axis_id == axis_id || layer.y_axis_id == axis_id)
+            })
+        })
         .flat_map(|panel| &panel.axes)
         .filter(|axis| axis.id == axis_id)
         .fold(
             (f64::INFINITY, f64::NEG_INFINITY),
             |(lower, upper), axis| (lower.min(axis.lower), upper.max(axis.upper)),
         );
+    if !bounds.0.is_finite() || !bounds.1.is_finite() {
+        return;
+    }
     for axis in document
         .panels
         .iter_mut()

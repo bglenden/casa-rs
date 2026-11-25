@@ -1882,8 +1882,7 @@ impl MsPlotSpec {
         if self.style.symbol_size.is_some_and(|size| size == 0) {
             return Err("msexplore symbolsize must be a positive integer".to_string());
         }
-        let plotms_shared_axes =
-            plotms_iteration && self.iteration.iteraxis.is_some() && self.y_axes.len() > 1;
+        let plotms_shared_axes = plotms_iteration && self.iteration.iteraxis.is_some();
         if !plotms_shared_axes && self.iteration.xselfscale && self.iteration.xsharedaxis {
             return Err(
                 "msexplore x-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
@@ -2023,6 +2022,7 @@ impl MsPlotSpec {
                 && !(self.y_axes.len() == 1
                     && plotms_row_axes::metadata_coordinate_pair(self.x_axis, y_axis).is_some())
                 && !(pointing && (y_axis.is_pointing() || y_axis == MsAxis::Time))
+                && !(plotms_iteration && y_axis == MsAxis::Time && self.averaging.avgtime.is_none())
             {
                 return Err(format!(
                     "msexplore y axis {} is modeled but not implemented yet",
@@ -3141,7 +3141,8 @@ fn build_uncalibrated_plotms_payload(
     columns: PlotMsColumnSelection<'_>,
     prefer_float_data: bool,
     load_models: Option<cli::PlotMsModelLoader>,
-) -> Result<MsPlotPayload, String> {
+    clock_labels: bool,
+) -> Result<(MsPlotPayload, Option<i64>), String> {
     let mut selected =
         crate::selection::resolve_casa_selection_with_system_budget(ms, &spec.selection)
             .map_err(|error| error.to_string())?;
@@ -3333,7 +3334,17 @@ fn build_uncalibrated_plotms_payload(
         pointing: columns.pointing,
         phasecenter: columns.phasecenter,
     };
-    build_msexplore_payload_internal(ms, spec, true, Some(&input))
+    let reference = clock_labels
+        .then(|| {
+            plotms_figure::reference_midnight(
+                selected
+                    .selected_rows
+                    .iter()
+                    .map(|row| row.time_mjd_seconds),
+            )
+        })
+        .flatten();
+    build_msexplore_payload_internal(ms, spec, true, Some(&input)).map(|plot| (plot, reference))
 }
 
 /// Open a MeasurementSet path from a full `msexplore` request and build the
