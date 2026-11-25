@@ -502,6 +502,66 @@ def compare_same_epoch_antenna_geometry(root, native):
           "CASA reuses the first field's coordinates in a joint selection", flush=True)
 
 
+def compare_ephemeris_axes(root, native):
+    from casars.tasks import TaskExecutionError, TaskParameterError
+    from gaincal_oracle import ephemeris_observation
+    from grpc import RpcError, StatusCode
+
+    work = root / "ephemeris-axes"
+    work.mkdir()
+    source, *_ = make_fixture(work)
+    title = "Uranus ephemeris coordinates"
+    cases = (
+        ("channel-radial-velocity", "channel", "Radial Velocity", 18,
+         [27.4322, 27.4352], "Channel", "Radial Velocity (km/s)"),
+        ("time-distance", "time", "Distance (rho)", 6,
+         [2.90480e9, 2.90483e9], "Time (MJD seconds)", "Distance (rho) (km)"),
+    )
+    for name, x, y, count, anchors, xlabel, ylabel in cases:
+        case = work / name
+        case.mkdir()
+        vis, _ = ephemeris_observation(case, source, offset=(0.002, -0.004))
+        before = snapshot(vis)
+        options = controls(vis) | dict(
+            xaxis=x, yaxis=y, antenna="A0&A1;A0&A2", spw="0:1~3", title=title, expformat="txt",
+        )
+        expected, actual = (case / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == count
+        assert len({point[9] for point in selected}) == 6
+        assert {point[6] for point in selected} == {"1"}
+        assert {point[12] for point in selected} == {"XX"}
+        assert [int(point[2]) for point in selected] == ([1, 2, 3] if x == "channel" else [1]) * 6
+        np.testing.assert_allclose([float(selected[0][1]), float(selected[-1][1])],
+                                   anchors, rtol=1.2e-5)
+        assert float(selected[0][1]) < float(selected[-1][1])
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        actual_values = np.asarray([float(point[1]) for point in rows(actual)])
+        expected_values = np.asarray([float(point[1]) for point in selected])
+        tolerance = 1e-4 if x == "channel" else 1e4
+        np.testing.assert_allclose(actual_values, expected_values, rtol=0, atol=tolerance)
+        assert np.unique(actual_values).size == np.unique(expected_values).size
+        print(f"{name}: {count} matching ephemeris coordinates and metadata", flush=True)
+        compare_figure(case, native, options, expected, (title, xlabel, ylabel))
+        verify_source(vis, before)
+
+    fixed = controls(source) | dict(xaxis="channel", yaxis="Radial Velocity", expformat="txt")
+    for engine, plotms in (("casa", reference), ("native", native)):
+        output = work / f"fixed-field.{engine}.txt"
+        try:
+            plotms(**fixed, plotfile=str(output))
+        except RpcError as error:
+            assert engine == "casa" and error.code() == StatusCode.INVALID_ARGUMENT
+        except (TaskExecutionError, TaskParameterError) as error:
+            assert engine == "native" and "ephemeris data is not available" in str(error)
+        else:
+            raise AssertionError(f"{engine} exported a moving ephemeris axis for a fixed MS")
+        assert not output.exists()
+    print("fixed-field: both tasks require ephemeris data before export", flush=True)
+
+
 def compare_flags_and_calibration(root, native, vis):
     base = controls(vis) | dict(xaxis="uwave", expformat="txt")
 
@@ -1163,7 +1223,8 @@ def main():
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes",
                                            "averaged-coordinates", "array-horizontal-axes",
-                                           "antenna-horizontal-axes", "antenna-horizontal-same-epoch"))
+                                           "antenna-horizontal-axes", "antenna-horizontal-same-epoch",
+                                           "ephemeris-axes"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1186,6 +1247,8 @@ def main():
             compare_antenna_horizontal_axes(root, native)
         if args.only in (None, "antenna-horizontal-same-epoch"):
             compare_same_epoch_antenna_geometry(root, native)
+        if args.only in (None, "ephemeris-axes"):
+            compare_ephemeris_axes(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
