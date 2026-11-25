@@ -31,6 +31,7 @@ pub(super) struct LegacySelection {
     rows: Option<Arc<[usize]>>,
     initial: Option<InitialSelection>,
     pub(super) axes: LegacyAxes,
+    pub(super) baselines: Option<Vec<(i32, i32)>>,
 }
 
 impl LegacySelection {
@@ -201,6 +202,7 @@ impl AttachedMs {
         });
         self.legacy_selection.rows = rows;
         self.legacy_selection.axes = LegacyAxes::default();
+        self.legacy_selection.baselines = None;
         Ok(same_shape)
     }
 
@@ -368,6 +370,7 @@ impl AttachedMs {
             RecordSelector::IfrNumber => {
                 let mut ids = integer_items(&field)?;
                 if ids.is_empty() {
+                    self.legacy_selection.baselines = None;
                     return Ok(());
                 }
                 let (snapshot, _) = self
@@ -378,6 +381,8 @@ impl AttachedMs {
                 ids.retain(|&id| {
                     (0..antennas).contains(&(id / 1000)) && (0..antennas).contains(&(id % 1000))
                 });
+                self.legacy_selection.baselines = (!ids.is_empty())
+                    .then(|| ids.iter().map(|id| (id / 1000, id % 1000)).collect());
                 Some(if ids.is_empty() {
                     "False".into()
                 } else {

@@ -177,6 +177,7 @@ impl AttachedMs {
             .map_err(runtime_error)?;
         let main = self.visibility.main(&self.path)?;
         let options = VisibilityReadOptions {
+            baseline_pairs: self.legacy_selection.baselines.as_deref(),
             channels: axes.channels,
             polarization: axes.polarization.as_ref(),
             legacy_axes: Some(LegacyVisibilityAxes {

@@ -233,7 +233,7 @@ pub fn read_tool_visibility(
     let grid = baseline_gap
         .map(|gap| {
             if legacy {
-                BaselineGrid::legacy(&read.scalar_columns, gap)
+                BaselineGrid::legacy(&read.scalar_columns, baseline_pairs, gap)
             } else {
                 BaselineGrid::new(&read.scalar_columns, baseline_pairs, gap)
             }
@@ -995,42 +995,11 @@ impl<'a> VisibilityRead<'a> {
                 self.matrix_cells(source, only_raw && !reduce && convert.is_none())?
             };
             let data = if uses_model {
-                let model_values = self.matrix_cells("MODEL_DATA", false)?;
-                let (ArrayValue::Complex32(mut observed), ArrayValue::Complex32(expected)) =
-                    (data, model_values)
-                else {
-                    return Err(input("visibility columns must contain Complex values"));
-                };
-                if observed.shape() != expected.shape() {
-                    return Err(input("visibility columns have different shapes"));
-                }
-                if prefix == "ratio_" {
-                    observed.zip_mut_with(&expected, |observed, expected| {
-                        *observed = divide_visibility(*observed, *expected);
-                    });
-                    if !self.legacy
-                        && !average
-                        && let Some(channels) = self.channels
-                        && channels.width() > 1
-                        && !self.rows.is_empty()
-                    {
-                        observed.zip_mut_with(
-                            self.channel_flags(channels)?,
-                            |observed, &flagged| {
-                                if flagged {
-                                    *observed = Complex32::default();
-                                }
-                            },
-                        );
-                    }
-                } else {
-                    observed.zip_mut_with(&expected, |observed, expected| *observed -= *expected);
-                }
-                ArrayValue::Complex32(observed)
+                self.model_product(data, prefix, average, convert)?
             } else {
                 data
             };
-            let data = if let Some(polarization) = convert {
+            let data = if let Some(polarization) = convert.filter(|_| !self.legacy || !uses_model) {
                 self.convert_visibility_product(data, polarization, !average && !self.legacy)?
             } else {
                 data

@@ -233,3 +233,100 @@ def test_legacy_converted_flag_sums_keep_the_converted_axis(native_dataset, base
         assert result["data"].shape == (1, raw["data"].shape[1])
         np.testing.assert_array_equal(result["flag_sum"], expected, strict=True)
         assert reader.done()
+
+
+@pytest.mark.parametrize("convert", [False, True])
+def test_legacy_model_ratio_converts_operands_and_fills_zero_model(
+    native_dataset, baseline_fixture, convert
+):
+    casa, _, raw = baseline_fixture
+    corrected = raw["data"].astype(np.complex64) + np.complex64(5 + 10j)
+    factors = np.array([1 + 2j, 3 + 4j], dtype=np.complex64)
+    model = np.broadcast_to(factors[:, None, None], corrected.shape).copy()
+    if not convert:
+        model[:, :2, 0] = 0
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    column = table.getcoldesc("DATA")
+    assert table.addcols({"CORRECTED_DATA": column, "MODEL_DATA": column})
+    assert table.putcol("CORRECTED_DATA", corrected)
+    assert table.putcol("MODEL_DATA", model)
+    assert table.done()
+
+    if convert:
+        corrected = np.stack([(corrected[0] + corrected[1]) / 2,
+                              (corrected[0] - corrected[1]) / 2])
+        model = np.stack([(model[0] + model[1]) / 2, (model[0] - model[1]) / 2])
+    expected = np.divide(corrected, model, out=np.ones_like(corrected), where=model != 0)
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        if convert:
+            assert reader.selectpolarizationold(["I", "V"])
+        result = reader.getdataold("ratio_data")["ratio_data"]
+        np.testing.assert_allclose(result, expected.astype(np.complex128),
+                                   rtol=3e-7, atol=1e-7, strict=True)
+        assert reader.done()
+
+
+def test_legacy_explicit_baseline_axis_survives_row_cuts(native_dataset, baseline_fixture):
+    casa, _, _ = baseline_fixture
+    # 3002 is a valid pair that is not present in this MS.
+    requested = [3003, 3002, 0, 3003]
+    records = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.selectold({"ifr_number": requested})
+        assert reader.selecttaqlold("ANTENNA1 == 0")
+        result = reader.getdataold(["data", "flag", "ifr_number", "axis_info"], ifraxis=True)
+        np.testing.assert_array_equal(result["ifr_number"], requested)
+        np.testing.assert_array_equal(result["axis_info"]["ifr_axis"]["ifr_number"], requested)
+        assert result["flag"][:, :, [0, 1, 3], :].all()
+        records.append(result)
+        assert reader.done()
+    same_visibility(records[1], records[0])
+
+
+def test_legacy_averaged_hour_angle_uses_first_field_at_mean_epoch(
+    native_dataset, baseline_fixture
+):
+    casa, _, raw = baseline_fixture
+    rows = np.flatnonzero((raw["antenna1"] == 0) & (raw["antenna2"] == 0))[:2]
+    first, second = map(int, rows)
+    mean = float(raw["time"][rows].mean())
+
+    fields = casa.table()
+    assert fields.open(str(native_dataset / "FIELD"), nomodify=False)
+    assert fields.addrows(1)
+    for name in fields.colnames():
+        if fields.iscelldefined(name, 0):
+            assert fields.putcell(name, 1, fields.getcell(name, 0))
+    direction = fields.getcell("PHASE_DIR", 0)
+    direction[0, 0] += 0.3
+    assert fields.putcell("PHASE_DIR", 1, direction)
+    assert fields.done()
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    assert table.putcell("FIELD_ID", second, 1)
+    assert table.done()
+
+    reader = tools.ms()
+    assert reader.open(str(native_dataset))
+    assert reader.selectold({"rows": rows.tolist()})
+    result = reader.getdataold(["axis_info", "ha"], ifraxis=True, average=True)
+    axis = result["axis_info"]["time_axis"]
+    np.testing.assert_array_equal(axis["MJDseconds"], [mean], strict=True)
+    assert reader.done()
+
+    # Use CASA's unaveraged coordinate at the corrected epoch and first direction.
+    assert table.open(str(native_dataset), nomodify=False)
+    assert table.putcell("TIME", first, mean)
+    assert table.done()
+    reference = casa.ms()
+    assert reference.open(str(native_dataset))
+    assert reference.selectold({"rows": [first]})
+    expected = reference.getdataold(["axis_info", "ha"], ifraxis=True)
+    np.testing.assert_allclose(axis["HA"], expected["axis_info"]["time_axis"]["HA"],
+                               rtol=0, atol=0.015, strict=True)
+    assert reference.done()

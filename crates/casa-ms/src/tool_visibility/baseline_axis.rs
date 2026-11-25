@@ -46,6 +46,7 @@ pub(super) fn rows_by_time<'a>(main: &Table, rows: &'a [usize]) -> MsResult<Cow<
 
 pub(super) struct BaselineGrid {
     baselines: BTreeMap<(i32, i32), usize>,
+    explicit_axis: Option<Vec<((i32, i32), usize)>>,
     baseline_count: usize,
     times: Vec<f64>,
     first_rows: Vec<usize>,
@@ -80,9 +81,10 @@ impl BaselineGrid {
 
     pub(super) fn legacy(
         columns: &HashMap<String, RequiredScalarColumnValues>,
+        selection: Option<&[(i32, i32)]>,
         gap: i32,
     ) -> MsResult<Self> {
-        Self::build(columns, None, gap, true)
+        Self::build(columns, selection, gap, true)
     }
 
     fn build(
@@ -104,18 +106,19 @@ impl BaselineGrid {
             .copied()
             .zip(second.iter().copied())
             .collect::<Vec<_>>();
-        let ordered = selection
-            .unwrap_or(&row_baselines)
-            .iter()
-            .copied()
-            .collect::<BTreeSet<_>>();
+        let explicit = selection.filter(|_| legacy);
+        let mut ordered = BTreeSet::new();
+        if explicit.is_none() {
+            ordered.extend(selection.unwrap_or(&row_baselines).iter().copied());
+        }
+        let mut explicit_axis = explicit.map(|pairs| Vec::with_capacity(pairs.len()));
         let mut previous = None;
         let mut baseline_count = 0_usize;
         let mut baselines = BTreeMap::new();
         let gap = gap.max(0) as usize;
-        for pair in ordered {
+        for pair in explicit.into_iter().flatten().copied().chain(ordered) {
             let antenna = pair.0;
-            let increase = if previous.is_some_and(|prior| prior != antenna) {
+            let increase = if previous.is_some_and(|prior| antenna > prior) {
                 1 + gap
             } else {
                 1
@@ -124,7 +127,11 @@ impl BaselineGrid {
                 .checked_add(increase)
                 .filter(|&length| length <= i32::MAX as usize)
                 .ok_or_else(|| input("baseline axis exceeds the supported length"))?;
-            baselines.insert(pair, baseline_count - 1);
+            let slot = baseline_count - 1;
+            baselines.insert(pair, slot);
+            if let Some(axis) = &mut explicit_axis {
+                axis.push((pair, slot));
+            }
             previous = Some(antenna);
         }
 
@@ -184,6 +191,7 @@ impl BaselineGrid {
         }
         Ok(Self {
             baselines,
+            explicit_axis,
             baseline_count,
             times,
             first_rows,
@@ -236,9 +244,18 @@ impl BaselineGrid {
             .map(|&(slot, source)| (slot % self.baseline_count, source))
     }
 
+    fn axis_entries(&self) -> impl Iterator<Item = ((i32, i32), usize)> + '_ {
+        self.explicit_axis.iter().flatten().copied().chain(
+            self.baselines
+                .iter()
+                .filter(|_| self.explicit_axis.is_none())
+                .map(|(&pair, &slot)| (pair, slot)),
+        )
+    }
+
     pub(super) fn numbers(&self) -> MsResult<ArrayValue> {
         let mut numbers = filled(self.baseline_count, -1)?;
-        for (&(first, second), &slot) in &self.baselines {
+        for ((first, second), slot) in self.axis_entries() {
             numbers[slot] = first.wrapping_mul(1000).wrapping_add(second);
         }
         Ok(ArrayValue::Int32(vector(numbers)))
@@ -270,7 +287,7 @@ impl BaselineGrid {
         let mut labels = filled(self.baseline_count, String::new())?;
         let mut shorts = filled(self.baseline_count, String::new())?;
         let mut lengths = filled(self.baseline_count, if self.legacy { -1.0 } else { 0.0 })?;
-        for (&(first, second), &slot) in &self.baselines {
+        for ((first, second), slot) in self.axis_entries() {
             let first = usize::try_from(first).map_err(|_| input("negative antenna ID"))?;
             let second = usize::try_from(second).map_err(|_| input("negative antenna ID"))?;
             for id in [first, second] {
@@ -302,7 +319,9 @@ impl BaselineGrid {
         }
         let numbers = if self.legacy {
             ArrayValue::Int32(vector(
-                self.baselines.keys().map(|&(a, b)| a * 1000 + b).collect(),
+                self.axis_entries()
+                    .map(|((a, b), _)| a.wrapping_mul(1000).wrapping_add(b))
+                    .collect(),
             ))
         } else {
             self.numbers()?
@@ -382,7 +401,11 @@ impl BaselineGrid {
                 .map(|&row| ids[row])
                 .collect::<Vec<_>>();
             if average {
-                averaging::common_id(&mut ids);
+                if self.legacy {
+                    ids.truncate(1);
+                } else {
+                    averaging::common_id(&mut ids);
+                }
             }
             Some((ms.field()?, ids))
         } else {
@@ -468,7 +491,7 @@ impl BaselineGrid {
                 ("antenna1" | "antenna2", Value::Array(ArrayValue::Int32(values))) => {
                     if self.legacy {
                         let mut antennas = filled(self.baseline_count, -1)?;
-                        for (&(first, second), &slot) in &self.baselines {
+                        for ((first, second), slot) in self.axis_entries() {
                             antennas[slot] = if name == "antenna1" { first } else { second };
                         }
                         *values = vector(antennas);
