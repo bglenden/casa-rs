@@ -268,11 +268,7 @@ def compare_wavelength_frame_selection(work, native):
     print("wavelength-frames: two paired same-frame points and one mixed-frame refusal", flush=True)
 
 
-def compare_array_horizontal_axes(root, native):
-    from casars.tasks import TaskParameterError
-
-    work = root / "array-horizontal-axes"
-    work.mkdir()
+def make_horizontal_fixture(work):
     vis, *_ = make_fixture(work, reverse_times=True)
     with opened(vis / "ANTENNA", True) as table:
         position = table.getcell("POSITION", 1)
@@ -290,6 +286,15 @@ def compare_array_horizontal_axes(root, native):
         # The same channel is still clear on the second selected baseline.
         flags[0, 1, first] = True
         table.putcol("FLAG", flags)
+    return vis, positions
+
+
+def compare_array_horizontal_axes(root, native):
+    from casars.tasks import TaskParameterError
+
+    work = root / "array-horizontal-axes"
+    work.mkdir()
+    vis, positions = make_horizontal_fixture(work)
     before = snapshot(vis)
     title = "Array horizontal coordinates"
     base = controls(vis) | dict(xaxis="channel", antenna="A0&A1;A0&A2", field="",
@@ -392,6 +397,109 @@ def compare_array_horizontal_axes(root, native):
     with opened(vis / "ANTENNA") as table:
         np.testing.assert_array_equal(table.getcol("POSITION"), positions)
     print("poln-amplitude: both public tasks refuse the MeasurementSet axis before export", flush=True)
+
+
+def compare_antenna_horizontal_axes(root, native):
+    work = root / "antenna-horizontal-axes"
+    work.mkdir()
+    vis, positions = make_horizontal_fixture(work)
+    with opened(vis / "ANTENNA", True) as table:
+        table.putcell("MOUNT", 3, "ALT-AZ+BWG-R")
+    with opened(vis / "FEED", True) as table:
+        angles = table.getcol("RECEPTOR_ANGLE")
+        antennas = table.getcol("ANTENNA_ID")
+        feeds = table.getcol("FEED_ID")
+        angles[0, (antennas == 1) & (feeds == 0)] += 0.075
+        table.putcol("RECEPTOR_ANGLE", angles)
+    before = snapshot(vis)
+    title = "Antenna horizontal coordinates"
+    base = controls(vis) | dict(xaxis="channel", antenna="A0&A1;A0&A2", field="",
+                                spw="0:1~3", title=title, expformat="txt")
+    cases = (
+        ("ant-azimuth", "XX", [-177.59806, 120.90605], None),
+        ("ant-elevation", "XX", [82.98457, 74.9439], "Ant-Elevation (deg)"),
+        ("ant-parang", "XX", [2.55258, -65.7585], None),
+        ("ant-parallacticangle", "XX,YY", [2.55258, -65.7585], None),
+    )
+    for axis, correlation, anchors, label in cases:
+        options = base | dict(yaxis=axis, correlation=correlation)
+        name = f"channel-{axis}-{correlation.replace(',', '-')}"
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [int(point[2]) for point in selected] == [1, 2, 3] * 60
+        for start in range(0, len(selected), 15):
+            buffer = selected[start:start + 15]
+            assert len({point[9] for point in buffer}) == 1
+            assert [point[6] for point in buffer[::3]] == ["1", "2", "1", "2", "1"]
+            pattern = (["XX", "YY"] * 8)[:15] if correlation == "XX,YY" else ["XX"] * 15
+            assert [point[12] for point in buffer] == pattern
+        np.testing.assert_allclose([float(selected[0][1]), float(selected[90][1])],
+                                   anchors, rtol=1.2e-5)
+        if axis.startswith("ant-par"):
+            np.testing.assert_allclose([float(selected[3][1]), float(selected[93][1])],
+                                       [37.5998, -50.8959], rtol=1.2e-5)
+            assert float(selected[9][1]) > 180.0
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 180
+        print(f"{name}: 180 matching antenna horizontal coordinates and identities", flush=True)
+        if label:
+            compare_figure(work, native, options, expected, (title, "Channel", label))
+    verify_source(vis, before)
+    with opened(vis / "ANTENNA") as table:
+        np.testing.assert_array_equal(table.getcol("POSITION"), positions)
+        assert table.getcell("MOUNT", 3) == "ALT-AZ+BWG-R"
+    with opened(vis / "FEED") as table:
+        np.testing.assert_array_equal(table.getcol("RECEPTOR_ANGLE"), angles)
+
+
+def compare_same_epoch_antenna_geometry(root, native):
+    work = root / "antenna-horizontal-same-epoch"
+    work.mkdir()
+    source, _ = make_horizontal_fixture(work)
+    vis = work / "same-epoch.ms"
+    with opened(source) as table:
+        fields = table.getcol("FIELD_ID")
+        times = table.getcol("TIME")
+        first, second = [min(times[fields == field]) for field in (0, 1)]
+        keep = ((fields == 0) & (times == first)) | ((fields == 1) & (times == second))
+        selected = table.selectrows(np.flatnonzero(keep).tolist())
+        try:
+            selected.copy(str(vis), deep=True, valuecopy=True).close()
+        finally:
+            selected.close()
+    with opened(vis, True) as table:
+        for column in ("TIME", "TIME_CENTROID"):
+            table.putcol(column, np.full(table.nrows(), first))
+    before = snapshot(vis)
+    options = controls(vis) | dict(xaxis="channel", yaxis="ant-elevation", field="",
+                                   antenna="A0&A1;A0&A2", spw="0:1~3", expformat="txt")
+    expected, actual = (work / f"together.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    assert native(**options, plotfile=str(actual)) is None
+    joint_casa, joint_native = rows(expected), rows(actual)
+    assert len(joint_casa) == len(joint_native) == 30
+    assert {point[9] for point in joint_native} == {f"{first:.3f}"}
+    isolated = []
+    cached = []
+    for field in ("0", "1"):
+        separate = work / f"field-{field}.casa.txt"
+        assert reference(**(options | dict(field=field)), plotfile=str(separate)) is None
+        selected = rows(separate)
+        native_field = [point for point in joint_native if point[4] == field]
+        assert len(native_field) == len(selected) == 15
+        for actual_point, expected_point in zip(native_field, selected, strict=True):
+            assert (actual_point[0], actual_point[2:]) == (expected_point[0], expected_point[2:])
+        isolated.append([float(point[1]) for point in selected])
+        cached.append([float(point[1]) for point in joint_casa if point[4] == field])
+        np.testing.assert_allclose([float(point[1]) for point in native_field], isolated[-1],
+                                   rtol=1.2e-5, atol=1e-7)
+    np.testing.assert_allclose([values[0] for values in isolated], [82.98457, 75.14170],
+                               rtol=1.2e-5)
+    np.testing.assert_array_equal(cached, [isolated[0], isolated[0]])
+    verify_source(vis, before)
+    print("equal-time-fields: 30 native points agree with the separate CASA selections; "
+          "CASA reuses the first field's coordinates in a joint selection", flush=True)
 
 
 def compare_flags_and_calibration(root, native, vis):
@@ -1054,7 +1162,8 @@ def main():
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes",
-                                           "averaged-coordinates", "array-horizontal-axes"))
+                                           "averaged-coordinates", "array-horizontal-axes",
+                                           "antenna-horizontal-axes", "antenna-horizontal-same-epoch"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1073,6 +1182,10 @@ def main():
             compare_averaged_coordinates(root, native)
         if args.only in (None, "array-horizontal-axes"):
             compare_array_horizontal_axes(root, native)
+        if args.only in (None, "antenna-horizontal-axes"):
+            compare_antenna_horizontal_axes(root, native)
+        if args.only in (None, "antenna-horizontal-same-epoch"):
+            compare_same_epoch_antenna_geometry(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)

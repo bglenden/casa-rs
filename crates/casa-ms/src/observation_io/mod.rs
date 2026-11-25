@@ -28,6 +28,7 @@ use std::path::Path;
 
 use casa_observation::{Observation, ObservationError};
 
+pub(crate) use msv2::catalogue::{Feeds, read_feeds};
 pub use msv2::{MainRowKeys, Msv2Cursor, Msv2Observation};
 #[cfg(feature = "msv4")]
 pub use msv4::{

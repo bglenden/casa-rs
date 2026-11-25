@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "979cc3cc94892a80950ab57e0e26350b59d1b7e5",
+  "source_revision": "979cc3cc94892a80950ab57e0e26350b59d1b7e5",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only antenna-horizontal-axes --work <new-dir> --native-bin <msexplore>",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "Selected Channel versus antenna azimuth, elevation and feed parallactic angle on the reversed two-field MeasurementSet. Two selected baselines use three channels, including one flagged on both baselines. The parallactic-angle plots test a nonzero first receptor, a right beam-waveguide mount and dual-correlation selection. The feed parallactic angle cases use CASA's ant-parang and ant-parallacticangle aliases.",
+  "result": "passed",
+  "baseline_result": "The native public task refuses the unsupported antenna azimuth axis.",
+  "text_exports": 4,
+  "points": 720,
+  "figures": 1,
+  "rendered_coordinates": 180,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "additional_command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only antenna-horizontal-same-epoch --work <new-dir> --native-bin <msexplore>",
+  "independent_same_epoch_points": 30
+}

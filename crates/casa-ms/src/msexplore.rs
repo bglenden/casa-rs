@@ -434,6 +434,15 @@ pub enum MsAxis {
     HourAngle,
     /// Parallactic-angle geometry axis.
     ParallacticAngle,
+    /// Azimuth in degrees at each antenna position.
+    #[serde(rename = "ant-azimuth")]
+    AntennaAzimuth,
+    /// Elevation in degrees at each antenna position.
+    #[serde(rename = "ant-elevation")]
+    AntennaElevation,
+    /// Feed parallactic angle in degrees including the first receptor angle.
+    #[serde(rename = "ant-parangle")]
+    AntennaParallacticAngle,
     /// Per-sample weight axis.
     Weight,
     /// Visibility amplitude multiplied by the buffer's correlation weight.
@@ -494,6 +503,9 @@ impl MsAxis {
             Self::Elevation => "elevation",
             Self::HourAngle => "hour_angle",
             Self::ParallacticAngle => "parallactic_angle",
+            Self::AntennaAzimuth => "ant-azimuth",
+            Self::AntennaElevation => "ant-elevation",
+            Self::AntennaParallacticAngle => "ant-parangle",
             Self::Weight => "weight",
             Self::WeightedAmplitude => "weighted_amplitude",
             Self::Sigma => "sigma",
@@ -543,6 +555,9 @@ impl MsAxis {
             Self::Elevation => "Elevation",
             Self::HourAngle => "Hour Angle",
             Self::ParallacticAngle => "Parallactic Angle",
+            Self::AntennaAzimuth => "Ant-Azimuth",
+            Self::AntennaElevation => "Ant-Elevation",
+            Self::AntennaParallacticAngle => "Ant-ParAngle",
             Self::Weight => "Weight",
             Self::WeightedAmplitude => "Wt*Amp",
             Self::Sigma => "Sigma",
@@ -593,6 +608,11 @@ impl MsAxis {
             "hourang" | "hourangle" | "hour_angle" | "hour-angle" => Ok(Self::HourAngle),
             "parang" | "parangle" | "parallactic_angle" | "parallactic-angle" => {
                 Ok(Self::ParallacticAngle)
+            }
+            "ant-azimuth" => Ok(Self::AntennaAzimuth),
+            "ant-elevation" => Ok(Self::AntennaElevation),
+            "ant-parang" | "ant-parangle" | "ant-parallacticangle" => {
+                Ok(Self::AntennaParallacticAngle)
             }
             "wt" | "weight" => Ok(Self::Weight),
             "wt*amp" | "weighted_amplitude" => Ok(Self::WeightedAmplitude),
@@ -650,6 +670,13 @@ impl MsAxis {
         matches!(
             self,
             Self::Azimuth | Self::Elevation | Self::HourAngle | Self::ParallacticAngle
+        )
+    }
+
+    fn is_antenna_horizontal(self) -> bool {
+        matches!(
+            self,
+            Self::AntennaAzimuth | Self::AntennaElevation | Self::AntennaParallacticAngle
         )
     }
 
@@ -1969,6 +1996,7 @@ impl MsPlotSpec {
             if !supported_y
                 && !y_axis.is_interval_or_wavelength()
                 && !y_axis.is_row_identifier()
+                && !y_axis.is_antenna_horizontal()
                 && !(pointing && (y_axis.is_pointing() || y_axis == MsAxis::Time))
             {
                 return Err(format!(
@@ -4257,6 +4285,21 @@ fn build_generic_visibility_scatter(
     let array_horizontal = calibration.is_some_and(|input| input.rows.is_none())
         && spec.y_axes.len() == 1
         && plotms_row_axes::array_horizontal_pair(spec.x_axis, spec.y_axis());
+    let antenna_horizontal = spec
+        .y_axes
+        .iter()
+        .copied()
+        .any(MsAxis::is_antenna_horizontal);
+    if antenna_horizontal
+        && (calibration.is_none_or(|input| input.rows.is_some())
+            || spec.x_axis != MsAxis::Channel
+            || spec.y_axes.len() != 1
+            || uses_extended_averaging(spec)
+            || spec.averaging.avgchannel.is_some_and(|width| width > 1)
+            || spec.iteration.iteraxis.is_some())
+    {
+        return Err("This PlotMS antenna horizontal axis combination is pending (#1032)".into());
+    }
     let metadata_pair = if pointing.is_some() {
         Some(plotms_ordinates::PointDimensions {
             channel: false,
@@ -4329,6 +4372,7 @@ fn build_generic_visibility_scatter(
     let order_ordinate_list = iterated_ordinate_list || calibrated_ordinate_list;
     let use_iterator_order = needs_row_axes
         || array_horizontal
+        || antenna_horizontal
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
@@ -4500,7 +4544,8 @@ fn build_generic_visibility_scatter(
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("load_aux_columns", &mut checkpoint_started);
     }
-    let derived_engine = if spec.x_axis.uses_derived_geometry()
+    let derived_engine = if antenna_horizontal
+        || spec.x_axis.uses_derived_geometry()
         || spec
             .y_axes
             .iter()
@@ -4521,6 +4566,9 @@ fn build_generic_visibility_scatter(
     };
     let mean_antenna_position = array_geometry_axis
         .map(|_| plotms_row_axes::mean_antenna_position(ms))
+        .transpose()?;
+    let antenna_axes = antenna_horizontal
+        .then(|| plotms_row_axes::AntennaAxes::read(ms, spec.y_axis()))
         .transpose()?;
     let geometry_dedup_required = !use_ordinate_masks
         && array_geometry_axis.is_none()
@@ -4659,7 +4707,19 @@ fn build_generic_visibility_scatter(
     let mut ordinate_points = (use_ordinate_masks || metadata_pair.is_some())
         .then(plotms_ordinates::CollapsedPointMask::default);
     let mut array_geometry_value = None;
-    for (row_slot, _) in row_numbers.iter().enumerate() {
+    let antenna_visits = antenna_axes
+        .as_ref()
+        .map(|axes| axes.visits(&buffer_starts));
+    let ordinary_rows = if antenna_horizontal {
+        0
+    } else {
+        row_numbers.len()
+    };
+    let visits = antenna_visits
+        .into_iter()
+        .flatten()
+        .chain((0..ordinary_rows).map(|row_slot| (row_slot, None)));
+    for (visit_index, (row_slot, antenna_visit)) in visits.enumerate() {
         if let Some(mask) = &mut ordinate_points {
             mask.begin_row(row_slot, buffer_starts[row_slot]);
         }
@@ -4835,6 +4895,7 @@ fn build_generic_visibility_scatter(
             continue;
         }
         let correlation_required = metadata_pair.is_some()
+            || antenna_horizontal
             || spec.x_axis.uses_correlation_slots()
             || spec
                 .y_axes
@@ -4889,6 +4950,21 @@ fn build_generic_visibility_scatter(
                 position.clone(),
             )?);
         }
+        let antenna_geometry = antenna_axes
+            .as_ref()
+            .zip(antenna_visit)
+            .map(|(axes, visit)| {
+                axes.value(
+                    derived_engine
+                        .as_ref()
+                        .expect("antenna horizontal geometry engine"),
+                    visit.antenna,
+                    selected_times[visit.buffer_start],
+                    selected_field_ids[visit.buffer_start],
+                    spw_id,
+                )
+            })
+            .transpose()?;
         let spectral_context = resolve_spectral_context(
             spec,
             spw_id,
@@ -4914,7 +4990,12 @@ fn build_generic_visibility_scatter(
                 correlation,
             )
         };
-        for (corr_index, corr_label) in &selected_correlations {
+        let correlation_visits = if antenna_horizontal {
+            1
+        } else {
+            selected_correlations.len()
+        };
+        for (corr_index, corr_label) in &selected_correlations[..correlation_visits] {
             let grouping_started = timing_enabled.then(Instant::now);
             let statistics = statistics_kinds.map(|kinds| {
                 plotms_columns::ChannelStatistics::from_bins(
@@ -5032,6 +5113,9 @@ fn build_generic_visibility_scatter(
                 }
                 let axis_started = timing_enabled.then(Instant::now);
                 let axis_value = |axis_slot, axis| {
+                    if antenna_horizontal && axis == spec.y_axis() {
+                        return Ok(antenna_geometry);
+                    }
                     if array_geometry_axis == Some(axis) {
                         return Ok(array_geometry_value);
                     }
@@ -5102,6 +5186,11 @@ fn build_generic_visibility_scatter(
                             selected_correlations[point.correlation].0,
                             &channel_bins[point.channel],
                         )
+                    } else if let Some(visit) = antenna_visit {
+                        let flat = visit.antenna * channel_bins.len() + bin.ordinal;
+                        let correlation =
+                            selected_correlations[flat % selected_correlations.len()].0;
+                        (row_slot, correlation, bin)
                     } else {
                         (row_slot, *corr_index, bin)
                     };
@@ -5170,7 +5259,11 @@ fn build_generic_visibility_scatter(
                         series.plotms_metadata.push(MsScatterPlotMsMetadata {
                             channel: point_bin.display_channel(),
                             average_time: None,
-                            averaging_group: use_iterator_order.then_some(point_row_slot),
+                            averaging_group: use_iterator_order.then_some(if antenna_horizontal {
+                                visit_index
+                            } else {
+                                point_row_slot
+                            }),
                         });
                     }
                     if let Some(started) = push_started {
@@ -5193,13 +5286,15 @@ fn build_generic_visibility_scatter(
             }
         }
 
-        for panel_key in row_panels {
-            if let Some(panel) = panels.get_mut(&panel_key) {
-                panel.contributing_rows += 1;
+        if antenna_visit.is_none_or(|visit| visit.first_for_row) {
+            for panel_key in row_panels {
+                if let Some(panel) = panels.get_mut(&panel_key) {
+                    panel.contributing_rows += 1;
+                }
             }
-        }
-        if row_contributed {
-            contributing_rows += 1;
+            if row_contributed {
+                contributing_rows += 1;
+            }
         }
     }
     if timing_enabled {
@@ -5221,7 +5316,11 @@ fn build_generic_visibility_scatter(
         .clone()
         .or_else(|| spec.preset.map(|preset| preset.display_name().to_string()))
         .unwrap_or_else(|| {
-            let relation = if metadata_pair.is_some() { "vs." } else { "vs" };
+            let relation = if metadata_pair.is_some() || antenna_horizontal {
+                "vs."
+            } else {
+                "vs"
+            };
             format!(
                 "{} {relation} {}",
                 spec.y_axis().display_name(),
@@ -5278,6 +5377,7 @@ fn build_generic_visibility_scatter(
                 series.sort_by_key(|entry| entry.y_index);
                 if needs_row_axes
                     || array_horizontal
+                    || antenna_horizontal
                     || pointing.is_some()
                     || raw_symbols.is_some()
                     || phase_shift.is_some()
@@ -7633,6 +7733,7 @@ fn axis_label(axis: MsAxis) -> String {
         MsAxis::Elevation => "Elevation (deg)".to_string(),
         MsAxis::HourAngle => "Hour Angle (hours)".to_string(),
         MsAxis::ParallacticAngle => "Parallactic Angle (deg)".to_string(),
+        axis if axis.is_antenna_horizontal() => format!("{} (deg)", axis.display_name()),
         MsAxis::Amplitude => "Amplitude".to_string(),
         MsAxis::Phase => "Phase (deg)".to_string(),
         MsAxis::Real => "Real".to_string(),

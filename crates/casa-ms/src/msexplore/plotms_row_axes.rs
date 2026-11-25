@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
-//! Unaveraged identifiers from the selected MeasurementSet and its iterator.
+//! Unaveraged identifiers and geometry on selected MeasurementSet buffers.
 
 use std::collections::HashMap;
 
@@ -11,6 +11,7 @@ use super::{
     selected_i32_values, uses_extended_averaging,
 };
 use crate::derived::engine::MsCalEngine;
+use crate::observation_io::{Feeds, read_feeds};
 use crate::subtables::get_string;
 use crate::{MeasurementSet, SubtableId};
 
@@ -32,6 +33,101 @@ pub(super) fn metadata_pair(spec: &MsPlotSpec) -> Option<PointDimensions> {
 
 pub(super) fn array_horizontal_pair(x: MsAxis, y: MsAxis) -> bool {
     x == MsAxis::Channel && y.uses_derived_geometry()
+}
+
+pub(super) struct AntennaAxes {
+    axis: MsAxis,
+    count: usize,
+    feeds: Option<Feeds>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct AntennaVisit {
+    pub(super) antenna: usize,
+    pub(super) buffer_start: usize,
+    pub(super) first_for_row: bool,
+}
+
+impl AntennaAxes {
+    pub(super) fn read(ms: &MeasurementSet, axis: MsAxis) -> Result<Self, String> {
+        let antenna = ms.antenna().map_err(|error| error.to_string())?;
+        let feeds = (axis == MsAxis::AntennaParallacticAngle)
+            .then(|| read_feeds(ms))
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            axis,
+            count: antenna.row_count(),
+            feeds,
+        })
+    }
+
+    pub(super) fn visits<'a>(
+        &self,
+        buffer_starts: &'a [bool],
+    ) -> impl Iterator<Item = (usize, Option<AntennaVisit>)> + use<'a> {
+        let starts = buffer_starts
+            .iter()
+            .enumerate()
+            .filter_map(|(row, &start)| start.then_some(row));
+        let ends = starts
+            .clone()
+            .skip(1)
+            .chain(std::iter::once(buffer_starts.len()));
+        let antenna_count = self.count;
+        starts.zip(ends).flat_map(move |(start, end)| {
+            let row_count = end - start;
+            (0..antenna_count).map(move |antenna| {
+                // The antenna axis spans the subtable, while export metadata
+                // indexes the selected baseline rows cyclically in this buffer.
+                (
+                    start + antenna % row_count,
+                    Some(AntennaVisit {
+                        antenna,
+                        buffer_start: start,
+                        first_for_row: antenna < row_count,
+                    }),
+                )
+            })
+        })
+    }
+
+    pub(super) fn value(
+        &self,
+        engine: &MsCalEngine,
+        antenna: usize,
+        time: f64,
+        field_id: i32,
+        spw: i32,
+    ) -> Result<f64, String> {
+        let field = usize::try_from(field_id)
+            .map_err(|_| format!("invalid FIELD_ID {field_id} for {} axis", self.axis))?;
+        let value = match self.axis {
+            MsAxis::AntennaAzimuth | MsAxis::AntennaElevation => engine
+                .azel(time, field, antenna)
+                .map(|(azimuth, elevation)| {
+                    if self.axis == MsAxis::AntennaAzimuth {
+                        normalize_signed_degrees(azimuth.to_degrees())
+                    } else {
+                        elevation.to_degrees()
+                    }
+                }),
+            MsAxis::AntennaParallacticAngle => {
+                let receptor = self
+                    .feeds
+                    .as_ref()
+                    .and_then(|feeds| feeds.receptors(antenna as i32, 0, spw))
+                    .and_then(|receptors| receptors.angles.first())
+                    .map_or(0.0, |angle| angle.value() as f32);
+                // The visibility iterator adds receptor zero in single precision.
+                engine
+                    .iterator_feed_parallactic_angle(time, field, antenna)
+                    .map(|angle| f64::from(angle as f32 + receptor).to_degrees())
+            }
+            _ => unreachable!("only antenna horizontal axes use the antenna grid"),
+        };
+        value.map_err(|error| error.to_string())
+    }
 }
 
 pub(super) fn uses_scan_row_iteration(spec: &MsPlotSpec) -> bool {

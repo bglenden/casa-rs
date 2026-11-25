@@ -440,6 +440,9 @@ pub(super) fn name(axis: MsAxis) -> &'static str {
         MsAxis::Elevation => "Elevation",
         MsAxis::HourAngle => "HourAngle",
         MsAxis::ParallacticAngle => "ParAngle",
+        MsAxis::AntennaAzimuth | MsAxis::AntennaElevation | MsAxis::AntennaParallacticAngle => {
+            axis.display_name()
+        }
         MsAxis::Weight => "Wt",
         MsAxis::Sigma => "Sigma",
         MsAxis::WeightSpectrum => "WtSp",
@@ -456,7 +459,9 @@ fn coordinate(axis: MsAxis, value: f64) -> String {
     match axis {
         MsAxis::Time => format!("{value:.3}"),
         MsAxis::Frequency => format!("{:.9}", value / 1e9),
-        MsAxis::AntRa | MsAxis::AntDec => format!("{value:.5}"),
+        MsAxis::AntRa | MsAxis::AntDec | MsAxis::AntennaAzimuth | MsAxis::AntennaElevation => {
+            format!("{value:.5}")
+        }
         _ => significant(value),
     }
 }
