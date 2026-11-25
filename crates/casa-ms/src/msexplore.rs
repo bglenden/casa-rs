@@ -4429,7 +4429,7 @@ fn build_generic_visibility_scatter(
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1);
     let mut phase_shift = calibration
         .and_then(|input| input.phasecenter.as_ref())
-        .map(plotms_phasecenter::PhaseCenterShift::new);
+        .map(|target| plotms_phasecenter::PhaseCenterShift::new(ms, target));
     let channel_derived = calibration.is_some_and(|input| {
         input.rows.is_none() && plotms_columns::uses_channel_derived(spec, input.x_data_column)
     });
@@ -4468,18 +4468,22 @@ fn build_generic_visibility_scatter(
                     .iter()
                     .copied()
                     .any(MsAxis::is_interval_or_wavelength));
-    let (row_numbers, buffer_starts) = if use_iterator_order {
+    let (row_numbers, buffer_starts, phase_reference_rows) = if use_iterator_order {
         let descriptions = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
         let ordered = crate::transform::selected_plotms_integration_order(
             ms,
             row_numbers.into_iter().zip(descriptions),
             false,
-            false,
+            phase_shift.is_some(),
         )
         .map_err(|error| error.to_string())?;
-        (ordered.rows, ordered.starts_visibility_buffer)
+        (
+            ordered.rows,
+            ordered.starts_visibility_buffer,
+            ordered.phase_reference_rows,
+        )
     } else {
-        (row_numbers, Vec::new())
+        (row_numbers, Vec::new(), Vec::new())
     };
     let selected_row_count = row_numbers.len();
     if timing_enabled {
@@ -4812,7 +4816,13 @@ fn build_generic_visibility_scatter(
         .into_iter()
         .flatten()
         .chain((0..ordinary_rows).map(|row_slot| (row_slot, None)));
+    let mut phase_reference_time = 0.0;
     for (visit_index, (row_slot, antenna_visit)) in visits.enumerate() {
+        // The visibility iterator uses the first selected epoch of a chunk
+        // for a polynomial FIELD direction throughout that chunk.
+        if phase_reference_rows.get(row_slot) == row_numbers.get(row_slot) {
+            phase_reference_time = selected_times[row_slot];
+        }
         if let Some(mask) = &mut ordinate_points {
             mask.begin_row(row_slot, buffer_starts[row_slot]);
         }
@@ -4870,6 +4880,7 @@ fn build_generic_visibility_scatter(
                 ms,
                 field_id_value,
                 spw_row,
+                phase_reference_time,
                 selected_uvw[row_slot],
                 &mut visibility_grids,
             )?

@@ -141,7 +141,7 @@ def check_refusals(root, native, vis):
     base = request(vis) | dict(expformat="txt", transform=True, phasecenter=PHASE_CENTER)
     for name, options, diagnostic in (
         ("bad-value", dict(phasecenter="J2000 north west"), "Cannot interpret phasecenter"),
-        ("other-frame", dict(phasecenter="GALACTIC 0deg 0deg"), "outside J2000"),
+        ("other-frame", dict(phasecenter="AZELGEO 0deg 0deg"), "outside J2000 and Galactic"),
         ("averaging", dict(averagedata=True, avgchannel="3"), "unaveraged"),
     ):
         output = root / f"{name}.native.txt"
