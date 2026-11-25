@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "21209f70caf162f8113f1c050fc98e3c59c4fe7f",
+  "source_revision": "21209f70caf162f8113f1c050fc98e3c59c4fe7f",
+  "baseline_revision": "3281fbcbb827c005e5a507c53329fb2b69c64616",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only <pointing-partners|pointing-averaging> --work <new-dir> --native-bin <msexplore>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on a four-epoch ALMA POINTING fixture with two baselines, two scans and partially masked visibility cells.",
+  "result": "passed",
+  "baseline_result": "The native public pointing validation refuses both new paired axis partners, metadata-only averaging, and scan iteration.",
+  "paired_text_exports": 6,
+  "paired_figures": 6,
+  "mixed_axis_points": 90,
+  "metadata_averaging_points": 117,
+  "scan_iteration_points": 12,
+  "paired_refusals": 3,
+  "native_invalid_time_requests": 6,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
