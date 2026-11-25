@@ -58,6 +58,7 @@ fn oracle_script() -> PathBuf {
 
 fn run_oracle(python: &Path, arguments: &[&str]) {
     let output = Command::new(python)
+        .current_dir(casa_test_support::test_log_dir())
         .arg(oracle_script())
         .args(arguments)
         .output()

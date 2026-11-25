@@ -39,7 +39,7 @@ casa-coordinates = { path = "../casa-coordinates" }
 casa-imaging-deconvolution = { path = "../casa-imaging-deconvolution" }
 casa-numerics = { path = "../casa-numerics" }
 casa-tables = { path = "../casa-tables" }
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 casa-types = { path = "../casa-types" }
 tempfile = "3"
 tracing-subscriber.workspace = true

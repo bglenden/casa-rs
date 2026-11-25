@@ -170,7 +170,7 @@ record. Locations on this workstation:
     built from the committed state; both take about 15 minutes.
   - **A jumped result:** check the case's `image.summary.json` `backend`. A
     case that names no backend runs on `auto`.
-- **T2 matrix**: `tools/perf/imager/run_workload.py` with
+- **T2 matrix**: `suites/perf/imager/run_workload.py` with
   `CASA_RS_IMPERF_DATA_ROOT` set to a staged copy of the inputs on
   GLENDENNING (`casa-rs-imperformance`, from its NAS mirror) and
   `CASA_RS_CASA_PYTHON`.

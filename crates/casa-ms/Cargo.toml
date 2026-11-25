@@ -57,7 +57,7 @@ quick-xml = { version = "0.42", default-features = false }
 [dev-dependencies]
 casa-simulation = { path = "../casa-simulation" }
 casa-observation = { path = "../casa-observation" }
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 flate2 = "1"
 tar = "0.4"
 
@@ -72,10 +72,6 @@ path = "src/bin/concat.rs"
 [[bin]]
 name = "flagmanager"
 path = "src/bin/flagmanager.rs"
-
-[[bin]]
-name = "ms-read-probe"
-path = "src/bin/ms-read-probe.rs"
 
 [lints]
 workspace = true

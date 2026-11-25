@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Runs the tests of the imaging performance and evidence tools under
-# tools/perf/imager, of the simulation oracle and benchmark tools under
+# suites/perf/imager, of the simulation oracle and benchmark tools under
 # tools/simulation, of the ATM oracle checker under tools/atmosphere, and of
 # the tutorial-parity runner under scripts/tutorial_parity, whose adapters
 # drive the task binaries' command lines, with pytest, which collects both the unittest and the
@@ -44,5 +44,5 @@ if ! "$python_bin" -c 'import pytest, numpy, scipy, matplotlib' 2>/dev/null; the
 fi
 
 PYTHONDONTWRITEBYTECODE=1 MPLBACKEND=Agg \
-  "$python_bin" -m pytest -q -p no:cacheprovider tools/perf/imager tools/simulation tools/atmosphere \
+  "$python_bin" -m pytest -q -p no:cacheprovider suites/perf/imager tools/simulation tools/atmosphere \
   scripts/tutorial_parity "$@"

@@ -14,6 +14,33 @@ if [[ $# -eq 0 ]]; then
   set -- --workspace
 fi
 
+# Opt-in suites stay out of default workspace test runs (`--workspace`/`--all`)
+# because `[workspace] default-members` has no effect when `--workspace` is passed.
+OPT_IN_SUITES=(
+  --exclude casacore-interop
+  --exclude casa-parity
+  --exclude casa-perf-suite
+)
+
+final_args=()
+exclude_opt_in=false
+inserted_excludes=false
+for arg in "$@"; do
+  if [[ "$arg" == "--" ]]; then
+    if "$exclude_opt_in" && ! "$inserted_excludes"; then
+      final_args+=("${OPT_IN_SUITES[@]}")
+      inserted_excludes=true
+    fi
+  elif [[ "$arg" == "--workspace" || "$arg" == "--all" ]]; then
+    exclude_opt_in=true
+  fi
+  final_args+=("$arg")
+done
+if "$exclude_opt_in" && ! "$inserted_excludes"; then
+  final_args+=("${OPT_IN_SUITES[@]}")
+fi
+set -- "${final_args[@]}"
+
 run_doctests() {
   local packages=()
   local scope=("$@")

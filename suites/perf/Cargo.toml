@@ -1,0 +1,76 @@
+[package]
+name = "casa-perf-suite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Opt-in performance benchmarks vs C++ casacore and CASA (internal)"
+repository.workspace = true
+publish = false
+autotests = false
+
+[features]
+default = []
+performance-tests = ["casa-test-support/performance-tests"]
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-coordinates = { path = "../../crates/casa-coordinates" }
+casa-images = { path = "../../crates/casa-images" }
+casa-lattices = { path = "../../crates/casa-lattices" }
+casa-measures-data = { path = "../../crates/casa-measures-data" }
+casa-tables = { path = "../../crates/casa-tables" }
+casa-test-support = { path = "../../dev/casa-test-support" }
+casa-types = { path = "../../crates/casa-types" }
+ndarray.workspace = true
+tempfile = "3"
+
+[build-dependencies]
+pkg-config.workspace = true
+
+[[test]]
+name = "images_perf_vs_cpp"
+path = "tests/images_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "lattice_statistics_perf_vs_cpp"
+path = "tests/lattice_statistics_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "measures_perf_vs_cpp"
+path = "tests/measures_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "quanta_perf_vs_cpp"
+path = "tests/quanta_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "table_measures_perf_vs_cpp"
+path = "tests/table_measures_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "table_quantum_perf_vs_cpp"
+path = "tests/table_quantum_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "tables_perf_vs_cpp"
+path = "tests/tables_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "taql_meas_perf_vs_cpp"
+path = "tests/taql_meas_perf_vs_cpp.rs"
+required-features = ["performance-tests"]
+
+[[test]]
+name = "taql_perf_threshold"
+path = "tests/taql_perf_threshold.rs"
+required-features = ["performance-tests"]

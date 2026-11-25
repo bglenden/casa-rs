@@ -15,12 +15,12 @@ It fails when:
   package (so every launched program is covered by the source scan below);
 - shipped code mentions `casatasks`, `casatools`, `mpicasa`, or a hard-coded
   CASA install (`CASA.app` or a local CASA build environment) on a code line:
-  non-test Rust and scripts under `crates/*/src` and the `casars` Python
-  package.
+  non-test Rust and scripts under shipped crate `src/` directories and the
+  `casars` Python package.
 
 Test code is exempt: `tests/` directories, `tests.rs` / `*_tests.rs` files,
-inline `#[cfg(test)] mod ...` blocks, and the dev-only `casa-test-support`
-crate. Comment lines are exempt so rustdoc may cite upstream CASA sources.
+inline `#[cfg(test)] mod ...` blocks, and dev/test-only crates (`dev/`,
+`suites/`). Comment lines are exempt so rustdoc may cite upstream CASA sources.
 """
 
 from __future__ import annotations
@@ -33,12 +33,19 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_ROOT = REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
-APPLICATIONS_PATH = CONTRACT_ROOT / "application-catalog.json"
-SURFACES_PATH = CONTRACT_ROOT / "parameter-surfaces.json"
 
-# Crates that exist only to support tests (dev-dependencies everywhere).
-TEST_ONLY_CRATES = {"casa-test-support"}
+
+def contract_root() -> Path:
+    surfaces = REPO_ROOT / "surfaces" / "casa-contracts" / "resources"
+    if (surfaces / "application-catalog.json").is_file():
+        return surfaces
+    return REPO_ROOT / "crates" / "casa-provider-contracts" / "resources"
+
+
+# Crates that exist only to support tests/dev/suites.
+TEST_ONLY_CRATES = {"casa-test-support", "casa-dev-tools", "casacore-interop", "casa-parity", "casa-perf-suite"}
+SHIPPED_CRATE_GLOBS = ("crates/*", "libs/*/*", "surfaces/*", "frontends/*")
+ALL_CRATE_GLOBS = (*SHIPPED_CRATE_GLOBS, "dev/*", "suites/*")
 
 BRIDGE_NAME = re.compile(r"casa[-_]task(?![-_]runtime)", re.IGNORECASE)
 RETIRED_PROVIDER_FAMILIES = {"casa_task_adapter"}
@@ -51,15 +58,24 @@ def load(path: Path) -> dict[str, object]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def crate_dirs(globs: tuple[str, ...]) -> list[Path]:
+    dirs: list[Path] = []
+    for pattern in globs:
+        for path in sorted(REPO_ROOT.glob(pattern)):
+            if (path / "Cargo.toml").is_file():
+                dirs.append(path)
+    return dirs
+
+
 def workspace_bin_targets() -> dict[str, set[str]]:
     """Map each workspace cargo package to its bin target names."""
     targets: dict[str, set[str]] = {}
-    for manifest in sorted((REPO_ROOT / "crates").glob("*/Cargo.toml")):
+    for crate in crate_dirs(ALL_CRATE_GLOBS):
+        manifest = crate / "Cargo.toml"
         data = tomllib.loads(manifest.read_text(encoding="utf-8"))
         package = data.get("package", {}).get("name")
         if not package:
             continue
-        crate = manifest.parent
         bins = {str(entry["name"]) for entry in data.get("bin", []) if "name" in entry}
         if (crate / "src" / "main.rs").exists():
             bins.add(package)
@@ -74,7 +90,10 @@ def workspace_bin_targets() -> dict[str, set[str]]:
 def catalog_violations() -> list[str]:
     problems: list[str] = []
     bin_targets = workspace_bin_targets()
-    for entry in load(APPLICATIONS_PATH).get("applications", []):
+    contracts = contract_root()
+    applications_path = contracts / "application-catalog.json"
+    surfaces_path = contracts / "parameter-surfaces.json"
+    for entry in load(applications_path).get("applications", []):
         launch = entry.get("launch", {})
         executable = str(launch.get("executable", ""))
         package = str(launch.get("cargo_package", ""))
@@ -90,7 +109,7 @@ def catalog_violations() -> list[str]:
                     f"application {entry.get('id')!r} launches through CASA bridge "
                     f"{field}={value!r}"
                 )
-    for surface in load(SURFACES_PATH).get("surfaces", []):
+    for surface in load(surfaces_path).get("surfaces", []):
         invocation = str(surface.get("execution", {}).get("invocation_name", ""))
         if BRIDGE_NAME.search(invocation):
             problems.append(
@@ -105,11 +124,13 @@ def catalog_violations() -> list[str]:
 
 
 def is_test_path(path: Path) -> bool:
-    relative = path.relative_to(REPO_ROOT / "crates")
+    relative = path.relative_to(REPO_ROOT)
     parts = relative.parts
-    if parts[0] in TEST_ONLY_CRATES:
+    if parts[0] in {"dev", "suites"}:
         return True
-    if any(part in {"tests", "benches", "examples"} for part in parts[1:-1]):
+    if any(part in TEST_ONLY_CRATES for part in parts):
+        return True
+    if any(part in {"tests", "benches", "examples"} for part in parts):
         return True
     return (
         path.name == "tests.rs"
@@ -151,13 +172,21 @@ SCRIPT_COMMENT_PREFIX = {".py": "#", ".sh": "#", ".js": "//", ".mjs": "//", ".ts
 
 def shipped_sources() -> list[tuple[Path, list[tuple[int, str]], str]]:
     sources: list[tuple[Path, list[tuple[int, str]], str]] = []
-    for path in sorted((REPO_ROOT / "crates").glob("*/src/**/*.rs")):
-        if not is_test_path(path):
-            sources.append((path, production_lines(path), "//"))
-    script_roots = [
-        *sorted((REPO_ROOT / "crates").glob("*/src")),
+    shipped_crates = crate_dirs(SHIPPED_CRATE_GLOBS)
+    for crate in shipped_crates:
+        src_dir = crate / "src"
+        if not src_dir.is_dir():
+            continue
+        for path in sorted(src_dir.rglob("*.rs")):
+            if not is_test_path(path):
+                sources.append((path, production_lines(path), "//"))
+    script_roots = [crate / "src" for crate in shipped_crates if (crate / "src").is_dir()]
+    for py_dir in (
         REPO_ROOT / "crates" / "casars-python" / "python" / "casars",
-    ]
+        REPO_ROOT / "frontends" / "casars-python" / "python" / "casars",
+    ):
+        if py_dir.is_dir():
+            script_roots.append(py_dir)
     for root in script_roots:
         for path in sorted(root.rglob("*")):
             prefix = SCRIPT_COMMENT_PREFIX.get(path.suffix)

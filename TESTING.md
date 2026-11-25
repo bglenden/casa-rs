@@ -59,6 +59,17 @@ Verification: just docs-check (policy); applicable domain gates below (code)
   libtest process could attach unrelated imaging work to a progress test;
   without nextest the script falls back to serial `cargo test`
   (`RUST_TEST_THREADS=1`).
+- Opt-in suites live under `suites/` (`suites/casacore-interop`,
+  `suites/casa-parity`, and `suites/perf` / `casa-perf-suite`). Because
+  `[workspace] default-members` has no effect when `--workspace` is passed,
+  `scripts/test-workspace.sh` passes explicit `--exclude` flags for the
+  `suites/*` packages whenever `--workspace` or `--all` is used; invoke
+  them explicitly (e.g., `cargo test -p casacore-interop --features cpp-interop-tests --tests`
+  or `cargo test -p casa-perf-suite --release --features performance-tests --tests`).
+- Developer-only binaries (`ms-read-probe`, `package_snapshot`, `synthetic-ms`)
+  live in `dev/casa-dev-tools`, and shared C++/oracle infrastructure lives in
+  `dev/casa-test-support`. Disposable test/oracle logs (including CASA Python
+  probe logs) route under `target/test-logs/`.
 
 ## Mocking policy
 
@@ -76,7 +87,7 @@ Verification: just docs-check (policy); applicable domain gates below (code)
   local gate. Use `just verify` for an explicitly required milestone or
   release.
 - Imaging T1 end-to-end tier: `CARGO_INCREMENTAL=0 cargo test -p casars-imager --test t1`
-- Performance and evidence tool tests (`tools/perf/imager`, pytest):
+- Performance and evidence tool tests (`suites/perf/imager`, pytest):
   `just perf-tools-test`. CI's `perf_tools` job enforces them; `just quick`
   runs them when the host's `python3` has pytest, numpy, scipy and
   matplotlib, and prints a skip notice otherwise. A tool whose casa-rs inputs
@@ -84,6 +95,11 @@ Verification: just docs-check (policy); applicable domain gates below (code)
 - Smoke/release gate: `just smoke`
 - Blocking C++ interop release gate: `just release-cpp-interop`
 - Informational release performance suite: `just release-perf`
+- Pinned reorganization baseline gates: `just arch-check`, `bash scripts/docs-check.sh`,
+  `python3 scripts/check-file-length.py`, `./scripts/check-spdx.sh`,
+  `python3 -B scripts/test-task-cli-hosts.py` (all 24 host executables), and
+  `CARGO_INCREMENTAL=0 cargo test -p casacore-interop --features cpp-interop-tests --test tables_locking_interop`
+  when `pkg-config casacore` is present.
 - Suite install gate: `scripts/test-install-suite.sh [--hide-checkout]`
   builds the release executables and wheel, installs the suite into a
   temporary root, and checks its commands on `PATH`, a task run from its
@@ -358,7 +374,7 @@ summarizes the modes and revisions of the archives in
 logical-capacity test and the explicit release throughput guard:
 
 - `cargo test -p casa-images fifty_gib_spectral_cube_streams_selected_planes_with_bounded_storage -- --nocapture`
-- `CASA_RS_CUBE_PERF_DIR=/path/to/volume cargo test -p casa-test-support --features performance-tests --test images_perf_vs_cpp full_spectral_cube_plane_io_tracks_raw_disk_speed --release -- --ignored --nocapture`
+- `CASA_RS_CUBE_PERF_DIR=/path/to/volume cargo test -p casa-perf-suite --features performance-tests --test images_perf_vs_cpp full_spectral_cube_plane_io_tracks_raw_disk_speed --release -- --ignored --nocapture`
 
 The throughput guard writes and reads every plane of a 50 GiB raw baseline
 and a 50 GiB tiled image on the selected volume, which needs at least 110 GiB
@@ -395,7 +411,7 @@ does not stand in for a scientific comparison.
   rows agree with CASA.
 - **T2, representative** (hours; when a row's code changes): the matrix in
   `resources/imaging-architecture/representative-science-matrix.json` run by
-  `tools/perf/imager/run_workload.py`, the timed checkpoints and the rows
+  `suites/perf/imager/run_workload.py`, the timed checkpoints and the rows
   judged against CASA's own time. The #648 results table records the
   accepted figures and their exceptions.
 

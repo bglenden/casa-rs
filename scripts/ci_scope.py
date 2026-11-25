@@ -17,9 +17,11 @@ ROOT_DOCS = {
     "TESTING.md",
 }
 PERF_PATHS = (
-    "scripts/tutorial_parity/", "tools/atmosphere/", "tools/perf/imager/",
+    "scripts/tutorial_parity/", "tools/atmosphere/", "suites/perf/imager/",
     "tools/simulation/",
 )
+CRATE_AREAS = {"src", "resources", "tests", "examples", "benches"}
+TWO_SEGMENT_ROOTS = {"crates", "surfaces", "frontends", "dev", "suites"}
 
 
 @dataclass(frozen=True)
@@ -87,13 +89,15 @@ def affected_scope(paths):
         elif path.startswith(("resources/casa-compat/", "tools/casa-compat/")):
             # The architecture check verifies compatibility references and pins.
             continue
-        elif parts[:3] == ["crates", "casars-python", "python"]:
-            python = True
         elif (
-            len(parts) >= 4 and parts[0] == "crates"
-            and parts[2] in {"src", "resources", "tests", "examples", "benches"}
+            parts[:3] == ["crates", "casars-python", "python"]
+            or parts[:3] == ["frontends", "casars-python", "python"]
         ):
+            python = True
+        elif len(parts) >= 4 and parts[0] in TWO_SEGMENT_ROOTS and parts[2] in CRATE_AREAS:
             cargo_paths.append(("/".join(parts[:2]), parts[2]))
+        elif len(parts) >= 5 and parts[0] == "libs" and parts[3] in CRATE_AREAS:
+            cargo_paths.append(("/".join(parts[:3]), parts[3]))
         else:
             return full_scope()
 

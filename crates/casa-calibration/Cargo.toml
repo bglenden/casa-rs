@@ -53,7 +53,7 @@ casa-ms = { path = "../casa-ms", features = ["msv4"] }
 casa-observation = { path = "../casa-observation" }
 flate2 = "1"
 tar = "0.4"
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 ndarray.workspace = true
 
 [[bin]]

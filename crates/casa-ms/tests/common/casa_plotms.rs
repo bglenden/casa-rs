@@ -96,6 +96,7 @@ fn probe_casa_python(program: PathBuf) -> Option<CasaPython> {
 
 fn python_can_import(program: &PathBuf, module: &str) -> bool {
     Command::new(program)
+        .current_dir(casa_test_support::test_log_dir())
         .arg("-c")
         .arg(format!("import {module}"))
         .output()
@@ -110,6 +111,7 @@ ok = hasattr(casatasks, "plotms") or importlib.util.find_spec("casaplotms") is n
 print("1" if ok else "0")
 "#;
     Command::new(program)
+        .current_dir(casa_test_support::test_log_dir())
         .arg("-c")
         .arg(script)
         .output()

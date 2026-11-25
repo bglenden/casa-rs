@@ -46,11 +46,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 sha2 = "0.10"
-casa-test-support = { path = "../casa-test-support" }
+casa-test-support = { path = "../../dev/casa-test-support" }
 flate2 = "1"
 tar = "0.4"
 tracing-subscriber.workspace = true
-
-[[bin]]
-name = "synthetic-ms"
-path = "bin/synthetic-ms.rs"

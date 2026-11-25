@@ -449,7 +449,7 @@ if [[ "$tmp_root" == /Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_del
     cat >"$marker" <<'EOF'
 This directory contains generated casa-rs ImPerformance artifacts.
 It is safe to delete when no benchmark run is actively using it.
-Recreate the contents by rerunning the relevant tools/perf/imager command.
+Recreate the contents by rerunning the relevant suites/perf/imager command.
 EOF
   fi
 fi
@@ -494,7 +494,7 @@ PY
     : >"$stderr_file"
     tail -f "$stderr_file" >&2 &
     local tail_pid="$!"
-    python3 "$repo_root/tools/perf/imager/perf_harness/subprocesses.py" -- "$@" >/dev/null 2>>"$stderr_file" &
+    python3 "$repo_root/suites/perf/imager/perf_harness/subprocesses.py" -- "$@" >/dev/null 2>>"$stderr_file" &
     local command_pid="$!"
     local heartbeat_start="$SECONDS"
     local last_heartbeat="$SECONDS"
@@ -510,7 +510,7 @@ PY
     kill "$tail_pid" 2>/dev/null
     wait "$tail_pid" 2>/dev/null
   else
-    python3 "$repo_root/tools/perf/imager/perf_harness/subprocesses.py" -- "$@" >/dev/null 2>"$stderr_file"
+    python3 "$repo_root/suites/perf/imager/perf_harness/subprocesses.py" -- "$@" >/dev/null 2>"$stderr_file"
     status="$?"
   fi
   set -e
@@ -808,7 +808,7 @@ echo "Rust stage medians (milliseconds):"
 if [[ "$skip_rust_enabled" == "1" ]]; then
   echo "  skipped=1"
 else
-  python3 "$repo_root/tools/perf/imager/perf_harness/stages.py" rust-stage-medians \
+  python3 "$repo_root/suites/perf/imager/perf_harness/stages.py" rust-stage-medians \
     "$tmpdir"/rust-*.stderr
 fi
 echo
@@ -1195,7 +1195,7 @@ if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_cas
   CASA_RS_BENCH_MIN_PSFFRACTION="$min_psf_fraction" \
   CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
   CASA_RS_BENCH_INTERPOLATION="$interpolation" \
-    "$CASA_RS_CASA_PYTHON" "$repo_root/tools/perf/imager/casa_phase_bench.py" | sed 's/^/  /'
+    "$CASA_RS_CASA_PYTHON" "$repo_root/suites/perf/imager/casa_phase_bench.py" | sed 's/^/  /'
 else
   echo "CASA PySynthesisImager stage medians (milliseconds):"
   echo "  skipped; set IMAGER_BENCH_PHASE_PROBE=1 for CASA phase diagnostics"

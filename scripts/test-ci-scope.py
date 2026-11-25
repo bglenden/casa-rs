@@ -27,10 +27,31 @@ class ScopeTests(unittest.TestCase):
         self.addCleanup(workspace.stop)
 
     def test_prose_and_tool_changes_only_select_relevant_jobs(self):
-        scope = affected_scope(["docs/install.md", "tools/perf/imager/test_run_workload.py"])
+        scope = affected_scope(["docs/install.md", "suites/perf/imager/test_run_workload.py"])
         self.assertEqual(scope.rust, "static")
         self.assertTrue(scope.docs and scope.perf)
         self.assertEqual(scope.python, "none")
+
+    def test_new_workspace_roots_select_owning_packages(self):
+        owners = {
+            "libs/casacore/casa-tables": "casa-tables",
+            "dev/casa-test-support": "casa-test-support",
+            "crates/casa-ms": "casa-ms",
+        }
+        deps = {
+            "casa-tables": set(),
+            "casa-test-support": {"casa-tables"},
+            "casa-ms": {"casa-tables"},
+        }
+        with patch("ci_scope.workspace_packages", return_value=(owners, deps)):
+            scope = affected_scope(["libs/casacore/casa-tables/src/lib.rs"])
+        self.assertEqual(scope.rust, "affected")
+        self.assertEqual(scope.packages.split(), ["casa-ms", "casa-tables", "casa-test-support"])
+
+        with patch("ci_scope.workspace_packages", return_value=(owners, deps)):
+            dev_scope = affected_scope(["dev/casa-test-support/src/lib.rs"])
+        self.assertEqual(dev_scope.rust, "affected")
+        self.assertEqual(dev_scope.packages, "casa-test-support")
 
     def test_rust_source_reaches_direct_consumers(self):
         scope = affected_scope(["crates/casa-calibration/src/lib.rs"])

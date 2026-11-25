@@ -29,6 +29,7 @@ HOSTED_TASKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("simobserve", ()),
     ("simanalyze", ()),
     ("simalma", ()),
+    ("predictcomp", ()),
     ("concat", ()),
     ("tsdimaging", ()),
     ("casars-imager", ()),

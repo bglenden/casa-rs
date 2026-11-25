@@ -35,8 +35,8 @@ cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
   --tier slow-parity \
   --require measurementset/vla/ngc5921.ms
 run_timed_step \
-  "Running casa-test-support release performance suite" \
-  cargo test -p casa-test-support --release --features performance-tests --tests -- --nocapture
+  "Running casa-perf-suite release performance suite" \
+  cargo test -p casa-perf-suite --release --features performance-tests --tests -- --nocapture
 run_timed_step \
   "Running MeasurementSet release performance suite" \
   cargo test -p casa-ms --release --features performance-tests --test ms_perf_vs_cpp -- --nocapture

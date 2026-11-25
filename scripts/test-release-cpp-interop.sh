@@ -39,8 +39,8 @@ cargo run -q -p casa-test-support --bin casatestdata-preflight -- \
   --require unittest/importvla/AS758_C030425.xp1 \
   --require unittest/importvla/AS758_C030426.xp5
 run_timed_step \
-  "Running casa-test-support C++ interop suite" \
-  cargo test -p casa-test-support --features cpp-interop-tests --tests
+  "Running casacore-interop C++ interop suite" \
+  cargo test -p casacore-interop --features cpp-interop-tests --tests
 run_timed_step \
   "Running MeasurementSet C++ interop suite" \
   cargo test -p casa-ms --features cpp-interop-tests \

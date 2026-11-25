@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Keep Rust source files under the line limit.
 
-A file under `crates/` longer than LIMIT lines must be listed in the
-allowlist, and a listed file must leave the list once it is back under the
-limit, so the list only shrinks (#705). Function length is clippy's
+A Rust file under the workspace crate roots (`crates/`, `libs/`, `surfaces/`,
+`frontends/`, `dev/`, `suites/`) longer than LIMIT lines must be listed in
+the allowlist, and a listed file must leave the list once it is back under
+the limit, so the list only shrinks (#705). Function length is clippy's
 `too_many_lines` lint (`clippy.toml`).
 
   python3 scripts/check-file-length.py           # check
@@ -18,14 +19,19 @@ import sys
 LIMIT = 1500
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALLOWLIST = ROOT / "resources" / "file-length-allowlist.json"
+SCAN_ROOTS = ("crates", "libs", "surfaces", "frontends", "dev", "suites")
 
 
 def lengths():
-    for path in sorted((ROOT / "crates").rglob("*.rs")):
-        if "target" in path.relative_to(ROOT).parts:
+    for root_name in SCAN_ROOTS:
+        scan_root = ROOT / root_name
+        if not scan_root.exists():
             continue
-        with path.open(encoding="utf-8") as handle:
-            yield path.relative_to(ROOT).as_posix(), sum(1 for _ in handle)
+        for path in sorted(scan_root.rglob("*.rs")):
+            if "target" in path.relative_to(ROOT).parts:
+                continue
+            with path.open(encoding="utf-8") as handle:
+                yield path.relative_to(ROOT).as_posix(), sum(1 for _ in handle)
 
 
 def main():
