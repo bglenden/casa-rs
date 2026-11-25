@@ -213,8 +213,11 @@ def test_member_columns_with_different_shapes(native_dataset, tmp_path, creator,
         assert table.done()
 
 
-@pytest.mark.parametrize("external", [False, True])
-def test_saved_reference_member(native_dataset, tmp_path, creator, external):
+@pytest.mark.parametrize(
+    ("external", "copy"),
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_saved_reference_member(native_dataset, tmp_path, creator, external, copy):
     casa = pinned_casa()
     first = tmp_path / "first.ms"
     copytree(native_dataset, first)
@@ -231,7 +234,9 @@ def test_saved_reference_member(native_dataset, tmp_path, creator, external):
     tool = creator.ms()
     if external and creator is casa:
         pytest.skip("CASA moves the member and strands its relative parent link")
-    assert tool.createmultims(str(output), [str(first), str(view_name)], [])
+    assert tool.createmultims(
+        str(output), [str(first), str(view_name)], [], copysubtables=copy,
+    )
     assert tool.nrow() == offset + 3
     assert tool.done()
     assert not first.exists()
@@ -243,6 +248,18 @@ def test_saved_reference_member(native_dataset, tmp_path, creator, external):
         for row, value in enumerate(expected, start=offset):
             np.testing.assert_array_equal(table.getcell("DATA", row), value, strict=True)
         assert table.done()
+        if copy and not external:
+            # The member view still shares its parent's keyword set. The
+            # ANTENNA copy inside the selected member serves both tables.
+            link = "Table: " + str(relocated / "SUBMSS" / view_name.name / "ANTENNA")
+            for member in (first, view_name):
+                assert table.open(str(relocated / "SUBMSS" / member.name))
+                assert table.getkeyword("ANTENNA") == link
+                assert table.done()
+        if copy and external:
+            assert table.open(str(parent))
+            assert table.getkeyword("ANTENNA") == "Table: " + str(parent / "ANTENNA")
+            assert table.done()
 
 
 def test_relative_member_symlink_and_existing_attachment(native_dataset, tmp_path):
@@ -264,3 +281,38 @@ def test_relative_member_symlink_and_existing_attachment(native_dataset, tmp_pat
         assert reader.open(str(output))
         assert reader.ismultims()
         assert reader.done()
+
+
+def test_subtable_copy_preserves_nested_multims(native_dataset, tmp_path, creator):
+    first, second = members(native_dataset, tmp_path / "parts")
+    third = second.with_name("third.ms")
+    copytree(native_dataset, third)
+    edit_antenna(creator, first, "FIRST")
+    edit_antenna(creator, second, "SECOND")
+    inner = tmp_path / "inner.ms"
+    tool = creator.ms()
+    assert tool.createmultims(str(inner), [str(second), str(third)], [])
+    assert tool.done()
+    output = tmp_path / "out.ms"
+    assert tool.createmultims(
+        str(output), [str(first), str(inner)], [], copysubtables=True,
+    )
+    assert tool.done()
+    nested = output / "SUBMSS" / inner.name
+    for api in (pinned_casa(), tools):
+        tool = api.ms()
+        assert tool.open(str(nested))
+        assert tool.ismultims()
+        assert tool.getreferencedtables() == [
+            str(nested / "SUBMSS" / part.name) for part in (second, third)
+        ]
+        assert tool.done()
+        table = api.table()
+        assert table.open(str(nested))
+        inherited = nested / "SUBMSS" / second.name / "ANTENNA"
+        assert table.getkeyword("ANTENNA") == "Table: " + str(inherited)
+        assert table.done()
+        for path, name in ((nested / "ANTENNA", "FIRST"), (inherited, "SECOND")):
+            assert table.open(str(path))
+            assert table.getcell("NAME", 0) == name
+            assert table.done()

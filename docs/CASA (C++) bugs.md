@@ -11782,6 +11782,11 @@ and a saved reference's parent across the move. The tool releases its own
 affected locks before moving their tables and acquires the requested
 locks on the completed MultiMS (#1030).
 
+When copying subtables into a saved reference that points outside the
+input members, CASA can first rewrite the external parent's keyword set
+and then strand the reference during relocation. casa-rs gives the
+staged member its own selected rows and subtable bindings in that case.
+
 ## MS sorting a transient selection checks a nonexistent table path
 
 In CASA 6.7.6.14, after `ms.select({'rows': [21, 3, 8, 1]})`,

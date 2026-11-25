@@ -130,16 +130,26 @@ fn assemble(stage: Assembly<'_>) -> MsResult<()> {
     } = stage;
     fs::create_dir_all(product.join("SUBMSS")).map_err(invalid)?;
     let first_path = first.path().expect("persisted member");
-    for (index, member) in members.iter_mut().enumerate() {
-        // Two aliases of a single table already share its keyword values.
-        let copy = copy_subtables.is_some() && index != order[0] && member.physical != first_path;
+    let (copy_modes, private_bases) = if copy_subtables.is_some() {
+        copy_modes(members, first_path, locations)?
+    } else {
+        (vec![CopyMode::Move; members.len()], HashSet::new())
+    };
+    for (member, &mode) in members.iter_mut().zip(&copy_modes) {
         let edit = relocation::MemberEdit::prepare(member, locations)?;
-        member.stage(edit, copy, locations)?;
+        let private_base = private_bases.contains(&member.physical);
+        member.stage(edit, mode, private_base, locations)?;
     }
     if let Some(omit) = copy_subtables {
-        for (index, member) in members.iter().enumerate() {
-            if index != order[0] && member.physical != first_path {
-                subtables::copy_from_first(first, &member.target, omit, locks)?;
+        for (member, mode) in members.iter().zip(copy_modes) {
+            if mode != CopyMode::Move {
+                subtables::copy_from_first(
+                    first,
+                    &member.target,
+                    omit,
+                    locks,
+                    mode != CopyMode::CopyNested,
+                )?;
             }
         }
     }
@@ -173,6 +183,52 @@ fn assemble(stage: Assembly<'_>) -> MsResult<()> {
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CopyMode {
+    Move,
+    CopySubtables,
+    CopyNested,
+    Materialize,
+}
+
+fn copy_modes(
+    members: &[Member],
+    first: &Path,
+    locations: &relocation::Locations,
+) -> MsResult<(Vec<CopyMode>, HashSet<PathBuf>)> {
+    let mut modes = Vec::with_capacity(members.len());
+    let mut private_bases = HashSet::new();
+    for member in members {
+        let path = &member.physical;
+        if path == first {
+            modes.push(CopyMode::Move);
+            continue;
+        }
+        let mode = match Table::immediate_part_names(path, path)? {
+            TablePartNames::Plain(_) => CopyMode::CopySubtables,
+            TablePartNames::Reference(_) => {
+                let root = subtables::reference_root(path)?;
+                if locations.contains_key(&root)
+                    && matches!(
+                        Table::immediate_part_names(&root, &root)?,
+                        TablePartNames::Plain(_)
+                    )
+                {
+                    // RefTable keyword writes go to its base. Stage that base
+                    // before changing the view or its inherited keywords.
+                    private_bases.insert(root);
+                    CopyMode::CopySubtables
+                } else {
+                    CopyMode::Materialize
+                }
+            }
+            TablePartNames::Concatenation { .. } => CopyMode::CopyNested,
+        };
+        modes.push(mode);
+    }
+    Ok((modes, private_bases))
+}
+
 struct Member {
     source: PathBuf,
     physical: PathBuf,
@@ -186,19 +242,15 @@ impl Member {
     fn stage(
         &mut self,
         edit: relocation::MemberEdit,
-        copy_subtables: bool,
+        mode: CopyMode,
+        private_base: bool,
         locations: &relocation::Locations,
     ) -> MsResult<()> {
-        if self.source != self.physical && !copy_subtables {
+        if self.source != self.physical && mode == CopyMode::Move {
             relocation::stage_alias(self, locations)?;
-        } else if copy_subtables
-            && !matches!(
-                Table::immediate_part_names(&self.physical, &self.physical)?,
-                TablePartNames::Plain(_)
-            )
-        {
+        } else if mode == CopyMode::Materialize {
             relocation::materialize_member(self, locations)?;
-        } else if copy_subtables || !edit.is_empty() {
+        } else if mode != CopyMode::Move || private_base || !edit.is_empty() {
             copy_locked_table_tree(&self.physical, &self.target).map_err(invalid)?;
             relocation::privatize_descriptor(&self.target)?;
             edit.apply(&self.target)?;

@@ -32,6 +32,7 @@ pub(super) fn copy_from_first(
     target: &Path,
     omit: &[String],
     held: &[casa_tables::TableWriteLock],
+    save_keywords: bool,
 ) -> MsResult<()> {
     let source = first.path().expect("persisted member");
     let mut output = Table::open(TableOptions::new(target))?;
@@ -56,7 +57,9 @@ pub(super) fn copy_from_first(
             output.set_column_keywords(name, target_keys);
         }
     }
-    output.save_metadata_only(TableOptions::new(target))?;
+    if save_keywords {
+        output.save_metadata_only(TableOptions::new(target))?;
+    }
     Ok(())
 }
 
@@ -146,7 +149,7 @@ impl SubtableCopies<'_> {
     }
 }
 
-fn reference_root(path: &Path) -> MsResult<PathBuf> {
+pub(super) fn reference_root(path: &Path) -> MsResult<PathBuf> {
     let mut path = path.to_path_buf();
     for _ in 0..64 {
         let TablePartNames::Reference(parent) = Table::immediate_part_names(&path, &path)? else {

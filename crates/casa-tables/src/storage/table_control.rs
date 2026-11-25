@@ -1233,9 +1233,14 @@ pub(crate) fn write_concat_table_dat(
 ) -> Result<(), StorageError> {
     let mut io = AipsIo::open(path, AipsOpenOption::New)?;
 
-    // Table envelope — version 2 (nrrow as u32).
-    io.putstart("Table", 2)?;
-    io.put_u32(contents.nrrow as u32)?;
+    // BaseTable uses version 3 once the row count exceeds a CASA Int.
+    let wide = contents.nrrow > i32::MAX as u64;
+    io.putstart("Table", if wide { 3 } else { 2 })?;
+    if wide {
+        io.put_u64(contents.nrrow)?;
+    } else {
+        io.put_u32(contents.nrrow as u32)?;
+    }
     io.put_u32(if contents.big_endian { 0 } else { 1 })?;
     io.put_string("ConcatTable")?;
 
@@ -2455,6 +2460,37 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!("table_control_{name}_{nanos}"))
+    }
+
+    #[test]
+    fn concat_descriptor_preserves_wide_row_counts_and_subtable_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("table.dat");
+        let cases = [
+            (i32::MAX as u64, 2),
+            (i32::MAX as u64 + 1, 3),
+            (u32::MAX as u64 + 11, 3),
+        ];
+        for big_endian in [false, true] {
+            for (nrrow, version) in cases {
+                let expected = ConcatTableDatContents {
+                    nrrow,
+                    big_endian,
+                    table_paths: vec!["././SUBMSS/first.ms".into()],
+                    sub_table_names: vec!["ANTENNA".into()],
+                };
+                write_concat_table_dat(&path, &expected).unwrap();
+                let mut io = AipsIo::open(&path, AipsOpenOption::Old).unwrap();
+                assert_eq!(read_table_header(&mut io).unwrap().0, version);
+                let TableDatResult::Concat(actual) = read_table_dat_dispatch(&path).unwrap() else {
+                    panic!("expected ConcatTable");
+                };
+                assert_eq!(actual.nrrow, expected.nrrow);
+                assert_eq!(actual.big_endian, expected.big_endian);
+                assert_eq!(actual.table_paths, expected.table_paths);
+                assert_eq!(actual.sub_table_names, expected.sub_table_names);
+            }
+        }
     }
 
     /// A Boolean array in a keyword record is bit-packed, as casacore's
