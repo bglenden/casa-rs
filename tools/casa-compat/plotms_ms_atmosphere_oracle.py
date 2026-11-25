@@ -207,7 +207,7 @@ def main():
     parser.add_argument('--native-bin', type=Path, required=True)
     parser.add_argument('--calibrate-bin', type=Path, required=True)
     parser.add_argument('--app-run', type=Path)
-    parser.add_argument('--only', choices=('combined',))
+    parser.add_argument('--only', choices=('combined', 'average-gaps'))
     args = parser.parse_args()
     root = args.work.resolve()
     root.mkdir()
@@ -222,6 +222,15 @@ def main():
         return
     ms, cal, wide = (root / name for name in ('source.ms', 'amplitude.cal', 'wide.ms'))
     fixture(ms, root / 'gain.cal')
+    base = dict(vis=str(ms), yaxis='amp', spw='0', antenna='A0&A1', correlation='XX',
+                showgui=False, overwrite=True)
+    freq = dict(xaxis='frequency', showatm=True)
+    average_gaps = freq | dict(spw='0:0~2;5~7', avgchannel='2')
+    if args.only == 'average-gaps':
+        atmosphere_inputs(ms)
+        with chdir(root), plotms_launcher(args.app_run):
+            paired_text(root, native, 'average_gaps', base | average_gaps)
+        return
     cal_options = dict(vis=str(ms), caltable=str(cal), caltype='amp', parameter=[2.0])
     casa.gencal(**cal_options)
     bandpass = root / 'bandpass.cal'
@@ -234,9 +243,6 @@ def main():
         table.putcell('REF_FREQUENCY', 0, 182.5e9)
     with opened(wide / 'ASDM_RECEIVER', True) as table:
         table.putcell('freqLO', 0, np.array([182e9]))
-    base = dict(vis=str(ms), yaxis='amp', spw='0', antenna='A0&A1', correlation='XX',
-                showgui=False, overwrite=True)
-    freq = dict(xaxis='frequency', showatm=True)
     sky = dict(xaxis='frequency', showtsky=True)
     scans = dict(iteraxis='scan', gridrows=2)
     color = dict(coloraxis='scan', colorizeoverlay=True)
@@ -244,7 +250,7 @@ def main():
         default=dict(showatm=True), channel=dict(xaxis='channel', showatm=True),
         frequency=freq, image=freq | dict(showimage=True), sky=sky,
         gaps=freq | dict(spw='0:2;4;5'), scan=freq | scans, avg=freq | dict(avgchannel='2'),
-        average_gaps=freq | dict(spw='0:0~2;5~7', avgchannel='2'),
+        average_gaps=average_gaps,
         all=freq | dict(antenna='', correlation=''), both_correlations=freq | dict(correlation=''),
         scan_color=freq | color, time_average=freq | dict(avgtime='30'),
         wide=sky | dict(vis=str(wide), showimage=True),

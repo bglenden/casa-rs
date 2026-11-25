@@ -8398,7 +8398,7 @@ impl TimePlotSpectrum {
         let frequencies_hz = bins
             .iter()
             .map(|bin| {
-                mean_selected_frequency_hz(&frequencies, bin)
+                mean_bin_frequency_hz(&frequencies, bin)
                     .ok_or("Missing selected channel frequency for PlotMS time averaging")
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -8412,14 +8412,16 @@ impl TimePlotSpectrum {
 
 impl SpectralContext {
     fn mean_frequency_hz(&self, bin: &ChannelBin) -> Option<f64> {
-        mean_selected_frequency_hz(&self.channel_frequencies_hz, bin)
+        mean_bin_frequency_hz(&self.channel_frequencies_hz, bin)
     }
 }
 
-fn mean_selected_frequency_hz(frequencies_hz: &[f64], bin: &ChannelBin) -> Option<f64> {
+fn mean_bin_frequency_hz(frequencies_hz: &[f64], bin: &ChannelBin) -> Option<f64> {
     let mut sum = 0.0;
     let mut count = 0;
-    for channel in bin.channels() {
+    // PlotMS takes frequencies from the physical output grid. The compressed
+    // visibility buffer can contribute a different group of input samples.
+    for channel in (bin.start..bin.end).step_by(bin.stride) {
         sum += frequencies_hz.get(channel)?;
         count += 1;
     }
@@ -8522,7 +8524,7 @@ fn resolve_spectral_context(
             // The public PlotMS task defaults to the middle selected buffer channel.
             // The msexplore request defaults to the arithmetic centre of the window.
             plotms_rest_bin
-                .and_then(|bin| mean_selected_frequency_hz(&channel_frequencies_hz, bin))
+                .and_then(|bin| mean_bin_frequency_hz(&channel_frequencies_hz, bin))
                 .unwrap_or_else(|| {
                     channel_frequencies_hz.iter().sum::<f64>() / channel_frequencies_hz.len() as f64
                 })
