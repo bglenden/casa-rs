@@ -33,6 +33,7 @@ use crate::selection::{
     ChannelRange, MsReadPlan, MsSelection, MsSelectionError, MsSelectionIoBudget,
     ResolvedMsSelectionRow, RowGrammar, SpwSelection, TimeSelection,
 };
+use crate::subtables::SubTable;
 use crate::write_session::{
     MeasurementSetArrayColumnPlan, MeasurementSetArrayShapePlan, MeasurementSetColumnStorage,
     MeasurementSetCreateTarget, MeasurementSetScalarColumnPlan, MeasurementSetWritePlan,
@@ -138,6 +139,9 @@ pub struct MsTransformRequest {
 /// Additional options used by the CASA task surfaces.
 #[derive(Debug, Clone, Default)]
 pub struct MsTransformTaskOptions {
+    /// Explicit visibility columns for callers that accept arbitrary combinations.
+    /// Ordinary task surfaces select a predefined combination on the request.
+    pub visibility_columns: Option<Vec<OptionalMainColumn>>,
     /// Create and fill weight and sigma spectra even when the input has none.
     pub use_weight_spectrum: bool,
     /// CASA task preference for the output's array storage.
@@ -688,8 +692,13 @@ fn mstransform_staged(
                 reason: source.to_string(),
             })?;
     let view_factory = options.input_view.as_deref();
-    let visibility =
-        VisibilityColumns::resolve(&input, request.data_column, &request.input_ms, view_factory)?;
+    let visibility = VisibilityColumns::resolve(
+        &input,
+        request.data_column,
+        options.visibility_columns.as_deref(),
+        &request.input_ms,
+        view_factory,
+    )?;
     let TransformSelection {
         selection,
         correlations,
@@ -1090,12 +1099,7 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    copy_subtables(
-        &request.input_ms,
-        metadata_path,
-        &request.output_ms,
-        &mut output_main,
-    )?;
+    copy_subtables(&input, metadata_path, &request.output_ms, &mut output_main)?;
     if grammar == RowGrammar::Transform
         && (task_average || !matches!(request.spw.as_str(), "" | "*"))
     {
@@ -3453,9 +3457,16 @@ fn preserve_spectral_ids(
             path: request.input_ms.join(name).display().to_string(),
             reason: source.to_string(),
         })?;
+    let source_path = windows
+        .table()
+        .path()
+        .ok_or_else(|| MsTransformError::SpectralMetadata {
+            path: request.input_ms.join(name).display().to_string(),
+            reason: "resolved spectral window table has no persisted path".into(),
+        })?;
     let rows = (0..windows.row_count()).collect::<Vec<_>>();
     rewrite_table_rows_with_variable_arrays(
-        &request.input_ms.join(name),
+        source_path,
         &request.output_ms.join(name),
         &rows,
         &["CHAN_FREQ", "CHAN_WIDTH", "RESOLUTION", "EFFECTIVE_BW"],

@@ -103,7 +103,7 @@ fn sort_attached(
     };
     let link = ms.working_metadata_link();
     link.verify_directory().map_err(runtime_error)?;
-    let destination = SortedDestination::inspect(&output)?;
+    let destination = SortedDestination::inspect(&output, "sorted")?;
     let locks = if let SortedDestination::Table(_) = destination {
         check_write_access(&output).map_err(runtime_error)?;
         lock_table_tree_for_replacement_with_held(&output, &ms.write_locks)
@@ -135,7 +135,7 @@ fn sort_attached(
     )
     .map_err(runtime_error)?;
     link.verify_directory().map_err(runtime_error)?;
-    destination.publish(&staged, &output)?;
+    destination.publish(&staged, &output, "sorted")?;
     if !in_place {
         return Ok(None);
     }
@@ -190,7 +190,7 @@ pub(super) enum SortedDestination {
 }
 
 impl SortedDestination {
-    pub(super) fn inspect(path: &Path) -> PyResult<Self> {
+    pub(super) fn inspect(path: &Path, operation: &str) -> PyResult<Self> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Self::Absent),
@@ -204,25 +204,25 @@ impl SortedDestination {
                 return Ok(Self::Table(metadata));
             }
         }
-        Err(runtime_error(
-            "sorted output already exists and is not a table",
-        ))
+        Err(runtime_error(format!(
+            "{operation} output already exists and is not a table"
+        )))
     }
 
     pub(super) fn is_table(&self) -> bool {
         matches!(self, Self::Table(_))
     }
 
-    pub(super) fn publish(self, staged: &Path, output: &Path) -> PyResult<()> {
+    pub(super) fn publish(self, staged: &Path, output: &Path, operation: &str) -> PyResult<()> {
         let original = match &self {
             Self::Absent => return rename_without_replacing(staged, output).map_err(runtime_error),
             Self::Empty(original) | Self::Table(original) => original,
         };
         let current = fs::symlink_metadata(output).map_err(runtime_error)?;
         if !same_directory(original, &current) {
-            return Err(runtime_error(
-                "sorted output directory changed before publication",
-            ));
+            return Err(runtime_error(format!(
+                "{operation} output directory changed before publication"
+            )));
         }
         match self {
             // rename rejects a directory that acquired files during staging.
@@ -244,10 +244,10 @@ mod tests {
         let staged = scratch.path().join("staged");
         fs::create_dir(&output).unwrap();
         fs::create_dir(&staged).unwrap();
-        let destination = SortedDestination::inspect(&output).unwrap();
+        let destination = SortedDestination::inspect(&output, "sorted").unwrap();
         let marker = output.join("keep");
         fs::write(&marker, "still there").unwrap();
-        assert!(destination.publish(&staged, &output).is_err());
+        assert!(destination.publish(&staged, &output, "sorted").is_err());
         assert_eq!(fs::read_to_string(marker).unwrap(), "still there");
         assert!(staged.is_dir());
     }

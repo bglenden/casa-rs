@@ -3,13 +3,15 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use casa_tables::{Table, TableOptions, add_directory, lexical_absolute, strip_directory};
+use casa_tables::{
+    Table, TableOptions, TablePartNames, add_directory, lexical_absolute, strip_directory,
+};
 use casa_types::Value;
 
-use super::{MsTransformError, SubtableId};
+use super::{MeasurementSet, MsTransformError, SubtableId};
 
 pub(super) fn copy_subtables(
-    input_path: &Path,
+    input: &MeasurementSet,
     metadata_path: &Path,
     output_path: &Path,
     main: &mut Table,
@@ -18,11 +20,27 @@ pub(super) fn copy_subtables(
         .iter()
         .chain(SubtableId::ALL_OPTIONAL)
     {
-        let source = input_path.join(id.name());
-        if source.exists() {
-            copy_dir_recursive(&source, &output_path.join(id.name()))
+        let Some(table) = input.subtable(*id) else {
+            continue;
+        };
+        let Some(source) = table.path() else {
+            continue;
+        };
+        let destination = output_path.join(id.name());
+        let source_kind = Table::immediate_part_names(source, source).map_err(|error| {
+            MsTransformError::MutateMeasurementSet {
+                path: source.display().to_string(),
+                source: Box::new(error),
+            }
+        })?;
+        if matches!(source_kind, TablePartNames::Plain(_)) {
+            copy_dir_recursive(source, &destination)
                 .map_err(|error| copy_error(output_path, error))?;
+        } else {
+            copy_attached_subtable(source, output_path, &destination)?;
         }
+        main.keywords_mut()
+            .upsert(id.name(), Value::TableRef(id.name().into()));
     }
 
     // CASA copies CALDEVICE, SYSPOWER and ASDM metadata alongside the
@@ -76,9 +94,12 @@ fn copy_attached_subtable(
     .map_err(table_error)?;
     #[cfg(not(unix))]
     let table = Table::open(options).map_err(table_error)?;
-    if table.is_reference_table().map_err(table_error)? {
-        // A reference descriptor still names the input backing table. Write
-        // its selected rows to an independent output table.
+    if !matches!(
+        Table::immediate_part_names(&source, &source).map_err(table_error)?,
+        TablePartNames::Plain(_)
+    ) {
+        // Reference and concatenated descriptors still name backing tables.
+        // Write their selected rows to an independent output table.
         table
             .deep_copy(TableOptions::new(destination))
             .map_err(table_error)

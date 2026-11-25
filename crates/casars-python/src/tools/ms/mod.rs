@@ -15,6 +15,7 @@ mod lister;
 pub(super) mod metadata_link;
 mod multims;
 mod owned_record;
+mod partition;
 mod putdata;
 mod range;
 mod scan_summary;
