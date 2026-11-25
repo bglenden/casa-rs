@@ -1424,20 +1424,19 @@ def compare_separated_antenna_shapes(root, native):
     base = request(windows) | dict(xaxis="amp", yaxis="phase", antenna="A0&A1;A0&A2",
                                    avgtime="20", avgantenna=True, expformat="txt")
     positives = (
-        ("equal-channels", base | dict(spw="0:1~3,1:1~3")),
-        ("different-channels", base | dict(spw="0:1~3,1:1")),
-        ("same-window-selected-xx", base | dict(vis=str(mixed), spw="0:1")),
+        ("equal-channels", base | dict(spw="0:1~3,1:1~3"), 36),
+        ("different-channels", base | dict(spw="0:1~3,1:1"), 24),
+        ("same-window-selected-xx", base | dict(vis=str(mixed), spw="0:1"), 9),
         ("different-window-mixed-correlations", base | dict(vis=str(separate), spw=f"0:1,{window}:1",
-                                                           correlation="")),
+                                                           correlation=""), 27),
     )
     for mode, scalar in (("vector", False), ("scalar", True)):
-        for name, options in positives:
+        for name, options, count in positives:
             expected, actual = (root / f"{mode}-{name}.{engine}.txt" for engine in ("casa", "native"))
             controls = options | dict(scalar=scalar)
             assert reference(**controls, plotfile=str(expected)) is None
             assert native(**controls, plotfile=str(actual)) is None
-            count = compare_text(actual, expected)
-            assert count > 0
+            assert compare_text(actual, expected) == count
             print(f"{mode}-{name}: {count} matching coordinates and IDs", flush=True)
         name = f"{mode}-same-window-mixed-correlations"
         expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
