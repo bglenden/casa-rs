@@ -272,9 +272,11 @@ impl TimeBaselinePlan {
             if let Some(&(output, weight)) = self.rows_to_average.get(&group) {
                 // PlotMSVBAverager weights the already-normalized UVW by the
                 // transformed baseline weight, including flagged windows.
-                uvws.entry((output, antenna1, antenna2))
-                    .or_default()
-                    .add(uvw.mean(), false, weight);
+                uvws.entry((output, antenna1, antenna2)).or_default().add(
+                    uvw.mean(),
+                    false,
+                    weight,
+                );
             }
         }
         uvws

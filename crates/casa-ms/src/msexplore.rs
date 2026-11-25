@@ -6793,15 +6793,6 @@ fn build_generic_visibility_scatter_with_averaging(
                 })
                 .collect::<Vec<_>>()
         });
-    let time_uvws = time_uvws.map(|mut averages| {
-        if let Some(plan) = time_baseline_plan.as_ref().filter(|_| time_spw) {
-            averages = plan.combine_uvws(averages);
-        }
-        averages
-            .into_iter()
-            .map(|(group, average)| (group, average.mean()))
-            .collect::<HashMap<_, _>>()
-    });
     let spw_groups = spw_groups.map(|groups| {
         groups.into_averages(
             scalar_spans.as_ref(),
@@ -6860,6 +6851,24 @@ fn build_generic_visibility_scatter_with_averaging(
         .enumerate()
         .map(|(order, row)| (row, order))
         .collect::<HashMap<_, _>>();
+    let time_uvws = time_uvws.map(|mut averages| {
+        let plan = time_baseline_plan.as_ref().filter(|_| time_spw);
+        if let Some(plan) = plan {
+            averages = plan.combine_uvws(averages);
+        }
+        averages
+            .into_iter()
+            .filter_map(|(key, average)| {
+                // The exported SPW rows have a distinct index for each baseline.
+                let order = if plan.is_some() {
+                    *averaged_order.get(&key)?
+                } else {
+                    key.0
+                };
+                Some((order, average.mean()))
+            })
+            .collect::<HashMap<_, _>>()
+    });
     let retain_empty_panel = average_operands
         || spw_average
         || antenna_channels
@@ -6921,17 +6930,11 @@ fn build_generic_visibility_scatter_with_averaging(
                     ) => groups[group].as_ref().map(|window| window.channel(ordinal)),
                     _ => None,
                 };
-                let uvw = time_uvws.as_ref().and_then(|uvws| {
-                    let AveragingBaselineToken::Baseline(antenna1, antenna2) = key.baseline else {
-                        return None;
-                    };
-                    uvws.get(&(group?, antenna1, antenna2)).copied()
-                });
-                (group, order, spectral_channel, uvw, point)
+                (group, order, spectral_channel, point)
             });
             let mut plot_order = calibration.filter(|_| !spw_average).map(|_| {
                 let mut ordered = points.by_ref().collect::<Vec<_>>();
-                ordered.sort_by_key(|(_, order, _, _, entry)| {
+                ordered.sort_by_key(|(_, order, _, entry)| {
                     entry
                         .representative
                         .as_ref()
@@ -6943,7 +6946,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 Some(points) => points.next(),
                 None => points.next(),
             });
-            for (group, order, spectral_channel, uvw, accumulator) in ordered {
+            for (group, order, spectral_channel, accumulator) in ordered {
                 if !accumulator.has_usable_weight() {
                     continue;
                 }
@@ -6979,7 +6982,9 @@ fn build_generic_visibility_scatter_with_averaging(
                     } else if axis == MsAxis::Row {
                         Some(*averaged_row_numbers?.get(group?)? as f64)
                     } else if weighted_time_uvw && axis.uses_uvw_metres() {
-                        uvw.map(|uvw| uvw_metres_coordinate(axis, uvw))
+                        order
+                            .and_then(|order| time_uvws.as_ref()?.get(&order))
+                            .map(|&uvw| uvw_metres_coordinate(axis, uvw))
                     } else if scalar_visibility && axis.is_visibility_math() {
                         let samples = if x_axis {
                             &accumulator.x_visibility
