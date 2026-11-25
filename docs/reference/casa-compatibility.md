@@ -3377,12 +3377,12 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-gapped-channel-frequencies"></a>
 ##### ms-gapped-channel-frequencies
 
-**MeasurementSet channel average physical frequency with a gapped selection — passed.** The release regression moved 12 displayed points from 100.0055 GHz to 100.0035 GHz while verbose frequencies and amplitudes matched. The revised provider matches all 48 visibility and atmosphere coordinates, including all 24 displayed and verbose visibility frequencies and the selected row metadata. Maximum overlay normalized RMS is 3.24621e-6. Public CASA 6.7.6.14 / casaplotms 2.9.1 and optimized casa-rs on the same atmospheric MeasurementSet, with Frequency versus Amp, spw=0:0~2;5~7, avgchannel=2, XX and A0&A1. The physical frequency grid drops partial bins while the visibility average reads the compressed buffer.
+**MeasurementSet channel average frequencies for gapped and strided selections — passed.** The release regression gave 12 gapped visibility points a displayed frequency of 100.0035 GHz despite a 100.0055 GHz verbose frequency. For strided bins, displayed 100.001 and 100.005 GHz disagreed with verbose 100.0015 and 100.0055 GHz. The revised provider matches all 96 visibility and atmosphere coordinates in the two paired cases, including their values, channel IDs and verbose frequencies. The surrounding atmosphere controls pass. Maximum normalized RMS in the two focused overlays is 3.24621e-06. Public CASA 6.7.6.14 / casaplotms 2.9.1 and optimized casa-rs on the same atmospheric MeasurementSet, with Frequency versus Amp, avgchannel=2, XX and A0&A1. Select gapped SPW 0:0~2;5~7 and strided SPW 0:0~7^2. Physical frequency spans and compressed visibility samples are distinct in both cases.
 
 - [https://github.com/bglenden/casa-rs/pull/2322](https://github.com/bglenden/casa-rs/pull/2322)
 - [https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
-- Revision: `1fd6adb99d6f815f7dce8477b4160c7eb6734c79`; CASA: `6.7.6.14`.
-- Command: `casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --only average-gaps --work <new-dir> --native-bin <release-msexplore> --calibrate-bin <release-calibrate>`.
+- Revision: `0c6348118118915c2c64ac664aad1d7803d6c237`; CASA: `6.7.6.14`.
+- Command: `casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --work <new-dir> --native-bin <release-msexplore> --calibrate-bin <release-calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-gapped-channel-frequencies-20261125.json`.
 
 ### plotweather
