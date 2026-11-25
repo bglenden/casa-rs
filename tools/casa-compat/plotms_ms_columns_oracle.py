@@ -1841,20 +1841,24 @@ def compare_baselines_in_observation_order(work, source, controls, native):
     print(f"observation-order: {len(selected)} matching baseline-averaged coordinates", flush=True)
 
 
+def write_float_column(vis, data, *, float_only=False):
+    with opened(vis, True) as table:
+        desc = table.getcoldesc("DATA")
+        desc.update(name="FLOAT_DATA", valueType="float",
+                    dataManagerType="StandardStMan", dataManagerGroup="FloatVis")
+        table.addcols({"FLOAT_DATA": desc})
+        table.putcol("FLOAT_DATA", data)
+        if float_only:
+            table.removecols(["DATA", "CORRECTED_DATA", "MODEL_DATA"])
+
+
 def compare_float_columns(root, vis, source, native):
     float_only = root / "float-only.ms"
     mixed = root / "float-and-complex.ms"
     floating = source["DATA"].real.astype(np.float32) - 6
     for destination in (float_only, mixed):
         copy_ms(vis, destination)
-        with opened(destination, True) as table:
-            desc = table.getcoldesc("DATA")
-            desc.update(name="FLOAT_DATA", valueType="float",
-                        dataManagerType="StandardStMan", dataManagerGroup="FloatVis")
-            table.addcols({"FLOAT_DATA": desc})
-            table.putcol("FLOAT_DATA", floating)
-            if destination == float_only:
-                table.removecols(["DATA", "CORRECTED_DATA", "MODEL_DATA"])
+        write_float_column(destination, floating, float_only=destination == float_only)
 
     cases = (
         ("float-explicit", float_only, {}, (1, -4)),
@@ -1919,21 +1923,14 @@ def compare_float_columns(root, vis, source, native):
                 raise AssertionError(f"{engine} accepted {name}")
             assert not output.exists()
 
-    from casars.tasks import TaskParameterError
-
     controls = request(mixed) | dict(xaxis="channel", yaxis="amp", xdatacolumn="",
                                      ydatacolumn="data", avgchannel="2", expformat="txt")
     expected, actual = (root / f"average-mixed-float.{engine}.txt" for engine in ("casa", "native"))
     assert reference(**controls, plotfile=str(expected)) is None
     selected = rows(expected)
     assert len(selected) == 6 and all(float(point[1]) < 0 for point in selected)
-    try:
-        native(**controls, plotfile=str(actual))
-    except TaskParameterError as error:
-        assert "averaging MeasurementSet FLOAT_DATA is pending #1032" in str(error), error
-    else:
-        raise AssertionError("Observed FLOAT_DATA averaging silently exported complex DATA")
-    assert not actual.exists()
+    assert native(**controls, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
 
     controls = request(float_only) | dict(xaxis="channel", yaxis="real", xdatacolumn="", ydatacolumn="float")
     expected, actual = (root / f"real-float.{engine}.txt" for engine in ("casa", "native"))
@@ -1953,6 +1950,111 @@ def compare_float_columns(root, vis, source, native):
         assert not expected.exists()
     else:
         assert compare_text(actual, expected) == 12
+
+
+def compare_effective_float_averages(root, native):
+    from grpc import RpcError, StatusCode
+    from plotms_callibrary_oracle import snapshot, verify_source
+    from plotms_ms_spw_average_oracle import make_fixture
+
+    work = root / "effective-float-averages"
+    work.mkdir()
+    time, _ = time_average_fixture(work)
+    windows = make_fixture(work)
+    only = work / "float-only.ms"
+    mixed = work / "float-and-complex.ms"
+    two_windows = work / "float-plain-windows.ms"
+    spectral = work / "float-two-windows.ms"
+    for source, destination in ((time, only), (time, mixed), (windows, two_windows)):
+        copy_ms(source, destination)
+        with opened(source) as table:
+            data = table.getcol("DATA").real.astype(np.float32)
+        channels = np.arange(data.shape[1], dtype=np.float32)[None, :, None]
+        write_float_column(destination, 2 * data - 7 + channels, float_only=destination == only)
+    copy_ms(two_windows, spectral)
+    add_float_spectral_weights(spectral)
+    snapshots = {vis: snapshot(vis) for vis in (only, mixed, two_windows, spectral)}
+    channel = dict(avgchannel="2")
+    interval = dict(avgtime="20")
+    both_windows = channel | dict(spw="0:0~3,1:0~3")
+    cases = (
+        ("only-channel", only, channel, [-4, 0] * 3, True),
+        ("only-time", only, interval, [-0.8, 1.2] * 3, True),
+        ("only-time-default", only, interval | dict(ydatacolumn=""), [-0.8, 1.2] * 3, False),
+        ("mixed-channel-amp", mixed, channel | dict(ydatacolumn="data"), [-4, 0] * 3, False),
+        ("mixed-channel-real", mixed, channel | dict(ydatacolumn="data", yaxis="real"), [-4, 0] * 3, False),
+        ("mixed-time-real", mixed, interval | dict(ydatacolumn="data", yaxis="real"), [-0.8, 1.2] * 3, False),
+        ("mixed-time-explicit", mixed, interval, [-0.8, 1.2] * 3, False),
+        ("mixed-time-scalar", mixed, interval | dict(scalar=True),
+         [-8 / 11, 2 - 8 / 11, -4 / 19, 2 - 4 / 19], False),
+        ("mixed-time-scalar-data", mixed, interval | dict(scalar=True, ydatacolumn="data"),
+         [8 / 11, 2, 4 / 19, 2], False),
+        ("only-time-channel", only, interval | channel, [-0.8] * 3, False),
+        ("mixed-time-channel-scalar-float", mixed, interval | channel | dict(scalar=True),
+         [-8 / 3, -4 / 3], False),
+        ("mixed-time-channel-scalar-data", mixed, interval | channel | dict(scalar=True, ydatacolumn="data"),
+         [4 / 3, 4 / 9], False),
+        ("disabled-amp", mixed, channel | interval | dict(averagedata=False, ydatacolumn="data"),
+         [-4, -2, 0, 2] * 3, False),
+        ("disabled-real", mixed, channel | interval | dict(averagedata=False, ydatacolumn="data", yaxis="real"),
+         [-4, -2, 0, 2] * 3, False),
+        ("weighted-channel", spectral, both_windows, [-5, 2, -2.75, 2] + [1 / 6, 113 / 6] * 2, False),
+        ("unweighted-spw-float", two_windows, both_windows | dict(avgspw=True), [-0.5, 9.5] * 2, False),
+        ("weighted-spw-float", spectral, both_windows | dict(avgspw=True),
+         [-29 / 12, 125 / 12, -31 / 24, 125 / 12], False),
+        ("weighted-spw-data", spectral, both_windows | dict(avgspw=True, ydatacolumn="data"),
+         [-2.9569, 8.02656, -2.9505, 8], False),
+    )
+    for name, vis, controls, values, compare_real in cases:
+        options = request(vis) | dict(xaxis="channel", xdatacolumn="", yaxis="amp",
+                                       ydatacolumn="float") | controls
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected), expformat="txt") is None
+        points = rows(expected)
+        np.testing.assert_allclose([float(point[1]) for point in points], values, rtol=1.2e-5, atol=1e-7)
+        assert native(**options, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(values)
+        if compare_real:
+            real = options | dict(yaxis="real")
+            real_reference = work / f"{name}-real.reference.txt"
+            real_reference.write_text(expected.read_text().replace("# Channel Amp ", "# Channel Real "))
+            output = work / f"{name}-real.native.txt"
+            assert native(**real, plotfile=str(output), expformat="txt") is None
+            assert compare_text(output, real_reference) == len(values)
+            if name == "only-channel":
+                failed = work / f"{name}-real.casa.txt"
+                try:
+                    reference(**real, plotfile=str(failed), expformat="txt")
+                except RpcError as error:
+                    assert error.code() == StatusCode.UNAVAILABLE, error
+                else:
+                    raise AssertionError("CASA no longer terminates on explicit real FLOAT_DATA")
+                assert not failed.exists()
+                print("explicit float Real: pinned server exits before creating an export", flush=True)
+        if name == "weighted-channel":
+            figure = options | dict(title="Float channel averages", xlabel="Channel bin")
+            compare_figure(work, native, figure, expected,
+                           ("Float channel averages", "Channel bin", "Amp:float"))
+        print(f"{name}: {len(points)} matching signed values, IDs and metadata", flush=True)
+    for vis, before in snapshots.items():
+        verify_source(vis, before)
+
+
+def add_float_spectral_weights(vis):
+    with opened(vis, True) as table:
+        shape = table.getcol("FLOAT_DATA").shape
+        descriptor = table.getcoldesc("FLOAT_DATA")
+        low = table.getcol("DATA_DESC_ID") == 0
+        calibrated = np.where(low, np.array([1, 3, 4, 2], dtype=np.float32)[:, None],
+                              np.array([5, 1, 1, 5], dtype=np.float32)[:, None])
+        observed = np.array([0.2, 2, 0.5, 1], dtype=np.float32)[:, None]
+        for name, values in (("WEIGHT_SPECTRUM", calibrated), ("SIGMA_SPECTRUM", observed)):
+            table.addcols({name: dict(descriptor, name=name, dataManagerGroup=name)})
+            table.putcol(name, np.broadcast_to(values, shape).copy())
+        times = table.getcol("TIME")
+        flags = table.getcol("FLAG")
+        flags[:, 1, low & (times == times[low].min())] = True
+        table.putcol("FLAG", flags)
 
 
 def compare_default_model(root, native):
@@ -2204,7 +2306,8 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("time-statistics", "channel-flag-symbols", "averaged-flag-symbols"))
+    parser.add_argument("--only", choices=("time-statistics", "channel-flag-symbols", "averaged-flag-symbols",
+                                           "effective-float-averages"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -2222,6 +2325,9 @@ def main():
         if args.only == "averaged-flag-symbols":
             compare_time_averaged_flag_symbols(root, native)
             compare_reduced_flag_symbols(root, native)
+            return
+        if args.only == "effective-float-averages":
+            compare_effective_float_averages(root, native)
             return
         vis, source = fixture(root)
         if args.only == "channel-flag-symbols":
@@ -2246,6 +2352,7 @@ def main():
         compare_time_scan_field_columns(root, native)
         compare_baseline_averaged_columns(root, native)
         compare_float_columns(root, vis, source, native)
+        compare_effective_float_averages(root, native)
         compare_default_model(root, native)
         compare_virtual_fourier_model(root, native)
 

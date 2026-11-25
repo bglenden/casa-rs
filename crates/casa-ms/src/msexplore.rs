@@ -3120,7 +3120,11 @@ fn build_uncalibrated_plotms_payload(
             || plot.is_some_and(plotms_columns::uses_averaged_geometry_coordinates)
             || plot.is_some_and(plotms_columns::uses_time_statistics)
             || plot.is_some_and(|plot| {
-                plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
+                plotms_columns::uses_direct_vector_time_projection(
+                    plot,
+                    columns.x,
+                    prefer_float_data,
+                )
             }));
     if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_projection {
         // Accumulate the Float sums in the chronological order of the iterator.
@@ -5866,6 +5870,7 @@ fn build_generic_visibility_scatter_with_averaging(
             || plotms_columns::uses_direct_vector_time_projection(
                 spec,
                 calibration.and_then(|input| input.x_data_column),
+                calibration.is_some_and(|input| input.prefer_float_data),
             ));
     let average_operands = extended_derived
         || scalar_channels
@@ -6588,6 +6593,12 @@ fn build_generic_visibility_scatter_with_averaging(
             || scalar_average
             || (spw_average && !time_spw))
             .then(|| {
+                // The channel transform leaves the output row weight unset
+                // when only FLOAT_DATA is requested. The SPW reducer weights
+                // those windows equally. A DATA request fills its usual weights.
+                if (spw_channels || scalar_channels) && spec.data_column == MsDataColumn::Float {
+                    return 1.0;
+                }
                 let correlation = selected_correlations[0].0;
                 let weight = channel_first_kinds.map_or(weight_values[correlation], |kinds| {
                     plotms_columns::channel_averaged_row_weight(
@@ -6744,6 +6755,10 @@ fn build_generic_visibility_scatter_with_averaging(
                     let samples = |axis| {
                         visibility_columns.samples(axis, &visibility_grids, &bin_buffers, false)
                     };
+                    // The scalar reducer packs the amplitude of a DATA cube
+                    // even when the iterator substitutes FLOAT_DATA for it.
+                    let preserve_float_sign =
+                        |axis| visibility_columns.column_on_axis(axis) == Some(MsDataColumn::Float);
                     let x_samples = samples(0);
                     collect_bin_flags_into(&flags, *corr_index, bin, &mut flag_samples);
                     if let Some(grid) = weight_spectrum_grid.as_ref() {
@@ -6860,6 +6875,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                                         .filter(|_| propagate_channel_weights),
                                                 ]),
                                                 conjugate,
+                                                preserve_float_sign: preserve_float_sign(axis),
                                             },
                                             *corr_index,
                                             bin,
@@ -6892,11 +6908,13 @@ fn build_generic_visibility_scatter_with_averaging(
                                 x_samples,
                                 scalar_weight,
                                 conjugate,
+                                preserve_float_sign(0),
                             );
                             accumulator.y_visibility.add_scalar(
                                 y_samples,
                                 scalar_weight,
                                 conjugate,
+                                preserve_float_sign(y_index + 1),
                             );
                         } else if average_model_channels_equally {
                             for (axis, average) in [
@@ -7234,6 +7252,7 @@ fn build_generic_visibility_scatter_with_averaging(
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
+    let x_projection_axis = visibility_columns.projection_axis(0, spec.x_axis);
     if paged_iteration {
         panel_order.sort_by_key(|key| panels[key].iteration_rank);
     }
@@ -7243,6 +7262,8 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let mut series_entries = Vec::new();
         for mut series in panel.series.into_values() {
+            let y_projection_axis =
+                visibility_columns.projection_axis(series.y_index + 1, series.y_axis);
             if let Some(plan) = &time_baseline_plan {
                 if time_antenna {
                     plan.combine_antenna_series(&mut series);
@@ -7383,10 +7404,10 @@ fn build_generic_visibility_scatter_with_averaging(
                         )
                     }
                 };
-                let Some(x_value) = project(spec.x_axis, true) else {
+                let Some(x_value) = project(x_projection_axis, true) else {
                     continue;
                 };
-                let Some(y_value) = project(series.y_axis, false) else {
+                let Some(y_value) = project(y_projection_axis, false) else {
                     continue;
                 };
                 let output = if accumulator.visibility_flagged == Some(true) {

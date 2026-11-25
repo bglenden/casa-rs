@@ -12,8 +12,9 @@ use super::super::{
     plotms_phasecenter, plotms_row_axes,
 };
 use super::{
-    CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
-    MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count, legend_position, number,
+    CliOptions, MeasurementSet, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis,
+    MsDataColumn, MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count,
+    legend_position, number,
 };
 
 impl CliOptions {
@@ -86,6 +87,71 @@ impl CliOptions {
 
     pub(super) fn plotms_averaging_active(&self) -> bool {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
+    }
+
+    fn supports_effective_float_averaging(&self) -> bool {
+        let channel = self.avgchannel.is_some_and(|width| width > 1);
+        let time = self.avgtime.is_some();
+        (channel || time)
+            && (!self.avgspw || (channel && !time))
+            && !(self.avgbaseline || self.avgantenna || self.avgscan || self.avgfield)
+            && self.iteraxis.is_none()
+            && self.freqframe.is_none()
+            && self.y_axis2.is_none()
+            && self.additional_ordinates.is_empty()
+            && self
+                .y_axis
+                .is_some_and(|axis| matches!(axis, MsAxis::Amplitude | MsAxis::Real))
+            && self.x_axis.is_some_and(|axis| {
+                matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
+            })
+    }
+
+    pub(super) fn resolve_visibility_storage(
+        &mut self,
+        ms: &MeasurementSet,
+        columns: &mut [MsDataColumn; 3],
+        implicit_derived_model: bool,
+        phasecenter: bool,
+    ) -> Result<bool, TaskFailure> {
+        let axes = [self.x_axis, self.y_axis, self.y_axis2];
+        let (adjusted, use_float) = plotms_columns::resolve_storage_columns(
+            ms,
+            *columns,
+            axes,
+            self.plotms_averaging_active(),
+            self.supports_effective_float_averaging(),
+        )?;
+        if let Some((storage, axis)) = self.derived_average_storage(*columns, adjusted) {
+            plotms_columns::check_averaged_derived_storage(
+                ms,
+                storage,
+                axis,
+                implicit_derived_model,
+            )?;
+        }
+        if phasecenter
+            && use_float
+            && axes.into_iter().zip(adjusted).any(|(axis, column)| {
+                axis.is_some_and(MsAxis::is_visibility_math)
+                    && matches!(column, MsDataColumn::Data | MsDataColumn::Float)
+            })
+        {
+            return Err(TaskFailure::validation(
+                "PlotMS phasecenter with MeasurementSet FLOAT_DATA is pending (#1032)",
+            )
+            .at("phasecenter"));
+        }
+        if adjusted != *columns {
+            let [x, y, secondary_y] = adjusted;
+            self.data_column = y;
+            self.x_data_column = (x != y).then_some(x);
+            if self.secondary_y_data_column.is_some() {
+                self.secondary_y_data_column = Some(secondary_y);
+            }
+            *columns = adjusted;
+        }
+        Ok(use_float)
     }
 
     pub(super) fn supports_averaged_ordinate_iteration(&self) -> bool {

@@ -87,6 +87,7 @@ pub(super) fn supports_ordinary_time_axes(spec: &MsPlotSpec) -> bool {
 pub(super) fn uses_direct_vector_time_projection(
     spec: &MsPlotSpec,
     x_column: Option<MsDataColumn>,
+    prefer_float_data: bool,
 ) -> bool {
     let model_only = spec.secondary_y_axis().is_none()
         && spec.data_column == MsDataColumn::Model
@@ -104,9 +105,14 @@ pub(super) fn uses_direct_vector_time_projection(
     let shared_or_channel = supports_reduced_visibility_axes(spec)
         && (spec.secondary_y_axis().is_some()
             || spec.averaging.avgchannel.is_some_and(|width| width > 1));
+    let effective_float = spec.y_axes.len() == 1
+        && spec.y_axis().is_visibility_math()
+        && (spec.data_column == MsDataColumn::Float
+            || (spec.data_column == MsDataColumn::Data && prefer_float_data))
+        && supports_ordinary_time_axes(spec);
     uses_time_averaging(spec, spec.y_axes.len() > 2)
         && !spec.averaging.scalar
-        && (model_only || stored_visibility_pair || shared_or_channel)
+        && (model_only || stored_visibility_pair || shared_or_channel || effective_float)
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
@@ -271,6 +277,7 @@ pub(super) struct PlotMsWeightKinds {
     pub(super) row_sigma: WeightKind,
     has_observed: bool,
     has_corrected: bool,
+    time_averaged: bool,
 }
 
 impl PlotMsWeightKinds {
@@ -279,7 +286,12 @@ impl PlotMsWeightKinds {
     }
 
     pub(super) fn for_column(self, column: MsDataColumn) -> WeightKind {
-        column_weight_kind(column, self.has_observed, self.has_corrected)
+        column_weight_kind(
+            column,
+            self.has_observed,
+            self.has_corrected,
+            self.time_averaged,
+        )
     }
 
     pub(super) fn uses_for_ordinates(
@@ -294,8 +306,15 @@ impl PlotMsWeightKinds {
     }
 }
 
-fn column_weight_kind(column: MsDataColumn, has_observed: bool, has_corrected: bool) -> WeightKind {
+fn column_weight_kind(
+    column: MsDataColumn,
+    has_observed: bool,
+    has_corrected: bool,
+    time_averaged: bool,
+) -> WeightKind {
     let column = match column {
+        MsDataColumn::Float if time_averaged => return WeightKind::Observed,
+        MsDataColumn::Float => OptionalMainColumn::FloatData,
         MsDataColumn::Data
         | MsDataColumn::DataMinusModel
         | MsDataColumn::DataMinusModelScalar
@@ -307,7 +326,6 @@ fn column_weight_kind(column: MsDataColumn, has_observed: bool, has_corrected: b
         | MsDataColumn::CorrectedDivModel
         | MsDataColumn::CorrectedDivModelScalar => OptionalMainColumn::CorrectedData,
         MsDataColumn::Model => OptionalMainColumn::ModelData,
-        _ => return WeightKind::Unit,
     };
     visibility_weight_kind(column, has_observed, has_corrected, false)
 }
@@ -362,7 +380,8 @@ pub(super) fn weight_kinds(
     } else {
         first.unwrap_or(primary)
     };
-    let kind = |column| column_weight_kind(column, has_observed, has_corrected);
+    let time_averaged = input.time_bins.is_some();
+    let kind = |column| column_weight_kind(column, has_observed, has_corrected, time_averaged);
     PlotMsWeightKinds {
         axes: columns.map(kind),
         model: (input.extended_derived || uses_channel_derived(spec, input.x_data_column))
@@ -380,6 +399,7 @@ pub(super) fn weight_kinds(
         },
         has_observed,
         has_corrected,
+        time_averaged,
     }
 }
 
@@ -747,6 +767,7 @@ pub(super) fn resolve_storage_columns<const N: usize>(
     requested: [MsDataColumn; N],
     axes: [Option<MsAxis>; N],
     averaging: bool,
+    allow_float_average: bool,
 ) -> Result<([MsDataColumn; N], bool), TaskFailure> {
     use MsDataColumn::*;
 
@@ -788,7 +809,8 @@ pub(super) fn resolve_storage_columns<const N: usize>(
         }
         let uses_observed = matches!(column, Data | Float)
             || (column.is_derived() && !column.is_corrected_model_expression());
-        if averaging && has_float && uses_observed {
+        if averaging && has_float && uses_observed && (!allow_float_average || column.is_derived())
+        {
             return Err(TaskFailure::validation(
                 "averaging MeasurementSet FLOAT_DATA is pending #1032",
             ));
@@ -800,5 +822,5 @@ pub(super) fn resolve_storage_columns<const N: usize>(
             "Using available observed columns for PlotMS."
         );
     }
-    Ok((columns, has_float && !averaging))
+    Ok((columns, has_float && (!averaging || allow_float_average)))
 }
