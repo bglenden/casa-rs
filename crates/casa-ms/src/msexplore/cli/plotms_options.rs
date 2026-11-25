@@ -690,7 +690,13 @@ pub(super) fn options_from_plotms(
             .map(|text| text.filter(|value| !value.is_empty()))
     };
     let plot_output = text("plotfile")?.map(PathBuf::from);
-    let text_export = super::super::plotms_text::requests_text(task, plot_output.as_deref())?;
+    let export_format = text("expformat")?.or_else(|| {
+        plot_output
+            .as_deref()
+            .and_then(std::path::Path::extension)
+            .and_then(std::ffi::OsStr::to_str)
+            .map(str::to_owned)
+    });
     let x_axis = text("xaxis")?
         .map_or(Ok(MsAxis::Time), |axis| {
             MsAxis::parse(&axis.to_ascii_lowercase())
@@ -759,11 +765,16 @@ pub(super) fn options_from_plotms(
         || x_axis.is_pointing()
         || y_axis.is_pointing();
     let visibility_document = visibility_document || document_axes;
-    if !visibility_document && plot_output.is_some() && !text_export {
-        return Err(TaskFailure::validation(
-            "MeasurementSet figure export is pending #1032",
-        ));
-    }
+    let plot_format = if visibility_document {
+        MsExportFormat::Txt
+    } else {
+        export_format
+            .as_deref()
+            .map(MsExportFormat::parse)
+            .transpose()
+            .map_err(|_| TaskFailure::validation("MeasurementSet figure export is pending #1032"))?
+            .unwrap_or(MsExportFormat::Txt)
+    };
     let color_by = text("coloraxis")?
         .map_or(Ok(MsColorAxis::None), |axis| {
             MsColorAxis::parse(&axis.to_ascii_lowercase())
@@ -860,7 +871,7 @@ pub(super) fn options_from_plotms(
         flag_apply: false,
         flag_output: None,
         plot_output,
-        plot_format: MsExportFormat::Txt,
+        plot_format,
     };
     options.validate_plotms_weight_averaging()?;
     options.validate_geometry_controls(task)?;

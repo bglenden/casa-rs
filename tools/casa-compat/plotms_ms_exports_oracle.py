@@ -98,6 +98,8 @@ def compare_sizes(root, native, base):
         ("highres-natural-size", dict(highres=True, dpi=-1, width=-1, height=-1), (751, 567), 96),
         ("default-canvas", dict(dpi=-1, width=-1, height=-1), (751, 567), 96),
         ("with-header", dict(headeritems="filename"), (500, 473), 100),
+        ("fractional-inches", dict(width=410, height=402), (410, 402), 100),
+        ("fractional-default-width", dict(width=-1, dpi=88), (751, 360), 88),
     )
     for name, extra, size, dpi in cases:
         for image in paired(root, name, native, base | extra, ".PNG"):
@@ -159,6 +161,14 @@ def check_publication(root, native, base):
         refused(native, base, dest, "interrupted figure save")
     assert dest.read_bytes() == previous
     assert not any(root.glob(f".{dest.name}.*"))
+
+    legacy = base | dict(xaxis="time", yaxis="channel", ydatacolumn="", antenna="", field="")
+    manifest = root / "legacy-time-channel.txt"
+    assert native(**legacy, plotfile=str(manifest)) is None
+    assert manifest.read_text().startswith("# msexplore-manifest-v1\n")
+    alias = root / "legacy-time-channel.text"
+    refused(native, legacy, alias, "figure export")
+    assert not alias.exists()
     print("invalid requests publish nothing and failed overwrites preserve the previous figure", flush=True)
 
 

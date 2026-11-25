@@ -392,6 +392,7 @@ fn run_visibility_plot(
     load_models: Option<PlotMsModelLoader>,
     phasecenter: Option<casa_types::measures::direction::MDirection>,
 ) -> Result<TaskSuccess, TaskFailure> {
+    let is_text = super::plotms_text::requests_text(task, options.plot_output.as_deref())?;
     let offset_grid = calibration.is_none() && atmosphere.is_none();
     let static_grid =
         super::plotms_figure::static_grid(task, options.iteraxis.is_some(), offset_grid)?;
@@ -470,7 +471,6 @@ fn run_visibility_plot(
         .transpose()?;
     let show = task.flag("showgui")?;
     let output = options.plot_output.as_deref();
-    let is_text = super::plotms_text::requests_text(task, output)?;
     let text_file = output.filter(|_| is_text);
     let figure_file = output.filter(|_| !is_text);
     let mut plots = Vec::new();

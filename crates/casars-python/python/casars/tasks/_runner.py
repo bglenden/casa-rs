@@ -16,7 +16,7 @@ import functools
 from http import HTTPStatus
 import inspect
 from json import JSONDecodeError, dumps, loads
-from math import isfinite, isnan
+from math import inf, isfinite, isnan, nextafter
 from numbers import Real
 import os
 from os import PathLike
@@ -2231,12 +2231,15 @@ def _size_plotms_figure(figure, options, document, encoding):
         height = height if height > 0 else 567
         if document["header_lines"]:
             height += 113
-    elif dpi <= 0:
-        dpi = 300 if options.get("highres") else figure.dpi
-    if width > 0 or height > 0:
-        current_width, current_height = figure.get_size_inches()
-        figure.set_size_inches(width / dpi if width > 0 else current_width,
-                               height / dpi if height > 0 else current_height)
+        # Older Agg versions truncate fractional pixels after converting inches back.
+        figure.set_size_inches(nextafter(width / dpi, inf), nextafter(height / dpi, inf))
+    else:
+        if dpi <= 0:
+            dpi = 300 if options.get("highres") else figure.dpi
+        if width > 0 or height > 0:
+            current_width, current_height = figure.get_size_inches()
+            figure.set_size_inches(width / dpi if width > 0 else current_width,
+                                   height / dpi if height > 0 else current_height)
     figure.set_dpi(dpi)
     return dpi
 
