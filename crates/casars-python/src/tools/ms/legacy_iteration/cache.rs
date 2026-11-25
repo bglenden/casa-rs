@@ -92,7 +92,9 @@ impl AttachedMs {
             .map_err(runtime_error)?;
         let staged = version.path();
         main.select_rows(&selected)
-            .and_then(|reference| reference.save(TableOptions::new(staged)))
+            .and_then(|reference| {
+                reference.save_for_destination(TableOptions::new(staged), &output)
+            })
             .map_err(runtime_error)?;
         let replaced_table = destination.is_table();
         let existed = output.exists();

@@ -1,10 +1,12 @@
 """Pinned controls for the legacy cursor, block view and persisted sort cache."""
 
+from shutil import copytree
+
 import numpy as np
 import pytest
 
 from casars import tools
-from test_tools_ms_putdata import assert_main_columns, writer_api
+from test_tools_ms_putdata import assert_main_columns, make_multi_ms, writer_api
 from test_tools_ms_visibility_ifraxis import baseline_fixture
 from test_tools_msmetadata import measures, native_dataset
 
@@ -77,6 +79,13 @@ def test_legacy_iterator_persists_a_readable_sorted_reference_and_writes_only_th
         np.testing.assert_array_equal(table.getcol("DATA"), expected[..., order], strict=True)
         assert table.done()
 
+    moved = native_dataset.rename(native_dataset.with_name("relocated.ms"))
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(str(moved / "SORTED_TABLE"))
+        np.testing.assert_array_equal(table.getcol("DATA"), expected[..., order], strict=True)
+        assert table.done()
+
 
 def test_legacy_cursor_omits_the_empty_block_after_an_exact_multiple(
     baseline_fixture, native_dataset,
@@ -96,3 +105,28 @@ def test_legacy_cursor_omits_the_empty_block_after_an_exact_multiple(
         assert counts == ([4, 4, 0] if api is casa else [4, 4])
         assert reader.nrowold(True) == 8
         assert reader.done()
+
+
+def test_legacy_writable_multims_uses_a_cursor_without_a_saved_sort_reference(
+    baseline_fixture, native_dataset, tmp_path, writer_api,
+):
+    casa, _, original = baseline_fixture
+    members = [tmp_path / name for name in ("part-z.ms", "part-a.ms")]
+    for member in members:
+        copytree(native_dataset, member)
+    path = make_multi_ms(casa, tmp_path / "multi.ms", members)
+    reader = writer_api.ms()
+    assert reader.open(path, nomodify=False)
+    assert reader.iterinitold(["TIME"], adddefaultsortcolumns=False)
+    assert reader.iteroriginold()
+    assert reader.nrowold(True) == 2 * len(original["time"])
+    record = reader.getdataold("time")
+    np.testing.assert_array_equal(record["time"], np.sort(np.tile(original["time"], 2)), strict=True)
+    assert reader.iternextold() is False
+    assert reader.iterendold()
+    assert reader.done()
+    assert not list(tmp_path.rglob("SORTED_TABLE"))
+    table = casa.table()
+    assert table.open(path)
+    assert not {"SORT_COLUMNS", "SORTED_TABLE"}.intersection(table.keywordnames())
+    assert table.done()

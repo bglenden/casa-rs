@@ -140,10 +140,15 @@ impl RefLayout {
         TableSchema::new(cols).ok()
     }
 
-    fn save(&self, parent: &Table, opts: crate::table::TableOptions) -> Result<(), TableError> {
+    fn save(
+        &self,
+        parent: &Table,
+        opts: &crate::table::TableOptions,
+        link_owner: &Path,
+    ) -> Result<(), TableError> {
         let parent_path = parent.path().ok_or(TableError::ParentNotSaved)?;
         let ref_path = opts.path();
-        let parent_relative = strip_directory(parent_path, ref_path);
+        let parent_relative = strip_directory(parent_path, link_owner);
 
         let ref_dat = RefTableDatContents {
             nrrow: self.row_map.len() as u64,
@@ -279,7 +284,21 @@ impl<'a> RefTable<'a> {
     }
 
     pub fn save(&self, opts: crate::table::TableOptions) -> Result<(), TableError> {
-        self.layout.save(self.parent, opts)
+        self.layout.save(self.parent, &opts, opts.path())
+    }
+
+    /// Stage this reference table with its parent link relative to
+    /// the intended publication path. The staged directory must be moved
+    /// to that destination before opening it.
+    ///
+    /// # Errors
+    /// The parent has no persisted path, or the staged descriptor cannot be written.
+    pub fn save_for_destination(
+        &self,
+        staging: crate::table::TableOptions,
+        destination: &Path,
+    ) -> Result<(), TableError> {
+        self.layout.save(self.parent, &staging, destination)
     }
 }
 
@@ -371,7 +390,7 @@ impl<'a> RefTableMut<'a> {
     }
 
     pub fn save(&self, opts: crate::table::TableOptions) -> Result<(), TableError> {
-        self.layout.save(&*self.parent, opts)
+        self.layout.save(&*self.parent, &opts, opts.path())
     }
 }
 
