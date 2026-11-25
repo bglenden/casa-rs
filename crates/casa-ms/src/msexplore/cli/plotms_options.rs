@@ -324,6 +324,12 @@ impl CliOptions {
             && !transforms_frequency
             && !crosses_boundary
             && !channel_average;
+        let spw_time_u = spectral_window_average
+            && self.avgtime.is_some()
+            && !crosses_boundary
+            && !channel_average
+            && !self.scalar
+            && self.iteraxis.is_none();
         let scalar_time = time_average && !transforms_frequency;
         (spectral_window_average
             || (!self.avgspw
@@ -334,6 +340,7 @@ impl CliOptions {
                 axis.is_visibility_math()
                     || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
                     || (ordinary_time && !self.scalar && axis.uses_uvw_metres())
+                    || (spw_time_u && axis == MsAxis::U)
             })
     }
 

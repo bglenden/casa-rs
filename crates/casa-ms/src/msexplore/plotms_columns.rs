@@ -129,7 +129,23 @@ pub(super) fn uses_spectral_window_average(spec: &MsPlotSpec) -> bool {
         && (averaging.avgtime.is_some() || !spans)
         && !averaging.avgbaseline
         && !averaging.avgantenna
-        && supports_reduced_visibility_axes(spec)
+        && (supports_reduced_visibility_axes(spec) || uses_weighted_spw_time_u(spec))
+}
+
+pub(super) fn uses_weighted_spw_time_u(spec: &MsPlotSpec) -> bool {
+    let averaging = &spec.averaging;
+    spec.x_axis == MsAxis::U
+        && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math)
+        && spec.iteration.iteraxis.is_none()
+        && spec.transforms.freqframe.is_none()
+        && averaging.avgspw
+        && averaging.avgtime.is_some()
+        && averaging.avgchannel.is_none_or(|width| width <= 1)
+        && !averaging.avgbaseline
+        && !averaging.avgantenna
+        && !averaging.avgscan
+        && !averaging.avgfield
+        && !averaging.scalar
 }
 
 fn supports_reduced_visibility_axes(spec: &MsPlotSpec) -> bool {

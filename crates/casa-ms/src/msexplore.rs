@@ -5550,7 +5550,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_bins = calibration.and_then(|input| input.time_bins);
     let averaged_row_numbers = time_bins.and_then(PlotTimeGroups::row_numbers);
     let extended_derived = calibration.is_some_and(|input| input.extended_derived);
-    let weighted_time_uvw = time_bins.is_some() && plotms_columns::uses_weighted_time_uvw(spec);
+    let weighted_time_uvw = time_bins.is_some()
+        && (plotms_columns::uses_weighted_time_uvw(spec)
+            || plotms_columns::uses_weighted_spw_time_u(spec));
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
     let spw_average = uncalibrated && plotms_columns::uses_spectral_window_average(spec);
     let time_spw = spw_average && time_bins.is_some();
@@ -6791,7 +6793,10 @@ fn build_generic_visibility_scatter_with_averaging(
                 })
                 .collect::<Vec<_>>()
         });
-    let time_uvws = time_uvws.map(|averages| {
+    let time_uvws = time_uvws.map(|mut averages| {
+        if let Some(plan) = time_baseline_plan.as_ref().filter(|_| time_spw) {
+            averages = plan.combine_uvws(averages);
+        }
         averages
             .into_iter()
             .map(|(group, average)| (group, average.mean()))

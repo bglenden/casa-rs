@@ -14,7 +14,7 @@ use super::{
     ChannelBin, FloatGrid, MsAverageSpec, plotms_columns,
 };
 use crate::transform::{
-    PlotTimeGroups, centered_time_and_interval, mean_weight_preferring_unflagged,
+    PlotTimeGroups, TimeUvwAverage, centered_time_and_interval, mean_weight_preferring_unflagged,
 };
 
 #[derive(Clone, Copy)]
@@ -263,6 +263,23 @@ pub(super) struct TimeBaselinePlan {
 }
 
 impl TimeBaselinePlan {
+    pub(super) fn combine_uvws(
+        &self,
+        time_uvws: HashMap<usize, TimeUvwAverage>,
+    ) -> HashMap<usize, TimeUvwAverage> {
+        let mut uvws = HashMap::<usize, TimeUvwAverage>::new();
+        for (group, uvw) in time_uvws {
+            if let Some(&(output, weight)) = self.rows_to_average.get(&group) {
+                // PlotMSVBAverager weights the already-normalized UVW by the
+                // transformed baseline weight, including flagged windows.
+                uvws.entry(output)
+                    .or_default()
+                    .add(uvw.mean(), false, weight);
+            }
+        }
+        uvws
+    }
+
     pub(super) fn output_group(&self, time_group: usize) -> Option<usize> {
         self.rows_to_average
             .get(&time_group)
