@@ -11472,6 +11472,16 @@ aborts. Casa-rs expands each bin into its selected physical channels
 once and keeps the channels between bins and outside the selection
 unchanged (#1030).
 
+## Legacy Float-data writes can swap recorded correlations
+
+On a MeasurementSet with recorded RR and LL, select `['LL', 'RR']` with
+`ms.selectpolarizationold()`. CASA 6.7.6.14 returns FLOAT_DATA in the
+requested order but writes an unchanged `getdataold('float_data')`
+record in the recorded order. This swaps the two physical correlation
+planes. Casa-rs writes each input plane to the recorded correlation
+named by the selected order, preserving the original cells on a round
+trip (#1030).
+
 ## Observed MS statistics take inverse squares of the stored weights
 
 For weighted observed `DATA` and `FLOAT_DATA` statistics, CASA 6.7.6.14's

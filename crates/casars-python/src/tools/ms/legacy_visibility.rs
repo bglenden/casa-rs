@@ -53,6 +53,14 @@ pub(super) struct LegacyBaselineRead {
 }
 
 impl LegacyBaselineRead {
+    pub(super) fn has_current_descriptor(&self) -> bool {
+        self.main.verify_write_layout(&BTreeSet::new()).is_ok()
+    }
+
+    pub(super) fn refresh_descriptor(&mut self, main: Arc<VisibilityMain>) {
+        self.main = main;
+    }
+
     pub(super) fn write_grid(
         &self,
         working_rows: Option<&[usize]>,
@@ -61,7 +69,7 @@ impl LegacyBaselineRead {
         (self.working_rows.as_deref() == working_rows
             && self.selected_rows.as_deref() == selection.rows()
             && self.baselines.as_deref() == selection.baselines.as_deref()
-            && self.main.verify_write_layout(&BTreeSet::new()).is_ok())
+            && self.has_current_descriptor())
         .then_some(LegacyVisibilityWriteGrid {
             rows: &self.rows,
             baseline_pairs: self.baselines.as_deref(),

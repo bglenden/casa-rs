@@ -100,7 +100,7 @@ impl<'a> VisibilityWriteRecord<'a> {
         }
         let mut row_columns = Vec::new();
         let mut baseline_columns = Vec::new();
-        for mut field in write_columns(main, RecordValue::new(fields), Column::from_legacy_name)? {
+        for mut field in write_columns(main, RecordValue::new(fields), true)? {
             let rank = field.column.cell_rank();
             field.select_polarization = rank == 2;
             field.channels = options.channels.filter(|_| rank == 2);
@@ -125,8 +125,13 @@ impl<'a> VisibilityWriteRecord<'a> {
                 input("call getdataold with ifraxis=True before writing a baseline-axis record")
             })?;
             let (rows, grid) = WriteGrid::from_legacy_read(main, saved)?;
+            // MSSelector ignores a visibility or FLAG cube with mismatched
+            // trailing grid dimensions. Valid fields in its record still write.
+            baseline_columns.retain(|field| {
+                field.column.cell_rank() != 2 || field.values.shape()[2..] == grid.shape
+            });
             validate_shape(&baseline_columns, &grid.shape)?;
-            if !rows.is_empty() {
+            if !rows.is_empty() && !baseline_columns.is_empty() {
                 records.push(Self {
                     rows,
                     columns: baseline_columns,

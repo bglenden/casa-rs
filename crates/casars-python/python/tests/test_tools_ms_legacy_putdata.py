@@ -178,3 +178,83 @@ def test_legacy_writer_persists_float_data_with_selected_channels(
     for bin, channel in enumerate((1, 3)):
         expected[:, channel, rows] = replacement[:, bin]
     assert_main_columns(casa, native_dataset, {"FLOAT_DATA": expected, "FLAG": original["flag"]})
+
+
+def test_legacy_writer_reuses_the_baseline_record_after_its_own_write(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, _, original = baseline_fixture
+    writer = writer_api.ms()
+    assert writer.open(str(native_dataset), nomodify=False)
+    record = writer.getdataold(["data", "flag"], ifraxis=True)
+    assert writer.putdataold({"data": 2 * record["data"]}) is True
+    assert writer.putdataold({"flag": ~record["flag"]}) is True
+    assert writer.done()
+    assert_main_columns(
+        casa, native_dataset, {"DATA": 2 * original["data"], "FLAG": ~original["flag"]},
+    )
+
+
+def test_legacy_writer_skips_a_misshapen_grid_field_and_writes_a_valid_row_field(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, _, original = baseline_fixture
+    writer = writer_api.ms()
+    assert writer.open(str(native_dataset), nomodify=False)
+    record = writer.getdataold("data", ifraxis=True)
+    updated = ~original["flag_row"]
+    assert writer.putdataold({"data": 2 * record["data"][:, :, :-1, :], "flag_row": updated}) is True
+    assert writer.done()
+    assert_main_columns(casa, native_dataset, {"DATA": original["data"], "FLAG_ROW": updated})
+
+
+def test_legacy_float_roundtrip_keeps_reordered_hands_in_their_recorded_cells(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, _, original = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    descriptor = table.getcoldesc("DATA")
+    descriptor.update(valueType="float", dataManagerType="StandardStMan", dataManagerGroup="FLOAT_DATA")
+    assert table.addcols({"FLOAT_DATA": descriptor})
+    shape = original["flag"].shape
+    values = np.arange(1, 1 + np.prod(shape), dtype=np.float64).reshape(shape, order="F")
+    assert table.putcol("FLOAT_DATA", values)
+    assert table.done()
+
+    writer = writer_api.ms()
+    assert writer.open(str(native_dataset), nomodify=False)
+    assert writer.selectpolarizationold(["LL", "RR"])
+    current = writer.getdataold("float_data")["float_data"]
+    np.testing.assert_array_equal(current, values[::-1], strict=True)
+    assert writer.putdataold({"float_data": current}) is True
+    assert writer.done()
+    expected = values if writer_api is tools else values[::-1]
+    assert_main_columns(casa, native_dataset, {"FLOAT_DATA": expected})
+
+
+def test_legacy_writer_ignores_absent_complex_data_on_a_float_only_ms(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, _, original = baseline_fixture
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    descriptor = table.getcoldesc("DATA")
+    descriptor.update(valueType="float", dataManagerType="StandardStMan", dataManagerGroup="FLOAT_DATA")
+    assert table.addcols({"FLOAT_DATA": descriptor})
+    expected = np.arange(np.prod(original["flag"].shape), dtype=np.float64).reshape(
+        original["flag"].shape, order="F",
+    )
+    assert table.putcol("FLOAT_DATA", expected)
+    assert table.removecols("DATA")
+    assert table.done()
+
+    writer = writer_api.ms()
+    rows = [0, 2, 4]
+    assert writer.open(str(native_dataset), nomodify=False)
+    assert writer.selectold({"rows": rows})
+    replacement = np.full(original["data"][..., rows].shape, 23, dtype=np.float32)
+    assert writer.putdataold({"data": original["data"][..., rows], "float_data": replacement}) is True
+    assert writer.done()
+    expected[..., rows] = replacement
+    assert_main_columns(casa, native_dataset, {"FLOAT_DATA": expected})

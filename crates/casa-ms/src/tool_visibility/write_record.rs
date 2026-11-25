@@ -89,18 +89,24 @@ pub(super) struct WriteColumn {
 pub(super) fn write_columns(
     main: &Table,
     items: RecordValue,
-    lookup: fn(&str) -> Option<Column>,
+    legacy: bool,
 ) -> MsResult<Vec<WriteColumn>> {
+    let lookup = if legacy {
+        Column::from_legacy_name
+    } else {
+        Column::from_name
+    };
     let mut columns = Vec::<WriteColumn>::new();
     for field in items.into_fields() {
         let Some(column) = lookup(&field.name) else {
             continue;
         };
-        if matches!(column, Column::CorrectedData | Column::ModelData)
+        let absent = (matches!(column, Column::CorrectedData | Column::ModelData)
+            || (legacy && column == Column::Data))
             && !main
                 .schema()
-                .is_some_and(|schema| schema.contains_column(column.name()))
-        {
+                .is_some_and(|schema| schema.contains_column(column.name()));
+        if absent && !legacy {
             continue;
         }
         let array = match field.value {
@@ -118,6 +124,9 @@ pub(super) fn write_columns(
                     field.name
                 ))
             })?;
+        if absent {
+            continue;
+        }
         // Casacore permits case aliases in one record and writes them in
         // field order. The last such field owns the resulting column.
         if let Some(prior) = columns.iter_mut().find(|entry| entry.column == column) {

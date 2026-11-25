@@ -581,8 +581,9 @@ impl AttachedMs {
         }
         let mut written = BTreeSet::new();
         let mut temporary = BTreeMap::new();
+        let has_legacy_grid = self.legacy_selection.axes.baseline_read.is_some();
         for (_, target) in &targets {
-            if refresh_cursor {
+            if refresh_cursor || has_legacy_grid {
                 written.insert(target.path.clone());
             }
             if !self.write_locks.contains_key(&target.path) && !temporary.contains_key(&target.path)
@@ -594,6 +595,12 @@ impl AttachedMs {
         }
         link.verify_directory().map_err(runtime_error)?;
         main.verify_write_layout(&BTreeSet::new())?;
+        let refresh_legacy_grid = self
+            .legacy_selection
+            .axes
+            .baseline_read
+            .as_ref()
+            .is_some_and(|read| read.has_current_descriptor());
         let prepared = targets
             .into_iter()
             .map(|(record, target)| {
@@ -615,18 +622,20 @@ impl AttachedMs {
                 .write_part(&mut ms, lock, part)
                 .map_err(runtime_error)?;
         }
-        if let Some(iteration) = self
-            .visibility
-            .iteration
-            .as_mut()
-            .filter(|_| refresh_cursor)
-        {
+        if refresh_cursor || refresh_legacy_grid {
             // Refresh data read bindings and the stamps changed by our own
             // write without accepting a different saved view projection.
             main.verify_write_layout(&written)?;
-            let refreshed = VisibilityMain::open(&self.path)?;
+            let refreshed = Arc::new(VisibilityMain::open(&self.path)?);
             main.verify_write_layout(&written)?;
-            iteration.layout = Some(Arc::new(refreshed));
+            if refresh_cursor && let Some(iteration) = self.visibility.iteration.as_mut() {
+                iteration.layout = Some(Arc::clone(&refreshed));
+            }
+            if refresh_legacy_grid
+                && let Some(read) = self.legacy_selection.axes.baseline_read.as_mut()
+            {
+                read.refresh_descriptor(refreshed);
+            }
         }
         for (_, lock) in temporary {
             lock.release().map_err(runtime_error)?;

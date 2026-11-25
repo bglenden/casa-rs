@@ -130,7 +130,7 @@ impl<'a> VisibilityWriteRecord<'a> {
         items: RecordValue,
         options: VisibilityWriteOptions<'a>,
     ) -> MsResult<Self> {
-        let columns = write_columns(main, items, Column::from_name)?;
+        let columns = write_columns(main, items, false)?;
         let full_grid = columns
             .iter()
             .any(|field| field.values.ndim() == field.column.cell_rank() + 2);
