@@ -38,7 +38,7 @@ const METHODS: &[Method] = &[
         "asdmref",
         &[param("abspath", K::Text, Text(""))],
         R::Any,
-        No,
+        Yes,
     ),
     method("close", &[], R::Bool, Yes),
     method(

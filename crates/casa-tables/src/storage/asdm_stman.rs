@@ -14,6 +14,9 @@ use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 use super::StorageError;
 use super::table_control::DataManagerEntry;
 
+mod reference;
+pub use reference::AsdmBdfIndex;
+
 pub(crate) const TYPE: &str = "AsdmStMan";
 
 #[derive(Clone, Debug, Default)]
@@ -106,24 +109,13 @@ impl Index {
         tests::INDEX_OPENS.with(|count| count.set(count.get() + 1));
         let size = std::fs::metadata(path)?.len();
         let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
-        let version = io.getstart(TYPE)?;
-        if version > 1 {
-            return Err(invalid(format!(
-                "unsupported index version {version} in {}",
-                path.display()
-            )));
-        }
-        let order = if io.get_bool()? {
+        let header = IndexHeader::read(&mut io, size)?;
+        let order = if header.big_endian {
             ByteOrder::BigEndian
         } else {
             ByteOrder::LittleEndian
         };
-        io.getstart("Block")?;
-        let path_count = checked_count(&mut io, size, 4)?;
-        let bdfs = (0..path_count)
-            .map(|_| read_bdf_name(&mut io, size))
-            .collect::<Result<Vec<_>, _>>()?;
-        io.getend()?;
+        let bdfs = header.bdfs;
         let count = checked_count(&mut io, size, 56)?;
         let mut descriptors = Vec::with_capacity(count);
         let mut previous_end = 0;
@@ -214,6 +206,35 @@ impl Index {
             cached_block: None,
             bytes: Vec::new(),
         }
+    }
+}
+
+struct IndexHeader {
+    version: u32,
+    big_endian: bool,
+    block_version: u32,
+    bdfs: Vec<PathBuf>,
+}
+
+impl IndexHeader {
+    fn read(io: &mut AipsIo, size: u64) -> Result<Self, StorageError> {
+        let version = io.getstart(TYPE)?;
+        if version > 1 {
+            return Err(invalid(format!("unsupported ASDM index version {version}")));
+        }
+        let big_endian = io.get_bool()?;
+        let block_version = io.getstart("Block")?;
+        let count = checked_count(io, size, 4)?;
+        let bdfs = (0..count)
+            .map(|_| read_bdf_name(io, size))
+            .collect::<Result<_, _>>()?;
+        io.getend()?;
+        Ok(Self {
+            version,
+            big_endian,
+            block_version,
+            bdfs,
+        })
     }
 }
 

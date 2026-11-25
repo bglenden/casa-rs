@@ -131,10 +131,7 @@ impl Table {
     /// # Errors
     /// Returns an error when the destination cannot be atomically updated.
     pub fn save_cache_keywords_atomically(&self, path: &Path) -> Result<(), TableError> {
-        self.save_keywords_with_sync(
-            path,
-            crate::storage::table_keyword_write::sync_cache_keywords,
-        )
+        self.save_keywords_with_sync(path, crate::publication::sync_publication_file)
     }
 
     fn save_keywords_with_sync(

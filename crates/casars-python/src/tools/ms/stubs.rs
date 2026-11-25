@@ -27,12 +27,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (abspath = None), text_signature = "($self, abspath='')")]
-    fn asdmref(&self, abspath: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("asdmref")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (msfile = None, freqtol = None, dirtol = None, weightscale = None, handling = None, destmsfile = None, respectname = None), text_signature = "($self, msfile='', freqtol=[], dirtol=[], weightscale=1.0, handling=0, destmsfile='', respectname=False)")]
     fn concatenate(
         &self,

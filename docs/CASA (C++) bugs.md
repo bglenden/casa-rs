@@ -11493,6 +11493,16 @@ the unmapped row number. Casa-rs uses the cache order only when its rows
 belong to the captured view, so both records reflect the actual
 selection (#1030).
 
+## ASDM path retargeting can change the BDF byte order or write an invalid path
+
+CASA 6.7.6.14 writes the local machine's endian flag when `ms.asdmref()`
+retargets a lazy MeasurementSet. Its BDF files remain in their original
+byte order, so a cross-endian index can decode the wrong visibility
+values. Casa-rs retains the endian flag and the original row descriptors.
+CASA also installs a non-UTF-8 bytes path before Python reports a
+`UnicodeDecodeError`. Casa-rs raises the error before changing the
+index (#1030).
+
 ## MS writes can reorder values read from saved views
 
 Read `getdata('data')` from a saved reference whose rows are out of order,

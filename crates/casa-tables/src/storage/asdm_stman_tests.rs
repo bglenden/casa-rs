@@ -131,6 +131,54 @@ fn data_values(cell: &ArrayValue) -> &[Complex32] {
 }
 
 #[test]
+fn retargeting_a_saved_view_preserves_cross_endian_visibility_cells() {
+    use crate::TableWriteLock;
+
+    for big_endian in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let initial = root.path().join("original-asdm");
+        let bdf = initial.join("ASDMBinary/samples.bdf");
+        std::fs::create_dir_all(bdf.parent().unwrap()).unwrap();
+        std::fs::write(&bdf, encoded_cross_shorts(big_endian)).unwrap();
+        let source = root.path().join("lazy");
+        binding(&source, &bdf, big_endian, &[CROSS], 6);
+        let read = |table: &Table| {
+            table
+                .column_accessor("DATA")
+                .unwrap()
+                .array_cells_owned_uncached(&[0, 5])
+                .unwrap()
+        };
+        let table = Table::open(TableOptions::new(&source)).unwrap();
+        let expected = read(&table);
+        let view = root.path().join("view");
+        table
+            .select_rows(&[5, 0, 2])
+            .unwrap()
+            .save(TableOptions::new(&view))
+            .unwrap();
+        let saved = Table::open(TableOptions::new(&view)).unwrap();
+        let index = saved.asdm_bdf_index().unwrap().unwrap();
+        assert_eq!(index.reference().unwrap(), initial.to_str().unwrap());
+        let relocated = root.path().join("relocated-asdm");
+        std::fs::rename(initial, &relocated).unwrap();
+
+        let mut lock = TableWriteLock::acquire(&source, 1).unwrap();
+        assert_eq!(
+            index
+                .relocate(relocated.to_str().unwrap(), &mut lock)
+                .unwrap(),
+            relocated.to_str().unwrap()
+        );
+        lock.release().unwrap();
+        let reopened = Table::open(TableOptions::new(&source)).unwrap();
+        let current = reopened.asdm_bdf_index().unwrap().unwrap();
+        assert_eq!(current.reference().unwrap(), relocated.to_str().unwrap());
+        assert_eq!(read(&reopened), expected);
+    }
+}
+
+#[test]
 fn crossed_baselines_are_reordered_and_materialize_independently() {
     for big_endian in [true, false] {
         let root = tempfile::tempdir().unwrap();
