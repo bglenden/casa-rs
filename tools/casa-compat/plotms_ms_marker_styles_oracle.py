@@ -103,10 +103,30 @@ def compare_ordinate_styles(root, native):
         np.testing.assert_allclose(line.get_xydata(), points, rtol=1.2e-5)
     print("independent ordinate styles retain 36 ordered coordinates, titles, marker sizes and outlines", flush=True)
 
+    for name, custom in (("scalar-style", [True, True]), ("scalar-enable", True)):
+        options = controls | dict(customsymbol=custom, symbolshape="square", symbolcolor="purple",
+                                  symbolfill="fill", symboloutline=True)
+        pinned = images(root, f"{name}-casa", reference, options)
+        for rgb in ([128, 0, 128], [0, 0, 255]):
+            assert np.count_nonzero(np.max(np.abs(pinned - rgb), axis=-1) < 45) > 5
+        observed.clear()
+        with patch.object(_plotms_plot, "configure", capture):
+            images(root, f"{name}-native", native, options)
+        left, right = [line for _, line in observed]
+        assert left.get_marker() == "s" and right.get_marker() == "o"
+        assert to_hex(left.get_markerfacecolor()) == "#800080"
+        assert to_hex(left.get_markeredgecolor()) == "#000000"
+        assert to_hex(right.get_markerfacecolor()) != "#800080"
+        if name == "scalar-style":
+            assert right.get_markersize() == 13
+            assert to_hex(right.get_markerfacecolor()) == to_hex(right.get_markeredgecolor()) == "#0000ff"
+        for (_, line), points in zip(observed, np.split(source, 2), strict=True):
+            np.testing.assert_allclose(line.get_xydata(), points, rtol=1.2e-5)
+
 
 def compare_color_groups(root, native):
     from casars.tasks import _plotms_plot
-    from matplotlib.colors import to_hex
+    from matplotlib.colors import to_hex, to_rgb
 
     root.mkdir()
     vis, _ = fixture(root)
@@ -138,6 +158,8 @@ def compare_color_groups(root, native):
         ("corr", 12, {"XX": "XX", "YY": "YY"}, ([168, 104, 216], [224, 118, 0])),
     ):
         options = controls | dict(coloraxis=dimension if groups else "")
+        if groups:
+            options |= dict(customsymbol=True, symbolshape="square", symbolsize=7, symbolcolor="purple")
         text = [root / f"{dimension}-{engine}.txt" for engine in ("casa", "native")]
         for task, path in zip((reference, native), text, strict=True):
             assert task(**options, expformat="txt", plotfile=str(path)) is None
@@ -146,7 +168,7 @@ def compare_color_groups(root, native):
         for color in palette:
             assert np.count_nonzero(np.max(np.abs(pixels - color), axis=-1) < 25) > 20
         with patch.object(_plotms_plot, "configure", capture):
-            images(root, f"{dimension}-native", native, options)
+            native_pixels = images(root, f"{dimension}-native", native, options)
         axis = figures.pop()
         selected = rows(text[0])
         assert sum(row[2] == "2" and row[12] == "XX" for row in selected) == 6
@@ -155,8 +177,12 @@ def compare_color_groups(root, native):
             label = line.get_label()
             flagged = label.lower() == "flagged"
             if groups:
-                assert label in groups and line.get_marker() == "o"
-                clear_colors.add(line.get_color())
+                assert label in groups and line.get_marker() == "s" and line.get_markersize() == 7
+                marker_color = to_hex(line.get_markerfacecolor())
+                assert marker_color == to_hex(line.get_markeredgecolor())
+                rgb = np.array(to_rgb(marker_color)) * 255
+                assert np.count_nonzero(np.max(np.abs(native_pixels - rgb), axis=-1) < 25) > 20
+                clear_colors.add(marker_color)
                 points = [row for row in selected if row[field] == groups[label]]
             elif flagged:
                 assert line.get_marker() == "D" and line.get_markersize() == 6

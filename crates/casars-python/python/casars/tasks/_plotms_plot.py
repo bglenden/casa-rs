@@ -253,19 +253,29 @@ def _share_measurement_set_axes(figure, primary, layout, options):
 def _line(line, layer, options, *, measurement_set):
     index = layer["id"].partition("-")[0]
     series = int(index) if index.isdigit() else 0
-    flagged = layer["color_group"] == "flagged"
+    group = layer["color_group"]
+    if measurement_set:
+        group = group.rsplit("::", 1)[-1]
+    flagged = group == "flagged"
     prefix = "flaggedsymbol" if flagged else "symbol"
     custom = "customflaggedsymbol" if flagged else "customsymbol"
-    if _per_series(options.get(custom), series, False):
-        shape = _per_series(options.get(f"{prefix}shape"), series, "circle" if flagged else "autoscaling")
-        color = _per_series(options.get(f"{prefix}color"), series, "ff0000" if flagged else "0000ff")
-        fill = _per_series(options.get(f"{prefix}fill"), series, "fill").lower()
-        outline = _per_series(options.get(f"{prefix}outline"), series, False)
-        size = _per_series(options.get(f"{prefix}size"), series, 2)
+
+    def option(name, default):
+        return _per_series(options.get(name), series, default, broadcast=not measurement_set)
+
+    if option(custom, False):
+        shape = option(f"{prefix}shape", "circle" if flagged else "autoscaling")
+        color = option(f"{prefix}color", "ff0000" if flagged else "0000ff")
+        fill = option(f"{prefix}fill", "fill").lower()
+        outline = option(f"{prefix}outline", False)
+        size = option(f"{prefix}size", 2)
         # Explicit PlotMS marker colors carry their own opacity.
         line.set_alpha(None)
         marker = _MARKERS[shape.lower()]
-        color = _color(color)
+        if measurement_set and group not in ("", "all", "flagged"):
+            color = line.get_color()
+        else:
+            color = _color(color)
         line.set_marker(marker)
         line.set_markersize(size)
         line.set_markeredgecolor("black" if outline else color)
@@ -314,9 +324,11 @@ def _mesh_marker(marker, fill):
     return MarkerStyle(path, transform=Affine2D().scale(2 * extent))
 
 
-def _per_series(value, series, default):
+def _per_series(value, series, default, *, broadcast):
     if isinstance(value, (list, tuple)):
-        return value[series] if series < len(value) else default
+        value = value[series] if series < len(value) else None
+    elif series and not broadcast:
+        return default
     return default if value is None else value
 
 
