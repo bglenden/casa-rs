@@ -31,8 +31,8 @@ const METHODS: &[Method] = &[
             param("comment", K::Text, Text("")),
             param("field", K::Any, Empty),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "asdmref",
