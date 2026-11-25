@@ -111,9 +111,12 @@ impl PyMsTool {
                 }
                 types.push(kind);
             }
-            let codes = ms.legacy_correlation_codes()?;
-            ms.legacy_selection.axes.polarization =
-                VisibilityPolarization::legacy_selected(&codes, types);
+            if !types.is_empty() {
+                let (description_count, codes) = ms.legacy_correlation_layout()?;
+                ms.legacy_selection.axes.polarization = Some(
+                    VisibilityPolarization::legacy_selected(description_count, &codes, types),
+                );
+            }
             ms.legacy_selection.axes.labels = Some(wanted);
             Ok(true)
         })

@@ -1,10 +1,13 @@
 """Exercise the pre-iterator CASA MSSelector visibility axes."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from casars import tools
 from test_tools_ms import pinned_casa
+from test_tools_ms_selection_indices import two_spws_dataset
 from test_tools_ms_visibility import same_visibility
 from test_tools_ms_visibility_ifraxis import baseline_fixture
 from test_tools_msmetadata import measures, native_dataset
@@ -188,3 +191,45 @@ def test_legacy_average_uses_each_correlations_own_weight(native_dataset, baseli
         np.testing.assert_array_equal(old_time, [slots.sum()], strict=True)
         np.testing.assert_array_equal(new_time, [slots.mean()], strict=True)
     assert native.done()
+
+
+def test_legacy_polarization_uses_the_active_description(two_spws_dataset):
+    casa = pinned_casa()
+    path = Path(two_spws_dataset)
+    table = casa.table()
+    assert table.open(str(path / "POLARIZATION"), nomodify=False)
+    other = table.nrows()
+    assert table.addrows(1)
+    for name in table.colnames():
+        value = np.array([9, 12], dtype=np.int32) if name == "CORR_TYPE" else table.getcell(name, 0)
+        assert table.putcell(name, other, value)
+    assert table.done()
+    assert table.open(str(path / "DATA_DESCRIPTION"), nomodify=False)
+    assert table.putcell("POLARIZATION_ID", 1, other)
+    assert table.done()
+
+    results = []
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(path))
+        assert reader.selecttaql("DATA_DESC_ID == 0")
+        assert reader.selectpolarizationold("LL")
+        result = reader.getdataold(["data", "weight", "sigma", "axis_info"])
+        assert result["data"].shape == (1, 4, 30)
+        assert result["weight"].shape == result["sigma"].shape == (2, 30)
+        assert reader.done()
+        results.append(result)
+    same_visibility(results[1], results[0])
+
+
+def test_legacy_converted_flag_sums_keep_the_converted_axis(native_dataset, baseline_fixture):
+    casa, _, raw = baseline_fixture
+    expected = np.count_nonzero(raw["flag"].any(axis=0, keepdims=True), axis=-1)
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.selectpolarizationold("XX")
+        result = reader.getdataold(["data", "flag", "flag_sum"], average=True)
+        assert result["data"].shape == (1, raw["data"].shape[1])
+        np.testing.assert_array_equal(result["flag_sum"], expected, strict=True)
+        assert reader.done()

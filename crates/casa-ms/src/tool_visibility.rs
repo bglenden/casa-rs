@@ -777,30 +777,36 @@ impl<'a> VisibilityRead<'a> {
     ) -> MsResult<()> {
         let (raw_flags, reduced_flags) = if let Some(reduced) = reduced {
             let (raw, flags, weights) = reduced.into_fields();
-            let (raw, weights) = if self
+            let converted = self
                 .polarization
-                .is_some_and(VisibilityPolarization::is_conversion)
-            {
-                (
-                    self.matrix_cells("FLAG", false)?,
-                    self.vector_cells("WEIGHT")?,
-                )
-            } else {
-                (ArrayValue::Bool(raw), weights)
-            };
-            let name = if names.contains("weight") {
-                "weight"
-            } else {
-                "avgweight"
-            };
-            if self.legacy {
+                .is_some_and(VisibilityPolarization::is_conversion);
+            let raw = if self.legacy {
                 if names.contains("weight") {
                     let weights = averaging::sum_weights(self.vector_cells("WEIGHT")?, grid)?;
                     fields.insert("weight".into(), Value::Array(weights));
                 }
+                if converted && names.contains("flag_sum") {
+                    ArrayValue::Bool(self.legacy_flags()?)
+                } else {
+                    ArrayValue::Bool(raw)
+                }
             } else {
+                let (raw, weights) = if converted {
+                    (
+                        self.matrix_cells("FLAG", false)?,
+                        self.vector_cells("WEIGHT")?,
+                    )
+                } else {
+                    (ArrayValue::Bool(raw), weights)
+                };
+                let name = if names.contains("weight") {
+                    "weight"
+                } else {
+                    "avgweight"
+                };
                 fields.insert(name.into(), Value::Array(weights));
-            }
+                raw
+            };
             (Some(raw), Some(flags))
         } else {
             if names.contains("weight") {

@@ -44,35 +44,30 @@ impl VisibilityPolarization {
         }
     }
 
-    /// Select recorded correlations in the requested order, or convert them
-    /// when the first selected data description lacks a requested type.
+    /// Select or convert correlations using the legacy selector's initialized
+    /// layout. It takes that layout from the first selected data description.
     pub fn legacy_selected(
-        descriptions: &[(i32, Vec<i32>)],
+        description_count: usize,
+        input_codes: &[i32],
         types: Vec<StokesType>,
-    ) -> Option<Self> {
-        if types.is_empty() {
-            return None;
-        }
-        let matches = descriptions
+    ) -> Self {
+        let indices = types
             .iter()
-            .map(|(id, codes)| {
-                let indices = types
-                    .iter()
-                    .map(|kind| codes.iter().position(|&code| code == kind.code()))
-                    .collect::<Option<Vec<_>>>()?;
-                Some(ToolCorrelationSelection {
-                    description_id: *id,
-                    indices,
-                    types: types.clone(),
-                })
-            })
+            .map(|kind| input_codes.iter().position(|&code| code == kind.code()))
             .collect::<Option<Vec<_>>>();
-        Some(if let Some(matches) = matches {
-            Self::stored(matches)
+        if let Some(indices) = indices {
+            Self::stored(
+                (0..description_count)
+                    .map(|id| ToolCorrelationSelection {
+                        description_id: id as i32,
+                        indices: indices.clone(),
+                        types: types.clone(),
+                    })
+                    .collect(),
+            )
         } else {
-            let plans = descriptions
-                .iter()
-                .map(|(id, codes)| (*id, Conversion::new(codes, &types)))
+            let plans = (0..description_count)
+                .map(|id| (id as i32, Conversion::new(input_codes, &types)))
                 .collect();
             Self {
                 project: Projection::Converted {
@@ -81,7 +76,7 @@ impl VisibilityPolarization {
                     recorded: None,
                 },
             }
-        })
+        }
     }
 
     /// Convert the selected rows to the requested Stokes or correlation types.

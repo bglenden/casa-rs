@@ -216,7 +216,7 @@ impl AttachedMs {
             .map_err(runtime_error)
     }
 
-    pub(super) fn legacy_correlation_codes(&self) -> PyResult<Vec<(i32, Vec<i32>)>> {
+    pub(super) fn legacy_correlation_layout(&self) -> PyResult<(usize, Vec<i32>)> {
         let refreshed = self.refresh_legacy_main()?;
         let table = refreshed.as_ref().unwrap_or(&self.main);
         let uncached = super::subtable_queries::Subtables::default();
@@ -230,23 +230,28 @@ impl AttachedMs {
         let descriptions = &linked[&SubtableId::DataDescription];
         let polarization = &linked[&SubtableId::Polarization];
         let count = descriptions.iter().map(Table::row_count).sum::<usize>();
-        (0..count)
-            .map(|id| {
-                let (table, row) =
-                    linked_subtable_row(descriptions, id, SubtableId::DataDescription)
-                        .map_err(runtime_error)?;
-                let pol = MsDataDescription::new(table)
-                    .polarization_id(row)
-                    .map_err(runtime_error)?;
-                let (table, row) =
-                    linked_subtable_row(polarization, pol as usize, SubtableId::Polarization)
-                        .map_err(runtime_error)?;
-                let codes = MsPolarization::new(table)
-                    .corr_type(row)
-                    .map_err(runtime_error)?;
-                Ok((id as i32, codes))
-            })
-            .collect()
+        let id = self
+            .legacy_selection
+            .descriptions()
+            .first()
+            .copied()
+            .ok_or_else(|| runtime_error("no initialized legacy data description"))?;
+        let (table, row) =
+            linked_subtable_row(descriptions, id as usize, SubtableId::DataDescription)
+                .map_err(runtime_error)?;
+        let pol = MsDataDescription::new(table)
+            .polarization_id(row)
+            .map_err(runtime_error)?;
+        let (table, row) = linked_subtable_row(
+            polarization,
+            usize::try_from(pol).map_err(runtime_error)?,
+            SubtableId::Polarization,
+        )
+        .map_err(runtime_error)?;
+        let codes = MsPolarization::new(table)
+            .corr_type(row)
+            .map_err(runtime_error)?;
+        Ok((count, codes))
     }
 
     pub(super) fn prepare_legacy_filter(&mut self) -> PyResult<bool> {
