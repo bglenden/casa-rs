@@ -4473,7 +4473,8 @@ fn build_generic_visibility_scatter(
     let use_spectral_weights = calibration.is_some()
         && needs_visibility_grid
         && spec.averaging.avgchannel.is_some_and(|width| width > 1);
-    let project_plotms_columns = calibration.is_some_and(|input| input.rows.is_none());
+    let project_plotms_columns = calibration
+        .is_some_and(|input| input.rows.is_none() || input.secondary_y_data_column.is_some());
     let statistics_kinds = calibration
         .filter(|_| {
             project_plotms_columns

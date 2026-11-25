@@ -12,6 +12,7 @@ import casatasks as casa
 from casaplotms import plotms as reference
 import numpy as np
 
+from calibration_gencal_tsys_oracle import attach_syscal
 from calibration_smoothcal_oracle import copy_ms, opened
 from plotms_calibration_oracle import compare_text, plotms_launcher
 from record_casa_returns import make_cal_ms
@@ -132,7 +133,7 @@ def requests(root, amplitude, bandpass, flagged, flagged_gain):
                 }
 
 
-def spectral_weight_requests(root, vis, amplitude, bandpass):
+def spectral_weight_fixture(root, vis):
     spectral = root / "spectral-weights.ms"
     copy_ms(vis, spectral)
     with opened(spectral, True) as table:
@@ -146,6 +147,10 @@ def spectral_weight_requests(root, vis, amplitude, bandpass):
                                    shape=np.array(sigma.shape[:2], dtype=np.int32))
                 table.addcols({name: description}, {"TYPE": "StandardStMan", "NAME": name})
             table.putcol(name, values)
+    return spectral
+
+
+def spectral_weight_requests(spectral, amplitude, bandpass):
     for name, correction, calibrate_weights in (
         ("amplitude", amplitude, False), ("bandpass", bandpass, True),
     ):
@@ -302,6 +307,48 @@ def compare_independent_ordinates(root, native, vis, amplitude, bandpass, flagge
     verify_source(vis, before)
 
 
+def compare_independent_spectra(root, native, vis):
+    attach_syscal(vis, root / "ordinate-syscal.txt", spectrum=True)
+    with opened(vis / "SYSCAL", True) as table:
+        antennas = np.tile(np.arange(4, dtype=np.int32), table.nrows() // 4)
+        table.putcol("ANTENNA_ID", antennas)
+        spectrum = table.getcol("TSYS_SPECTRUM")
+        spectrum[:, ::2, :] = 10
+        spectrum[:, 1::2, :] = 50
+        table.putcol("TSYS_SPECTRUM", spectrum)
+    tsys = root / "ordinate-tsys.cal"
+    casa.gencal(str(vis), str(tsys), "tsys")
+    # Remove one complete bin on the selected baseline and polarization. The
+    # surviving bins still have unequal sigma and weight spectra.
+    with opened(vis, True) as table:
+        rows = np.flatnonzero((table.getcol("ANTENNA1") == 0) & (table.getcol("ANTENNA2") == 1))
+        first = int(rows[0])
+        flags = table.getcell("FLAG", first)
+        flags[0, 2:4] = True
+        table.putcell("FLAG", first, flags)
+    before = snapshot(vis)
+    controls = dict(vis=str(vis), xaxis="channel", yaxis=["real", "real"],
+                    ydatacolumn=["data", "corrected"], yaxislocation=["left", "right"],
+                    antenna="A0&A1", spw="0:0~3", correlation="XX", avgchannel="2",
+                    showgui=False, expformat="txt")
+    paired_rows = []
+    for calwt, corrected in ((False, 13.0989), (True, 10.8068)):
+        options = controls | dict(callib=library_entry(tsys, calwt))
+        stem = f"calibrated-ordinate-spectra-{calwt}"
+        expected, actual = (root / f"{stem}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 46
+        rows = [line.split() for line in expected.read_text().splitlines() if not line.startswith("#")]
+        np.testing.assert_allclose([float(rows[0][1]), float(rows[23][1])],
+                                   [1.06802, corrected], rtol=1.2e-5)
+        assert [row[2:] for row in rows[:23]] == [row[2:] for row in rows[23:]]
+        paired_rows.append(rows)
+        print(f"{stem}: 46 matching weighted coordinates with the flagged bin omitted", flush=True)
+    assert paired_rows[0][:23] == paired_rows[1][:23], "calwt changed the stored ordinate"
+    verify_source(vis, before)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -323,6 +370,10 @@ def main():
         with plotms_launcher(args.app_run):
             if args.only != "existing":
                 compare_independent_ordinates(root, native, vis, amplitude, bandpass, flagged)
+                spectral_dir = root / "ordinate-spectral"
+                spectral_dir.mkdir()
+                spectral = spectral_weight_fixture(spectral_dir, vis)
+                compare_independent_spectra(root, native, spectral)
             if args.only != "ordinates":
                 persisted = root / "persisted-correction.ms"
                 copy_ms(vis, persisted)
@@ -330,7 +381,8 @@ def main():
                 with opened(persisted, True) as table:
                     table.putcol("CORRECTED_DATA", 7 * table.getcol("DATA"))
                 cases = list(requests(root, amplitude, bandpass, flagged, flagged_gain))
-                cases.extend(spectral_weight_requests(root, vis, amplitude, bandpass))
+                spectral = spectral_weight_fixture(root, vis)
+                cases.extend(spectral_weight_requests(spectral, amplitude, bandpass))
                 cases.append(("preserve-existing-corrected-data", {
                     "vis": str(persisted), "callib": library_entry(amplitude),
                 }))
