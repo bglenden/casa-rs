@@ -1858,7 +1858,9 @@ fn mstransform_staged(
                 transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
             };
             let hanning_noise = if hanning && legacy_grid.is_some() {
-                hanning::flag(&mut transformed_flags);
+                if bins.len() > 1 {
+                    hanning::flag(&mut transformed_flags);
+                }
                 None
             } else if let (true, Some(noise)) = (hanning, noise.as_ref()) {
                 let statistics = hanning::statistics(
@@ -1982,11 +1984,15 @@ fn mstransform_staged(
                     })?
                 };
                 if hanning && column.source != OptionalMainColumn::LagData {
-                    hanning::smooth(
-                        &mut transformed,
-                        &[transformed_flags.shape()[0], bins.len()],
-                    )
-                    .map_err(mutation_error)?;
+                    if legacy_grid.is_some() {
+                        hanning::smooth_regrid(&mut transformed, &flags).map_err(mutation_error)?;
+                    } else {
+                        hanning::smooth(
+                            &mut transformed,
+                            &[transformed_flags.shape()[0], bins.len()],
+                        )
+                        .map_err(mutation_error)?;
+                    }
                 }
                 if column.source != OptionalMainColumn::LagData {
                     if let Some(regrid) = &regrid {
@@ -2232,10 +2238,10 @@ fn mstransform_staged(
                 && legacy_grid.is_some()
             {
                 regrid
-                    .scale_noise(&mut weight, false)
+                    .scale_noise(&mut weight, false, hanning)
                     .map_err(mutation_error)?;
                 regrid
-                    .scale_noise(&mut sigma, true)
+                    .scale_noise(&mut sigma, true, hanning)
                     .map_err(mutation_error)?;
             } else if continuum.is_some()
                 && !task_average
@@ -2295,7 +2301,11 @@ fn mstransform_staged(
                             .and_then(|index| row_spectra[index].take())
                             .map(|value| {
                                 let mut output = projector.apply(value, fft_flags.as_ref())?;
-                                projector.scale_noise(&mut output, name == "SIGMA_SPECTRUM")?;
+                                projector.scale_noise(
+                                    &mut output,
+                                    name == "SIGMA_SPECTRUM",
+                                    hanning,
+                                )?;
                                 Ok(output)
                             })
                             .transpose()

@@ -65,6 +65,76 @@ where
     );
 }
 
+pub(super) fn smooth_regrid(value: &mut ArrayValue, flags: &ArrayValue) -> Result<(), TableError> {
+    let ArrayValue::Bool(flags) = flags else {
+        return Err(TableError::Schema("Hanning FLAG must be Bool".into()));
+    };
+    if value.shape() != flags.shape() || flags.ndim() != 2 {
+        return Err(TableError::Schema(
+            "visibility and FLAG must have matching [corr, chan] shapes for Hanning smoothing"
+                .into(),
+        ));
+    }
+    match value {
+        ArrayValue::Complex32(array) => smooth_flagged_values(array, flags),
+        ArrayValue::Float32(array) => smooth_flagged_values(array, flags),
+        _ => {
+            return Err(TableError::Schema(
+                "Hanning visibility must be Complex32 or Float32".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn smooth_flagged_values<T>(values: &mut ArrayD<T>, flags: &ArrayD<bool>)
+where
+    T: Copy + Add<Output = T> + Mul<f32, Output = T>,
+{
+    let channels = values.len_of(Axis(1));
+    if channels < 2 {
+        return;
+    }
+    let last = channels - 1;
+    for (mut row, flags) in values
+        .lanes_mut(Axis(1))
+        .into_iter()
+        .zip(flags.lanes(Axis(1)))
+    {
+        // SubMS uses Smooth::hanning with relaxed=True and TrueIsGood=False.
+        // Both endpoints remain flagged. Their stored values use the edge masks.
+        let first_value = if !flags[0] && !flags[1] {
+            row[0] * (2.0 / 3.0) + row[1] * (1.0 / 3.0)
+        } else {
+            row[0]
+        };
+        let last_value = if flags[last] {
+            row[last]
+        } else if flags[last - 1] {
+            row[last - 1]
+        } else {
+            row[last] * (2.0 / 3.0) + row[last - 1] * (1.0 / 3.0)
+        };
+        let mut left = row[0];
+        for channel in 1..last {
+            let centre = row[channel];
+            let right = row[channel + 1];
+            if !flags[channel] {
+                let weights = match (flags[channel - 1], flags[channel + 1]) {
+                    (false, false) => COEFFICIENTS,
+                    (false, true) => [1.0 / 3.0, 2.0 / 3.0, 0.0],
+                    (true, false) => [0.0, 2.0 / 3.0, 1.0 / 3.0],
+                    (true, true) => [0.0, 1.0, 0.0],
+                };
+                row[channel] = left * weights[0] + centre * weights[1] + right * weights[2];
+            }
+            left = centre;
+        }
+        row[0] = first_value;
+        row[last] = last_value;
+    }
+}
+
 pub(super) fn flag(value: &mut ArrayValue) {
     let ArrayValue::Bool(flags) = value else {
         unreachable!("FLAG has already been validated")

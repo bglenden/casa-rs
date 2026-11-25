@@ -429,6 +429,24 @@ impl Window {
                 bandwidth,
                 channel_width,
             )?,
+            Some(LegacySpectralGrid::CenteredNumeric {
+                quantity,
+                centre,
+                bandwidth,
+                channel_width,
+                rest_hz,
+            }) => crate::spectral_selection::centered_numeric_frequencies(
+                quantity,
+                (centre, bandwidth, channel_width, rest_hz),
+                &converted,
+                &converted_widths,
+                maximum_channels,
+            )
+            .map_err(ms_error)?,
+            Some(LegacySpectralGrid::FrameOnly) => CasaChannelFrequencies {
+                centres_hz: converted.clone(),
+                steps_hz: converted_widths.clone(),
+            },
             _ => axis::output_axis(options, &converted, &converted_widths, maximum_channels)?,
         };
         let count = axis.centres_hz.len();
@@ -779,6 +797,7 @@ impl Projection<'_> {
         &self,
         values: &mut ArrayValue,
         sigma: bool,
+        hanning: bool,
     ) -> Result<(), TableError> {
         let ArrayValue::Float32(values) = values else {
             return Err(TableError::Schema(
@@ -786,7 +805,9 @@ impl Projection<'_> {
             ));
         };
         let scale = if sigma {
-            self.noise_scale.sqrt().recip()
+            // SubMS calculates SIGMA before refreshing the WEIGHT factors.
+            let factor = if hanning { 1.32 } else { 1.0 };
+            (self.noise_scale * factor).sqrt().recip()
         } else {
             self.noise_scale
         };

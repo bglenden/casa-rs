@@ -3,6 +3,8 @@
 
 use std::path::Path;
 
+use casa_ms::spectral_selection::LegacyRegridQuantity;
+use casa_ms::subtables::MsSpectralWindow;
 use casa_ms::tool_history::append_tool_history;
 use casa_ms::transform::{
     LegacyMsTool, LegacySpectralGrid, MsRegridOptions, MsTransformError, MsTransformRequest,
@@ -12,6 +14,7 @@ use casa_tables::publication::{
     check_write_access, exchange_directories, lock_table_tree_for_replacement_with_held,
 };
 use casa_tables::{Table, TableOptions};
+use casa_types::measures::frequency::FrequencyRef;
 use pyo3::prelude::*;
 
 use super::sort::SortedDestination;
@@ -31,8 +34,45 @@ impl SpectralRewrite {
     fn method(&self) -> &'static str {
         match self.grid {
             LegacySpectralGrid::Cvel => "cvel",
-            LegacySpectralGrid::CenteredChannels { .. } => "regridspw",
+            _ => "regridspw",
         }
+    }
+
+    fn unchanged(&self, ms: &AttachedMs) -> PyResult<bool> {
+        if !matches!(self.grid, LegacySpectralGrid::FrameOnly)
+            && !self.options.interpolation.is_empty()
+        {
+            return Ok(false);
+        }
+        let link = ms.working_metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        if self.options.interpolation.is_empty() {
+            // SubMS declines an unknown regridspw interpolation without editing.
+            return Ok(self.method() == "regridspw");
+        }
+        if self.options.outframe.is_empty() {
+            return Ok(true);
+        }
+        let Ok(reference) = self.options.outframe.parse::<FrequencyRef>() else {
+            return Ok(false);
+        };
+        if reference == FrequencyRef::GEO {
+            return Ok(false);
+        }
+        let tables = ms
+            .subtables
+            .spectral_grid_tables(&ms.main)
+            .map_err(runtime_error)?;
+        for table in tables.windows.iter() {
+            let window = MsSpectralWindow::new(table);
+            for row in 0..table.row_count() {
+                if window.meas_freq_ref(row).map_err(runtime_error)? != reference.casacore_code() {
+                    return Ok(false);
+                }
+            }
+        }
+        link.verify_directory().map_err(runtime_error)?;
+        Ok(true)
     }
 }
 
@@ -55,7 +95,12 @@ impl PyMsTool {
         #[pyo3(from_py_with = strict_bool)] hanning: bool,
     ) -> PyResult<bool> {
         let centre = if start > UNSET_CENTRE {
-            let derived = (start + bandwidth / 2.).floor();
+            let derived = start + bandwidth / 2.;
+            let derived = if mode == "chan" {
+                derived.floor()
+            } else {
+                derived
+            };
             if center > UNSET_CENTRE && derived != center {
                 return Ok(false);
             }
@@ -63,11 +108,36 @@ impl PyMsTool {
         } else {
             center
         };
-        if mode != "chan" {
-            return Err(runtime_error(format!(
-                "The legacy regridspw mode {mode:?} is not yet implemented (#1030)"
-            )));
-        }
+        // Empty mode and the default channel band only transform the frame.
+        let grid = match mode.as_str() {
+            "" => LegacySpectralGrid::FrameOnly,
+            "chan" if centre < UNSET_CENTRE && bandwidth <= 0. && chanwidth <= 1. => {
+                LegacySpectralGrid::FrameOnly
+            }
+            "chan" => LegacySpectralGrid::CenteredChannels {
+                centre,
+                bandwidth,
+                channel_width: chanwidth,
+            },
+            _ => LegacySpectralGrid::CenteredNumeric {
+                quantity: match mode.as_str() {
+                    "freq" => LegacyRegridQuantity::Frequency,
+                    "vrad" => LegacyRegridQuantity::RadioVelocity,
+                    "vopt" => LegacyRegridQuantity::OpticalVelocity,
+                    "wave" => LegacyRegridQuantity::Wavelength,
+                    _ => return self.invalid_regridspw(),
+                },
+                centre,
+                bandwidth,
+                channel_width: chanwidth,
+                rest_hz: restfreq,
+            },
+        };
+        let interpolation = if matches!(grid, LegacySpectralGrid::FrameOnly) {
+            "linear"
+        } else {
+            regridspw_interpolation(&interpolation, &grid)
+        };
         self.rewrite_spectra(
             py,
             SpectralRewrite {
@@ -77,22 +147,14 @@ impl PyMsTool {
                     start: String::new(),
                     width: String::new(),
                     nspw: 1,
-                    interpolation: interpolation.to_ascii_lowercase(),
+                    interpolation: interpolation.into(),
                     phasecenter: String::new(),
-                    restfreq: if restfreq > 0. {
-                        format!("{restfreq}Hz")
-                    } else {
-                        String::new()
-                    },
+                    restfreq: String::new(),
                     outframe,
                     veltype: "radio".into(),
                     preaverage: false,
                 },
-                grid: LegacySpectralGrid::CenteredChannels {
-                    centre,
-                    bandwidth,
-                    channel_width: chanwidth,
-                },
+                grid,
                 hanning,
             },
         )
@@ -143,13 +205,52 @@ impl PyMsTool {
     }
 }
 
+fn regridspw_interpolation(interpolation: &str, grid: &LegacySpectralGrid) -> &'static str {
+    let interpolation = interpolation.to_ascii_lowercase();
+    if interpolation.contains("nearest") {
+        "nearest"
+    } else if interpolation.contains("splin") {
+        "spline"
+    } else if interpolation.contains("cub") {
+        "cubic"
+    } else if interpolation.contains("fft") {
+        if matches!(
+            grid,
+            LegacySpectralGrid::CenteredNumeric {
+                quantity: LegacyRegridQuantity::OpticalVelocity | LegacyRegridQuantity::Wavelength,
+                ..
+            }
+        ) {
+            ""
+        } else {
+            "fftshift"
+        }
+    } else if interpolation.is_empty() || interpolation.contains("linear") {
+        "linear"
+    } else {
+        ""
+    }
+}
+
 impl PyMsTool {
+    fn invalid_regridspw(&self) -> PyResult<bool> {
+        let attached = self.attached.lock().map_err(runtime_error)?;
+        if attached.as_ref().is_some_and(|ms| ms.writable) {
+            Err(runtime_error("Regridding failed."))
+        } else {
+            Ok(false)
+        }
+    }
+
     fn rewrite_spectra(&self, py: Python<'_>, rewrite: SpectralRewrite) -> PyResult<bool> {
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_mut().filter(|ms| ms.writable) else {
                 return Ok(false);
             };
+            if rewrite.unchanged(ms)? {
+                return Ok(true);
+            }
             if ms.selected_rows.is_some() {
                 return if rewrite.method() == "cvel" {
                     Err(runtime_error(
@@ -209,6 +310,9 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
         ..Default::default()
     };
     match mstransform_task(&request, &options) {
+        Err(MsTransformError::Spectrum(_)) if operation == "regridspw" => {
+            return Err(runtime_error("Regridding failed."));
+        }
         Err(MsTransformError::RegridParameter { .. } | MsTransformError::Spectrum(_)) => {
             return Ok(None);
         }

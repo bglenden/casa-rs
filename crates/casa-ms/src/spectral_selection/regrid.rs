@@ -49,6 +49,19 @@ impl RegridQuantity {
     }
 }
 
+/// Units of the numeric spectral grids accepted by `ms.regridspw()`.
+#[derive(Debug, Clone, Copy)]
+pub enum LegacyRegridQuantity {
+    /// Frequency in Hz.
+    Frequency,
+    /// Radio velocity in m/s.
+    RadioVelocity,
+    /// Optical velocity in m/s.
+    OpticalVelocity,
+    /// Wavelength in metres.
+    Wavelength,
+}
+
 /// A frequency- or velocity-mode cube grid as tclean asks for it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RegridRequest {
@@ -136,18 +149,103 @@ pub(crate) fn casa_data_channel_frequencies(
     maximum_channels: usize,
 ) -> MsResult<CasaChannelFrequencies> {
     let bounds = regrid_chan_bounds(request, frequencies_hz, widths_hz, maximum_channels)?;
-    let centres_hz = bounds
-        .iter()
-        .map(|(low_hz, high_hz)| (low_hz + high_hz) / 2.0)
-        .collect::<Vec<_>>();
-    let steps_hz = bounds
-        .iter()
-        .map(|(low_hz, high_hz)| high_hz - low_hz)
-        .collect::<Vec<_>>();
-    Ok(CasaChannelFrequencies {
+    Ok(frequencies_from_bounds(bounds))
+}
+
+fn frequencies_from_bounds(bounds: Vec<(f64, f64)>) -> CasaChannelFrequencies {
+    let (centres_hz, steps_hz) = bounds
+        .into_iter()
+        .map(|(low_hz, high_hz)| ((low_hz + high_hz) / 2.0, high_hz - low_hz))
+        .unzip();
+    CasaChannelFrequencies {
         centres_hz,
         steps_hz,
-    })
+    }
+}
+
+/// The centered numeric path in CASA 6.7.6.14's SubMS::regridChanBounds.
+pub(crate) fn centered_numeric_frequencies(
+    quantity: LegacyRegridQuantity,
+    (centre, bandwidth, width, rest_hz): (f64, f64, f64, f64),
+    frequencies_hz: &[f64],
+    widths_hz: &[f64],
+    maximum_channels: usize,
+) -> MsResult<CasaChannelFrequencies> {
+    use LegacyRegridQuantity::{Frequency, OpticalVelocity, RadioVelocity, Wavelength};
+
+    let (band, descending) = ascending_band(frequencies_hz, widths_hz)?;
+    if matches!(quantity, RadioVelocity | OpticalVelocity) && !(rest_hz > 0.0 && rest_hz <= 1e30) {
+        return Err(MsError::InvalidInput(
+            "Regridding needs a valid rest frequency".into(),
+        ));
+    }
+
+    let stepping = match quantity {
+        Frequency => None,
+        RadioVelocity => Some(&RADIO_VELOCITY),
+        OpticalVelocity => Some(&OPTICAL_VELOCITY),
+        Wavelength => Some(&WAVELENGTH),
+    };
+    let (centre_hz, bandwidth_hz, channel_width_hz) = if let Some(steps) = stepping {
+        let first = band.first();
+        let last = band.last();
+        let to_unit = |frequency| (steps.to_velocity)(frequency, rest_hz);
+        let to_hz = |value| (steps.to_frequency)(value, rest_hz);
+        let minimum_centre = if matches!(quantity, Wavelength) {
+            0.0
+        } else {
+            -C
+        };
+        let (centre_hz, centre) = if centre > minimum_centre {
+            (to_hz(centre), centre)
+        } else {
+            let centre_hz = if matches!(quantity, OpticalVelocity) {
+                (first.0 - first.1 + last.0 + last.1) / 2.0
+            } else {
+                (first.0 + last.0) / 2.0
+            };
+            (centre_hz, to_unit(centre_hz))
+        };
+        let interval_hz = |width: f64| {
+            if width > 0.0 && (!matches!(quantity, Wavelength) || width / 2.0 < centre) {
+                2.0 * (to_hz(centre - width / 2.0) - to_hz(centre))
+            } else {
+                -1.0
+            }
+        };
+        (centre_hz, interval_hz(bandwidth), interval_hz(width))
+    } else {
+        (centre, bandwidth, width)
+    };
+
+    let grid = FrequencyGrid {
+        centre_hz,
+        bandwidth_hz,
+        channel_width_hz,
+        centre_is_start: false,
+        start_is_end: false,
+        nchan: ChannelCount::Spent,
+        start: centre,
+    };
+    let wavelength_spacing = matches!(quantity, OpticalVelocity | Wavelength);
+    let (centre_hz, bandwidth_hz) = possible_centre_and_bandwidth(wavelength_spacing, &grid, &band);
+    let default_width = band.widths_hz[band.widths_hz.len() / 2];
+    let (central_width_hz, unit_width) =
+        central_channel_width(width, default_width, &grid, &band, bandwidth_hz)?;
+    let span = Span {
+        centre_hz,
+        bandwidth_hz,
+        central_width_hz,
+    };
+    let bounds = channel_bounds(
+        &span,
+        stepping,
+        unit_width,
+        rest_hz,
+        descending,
+        maximum_channels,
+    )?;
+    Ok(frequencies_from_bounds(bounds))
 }
 
 /// The data channels `regridChanBounds` works on, ascending in frequency.
@@ -236,35 +334,53 @@ fn regrid_chan_bounds(
         RegridQuantity::RadioVelocity => radio_velocity_grid(request, &band),
         RegridQuantity::OpticalVelocity => optical_velocity_grid(request, &band),
     };
-    let (centre_hz, bandwidth_hz) = possible_centre_and_bandwidth(request.quantity, &grid, &band);
-    let (central_width_hz, velocity_width) =
-        central_channel_width(request, &grid, &band, bandwidth_hz)?;
-    if !(central_width_hz.is_finite() && central_width_hz > 0.0) {
-        return Err(MsError::VersionError(format!(
-            "cube output channel width must be positive, got {central_width_hz} Hz"
-        )));
-    }
+    let wavelength_spacing = request.quantity == RegridQuantity::OpticalVelocity;
+    let (centre_hz, bandwidth_hz) = possible_centre_and_bandwidth(wavelength_spacing, &grid, &band);
+    let (central_width_hz, velocity_width) = central_channel_width(
+        request.channel_width(),
+        band.first().1,
+        &grid,
+        &band,
+        bandwidth_hz,
+    )?;
     let span = Span {
         centre_hz,
         bandwidth_hz,
         central_width_hz,
     };
-    let (up, down) = match request.quantity {
-        RegridQuantity::Frequency => frequency_bounds(&span, maximum_channels)?,
-        RegridQuantity::RadioVelocity => velocity_bounds(
-            &span,
-            velocity_width,
-            &RADIO_VELOCITY,
-            rest_hz,
-            maximum_channels,
-        )?,
-        RegridQuantity::OpticalVelocity => velocity_bounds(
-            &span,
-            velocity_width,
-            &OPTICAL_VELOCITY,
-            rest_hz,
-            maximum_channels,
-        )?,
+    let stepping = match request.quantity {
+        RegridQuantity::Frequency => None,
+        RegridQuantity::RadioVelocity => Some(&RADIO_VELOCITY),
+        RegridQuantity::OpticalVelocity => Some(&OPTICAL_VELOCITY),
+    };
+    channel_bounds(
+        &span,
+        stepping,
+        velocity_width,
+        rest_hz,
+        descending,
+        maximum_channels,
+    )
+}
+
+fn channel_bounds(
+    span: &Span,
+    stepping: Option<&VelocityStepping>,
+    width: f64,
+    rest_hz: f64,
+    descending: bool,
+    maximum_channels: usize,
+) -> MsResult<Vec<(f64, f64)>> {
+    if !(span.central_width_hz.is_finite() && span.central_width_hz > 0.0) {
+        return Err(MsError::VersionError(format!(
+            "Output channel width must be positive, got {} Hz",
+            span.central_width_hz
+        )));
+    }
+    let (up, down) = if let Some(steps) = stepping {
+        velocity_bounds(span, width, steps, rest_hz, maximum_channels)?
+    } else {
+        frequency_bounds(span, maximum_channels)?
     };
     // The central channel opens both lists.
     let mut bounds = down
@@ -516,7 +632,7 @@ fn optical_velocity_grid(request: &RegridRequest, band: &Band) -> FrequencyGrid 
 /// `theRegridCenterF` and `theRegridBWF`: the band centre kept within the
 /// data's edges and the bandwidth the grid can have.
 fn possible_centre_and_bandwidth(
-    quantity: RegridQuantity,
+    wavelength_spacing: bool,
     grid: &FrequencyGrid,
     band: &Band,
 ) -> (f64, f64) {
@@ -546,7 +662,7 @@ fn possible_centre_and_bandwidth(
         // Equidistant in frequency: whole channels of the output width
         // ("define via width of first channel to avoid numerical problems").
         let whole_channels = |bandwidth_hz: f64| {
-            if quantity == RegridQuantity::OpticalVelocity {
+            if wavelength_spacing {
                 return bandwidth_hz;
             }
             let width_hz = if grid.channel_width_hz <= 0.0 {
@@ -594,7 +710,7 @@ fn possible_centre_and_bandwidth(
         shift_start_to_centre(&mut centre_hz, bandwidth_hz);
     }
     // The centre of an optical-velocity grid is its centre in wavelength.
-    let range_tolerance_hz = if quantity == RegridQuantity::OpticalVelocity {
+    let range_tolerance_hz = if wavelength_spacing {
         first_width_hz
     } else {
         1.0
@@ -628,16 +744,15 @@ fn possible_centre_and_bandwidth(
 /// (`-1` otherwise). A width narrower than every data channel by more
 /// than 1 Hz is refused, as CASA refuses it.
 fn central_channel_width(
-    request: &RegridRequest,
+    requested_width: f64,
+    default_width_hz: f64,
     grid: &FrequencyGrid,
     band: &Band,
     bandwidth_hz: f64,
 ) -> MsResult<(f64, f64)> {
     let first_width_hz = band.first().1;
     if grid.channel_width_hz <= 0.0 {
-        // `nchan != 0 || centerIsStartC`, and a tclean grid always starts
-        // with `centerIsStart`: the first data channel's width.
-        return Ok((first_width_hz, -1.0));
+        return Ok((default_width_hz, -1.0));
     }
     let width_hz = grid.channel_width_hz;
     if width_hz > bandwidth_hz {
@@ -657,7 +772,7 @@ fn central_channel_width(
              channel width which is {smallest_hz} Hz"
         )));
     }
-    Ok((width_hz, request.channel_width()))
+    Ok((width_hz, requested_width))
 }
 
 /// The band the output channels fill.
@@ -770,6 +885,12 @@ const OPTICAL_VELOCITY: VelocityStepping = VelocityStepping {
     to_frequency: freq_from_vopt,
     continue_up: |end, edge, width| end - edge < width / 10.0,
     continue_down: |end, edge, width| edge - end < width / 10.0,
+};
+
+const WAVELENGTH: VelocityStepping = VelocityStepping {
+    to_velocity: |frequency, _| C / frequency,
+    to_frequency: |wavelength, _| C / wavelength,
+    ..OPTICAL_VELOCITY
 };
 
 /// The `"vrad"` and `"vopt"` bounds: contiguous channels of equal

@@ -12193,3 +12193,14 @@ when reading the observation epoch and segfaults. Casa-rs returns the
 persisted spectral grid for unframed queries and an empty float64 axis
 when conversion needs an observation epoch. The empty view remains
 attached (#1030).
+
+
+## Spectral regridding can leave later fields on the original noise scale
+
+In CASA 6.7.6.14, regrid a MeasurementSet with several fields sharing one
+spectral window through `ms.regridspw(mode="chan", chanwidth=2, hanning=False)`
+without changing its frequency reference. CASA doubles the per-row and
+spectral weights and scales sigma by the inverse square root of two for
+the first field. It reuses the same grid for later fields while leaving
+their weights and sigma at the original scale. Casa-rs applies the same
+bandwidth ratio to all fields that use the same spectral grid (#1030).

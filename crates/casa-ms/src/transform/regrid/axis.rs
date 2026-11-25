@@ -4,8 +4,8 @@
 use casa_types::quanta::{Quantity, Unit};
 
 use crate::spectral_selection::{
-    CasaChannelFrequencies, RegridQuantity, RegridRequest, casa_data_channel_frequencies,
-    parse_rest_frequency_hz,
+    CasaChannelFrequencies, LegacyRegridQuantity, RegridQuantity, RegridRequest,
+    casa_data_channel_frequencies, parse_rest_frequency_hz,
 };
 
 use super::super::{MsRegridOptions, MsTransformError};
@@ -15,6 +15,21 @@ use super::super::{MsRegridOptions, MsTransformError};
 pub enum LegacySpectralGrid {
     /// The mode, start and channel count established by `cvel()`.
     Cvel,
+    /// Convert frequency metadata without resampling.
+    FrameOnly,
+    /// The numeric band in frequency, velocity or wavelength units.
+    CenteredNumeric {
+        /// Units for the centre, bandwidth and channel width.
+        quantity: LegacyRegridQuantity,
+        /// Centre of the new spectral window in the requested units.
+        centre: f64,
+        /// Width of the new spectral window in the requested units.
+        bandwidth: f64,
+        /// Width of one new channel in the requested units.
+        channel_width: f64,
+        /// Rest frequency in Hz, used for the two velocity conventions.
+        rest_hz: f64,
+    },
     /// The numeric band supplied to `regridspw(mode="chan")`.
     CenteredChannels {
         /// Centre expressed as an original channel index.
