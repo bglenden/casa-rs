@@ -720,8 +720,8 @@ const METHODS: &[Method] = &[
             param("msname", K::Text, Text("")),
             param("app", K::Text, Text("ms")),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "writehistory_batch",
@@ -732,8 +732,8 @@ const METHODS: &[Method] = &[
             param("msname", K::Text, Text("")),
             param("app", K::Text, Text("ms")),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
 ];
 

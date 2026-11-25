@@ -116,7 +116,7 @@ impl Table {
         if count == 0 {
             return Ok(());
         }
-        self.edit_rows_in_place(Rows::Append { count, defaults })
+        self.edit_rows_in_place(Rows::Append { count, defaults }, true)
     }
 
     /// Append distinct records in a single edit, preserving the table's
@@ -128,6 +128,20 @@ impl Table {
     /// The table cannot be locked or written, a row disagrees with its
     /// schema, or a manager cannot append explicit records.
     pub fn append_records_in_place(&mut self, records: &[RecordValue]) -> Result<(), TableError> {
+        self.append_records(records, true)
+    }
+
+    /// Append records using [`Self::append_records_in_place`]'s persistence
+    /// rules and consume the handle. The written layout is available to a
+    /// fresh reader without reloading this handle first.
+    ///
+    /// # Errors
+    /// As in [`Self::append_records_in_place`].
+    pub fn append_records_and_close(mut self, records: &[RecordValue]) -> Result<(), TableError> {
+        self.append_records(records, false)
+    }
+
+    fn append_records(&mut self, records: &[RecordValue], reload: bool) -> Result<(), TableError> {
         if records.is_empty() {
             return Ok(());
         }
@@ -149,10 +163,13 @@ impl Table {
             }
         }
         let defaults = schema.default_row();
-        self.edit_rows_in_place(Rows::AppendRecords {
-            records,
-            defaults: &defaults,
-        })
+        self.edit_rows_in_place(
+            Rows::AppendRecords {
+                records,
+                defaults: &defaults,
+            },
+            reload,
+        )
     }
 
     /// Keep the given rows in an existing plain table, in ascending order,
@@ -169,7 +186,7 @@ impl Table {
                 "retained rows must strictly increase".into(),
             ));
         }
-        self.edit_rows_in_place(Rows::Keep(kept))
+        self.edit_rows_in_place(Rows::Keep(kept), true)
     }
 
     /// Add columns without changing the files for managers that do not
@@ -240,7 +257,7 @@ impl Table {
         )
     }
 
-    fn edit_rows_in_place(&mut self, rows: Rows<'_>) -> Result<(), TableError> {
+    fn edit_rows_in_place(&mut self, rows: Rows<'_>, reload: bool) -> Result<(), TableError> {
         self.edit_clean_layout("edit rows in place", |this, path, dat, old| {
             if let Rows::Keep(kept) = rows {
                 if kept.last().is_some_and(|&row| row as u64 >= old) {
@@ -253,10 +270,17 @@ impl Table {
             let plan = StagedEdit::stage(path, dat, old, rows)?;
             this.note_persisted_write(path);
             plan.publish()?;
-            // Publish the new count before reopening; the old lock sync
-            // count otherwise hides removals.
-            this.note_full_save(path)?;
-            this.reload_disk_state_at(path)
+            if reload {
+                // Publish the count before reopening; the old lock sync
+                // count otherwise hides removals.
+                this.note_full_save(path)?;
+                this.reload_disk_state_at(path)
+            } else {
+                // The handle is consumed. Its lock still announces the
+                // persisted row count when released.
+                this.mark_flushed();
+                Ok(())
+            }
         })
     }
 

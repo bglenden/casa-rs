@@ -118,7 +118,7 @@ pub(super) fn write_group_indexes(
             big_endian,
         )?;
     }
-    let (nr_idx_buckets, index_length) = sink.finish()?;
+    let (_, nr_idx_buckets, index_length) = sink.finish()?;
     let nr_buckets = first_idx_bucket + nr_idx_buckets;
     let header = serialize_ssm_header(
         bucket_size,
@@ -148,9 +148,10 @@ pub(super) fn write_group_indexes(
 /// each object's length once the object ends. The bucket being filled is
 /// held until the stream moves into the next; a length that falls in an
 /// earlier bucket is written straight to the file.
-pub(super) struct IndexBucketSink {
-    file: File,
+pub(super) struct IndexBucketSink<W> {
+    writer: W,
     first_bucket: usize,
+    first_offset: u64,
     bucket_bytes: usize,
     /// Position in the stream.
     position: u64,
@@ -160,11 +161,26 @@ pub(super) struct IndexBucketSink {
     open: Option<(usize, Vec<u8>)>,
 }
 
-impl IndexBucketSink {
-    pub(super) fn new(file: File, first_bucket: usize, bucket_bytes: usize) -> Self {
-        Self {
-            file,
+impl<W: Write + Seek + 'static> IndexBucketSink<W> {
+    pub(super) fn new(writer: W, first_bucket: usize, bucket_bytes: usize) -> Self {
+        Self::at_offset(
+            writer,
             first_bucket,
+            bucket_bytes,
+            bucket_offset(first_bucket, bucket_bytes),
+        )
+    }
+
+    pub(super) fn at_offset(
+        writer: W,
+        first_bucket: usize,
+        bucket_bytes: usize,
+        first_offset: u64,
+    ) -> Self {
+        Self {
+            writer,
+            first_bucket,
+            first_offset,
             bucket_bytes,
             position: 0,
             end: 0,
@@ -219,9 +235,9 @@ impl IndexBucketSink {
         Ok(io.into_inner_typed()?)
     }
 
-    /// End the chain at the last bucket and write it; return the number of
-    /// index buckets and the length of the index.
-    pub(super) fn finish(mut self) -> io::Result<(usize, usize)> {
+    /// Write the final index bucket and return the writer, bucket count,
+    /// and serialized index length.
+    pub(super) fn finish(mut self) -> io::Result<(W, usize, usize)> {
         let buckets = match &mut self.open {
             Some((bucket, bytes)) => {
                 write_chain_header(bytes, -1);
@@ -230,19 +246,19 @@ impl IndexBucketSink {
             None => 0,
         };
         self.write_open()?;
-        Ok((buckets, self.end as usize))
+        Ok((self.writer, buckets, self.end as usize))
     }
 
     /// File offset of index bucket `bucket`, counted from the first.
     fn bucket_start(&self, bucket: usize) -> u64 {
-        bucket_offset(self.first_bucket + bucket, self.bucket_bytes)
+        self.first_offset + bucket as u64 * self.bucket_bytes as u64
     }
 
     fn write_open(&mut self) -> io::Result<()> {
         if let Some((bucket, bytes)) = &self.open {
-            self.file
-                .seek(SeekFrom::Start(self.bucket_start(*bucket)))?;
-            self.file.write_all(bytes)?;
+            let offset = self.bucket_start(*bucket);
+            self.writer.seek(SeekFrom::Start(offset))?;
+            self.writer.write_all(bytes)?;
         }
         Ok(())
     }
@@ -266,7 +282,7 @@ impl IndexBucketSink {
     }
 }
 
-impl Write for IndexBucketSink {
+impl<W: Write + Seek + 'static> Write for IndexBucketSink<W> {
     /// Write as much of `buf` as fits in the index bucket it starts in.
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if buf.is_empty() {
@@ -280,8 +296,8 @@ impl Write for IndexBucketSink {
         let open = self.open.as_ref().map(|(open, _)| *open);
         if open.is_some_and(|open| bucket < open) {
             let offset = self.bucket_start(bucket) + (CHAIN_BYTES + within) as u64;
-            self.file.seek(SeekFrom::Start(offset))?;
-            self.file.write_all(chunk)?;
+            self.writer.seek(SeekFrom::Start(offset))?;
+            self.writer.write_all(chunk)?;
         } else {
             if open != Some(bucket) {
                 self.open_bucket(bucket)?;
@@ -299,7 +315,7 @@ impl Write for IndexBucketSink {
     }
 }
 
-impl Seek for IndexBucketSink {
+impl<W> Seek for IndexBucketSink<W> {
     fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
         let invalid = || io::Error::new(io::ErrorKind::InvalidInput, "SSM index seek out of range");
         self.position = match position {
@@ -314,7 +330,7 @@ impl Seek for IndexBucketSink {
     }
 }
 
-impl Read for IndexBucketSink {
+impl<W> Read for IndexBucketSink<W> {
     fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -395,18 +411,19 @@ mod tests {
 
                     let path = dir.path().join("index");
                     let file = File::create(&path).unwrap();
-                    let (buckets, length) = IndexBucketSink::new(file, first_bucket, bucket_bytes)
-                        .write_index(
-                            nr_data_buckets as u32,
-                            rows_per_bucket,
-                            ncol as i32,
-                            last_row.iter().copied(),
-                            bucket_number.iter().copied(),
-                            big_endian,
-                        )
-                        .unwrap()
-                        .finish()
-                        .unwrap();
+                    let (_, buckets, length) =
+                        IndexBucketSink::new(file, first_bucket, bucket_bytes)
+                            .write_index(
+                                nr_data_buckets as u32,
+                                rows_per_bucket,
+                                ncol as i32,
+                                last_row.iter().copied(),
+                                bucket_number.iter().copied(),
+                                big_endian,
+                            )
+                            .unwrap()
+                            .finish()
+                            .unwrap();
                     let case = format!(
                         "{nr_data_buckets} data buckets, {bucket_bytes}-byte buckets, \
                          big_endian {big_endian}"

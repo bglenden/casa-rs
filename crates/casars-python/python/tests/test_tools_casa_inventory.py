@@ -76,6 +76,7 @@ IMPLEMENTED["ms"] = {
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
     "open", "range", "reset", "select", "selectinit", "selecttaql", "sort",
     "statistics", "statisticsold", "statwt", "summary", "timesort", "uvsub",
+    "writehistory", "writehistory_batch",
 }
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",

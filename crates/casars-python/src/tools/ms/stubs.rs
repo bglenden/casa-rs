@@ -477,30 +477,4 @@ impl PyMsTool {
     ) -> PyResult<Py<PyAny>> {
         stub("virtconcatenate")
     }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (message = None, parms = None, origin = None, msname = None, app = None), text_signature = "($self, message='', parms='', origin='MSHistoryHandler::addMessage()', msname='', app='ms')")]
-    fn writehistory(
-        &self,
-        message: Option<&Bound<'_, PyAny>>,
-        parms: Option<&Bound<'_, PyAny>>,
-        origin: Option<&Bound<'_, PyAny>>,
-        msname: Option<&Bound<'_, PyAny>>,
-        app: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("writehistory")
-    }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (messages = None, parms = None, origin = None, msname = None, app = None), text_signature = "($self, messages=[], parms='', origin='MSHistoryHandler::addMessage()', msname='', app='ms')")]
-    fn writehistory_batch(
-        &self,
-        messages: Option<&Bound<'_, PyAny>>,
-        parms: Option<&Bound<'_, PyAny>>,
-        origin: Option<&Bound<'_, PyAny>>,
-        msname: Option<&Bound<'_, PyAny>>,
-        app: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("writehistory_batch")
-    }
 }
