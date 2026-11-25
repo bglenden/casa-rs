@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "9d823651ffdeb40539a21f0019a0765755930b01",
+  "source_revision": "9d823651ffdeb40539a21f0019a0765755930b01",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only compound-selection --work <new-dir> --native-bin <msexplore>",
+  "scope": "A two-window static MeasurementSet visibility plot with intersecting field, strided SPW, time, scan, intent, antenna, feed, UV, array, observation and TaQL selectors. The two positive requests select the same correlation through its primary spelling and through the polarization alias.",
+  "result": "passed",
+  "text_exports": 2,
+  "points": 16,
+  "refusal_controls": 2
+}

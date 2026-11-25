@@ -338,7 +338,8 @@
     "field": {
       "scope": "Field names or ids (blank for all)",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -349,7 +350,8 @@
       "scope": "Spectral windows:channels (blank for all) Virtual-model spectral-window averages align selected physical channels with the prediction buffer grid.",
       "evidence": [
         "paired",
-        "ms-virtual-spw-models"
+        "ms-virtual-spw-models",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -359,7 +361,8 @@
     "timerange": {
       "scope": "Time range (blank for all)",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -370,7 +373,8 @@
       "scope": "UV range (blank for all). Modern calibration tables reject this selector.",
       "evidence": [
         "selectors",
-        "remaining"
+        "remaining",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -380,7 +384,8 @@
     "antenna": {
       "scope": "Baseline/antenna names or ids (blank for all)",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -390,7 +395,8 @@
     "scan": {
       "scope": "Scan numbers (blank for all)",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -401,7 +407,8 @@
       "scope": "Correlations/polarizations (blank for all)",
       "evidence": [
         "paired",
-        "ms-per-antenna-export"
+        "ms-per-antenna-export",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -411,7 +418,8 @@
     "polarization": {
       "scope": "Polarizations (blank for all)",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -432,7 +440,8 @@
       "scope": "(Sub)array numbers (blank for all). Modern calibration tables reject this selector.",
       "evidence": [
         "selectors",
-        "remaining"
+        "remaining",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -442,7 +451,8 @@
     "observation": {
       "scope": "Observation IDs (blank for all)",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -453,7 +463,8 @@
       "scope": "Observing intent (blank for all). Modern calibration tables reject this selector.",
       "evidence": [
         "selectors",
-        "remaining"
+        "remaining",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -465,7 +476,8 @@
       "evidence": [
         "selectors",
         "remaining",
-        "ms-feed-selection"
+        "ms-feed-selection",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -473,9 +485,10 @@
       "status": "Partial"
     },
     "msselect": {
-      "scope": "Apply a TaQL row expression to a modern calibration table. Refuse a selection with no solutions.",
+      "scope": "Apply a TaQL row expression to a modern calibration table. Refuse a selection with no solutions. Intersect TaQL with selected strided channels and feed, intent, UV and metadata controls across two windows.",
       "evidence": [
-        "selectors"
+        "selectors",
+        "ms-compound-selection"
       ],
       "behaviors": [
         "selection"
@@ -2890,6 +2903,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-combined-atmosphere-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2283"
+      ]
+    },
+    "ms-compound-selection": {
+      "kind": "Paired compound two-window MeasurementSet selection",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. A two-window static MeasurementSet visibility plot with intersecting field, strided SPW, time, scan, intent, antenna, feed, UV, array, observation and TaQL selectors. The two positive requests select the same correlation through its primary spelling and through the polarization alias.",
+      "result": "The two exports match 16 ordered coordinates with GHz metadata and absolute MJD within 0.00051 s. Both engines preserve the selected clear cube and omit the one flagged channel while applying the independent UV and other metadata filters. Both refuse simultaneous correlation and polarization selectors and an empty TaQL intersection without a product. The source arrays stay unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "9d823651ffdeb40539a21f0019a0765755930b01",
+      "source_revision": "9d823651ffdeb40539a21f0019a0765755930b01",
+      "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only compound-selection --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-compound-selection-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2285"
       ]
     }
   }
