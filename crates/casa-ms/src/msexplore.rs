@@ -6997,6 +6997,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 let Some(representative) = accumulator.representative.clone() else {
                     continue;
                 };
+                let channel_start = representative.chan_start;
                 let planned_time = group.and_then(|group| {
                     if scalar_intervals {
                         scalar_time_bounds
@@ -7034,7 +7035,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             let slot = time_bins?.first_row_slot(group?);
                             let ddid = selected_data_desc_ids[slot];
                             let spectrum = wavelength_spectra.as_ref()?.get(&ddid)?;
-                            let frequency_hz = *spectrum.get(representative.chan_start)?;
+                            let frequency_hz = *spectrum.get(channel_start)?;
                             Some(metres_to_wavelengths(metres, frequency_hz))
                         } else {
                             Some(metres)
