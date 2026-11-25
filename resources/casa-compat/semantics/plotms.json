@@ -124,7 +124,8 @@
         "ms-ephemeris-axes",
         "ms-static-metadata-coordinates",
         "ms-pointing-sample-masks-and-pages",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "coordinates"
@@ -175,7 +176,8 @@
         "ms-virtual-model-time-averages",
         "ms-virtual-model-averaged-expressions",
         "ms-spw-antenna-visibility-expressions",
-        "ms-time-antenna-spw-flag-symbols"
+        "ms-time-antenna-spw-flag-symbols",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "coordinates"
@@ -240,7 +242,8 @@
         "ms-static-metadata-coordinates",
         "ms-pointing-list-controls",
         "ms-pointing-sample-masks-and-pages",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "coordinates"
@@ -306,7 +309,8 @@
         "callibrary-independent-ordinates",
         "ms-combined-atmosphere",
         "ms-time-antenna-spw-flag-symbols",
-        "ms-effective-float-averages"
+        "ms-effective-float-averages",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "coordinates"
@@ -599,7 +603,8 @@
         "ms-effective-float-averages",
         "ms-combined-spw-baseline-antenna-ids",
         "ms-pointing-sample-masks-and-pages",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "averaging"
@@ -667,7 +672,8 @@
         "ms-antenna-time-window-correlation-shapes",
         "ms-combined-spw-baseline-antenna-ids",
         "ms-pointing-sample-masks-and-pages",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "averaging"
@@ -843,12 +849,13 @@
       "status": "Partial"
     },
     "transform": {
-      "scope": "Disable frequency controls and the fixed MeasurementSet phase-center shift when false. Additional active calibration transforms remain open. Active MeasurementSet spectral transforms share one reporting grid between Frequency, Velocity, wavelength coordinates and verbose TXT metadata.",
+      "scope": "Disable frequency controls and MeasurementSet phase-center shifts when false. Additional active calibration transforms remain open. Active MeasurementSet spectral transforms share one reporting grid between Frequency, Velocity, wavelength coordinates and verbose TXT metadata.",
       "evidence": [
         "selectors",
         "ms-fixed-phasecenter",
         "remaining",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "advanced"
@@ -861,7 +868,8 @@
         "calibration-controls",
         "selectors",
         "remaining",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "advanced"
@@ -892,10 +900,11 @@
       "status": "Partial"
     },
     "phasecenter": {
-      "scope": "Shift selected unaveraged complex visibilities and UVW to a fixed J2000 phase center on a MeasurementSet with fixed J2000 field directions. Plot one complex visibility ordinate against a complex visibility or UVW coordinate in metres. Other frames and compositions with averaging, iteration, reporting frames, callibraries, overlays, selected FLOAT_DATA or virtual models remain open.",
+      "scope": "Shift selected complex visibility columns and UVW to a fixed J2000 or Galactic direction. A polynomial J2000 FIELD uses the first selected epoch in its visibility iterator chunk. Shift a vector time average at its averaged UVW, or shift before reducing channel bins. The supported single visibility pair also composes with raw scan iteration, reporting-frame frequencies and a selected virtual model. The separate vector averages are supported, and the pinned combined time/channel request is refused. Other direction frames, callibraries, overlays and selected FLOAT_DATA remain open.",
       "evidence": [
         "ms-fixed-phasecenter",
-        "remaining"
+        "remaining",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "advanced"
@@ -940,7 +949,8 @@
         "callibrary-independent-ordinates",
         "ms-unaveraged-row-axes",
         "ms-static-metadata-coordinates",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "pages"
@@ -1355,7 +1365,8 @@
         "ms-iterated-visibility-ordinates",
         "ms-pointing-list-controls",
         "ms-pointing-sample-masks-and-pages",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-phasecenter-compositions"
       ],
       "behaviors": [
         "export"
@@ -1654,14 +1665,15 @@
       "id": "advanced",
       "title": "Advanced calibration plotting controls",
       "status": "Partial",
-      "scope": "Apply calibration libraries to MeasurementSet plots in memory. Compute transmission, sky temperature and receiver sidebands for MeasurementSets and calibration tables, including selected channels and requested overlay color groups.",
+      "scope": "Apply calibration libraries to MeasurementSet plots in memory. Compute transmission, sky temperature and receiver sidebands for MeasurementSets and calibration tables, including selected channels and requested overlay color groups. Compose read-only J2000 or Galactic phase-center shifts with polynomial FIELD directions, separate vector time or channel averaging, raw scan iteration, a spectral reporting frame or selected virtual model cells.",
       "evidence": [
         "atmosphere",
         "ms-atmosphere",
         "selectors",
         "remaining",
         "callibrary",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-phasecenter-compositions"
       ],
       "gap": "Remaining shared PlotMS forms are tracked in #1032 and #215."
     }
@@ -3260,6 +3272,22 @@
         "https://github.com/bglenden/casa-rs/pull/2310",
         "https://github.com/bglenden/casa-rs/pull/2289",
         "https://github.com/bglenden/casa-rs/pull/2297"
+      ]
+    },
+    "ms-phasecenter-compositions": {
+      "kind": "Same-input MeasurementSet phase-center compositions",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Selected complex MeasurementSet visibility axes with J2000 and Galactic targets, mixed-shape polynomial FIELD directions in two scans, separate vector time and channel reductions, scan iteration, LSRK and virtual MODEL.",
+      "result": "Eight composition cases match 93 selected coordinates and their identifiers, including the masked channels, two six-point scan panels and 12 verbose LSRK frequencies. Seven active PNG pairs match the coordinates, ordered panels and 500 by 360 dimensions. Active CASA marker masks match separate materialized controls for the polynomial, channel, time, LSRK and model cases. The pinned visibility iterator rotates the averaged UVW and complex visibilities for time averaging, and channel averaging uses already rotated cells. The pinned task refuses simultaneous channel and time averaging for equal and independent columns. Input MAIN data and flags, polynomial FIELD cells and the virtual SOURCE_MODEL are unchanged. The earlier 108 fixed-shift points and 108 inactive points still match. Review regressions pair 18 weighted polynomial time-chunk coordinates and 30 raw or channel-only scalar no-op coordinates with three further active PNGs.",
+      "casa_version": "6.7.6.14",
+      "revision": "a51426fa285d8dca974b1edaee30292ac4e70e9f",
+      "source_revision": "a51426fa285d8dca974b1edaee30292ac4e70e9f",
+      "command": "casa-python tools/casa-compat/plotms_ms_phasecenter_oracle.py --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-phasecenter-compositions-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2311",
+        "https://github.com/bglenden/casa-rs/pull/2207",
+        "https://github.com/bglenden/casa-rs/pull/2271"
       ]
     }
   }
