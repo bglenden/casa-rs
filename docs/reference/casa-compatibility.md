@@ -3131,10 +3131,10 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 <a id="plotms-evidence-ms-time-spw-u"></a>
 ##### ms-time-spw-u
 
-**Paired time and SPW U coordinates — passed.** Six TXT exports match 21 coordinates, selected values and metadata. Equal windows produce U=13.75 m. A tenfold second-window weight produces 22.9545 m in either selector order. A flagged second window produces 18.4091 m for U and contributes no unflagged visibilities. The ordinary time control retains six coordinates. The 500 by 360 PNG matches all three plotted points and U in metres with both ordinate sides. Source UVW, flags, weights and visibility arrays are unchanged. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. The U abscissa in metres with three independent stored visibility ordinates, on vector time and spectral-window averages with unequal row weights, selected window order and flags.
+**Paired time and SPW U coordinates — passed.** Seven TXT exports match 27 coordinates, selected values and metadata. Equal windows produce U=13.75 m. A tenfold second-window weight produces 22.9545 m in either selector order. A flagged second window produces 18.4091 m for U and contributes no unflagged visibilities. Two retained baselines independently report U=13.75 and 113.75 m. The ordinary time control retains six coordinates. The 500 by 360 PNG matches all three plotted points and U in metres with both ordinate sides. Source UVW, flags, weights and visibility arrays are unchanged. Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. The U abscissa in metres with three independent stored visibility ordinates, on vector time and spectral-window averages with unequal row weights, selected window order and flags.
 
 - [https://github.com/bglenden/casa-rs/pull/2288](https://github.com/bglenden/casa-rs/pull/2288)
-- Revision: `dbf6a257c7b4bb5be000e0ba8f247b82adf01541`; CASA: `6.7.6.14`.
+- Revision: `3dbc8d40b9df689687679e379a164413aa72a0e2`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only ordinate-list-uvw --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-time-spw-u-20261124.json`.
 
