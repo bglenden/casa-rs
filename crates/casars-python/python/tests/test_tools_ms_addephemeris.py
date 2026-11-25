@@ -1,5 +1,6 @@
 """Attach CASA comet tables and read the persisted field through both tools."""
 
+from pathlib import Path
 from shutil import copytree
 
 import numpy as np
@@ -156,3 +157,58 @@ def test_addephemeris_preserves_field_time_when_the_ephemeris_starts_outside_obs
     assert table.open(str(field))
     assert table.getcell("TIME", 0) == 0.0
     assert table.done()
+
+
+@pytest.mark.parametrize("view_kind", ["reference", "multims"])
+def test_addephemeris_targets_the_inherited_field(
+    ephemeris_dataset, tmp_path, writer_api, view_kind,
+):
+    casa = pytest.importorskip("casatools")
+    dataset, _ = ephemeris_dataset
+    external = tmp_path / "view-source.tab"
+    copytree(dataset / "FIELD" / "EPHEM0_TEST.tab", external)
+    view = tmp_path / "view.ms"
+    if view_kind == "reference":
+        table = casa.table()
+        assert table.open(str(dataset))
+        rows = table.selectrows(np.array([0], dtype=np.int64), str(view))
+        assert rows.done()
+        assert table.done()
+        field = dataset / "FIELD"
+        another = None
+    else:
+        other = tmp_path / "other.ms"
+        copytree(dataset, other)
+        tool = casa.ms()
+        assert tool.createmultims(
+            str(view), list(map(str, (dataset, other))), ["ANTENNA", "DATA_DESCRIPTION", "FEED"]
+        )
+        assert tool.done()
+        assert tool.open(str(view))
+        first, second = tool.getreferencedtables()
+        field = Path(first) / "FIELD"
+        another = Path(second) / "FIELD"
+        assert tool.done()
+
+    tool = writer_api.ms()
+    assert tool.open(str(view), nomodify=False)
+    assert tool.addephemeris(0, str(external), "view", [0])
+    direction = tool.getfielddirmeas("EPHEMERIS_DIR", 0)
+    assert direction["refer"] == "ICRS"
+    assert tool.done()
+    assert (field / "EPHEM0_view.tab").is_dir()
+    if another is not None:
+        assert {path.name for path in another.glob("EPHEM*.tab")} == {"EPHEM0_TEST.tab"}
+
+
+@pytest.mark.parametrize("unselected", [False, True])
+def test_addephemeris_with_a_retained_lock(ephemeris_dataset, tmp_path, writer_api, unselected):
+    dataset, _ = ephemeris_dataset
+    external = tmp_path / "locked-source.tab"
+    copytree(dataset / "FIELD" / "EPHEM0_TEST.tab", external)
+    tool = writer_api.ms()
+    assert tool.open(str(dataset), nomodify=unselected, lock=True)
+    assert tool.addephemeris(-1, str(external), "locked", [] if unselected else [0])
+    assert tool.done()
+    ephemeris_id = 1 if unselected else 0
+    assert (dataset / "FIELD" / f"EPHEM{ephemeris_id}_locked.tab").is_dir()
