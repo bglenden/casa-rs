@@ -783,10 +783,10 @@ def compare_ordinate_list_uvw(root, native, options, vis):
     verify_source(vis, before)
     print("uvw-spw-ordinates: three combined and six ordinary time coordinates matched", flush=True)
 
-    equal = root / "equal-uvw-windows.ms"
     heavier = root / "weighted-uvw-windows.ms"
     flagged = root / "flagged-uvw-window.ms"
-    copy_ms(vis, equal)
+    three_antennas = make_fixture(root, "three-uvw-antennas", antenna_count=3)
+    equal, _ = stagger_windows(root, three_antennas, "equal-uvw-windows")
     with opened(equal, True) as table:
         windows = table.getcol("DATA_DESC_ID")
         times = table.getcol("TIME")
@@ -796,6 +796,7 @@ def compare_ordinate_list_uvw(root, native, options, vis):
             later[local] = times[local] > times[local].min()
         uvw = np.zeros_like(table.getcol("UVW"))
         uvw[0] = np.where(windows == 0, 1 + 2 * later, 10 + 20 * later)
+        uvw[0] += 100 * (table.getcol("ANTENNA2") - 1)
         table.putcol("UVW", uvw)
         weights = table.getcol("WEIGHT")
         weights[:] = np.where(later, 3, 1)
@@ -829,6 +830,16 @@ def compare_ordinate_list_uvw(root, native, options, vis):
         with opened(source) as table:
             np.testing.assert_array_equal(table.getcol("UVW"), uvw)
         print(f"{name}: three matching coordinates at U={u_metres} m", flush=True)
+    multiple = controls | dict(vis=str(equal), antenna="A0&A1;A0&A2")
+    before = snapshot(equal)
+    expected = export(root, "baselines-spw-u.casa", reference, multiple)
+    selected = rows(expected)
+    assert [row[5:7] for row in selected] == [["0", "1"], ["0", "2"]] * 3
+    np.testing.assert_allclose(coordinates(selected)[:, 0], [13.75, 113.75] * 3, rtol=1.2e-5)
+    actual = export(root, "baselines-spw-u.native", native, multiple)
+    assert compare_text(actual, expected) == 6
+    verify_source(equal, before)
+    print("baselines-spw-u: six coordinates preserve distinct retained baselines", flush=True)
     compare_sides(root, native, controls | dict(vis=str(heavier)), expected_x="U (m)",
                   expected_right="Imag:corrected", name="weighted-spw-u")
 
