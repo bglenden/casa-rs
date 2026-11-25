@@ -27,7 +27,11 @@ impl MetadataDirection {
         }
     }
 
-    pub(crate) fn resolve_offset(&self, frame: &MeasFrame) -> MsResult<MDirection> {
+    /// Apply the stored measure offset in the supplied observation frame.
+    ///
+    /// # Errors
+    /// The offset cannot be converted to the direction's reference.
+    pub fn resolve_offset(&self, frame: &MeasFrame) -> MsResult<MDirection> {
         let Some(offset) = &self.offset else {
             return Ok(self.direction.clone());
         };

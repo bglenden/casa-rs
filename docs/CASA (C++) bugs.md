@@ -12204,3 +12204,16 @@ spectral weights and scales sigma by the inverse square root of two for
 the first field. It reuses the same grid for later fields while leaving
 their weights and sigma at the original scale. Casa-rs applies the same
 bandwidth ratio to all fields that use the same spectral grid (#1030).
+
+## Legacy spectral writers can modify an MS after a read-only open or a failed selection
+
+CASA 6.7.6.14 `ms.cvel(mode="channel", width=2)` can reopen and rewrite a
+MeasurementSet after the tool was opened with `nomodify=True`. On the pinned
+`ngc5921_ut.ms` fixture the overload changed the source from 63 to 31 channels.
+With a row selection active, `ms.regridspw(chanwidth=2)` can change the parent
+spectral-window table and then fail while the parent DATA cells still have their
+original shape.
+
+casa-rs honors the attachment's write mode and requires the complete attached MS
+for a spectral rewrite. It prepares and checks a private output before
+publication so a failed operation keeps the original MS usable (#1030).

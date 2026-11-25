@@ -3,6 +3,8 @@
 
 mod axis;
 pub use axis::LegacySpectralGrid;
+mod frame_only;
+pub use frame_only::reframe_staged_ms;
 mod interpolate;
 mod partition;
 mod shift;
@@ -191,7 +193,10 @@ impl Plan {
     ) -> Result<Projection<'_>, MsTransformError> {
         let id = self.window_id(spw);
         let window = self.windows.get_mut(&id).expect("selected window");
-        let (interpolation, shift) = if let Some(frame) = &self.frame {
+        let dynamic = self.frame.as_ref().filter(|frame| {
+            window.frame != frame.target_reference || frame.source_velocity.is_some()
+        });
+        let (interpolation, shift) = if let Some(frame) = dynamic {
             let time = crate::subtables::get_f64(input, row, "TIME").map_err(ms_error)?;
             let field =
                 crate::subtables::get_i32(input, row, "FIELD_ID").map_err(ms_error)? as usize;

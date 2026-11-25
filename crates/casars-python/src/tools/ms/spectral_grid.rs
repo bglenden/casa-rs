@@ -239,7 +239,7 @@ impl PyMsTool {
     }
 }
 
-fn grid_direction(
+pub(super) fn grid_direction(
     value: &Variant,
     provider: &Arc<dyn MeasuresProvider>,
 ) -> Option<MetadataDirection> {
@@ -276,7 +276,7 @@ pub(super) fn axis_argument(mode: &str, value: Option<Variant>) -> String {
 }
 
 impl AttachedMs {
-    fn spectral_query_measures(&self) -> MsResult<Arc<dyn MeasuresProvider>> {
+    pub(super) fn spectral_query_measures(&self) -> MsResult<Arc<dyn MeasuresProvider>> {
         if let Some(measures) = self.visibility.time_measures.get() {
             return Ok(Arc::clone(measures));
         }

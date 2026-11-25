@@ -3,22 +3,26 @@
 
 use std::path::Path;
 
+use casa_ms::selection::MsSelectionIoBudget;
 use casa_ms::spectral_selection::LegacyRegridQuantity;
 use casa_ms::subtables::MsSpectralWindow;
 use casa_ms::tool_history::append_tool_history;
 use casa_ms::transform::{
-    LegacyMsTool, LegacySpectralGrid, MsRegridOptions, MsTransformError, MsTransformRequest,
-    MsTransformTaskOptions, TransformDataColumn, mstransform_task,
+    HanningDataColumn, LegacyMsTool, LegacySpectralGrid, MsRegridOptions, MsTransformError,
+    MsTransformRequest, MsTransformTaskOptions, ToolSpectralWindow, TransformDataColumn,
+    mstransform_task, reframe_staged_ms, tool_channel_frequencies,
 };
 use casa_tables::publication::{
-    check_write_access, exchange_directories, lock_table_tree_for_replacement_with_held,
+    check_write_access, copy_locked_table_tree, exchange_directories,
+    lock_table_tree_for_replacement_with_held,
 };
 use casa_tables::{Table, TableOptions};
+use casa_types::measures::MeasFrame;
 use casa_types::measures::frequency::FrequencyRef;
 use pyo3::prelude::*;
 
 use super::sort::SortedDestination;
-use super::spectral_grid::axis_argument;
+use super::spectral_grid::{axis_argument, grid_direction};
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::Variant;
 
@@ -27,6 +31,7 @@ const UNSET_CENTRE: f64 = -1e30;
 struct SpectralRewrite {
     options: MsRegridOptions,
     grid: LegacySpectralGrid,
+    phase: Option<Variant>,
     hanning: bool,
 }
 
@@ -39,7 +44,9 @@ impl SpectralRewrite {
     }
 
     fn unchanged(&self, ms: &AttachedMs) -> PyResult<bool> {
-        if !matches!(self.grid, LegacySpectralGrid::FrameOnly)
+        let cvel = matches!(self.grid, LegacySpectralGrid::Cvel);
+        if !cvel
+            && !matches!(self.grid, LegacySpectralGrid::FrameOnly)
             && !self.options.interpolation.is_empty()
         {
             return Ok(false);
@@ -47,31 +54,111 @@ impl SpectralRewrite {
         let link = ms.working_metadata_link();
         link.verify_directory().map_err(runtime_error)?;
         if self.options.interpolation.is_empty() {
-            // SubMS declines an unknown regridspw interpolation without editing.
-            return Ok(self.method() == "regridspw");
-        }
-        if self.options.outframe.is_empty() {
+            // SubMS declines an unknown interpolation without editing the grid.
             return Ok(true);
         }
-        let Ok(reference) = self.options.outframe.parse::<FrequencyRef>() else {
-            return Ok(false);
+        let target = if self.options.outframe.is_empty() {
+            if !cvel {
+                return Ok(true);
+            }
+            None
+        } else {
+            let Ok(target) = self.options.outframe.parse::<FrequencyRef>() else {
+                return Ok(cvel && !self.options.outframe.eq_ignore_ascii_case("SOURCE"));
+            };
+            if matches!(target, FrequencyRef::REST | FrequencyRef::Undefined) {
+                return Ok(cvel);
+            }
+            if target == FrequencyRef::GEO {
+                return Ok(false);
+            }
+            Some(target)
         };
-        if reference == FrequencyRef::GEO {
-            return Ok(false);
-        }
+
         let tables = ms
             .subtables
             .spectral_grid_tables(&ms.main)
             .map_err(runtime_error)?;
+        if cvel && tables.windows.iter().map(Table::row_count).sum::<usize>() != 1 {
+            return Ok(false);
+        }
         for table in tables.windows.iter() {
             let window = MsSpectralWindow::new(table);
             for row in 0..table.row_count() {
-                if window.meas_freq_ref(row).map_err(runtime_error)? != reference.casacore_code() {
+                let code = window.meas_freq_ref(row).map_err(runtime_error)?;
+                let reference = FrequencyRef::from_casacore_code(code)
+                    .ok_or_else(|| runtime_error(format!("Invalid MEAS_FREQ_REF {code}")))?;
+                if target.is_some_and(|target| target != reference) {
+                    return Ok(false);
+                }
+                if cvel && !self.same_channels(&window, row, reference)? {
                     return Ok(false);
                 }
             }
         }
         link.verify_directory().map_err(runtime_error)?;
+        Ok(true)
+    }
+
+    fn same_channels(
+        &self,
+        window: &MsSpectralWindow<'_>,
+        row: usize,
+        reference: FrequencyRef,
+    ) -> PyResult<bool> {
+        let input = window.chan_freq(row).map_err(runtime_error)?;
+        let spectrum = ToolSpectralWindow {
+            centres_hz: input.clone(),
+            widths_hz: window.chan_width(row).map_err(runtime_error)?,
+            reference,
+        };
+        let budget = MsSelectionIoBudget::from_system_memory(1, size_of::<f64>(), None)
+            .map_err(runtime_error)?
+            .available_bytes;
+        let candidate =
+            tool_channel_frequencies(vec![spectrum], &self.options, budget, false, || {
+                unreachable!("checked the frequency reference before testing the grid")
+            });
+        Ok(candidate.is_ok_and(|centres| centres == input))
+    }
+
+    fn prepare_phase(&mut self, ms: &AttachedMs) -> PyResult<bool> {
+        if !matches!(self.grid, LegacySpectralGrid::Cvel) {
+            return Ok(true);
+        }
+        let phase = self.phase.take().unwrap_or(Variant::Empty);
+        let field = match &phase {
+            phase if phase.is_empty_sequence() => Some(0),
+            Variant::Text(text) if text.is_empty() => Some(0),
+            Variant::Number(field) => Some(*field as i32),
+            Variant::Numbers(fields) => fields.first().map(|&field| field as i32),
+            Variant::Array { values, .. } => values.first().map(|&field| field as i32),
+            _ => None,
+        };
+        if let Some(field) = field {
+            let tables = ms
+                .subtables
+                .spectral_grid_tables(&ms.main)
+                .map_err(runtime_error)?;
+            let rows = tables.fields.iter().map(Table::row_count).sum::<usize>();
+            if !(0..rows).contains(&(field as usize)) {
+                return Ok(false);
+            }
+            self.options.phasecenter = field.to_string();
+        } else {
+            let measures = ms.spectral_query_measures().map_err(runtime_error)?;
+            let Some(direction) = grid_direction(&phase, &measures) else {
+                return Ok(false);
+            };
+            let frame = MeasFrame::new().with_measures(measures);
+            let direction = direction.resolve_offset(&frame).map_err(runtime_error)?;
+            self.options.phasecenter = format!(
+                "{} {}rad {}rad",
+                direction.refer(),
+                direction.longitude_rad(),
+                direction.latitude_rad()
+            );
+        }
         Ok(true)
     }
 }
@@ -136,7 +223,15 @@ impl PyMsTool {
         let interpolation = if matches!(grid, LegacySpectralGrid::FrameOnly) {
             "linear"
         } else {
-            regridspw_interpolation(&interpolation, &grid)
+            let fft_allowed = !matches!(
+                grid,
+                LegacySpectralGrid::CenteredNumeric {
+                    quantity: LegacyRegridQuantity::OpticalVelocity
+                        | LegacyRegridQuantity::Wavelength,
+                    ..
+                }
+            );
+            rewrite_interpolation(&interpolation, fft_allowed)
         };
         self.rewrite_spectra(
             py,
@@ -155,6 +250,7 @@ impl PyMsTool {
                     preaverage: false,
                 },
                 grid,
+                phase: None,
                 hanning,
             },
         )
@@ -177,6 +273,14 @@ impl PyMsTool {
         veltype: String,
         #[pyo3(from_py_with = strict_bool)] hanning: bool,
     ) -> PyResult<bool> {
+        if !matches!(
+            mode.as_str(),
+            "channel" | "channel_b" | "frequency" | "velocity"
+        ) {
+            return Ok(false);
+        }
+        let interpolation =
+            rewrite_interpolation(&interp, mode != "velocity" || veltype != "optical");
         let veltype = if veltype == "optical" {
             veltype
         } else {
@@ -191,21 +295,22 @@ impl PyMsTool {
                     mode,
                     nchan,
                     nspw: 1,
-                    interpolation: interp.to_ascii_lowercase(),
-                    phasecenter: axis_argument("", phasec),
+                    interpolation: interpolation.into(),
+                    phasecenter: String::new(),
                     restfreq: axis_argument("", restfreq),
                     outframe,
                     veltype,
                     preaverage: false,
                 },
                 grid: LegacySpectralGrid::Cvel,
+                phase: phasec,
                 hanning,
             },
         )
     }
 }
 
-fn regridspw_interpolation(interpolation: &str, grid: &LegacySpectralGrid) -> &'static str {
+fn rewrite_interpolation(interpolation: &str, fft_allowed: bool) -> &'static str {
     let interpolation = interpolation.to_ascii_lowercase();
     if interpolation.contains("nearest") {
         "nearest"
@@ -214,17 +319,7 @@ fn regridspw_interpolation(interpolation: &str, grid: &LegacySpectralGrid) -> &'
     } else if interpolation.contains("cub") {
         "cubic"
     } else if interpolation.contains("fft") {
-        if matches!(
-            grid,
-            LegacySpectralGrid::CenteredNumeric {
-                quantity: LegacyRegridQuantity::OpticalVelocity | LegacyRegridQuantity::Wavelength,
-                ..
-            }
-        ) {
-            ""
-        } else {
-            "fftshift"
-        }
+        if fft_allowed { "fftshift" } else { "" }
     } else if interpolation.is_empty() || interpolation.contains("linear") {
         "linear"
     } else {
@@ -242,23 +337,29 @@ impl PyMsTool {
         }
     }
 
-    fn rewrite_spectra(&self, py: Python<'_>, rewrite: SpectralRewrite) -> PyResult<bool> {
+    fn rewrite_spectra(&self, py: Python<'_>, mut rewrite: SpectralRewrite) -> PyResult<bool> {
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             let Some(ms) = attached.as_mut().filter(|ms| ms.writable) else {
                 return Ok(false);
             };
+            let cvel = rewrite.method() == "cvel";
+            if cvel && ms.selected_rows.is_some() {
+                return Err(runtime_error(
+                    "In-place cvel requires the complete attached MeasurementSet",
+                ));
+            }
+            if !rewrite.prepare_phase(ms)? {
+                return Ok(false);
+            }
             if rewrite.unchanged(ms)? {
+                if cvel && rewrite.hanning {
+                    return ms.hanning_rows(HanningDataColumn::Both);
+                }
                 return Ok(true);
             }
             if ms.selected_rows.is_some() {
-                return if rewrite.method() == "cvel" {
-                    Err(runtime_error(
-                        "In-place cvel requires the complete attached MeasurementSet",
-                    ))
-                } else {
-                    Ok(false)
-                };
+                return Ok(false);
             }
             let read_locks = std::mem::take(&mut ms.read_locks).into_keys().collect();
             match rewrite_attached(ms, rewrite) {
@@ -290,34 +391,16 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
     let workspace = tempfile::tempdir_in(ms.path.parent().unwrap_or_else(|| Path::new(".")))
         .map_err(runtime_error)?;
     let staged = workspace.path().join("spectral.ms");
-    let combine_spws =
-        operation == "cvel" && link.spectral_window_count().map_err(runtime_error)? > 1;
-    let request = MsTransformRequest {
-        input_ms: ms.path.clone(),
-        output_ms: staged.clone(),
-        spw: "*".into(),
-        width: 1,
-        data_column: TransformDataColumn::All,
-        selection: Default::default(),
-        keep_flags: true,
-    };
-    let options = MsTransformTaskOptions {
-        combine_spws,
-        preserve_ids: !combine_spws,
-        hanning: rewrite.hanning,
-        regrid: Some(rewrite.options),
-        legacy_tool: Some(LegacyMsTool::Regrid(rewrite.grid)),
-        ..Default::default()
-    };
-    match mstransform_task(&request, &options) {
-        Err(MsTransformError::Spectrum(_)) if operation == "regridspw" => {
-            return Err(runtime_error("Regridding failed."));
+    if matches!(rewrite.grid, LegacySpectralGrid::FrameOnly) {
+        copy_locked_table_tree(&ms.path, &staged).map_err(runtime_error)?;
+        match reframe_staged_ms(&staged, &rewrite.options) {
+            Ok(true) => {}
+            Ok(false) | Err(MsTransformError::RegridParameter { .. }) => return Ok(None),
+            Err(error) => return Err(runtime_error(error)),
         }
-        Err(MsTransformError::RegridParameter { .. } | MsTransformError::Spectrum(_)) => {
-            return Ok(None);
-        }
-        result => result.map_err(runtime_error)?,
-    };
+    } else if !regrid_to_stage(ms, rewrite, &staged)? {
+        return Ok(None);
+    }
     let table = Table::open(TableOptions::new(&staged)).map_err(runtime_error)?;
     append_tool_history(
         &table,
@@ -354,4 +437,38 @@ fn rewrite_attached(ms: &AttachedMs, rewrite: SpectralRewrite) -> PyResult<Optio
             Err(error)
         }
     }
+}
+
+fn regrid_to_stage(ms: &AttachedMs, rewrite: SpectralRewrite, staged: &Path) -> PyResult<bool> {
+    let operation = rewrite.method();
+    let link = ms.working_metadata_link();
+    let combine_spws =
+        operation == "cvel" && link.spectral_window_count().map_err(runtime_error)? > 1;
+    let request = MsTransformRequest {
+        input_ms: ms.path.clone(),
+        output_ms: staged.to_owned(),
+        spw: "*".into(),
+        width: 1,
+        data_column: TransformDataColumn::All,
+        selection: Default::default(),
+        keep_flags: true,
+    };
+    let options = MsTransformTaskOptions {
+        combine_spws,
+        preserve_ids: !combine_spws,
+        hanning: rewrite.hanning,
+        regrid: Some(rewrite.options),
+        legacy_tool: Some(LegacyMsTool::Regrid(rewrite.grid)),
+        ..Default::default()
+    };
+    match mstransform_task(&request, &options) {
+        Err(MsTransformError::Spectrum(_)) if operation == "regridspw" => {
+            return Err(runtime_error("Regridding failed."));
+        }
+        Err(MsTransformError::RegridParameter { .. } | MsTransformError::Spectrum(_)) => {
+            return Ok(false);
+        }
+        result => result.map_err(runtime_error)?,
+    };
+    Ok(true)
 }

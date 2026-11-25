@@ -82,7 +82,8 @@ pub use input_view::{PreparedTransformInputView, TransformInputColumns, Transfor
 use main_arrays::MainArrayBlock;
 pub use regrid::{
     LegacySpectralGrid, ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow,
-    tool_channel_frequencies, tool_grid_frame_at_epoch, tool_grid_reference_epoch,
+    reframe_staged_ms, tool_channel_frequencies, tool_grid_frame_at_epoch,
+    tool_grid_reference_epoch,
 };
 pub(crate) use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;
@@ -859,6 +860,7 @@ fn mstransform_staged(
                     .map_or(&channel_selection, |(_, channels)| channels),
                 normalized_width(request.width),
                 budget.available_bytes / budget.maximum_live_blocks,
+                matches!(legacy_grid, Some(LegacySpectralGrid::Cvel)),
             )?
         } else {
             None
@@ -927,6 +929,12 @@ fn mstransform_staged(
             });
         }
     }
+    let legacy_direct_band = legacy_grid.is_some()
+        && combined_grid.is_none()
+        && options.time_averaging.is_none()
+        && options.channel_widths.is_none()
+        && normalized_width(request.width) == 1
+        && spw == "*";
     let first_selected_row = selected_rows
         .iter()
         .copied()
@@ -1017,7 +1025,8 @@ fn mstransform_staged(
             starts_visibility_buffer: Vec::new(),
             phase_reference_rows: Vec::new(),
         }
-    } else if legacy {
+    } else if legacy || legacy_direct_band {
+        // In-place regridding leaves existing MAIN rows in their original order.
         selection_metadata::OrderedMainRows {
             rows: selected_rows,
             descriptions: selected_ddids,
@@ -1589,6 +1598,7 @@ fn mstransform_staged(
             && !read_spectral_weights
             && combination.is_none()
             && !legacy
+            && legacy_grid.is_none()
         {
             input_block.resolve_buffer_spectra(
                 row_spectrum_names,
@@ -1825,7 +1835,8 @@ fn mstransform_staged(
             } else {
                 None
             };
-            let average_regrid_input = regrid.is_some() && !bins_are_single_channel(bins);
+            let average_regrid_input =
+                !legacy_direct_band && regrid.is_some() && !bins_are_single_channel(bins);
             let averages = if let (true, Some((weight, sigma))) =
                 (task_average || average_regrid_input, &noise)
             {
@@ -1854,6 +1865,8 @@ fn mstransform_staged(
                 averages.flags()
             } else if let Some(averages) = &averages {
                 averages.flags()
+            } else if legacy_direct_band {
+                flags.clone()
             } else {
                 transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
             };
@@ -1960,7 +1973,7 @@ fn mstransform_staged(
                 let source = column.source.name();
                 let target = column.output.name();
                 let Some(value) = values.next().flatten() else {
-                    if column.source == OptionalMainColumn::LagData {
+                    if legacy_direct_band || column.source == OptionalMainColumn::LagData {
                         undefined(&mut write_session, target)?;
                         continue;
                     }
