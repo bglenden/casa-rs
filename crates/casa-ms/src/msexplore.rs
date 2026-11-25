@@ -2342,12 +2342,14 @@ pub enum MsScatterPlotMsAverageIds {
     Antenna(Arc<[i32]>),
     /// Shared `(scan, field, antenna)` IDs when antenna averaging spans scans or fields.
     ScanFieldAndAntenna(Arc<[(i32, i32, i32)]>),
-    /// Shared spectral coordinates and their group index for each output baseline.
+    /// Shared spectral coordinates and identifiers for each averaged output row.
     SpectralWindow {
         /// Spectral coordinates for each averaged visibility buffer.
         groups: Arc<[Option<MsScatterPlotMsAverageSpw>]>,
         /// Buffer index for each output row in PlotMS export order.
         row_groups: Arc<[usize]>,
+        /// Output antenna for per-antenna rows in the same order, when requested.
+        antenna_ids: Option<Arc<[i32]>>,
     },
 }
 
@@ -5824,6 +5826,7 @@ fn build_generic_visibility_scatter_with_averaging(
         uncalibrated && time_bins.is_some() && plotms_columns::uses_time_statistics(spec);
     let spw_average = uncalibrated && plotms_columns::uses_spectral_window_average(spec);
     let time_spw = spw_average && time_bins.is_some();
+    let spw_antenna = spw_average && spec.averaging.avgantenna;
     let scalar_average = uncalibrated && plotms_columns::uses_scalar_visibility_average(spec);
     let antenna_average = uncalibrated && plotms_columns::uses_antenna_visibility_average(spec);
     let time_antenna = antenna_average && time_bins.is_some();
@@ -5850,10 +5853,10 @@ fn build_generic_visibility_scatter_with_averaging(
         scalar_average || scalar_spw_time || (extended_derived && scalar_antenna_time);
     let scalar_channels = scalar_operands && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
-    let standalone_antenna =
-        antenna_average && spec.averaging.avgtime.is_none() && !average_channels;
+    let unbinned_antenna =
+        (antenna_average && spec.averaging.avgtime.is_none() && !average_channels) || spw_antenna;
     // The unbinned antenna reducer uses the selected visibility cube flags.
-    let antenna_cube_flags = standalone_antenna && (spec.y_axes.len() > 2 || symbols.is_some());
+    let antenna_cube_flags = unbinned_antenna && (spec.y_axes.len() > 2 || symbols.is_some());
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
     let vector_span_models = !spw_average
@@ -6003,7 +6006,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let use_spectral_weights = calibration.is_some()
         && (needs_visibility_grid || average_statistics)
         && (!scalar_average || scalar_channels)
-        && (!spw_average || spw_channels || time_spw)
+        && (!spw_average || spw_channels || time_spw || spw_antenna)
         && (!time_spw || needs_calibrated_weights)
         && (!collapse_baselines || channel_baselines || time_baselines);
     let needs_weight_spectrum = matches!(spec.x_axis, MsAxis::WeightSpectrum)
@@ -6511,12 +6514,14 @@ fn build_generic_visibility_scatter_with_averaging(
             }
         }
         if let Some(group) = group.filter(|_| scalar_average || spw_average) {
-            let (antenna1, antenna2) = if collapse_baselines {
-                (-1, -1)
-            } else {
-                (antenna1_value, antenna2_value)
-            };
-            averaged_rows.insert((group, antenna1, antenna2));
+            if !spw_antenna {
+                let (antenna1, antenna2) = if collapse_baselines {
+                    (-1, -1)
+                } else {
+                    (antenna1_value, antenna2_value)
+                };
+                averaged_rows.insert((group, antenna1, antenna2));
+            }
             // The scalar reducer uses the first row's interval for each buffer.
             if starts_buffer {
                 record_scalar_interval(
@@ -6527,7 +6532,9 @@ fn build_generic_visibility_scatter_with_averaging(
                 );
             }
         }
-        if antenna_average && let Some(group) = group {
+        if (antenna_average || spw_antenna)
+            && let Some(group) = group
+        {
             averaged_rows.extend([(group, antenna1_value, -1), (group, antenna2_value, -1)]);
         }
         let shared_time_scope_value = if use_shared_time_scope_midpoint {
@@ -6603,7 +6610,7 @@ fn build_generic_visibility_scatter_with_averaging(
         };
         let shared_baseline_weight = ((collapse_baselines && !time_baselines)
             || scalar_average
-            || (spw_average && !time_spw))
+            || (spw_average && !time_spw && !spw_antenna))
             .then(|| {
                 // The channel transform leaves the output row weight unset
                 // when only FLOAT_DATA is requested. The SPW reducer weights
@@ -6637,7 +6644,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 // conjugate, including when both ends are the same antenna.
                 let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(_))
                     && endpoint == 1
-                    && (antenna_average || antenna1_value != antenna2_value);
+                    && (antenna_average || spw_antenna || antenna1_value != antenna2_value);
                 for bin in channel_bins.iter() {
                     let antenna_weight = antenna_channels.then(|| {
                         if skip_flagged_row {
@@ -6943,13 +6950,13 @@ fn build_generic_visibility_scatter_with_averaging(
                                 x_samples,
                                 scalar_weight,
                                 conjugate,
-                                standalone_antenna,
+                                unbinned_antenna,
                             );
                             accumulator.y_visibility.add(
                                 y_samples,
                                 scalar_weight,
                                 conjugate,
-                                standalone_antenna,
+                                unbinned_antenna,
                             );
                         }
                         if calibration.is_some()
@@ -7188,6 +7195,12 @@ fn build_generic_visibility_scatter_with_averaging(
         Some(MsScatterPlotMsAverageIds::SpectralWindow {
             groups: groups.clone(),
             row_groups,
+            antenna_ids: spw_antenna.then(|| {
+                averaged_rows
+                    .iter()
+                    .map(|&(_, antenna, _)| antenna)
+                    .collect()
+            }),
         })
     } else if antenna_average && spans_scan_or_field {
         let ids = averaged_rows
@@ -7309,7 +7322,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     {
                         averaged_order[&(group, antenna1, antenna2)]
                     }
-                    AveragingBaselineToken::Antenna(antenna) if antenna_average => {
+                    AveragingBaselineToken::Antenna(antenna) if antenna_average || spw_antenna => {
                         averaged_order[&(group, antenna, -1)]
                     }
                     _ => group,

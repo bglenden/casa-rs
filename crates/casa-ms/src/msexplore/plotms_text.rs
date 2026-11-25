@@ -342,15 +342,25 @@ fn write_point(
             .map_or((None, None), |&(scan, field, antenna)| {
                 (Some((scan, field)), Some(antenna))
             }),
-        Some((MsScatterPlotMsAverageIds::SpectralWindow { .. }, _)) | None => (None, None),
+        Some((MsScatterPlotMsAverageIds::SpectralWindow { antenna_ids, .. }, order)) => (
+            None,
+            antenna_ids
+                .as_deref()
+                .and_then(|ids| ids.get(order))
+                .copied(),
+        ),
+        None => (None, None),
     };
     let spectral_window = match averaged.zip(order) {
-        Some((MsScatterPlotMsAverageIds::SpectralWindow { groups, row_groups }, order)) => {
-            row_groups
-                .get(order)
-                .and_then(|&group| groups.get(group))
-                .and_then(Option::as_ref)
-        }
+        Some((
+            MsScatterPlotMsAverageIds::SpectralWindow {
+                groups, row_groups, ..
+            },
+            order,
+        )) => row_groups
+            .get(order)
+            .and_then(|&group| groups.get(group))
+            .and_then(Option::as_ref),
         _ => None,
     };
     let (scan, field) = scan_field

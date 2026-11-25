@@ -150,7 +150,19 @@ def compare_spw_reducers(root, native):
         flags[:, 3, windows == 1] = True
         table.putcol("FLAG", flags)
         times = np.unique(table.getcol("TIME"))
-    before = snapshot(vis)
+    weighted = root / "weighted-reducers.ms"
+    copy_ms(vis, weighted)
+    with opened(weighted, True) as table:
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        table.addcols({"WEIGHT_SPECTRUM": dict(descriptor, name="WEIGHT_SPECTRUM", valueType="float",
+                                              dataManagerType="StandardStMan", dataManagerGroup="WeightSpec")})
+        low = table.getcol("DATA_DESC_ID") == 0
+        weights = np.where(low, np.array([1, 9, 1, 2], dtype=np.float32)[:, None],
+                           np.array([2, 1, 5, 7], dtype=np.float32)[:, None])
+        weights *= np.where(table.getcol("ANTENNA2") == 2, 2, 1)
+        table.putcol("WEIGHT_SPECTRUM", np.broadcast_to(weights, shape).copy())
+    before, before_weighted = snapshot(vis), snapshot(weighted)
     base = request(vis) | dict(antenna="A0&A1;A0&A2;A1&A2", spw="0:1~3,1:1~3",
                                    xaxis="amp", yaxis="amp", avgspw=True,
                                    msselect="DATA_DESC_ID != 0 || ANTENNA1 != 1")
@@ -164,6 +176,8 @@ def compare_spw_reducers(root, native):
         ("vector-antenna", antenna, (0, 1, 2), (12.3744, 34.7365)),
         ("scalar-antenna", antenna | dict(scalar=True), (0, 1, 2), (15.0816, 34.7381)),
         ("zero-antenna", antenna | zero, (0, 1, 2), (12.3744, 34.7365)),
+        ("weighted-vector-antenna", antenna | dict(vis=str(weighted)), (0, 1, 2), (6.761, 29.6706)),
+        ("weighted-scalar-antenna", antenna | dict(vis=str(weighted), scalar=True), (0, 1, 2), (9.21236, 29.6715)),
     )
     for name, reducer, antennas, first in cases:
         options = base | reducer
@@ -196,6 +210,7 @@ def compare_spw_reducers(root, native):
             assert not output.exists()
         print(f"{name}: matching parameter refusal before export", flush=True)
     verify_source(vis, before)
+    verify_source(weighted, before_weighted)
 
 
 def compare_disjoint_channels(root, native, base):
