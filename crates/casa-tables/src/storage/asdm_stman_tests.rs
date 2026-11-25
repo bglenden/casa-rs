@@ -171,7 +171,10 @@ fn retargeting_a_saved_view_preserves_cross_endian_visibility_cells() {
             .unwrap();
         let saved = Table::open(TableOptions::new(&view)).unwrap();
         let index = saved.asdm_bdf_index().unwrap().unwrap();
-        assert_eq!(index.reference(literal).unwrap(), initial.to_str().unwrap());
+        assert_eq!(
+            index.reference(literal).unwrap().0.unwrap(),
+            initial.to_str().unwrap()
+        );
         let relocated = root.path().join("relocated-asdm");
         std::fs::rename(initial, &relocated).unwrap();
 
@@ -180,10 +183,10 @@ fn retargeting_a_saved_view_preserves_cross_endian_visibility_cells() {
         assert_eq!(index.relocate(&spelling, &lock, literal).unwrap(), spelling);
         lock.release().unwrap();
         let reference = format!("{}/", relocated.display());
-        assert_eq!(index.reference(literal).unwrap(), reference);
+        assert_eq!(index.reference(literal).unwrap().0.unwrap(), reference);
         let reopened = Table::open(TableOptions::new(&source)).unwrap();
         let current = reopened.asdm_bdf_index().unwrap().unwrap();
-        assert_eq!(current.reference(literal).unwrap(), reference);
+        assert_eq!(current.reference(literal).unwrap().0.unwrap(), reference);
         assert_eq!(read(&reopened), expected);
     }
 }
@@ -211,7 +214,10 @@ fn retargeting_a_linked_index_preserves_its_binding() {
     let table = Table::open(TableOptions::new(&source)).unwrap();
     let index = table.asdm_bdf_index().unwrap().unwrap();
     let literal: fn(&str) -> Option<Cow<'_, str>> = |path| Some(Cow::Borrowed(path));
-    assert_eq!(index.reference(literal).unwrap(), initial.to_str().unwrap());
+    assert_eq!(
+        index.reference(literal).unwrap().0.unwrap(),
+        initial.to_str().unwrap()
+    );
     let new_path = root.path().join("new");
     fs::rename(initial, &new_path).unwrap();
     let before = fs::read(&target).unwrap();
@@ -220,7 +226,74 @@ fn retargeting_a_linked_index_preserves_its_binding() {
     assert_eq!(index.relocate(path, &lock, literal).unwrap(), path);
     assert_eq!(fs::read_link(&entry).unwrap(), link_text);
     assert_ne!(fs::read(&target).unwrap(), before);
-    assert_eq!(index.reference(literal).unwrap(), path);
+    assert_eq!(index.reference(literal).unwrap().0.unwrap(), path);
+    lock.release().unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn a_retained_binding_cannot_change_a_replacement_table() {
+    use crate::TableWriteLock;
+    use std::borrow::Cow;
+    use std::fs;
+
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("lazy");
+    let bdf = root.path().join("input/ASDMBinary/data.bdf");
+    binding(&source, &bdf, true, &[CROSS], 6);
+    let table = Table::open(TableOptions::new(&source)).unwrap();
+    let captured = table.asdm_bdf_index().unwrap().unwrap();
+    fs::rename(&source, root.path().join("old")).unwrap();
+    binding(&source, &bdf, false, &[CROSS], 6);
+    let file = source.join("table.f1asdmindex");
+    let before = fs::read(&file).unwrap();
+    let lock = TableWriteLock::acquire(&source, 1).unwrap();
+    let literal: fn(&str) -> Option<Cow<'_, str>> = |path| Some(Cow::Borrowed(path));
+    assert!(captured.relocate("another", &lock, literal).is_err());
+    assert_eq!(fs::read(&file).unwrap(), before);
+    lock.release().unwrap();
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn shared_hard_links_are_preserved_and_an_empty_index_needs_no_write() {
+    use crate::TableWriteLock;
+    use std::borrow::Cow;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("lazy");
+    let bdf = root.path().join("input/ASDMBinary/data.bdf");
+    binding(&source, &bdf, true, &[CROSS], 6);
+    let table = Table::open(TableOptions::new(&source)).unwrap();
+    let index = table.asdm_bdf_index().unwrap().unwrap();
+    let lock = TableWriteLock::acquire(&source, 1).unwrap();
+    let literal: fn(&str) -> Option<Cow<'_, str>> = |path| Some(Cow::Borrowed(path));
+    let file = source.join("table.f1asdmindex");
+    let alias = root.path().join("index-alias");
+    fs::hard_link(&file, &alias).unwrap();
+    let before = fs::read(&file).unwrap();
+    let error = index.relocate("another", &lock, literal).unwrap_err();
+    assert!(error.to_string().contains("hard-linked ASDM index"));
+    assert_eq!(fs::read(&file).unwrap(), before);
+    assert_eq!(fs::read(&alias).unwrap(), before);
+    fs::remove_file(&alias).unwrap();
+
+    let mut empty = AipsIo::new_write_only(fs::File::create(&file).unwrap());
+    empty.putstart(TYPE, 1).unwrap();
+    empty.put_bool(true).unwrap();
+    empty.putstart("Block", 1).unwrap();
+    empty.put_u32(0).unwrap();
+    empty.putend().unwrap();
+    empty.put_u32(0).unwrap();
+    empty.putend().unwrap();
+    empty.close().unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o444)).unwrap();
+    let empty_bytes = fs::read(&file).unwrap();
+    assert_eq!(index.reference(literal).unwrap().0, None);
+    assert_eq!(index.relocate("another", &lock, literal).unwrap(), "");
+    assert_eq!(fs::read(&file).unwrap(), empty_bytes);
     lock.release().unwrap();
 }
 

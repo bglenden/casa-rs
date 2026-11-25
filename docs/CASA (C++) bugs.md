@@ -11505,7 +11505,8 @@ index. CASA truncates the original index before writing its replacement,
 so an interrupted write can leave the MeasurementSet without a readable
 index. Casa-rs stages the update and publishes it atomically. On Linux
 and macOS a symbolic link continues to point at the same referent
-(#1030).
+(#1030). A multiply hard-linked index is refused before publishing,
+since replacing one directory entry would split the aliases.
 
 ## MS writes can reorder values read from saved views
 

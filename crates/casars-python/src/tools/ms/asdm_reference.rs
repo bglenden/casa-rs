@@ -3,10 +3,11 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use casa_tables::TableWriteLock;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyBytesMethods};
 
 use crate::tools::casacore_path::expand_asdm_path;
 
@@ -42,22 +43,39 @@ impl AttachedMs {
         } else {
             Some(self.visibility.current_main(&self.path)?)
         };
-        let fresh;
         let binding = if let Some(layout) = &captured {
-            fresh = layout.table.asdm_bdf_index().map_err(runtime_error)?;
-            &fresh
+            layout
+                .table
+                .asdm_bdf_index()
+                .map_err(runtime_error)?
+                .map(Arc::new)
         } else {
             if self.asdm_index.is_none() {
-                self.asdm_index = Some(self.main.asdm_bdf_index().map_err(runtime_error)?);
+                self.asdm_index = Some(
+                    self.main
+                        .asdm_bdf_index()
+                        .map_err(runtime_error)?
+                        .map(Arc::new),
+                );
             }
-            self.asdm_index.as_ref().expect("cached plain ASDM binding")
+            self.asdm_index
+                .as_ref()
+                .expect("cached plain ASDM binding")
+                .clone()
         };
         let Some(index) = binding else {
             return Ok(String::new());
         };
+        let (present, changed) = index.reference(expand_asdm_path).map_err(runtime_error)?;
+        if changed {
+            self.refresh_asdm_readers()?;
+        }
+        let Some(present) = present else {
+            return Ok(String::new());
+        };
         let new_path = new_path?;
         if new_path.is_empty() || new_path == "/" {
-            return index.reference(expand_asdm_path).map_err(runtime_error);
+            return Ok(present);
         }
 
         // CASA permits this explicit index retarget even on a nomodify
@@ -99,10 +117,23 @@ impl AttachedMs {
 }
 
 fn path_argument(value: &Bound<'_, PyAny>) -> PyResult<PyResult<String>> {
-    // CASA consumes bytes only when it addresses an ASDM binding.
-    if value.is_instance_of::<PyBytes>() {
-        Ok(selection_text(value, "abspath"))
+    // The CASA binding takes str and bytes through a NUL-terminated string.
+    // It consumes opaque bytes only when it addresses an ASDM binding.
+    if let Ok(bytes) = value.cast::<PyBytes>() {
+        let source = bytes.as_bytes();
+        if let Some(end) = source.iter().position(|byte| *byte == 0) {
+            Ok(selection_text(
+                PyBytes::new(value.py(), &source[..end]).as_any(),
+                "abspath",
+            ))
+        } else {
+            Ok(selection_text(value, "abspath"))
+        }
     } else {
-        selection_text(value, "abspath").map(Ok)
+        let mut path = selection_text(value, "abspath")?;
+        if let Some(end) = path.find('\0') {
+            path.truncate(end);
+        }
+        Ok(Ok(path))
     }
 }

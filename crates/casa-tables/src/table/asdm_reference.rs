@@ -30,7 +30,7 @@ impl Table {
             return Ok(None);
         };
         if !self.data_manager_info().is_empty() && !self.is_reference_table()? {
-            return Ok(self.asdm_index_for_column(column));
+            return self.asdm_index_for_column(column);
         }
         let mut path = source.to_owned();
         let mut column = column.to_owned();
@@ -38,7 +38,7 @@ impl Table {
             match read_table_dat_dispatch(&path.join(TABLE_CONTROL_FILE))? {
                 TableDatResult::Plain(_) => {
                     let root = Table::open(TableOptions::new(path))?;
-                    return Ok(root.asdm_index_for_column(&column));
+                    return root.asdm_index_for_column(&column);
                 }
                 TableDatResult::Ref(reference) => {
                     column = reference.parent_column(&column).to_owned();
@@ -57,8 +57,10 @@ impl Table {
         ))
     }
 
-    fn asdm_index_for_column(&self, column: &str) -> Option<AsdmBdfIndex> {
-        let path = self.path()?;
+    fn asdm_index_for_column(&self, column: &str) -> Result<Option<AsdmBdfIndex>, TableError> {
+        let Some(path) = self.path() else {
+            return Ok(None);
+        };
         self.data_manager_info()
             .iter()
             .find(|manager| {
@@ -68,5 +70,6 @@ impl Table {
                 manager.dm_type == TYPE && manager.columns.iter().any(|name| name == column)
             })
             .map(|manager| AsdmBdfIndex::new(path.to_owned(), manager.seq_nr))
+            .transpose()
     }
 }

@@ -24,6 +24,37 @@ pub struct AsdmBdfIndex {
     path: PathBuf,
     #[cfg(unix)]
     first: Mutex<Option<CachedName>>,
+    #[cfg(unix)]
+    binding: TableBinding,
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct TableBinding {
+    _directory: File,
+    _descriptor: File,
+    identity: (u64, u64),
+    descriptor: IndexVersion,
+}
+
+#[cfg(unix)]
+impl TableBinding {
+    fn capture(table: &Path) -> Result<Self, StorageError> {
+        let directory = publication::open_directory_identity(table)?;
+        let descriptor = File::open(table.join("table.dat"))?;
+        Ok(Self {
+            identity: IndexVersion::from(&directory.metadata()?).identity,
+            descriptor: IndexVersion::from(&descriptor.metadata()?),
+            _directory: directory,
+            _descriptor: descriptor,
+        })
+    }
+
+    fn matches(&self, table: &Path) -> bool {
+        std::fs::metadata(table).is_ok_and(|dir| IndexVersion::from(&dir).identity == self.identity)
+            && std::fs::metadata(table.join("table.dat"))
+                .is_ok_and(|descriptor| IndexVersion::from(&descriptor) == self.descriptor)
+    }
 }
 
 #[cfg(unix)]
@@ -55,14 +86,16 @@ impl From<&Metadata> for IndexVersion {
 }
 
 impl AsdmBdfIndex {
-    pub(crate) fn new(table: PathBuf, sequence: u32) -> Self {
+    pub(crate) fn new(table: PathBuf, sequence: u32) -> Result<Self, TableError> {
         let path = table.join(format!("table.f{sequence}asdmindex"));
-        Self {
+        Ok(Self {
+            #[cfg(unix)]
+            binding: TableBinding::capture(&table)?,
             table,
             path,
             #[cfg(unix)]
             first: Mutex::new(None),
-        }
+        })
     }
 
     /// Physical table directory whose write lock guards the index.
@@ -74,10 +107,12 @@ impl AsdmBdfIndex {
     ///
     /// The caller provides variable and home-directory expansion for the
     /// persisted paths. Pass an identity function to use literal paths.
+    /// The directory is absent when the index lists no BDF files. The second
+    /// result is true when the index was read again or read for the first time.
     ///
     /// # Errors
     /// The index cannot be read or its filename block is malformed.
-    pub fn reference(&self, expand: PathExpansion) -> Result<String, TableError> {
+    pub fn reference(&self, expand: PathExpansion) -> Result<(Option<String>, bool), TableError> {
         #[cfg(unix)]
         {
             let mut cached = self
@@ -88,7 +123,7 @@ impl AsdmBdfIndex {
                 && std::fs::metadata(&self.path)
                     .is_ok_and(|file| current.version == IndexVersion::from(&file))
             {
-                return Ok(reference_name(current.path.as_deref(), expand)?);
+                return Ok((reference_name(current.path.as_deref(), expand)?, false));
             }
             let input = File::open(&self.path).map_err(StorageError::from)?;
             let file = input.metadata().map_err(StorageError::from)?;
@@ -99,17 +134,17 @@ impl AsdmBdfIndex {
                 version: IndexVersion::from(&file),
                 path,
             });
-            Ok(result?)
+            Ok((result?, true))
         }
         #[cfg(not(unix))]
         {
             let input = File::open(&self.path).map_err(StorageError::from)?;
             let size = input.metadata().map_err(StorageError::from)?.len();
             let (_, header) = read_header(input, size)?;
-            Ok(reference_name(
-                header.bdfs.first().map(PathBuf::as_path),
-                expand,
-            )?)
+            Ok((
+                reference_name(header.bdfs.first().map(PathBuf::as_path), expand)?,
+                true,
+            ))
         }
     }
 
@@ -130,8 +165,14 @@ impl AsdmBdfIndex {
         lock: &TableWriteLock,
         expand: PathExpansion,
     ) -> Result<String, TableError> {
-        if !lock.matches_table_path(&self.table) {
+        if !self.matches_table(lock) {
             return Err(invalid("ASDM index write does not hold its physical table lock").into());
+        }
+        if replacement.contains('\0') {
+            return Err(invalid("an ASDM pathname cannot contain NUL").into());
+        }
+        if self.reference(expand)?.0.is_none() {
+            return Ok(String::new());
         }
         let changed = self.replace_names(replacement, expand, lock)?;
         if changed {
@@ -141,6 +182,14 @@ impl AsdmBdfIndex {
         } else {
             Ok(String::new())
         }
+    }
+
+    fn matches_table(&self, lock: &TableWriteLock) -> bool {
+        #[cfg(unix)]
+        if !self.binding.matches(&self.table) {
+            return false;
+        }
+        lock.matches_table_path(&self.table)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -154,7 +203,7 @@ impl AsdmBdfIndex {
         publication::check_write_access(&self.path)?;
         let name = self.path.file_name().expect("ASDM index file name");
         let verify_table = || {
-            if lock.matches_table_path(&self.table) {
+            if self.matches_table(lock) {
                 Ok(())
             } else {
                 Err(invalid("ASDM table changed during index publication"))
@@ -217,7 +266,7 @@ impl AsdmBdfIndex {
         staged.as_file().set_permissions(original.permissions())?;
         publication::sync_publication_file(staged.as_file())?;
         let current = self.path.symlink_metadata()?;
-        if !lock.matches_table_path(&self.table)
+        if !self.matches_table(lock)
             || !current.is_file()
             || current.len() != original.len()
             || current.modified()? != original.modified()?
@@ -239,6 +288,11 @@ fn replace_existing(
     verify: impl FnOnce() -> Result<(), StorageError>,
 ) -> Result<bool, StorageError> {
     let identity = original.metadata()?;
+    if identity.nlink() > 1 {
+        return Err(invalid(
+            "a hard-linked ASDM index cannot be replaced atomically",
+        ));
+    }
     let directory = path
         .parent()
         .ok_or_else(|| invalid("missing ASDM index parent"))?;
@@ -257,6 +311,9 @@ fn replace_existing(
     staged.file_mut().set_permissions(identity.permissions())?;
     publication::sync_publication_file(staged.file_mut())?;
     verify()?;
+    if original.metadata()?.nlink() != 1 {
+        return Err(invalid("ASDM index links changed during publication"));
+    }
     staged.replace(name, &identity)?;
     Ok(true)
 }
@@ -335,13 +392,16 @@ fn write_index(
     Ok(true)
 }
 
-fn reference_name(first: Option<&Path>, expand: PathExpansion) -> Result<String, StorageError> {
+fn reference_name(
+    first: Option<&Path>,
+    expand: PathExpansion,
+) -> Result<Option<String>, StorageError> {
     let Some(first) = first else {
-        return Ok(String::new());
+        return Ok(None);
     };
     let name = expanded_name(first, expand)?;
     let directory = expand_name(dirname(&name), expand)?;
-    Ok(dirname(&directory).to_owned())
+    Ok(Some(dirname(&directory).to_owned()))
 }
 
 fn expanded_name(path: &Path, expand: PathExpansion) -> Result<Cow<'_, str>, StorageError> {
