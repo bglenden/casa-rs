@@ -268,6 +268,65 @@ def compare_wavelength_frame_selection(work, native):
     print("wavelength-frames: two paired same-frame points and one mixed-frame refusal", flush=True)
 
 
+def compare_array_horizontal_axes(root, native):
+    from casars.tasks import TaskParameterError
+
+    work = root / "array-horizontal-axes"
+    work.mkdir()
+    vis, *_ = make_fixture(work, reverse_times=True)
+    with opened(vis / "ANTENNA", True) as table:
+        position = table.getcell("POSITION", 1)
+        cosine, sine = np.cos(0.08), np.sin(0.08)
+        position[:2] = np.array([[cosine, -sine], [sine, cosine]]) @ position[:2]
+        table.putcell("POSITION", 1, position)
+        positions = table.getcol("POSITION")
+    before = snapshot(vis)
+    title = "Array horizontal coordinates"
+    base = controls(vis) | dict(xaxis="channel", antenna="A0&A1;A0&A2", field="",
+                                spw="0:1~3", title=title, expformat="txt")
+    cases = (
+        ("azimuth", [-171.14955, 122.20082], None),
+        ("elevation", [82.912, 75.66891], "Elevation (deg)"),
+        ("hourangle", [0.0836523, -0.932087], "Hour Angle (hours)"),
+        ("parangle", [9.40932, 295.949], None),
+    )
+    for axis, first, label in cases:
+        options = base | dict(yaxis=axis)
+        expected, actual = (work / f"channel-{axis}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        points = rows(expected)
+        assert [int(row[2]) for row in points] == [1, 3] * 12
+        assert {tuple(row[5:7]) for row in points} == {("0", "1")}
+        assert {row[12] for row in points} == {"XX"}
+        assert all(left[9] == right[9] for left, right in zip(points[::2], points[1::2], strict=True))
+        np.testing.assert_allclose([float(points[0][1]), float(points[12][1])], first, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(points)
+        print(f"channel-{axis}: {len(points)} matching horizontal coordinates", flush=True)
+        if label:
+            compare_figure(work, native, options, expected, (title, "Channel", label))
+
+    poln = base | dict(xaxis="poln", yaxis="amp", correlation="XX,YY")
+    expected, actual = (work / f"poln-amplitude.{engine}.txt" for engine in ("casa", "native"))
+    try:
+        reference(**poln, plotfile=str(expected))
+    except Exception as error:
+        assert callable(getattr(error, "details", None)) and error.details() == "plot parameters failed", error
+    else:
+        raise AssertionError("CASA accepted a Poln axis on this MeasurementSet")
+    try:
+        native(**poln, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert 'unsupported msexplore axis "poln"' in str(error)
+    else:
+        raise AssertionError("casa-rs accepted a Poln axis on this MeasurementSet")
+    assert not expected.exists() and not actual.exists()
+    verify_source(vis, before)
+    with opened(vis / "ANTENNA") as table:
+        np.testing.assert_array_equal(table.getcol("POSITION"), positions)
+    print("poln-amplitude: both public tasks refuse the MeasurementSet axis before export", flush=True)
+
+
 def compare_flags_and_calibration(root, native, vis):
     base = controls(vis) | dict(xaxis="uwave", expformat="txt")
 
@@ -927,7 +986,8 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes", "averaged-coordinates"))
+    parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes",
+                                           "averaged-coordinates", "array-horizontal-axes"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -944,6 +1004,8 @@ def main():
             compare_pointing_axes(root, native)
         if args.only in (None, "averaged-coordinates"):
             compare_averaged_coordinates(root, native)
+        if args.only in (None, "array-horizontal-axes"):
+            compare_array_horizontal_axes(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
