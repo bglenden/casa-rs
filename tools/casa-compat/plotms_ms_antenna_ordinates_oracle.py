@@ -271,7 +271,7 @@ def compare_averaged_color_groups(root, native, controls):
         ("spanned-field", "field", True, controls, "-1", "7", {"0": "#202020", "1": "#e00066"}, 18),
         ("retained-field", "field", False, controls, "1", "7", {"0": "#202020", "1": "#e00066"}, 18),
         ("scan-palette-collision", "scan", False, controls | dict(vis=str(collision)),
-         "11", "1", {"11": "#202020", "1": "#e00066"}, 18),
+         "11", "1", {"1": "#202020", "11": "#e00066"}, 18),
         ("scan-palette-masked", "scan", False, controls | dict(vis=str(masked)),
          "1", "11", {"1": "#202020", "11": "#e00066"}, 9),
     )
@@ -311,7 +311,8 @@ def compare_averaged_color_groups(root, native, controls):
                     ordinate = int(line.get_gid().split("-", 1)[0])
                     label = line.get_label()
                     index = next(value for value, name in labels.items() if name == label)
-                    assert to_hex(line.get_markerfacecolor()) == palette[index]
+                    face = to_hex(line.get_markerfacecolor())
+                    assert face == palette[index], (case, label, face, palette[index])
                     size = count // 3
                     expected_rows = [point for point in selected[ordinate * size:(ordinate + 1) * size]
                                      if point[metadata_index] == index]
@@ -350,6 +351,10 @@ def compare_averaged_color_groups(root, native, controls):
                 matches = np.max(np.abs(pixels - rgb), axis=-1) < 15
                 size = np.count_nonzero(matches)
                 assert (size > 100 if index in visible else 0 < size < 100), (path, hue, size)
+                if case == "scan-palette-collision" and index == "11":
+                    # Pink is the earlier timestamp even though retained scans
+                    # enter the cache in numeric order on this fixture.
+                    assert np.count_nonzero(matches[:, :pixels.shape[1] // 2]) > 100, path
         print(f"{tag}: {count} paired coordinates, final group labels and marker colors", flush=True)
 
 
