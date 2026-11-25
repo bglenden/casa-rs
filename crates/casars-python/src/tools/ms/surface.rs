@@ -52,8 +52,8 @@ const METHODS: &[Method] = &[
             param("destmsfile", K::Text, Text("")),
             param("respectname", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "continuumsub",
