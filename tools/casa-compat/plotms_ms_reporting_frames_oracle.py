@@ -94,18 +94,24 @@ def compare_wavelength_reporting_frames(work, native):
         for wavelength, metres in (('uwave', 'u'), ('vwave', 'v'), ('wwave', 'w'), ('uvwave', 'uvdist')):
             for suffix, averaging, count in (('raw', {}, 3), ('time', dict(averagedata=True, avgtime='20'), 2)):
                 name = f'{wavelength}-{suffix}'
-                control = work / f'{name}-metres.casa.txt'
                 options = base | averaging
-                assert reference(**options, xaxis=metres, transform=False, expformat='txt', plotfile=str(control)) is None
-                points = rows(control)
-                assert len(points) == count
-                assert {int(point[2]) for point in points} == {1, 3}
-                freqs = reporting_frequencies(points, 'LSRK', me, qa)
-                values = np.asarray([float(point[0]) for point in points]) * freqs * 1e6 / LIGHT_SPEED_KM_S
-                check_active(work, native, name, options | dict(xaxis=wavelength), points, values, freqs)
+                check_wavelength(work, native, name, options, (wavelength, metres, count), me, qa)
+        check_wavelength(work, native, 'uwave-bary', base | dict(freqframe='BARY'), ('uwave', 'u', 3), me, qa)
     finally:
         me.done()
         qa.done()
+
+
+def check_wavelength(work, native, name, options, axes, me, qa):
+    wavelength, metres, count = axes
+    control = work / f'{name}-metres.casa.txt'
+    assert reference(**options, xaxis=metres, transform=False, expformat='txt', plotfile=str(control)) is None
+    points = rows(control)
+    assert len(points) == count
+    assert {int(point[2]) for point in points} == {1, 3}
+    freqs = reporting_frequencies(points, options['freqframe'], me, qa)
+    values = np.asarray([float(point[0]) for point in points]) * freqs * 1e6 / LIGHT_SPEED_KM_S
+    check_active(work, native, name, options | dict(xaxis=wavelength), points, values, freqs)
 
 
 def compare_channel_frequency_transform(work, native, base, raw):

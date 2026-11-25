@@ -132,7 +132,7 @@ def compare(root, native):
         )
 
     compare_flags_and_calibration(root, native, fixture_data[0])
-    check_frame_refusal(root, native, fixture_data[0])
+    check_interval_frame_refusal(root, native, fixture_data[0])
     feed_fixture = compare_feed_selection(root, native)
     row_fixture = compare_row_axes(root, native, feed_fixture)
     compare_metadata_pairs(root, native, row_fixture)
@@ -751,20 +751,19 @@ def compare_flags_and_calibration(root, native, vis):
     print("row-flag-only: 12 matching coordinates with the cube flag mask", flush=True)
 
 
-def check_frame_refusal(root, native, vis):
+def check_interval_frame_refusal(root, native, vis):
     from casars.tasks import TaskParameterError
 
-    for name in ("interval", "uwave"):
-        output = root / f"{name}-frame.native.txt"
-        options = controls(vis) | dict(xaxis=name, expformat="txt", transform=True, freqframe="BARY")
-        try:
-            native(**options, plotfile=str(output))
-        except TaskParameterError as error:
-            assert "reporting-frame transforms for interval and wavelength plots" in str(error)
-            assert "#1032" in str(error)
-        else:
-            raise AssertionError(f"Unsupported {name} reporting frame was exported")
-        assert not output.exists()
+    output = root / "interval-frame.native.txt"
+    options = controls(vis) | dict(xaxis="interval", expformat="txt", transform=True, freqframe="BARY")
+    try:
+        native(**options, plotfile=str(output))
+    except TaskParameterError as error:
+        assert "reporting-frame transforms for interval and wavelength plots" in str(error)
+        assert "#1032" in str(error)
+    else:
+        raise AssertionError("Unsupported Interval reporting frame was exported")
+    assert not output.exists()
 
 
 def make_feed_selection_fixture(work):
