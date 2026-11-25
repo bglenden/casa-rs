@@ -1,0 +1,2184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>casa-rs Module Reorganization Proposal v3 — Clean-Sheet Architecture &amp; ADR Alignment</title>
+<style>
+:root {
+  --bg: #f6f8fa;
+  --surface: #ffffff;
+  --surface-2: #f0f3f7;
+  --surface-code: #eef2f6;
+  --text: #18202c;
+  --text-muted: #526072;
+  --border: #d5dce6;
+  --border-strong: #b4c0d0;
+  --accent: #0f62fe;
+  --accent-soft: rgba(15, 98, 254, 0.10);
+  --good: #117a37;
+  --good-soft: rgba(17, 122, 55, 0.11);
+  --warn: #a15c00;
+  --warn-soft: rgba(161, 92, 0, 0.12);
+  --bad: #c9202e;
+  --bad-soft: rgba(201, 32, 46, 0.11);
+  --purple: #6e36d8;
+  --purple-soft: rgba(110, 54, 216, 0.11);
+  --teal: #0b7285;
+  --teal-soft: rgba(11, 114, 133, 0.11);
+  --shadow: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+html[data-theme="dark"] {
+  --bg: #0d1117;
+  --surface: #151b23;
+  --surface-2: #1c2430;
+  --surface-code: #0f141b;
+  --text: #e6edf5;
+  --text-muted: #93a1b5;
+  --border: #2a3444;
+  --border-strong: #3d4b61;
+  --accent: #58a6ff;
+  --accent-soft: rgba(88, 166, 255, 0.14);
+  --good: #3fb950;
+  --good-soft: rgba(63, 185, 80, 0.14);
+  --warn: #e3b341;
+  --warn-soft: rgba(227, 179, 65, 0.15);
+  --bad: #ff6b72;
+  --bad-soft: rgba(255, 107, 114, 0.15);
+  --purple: #b392f0;
+  --purple-soft: rgba(179, 146, 240, 0.15);
+  --teal: #56d4dd;
+  --teal-soft: rgba(86, 212, 221, 0.14);
+  --shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --bg: #0d1117;
+    --surface: #151b23;
+    --surface-2: #1c2430;
+    --surface-code: #0f141b;
+    --text: #e6edf5;
+    --text-muted: #93a1b5;
+    --border: #2a3444;
+    --border-strong: #3d4b61;
+    --accent: #58a6ff;
+    --accent-soft: rgba(88, 166, 255, 0.14);
+    --good: #3fb950;
+    --good-soft: rgba(63, 185, 80, 0.14);
+    --warn: #e3b341;
+    --warn-soft: rgba(227, 179, 65, 0.15);
+    --bad: #ff6b72;
+    --bad-soft: rgba(255, 107, 114, 0.15);
+    --purple: #b392f0;
+    --purple-soft: rgba(179, 146, 240, 0.15);
+    --teal: #56d4dd;
+    --teal-soft: rgba(86, 212, 221, 0.14);
+    --shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.55;
+  font-size: 15px;
+}
+code, pre, .mono { font-family: var(--mono); }
+code {
+  background: var(--surface-code);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 0.87em;
+}
+pre {
+  background: var(--surface-code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 12.8px;
+  line-height: 1.5;
+  margin: 10px 0 0;
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+/* Sticky Top Nav */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar-inner {
+  max-width: 1420px;
+  margin: 0 auto;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.brand-pill {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.nav-links {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.nav-links a {
+  text-decoration: none;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 5px 8px;
+  border-radius: 6px;
+  transition: background 0.15s, color 0.15s;
+}
+.nav-links a:hover, .nav-links a.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.theme-btn {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.theme-btn:hover { border-color: var(--accent); }
+
+/* Layout */
+.container {
+  max-width: 1420px;
+  margin: 0 auto;
+  padding: 28px 20px 72px;
+}
+.hero {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 26px 28px;
+  box-shadow: var(--shadow);
+  margin-bottom: 24px;
+}
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.hero h1 {
+  margin: 0 0 10px;
+  font-size: clamp(1.5rem, 2.5vw, 2.05rem);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.hero p.lead {
+  margin: 0;
+  max-width: 1040px;
+  color: var(--text-muted);
+  font-size: 15.2px;
+}
+
+/* Review & ADR callout */
+.callout {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--accent-soft);
+  font-size: 13.3px;
+}
+.callout strong.callout-title {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13.8px;
+  color: var(--accent);
+}
+.callout ul { margin: 4px 0 0; padding-left: 18px; }
+.callout li + li { margin-top: 3px; }
+
+/* KPI Grid */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+  gap: 14px;
+  margin-top: 20px;
+}
+.kpi-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.kpi-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.kpi-values {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 4px;
+  font-family: var(--mono);
+}
+.kpi-before { font-size: 15px; color: var(--bad); text-decoration: line-through; opacity: 0.85; }
+.kpi-arrow { color: var(--text-muted); font-size: 13px; }
+.kpi-after { font-size: 21px; font-weight: 700; color: var(--good); }
+.kpi-note { font-size: 12px; color: var(--text-muted); }
+
+/* Sections */
+section.report-section {
+  margin-top: 34px;
+  scroll-margin-top: 72px;
+}
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border);
+}
+.section-head h2 {
+  margin: 0;
+  font-size: 1.38rem;
+  letter-spacing: -0.015em;
+}
+.section-tag {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+.card + .card { margin-top: 16px; }
+.card h3 { margin: 0 0 8px; font-size: 1.05rem; }
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.b-good { background: var(--good-soft); color: var(--good); border-color: color-mix(in srgb, var(--good) 28%, transparent); }
+.b-warn { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.b-bad  { background: var(--bad-soft);  color: var(--bad);  border-color: color-mix(in srgb, var(--bad) 28%, transparent); }
+.b-info { background: var(--accent-soft); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 28%, transparent); }
+.b-purple { background: var(--purple-soft); color: var(--purple); border-color: color-mix(in srgb, var(--purple) 28%, transparent); }
+.b-teal { background: var(--teal-soft); color: var(--teal); border-color: color-mix(in srgb, var(--teal) 28%, transparent); }
+.b-muted { background: var(--surface-2); color: var(--text-muted); border-color: var(--border); }
+
+/* Graph + Inspector split */
+.graph-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1020px) {
+  .graph-shell { grid-template-columns: 1fr; }
+}
+.graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.pill-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pill-btn {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.pill-btn:hover { border-color: var(--accent); color: var(--text); }
+.pill-btn[aria-pressed="true"], .pill-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.svg-wrap {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+}
+.svg-wrap svg {
+  display: block;
+  width: 100%;
+  min-width: 820px;
+  height: auto;
+  user-select: none;
+}
+.inspector {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  font-size: 13.5px;
+}
+.inspector h4 { margin: 0 0 6px; font-family: var(--mono); font-size: 14px; }
+.inspector-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 6px 0 10px;
+}
+.dep-chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+}
+.dep-chip:hover { border-color: var(--accent); }
+.dep-chip.violation {
+  border-color: var(--bad);
+  color: var(--bad);
+  background: var(--bad-soft);
+}
+
+/* SVG node & edge styling */
+.g-node { cursor: pointer; transition: opacity 0.15s; }
+.g-node rect {
+  stroke-width: 1.5;
+  rx: 7;
+  transition: stroke-width 0.12s, filter 0.12s;
+}
+.g-node.dimmed { opacity: 0.22; }
+.g-node.selected rect { stroke-width: 2.6; stroke: var(--accent) !important; }
+.g-edge { fill: none; stroke-width: 1.35; opacity: 0.38; transition: opacity 0.15s, stroke-width 0.15s; }
+.g-edge.violation { stroke: var(--bad); stroke-dasharray: 5 3; opacity: 0.72; }
+.g-edge.normal { stroke: var(--text-muted); }
+.g-edge.active { opacity: 0.96; stroke-width: 2.3; }
+.g-edge.dimmed { opacity: 0.06; }
+
+/* Controls & Tables */
+.table-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 12px;
+}
+.search-input {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 13.5px;
+  min-width: 250px;
+}
+.search-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-weight: 700;
+  text-align: left;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+thead th.sortable { cursor: pointer; }
+thead th.sortable:hover { color: var(--accent); }
+tbody td {
+  padding: 8px 11px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--surface-2); }
+.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* Slop Cards */
+.slop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(390px, 1fr));
+  gap: 16px;
+}
+@media (max-width: 500px) { .slop-grid { grid-template-columns: 1fr; } }
+.slop-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--bad);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+.slop-card.warn { border-left-color: var(--warn); }
+.slop-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.slop-head h3 { margin: 0; font-size: 1.02rem; }
+details.evidence {
+  margin-top: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+details.evidence summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+details.evidence ul {
+  margin: 8px 0 2px;
+  padding-left: 18px;
+  font-size: 12.8px;
+}
+details.evidence li + li { margin-top: 4px; }
+
+/* Two-col & Tree */
+.two-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 16px;
+}
+@media (max-width: 500px) { .two-col { grid-template-columns: 1fr; } }
+.tree-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.tree-group summary {
+  padding: 10px 14px;
+  font-weight: 700;
+  font-family: var(--mono);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--surface-2);
+}
+.tree-items {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 8px 14px;
+}
+.tree-item {
+  display: grid;
+  grid-template-columns: 195px 95px 1fr;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 13px;
+  align-items: baseline;
+}
+.tree-item:last-child { border-bottom: 0; }
+@media (max-width: 680px) { .tree-item { grid-template-columns: 1fr; gap: 3px; } }
+
+/* Stat strip & Bar meters for Testing section */
+.stat-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+.stat-tile {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.stat-tile .val {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 700;
+}
+.stat-tile .lbl {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bar-track {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+  min-width: 90px;
+}
+.bar-fill {
+  height: 100%;
+  background: var(--bad);
+  border-radius: 999px;
+}
+
+/* Anatomy diagram & Roadmap */
+.anatomy-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.wave-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.wave-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 14px 15px;
+}
+.wave-card h4 { margin: 0 0 6px; font-size: 14px; }
+.wave-card ul { margin: 6px 0 0; padding-left: 17px; font-size: 12.8px; }
+.wave-card li + li { margin-top: 4px; }
+
+.legend-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+.legend-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.swatch-box {
+  width: 14px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1.5px solid currentColor;
+}
+.compare-box {
+  display: none;
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.compare-box.visible { display: block; }
+
+@media print {
+  .topbar, .graph-toolbar, .table-controls, .theme-btn { display: none !important; }
+  body { background: #fff; color: #000; }
+  .card, .hero, .slop-card { box-shadow: none; break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <span>casa-rs</span>
+      <span class="brand-pill">Architecture Proposal v3 (Reviewed + ADR Updates)</span>
+    </div>
+    <nav class="nav-links" aria-label="Page sections">
+      <a href="#current">1. Current</a>
+      <a href="#slop">2. Slop</a>
+      <a href="#proposed">3. Proposed</a>
+      <a href="#migration">4. Migration</a>
+      <a href="#testing">5. Testing</a>
+      <a href="#deep-modules">6. Deep Modules</a>
+      <a href="#adrs">7. ADR Updates</a>
+      <a href="#crates-io">8. Crates.io &amp; Plan</a>
+    </nav>
+    <button type="button" class="theme-btn" id="themeToggle" aria-label="Toggle light or dark theme">Toggle Theme</button>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- HERO & EXECUTIVE SUMMARY -->
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-meta">
+      <span><strong>Workspace:</strong> casa-rs v0.27.0 (Rust 2024, MSRV 1.99)</span>
+      <span><strong>Base Commit:</strong> <code>b84c228f82</code></span>
+      <span><strong>Revision:</strong> v3 — Codex review fixes + recommended ADR amendments</span>
+      <span><strong>Scope:</strong> 834,300 src LOC &bull; 206,096 test LOC &bull; 35 crates (+2 orphans) &bull; 345 test link targets</span>
+    </div>
+    <h1 id="hero-title">Reorganizing <code>casa-rs</code> into Deep, Publishable, UI-Decoupled, Agent-Legible Modules</h1>
+    <p class="lead">
+      After ~1 year of rapid development, <code>casa-rs</code> has grown to 1.04M lines of Rust across 35 flat crates in <code>crates/</code>.
+      While imaging (<code>ADR-0016</code>) underwent a rigorous consolidation, the rest of the workspace accumulated severe boundary drift:
+      domain crates depend <em>upward</em> on ~18.5k lines of multi-process contract/CLI plumbing left over from retired GUIs, 12 of 13 <code>publish = true</code> crates fail crates.io publication,
+      19 binaries sit inside library crates, two "god crates" (<code>casa-ms</code> 130kL, <code>casa-calibration</code> 118kL) mix unrelated subsystems,
+      50 files breach the 1,500-line ceiling, and tests compile into <strong>345 separate link targets</strong>.
+      This v3 proposal pairs <strong>compiler-enforced library boundaries</strong> (<strong>38 crates across 5 physical roots</strong>) with targeted
+      <strong>ADR amendments</strong> (<code>ADR-0017</code> in-process Python tasks, <code>ADR-0006</code> protocol slimming, <code>ADR-0011</code> <code>uvcontsub</code> relocation)
+      to deliver maximum architectural simplicity, zero cycles, true UI decoupling, and out-of-the-box <code>crates.io</code> / <code>docs.rs</code> readiness.
+    </p>
+
+    <div class="callout" role="note" aria-label="Codex review fixes and ADR amendments">
+      <strong class="callout-title">Key Foundations: Codex Review Fixes (<code>b84c228f82</code>) + Recommended ADR Amendments</strong>
+      <ul>
+        <li><strong>Preserved <code>ADR-0016</code> imaging firewall &amp; broke synthesis/SD/calibration cycles:</strong> Kept the 8-crate compiler-enforced DAG under <code>libs/imaging/</code> (all <code>publish = true</code>, facade renamed <code>casa-imaging</code>), keeping <code>casa-imaging-runtime</code> below both <code>casa-imaging-singledish</code> and <code>casa-imaging</code>, and placing high-level <code>casa-singledish</code> above <code>casa-calibration</code>.</li>
+        <li><strong>Fixed missing edges &amp; kept <code>casa-aipsio</code> / <code>casa-fft</code> distinct:</strong> Added <code>casa-ms &rarr; casa-measures</code>; kept <code>casa-aipsio</code> as a small <code>publish = true</code> codec crate for C++ wire oracles (with a narrow table-header probe in <code>casa-tables</code>); kept pure <code>casa-numerics</code> separate from <code>casa-fft</code> so beam-only callers avoid FFTW.</li>
+        <li><strong>Amended <code>ADR-0017</code> &amp; trimmed <code>ADR-0006</code>:</strong> Both <code>casars.tools</code> and <code>casars.tasks</code> run <strong>in-process</strong> in <code>casars._core</code> (via PyO3 over feature-gated <code>surfaces/casa-tasks</code> with GIL release + <code>SIGINT &rarr; Cancel</code>), sharing process-wide <code>MeasuresRuntime</code> and table caches; retired ~13.5kL of leftover GUI-era <code>ProviderContractEnvelope</code>, <code>build.rs</code> JSON-fingerprinting, and mandatory 23-binary child-process launcher scaffolding; kept <code>frontends/casars-cli</code> as a standalone shell/HPC CLI.</li>
+        <li><strong>Relocated <code>uvcontsub</code> (<code>ADR-0011</code>) &amp; hardened test / <code>docs.rs</code> mechanics:</strong> Moved visibility-domain <code>fit_and_subtract_continuum</code> from <code>casa-imaging-operator</code> to <code>casa-mstransform</code>; corrected test targets to <strong>345</strong> with allocator/<code>CARGO_BIN_EXE</code> exceptions; excluded opt-in <code>suites/*</code> from default <code>--workspace</code>; updated <code>casa-fft/build.rs</code> for Linux <code>docs.rs</code>.</li>
+      </ul>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Workspace Crates</div>
+        <div class="kpi-values"><span class="kpi-before">35 (+2)</span><span class="kpi-arrow">&rarr;</span><span class="kpi-after">38</span></div>
+        <div class="kpi-note"><code>libs/</code> (28), <code>surfaces/</code> (3), <code>frontends/</code> (2), <code>dev/</code>+<code>suites/</code> (5)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Crates.io Publishable</div>
+        <div class="kpi-values"><span class="kpi-before">1 / 13</span><span class="kpi-arrow">&rarr;</span><span class="kpi-after">28 / 28</span></div>
+        <div class="kpi-note">100% of <code>libs/*</code> DAG verified via <code>cargo package</code></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Task/Contract Plumbing</div>
+        <div class="kpi-values"><span class="kpi-before">18.5kL</span><span class="kpi-arrow">&rarr;</span><span class="kpi-after">~5kL</span></div>
+        <div class="kpi-note">Retires GUI-era envelope, <code>build.rs</code> probes &amp; bin launcher</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Bins in Library Crates</div>
+        <div class="kpi-values"><span class="kpi-before">19</span><span class="kpi-arrow">&rarr;</span><span class="kpi-after">0</span></div>
+        <div class="kpi-note"><code>casars-cli</code> standalone; Python tasks run in-process</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Test Link Targets</div>
+        <div class="kpi-values"><span class="kpi-before">345</span><span class="kpi-arrow">&rarr;</span><span class="kpi-after">~40</span></div>
+        <div class="kpi-note"><code>tests/api.rs</code> default + allocator/bin exceptions</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Files &gt; 1,500 Lines</div>
+        <div class="kpi-values"><span class="kpi-before">50</span><span class="kpi-arrow">&rarr;</span><span class="kpi-after">0</span></div>
+        <div class="kpi-note">Burn down allowlist; ban dual <code>x.rs</code> + <code>x/</code></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 1: CURRENT STRUCTURE -->
+  <section id="current" class="report-section">
+    <div class="section-head">
+      <h2>1. Current Workspace Structure (As-Is)</h2>
+      <span class="section-tag">35 members &bull; 30 binaries &bull; flat crates/</span>
+    </div>
+
+    <div class="card">
+      <h3>Interactive Current Dependency &amp; Layer Violation Graph</h3>
+      <p style="margin:0 0 12px; color:var(--text-muted); font-size:13.5px;">
+        Click or hover any crate to inspect its workspace dependencies, reverse dependents, binaries, and boundary violations.
+        Red dashed edges indicate architectural violations: domain libraries importing <code>casa-provider-contracts</code> / <code>casa-task-runtime</code>,
+        <code>publish = true</code> crates depending on <code>publish = false</code> crates, or layer bypasses (e.g. <code>casars-python &rarr; casa-aipsio</code>).
+      </p>
+      <div class="graph-toolbar">
+        <div class="pill-group" id="curGraphFilters">
+          <button type="button" class="pill-btn active" data-mode="all">All Edges</button>
+          <button type="button" class="pill-btn" data-mode="violations">Violations Only</button>
+          <button type="button" class="pill-btn" data-mode="publish">Broken Publish Edges</button>
+          <button type="button" class="pill-btn" data-mode="upward">Upward Task-Runtime Leaks</button>
+        </div>
+        <button type="button" class="pill-btn" id="curGraphReset">Clear Selection</button>
+      </div>
+      <div class="graph-shell">
+        <div>
+          <div class="svg-wrap">
+            <svg id="curSvg" viewBox="0 0 1080 620" role="img" aria-label="Current 35-crate workspace dependency graph"></svg>
+          </div>
+          <div class="legend-row">
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--good); background:var(--good-soft)"></span> publish=true (clean)</span>
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--bad); background:var(--bad-soft)"></span> publish=true (blocked by private dep)</span>
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--accent); background:var(--accent-soft)"></span> publish=false library / runtime</span>
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--purple); background:var(--purple-soft)"></span> frontend / app / test</span>
+            <span class="legend-swatch" style="color:var(--bad)">- - - architectural / publish violation edge</span>
+          </div>
+        </div>
+        <aside class="inspector" id="curInspector" aria-live="polite">
+          <h4>Select a crate node</h4>
+          <p style="color:var(--text-muted); margin:0;">Click any of the 35 crates in the graph or table to inspect its exact LOC, binaries, workspace dependencies, and violations.</p>
+        </aside>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Complete 35-Crate Inventory</h3>
+      <div class="table-controls">
+        <div class="pill-group" id="curTablePills">
+          <button type="button" class="pill-btn active" data-filter="all">All (35)</button>
+          <button type="button" class="pill-btn" data-filter="broken_pub">Publish Broken (8 direct / 12 total)</button>
+          <button type="button" class="pill-btn" data-filter="has_bins">Embedded Bins (12)</button>
+          <button type="button" class="pill-btn" data-filter="giant">God Crates &gt;40k LOC (7)</button>
+          <button type="button" class="pill-btn" data-filter="micro">Micro &lt;2k LOC (7)</button>
+          <button type="button" class="pill-btn" data-filter="no_docs">No missing_docs (17)</button>
+        </div>
+        <input type="search" class="search-input" id="curSearch" placeholder="Filter by crate name or binary...">
+      </div>
+      <div class="table-scroll">
+        <table id="curTable">
+          <thead>
+            <tr>
+              <th class="sortable" data-sort="name">Crate</th>
+              <th class="sortable" data-sort="src_lines" style="text-align:right">Src LOC</th>
+              <th class="sortable" data-sort="test_lines" style="text-align:right">Test LOC</th>
+              <th class="sortable" data-sort="src_files" style="text-align:right">Files</th>
+              <th class="sortable" data-sort="ws_deps" style="text-align:right">WS Deps</th>
+              <th class="sortable" data-sort="rdeps" style="text-align:right">RDeps</th>
+              <th>Publish</th>
+              <th>Docs Lint</th>
+              <th>Binaries</th>
+              <th>Key Issue</th>
+            </tr>
+          </thead>
+          <tbody id="curTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 2: SLOP & STRUCTURAL PATHOLOGIES -->
+  <section id="slop" class="report-section">
+    <div class="section-head">
+      <h2>2. Accumulated Slop &amp; Structural Pathologies</h2>
+      <span class="section-tag">Verified code-level findings</span>
+    </div>
+
+    <div class="slop-grid">
+      <article class="slop-card">
+        <div class="slop-head">
+          <h3>1. Broken Crates.io Publication Graph</h3>
+          <span class="badge b-bad">Critical &bull; 1/13 publishable</span>
+        </div>
+        <p style="margin:0; font-size:13.5px;">
+          13 crates set <code>publish = true</code>, yet <strong>8 of them directly depend on <code>publish = false</code> crates</strong>
+          and 4 more transitively fail through them. Only <code>casa-fft</code> has zero workspace deps. Zero path dependencies (normal or build) specify <code>version = "..."</code>,
+          and 34/35 crates lack a <code>README.md</code>, <code>keywords</code>, or <code>categories</code>.
+        </p>
+        <details class="evidence">
+          <summary>Measured publish blockers across Cargo.toml</summary>
+          <ul>
+            <li><code>casa-types</code> (publish=true) &rarr; <code>casa-values</code> (publish=false)</li>
+            <li><code>casa-tables</code> (publish=true) &rarr; <code>casa-aipsio</code> (publish=false)</li>
+            <li><code>casa-images</code> (publish=true) &rarr; <code>casa-numerics</code>, <code>casa-provider-contracts</code>, <code>casa-task-runtime</code> (all false)</li>
+            <li><code>casa-ms</code> (publish=true) &rarr; 6 private crates incl. <code>casa-atmosphere</code>, <code>casa-observation</code>, <code>casa-task-runtime</code></li>
+            <li><code>casa-imaging-runtime</code> (publish=true) &rarr; 5 private imaging siblings (<code>model</code>, <code>operator</code>, <code>deconvolution</code>, <code>products</code>, <code>metal</code>)</li>
+            <li><code>casa-simulation</code> (publish=true) &rarr; 9 private crates out of 20 workspace deps!</li>
+            <li>Root <code>Cargo.toml</code> <code>workspace.package.description</code> still reads: <em>"Rust implementation of casacore-compatible persistent data I/O"</em>.</li>
+          </ul>
+        </details>
+      </article>
+
+      <article class="slop-card">
+        <div class="slop-head">
+          <h3>2. Inverted Dependency Arrows &amp; GUI-Era Protocol Bloat</h3>
+          <span class="badge b-bad">Critical &bull; Layer Violation</span>
+        </div>
+        <p style="margin:0; font-size:13.5px;">
+          5 core domain crates depend <em>upward</em> on ~18.5k lines of <code>casa-provider-contracts</code> + <code>casa-task-runtime</code>
+          (including build scripts like <code>casa-images/build.rs</code> emitting <code>IMAGE_PROVIDER_PROBES</code>), ship <strong>19 binaries inside libraries</strong>,
+          and force Python tasks through mandatory child-process executable spawning.
+        </p>
+        <details class="evidence">
+          <summary>Embedded binaries, build scripts &amp; multi-process scaffolding</summary>
+          <ul>
+            <li><code>casa-images</code> embeds 9 task binaries + <code>task_front_end.rs</code> + <code>build.rs</code> calling <code>casa_provider_contracts::builtin_provider_fingerprint</code>.</li>
+            <li><code>casa-ms</code> embeds <code>msexplore</code>, <code>concat</code>, <code>flagmanager</code>, and dev probe <code>ms-read-probe</code>; carries an <strong>unused dependency on <code>casa-logging</code></strong> (0 files import it).</li>
+            <li><code>casa-calibration</code> embeds <code>calibrate</code>, <code>flagdata</code>, <code>mstransform</code> + 9,356 lines in <code>src/cli/</code>.</li>
+            <li><code>casa-provider-contracts</code> (7.7kL) + <code>casa-task-runtime</code> (10.8kL) retain <code>ProviderContractEnvelope</code> and <code>ApplicationCatalog</code> binary resolution left over from retired GUIs/TUI.</li>
+          </ul>
+        </details>
+      </article>
+
+      <article class="slop-card">
+        <div class="slop-head">
+          <h3>3. Dumping-Ground "God Crates"</h3>
+          <span class="badge b-bad">High &bull; 331k LOC in 3 crates</span>
+        </div>
+        <p style="margin:0; font-size:13.5px;">
+          <code>casa-ms</code> (129.7kL, 28 <code>pub mod</code>s), <code>casa-calibration</code> (118.3kL, 60 submodules, 17 WS deps),
+          and <code>casa-images</code> (83.5kL, 20 <code>pub mod</code>s) have become catch-alls for unrelated subsystems, dragging in massive transitive dependency graphs.
+        </p>
+        <details class="evidence">
+          <summary>God-crate internal bloat &amp; stale facades</summary>
+          <ul>
+            <li><code>casa-calibration/src/lib.rs</code> doc still says: <em>"The public API is intentionally narrow in the first wave: summarize_table, summarize_tables..."</em> while re-exporting ~210 flat symbols across 60 submodules, plus <code>single_dish</code> (8,777L), <code>ft</code> (10,455L), <code>flagdata_model</code>, <code>statwt</code>, <code>uvsub</code>, <code>plotms</code>, <code>plotbandpass</code>.</li>
+            <li><code>casa-ms</code> pulls <code>casa-atmosphere</code> solely for 3 <code>msexplore</code> plot files, <code>casa-fft</code> solely for 1 <code>transform/regrid/shift.rs</code> file, and <code>casa-components</code> solely for <code>flagging/clip_models.rs</code>.</li>
+            <li><code>casa-images</code> mixes casacore image persistence (~37kL) with 45.5kL of CASA <code>analysis/</code> tasks.</li>
+            <li><code>casars-python/src/tools/image</code> has ballooned to 27,409 lines of Rust inside the Python binding crate.</li>
+          </ul>
+        </details>
+      </article>
+
+      <article class="slop-card">
+        <div class="slop-head">
+          <h3>4. Leaky Implementation Internals &amp; Test Leakage</h3>
+          <span class="badge b-bad">High &bull; Shallow Facades</span>
+        </div>
+        <p style="margin:0; font-size:13.5px;">
+          Public crate roots expose test-law verification modules, raw storage-manager plumbing, and test-only behavior switches—forcing agents and users to read implementation details to know what is supported.
+        </p>
+        <details class="evidence">
+          <summary>Specific facade &amp; test leaks observed</summary>
+          <ul>
+            <li><code>casa-imaging-application/src/lib.rs</code> exports <strong>8 test-law modules as <code>pub mod</code></strong> (<code>mask_image_law</code>, <code>mvc_view_law</code>, <code>product_law</code>, <code>restart_mask_law</code> [not even <code>#[doc(hidden)]</code>], <code>restart_products_law</code>, <code>source_law</code>, <code>start_model_law</code>, <code>store_law</code>).</li>
+            <li><code>casa-ms::open_measures_runtime()</code> uses <code>#[cfg(test)]</code> to silently return <code>casa_test_support::deterministic_measures_provider()</code> instead of production runtime discovery.</li>
+            <li><code>casa-tables/src/lib.rs</code> re-exports 30+ low-level <code>install_streamed_tiled_*</code> and <code>StreamedTiledShape*</code> symbols at crate root alongside high-level <code>Table</code>.</li>
+            <li><code>casa-numerics</code> carries dead <code>SimulatedBandpass</code> (0 external callers).</li>
+          </ul>
+        </details>
+      </article>
+
+      <article class="slop-card warn">
+        <div class="slop-head">
+          <h3>5. Micro-Crate Fragmentation &amp; Layer Bypasses</h3>
+          <span class="badge b-warn">Medium &bull; Split Brain</span>
+        </div>
+        <p style="margin:0; font-size:13.5px;">
+          Several tiny crates exist only as artificial wrappers (<code>casa-values</code> 1,154L, <code>casa-measures-tools</code> 362L, <code>casars-imexplore</code> 533L,
+          <code>casars-msconvert</code> 1,040L, <code>casars-simulation</code> 1,229L), while <code>casars-python</code> bypasses layers by importing <code>casa-aipsio</code> directly for comet header checks and linking app crates.
+        </p>
+        <details class="evidence">
+          <summary>Micro-crates &amp; bypasses observed</summary>
+          <ul>
+            <li><code>casa-values</code> (1,154L, 1 file) exists only as a private crate behind <code>casa-types</code>, breaking <code>casa-types</code> publication.</li>
+            <li><code>casars-python/src/tools/measures/comet.rs:102</code> reads <code>table.dat</code> type tag directly via <code>casa-aipsio</code> instead of a narrow <code>casa-tables</code> probe.</li>
+            <li><code>casa-measures-tools</code> (362L) wraps <code>casa-measures-data</code> for one snapshot binary.</li>
+            <li><code>casars-imexplore</code> (533L), <code>casars-msconvert</code> (1,040L), <code>casars-simulation</code> (1,229L) each duplicate task binary boilerplate.</li>
+          </ul>
+        </details>
+      </article>
+
+      <article class="slop-card warn">
+        <div class="slop-head">
+          <h3>6. File Giantism &amp; Dual Module Pattern (Agent Trap)</h3>
+          <span class="badge b-warn">High &bull; 50 Files &gt; 1,500L</span>
+        </div>
+        <p style="margin:0; font-size:13.5px;">
+          Fifty Rust files exceed the 1,500-line limit in <code>resources/file-length-allowlist.json</code>. Worse, crates systematically pair a massive
+          <code>foo.rs</code> file with a <code>foo/</code> directory of submodules (e.g., <code>msexplore.rs</code> 8.9kL + <code>msexplore/</code> 7.7kL),
+          shattering context locality for AI agents.
+        </p>
+        <details class="evidence">
+          <summary>Top oversized files &amp; dual-module pairs</summary>
+          <ul>
+            <li><code>crates/casa-tables/src/storage/tiled_stman.rs</code> — <strong>14,497 lines</strong></li>
+            <li><code>crates/casa-ms/src/msexplore.rs</code> (8,890L) + <code>msexplore/</code> (7,697L)</li>
+            <li><code>crates/casa-tables/src/table/tests.rs</code> — 8,407 lines</li>
+            <li><code>crates/casa-calibration/src/execute.rs</code> (7,156L) + <code>execute/</code> (4,835L)</li>
+            <li><code>crates/casa-ms/src/flagging.rs</code> (6,223L) + <code>flagging/</code> (8,295L)</li>
+            <li><code>crates/casa-images/src/image.rs</code> (4,974L), <code>analysis.rs</code> (4,931L + 40,557L in <code>analysis/</code>)</li>
+            <li><code>crates/casa-vla/src/importer.rs</code> — 4,954 lines</li>
+          </ul>
+        </details>
+      </article>
+
+      <article class="slop-card warn">
+        <div class="slop-head">
+          <h3>7. Orphaned Directories &amp; Repository Clutter</h3>
+          <span class="badge b-warn">Medium &bull; Noise</span>
+        </div>
+        <p style="margin:0; font-size:13.5px;">
+          Empty or non-member crate directories, retired GUI artifacts, and <strong>26,874 gitignored <code>casa-*.log</code> files</strong> inside <code>crates/</code>
+          confuse directory listings, glob searches, and agent discovery.
+        </p>
+        <details class="evidence">
+          <summary>Orphans &amp; clutter inventory</summary>
+          <ul>
+            <li><code>crates/casa-imaging-reconstruction/</code> — empty leftover dir after ADR-0016 deletion.</li>
+            <li><code>crates/casars/</code> — non-member dir containing <code>src/</code> + 19 old <code>casa-*.log</code> files.</li>
+            <li><code>apps/casars-mac/</code> — untracked retired Mac GUI directory (ADR-0017: no GUI).</li>
+            <li><code>site/</code> — May 2026 static HTML build still housing <code>casars-tui-framework/</code>, <code>mac-native-gui-spec/</code>, etc.</li>
+            <li>26,874 <code>casa-*.log</code> files in crate roots (15,075 in <code>casars-imager/</code>, 10,836 in <code>casa-ms/</code>, 387 in <code>casa-calibration/</code>).</li>
+          </ul>
+        </details>
+      </article>
+    </div>
+  </section>
+
+  <!-- SECTION 3: PROPOSED CLEAN-SHEET ARCHITECTURE -->
+  <section id="proposed" class="report-section">
+    <div class="section-head">
+      <h2>3. Proposed v3 Clean-Sheet Architecture (To-Be)</h2>
+      <span class="section-tag">38 crates &bull; 6 visual tiers &bull; cycle-free compiler-enforced DAG</span>
+    </div>
+
+    <div class="card">
+      <h3>Interactive Proposed Dependency Architecture (38 Crates)</h3>
+      <p style="margin:0 0 12px; color:var(--text-muted); font-size:13.5px;">
+        Every dependency flows strictly downward, and every <code>publish = true</code> crate (all 28 crates in <code>libs/*</code>) depends exclusively on <code>publish = true</code> crates.
+        <code>libs/imaging/</code> preserves ADR-0016's compiler-enforced firewall while renaming the facade to <code>casa-imaging</code>;
+        <code>surfaces/</code> shrinks from 18.5kL to ~7.5kL of slim, optional-feature-gated contracts, in-process task dispatch (used directly by Python, CLI, and future UIs per amended <code>ADR-0017</code>), and plot DTOs;
+        and <code>suites/</code> holds opt-in interop, parity, and perf suites excluded from default <code>--workspace</code> runs.
+      </p>
+      <div class="graph-toolbar">
+        <div class="pill-group">
+          <button type="button" class="pill-btn active" id="propToggleCompare">Toggle Before/After Summary</button>
+          <button type="button" class="pill-btn" id="propGraphReset">Clear Selection</button>
+        </div>
+        <span style="font-size:12.5px; color:var(--text-muted);">Click any proposed crate to trace its verified cycle-free DAG</span>
+      </div>
+      <div class="compare-box" id="compareBox">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; font-size:13px;">
+          <div>
+            <strong>Before (Current)</strong>
+            <ul style="margin:6px 0 0; padding-left:18px; color:var(--text-muted);">
+              <li>35 flat crates in <code>crates/</code> + 2 orphan dirs</li>
+              <li>18.5kL contract/runtime + <code>build.rs</code> probes leaked into <code>libs/</code></li>
+              <li>Python tasks must spawn 23 child binaries via <code>ApplicationCatalog</code></li>
+              <li>1 / 13 <code>publish = true</code> crates actually publishable</li>
+              <li>345 separate test link targets mixing unit/interop/parity/perf</li>
+            </ul>
+          </div>
+          <div>
+            <strong>After (v3 Reviewed + ADR Updates)</strong>
+            <ul style="margin:6px 0 0; padding-left:18px; color:var(--text-muted);">
+              <li>38 crates in <code>libs/{casacore,imaging,casa}</code>, <code>surfaces/</code>, <code>frontends/</code>, <code>dev/</code>, opt-in <code>suites/</code></li>
+              <li>~7.5kL slim <code>surfaces/{casa-contracts,casa-tasks}</code>; zero <code>libs/</code> upward deps or <code>build.rs</code> probes</li>
+              <li>Python &amp; future UIs run tasks <strong>in-process</strong> via <code>surfaces/casa-tasks</code>; <code>casars-cli</code> standalone</li>
+              <li>28 / 28 <code>libs/*</code> crates 100% publishable with zero cycles</li>
+              <li>5-tier test taxonomy (~40 link targets; opt-in <code>suites/</code> outside default runs)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="graph-shell" style="margin-top:12px;">
+        <div>
+          <div class="svg-wrap">
+            <svg id="propSvg" viewBox="0 0 1080 760" role="img" aria-label="Proposed v3 38-crate clean-sheet architecture graph"></svg>
+          </div>
+          <div class="legend-row">
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--teal); background:var(--teal-soft)"></span> Tier 0: libs/casacore (11, publish=true)</span>
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--good); background:var(--good-soft)"></span> Tier 1: libs/imaging (8, publish=true)</span>
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--good); background:var(--good-soft)"></span> Tier 2: libs/casa (9, publish=true)</span>
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--warn); background:var(--warn-soft)"></span> Tier 3: surfaces/ (3, UI-agnostic, feature-gated)</span>
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--accent); background:var(--accent-soft)"></span> Tier 4: frontends/ (2 + experimental UIs)</span>
+            <span class="legend-swatch"><span class="swatch-box" style="color:var(--purple); background:var(--purple-soft)"></span> Tier 5: dev/ &amp; opt-in suites/ (5)</span>
+          </div>
+        </div>
+        <aside class="inspector" id="propInspector" aria-live="polite">
+          <h4>Select a proposed crate</h4>
+          <p style="color:var(--text-muted); margin:0;">Click any node in the proposed graph to inspect its absorbed sources, strict dependency set, and public facade role.</p>
+        </aside>
+      </div>
+    </div>
+
+    <div class="two-col" style="margin-top:16px;">
+      <div class="card">
+        <h3>Proposed Physical Workspace Layout</h3>
+        <div id="treeContainer"></div>
+      </div>
+
+      <div class="card">
+        <h3>CASA / Casacore Familiarity Matrix</h3>
+        <p style="margin:0 0 10px; font-size:13px; color:var(--text-muted);">
+          Maps familiar C++ <code>casacore</code> &amp; <code>CASA (casacpp)</code> library boundaries directly onto idiomatic Rust crates without mimicking C++ inheritance.
+        </p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th>C++ Casacore / CASA</th><th>Proposed Rust Crate</th><th>Role</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>casacore::casa</code> (Arrays, Quanta, Record)</td><td><code>casa-core</code></td><td>Definitional values, units, pure measures</td></tr>
+              <tr><td><code>casacore::casa</code> (AipsIO codec)</td><td><code>casa-aipsio</code></td><td>Publishable framing codec + C++ wire oracle target</td></tr>
+              <tr><td><code>casacore::scimath</code> (Fitting, PBMath, FFT)</td><td><code>casa-numerics</code> + <code>casa-fft</code></td><td>Beam/fit math stays FFTW-free; FFTW isolated</td></tr>
+              <tr><td><code>casacore::tables</code> (+ TaQL, LogSink)</td><td><code>casa-tables</code></td><td>CTDS storage managers, TaQL, locking</td></tr>
+              <tr><td><code>casacore::measures</code> (MeasTable, Frame)</td><td><code>casa-measures</code></td><td>Measures runtime data &amp; table columns</td></tr>
+              <tr><td><code>casacore::lattices</code></td><td><code>casa-lattices</code></td><td>N-D paged/temp arrays &amp; regions</td></tr>
+              <tr><td><code>casacore::coordinates</code></td><td><code>casa-coordinates</code></td><td>WCS / Direction / Spectral / Stokes</td></tr>
+              <tr><td><code>casacore::images</code> (FITS, ImageExpr)</td><td><code>casa-images</code></td><td>Image persistence, beam metadata &amp; lazy LEL</td></tr>
+              <tr><td><code>casacore::ms</code> + <code>msvis</code></td><td><code>casa-observation</code> + <code>casa-ms</code></td><td>Observation stream contract &amp; MS I/O</td></tr>
+              <tr><td><code>casacpp::atmosphere</code> (ATM)</td><td><code>casa-atmosphere</code></td><td>Atmospheric transmission &amp; refractivity</td></tr>
+              <tr><td><code>casacpp::components</code></td><td><code>casa-components</code></td><td>Sky component lists &amp; spectra</td></tr>
+              <tr><td><code>casacpp::imageanalysis</code></td><td><code>casa-imageanalysis</code></td><td>immath, imregrid, moments, ComponentListImage, fitting</td></tr>
+              <tr><td><code>casacpp::flagging</code></td><td><code>casa-flagging</code></td><td>Auto-flagging, shadowing, flag versions</td></tr>
+              <tr><td><code>casacpp::mstransform</code></td><td><code>casa-mstransform</code></td><td>Split, regrid, concat, <code>uvcontsub</code>, MSv2&harr;MSv4</td></tr>
+              <tr><td><code>casacpp::synthesis</code></td><td><code>libs/imaging/*</code> (<code>casa-imaging</code> facade)</td><td>ADR-0016 compiler-layered imaging + SDGrid</td></tr>
+              <tr><td><code>casacpp::calibration</code> (CalTables)</td><td><code>casa-calibration</code></td><td>Jones solvers, applycal, gencal, statwt, uvsub, wvr</td></tr>
+              <tr><td><code>casacpp::singledish</code></td><td><code>casa-singledish</code></td><td>ASAP/NRO import, baseline &amp; SD workflows</td></tr>
+              <tr><td><code>casacpp::simulator</code></td><td><code>casa-simulation</code></td><td>Predict, corrupt, simobserve/alma</td></tr>
+              <tr><td><code>casacpp::nrao</code> (VLA)</td><td><code>casa-vla</code></td><td>VLA archive reader</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>Key Architectural Decisions &amp; Tradeoffs (v3)</h3>
+      <div class="anatomy-grid" style="margin-top:10px;">
+        <div class="wave-card">
+          <h4>In-Process <code>surfaces/</code> + Disposable <code>frontends/</code></h4>
+          <p style="margin:0; font-size:13px; color:var(--text-muted);">
+            Amending <code>ADR-0017</code> &amp; slimming <code>ADR-0006</code> collapses ~18.5kL of envelope/launcher boilerplate into ~7.5kL of typed <code>casa-contracts</code> + optional-feature-gated <code>casa-tasks</code>.
+            <code>casars.tasks</code> in Python, <code>casars-cli</code>, and any experimental Web/Notebook/MCP UI all dispatch in-process with GIL release, <code>Cancel</code> tokens, and shared caches.
+          </p>
+        </div>
+        <div class="wave-card">
+          <h4>Preserving <code>libs/imaging/</code> &amp; Breaking Cycles</h4>
+          <p style="margin:0; font-size:13px; color:var(--text-muted);">
+            Keeping ADR-0016's Cargo boundaries preserves compile-time isolation and fast <code>CARGO_INCREMENTAL=0</code> builds while publishing all 8 crates.
+            Keeping <code>casa-imaging-runtime</code> below <code>casa-imaging-singledish</code> and <code>casa-imaging</code>, and placing <code>casa-singledish</code> above <code>casa-calibration</code>, eliminates both cycles cleanly.
+          </p>
+        </div>
+        <div class="wave-card">
+          <h4>Keeping <code>casa-aipsio</code> &amp; <code>casa-fft</code> Separate</h4>
+          <p style="margin:0; font-size:13px; color:var(--text-muted);">
+            The C++ interop harness (<code>aipsio_oracle.rs</code>, <code>table_sync.rs</code>) tests raw AipsIO encoding directly, so keeping <code>casa-aipsio</code> small and <code>publish = true</code> beats hiding it.
+            Keeping pure beams in <code>casa-numerics</code> separate from <code>casa-fft</code> ensures beam-only callers never link FFTW.
+          </p>
+        </div>
+        <div class="wave-card">
+          <h4>Clean Domain Seams (<code>uvcontsub</code>, Flagging, Transforms)</h4>
+          <p style="margin:0; font-size:13px; color:var(--text-muted);">
+            Relocating <code>fit_and_subtract_continuum</code> (<code>uvcontsub</code>) out of <code>casa-imaging-operator</code> into <code>casa-mstransform</code> matches CASA's domain model;
+            <code>casa-flagging</code> &amp; <code>casa-mstransform</code> stay free of <code>casa-calibration</code> via their existing model-input traits.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 4: COMPLETE MIGRATION MAP -->
+  <section id="migration" class="report-section">
+    <div class="section-head">
+      <h2>4. Complete Migration Map (35 Crates + 2 Orphans &rarr; 38 Crates)</h2>
+      <span class="section-tag">Every current crate, orphan, build script &amp; binary accounted for</span>
+    </div>
+
+    <div class="card">
+      <div class="table-controls">
+        <div class="pill-group" id="migPills">
+          <button type="button" class="pill-btn active" data-disp="all">All (37)</button>
+          <button type="button" class="pill-btn" data-disp="Merge">Merge</button>
+          <button type="button" class="pill-btn" data-disp="Split">Split</button>
+          <button type="button" class="pill-btn" data-disp="Slim">Slim</button>
+          <button type="button" class="pill-btn" data-disp="Promote">Promote</button>
+          <button type="button" class="pill-btn" data-disp="Move">Move</button>
+          <button type="button" class="pill-btn" data-disp="Delete">Delete</button>
+        </div>
+        <input type="search" class="search-input" id="migSearch" placeholder="Search current or target crate...">
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Current Crate / Dir</th>
+              <th>Disposition</th>
+              <th>Target Crate(s)</th>
+              <th>Action &amp; Rationale</th>
+            </tr>
+          </thead>
+          <tbody id="migTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5: TEST ARCHITECTURE & TEST-FIRST REORGANIZATION -->
+  <section id="testing" class="report-section">
+    <div class="section-head">
+      <h2>5. Test Architecture &amp; Test-First Reorganization</h2>
+      <span class="section-tag">7,016 Rust tests &bull; 345 link targets &bull; 955 Python test/tool files</span>
+    </div>
+
+    <div class="card">
+      <h3>Measured Audit of Current Testing Sprawl</h3>
+      <p style="margin:0 0 8px; color:var(--text-muted); font-size:13.5px;">
+        Cargo compiles every top-level file in <code>tests/*.rs</code> (plus custom-main targets like <code>pass_laws/main.rs</code>) as a <strong>separate linked executable</strong>.
+        Across the workspace today, 345 integration-test link targets mix unit-level checks, <code>#[ignore]</code> parity suites, C++ interop matrices, and memory/timing laws.
+      </p>
+      <div class="stat-strip">
+        <div class="stat-tile"><div class="val">4,043</div><div class="lbl">Unit <code>#[test]</code> in <code>src/</code></div></div>
+        <div class="stat-tile"><div class="val">2,973</div><div class="lbl">Integration <code>#[test]</code> in <code>tests/</code></div></div>
+        <div class="stat-tile"><div class="val" style="color:var(--bad)">345</div><div class="lbl">Cargo integration test link targets</div></div>
+        <div class="stat-tile"><div class="val" style="color:var(--warn)">72</div><div class="lbl"><code>#[ignore]</code> tests across 14 crates</div></div>
+        <div class="stat-tile"><div class="val">232</div><div class="lbl"><code>test_*.py</code> in <code>casars-python</code></div></div>
+        <div class="stat-tile"><div class="val">723</div><div class="lbl"><code>.py</code> scripts in <code>tools/</code></div></div>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <h4 style="margin:0 0 8px; font-size:13.5px;">Top Integration-Binary Link Targets</h4>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>Crate</th><th style="text-align:right">Link Targets</th><th>Sub-files</th><th>Visual Share</th></tr></thead>
+              <tbody>
+                <tr><td><code>casa-simulation</code></td><td class="num">82</td><td class="num">57</td><td><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div></td></tr>
+                <tr><td><code>casa-test-support</code></td><td class="num">50</td><td class="num">0</td><td><div class="bar-track"><div class="bar-fill" style="width:61%"></div></div></td></tr>
+                <tr><td><code>casa-ms</code></td><td class="num">31</td><td class="num">22</td><td><div class="bar-track"><div class="bar-fill" style="width:38%"></div></div></td></tr>
+                <tr><td><code>casa-calibration</code></td><td class="num">29</td><td class="num">1</td><td><div class="bar-track"><div class="bar-fill" style="width:35%"></div></div></td></tr>
+                <tr><td><code>casa-tables</code></td><td class="num">20</td><td class="num">0</td><td><div class="bar-track"><div class="bar-fill" style="width:24%"></div></div></td></tr>
+                <tr><td><code>casa-images</code></td><td class="num">18</td><td class="num">2</td><td><div class="bar-track"><div class="bar-fill" style="width:22%"></div></div></td></tr>
+                <tr><td><code>casa-imaging-operator</code></td><td class="num">17</td><td class="num">4</td><td><div class="bar-track"><div class="bar-fill" style="width:21%"></div></div></td></tr>
+                <tr><td><code>casa-imaging-application</code></td><td class="num">17</td><td class="num">25</td><td><div class="bar-track"><div class="bar-fill" style="width:21%"></div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 8px; font-size:13.5px;">Structural Test Defects Found</h4>
+          <ul style="margin:0; padding-left:18px; font-size:13.2px; line-height:1.6;">
+            <li><strong>Test-driven API leaks:</strong> <code>casa-imaging-application</code> exports 8 <code>pub mod *_law</code> modules solely for integration tests; <code>casa-ms::open_measures_runtime()</code> swaps to <code>casa-test-support</code> under <code>#[cfg(test)]</code>.</li>
+            <li><strong>Tests in the wrong tier:</strong> <code>casars-imager</code> (a 2,130L CLI wrapper) holds <strong>21,467 lines of tests</strong> (301 tests across 48 files) — most of the T1 imaging suite.</li>
+            <li><strong>Zero black-box API suites:</strong> <code>casa-coordinates</code> (219 unit, 0 integ), <code>casa-lattices</code> (136 / 0), <code>casa-numerics</code> (57 / 0), and <code>casa-observation</code> (43 / 0) have no <code>tests/</code> suites verifying their public facades.</li>
+            <li><strong>Interop features pollute libraries:</strong> 6 library crates carry <code>cpp-interop-tests</code> features and <code>casa-test-support</code> dev-deps that belong in external interop suites.</li>
+            <li><strong>Special binary/allocator boundaries:</strong> <code>pass_laws/main.rs</code> installs a custom <code>#[global_allocator]</code>; <code>lock_multiprocess.rs</code> uses <code>env!("CARGO_BIN_EXE_lock_helper")</code>; <code>--workspace</code> in <code>scripts/test-workspace.sh</code> runs everything unless opt-in crates are excluded.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Proposed 5-Tier Test Taxonomy</h3>
+      <div class="table-scroll" style="margin-top:8px;">
+        <table>
+          <thead>
+            <tr><th>Tier</th><th>Location</th><th>Scope &amp; Visibility</th><th>Rules &amp; Execution Profile</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>1. Private Unit Tests</strong></td>
+              <td><code>&lt;crate&gt;/src/**</code> (<code>#[cfg(test)]</code>)</td>
+              <td>White-box: internal math, parsers, storage codecs, private state invariants</td>
+              <td>Milliseconds per test; zero disk fixtures, zero C++, zero CASA, zero env vars</td>
+            </tr>
+            <tr>
+              <td><strong>2. Public API &amp; Memory Laws</strong></td>
+              <td><code>&lt;crate&gt;/tests/api.rs</code> (+ explicit allocator/bin exceptions)</td>
+              <td>Black-box: exercises <em>only</em> the crate's curated public API, plus required admission/memory counting laws</td>
+              <td><strong>Default 1 binary per crate</strong> (nextest runs tests in parallel); separate targets kept <em>only</em> for custom <code>#[global_allocator]</code> or <code>CARGO_BIN_EXE_*</code> isolation; zero <code>*_law</code> leaks</td>
+            </tr>
+            <tr>
+              <td><strong>3. End-to-End Surface Tests</strong></td>
+              <td><code>frontends/casars-cli/tests/</code> &amp; <code>frontends/casars-python/tests/</code></td>
+              <td>Full workflows through <code>casars.tasks</code>, <code>casars.tools</code>, and standalone <code>casars-cli</code></td>
+              <td>Tests observable products &amp; exit codes; invariant across internal crate splits/merges</td>
+            </tr>
+            <tr>
+              <td><strong>4. Opt-In Interop &amp; CASA Parity</strong></td>
+              <td><code>suites/casacore-interop/</code> &amp; <code>suites/casa-parity/</code> (excluded from default <code>--workspace</code>)</td>
+              <td>2&times;2 C++ <code>casacore</code> matrix (<code>RR/RC/CR/CC</code>) &amp; CASA 6.7 oracle parity (<code>tools/casa-compat</code>)</td>
+              <td>Excluded from default <code>scripts/test-workspace.sh</code>; invoked explicitly via <code>-p</code> and release scripts; removes <code>cpp-interop-tests</code> features from <code>libs/*</code></td>
+            </tr>
+            <tr>
+              <td><strong>5. Opt-In Performance Suites</strong></td>
+              <td><code>suites/perf/</code> + <code>benches/</code> + <code>tools/perf/</code></td>
+              <td>Throughput benchmarks, CPU/Metal parity timing, large workload scaling</td>
+              <td>Excluded from default <code>--workspace</code> runs; always compiled optimized</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Should Tests Be Restructured First? — The Two-Beat Sequence</h3>
+      <div class="two-col" style="margin-top:8px;">
+        <div class="wave-card">
+          <h4>Beat 1 (Step 0 — Pin Existing Gates Before Moving Code)</h4>
+          <ul>
+            <li>Pin the existing acceptance commands as the immutable regression net: <code>test-task-cli-hosts.py</code>, <code>cargo test -p casars-python</code>, <code>test-python-package.sh</code>, <code>test-install-suite.sh</code>, <code>test-casa-inventory.sh</code>, <code>test-release-cpp-interop.sh</code>, imaging T0/T1/T1.5 &amp; bounded-write laws.</li>
+            <li>Create opt-in <code>suites/{casacore-interop,casa-parity,perf}</code> (excluded from default <code>--workspace</code>) and move each suite together with its invoking script.</li>
+            <li>Route all test logs to <code>target/test-logs/</code> so crate roots stay clean.</li>
+          </ul>
+        </div>
+        <div class="wave-card">
+          <h4>Beat 2 (Waves 1–4 — Per Crate As Modules Move)</h4>
+          <ul>
+            <li><strong>Do not</strong> rewrite all 7,016 unit/API tests in place before moving crates — you would update imports twice.</li>
+            <li>Instead, in the same PR that lands each reorganized crate, collapse its fragmented <code>tests/*.rs</code> into <strong><code>tests/api.rs</code></strong> (keeping documented allocator/bin targets separate), retain memory counting laws as required checks, and delete its <code>pub mod *_law</code> / <code>#[cfg(test)]</code> leaks.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 6: DEEP MODULES, AGENT UNDERSTANDABILITY & GUARDRAILS -->
+  <section id="deep-modules" class="report-section">
+    <div class="section-head">
+      <h2>6. Deep Modules, Agent Understandability &amp; Automated Guardrails</h2>
+      <span class="section-tag">Ousterhout deep modules + agent-first layout + arch-check</span>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <h3>Standard Deep-Module Crate Anatomy</h3>
+        <p style="margin:0 0 10px; font-size:13.5px; color:var(--text-muted);">
+          Agents understand a crate by reading two files first: <code>README.md</code> and <code>src/lib.rs</code>.
+          Every library crate follows one predictable, shallow-interface / deep-implementation shape:
+        </p>
+        <pre><code>libs/casacore/casa-tables/
+├── Cargo.toml           # complete crates.io + docs.rs metadata
+├── README.md            # 15–25 lines: purpose, 1 snippet, non-goals
+├── src/
+│   ├── lib.rs           # &le;150 lines: #![warn(missing_docs)], crate doc,
+│   │                    # curated public types + 2-6 topical pub mods
+│   ├── error.rs         # single crate Error enum (thiserror)
+│   ├── table/           # cohesive private implementation submodules (with #[cfg(test)])
+│   ├── storage/         # internal storage managers (never re-exported raw)
+│   └── taql/            # public topical sub-API (pub mod taql)
+└── tests/
+    └── api.rs           # default single black-box public API test binary</code></pre>
+      </div>
+
+      <div class="card">
+        <h3>6 Agent-Ergonomics &amp; Deep-Module Rules</h3>
+        <ol style="margin:4px 0 0; padding-left:20px; font-size:13.5px; line-height:1.65;">
+          <li><strong>Curated facades over symbol dumps:</strong> <code>src/lib.rs</code> &le; 150 lines; max 6 <code>pub mod</code>s per crate; never expose internal helpers or test-law modules as <code>pub mod</code>.</li>
+          <li><strong>Single source of truth for modules:</strong> Ban dual <code>foo.rs</code> + <code>foo/</code> pairs—pick either a single file <code>foo.rs</code> or <code>foo/mod.rs</code> so agents never guess where code lives.</li>
+          <li><strong>Strict 1,500-line ceiling (0 exceptions):</strong> Split the 50 grandfathered files (e.g., 14,497L <code>tiled_stman.rs</code>) into single-responsibility submodules and empty <code>file-length-allowlist.json</code>.</li>
+          <li><strong>Clean test isolation:</strong> No <code>#[cfg(test)]</code> production behavior swaps (delete the <code>open_measures_runtime</code> test hook); inject dependencies explicitly via constructors/traits.</li>
+          <li><strong>Zero repository clutter:</strong> Route test logs to <code>target/test-logs/</code> via harness setup; delete orphan dirs and stale <code>site/</code> GUI pages.</li>
+          <li><strong>Predictable naming:</strong> <code>casa-&lt;domain&gt;</code> for publishable libs, <code>surfaces/casa-*</code> for UI-agnostic plumbing, <code>frontends/casars-*</code> for UIs, and <code>suites/*</code> for opt-in verification.</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>Workspace-Wide Automated Guardrails (Extending <code>just arch-check</code>)</h3>
+      <p style="margin:0 0 12px; font-size:13.5px; color:var(--text-muted);">
+        Currently <code>scripts/check-imaging-dependencies.py</code> only polices imaging crates. Upgrade it into a workspace-wide <code>scripts/check-workspace-arch.py</code> checking 10 mechanical invariants on every PR:
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Invariant</th><th>Scope</th><th>Enforcement</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="num">1</td><td><strong>No task/CLI/UI plumbing or probe <code>build.rs</code> in libs</strong></td><td>All crates in <code>libs/*</code></td><td>Forbid deps on <code>surfaces/*</code>, <code>frontends/*</code>, <code>clap</code>, PyO3, and forbid JSON-fingerprinting <code>build.rs</code> scripts</td></tr>
+            <tr><td class="num">2</td><td><strong>UI-agnostic &amp; feature-gated surfaces</strong></td><td><code>surfaces/*</code> &amp; <code>frontends/casars-cli</code></td><td>Forbid <code>clap</code>/PyO3 in <code>surfaces/*</code>; require optional domain deps behind features (proved by <code>exportfits</code>-only build)</td></tr>
+            <tr><td class="num">3</td><td><strong>Zero binaries in library crates</strong></td><td>All crates in <code>libs/*</code> &amp; <code>surfaces/*</code></td><td>Assert <code>[[bin]]</code>, <code>src/main.rs</code>, and <code>src/bin/</code> are empty</td></tr>
+            <tr><td class="num">4</td><td><strong>100% publishable DAG</strong></td><td>All <code>publish = true</code> crates</td><td>Every normal &amp; build workspace dep must have <code>publish = true</code> + explicit <code>version</code>; checked via <code>cargo package</code></td></tr>
+            <tr><td class="num">5</td><td><strong>Tier &amp; ADR-0016 imaging DAG</strong></td><td><code>libs/casacore</code>, <code>libs/imaging</code>, <code>libs/casa</code></td><td>Enforce strict downward tiers + layer rules inside <code>libs/imaging/*</code></td></tr>
+            <tr><td class="num">6</td><td><strong>Definitional &amp; device boundaries</strong></td><td><code>casa-core</code>, <code>casa-coordinates</code>, <code>imaging-metal</code></td><td>Zero file/net/env/thread I/O in definitional crates; macOS <code>objc2-metal</code> confined to <code>casa-imaging-metal</code></td></tr>
+            <tr><td class="num">7</td><td><strong>Clean test targets &amp; no interop features in libs</strong></td><td>All crates in <code>libs/*</code></td><td>Require <code>tests/api.rs</code> default (explicit allowlist only for allocator/<code>CARGO_BIN_EXE</code> targets); forbid <code>cpp-interop-tests</code> features</td></tr>
+            <tr><td class="num">8</td><td><strong>Amended <code>ADR-0017</code> Python boundary</strong></td><td><code>frontends/casars-python</code></td><td><code>casars.tools</code> calls <code>libs/*</code> &amp; <code>casars.tasks</code> calls <code>surfaces/casa-tasks</code> in-process (GIL released); zero <code>casa-aipsio</code> imports</td></tr>
+            <tr><td class="num">9</td><td><strong>Docs lint &amp; metadata</strong></td><td>All crates in <code>libs/*</code> &amp; <code>surfaces/*</code></td><td>Require <code>#![warn(missing_docs)]</code>, <code>README.md</code>, <code>keywords</code>, <code>categories</code>, and <code>[package.metadata.docs.rs]</code></td></tr>
+            <tr><td class="num">10</td><td><strong>No dual modules &amp; unused deps</strong></td><td>All workspace crates</td><td>Reject simultaneous <code>foo.rs</code> + <code>foo/</code>; run unused-dep check (<code>cargo machete</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 7: RECOMMENDED ADR AMENDMENTS -->
+  <section id="adrs" class="report-section">
+    <div class="section-head">
+      <h2>7. ADR Audit &amp; Recommended Contract Updates</h2>
+      <span class="section-tag">Aligning all 8 ADRs with clean-sheet best practices</span>
+    </div>
+
+    <div class="card">
+      <p style="margin:0 0 12px; color:var(--text-muted); font-size:13.5px;">
+        Most of the existing ADRs encode strong systems engineering (bounded streaming, on-disk interoperability, ownership-based identity, single-investigator focus).
+        Two ADRs—<strong>ADR-0017</strong> and the leftover multi-process machinery around <strong>ADR-0006</strong>—are actively forcing binary sprawl and ~13.5kL of avoidable plumbing.
+      </p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>ADR</th><th>Disposition</th><th>Current Normative Rule</th><th>Why Change / Keep</th><th>Exact v3 Action</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ADR-0017</code><br><span style="font-size:11.5px; color:var(--text-muted)">Python-first surface</span></td>
+              <td><span class="badge b-bad">Amend</span></td>
+              <td><code>casars.tools</code> uses in-process PyO3; <code>casars.tasks</code> must spawn a cataloged child-process executable per call (<code>--json-run -</code>).</td>
+              <td>Forces 23-binary discovery/version-lock machinery, prevents <code>MeasuresRuntime</code> &amp; table-cache reuse across task calls, and blocks clean in-process UI dispatch.</td>
+              <td>Dispatch <code>casars.tasks</code> <strong>in-process</strong> via PyO3 over <code>surfaces/casa-tasks</code> (release GIL + wire <code>SIGINT</code> to <code>Cancel</code>); keep <code>casars-cli</code> standalone; delete legacy <code>casars.data.Image</code>/<code>Table</code> note (#839).</td>
+            </tr>
+            <tr>
+              <td><code>ADR-0006</code><br><span style="font-size:11.5px; color:var(--text-muted)">Parameter model &amp; profiles</span></td>
+              <td><span class="badge b-warn">Trim</span></td>
+              <td>One Rust parameter model + sparse TOML profiles; implemented via <code>ProviderContractEnvelope</code>, <code>build.rs</code> JSON probes, and <code>ApplicationCatalog</code>.</td>
+              <td>The envelope/fingerprinting/launcher stack (~18.5kL) is leftover scaffolding from the retired Mac GUI &amp; TUI, violating <code>ADR-0020</code>.</td>
+              <td>Keep one Rust parameter model + sparse TOML; retire <code>ProviderContractEnvelope</code>, <code>build.rs</code> probes (<code>IMAGE_PROVIDER_PROBES</code>), and binary resolver—shrinking <code>surfaces/</code> from 18.5kL to ~7.5kL.</td>
+            </tr>
+            <tr>
+              <td><code>ADR-0016</code><br><span style="font-size:11.5px; color:var(--text-muted)">Imaging foundation</span></td>
+              <td><span class="badge b-warn">Amend</span></td>
+              <td>Decision 10 pins exact crate names (<code>casa-values</code>, <code>casa-types</code>, <code>casa-imaging-application</code>, deleted <code>casa-imaging-reconstruction</code>) and exact package lists.</td>
+              <td>Layer boundaries &amp; code rules are excellent; exact crate-name ratchets add friction when renaming/moving to <code>libs/imaging/</code>.</td>
+              <td>Keep all 8 imaging crates &amp; layer rules intact under <code>libs/imaging/</code>; update names (<code>casa-core</code>, <code>casa-imaging</code>, drop <code>casa-imaging-reconstruction</code>) and enforce layer edges rather than brittle static lists.</td>
+            </tr>
+            <tr>
+              <td><code>ADR-0009</code><br><span style="font-size:11.5px; color:var(--text-muted)">Imaging architecture</span></td>
+              <td><span class="badge b-info">Clean Up</span></td>
+              <td>Line 26 permits frontends to <em>"version-migrate and validate request syntax"</em>.</td>
+              <td>Contradicts <code>ADR-0006</code> &amp; <code>ADR-0020</code> (no migrations; refuse stale profiles).</td>
+              <td>Delete the stale <em>"version-migrate"</em> phrase and update <code>casa-imaging-application</code> &rarr; <code>casa-imaging</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ADR-0011</code><br><span style="font-size:11.5px; color:var(--text-muted)">Continuum-line coupling</span></td>
+              <td><span class="badge b-info">Clean Up</span></td>
+              <td>Marked <code>Status: retired</code> yet carries <code>Truth class: normative</code> and pins <code>fit_and_subtract_continuum</code> inside <code>casa-imaging-operator</code>.</td>
+              <td>Visibility-domain <code>uvcontsub</code> belongs in visibility transforms, not inside the imaging gridding operator.</td>
+              <td>Drop <code>Truth class: normative</code> on the retired ADR and relocate <code>fit_and_subtract_continuum</code> to <code>casa-mstransform</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ADR-0008</code><br><span style="font-size:11.5px; color:var(--text-muted)">Casacore storage</span></td>
+              <td><span class="badge b-good">Keep</span></td>
+              <td>Preserve data-manager bindings, bounded streaming plans, kernel table locks, no private MS keywords or rollback.</td>
+              <td>Textbook casacore interoperability and bounded-memory systems design.</td>
+              <td>No change required.</td>
+            </tr>
+            <tr>
+              <td><code>ADR-0014</code><br><span style="font-size:11.5px; color:var(--text-muted)">Identity is ownership</span></td>
+              <td><span class="badge b-good">Keep</span></td>
+              <td>No SHA-256/CRC attestation over arrays/plans/spill inside a trusted process.</td>
+              <td>Eliminates wasted I/O, copies, and fake trust boundaries.</td>
+              <td>No change required.</td>
+            </tr>
+            <tr>
+              <td><code>ADR-0020</code><br><span style="font-size:11.5px; color:var(--text-muted)">Single investigator</span></td>
+              <td><span class="badge b-good">Keep</span></td>
+              <td>No backwards-compatibility shims, migrations, or speculative layers for hypothetical users.</td>
+              <td>Directly authorizes this clean-sheet reorganization and deleting GUI-era scaffolding.</td>
+              <td>No change required.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 8: CRATES.IO READINESS, SPARE DOCS & ROADMAP -->
+  <section id="crates-io" class="report-section">
+    <div class="section-head">
+      <h2>8. Crates.io Readiness, Documentation Balance &amp; Execution Roadmap</h2>
+      <span class="section-tag">Verified cargo package + Linux docs.rs + 5-wave plan</span>
+    </div>
+
+    <div class="two-col">
+      <div class="card">
+        <h3>Crates.io &amp; Linux <code>docs.rs</code> Packaging Blueprint</h3>
+        <p style="margin:0 0 8px; font-size:13.5px; color:var(--text-muted);">
+          The <code>docs.rs</code> Linux container already ships <code>libfftw3-dev</code>, but <code>crates/casa-fft/build.rs</code> probes both precisions and forces static threaded linking (<code>fftw3f_threads</code>, <code>fftw3_threads</code>).
+          A top-level crate's <code>[package.metadata.docs.rs]</code> cannot reconfigure dependency build scripts—so <code>casa-fft/build.rs</code> itself must handle <code>DOCS_RS</code> cleanly,
+          <code>casa-imaging-metal</code> preserves its macOS target gate, and every normal <em>and</em> build path dependency specifies a registry <code>version</code>:
+        </p>
+        <pre><code># Root Cargo.toml
+[workspace.package]
+version = "0.28.0"
+edition = "2024"
+license = "LGPL-3.0-or-later"
+rust-version = "1.99"
+repository = "https://github.com/bglenden/casa-rs"
+homepage = "https://github.com/bglenden/casa-rs"
+description = "Native Rust casacore &amp; CASA radio astronomy libraries"
+
+# libs/casacore/casa-fft/build.rs
+// When std::env::var_os("DOCS_RS").is_some(), emit cfg/dynamic link hints
+// compatible with docs.rs's Linux libfftw3-dev instead of static *_threads.
+
+# libs/imaging/casa-imaging-metal/Cargo.toml
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-metal = "0.3"
+
+# libs/imaging/casa-imaging-runtime/Cargo.toml
+[dependencies]
+casa-core = { path = "../../casacore/casa-core", version = "0.28.0" }
+casa-imaging-model = { path = "../casa-imaging-model", version = "0.28.0" }
+[target.'cfg(target_os = "macos")'.dependencies]
+casa-imaging-metal = { path = "../casa-imaging-metal", version = "0.28.0" }</code></pre>
+      </div>
+
+      <div class="card">
+        <h3>Documentation Standard: Spare Landing Pages, Deep Scientific APIs</h3>
+        <p style="margin:0 0 8px; font-size:13.5px; color:var(--text-muted);">
+          Keep crate landing pages (<code>README.md</code> + <code>lib.rs</code> top comment) spare for fast agent orientation and clean <code>crates.io</code> previews,
+          while preserving the full <code>AGENTS.md</code> casacore-doxygen depth on public scientific types and functions:
+        </p>
+        <ul style="margin:0 0 12px; padding-left:18px; font-size:13.2px;">
+          <li><strong>Crate landing (<code>README.md</code> + <code>lib.rs</code>):</strong> 1-sentence summary + 3–5 bullet key types + 1 short runnable example. Zero implementation history ("first wave", "T21").</li>
+          <li><strong>Public scientific APIs (<code>#![warn(missing_docs)]</code>):</strong> Concise, complete contracts covering physical units, coordinate/measure frames, memory/ownership invariants, and failure behavior.</li>
+          <li><strong>Publication gate:</strong> Prove it via <code>cargo package</code> / dry-run across all 28 <code>libs/*</code> and a Linux <code>cargo doc</code> build.</li>
+        </ul>
+        <pre><code># casa-ms
+
+Casacore-compatible MeasurementSet v2/v4 reader, writer, and selection API.
+
+## Key Types
+- `MeasurementSet`: Open, inspect, and mutate MS tables and subtables.
+- `MsSelection`: CASA TAQL/string selection over antennas, fields, SPWs, time.
+- `VisibilityBuffer`: Bounded block-streaming visibility reader/writer.
+
+## Quick Example
+```rust,no_run
+use casa_ms::{MeasurementSet, MsSelection};
+let ms = MeasurementSet::open("observation.ms")?;
+let sel = ms.select(&amp;MsSelection::new().spw("0:10~50"))?;
+# Ok::&lt;(), casa_ms::MsError&gt;(())
+```</code></pre>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>5-Wave Clean-Cut Execution Roadmap</h3>
+      <div class="wave-list" style="margin-top:10px;">
+        <div class="wave-card">
+          <h4>Wave 0: ADRs, Hygiene &amp; Test Safety Net</h4>
+          <ul>
+            <li>Record ADR amendments (<code>0017</code>, <code>0006</code>, <code>0016</code>, <code>0009</code>, <code>0011</code>) so clean-sheet cuts match policy.</li>
+            <li>Pin existing acceptance gates and create opt-in <code>suites/{casacore-interop,casa-parity,perf}</code> (excluded from default <code>--workspace</code>).</li>
+            <li>Delete orphan dirs, <code>apps/casars-mac</code>, stale <code>site/</code>, and 26.8k <code>*.log</code> files; route logs to <code>target/test-logs/</code>.</li>
+          </ul>
+        </div>
+        <div class="wave-card">
+          <h4>Wave 1: Slim Surfaces &amp; In-Process Python</h4>
+          <ul>
+            <li>Create feature-gated <code>surfaces/{casa-contracts,casa-tasks,casa-plot-data}</code>; delete <code>ProviderContractEnvelope</code>, <code>build.rs</code> probes, and mandatory launcher scaffolding.</li>
+            <li>Move all 23 task binaries into feature-gated <code>frontends/casars-cli</code> (proved with <code>exportfits</code>-only build); route <code>casars.tasks</code> in-process through PyO3.</li>
+            <li>Move dev probes into <code>dev/casa-dev-tools</code>; relocate <code>casa-test-support</code> to <code>dev/</code>.</li>
+          </ul>
+        </div>
+        <div class="wave-card">
+          <h4>Wave 2: Split God Crates &amp; Thin Python</h4>
+          <ul>
+            <li>Extract <code>casa-imageanalysis</code> (incl. <code>ComponentListImage</code> &amp; <code>casars-python/tools/image</code> logic), <code>casa-flagging</code>, and <code>casa-mstransform</code> (moving <code>uvcontsub</code> from <code>casa-imaging-operator</code>).</li>
+            <li>Assemble high-level <code>casa-singledish</code> above <code>casa-calibration</code> + <code>casa-imaging-singledish</code>.</li>
+            <li>Collapse each moved crate's <code>tests/*.rs</code> into <code>tests/api.rs</code>; remove <code>casa-aipsio</code> &amp; app deps from <code>casars-python</code>.</li>
+          </ul>
+        </div>
+        <div class="wave-card">
+          <h4>Wave 3: Core &amp; Imaging Facade Polish</h4>
+          <ul>
+            <li>Merge <code>values</code>+<code>types</code> &rarr; <code>casa-core</code>; merge <code>measures-data</code>+<code>tools</code>+<code>table_measures</code> &rarr; <code>casa-measures</code>; keep <code>casa-aipsio</code>, <code>casa-numerics</code> &amp; <code>casa-fft</code> clean &amp; publishable.</li>
+            <li>Add explicit <code>casa-ms &rarr; casa-measures</code> edge; drop unused <code>casa-logging</code> &amp; <code>#[cfg(test)]</code> hook.</li>
+            <li>Move 8 ADR-0016 imaging crates to <code>libs/imaging/</code> (all <code>publish = true</code>), rename <code>casa-imaging-application</code> &rarr; <code>casa-imaging</code>, delete 8 leaked <code>*_law</code> modules.</li>
+          </ul>
+        </div>
+        <div class="wave-card">
+          <h4>Wave 4: Crates.io, Docs &amp; File Splits</h4>
+          <ul>
+            <li>Split 50 oversized files (&gt;1,500L) &amp; dual <code>x.rs</code>+<code>x/</code> pairs; empty allowlist.</li>
+            <li>Enable <code>#![warn(missing_docs)]</code> across <code>libs/*</code> &amp; <code>surfaces/*</code>; add spare <code>README.md</code>, versioned deps &amp; <code>DOCS_RS</code> fix in <code>casa-fft/build.rs</code>.</li>
+            <li>Verify <code>cargo package</code> / dry-run publish across all 28 <code>libs/*</code> + Linux <code>cargo doc</code> + workspace <code>arch-check</code>.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // --- Theme Toggle ---
+  const root = document.documentElement;
+  const themeBtn = document.getElementById("themeToggle");
+  const savedTheme = localStorage.getItem("casars_arch_theme");
+  if (savedTheme === "dark" || savedTheme === "light") {
+    root.setAttribute("data-theme", savedTheme);
+  }
+  themeBtn.addEventListener("click", () => {
+    const isDark = root.getAttribute("data-theme") === "dark" ||
+      (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const next = isDark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    localStorage.setItem("casars_arch_theme", next);
+  });
+
+  // --- Verified 35 Current Crates Dataset ---
+  const CURRENT_CRATES = [
+    {name:"casa-values",tier:0,publish:false,src_lines:1154,test_lines:0,src_files:1,bins:[],ws_deps:[],missing_docs:false,pub_mods:0,issue:"Private micro-crate blocking casa-types publication"},
+    {name:"casa-aipsio",tier:0,publish:false,src_lines:3529,test_lines:3,src_files:3,bins:[],ws_deps:["casa-values"],missing_docs:false,pub_mods:2,issue:"Private codec blocking casa-tables; bypassed by casars-python"},
+    {name:"casa-fft",tier:0,publish:true,src_lines:835,test_lines:178,src_files:1,bins:[],ws_deps:[],missing_docs:true,pub_mods:0,issue:"Single-file micro-crate; build.rs hardcodes static fftw3*_threads on Linux"},
+    {name:"casa-numerics",tier:0,publish:false,src_lines:5921,test_lines:0,src_files:21,bins:[],ws_deps:[],missing_docs:true,pub_mods:1,issue:"Marked publish=false; carries dead SimulatedBandpass; 0 black-box tests/"},
+    {name:"casa-atmosphere",tier:0,publish:false,src_lines:12727,test_lines:1466,src_files:39,bins:[],ws_deps:[],missing_docs:true,pub_mods:2,issue:"Pure science leaf wrongly marked publish=false"},
+
+    {name:"casa-types",tier:1,publish:true,src_lines:18633,test_lines:1344,src_files:47,bins:[],ws_deps:["casa-values"],missing_docs:false,pub_mods:4,issue:"Blocked by publish=false casa-values; lacks missing_docs"},
+    {name:"casa-coordinates",tier:1,publish:true,src_lines:18852,test_lines:0,src_files:39,bins:[],ws_deps:["casa-types"],missing_docs:false,pub_mods:14,issue:"14 pub mods; lacks missing_docs; 0 black-box tests/"},
+    {name:"casa-observation",tier:1,publish:false,src_lines:9221,test_lines:0,src_files:20,bins:[],ws_deps:["casa-types"],missing_docs:true,pub_mods:0,issue:"Clean shared MS contract wrongly marked publish=false"},
+    {name:"casa-tables",tier:1,publish:true,src_lines:104913,test_lines:6111,src_files:126,bins:["lock_helper"],ws_deps:["casa-aipsio","casa-types"],missing_docs:false,pub_mods:6,issue:"14.5kL tiled_stman.rs; blocked by casa-aipsio; 20 test binaries"},
+    {name:"casa-logging",tier:1,publish:true,src_lines:1551,test_lines:0,src_files:2,bins:[],ws_deps:["casa-tables","casa-types"],missing_docs:false,pub_mods:0,issue:"Tiny 2-file crate mixing log table sink with CLI tracing init"},
+    {name:"casa-measures-data",tier:1,publish:false,src_lines:3224,test_lines:96,src_files:10,bins:[],ws_deps:["casa-tables","casa-types"],missing_docs:false,pub_mods:1,issue:"Private crate imported by publish=true casa-ms & casa-vla"},
+    {name:"casa-measures-tools",tier:1,publish:false,src_lines:362,test_lines:0,src_files:2,bins:["package_snapshot"],ws_deps:["casa-measures-data"],missing_docs:false,pub_mods:0,issue:"362-line micro-crate for one snapshot binary"},
+    {name:"casa-lattices",tier:1,publish:true,src_lines:9664,test_lines:0,src_files:22,bins:[],ws_deps:["casa-tables","casa-types"],missing_docs:false,pub_mods:4,issue:"Lacks missing_docs lint; transitive publish blocker; 0 tests/"},
+    {name:"casa-components",tier:1,publish:true,src_lines:6243,test_lines:1744,src_files:20,bins:[],ws_deps:["casa-tables","casa-types"],missing_docs:false,pub_mods:0,issue:"Lacks missing_docs lint; transitive publish blocker"},
+
+    {name:"casa-provider-contracts",tier:2,publish:false,src_lines:7725,test_lines:129,src_files:21,bins:[],ws_deps:["casa-types"],missing_docs:false,pub_mods:0,issue:"GUI-era envelope/catalog & binary resolver leaked upward into domain libs"},
+    {name:"casa-task-runtime",tier:2,publish:false,src_lines:10781,test_lines:232,src_files:23,bins:[],ws_deps:["casa-logging","casa-provider-contracts","casa-types"],missing_docs:false,pub_mods:0,issue:"CLI/profile runtime fused with UI-agnostic dispatch; leaked into 5 libs"},
+
+    {name:"casa-images",tier:3,publish:true,src_lines:83482,test_lines:7188,src_files:191,bins:["exportfits","feather","immath","immoments","impbcor","importfits","impv","imregrid","imsubimage"],ws_deps:["casa-components","casa-coordinates","casa-fft","casa-lattices","casa-numerics","casa-provider-contracts","casa-tables","casa-task-runtime","casa-types"],missing_docs:false,pub_mods:20,issue:"Embeds 9 bins + build.rs provider probes + 45.5kL analysis + 18 test bins"},
+    {name:"casa-ms",tier:3,publish:true,src_lines:129736,test_lines:28740,src_files:277,bins:["msexplore","concat","flagmanager","ms-read-probe"],ws_deps:["casa-atmosphere","casa-components","casa-coordinates","casa-fft","casa-logging","casa-measures-data","casa-numerics","casa-observation","casa-provider-contracts","casa-tables","casa-task-runtime","casa-types"],missing_docs:true,pub_mods:28,issue:"130kL god crate; 28 pub mods; 4 bins; unused casa-logging; 31 test bins"},
+    {name:"casa-vla",tier:3,publish:true,src_lines:9506,test_lines:3262,src_files:14,bins:["importvla"],ws_deps:["casa-logging","casa-measures-data","casa-ms","casa-provider-contracts","casa-tables","casa-task-runtime","casa-types"],missing_docs:true,pub_mods:1,issue:"Embeds importvla bin & upward task deps; 4.9kL importer.rs"},
+    {name:"casa-calibration",tier:3,publish:false,src_lines:118306,test_lines:18605,src_files:340,bins:["calibrate","flagdata","mstransform"],ws_deps:["casa-atmosphere","casa-components","casa-coordinates","casa-fft","casa-images","casa-imaging-model","casa-imaging-operator","casa-imaging-runtime","casa-imaging-singledish","casa-lattices","casa-measures-data","casa-ms","casa-numerics","casa-provider-contracts","casa-tables","casa-task-runtime","casa-types"],missing_docs:false,pub_mods:2,issue:"118kL god crate; 17 deps; 3 bins; 29 test binaries; single_dish & cli bloat"},
+    {name:"casa-simulation",tier:3,publish:true,src_lines:45752,test_lines:30814,src_files:150,bins:["synthetic-ms"],ws_deps:["casa-atmosphere","casa-calibration","casa-components","casa-coordinates","casa-fft","casa-images","casa-imaging-application","casa-imaging-model","casa-imaging-operator","casa-imaging-products","casa-imaging-runtime","casa-imaging-singledish","casa-lattices","casa-logging","casa-ms","casa-numerics","casa-provider-contracts","casa-tables","casa-task-runtime","casa-types"],missing_docs:true,pub_mods:9,issue:"20 WS deps (9 private); 82 separate test binaries!"},
+
+    {name:"casa-imaging-model",tier:4,publish:false,src_lines:13322,test_lines:5403,src_files:24,bins:[],ws_deps:["casa-coordinates","casa-observation","casa-types"],missing_docs:true,pub_mods:0,issue:"ADR-0016 layer crate blocked from crates.io (publish=false)"},
+    {name:"casa-imaging-operator",tier:4,publish:false,src_lines:22719,test_lines:10805,src_files:48,bins:[],ws_deps:["casa-coordinates","casa-fft","casa-images","casa-imaging-model","casa-numerics","casa-types"],missing_docs:true,pub_mods:0,issue:"ADR-0016 layer crate (publish=false); holds uvcontsub transform; 17 test bins"},
+    {name:"casa-imaging-deconvolution",tier:4,publish:false,src_lines:16104,test_lines:3670,src_files:29,bins:[],ws_deps:["casa-coordinates","casa-fft","casa-imaging-model","casa-numerics"],missing_docs:true,pub_mods:0,issue:"ADR-0016 layer crate (publish=false)"},
+    {name:"casa-imaging-products",tier:4,publish:false,src_lines:9800,test_lines:6500,src_files:23,bins:[],ws_deps:["casa-coordinates","casa-fft","casa-images","casa-imaging-deconvolution","casa-imaging-model","casa-numerics","casa-types"],missing_docs:true,pub_mods:0,issue:"ADR-0016 layer crate (publish=false)"},
+    {name:"casa-imaging-metal",tier:4,publish:false,src_lines:2644,test_lines:2389,src_files:6,bins:[],ws_deps:["casa-imaging-operator","casa-numerics"],missing_docs:true,pub_mods:0,issue:"macOS GPU backend (publish=false)"},
+    {name:"casa-imaging-runtime",tier:4,publish:true,src_lines:15077,test_lines:8452,src_files:31,bins:[],ws_deps:["casa-imaging-deconvolution","casa-imaging-metal","casa-imaging-model","casa-imaging-operator","casa-imaging-products","casa-lattices","casa-ms","casa-tables"],missing_docs:true,pub_mods:1,issue:"publish=true while depending on 5 publish=false imaging crates"},
+    {name:"casa-imaging-singledish",tier:4,publish:true,src_lines:2466,test_lines:744,src_files:10,bins:[],ws_deps:["casa-imaging-operator","casa-imaging-runtime","casa-numerics"],missing_docs:true,pub_mods:0,issue:"publish=true while depending on publish=false operator & numerics"},
+    {name:"casa-imaging-application",tier:4,publish:false,src_lines:43450,test_lines:18340,src_files:96,bins:[],ws_deps:["casa-coordinates","casa-images","casa-imaging-deconvolution","casa-imaging-model","casa-imaging-operator","casa-imaging-products","casa-imaging-runtime","casa-imaging-singledish","casa-ms","casa-numerics","casa-observation","casa-types"],missing_docs:true,pub_mods:10,issue:"Exposes 8 test-law modules as pub mod; marked publish=false"},
+
+    {name:"casars-imager",tier:5,publish:false,src_lines:2130,test_lines:21467,src_files:9,bins:["casars-imager","tsdimaging"],ws_deps:["casa-images","casa-imaging-application","casa-ms","casa-provider-contracts","casa-task-runtime"],missing_docs:true,pub_mods:2,issue:"2kL CLI wrapper hosting 21.5kL of integration tests; imported by python"},
+    {name:"casars-imexplore",tier:5,publish:false,src_lines:533,test_lines:6192,src_files:1,bins:["imexplore","casars-imexplore"],ws_deps:["casa-images","casa-provider-contracts","casa-task-runtime"],missing_docs:false,pub_mods:0,issue:"533-line app wrapper with no missing_docs & 20 test files"},
+    {name:"casars-msconvert",tier:5,publish:false,src_lines:1040,test_lines:364,src_files:5,bins:["msconvert","casars-msconvert"],ws_deps:["casa-ms","casa-observation","casa-provider-contracts","casa-task-runtime","casa-types"],missing_docs:true,pub_mods:0,issue:"1,040-line wrapper housing MSv2<->MSv4 conversion logic"},
+    {name:"casars-simulation",tier:5,publish:false,src_lines:1229,test_lines:55,src_files:9,bins:["simobserve","simanalyze","simalma","predictcomp","casars-simulation"],ws_deps:["casa-calibration","casa-components","casa-measures-data","casa-ms","casa-provider-contracts","casa-simulation","casa-tables","casa-task-runtime","casa-types"],missing_docs:true,pub_mods:0,issue:"App wrapper imported by casars-python"},
+    {name:"casars-python",tier:5,publish:false,src_lines:84499,test_lines:87,src_files:275,bins:[],ws_deps:["casa-aipsio","casa-atmosphere","casa-calibration","casa-components","casa-coordinates","casa-images","casa-lattices","casa-measures-data","casa-ms","casa-provider-contracts","casa-simulation","casa-tables","casa-task-runtime","casa-types","casars-imager","casars-simulation"],missing_docs:false,pub_mods:0,issue:"84.5kL binding crate (27.4kL tools/image); bypasses via casa-aipsio; spawns child tasks per ADR-0017"},
+    {name:"casa-test-support",tier:5,publish:false,src_lines:17170,test_lines:21716,src_files:32,bins:["casacore-held-table-reader","casatestdata-preflight"],ws_deps:["casa-aipsio","casa-coordinates","casa-images","casa-lattices","casa-measures-data","casa-tables","casa-types"],missing_docs:false,pub_mods:14,issue:"C++ parity harness living inside crates/ with 50 separate test binaries"}
+  ];
+
+  const CUR_MAP = Object.fromEntries(CURRENT_CRATES.map(c => [c.name, c]));
+  for (const c of CURRENT_CRATES) {
+    c.broken_pub_deps = c.publish ? c.ws_deps.filter(d => !CUR_MAP[d].publish) : [];
+    c.rdeps = CURRENT_CRATES.filter(other => other.ws_deps.includes(c.name)).map(o => o.name);
+  }
+
+  function classifyCurEdge(src, dst) {
+    const s = CUR_MAP[src], d = CUR_MAP[dst];
+    const reasons = [];
+    if (s.publish && !d.publish) reasons.push("publish");
+    if ((s.tier === 3) && (dst === "casa-provider-contracts" || dst === "casa-task-runtime")) reasons.push("upward");
+    if (src === "casars-python" && (dst === "casa-aipsio" || dst === "casars-imager" || dst === "casars-simulation")) reasons.push("bypass");
+    if (src === "casa-ms" && (dst === "casa-logging" || dst === "casa-atmosphere")) reasons.push("bloat");
+    return reasons;
+  }
+
+  // --- Proposed v3 38-Crate Verified DAG across 6 Visual Tiers ---
+  const PROPOSED_CRATES = [
+    // Tier 0: libs/casacore/ (11 crates, ALL publish=true)
+    {name:"casa-core",dir:"libs/casacore/casa-core",tier:0,publish:true,est:"19.8kL",deps:[],role:"Definitional values, arrays, records, quanta, pure measures (zero I/O)",from:"casa-values + casa-types"},
+    {name:"casa-aipsio",dir:"libs/casacore/casa-aipsio",tier:0,publish:true,est:"3.5kL",deps:["casa-core"],role:"Small publishable AipsIO framing codec (supports C++ byte-level oracle)",from:"casa-aipsio (promoted publish=true)"},
+    {name:"casa-numerics",dir:"libs/casacore/casa-numerics",tier:0,publish:true,est:"5.7kL",deps:[],role:"Linear algebra fitting & pure primary beam curves (zero FFTW, dead code removed)",from:"casa-numerics (promoted publish=true)"},
+    {name:"casa-fft",dir:"libs/casacore/casa-fft",tier:0,publish:true,est:"0.8kL",deps:[],role:"Standalone FFTW wrapper (build.rs handles DOCS_RS on Linux cleanly)",from:"casa-fft"},
+    {name:"casa-tables",dir:"libs/casacore/casa-tables",tier:0,publish:true,est:"103kL",deps:["casa-core","casa-aipsio"],role:"CTDS storage managers, TaQL, locking, log_table sink & table-header probe",from:"casa-tables + casa-logging(sink)"},
+    {name:"casa-measures",dir:"libs/casacore/casa-measures",tier:0,publish:true,est:"5.0kL",deps:["casa-core","casa-tables"],role:"IERS/ephemeris runtime tables & table_measures column persistence",from:"casa-measures-data + casa-measures-tools(lib) + table_measures"},
+    {name:"casa-lattices",dir:"libs/casacore/casa-lattices",tier:0,publish:true,est:"9.7kL",deps:["casa-core","casa-tables"],role:"N-D paged/temp arrays, traversal & lattice expressions",from:"casa-lattices"},
+    {name:"casa-coordinates",dir:"libs/casacore/casa-coordinates",tier:0,publish:true,est:"18.9kL",deps:["casa-core"],role:"Definitional WCS, direction, spectral, Stokes & FITS coordinate headers",from:"casa-coordinates"},
+    {name:"casa-images",dir:"libs/casacore/casa-images",tier:0,publish:true,est:"36kL",deps:["casa-core","casa-numerics","casa-tables","casa-lattices","casa-coordinates"],role:"PagedImage, TempImage, FITS/MIRIAD I/O, beam metadata & lazy ImageExpr",from:"casa-images (slimmed; analysis & build.rs removed)"},
+    {name:"casa-observation",dir:"libs/casacore/casa-observation",tier:0,publish:true,est:"9.2kL",deps:["casa-core"],role:"Shared MSv2/MSv4 observation catalogue, AccessRequest & VisibilityBatch",from:"casa-observation"},
+    {name:"casa-ms",dir:"libs/casacore/casa-ms",tier:0,publish:true,est:"55kL",deps:["casa-core","casa-numerics","casa-tables","casa-measures","casa-coordinates","casa-observation"],role:"MSv2/v4 persistence, subtables, selection, VisibilityBuffer & write_session",from:"casa-ms (slimmed; +casa-measures edge)"},
+
+    // Tier 1: libs/imaging/ (8 crates, ALL publish=true, ADR-0016 compiler-enforced DAG)
+    {name:"casa-imaging-model",dir:"libs/imaging/casa-imaging-model",tier:1,publish:true,est:"13.3kL",deps:["casa-core","casa-coordinates","casa-observation"],role:"Request science, CompiledProblem & BatchGeometry (ADR-0016)",from:"casa-imaging-model"},
+    {name:"casa-imaging-operator",dir:"libs/imaging/casa-imaging-operator",tier:1,publish:true,est:"21.5kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-images","casa-imaging-model"],role:"Measurement operator, 4 kernel sets, GridBackend & CPU gridding (uvcontsub moved)",from:"casa-imaging-operator (uvcontsub moved to casa-mstransform)"},
+    {name:"casa-imaging-deconvolution",dir:"libs/imaging/casa-imaging-deconvolution",tier:1,publish:true,est:"16.1kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-imaging-model"],role:"MajorCycle, model lifecycle, masks & minor-cycle solvers",from:"casa-imaging-deconvolution"},
+    {name:"casa-imaging-products",dir:"libs/imaging/casa-imaging-products",tier:1,publish:true,est:"9.8kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-images","casa-imaging-model","casa-imaging-deconvolution"],role:"Normalization, restoration, Taylor/PB products & CASA image writer",from:"casa-imaging-products"},
+    {name:"casa-imaging-metal",dir:"libs/imaging/casa-imaging-metal",tier:1,publish:true,est:"2.6kL",deps:["casa-core","casa-numerics","casa-imaging-operator"],role:"macOS target-gated Metal GridBackend (sole GPU crate)",from:"casa-imaging-metal"},
+    {name:"casa-imaging-runtime",dir:"libs/imaging/casa-imaging-runtime",tier:1,publish:true,est:"15.1kL",deps:["casa-core","casa-tables","casa-lattices","casa-ms","casa-imaging-model","casa-imaging-operator","casa-imaging-deconvolution","casa-imaging-products","casa-imaging-metal"],role:"Shared execution runtime, admission & worker team (below both gridders)",from:"casa-imaging-runtime"},
+    {name:"casa-imaging-singledish",dir:"libs/imaging/casa-imaging-singledish",tier:1,publish:true,est:"2.5kL",deps:["casa-core","casa-numerics","casa-imaging-operator","casa-imaging-runtime"],role:"SDGrid & adjoint total-power degridder (below imaging & calibration)",from:"casa-imaging-singledish"},
+    {name:"casa-imaging",dir:"libs/imaging/casa-imaging",tier:1,publish:true,est:"43kL",deps:["casa-core","casa-numerics","casa-coordinates","casa-images","casa-observation","casa-ms","casa-imaging-model","casa-imaging-operator","casa-imaging-deconvolution","casa-imaging-products","casa-imaging-runtime","casa-imaging-singledish"],role:"Curated developer-facing imaging facade (8 leaked *_law modules deleted)",from:"casa-imaging-application (renamed & cleaned)"},
+
+    // Tier 2: libs/casa/ (9 crates, ALL publish=true, ZERO CLI/task/UI deps)
+    {name:"casa-atmosphere",dir:"libs/casa/casa-atmosphere",tier:2,publish:true,est:"12.7kL",deps:[],role:"Pure ATM atmospheric transmission & refractivity leaf library",from:"casa-atmosphere"},
+    {name:"casa-components",dir:"libs/casa/casa-components",tier:2,publish:true,est:"6.2kL",deps:["casa-core","casa-tables"],role:"Sky component lists, shapes & spectral models",from:"casa-components"},
+    {name:"casa-imageanalysis",dir:"libs/casa/casa-imageanalysis",tier:2,publish:true,est:"46kL",deps:["casa-core","casa-numerics","casa-fft","casa-lattices","casa-coordinates","casa-images","casa-components"],role:"Image math, moments, regrid, pv, feather, ComponentListImage & fitting",from:"casa-images::{analysis,component_list_image} + casars-python/tools/image logic"},
+    {name:"casa-flagging",dir:"libs/casa/casa-flagging",tier:2,publish:true,est:"16kL",deps:["casa-core","casa-numerics","casa-ms","casa-components"],role:"Auto-flagging, clip, shadowing & flag-version management (via model traits)",from:"casa-ms::{flagging,shadowing}"},
+    {name:"casa-mstransform",dir:"libs/casa/casa-mstransform",tier:2,publish:true,est:"19kL",deps:["casa-core","casa-numerics","casa-fft","casa-coordinates","casa-observation","casa-ms"],role:"Split, regrid, concat, uvcontsub & MSv2<->MSv4 (via existing model/callib traits)",from:"casa-ms::{transform,concat} + casars-msconvert + uvcontsub"},
+    {name:"casa-calibration",dir:"libs/casa/casa-calibration",tier:2,publish:true,est:"95kL",deps:["casa-core","casa-numerics","casa-fft","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-ms","casa-flagging","casa-mstransform","casa-imaging-model","casa-imaging-operator","casa-imaging-runtime","casa-imaging-singledish"],role:"Interferometric calibration, ft/predict, flagdata_model, statwt, uvsub & wvr",from:"casa-calibration (stripped of single_dish, cli/, bins, plot*)"},
+    {name:"casa-singledish",dir:"libs/casa/casa-singledish",tier:2,publish:true,est:"10.8kL",deps:["casa-core","casa-numerics","casa-atmosphere","casa-tables","casa-ms","casa-calibration","casa-imaging-singledish"],role:"High-level single-dish workflows: ASAP/NRO import, baseline, SD calibration",from:"casa-calibration::single_dish + casa-ms::single_dish_import"},
+    {name:"casa-simulation",dir:"libs/casa/casa-simulation",tier:2,publish:true,est:"45kL",deps:["casa-core","casa-numerics","casa-fft","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-ms","casa-calibration","casa-imaging-model","casa-imaging-operator","casa-imaging-products","casa-imaging-runtime","casa-imaging-singledish","casa-imaging","casa-singledish"],role:"Pure visibility simulation, corruption, simobserve, simanalyze & simalma",from:"casa-simulation (slimmed)"},
+    {name:"casa-vla",dir:"libs/casa/casa-vla",tier:2,publish:true,est:"8.5kL",deps:["casa-core","casa-tables","casa-measures","casa-ms"],role:"Pure VLA archive importer library (no CLI/task plumbing)",from:"casa-vla (slimmed)"},
+
+    // Tier 3: surfaces/ (3 crates, publish=false, UI-agnostic, optional domain features)
+    {name:"casa-contracts",dir:"surfaces/casa-contracts",tier:3,publish:false,est:"2.5kL",deps:["casa-core"],role:"Slim ParameterCatalog, sparse TOML profiles & JSON Schema (retires GUI envelope/launcher)",from:"casa-provider-contracts (trimmed per ADR-0006/0020)"},
+    {name:"casa-tasks",dir:"surfaces/casa-tasks",tier:3,publish:false,est:"5.0kL",deps:["casa-core","casa-contracts","casa-tables","casa-measures","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-mstransform","casa-imaging","casa-calibration","casa-singledish","casa-simulation","casa-vla"],role:"Feature-gated in-process task dispatcher + Cancel/progress hooks (shared by Python, CLI, UIs)",from:"casa-task-runtime (trimmed) + per-crate task_contract adapters"},
+    {name:"casa-plot-data",dir:"surfaces/casa-plot-data",tier:3,publish:false,est:"22kL",deps:["casa-core","casa-atmosphere","casa-ms","casa-calibration"],role:"Optional-feature-gated renderer-neutral plot DTOs (msexplore, plotms, bandpass)",from:"casa-ms::{msexplore,plot*} + casa-calibration::{plotms,plotbandpass}"},
+
+    // Tier 4: frontends/ (2 crates + pluggable experimental UIs, publish=false)
+    {name:"casars-cli",dir:"frontends/casars-cli",tier:4,publish:false,est:"3.5kL",deps:["casa-core","casa-contracts","casa-tasks","casa-plot-data"],role:"Standalone feature-gated CLI suite (23 bins; exportfits builds without calibration)",from:"casars-{imager,imexplore,msconvert,simulation} + 16 embedded bins + casa-logging(cli)"},
+    {name:"casars-python",dir:"frontends/casars-python",tier:4,publish:false,est:"55kL",deps:["casa-core","casa-atmosphere","casa-components","casa-coordinates","casa-tables","casa-measures","casa-lattices","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-mstransform","casa-calibration","casa-singledish","casa-simulation","casa-vla","casa-contracts","casa-tasks","casa-plot-data"],role:"Thin PyO3 casars._core: BOTH tools & tasks run in-process (amended ADR-0017)",from:"casars-python (stripped of image logic, aipsio & subprocess task launcher)"},
+
+    // Tier 5: dev/ & opt-in suites/ (5 crates, publish=false; suites/* excluded from default --workspace)
+    {name:"casa-test-support",dir:"dev/casa-test-support",tier:5,publish:false,est:"12kL",deps:["casa-core","casa-aipsio","casa-tables","casa-measures","casa-lattices","casa-coordinates","casa-images","casa-ms"],role:"Shared C++ casacore FFI oracle runtime & deterministic fixtures",from:"crates/casa-test-support (oracle runtime)"},
+    {name:"casa-dev-tools",dir:"dev/casa-dev-tools",tier:5,publish:false,est:"3kL",deps:["casa-core","casa-tables","casa-measures","casa-ms","casa-simulation"],role:"Dev probes & helpers: lock_helper, ms-read-probe, package_snapshot, synthetic-ms",from:"dev bins from 4 crates"},
+    {name:"casacore-interop",dir:"suites/casacore-interop",tier:5,publish:false,est:"15kL",deps:["casa-core","casa-aipsio","casa-tables","casa-measures","casa-lattices","casa-coordinates","casa-images","casa-ms","casa-components","casa-vla","casa-imaging-products","casa-simulation","casa-test-support"],role:"Opt-in 2x2 RR/RC/CR/CC C++ casacore interop suite (moved with scripts)",from:"casa-test-support/tests/*_interop + cpp-interop-tests in 6 crates"},
+    {name:"casa-parity",dir:"suites/casa-parity",tier:5,publish:false,est:"18kL",deps:["casa-core","casa-atmosphere","casa-images","casa-imageanalysis","casa-ms","casa-flagging","casa-mstransform","casa-calibration","casa-imaging","casa-singledish","casa-simulation","casa-vla","casa-tasks","casars-cli","casa-test-support"],role:"Opt-in CASA 6.7 oracle parity suite + consolidated tools/casa-compat",from:"*_parity/oracle tests + tools/casa-compat"},
+    {name:"casa-perf-suite",dir:"suites/perf",tier:5,publish:false,est:"8kL",deps:["casa-core","casa-tables","casa-images","casa-ms","casa-imaging","casa-calibration","casa-simulation","casa-test-support"],role:"Opt-in throughput benchmarks & tools/perf harnesses",from:"perf benchmarks + tools/perf"}
+  ];
+
+  const PROP_MAP = Object.fromEntries(PROPOSED_CRATES.map(c => [c.name, c]));
+  for (const c of PROPOSED_CRATES) {
+    c.rdeps = PROPOSED_CRATES.filter(o => o.deps.includes(c.name)).map(o => o.name);
+  }
+
+  // --- SVG Graph Renderer ---
+  function renderGraph(svgEl, items, opts) {
+    const { tiers, getDeps, getRdeps, classifyEdge, nodeStyle, width, height, modeGetter } = opts;
+    const ns = "http://www.w3.org/2000/svg";
+    svgEl.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svgEl.innerHTML = "";
+
+    const defs = document.createElementNS(ns, "defs");
+    const marker = (id, color) => {
+      const m = document.createElementNS(ns, "marker");
+      m.setAttribute("id", id);
+      m.setAttribute("viewBox", "0 0 10 10");
+      m.setAttribute("refX", "8");
+      m.setAttribute("refY", "5");
+      m.setAttribute("markerWidth", "5.5");
+      m.setAttribute("markerHeight", "5.5");
+      m.setAttribute("orient", "auto-start-reverse");
+      const p = document.createElementNS(ns, "path");
+      p.setAttribute("d", "M 0 1 L 10 5 L 0 9 z");
+      p.setAttribute("fill", color);
+      m.appendChild(p);
+      return m;
+    };
+    defs.appendChild(marker(svgEl.id + "-arr-norm", "var(--text-muted)"));
+    defs.appendChild(marker(svgEl.id + "-arr-bad", "var(--bad)"));
+    svgEl.appendChild(defs);
+
+    const rowHeight = (height - 30) / tiers.length;
+    const pos = {};
+
+    tiers.forEach((label, tIdx) => {
+      const y0 = 15 + tIdx * rowHeight;
+      const bg = document.createElementNS(ns, "rect");
+      bg.setAttribute("x", 8);
+      bg.setAttribute("y", y0);
+      bg.setAttribute("width", width - 16);
+      bg.setAttribute("height", rowHeight - 8);
+      bg.setAttribute("rx", 8);
+      bg.setAttribute("fill", tIdx % 2 === 0 ? "var(--surface)" : "var(--surface-2)");
+      bg.setAttribute("stroke", "var(--border)");
+      bg.setAttribute("stroke-width", "1");
+      bg.setAttribute("opacity", "0.75");
+      svgEl.appendChild(bg);
+
+      const txt = document.createElementNS(ns, "text");
+      txt.setAttribute("x", 18);
+      txt.setAttribute("y", y0 + 18);
+      txt.setAttribute("font-size", "11");
+      txt.setAttribute("font-weight", "700");
+      txt.setAttribute("fill", "var(--text-muted)");
+      txt.textContent = label;
+      svgEl.appendChild(txt);
+
+      const rowItems = items.filter(it => it.tier === tIdx);
+      const usableW = width - 44;
+      const cols = rowItems.length;
+      const boxW = Math.min(140, Math.max(82, Math.floor((usableW - (cols - 1) * 7) / Math.max(1, cols))));
+      const totalSpan = cols * boxW + (cols - 1) * 7;
+      const startX = Math.max(20, (width - totalSpan) / 2);
+      rowItems.forEach((it, idx) => {
+        const x = startX + idx * (boxW + 7);
+        const y = y0 + 28 + ((rowHeight - 60) / 2);
+        pos[it.name] = { x, y, w: boxW, h: 31, cx: x + boxW / 2, cy: y + 15.5 };
+      });
+    });
+
+    const edgeLayer = document.createElementNS(ns, "g");
+    const nodeLayer = document.createElementNS(ns, "g");
+    svgEl.appendChild(edgeLayer);
+    svgEl.appendChild(nodeLayer);
+
+    const edgeEls = [];
+    items.forEach(src => {
+      getDeps(src).forEach(dstName => {
+        const a = pos[src.name], b = pos[dstName];
+        if (!a || !b) return;
+        const reasons = classifyEdge ? classifyEdge(src.name, dstName) : [];
+        const isViolation = reasons.length > 0;
+        const path = document.createElementNS(ns, "path");
+        const dy = b.cy - a.cy;
+        const y1 = dy > 0 ? a.y + a.h : (dy < 0 ? a.y : a.cy);
+        const y2 = dy > 0 ? b.y : (dy < 0 ? b.y + b.h : b.cy);
+        const midY = (y1 + y2) / 2 + (dy === 0 ? -24 : 0);
+        path.setAttribute("d", `M ${a.cx} ${y1} C ${a.cx} ${midY}, ${b.cx} ${midY}, ${b.cx} ${y2}`);
+        path.setAttribute("class", "g-edge " + (isViolation ? "violation" : "normal"));
+        path.setAttribute("marker-end", `url(#${svgEl.id}-${isViolation ? "arr-bad" : "arr-norm"})`);
+        edgeLayer.appendChild(path);
+        edgeEls.push({ el: path, src: src.name, dst: dstName, reasons, isViolation });
+      });
+    });
+
+    const nodeEls = {};
+    items.forEach(it => {
+      const p = pos[it.name];
+      const st = nodeStyle(it);
+      const g = document.createElementNS(ns, "g");
+      g.setAttribute("class", "g-node");
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "button");
+      g.setAttribute("aria-label", it.name);
+
+      const rect = document.createElementNS(ns, "rect");
+      rect.setAttribute("x", p.x);
+      rect.setAttribute("y", p.y);
+      rect.setAttribute("width", p.w);
+      rect.setAttribute("height", p.h);
+      rect.setAttribute("fill", st.fill);
+      rect.setAttribute("stroke", st.stroke);
+      g.appendChild(rect);
+
+      const label = document.createElementNS(ns, "text");
+      label.setAttribute("x", p.cx);
+      label.setAttribute("y", p.cy + 4);
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("font-family", "var(--mono)");
+      label.setAttribute("font-size", p.w < 96 ? "8.7" : "9.8");
+      label.setAttribute("font-weight", "600");
+      label.setAttribute("fill", "var(--text)");
+      const shortName = it.name.replace(/^casa-imaging-/, "img-").replace(/^casa-/, "");
+      label.textContent = p.w < 118 && it.name.length > 13 ? shortName : it.name;
+      g.appendChild(label);
+
+      const title = document.createElementNS(ns, "title");
+      title.textContent = it.name;
+      g.appendChild(title);
+
+      g.addEventListener("click", () => selectNode(it.name));
+      g.addEventListener("keydown", e => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectNode(it.name); }
+      });
+      nodeLayer.appendChild(g);
+      nodeEls[it.name] = g;
+    });
+
+    let selected = null;
+    function applyVisibility() {
+      const mode = modeGetter ? modeGetter() : "all";
+      const connected = new Set();
+      if (selected) {
+        connected.add(selected);
+        const sObj = items.find(i => i.name === selected);
+        if (sObj) {
+          getDeps(sObj).forEach(d => connected.add(d));
+          getRdeps(sObj).forEach(r => connected.add(r));
+        }
+      }
+      edgeEls.forEach(e => {
+        const modeOk = mode === "all" ||
+          (mode === "violations" && e.isViolation) ||
+          (mode === "publish" && e.reasons.includes("publish")) ||
+          (mode === "upward" && e.reasons.includes("upward"));
+        e.el.classList.remove("active", "dimmed");
+        if (!modeOk) {
+          e.el.style.display = "none";
+          return;
+        }
+        e.el.style.display = "";
+        if (selected) {
+          if (e.src === selected || e.dst === selected) e.el.classList.add("active");
+          else e.el.classList.add("dimmed");
+        }
+      });
+      items.forEach(it => {
+        const g = nodeEls[it.name];
+        g.classList.remove("selected", "dimmed");
+        if (selected) {
+          if (it.name === selected) g.classList.add("selected");
+          else if (!connected.has(it.name)) g.classList.add("dimmed");
+        }
+      });
+    }
+
+    function selectNode(name) {
+      selected = name;
+      applyVisibility();
+      if (name && opts.renderInspector) {
+        opts.renderInspector(items.find(i => i.name === name), selectNode);
+      }
+    }
+
+    applyVisibility();
+    return { selectNode, refresh: applyVisibility };
+  }
+
+  // --- Instantiate Current Graph ---
+  let curMode = "all";
+  const curCtrl = renderGraph(
+    document.getElementById("curSvg"),
+    CURRENT_CRATES,
+    {
+      tiers: [
+        "Leaf / Codec Foundations (tier 0)",
+        "Casacore Storage & Domain Foundations (tier 1)",
+        "Task & Provider Plumbing — should sit ABOVE domain libs (tier 2)",
+        "Domain Libraries — currently leaking upward into tier 2 (tier 3)",
+        "Native Imaging Stack — 8 crates, mixed publish flags (tier 4)",
+        "Frontends, Python & Test Support (tier 5)"
+      ],
+      getDeps: c => c.ws_deps,
+      getRdeps: c => c.rdeps,
+      classifyEdge: classifyCurEdge,
+      modeGetter: () => curMode,
+      width: 1080,
+      height: 620,
+      nodeStyle: c => {
+        if (c.publish && c.broken_pub_deps.length > 0) return { fill: "var(--bad-soft)", stroke: "var(--bad)" };
+        if (c.publish) return { fill: "var(--good-soft)", stroke: "var(--good)" };
+        if (c.tier === 5) return { fill: "var(--purple-soft)", stroke: "var(--purple)" };
+        return { fill: "var(--accent-soft)", stroke: "var(--accent)" };
+      },
+      renderInspector: (c, selectFn) => {
+        const el = document.getElementById("curInspector");
+        if (!c) return;
+        const depsHtml = c.ws_deps.length
+          ? c.ws_deps.map(d => {
+              const viol = classifyCurEdge(c.name, d).length > 0;
+              return `<button type="button" class="dep-chip ${viol ? "violation" : ""}" data-jump="${d}">${d}${viol ? " !" : ""}</button>`;
+            }).join("")
+          : '<span style="color:var(--text-muted)">None</span>';
+        const rdepsHtml = c.rdeps.length
+          ? c.rdeps.map(r => `<button type="button" class="dep-chip" data-jump="${r}">${r}</button>`).join("")
+          : '<span style="color:var(--text-muted)">None</span>';
+        el.innerHTML = `
+          <h4>${c.name}</h4>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
+            <span class="badge ${c.publish ? (c.broken_pub_deps.length ? "b-bad" : "b-good") : "b-muted"}">publish=${c.publish}</span>
+            <span class="badge ${c.missing_docs ? "b-good" : "b-warn"}">${c.missing_docs ? "warn(missing_docs)" : "no missing_docs"}</span>
+            <span class="badge b-info">${c.src_lines.toLocaleString()} src LOC</span>
+          </div>
+          <p style="margin:0 0 8px;"><strong>Primary Issue:</strong> ${c.issue}</p>
+          ${c.bins.length ? `<p style="margin:0 0 8px;"><strong>Binaries (${c.bins.length}):</strong> <code>${c.bins.join("</code>, <code>")}</code></p>` : ""}
+          <div><strong>Workspace Deps (${c.ws_deps.length}):</strong></div>
+          <div class="inspector-list">${depsHtml}</div>
+          <div><strong>Reverse Deps (${c.rdeps.length}):</strong></div>
+          <div class="inspector-list">${rdepsHtml}</div>
+        `;
+        el.querySelectorAll("[data-jump]").forEach(btn => {
+          btn.addEventListener("click", () => selectFn(btn.dataset.jump));
+        });
+      }
+    }
+  );
+
+  document.querySelectorAll("#curGraphFilters .pill-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#curGraphFilters .pill-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      curMode = btn.dataset.mode;
+      curCtrl.refresh();
+    });
+  });
+  document.getElementById("curGraphReset").addEventListener("click", () => {
+    curCtrl.selectNode(null);
+    document.getElementById("curInspector").innerHTML = '<h4>Select a crate node</h4><p style="color:var(--text-muted); margin:0;">Click any of the 35 crates in the graph or table to inspect its exact LOC, binaries, workspace dependencies, and violations.</p>';
+  });
+
+  // --- Instantiate Proposed v3 Graph ---
+  const propCtrl = renderGraph(
+    document.getElementById("propSvg"),
+    PROPOSED_CRATES,
+    {
+      tiers: [
+        "Tier 0 — libs/casacore/ (11 crates, ALL publish=true, zero task/UI plumbing)",
+        "Tier 1 — libs/imaging/ (8 crates, ALL publish=true, ADR-0016 compiler-enforced DAG)",
+        "Tier 2 — libs/casa/ (9 crates, ALL publish=true, zero CLI/task/UI deps)",
+        "Tier 3 — surfaces/ (3 crates, publish=false, slim feature-gated UI-agnostic layer)",
+        "Tier 4 — frontends/ (2 crates + experimental UIs, publish=false, in-process surfaces/casa-tasks)",
+        "Tier 5 — dev/ & opt-in suites/ (5 crates, publish=false, suites excluded from default --workspace)"
+      ],
+      getDeps: c => c.deps,
+      getRdeps: c => c.rdeps,
+      classifyEdge: () => [],
+      width: 1080,
+      height: 760,
+      nodeStyle: c => {
+        if (c.tier === 0) return { fill: "var(--teal-soft)", stroke: "var(--teal)" };
+        if (c.tier === 1 || c.tier === 2) return { fill: "var(--good-soft)", stroke: "var(--good)" };
+        if (c.tier === 3) return { fill: "var(--warn-soft)", stroke: "var(--warn)" };
+        if (c.tier === 4) return { fill: "var(--accent-soft)", stroke: "var(--accent)" };
+        return { fill: "var(--purple-soft)", stroke: "var(--purple)" };
+      },
+      renderInspector: (c, selectFn) => {
+        const el = document.getElementById("propInspector");
+        if (!c) return;
+        const depsHtml = c.deps.length
+          ? c.deps.map(d => `<button type="button" class="dep-chip" data-jump="${d}">${d}</button>`).join("")
+          : '<span style="color:var(--text-muted)">Zero workspace deps (leaf)</span>';
+        const rdepsHtml = c.rdeps.length
+          ? c.rdeps.map(r => `<button type="button" class="dep-chip" data-jump="${r}">${r}</button>`).join("")
+          : '<span style="color:var(--text-muted)">Leaf consumer</span>';
+        el.innerHTML = `
+          <h4>${c.name}</h4>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;">
+            <span class="badge ${c.publish ? "b-good" : "b-muted"}">publish=${c.publish}</span>
+            <span class="badge b-info">~${c.est}</span>
+          </div>
+          <p style="margin:0 0 6px; font-size:12.5px;"><code>${c.dir}/</code></p>
+          <p style="margin:0 0 8px;">${c.role}</p>
+          <p style="margin:0 0 8px;"><strong>Built From:</strong> ${c.from}</p>
+          <div><strong>Workspace Deps (${c.deps.length}):</strong></div>
+          <div class="inspector-list">${depsHtml}</div>
+          <div><strong>Used By (${c.rdeps.length}):</strong></div>
+          <div class="inspector-list">${rdepsHtml}</div>
+        `;
+        el.querySelectorAll("[data-jump]").forEach(btn => {
+          btn.addEventListener("click", () => selectFn(btn.dataset.jump));
+        });
+      }
+    }
+  );
+  document.getElementById("propGraphReset").addEventListener("click", () => {
+    propCtrl.selectNode(null);
+    document.getElementById("propInspector").innerHTML = '<h4>Select a proposed crate</h4><p style="color:var(--text-muted); margin:0;">Click any node in the proposed graph to inspect its absorbed sources, strict dependency set, and public facade role.</p>';
+  });
+  document.getElementById("propToggleCompare").addEventListener("click", () => {
+    document.getElementById("compareBox").classList.toggle("visible");
+  });
+
+  // --- Current 35-Crate Table ---
+  let curFilter = "all";
+  let curQuery = "";
+  let sortKey = "src_lines";
+  let sortDir = -1;
+
+  function renderCurTable() {
+    const tbody = document.getElementById("curTableBody");
+    const filtered = CURRENT_CRATES.filter(c => {
+      if (curFilter === "broken_pub" && (!c.publish || c.broken_pub_deps.length === 0)) return false;
+      if (curFilter === "has_bins" && c.bins.length === 0) return false;
+      if (curFilter === "giant" && c.src_lines <= 40000) return false;
+      if (curFilter === "micro" && c.src_lines >= 2000) return false;
+      if (curFilter === "no_docs" && c.missing_docs) return false;
+      if (curQuery) {
+        const hay = (c.name + " " + c.bins.join(" ") + " " + c.issue).toLowerCase();
+        if (!hay.includes(curQuery)) return false;
+      }
+      return true;
+    }).sort((a, b) => {
+      let av = a[sortKey], bv = b[sortKey];
+      if (Array.isArray(av)) { av = av.length; bv = bv.length; }
+      if (typeof av === "string") return av.localeCompare(bv) * sortDir;
+      return (av - bv) * sortDir;
+    });
+
+    tbody.innerHTML = filtered.map(c => {
+      const pubBadge = !c.publish
+        ? '<span class="badge b-muted">false</span>'
+        : (c.broken_pub_deps.length
+            ? `<span class="badge b-bad">broken (${c.broken_pub_deps.length})</span>`
+            : (c.ws_deps.length ? '<span class="badge b-warn">transitive</span>' : '<span class="badge b-good">ready</span>'));
+      const docsBadge = c.missing_docs
+        ? '<span class="badge b-good">warn</span>'
+        : '<span class="badge b-bad">none</span>';
+      const binsCell = c.bins.length
+        ? `<span class="badge b-purple">${c.bins.length}</span> <code style="font-size:11px">${c.bins.slice(0,2).join(", ")}${c.bins.length > 2 ? ", …" : ""}</code>`
+        : '<span style="color:var(--text-muted)">—</span>';
+      return `<tr data-crate="${c.name}" style="cursor:pointer">
+        <td><code>${c.name}</code></td>
+        <td class="num">${c.src_lines.toLocaleString()}</td>
+        <td class="num">${c.test_lines.toLocaleString()}</td>
+        <td class="num">${c.src_files}</td>
+        <td class="num">${c.ws_deps.length}</td>
+        <td class="num">${c.rdeps.length}</td>
+        <td>${pubBadge}</td>
+        <td>${docsBadge}</td>
+        <td>${binsCell}</td>
+        <td style="font-size:12.5px; color:var(--text-muted)">${c.issue}</td>
+      </tr>`;
+    }).join("");
+
+    tbody.querySelectorAll("tr").forEach(tr => {
+      tr.addEventListener("click", () => {
+        curCtrl.selectNode(tr.dataset.crate);
+        document.getElementById("curSvg").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    });
+  }
+
+  document.querySelectorAll("#curTablePills .pill-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#curTablePills .pill-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      curFilter = btn.dataset.filter;
+      renderCurTable();
+    });
+  });
+  document.getElementById("curSearch").addEventListener("input", e => {
+    curQuery = e.target.value.trim().toLowerCase();
+    renderCurTable();
+  });
+  document.querySelectorAll("#curTable thead th.sortable").forEach(th => {
+    th.addEventListener("click", () => {
+      const k = th.dataset.sort;
+      if (sortKey === k) sortDir *= -1;
+      else { sortKey = k; sortDir = k === "name" ? 1 : -1; }
+      renderCurTable();
+    });
+  });
+  renderCurTable();
+
+  // --- Proposed Directory Tree ---
+  const TREE_GROUPS = [
+    { title: "libs/casacore/ — Core Casacore Libraries (11 crates, ALL publish = true)", open: true, filter: c => c.dir.startsWith("libs/casacore/") },
+    { title: "libs/imaging/ — ADR-0016 Compiler-Layered Imaging (8 crates, ALL publish = true)", open: true, filter: c => c.dir.startsWith("libs/imaging/") },
+    { title: "libs/casa/ — CASA Scientific Domain Libraries (9 crates, ALL publish = true)", open: true, filter: c => c.dir.startsWith("libs/casa/") },
+    { title: "surfaces/ — Slim UI-Agnostic Contracts, Task Dispatch & Plot DTOs (3 crates, publish = false)", open: true, filter: c => c.dir.startsWith("surfaces/") },
+    { title: "frontends/ — Pluggable UI Shells (2 crates + experimental UIs, publish = false)", open: true, filter: c => c.dir.startsWith("frontends/"), extraHtml: `<div class="tree-item"><code>&lt;experimental-ui&gt;/</code><span><span class="badge b-info">pluggable</span></span><span style="color:var(--text-muted); font-size:12.5px">Future Web / Notebook / MCP UI calling <code>surfaces/casa-tasks</code> in-process</span></div>` },
+    { title: "dev/ & suites/ — Dev Tools & Opt-In Interop/Parity/Perf Suites (5 crates, publish = false)", open: true, filter: c => c.dir.startsWith("suites/") || c.dir.startsWith("dev/") }
+  ];
+  document.getElementById("treeContainer").innerHTML = TREE_GROUPS.map(g => {
+    const list = PROPOSED_CRATES.filter(g.filter);
+    return `<details class="tree-group" ${g.open ? "open" : ""}>
+      <summary><span>${g.title}</span><span class="badge b-info">${list.length} crates</span></summary>
+      <div class="tree-items">
+        ${list.map(c => `<div class="tree-item">
+          <code>${c.name}</code>
+          <span><span class="badge ${c.publish ? "b-good" : "b-muted"}">${c.publish ? "publish" : "private"}</span> <span style="font-size:11px;color:var(--text-muted)">${c.est}</span></span>
+          <span style="color:var(--text-muted); font-size:12.5px">${c.role}</span>
+        </div>`).join("")}${g.extraHtml || ""}
+      </div>
+    </details>`;
+  }).join("");
+
+  // --- Complete Migration Map (35 + 2 orphans) ---
+  const MIGRATION = [
+    {src:"casa-values (1.2kL)",disp:"Merge",target:"casa-core",note:"Fold generic Value/Record types into casa-core; unblocks casa-types publication"},
+    {src:"casa-types (18.6kL)",disp:"Merge",target:"casa-core",note:"Merge with casa-values; keep strictly definitional (zero I/O); enable missing_docs"},
+    {src:"casa-aipsio (3.5kL)",disp:"Promote",target:"libs/casacore/casa-aipsio",note:"Keep small publish=true codec crate for byte-level C++ oracle (aipsio_oracle.rs); unblock casa-tables"},
+    {src:"casa-numerics (5.9kL)",disp:"Promote",target:"libs/casacore/casa-numerics",note:"Promote publish=true; delete dead SimulatedBandpass; stay FFTW-free for beam-only callers"},
+    {src:"casa-fft (0.8kL)",disp:"Move",target:"libs/casacore/casa-fft",note:"Keep separate from casa-numerics; update build.rs to handle DOCS_RS on Linux"},
+    {src:"casa-tables (104.9kL)",disp:"Slim",target:"casa-tables, casa-measures, dev/casa-dev-tools",note:"Move table_measures to casa-measures & lock_helper to dev/ (keep bin tests isolated); add narrow table-header probe; split 14.5kL tiled_stman.rs"},
+    {src:"casa-logging (1.6kL)",disp:"Split",target:"casa-tables, frontends/casars-cli",note:"Move Casacore LogTable sink into casa-tables::log_table; move CLI tracing init into casars-cli"},
+    {src:"casa-measures-data (3.2kL)",disp:"Merge",target:"casa-measures",note:"Combine with casa-measures-tools lib & table_measures; promote publish=true"},
+    {src:"casa-measures-tools (0.4kL)",disp:"Split",target:"casa-measures, dev/casa-dev-tools",note:"Move snapshot builder into casa-measures; move package_snapshot bin into dev/casa-dev-tools"},
+    {src:"casa-lattices (9.7kL)",disp:"Move",target:"libs/casacore/casa-lattices",note:"Enable missing_docs; add tests/api.rs & crates.io metadata"},
+    {src:"casa-coordinates (18.9kL)",disp:"Move",target:"libs/casacore/casa-coordinates",note:"Keep definitional; trim 14 pub mods to curated facade; add tests/api.rs & missing_docs"},
+    {src:"casa-images (83.5kL)",disp:"Split",target:"casa-images, casa-imageanalysis, surfaces/casa-tasks, frontends/casars-cli",note:"Keep persistence/FITS/MIRIAD/beam/ImageExpr (~36kL) in casa-images; move analysis & ComponentListImage to casa-imageanalysis; delete build.rs JSON probe; move 9 bins to casars-cli"},
+    {src:"casa-observation (9.2kL)",disp:"Promote",target:"libs/casacore/casa-observation",note:"Promote publish=true as clean MSv2/v4 observation boundary; add tests/api.rs"},
+    {src:"casa-ms (129.7kL)",disp:"Split",target:"casa-ms, casa-flagging, casa-mstransform, casa-singledish, surfaces/casa-plot-data, frontends/casars-cli, dev/casa-dev-tools",note:"Keep MS I/O/selection/buffer (~55kL); add explicit casa-measures edge; drop unused casa-logging & #[cfg(test)] hook; collapse 31 test binaries"},
+    {src:"casa-atmosphere (12.7kL)",disp:"Promote",target:"libs/casa/casa-atmosphere",note:"Promote pure ATM leaf crate to publish=true; move parity tests to suites/casa-parity"},
+    {src:"casa-components (6.2kL)",disp:"Move",target:"libs/casa/casa-components",note:"Enable missing_docs; move cpp-interop-tests to suites/casacore-interop"},
+    {src:"casa-imaging-model (13.3kL)",disp:"Promote",target:"libs/imaging/casa-imaging-model",note:"Keep compiler-enforced ADR-0016 boundary; promote publish=true"},
+    {src:"casa-imaging-operator (22.7kL)",disp:"Promote",target:"libs/imaging/casa-imaging-operator",note:"Keep ADR-0016 boundary; promote publish=true; move uvcontsub (fit_and_subtract_continuum) to casa-mstransform; collapse 17 test bins"},
+    {src:"casa-imaging-deconvolution (16.1kL)",disp:"Promote",target:"libs/imaging/casa-imaging-deconvolution",note:"Keep ADR-0016 boundary; promote publish=true"},
+    {src:"casa-imaging-products (9.8kL)",disp:"Promote",target:"libs/imaging/casa-imaging-products",note:"Keep ADR-0016 boundary; promote publish=true; move cpp-interop to suites/casacore-interop"},
+    {src:"casa-imaging-metal (2.6kL)",disp:"Promote",target:"libs/imaging/casa-imaging-metal",note:"Preserve macOS target-gated objc2-metal; promote publish=true"},
+    {src:"casa-imaging-runtime (15.1kL)",disp:"Move",target:"libs/imaging/casa-imaging-runtime",note:"Shared runtime below both casa-imaging-singledish and casa-imaging; keep pass_laws allocator isolation"},
+    {src:"casa-imaging-singledish (2.5kL)",disp:"Move",target:"libs/imaging/casa-imaging-singledish",note:"Keep SDGrid + adjoint below casa-imaging, casa-calibration & casa-singledish (cycle-free)"},
+    {src:"casa-imaging-application (43.5kL)",disp:"Slim",target:"libs/imaging/casa-imaging",note:"Rename to casa-imaging; promote publish=true; delete 8 leaked pub mod *_law modules"},
+    {src:"casa-calibration (118.3kL)",disp:"Slim",target:"casa-calibration, casa-singledish, surfaces/casa-plot-data, frontends/casars-cli",note:"Promote publish=true; keep Jones/CalTable/ft/flagdata_model/statwt/uvsub; strip single_dish, cli/, 3 bins, plot*, stale docstring"},
+    {src:"casa-simulation (45.8kL)",disp:"Slim",target:"libs/casa/casa-simulation, dev/casa-dev-tools",note:"Strip task-runtime/CLI glue & move synthetic-ms bin to dev/casa-dev-tools; collapse 82 test binaries"},
+    {src:"casa-vla (9.5kL)",disp:"Slim",target:"libs/casa/casa-vla, surfaces/casa-tasks, frontends/casars-cli",note:"Strip cli/task_contract & move importvla bin to casars-cli; split 4.9kL importer.rs"},
+    {src:"casa-provider-contracts (7.7kL)",disp:"Slim",target:"surfaces/casa-contracts",note:"Retain ParameterCatalog, sparse TOML & JSON Schema; delete GUI-era ProviderContractEnvelope & ApplicationCatalog launcher"},
+    {src:"casa-task-runtime (10.8kL)",disp:"Split",target:"surfaces/casa-tasks, frontends/casars-cli",note:"Slim to ~5kL UI-agnostic in-process task dispatch (surfaces/casa-tasks) + CLI flags/Last state (casars-cli)"},
+    {src:"casars-imager (2.1kL + 21.5kL tests)",disp:"Split",target:"surfaces/casa-tasks, frontends/casars-cli, suites/casa-parity",note:"Move task adapter to casa-tasks; move binaries to casars-cli; relocate 21.5kL T1 tests to casa-imaging & suites/casa-parity"},
+    {src:"casars-imexplore (0.5kL)",disp:"Merge",target:"surfaces/casa-tasks, frontends/casars-cli",note:"Move imhead/imstat/imexplore dispatch to casa-tasks & binary to casars-cli"},
+    {src:"casars-msconvert (1.0kL)",disp:"Split",target:"casa-mstransform, surfaces/casa-tasks, frontends/casars-cli",note:"Move MSv2<->MSv4 logic to casa-mstransform; move msconvert binary to casars-cli"},
+    {src:"casars-simulation (1.2kL)",disp:"Merge",target:"surfaces/casa-tasks, frontends/casars-cli",note:"Move simobserve/simanalyze/simalma/predictcomp dispatch to casa-tasks & binaries to casars-cli"},
+    {src:"casars-python (84.5kL)",disp:"Slim",target:"frontends/casars-python, casa-imageanalysis, casa-tables",note:"Remove casa-aipsio & app-crate deps; push 27.4kL tools/image logic into casa-imageanalysis; run tasks in-process via casa-tasks (amended ADR-0017)"},
+    {src:"casa-test-support (17.2kL)",disp:"Split",target:"dev/casa-test-support, suites/{casacore-interop,casa-parity,perf}",note:"Keep shared C++ oracle runtime in dev/; move 50 test binaries into opt-in suites/"},
+    {src:"crates/casa-imaging-reconstruction/",disp:"Delete",target:"(removed)",note:"Orphaned empty leftover dir from ADR-0016 consolidation"},
+    {src:"crates/casars/",disp:"Delete",target:"(removed)",note:"Orphaned non-member directory with stale logs"}
+  ];
+
+  let migDisp = "all";
+  let migQuery = "";
+  const dispClass = { Merge:"b-info", Split:"b-warn", Slim:"b-purple", Promote:"b-good", Move:"b-teal", Delete:"b-bad" };
+
+  function renderMigTable() {
+    const tbody = document.getElementById("migTableBody");
+    const rows = MIGRATION.filter(r => {
+      if (migDisp !== "all" && r.disp !== migDisp) return false;
+      if (migQuery && !(r.src + " " + r.target + " " + r.note).toLowerCase().includes(migQuery)) return false;
+      return true;
+    });
+    tbody.innerHTML = rows.map(r => `<tr>
+      <td><code>${r.src}</code></td>
+      <td><span class="badge ${dispClass[r.disp] || "b-muted"}">${r.disp}</span></td>
+      <td><code>${r.target}</code></td>
+      <td style="font-size:12.8px; color:var(--text-muted)">${r.note}</td>
+    </tr>`).join("");
+  }
+
+  document.querySelectorAll("#migPills .pill-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#migPills .pill-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      migDisp = btn.dataset.disp;
+      renderMigTable();
+    });
+  });
+  document.getElementById("migSearch").addEventListener("input", e => {
+    migQuery = e.target.value.trim().toLowerCase();
+    renderMigTable();
+  });
+  renderMigTable();
+})();
+</script>
+</body>
+</html>
