@@ -6,6 +6,7 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use super::legacy_selection::deprecation;
 use super::{PyMsTool, runtime_error};
 use crate::tools::table::casa_record;
 
@@ -21,6 +22,22 @@ impl PyMsTool {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
             match attached.as_mut().filter(|ms| ms.writable) {
                 Some(ms) => ms.putdata_rows(items),
+                None => Ok(false),
+            }
+        })
+    }
+
+    #[pyo3(signature = (items = RecordValue::default()), text_signature = "($self, items={})")]
+    fn putdataold(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = write_record)] items: RecordValue,
+    ) -> PyResult<bool> {
+        deprecation(py, "putdataold", "putdata")?;
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            match attached.as_mut().filter(|ms| ms.writable) {
+                Some(ms) => ms.put_legacy_data_rows(items),
                 None => Ok(false),
             }
         })

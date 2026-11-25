@@ -35,6 +35,12 @@ impl LegacySelection {
     }
 }
 
+impl LegacyAxes {
+    pub(super) fn needs_write_projection(&self) -> bool {
+        self.channels.is_some() || self.polarization.is_some()
+    }
+}
+
 #[pymethods]
 impl PyMsTool {
     #[pyo3(signature = (items = None, ifraxis = false, ifraxisgap = 0, increment = 1, average = false), text_signature = "($self, items=[], ifraxis=False, ifraxisgap=0, increment=1, average=False)")]

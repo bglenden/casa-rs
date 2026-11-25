@@ -312,12 +312,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (items = None), text_signature = "($self, items={})")]
-    fn putdataold(&self, items: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
-        stub("putdataold")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (outframe = None, mode = None, restfreq = None, interpolation = None, start = None, center = None, bandwidth = None, chanwidth = None, hanning = None), text_signature = "($self, outframe='LSRK', mode='chan', restfreq=-3e+30, interpolation='LINEAR', start=-3e+30, center=-3e+30, bandwidth=-1.0, chanwidth=-1.0, hanning=True)")]
     fn regridspw(
         &self,

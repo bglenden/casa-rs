@@ -19,7 +19,7 @@ use pyo3::types::{PyInt, PyList, PyListMethods, PyString};
 
 use super::attachment_info::{TableFiles, TableStamp};
 use super::iteration::VisibilityIteration;
-use super::metadata_link::{MetadataLink, MetadataSnapshot};
+use super::metadata_link::{MetadataLink, MetadataSnapshot, compose_rows};
 use super::owned_record::visibility_record;
 use super::subtable_queries::Subtables;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -102,6 +102,13 @@ impl VisibilityState {
             self.range_subtables = Subtables::default();
         }
         Ok(self.main.as_deref().expect("MAIN table was opened"))
+    }
+
+    fn current_main(&mut self, path: &Path) -> PyResult<Arc<VisibilityMain>> {
+        self.main(path)?;
+        Ok(Arc::clone(
+            self.main.as_ref().expect("MAIN table was opened"),
+        ))
     }
 
     pub(super) fn range_for_rows(
@@ -461,12 +468,7 @@ impl AttachedMs {
             layout.verify_write_layout(&BTreeSet::new())?;
             layout
         } else {
-            self.visibility.main(&self.path)?;
-            self.visibility
-                .main
-                .as_ref()
-                .expect("MAIN table was opened")
-                .clone()
+            self.visibility.current_main(&self.path)?
         };
         let rows = if let Some(iteration) = &self.visibility.iteration {
             iteration.cursor.rows().map_err(runtime_error)?.to_vec()
@@ -490,6 +492,14 @@ impl AttachedMs {
         } else {
             None
         };
+        let polarization = self
+            .visibility
+            .iteration
+            .as_ref()
+            .map_or(self.visibility.polarization.as_ref(), |iteration| {
+                iteration.polarization.as_ref()
+            })
+            .cloned();
         let options = tool_visibility::VisibilityWriteOptions {
             baseline_gap: layout.map(|(gap, _)| gap),
             sampled_baselines: layout.is_some_and(|(_, increment)| {
@@ -497,27 +507,63 @@ impl AttachedMs {
             }),
             recent_baseline_read: self.visibility.recent_baseline_read,
             baseline_pairs: baseline_pairs.as_deref(),
-            polarization: self
-                .visibility
-                .iteration
-                .as_ref()
-                .map_or(self.visibility.polarization.as_deref(), |iteration| {
-                    iteration.polarization.as_deref()
-                }),
+            polarization: polarization.as_deref(),
             iterator: self.visibility.iteration.is_some(),
         };
         let record = tool_visibility::VisibilityWriteRecord::new(&main.table, rows, items, options)
             .map_err(runtime_error)?;
-        let names = record.column_names().collect::<Vec<_>>();
-        if names.is_empty() {
+        if record.column_names().len() == 0 {
             return Ok(false);
         }
-        let targets = main.write_targets(record.rows(), &names)?;
         let refresh_cursor = self
             .visibility
             .iteration
             .as_ref()
             .is_some_and(|iteration| iteration.layout.is_some());
+        self.write_visibility_record(&link, &main, record, refresh_cursor)?;
+        Ok(true)
+    }
+
+    pub(super) fn put_legacy_data_rows(&mut self, items: RecordValue) -> PyResult<bool> {
+        if !self.prepare_legacy_filter()? {
+            return Ok(false);
+        }
+        let link = self.working_metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        let base = link.selected_rows().map_err(runtime_error)?;
+        let main = self.visibility.current_main(&self.path)?;
+        let rows = compose_rows(base.as_deref(), self.legacy_selection.rows()).map_or_else(
+            || (0..main.table.row_count()).collect(),
+            |rows| rows.into_owned(),
+        );
+        if rows.is_empty() {
+            return Ok(false);
+        }
+        if self.legacy_selection.axes.needs_write_projection() {
+            return Ok(false);
+        }
+        let record = tool_visibility::VisibilityWriteRecord::new(
+            &main.table,
+            rows,
+            items,
+            tool_visibility::VisibilityWriteOptions::default(),
+        )
+        .map_err(runtime_error)?;
+        if record.column_names().len() != 0 {
+            self.write_visibility_record(&link, &main, record, false)?;
+        }
+        Ok(true)
+    }
+
+    fn write_visibility_record(
+        &mut self,
+        link: &MetadataLink,
+        main: &VisibilityMain,
+        record: tool_visibility::VisibilityWriteRecord<'_>,
+        refresh_cursor: bool,
+    ) -> PyResult<()> {
+        let names = record.column_names().collect::<Vec<_>>();
+        let targets = main.write_targets(record.rows(), &names)?;
         let mut written = BTreeSet::new();
         let mut temporary = BTreeMap::new();
         for target in &targets {
@@ -569,7 +615,7 @@ impl AttachedMs {
         for (_, lock) in temporary {
             lock.release().map_err(runtime_error)?;
         }
-        Ok(true)
+        Ok(())
     }
 
     pub(super) fn visibility_range(&mut self, request: &ToolRangeRequest) -> PyResult<CasaValue> {
