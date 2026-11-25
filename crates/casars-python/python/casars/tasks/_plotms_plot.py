@@ -142,7 +142,8 @@ def configure(figure, panel_axes, document, options):
             anchor = (anchor[0], 1.0)
         if handles:
             figure.axes[0].legend(handles, labels, loc=location, bbox_to_anchor=anchor)
-    if measurement_set:
+    # Positioned pages reserve their grid cells even when some are empty.
+    if measurement_set and not positioned:
         figure.tight_layout(rect=(0, 0, 1, title_y if title_y is not None else 1))
 
 
