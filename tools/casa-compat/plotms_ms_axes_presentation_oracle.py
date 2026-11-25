@@ -42,7 +42,7 @@ def ranges_fixture(root):
     return vis
 
 
-def marker_spans(path):
+def marker_spans(path, panel_boxes=None):
     with Image.open(path) as image:
         assert image.size == (600, 450)
         colors = np.asarray(image.convert("RGB"), dtype=np.int16)
@@ -58,8 +58,14 @@ def marker_spans(path):
         rgb = [int(marker[index:index + 2], 16) for index in (0, 2, 4)]
         y, x = np.where(np.max(np.abs(colors - rgb), axis=-1) < 50)
         panels = []
-        for row, col in ((0, 0), (0, 1), (1, 0), (1, 1)):
-            keep = ((y >= split_y) == row) & ((x >= split_x) == col)
+        cells = (
+            (((y >= split_y) == row) & ((x >= split_x) == col))
+            for row, col in ((0, 0), (0, 1), (1, 0), (1, 1))
+        ) if panel_boxes is None else (
+            (x >= box.x0) & (x <= box.x1) & (450 - y >= box.y0) & (450 - y <= box.y1)
+            for box in panel_boxes
+        )
+        for keep in cells:
             if np.any(keep):
                 panels.append((np.ptp(x[keep]), np.ptp(y[keep])))
         extents.append(panels)
@@ -144,11 +150,24 @@ def compare_ranges(root, native):
             assert not path.exists()
     single = options | shared | dict(yaxis="real", ydatacolumn="corrected", yaxislocation="left",
                                      customsymbol=True, symbolcolor="dd2255", symbolshape="circle")
-    for task, engine in ((reference, "casa"), (native, "native")):
-        assert task(**single, plotfile=str(root / f"single-{engine}.png")) is None
-        for suffix, count in zip(FILE_SUFFIXES, (4, 1), strict=True):
-            markers = marker_spans(root / f"single-{engine}_{suffix}.png")
-            assert list(map(len, markers)) == [count, 0]
+    single_pages = []
+
+    def capture_single(figure, primary, document, arguments):
+        configure(figure, primary, document, arguments)
+        axes = primary if isinstance(primary, list) else [primary]
+        for index, axis in enumerate(axes):
+            cell = axis.get_subplotspec()
+            assert cell.get_gridspec().get_geometry() == (2, 2)
+            assert (cell.rowspan.start, cell.colspan.start) == divmod(index, 2)
+        single_pages.append([axis.get_window_extent() for axis in axes])
+
+    assert reference(**single, plotfile=str(root / "single-casa.png")) is None
+    with patch.object(_plotms_plot, "configure", capture_single):
+        assert native(**single, plotfile=str(root / "single-native.png")) is None
+    for suffix, count, boxes in zip(FILE_SUFFIXES, (4, 1), single_pages, strict=True):
+        assert len(boxes) == count
+        assert list(map(len, marker_spans(root / f"single-casa_{suffix}.png"))) == [count, 0]
+        assert list(map(len, marker_spans(root / f"single-native_{suffix}.png", boxes))) == [count, 0]
     print("shared ranges: five paired modes, a single ordinate and two paired refusals", flush=True)
 
 
