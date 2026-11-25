@@ -4,16 +4,23 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
 use casa_types::measures::MeasFrame;
 use casa_types::measures::direction::MDirection;
-use casa_types::measures::epoch::MEpoch;
+use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::frequency_conversion::PreparedFrequencyConversion;
+use casa_types::measures::position::MPosition;
 
+use crate::derived::engine::{MsCalEngine, detect_epoch_reference};
 use crate::spectral_selection::combine_windows;
-use crate::{MeasurementSet, derived::engine::MsCalEngine};
+use crate::subtables::{
+    FieldDirectionColumn, MsAntenna, MsDataDescription, MsField, get_i32, get_string,
+    linked_subtable_row,
+};
+use crate::{MeasurementSet, SubtableId};
 
-use super::super::{MsRegridOptions, MsTransformError, scalar_f64, scalar_i32};
+use super::super::{MsRegridOptions, MsTransformError};
 use super::{
     GridBudget, MIN_SOURCE_VELOCITY_M_PER_S, axis, invalid_choice, ms_error, radial_shift,
 };
@@ -36,38 +43,103 @@ pub enum ToolGridPhaseCentre {
     Direction(MDirection),
 }
 
-/// Determine the observatory frame used by the legacy grid query.
+/// The persisted tables that supply a spectral query's observation geometry.
+pub struct ToolGridFrameTables<'a> {
+    /// The attached physical MAIN table.
+    pub main: &'a Table,
+    /// The first row in the current tool view, as a physical MAIN row.
+    pub first_row: usize,
+    /// Linked ANTENNA tables in view order.
+    pub antenna: &'a [Table],
+    /// Linked FIELD tables in view order.
+    pub field: &'a [Table],
+    /// Linked OBSERVATION tables in view order.
+    pub observation: &'a [Table],
+}
+
+/// Construct the frame for a fixed or explicitly supplied phase centre.
 ///
-/// In the absence of an explicit epoch, use the earliest working row
-/// matching the spectral window and field IDs. Casa's fallback is the
-/// first working row when that cross-selection has no matches.
+/// Returns `None` when a FIELD polynomial, ephemeris, or measure offset
+/// needs the general spectral frame evaluator.
+///
+/// # Errors
+///
+/// The field or observatory tables cannot be read or contain invalid rows.
+pub fn tool_grid_frame_at_epoch(
+    tables: ToolGridFrameTables<'_>,
+    epoch: &MEpoch,
+    phase: &ToolGridPhaseCentre,
+) -> Result<Option<MeasFrame>, MsTransformError> {
+    let direction = match phase {
+        ToolGridPhaseCentre::Direction(direction) => direction.clone(),
+        ToolGridPhaseCentre::Field(id) => {
+            let (table, row) =
+                linked_subtable_row(tables.field, *id, SubtableId::Field).map_err(ms_error)?;
+            let field = MsField::new(table);
+            if field.num_poly(row).map_err(ms_error)? > 0
+                || field
+                    .ephemeris_id(row)
+                    .map_err(ms_error)?
+                    .is_some_and(|id| id >= 0)
+            {
+                return Ok(None);
+            }
+            let phase = field
+                .metadata_direction_at_seconds(row, FieldDirectionColumn::Phase, 0.0)
+                .map_err(ms_error)?;
+            if phase.offset.is_some() {
+                return Ok(None);
+            }
+            phase.direction
+        }
+    };
+    let telescope = if tables.observation.iter().any(|table| table.row_count() > 0) {
+        let id = get_i32(tables.main, tables.first_row, "OBSERVATION_ID").map_err(ms_error)?;
+        let (observation, row) =
+            linked_subtable_row(tables.observation, id as usize, SubtableId::Observation)
+                .map_err(ms_error)?;
+        Some(get_string(observation, row, "TELESCOPE_NAME").map_err(ms_error)?)
+    } else {
+        None
+    };
+    let (antenna, row) =
+        linked_subtable_row(tables.antenna, 0, SubtableId::Antenna).map_err(ms_error)?;
+    let [x, y, z] = MsAntenna::new(antenna).position(row).map_err(ms_error)?;
+    let fallback = MPosition::new_itrf(x, y, z);
+    let measures = crate::open_measures_runtime().map_err(ms_error)?;
+    let position =
+        MPosition::casa_array_reference(telescope.as_deref(), Some(&fallback), measures.as_ref());
+    Ok(Some(
+        MeasFrame::new()
+            .with_epoch(epoch.clone())
+            .with_direction(direction)
+            .with_position(position)
+            .with_measures(measures),
+    ))
+}
+
+/// Evaluate the observatory frame for a FIELD with time-dependent measure metadata.
 ///
 /// # Errors
 ///
 /// Malformed row metadata or missing position, epoch, or phase data.
 pub fn tool_spectral_grid_frame(
     input: &MeasurementSet,
-    working_rows: Option<&[usize]>,
-    (spws, fields): (&[i32], &[i32]),
-    epoch: Option<MEpoch>,
+    epoch: &MEpoch,
     phase: &ToolGridPhaseCentre,
     source_frame: bool,
 ) -> Result<MeasFrame, MsTransformError> {
     let measures = crate::open_measures_runtime().map_err(ms_error)?;
     let engine = MsCalEngine::with_measures(input, Arc::clone(&measures)).map_err(ms_error)?;
-    let seconds = if let Some(epoch) = epoch {
-        epoch
-            .convert_to(
-                engine.time_reference(),
-                &MeasFrame::default().with_measures(measures),
-            )
-            .map_err(ms_error)?
-            .value()
-            .as_mjd()
-            * 86_400.0
-    } else {
-        earliest_epoch(input, working_rows, spws, fields)?
-    };
+    let seconds = epoch
+        .convert_to(
+            engine.time_reference(),
+            &MeasFrame::default().with_measures(measures),
+        )
+        .map_err(ms_error)?
+        .value()
+        .as_mjd()
+        * 86_400.0;
     match phase {
         ToolGridPhaseCentre::Field(field) => {
             let mut frame = engine
@@ -88,13 +160,21 @@ pub fn tool_spectral_grid_frame(
     }
 }
 
-fn earliest_epoch(
-    input: &MeasurementSet,
+/// Return the earliest working epoch for the requested fields and windows.
+///
+/// When that cross-selection contains no rows, use the first working row.
+/// The result retains the epoch scale stored in MAIN.
+///
+/// # Errors
+///
+/// The working view has no rows or its required scalar columns cannot be read.
+pub fn tool_grid_reference_epoch(
+    table: &Table,
     working_rows: Option<&[usize]>,
+    description_tables: &[Table],
     spws: &[i32],
     fields: &[i32],
-) -> Result<f64, MsTransformError> {
-    let table = input.main_table();
+) -> Result<MEpoch, MsTransformError> {
     let all_rows;
     let rows = if let Some(rows) = working_rows {
         rows
@@ -102,49 +182,56 @@ fn earliest_epoch(
         all_rows = (0..table.row_count()).collect::<Vec<_>>();
         &all_rows
     };
-    let descriptions = input.data_description().map_err(ms_error)?;
     let mut selected_descriptions = BTreeSet::new();
-    for id in 0..descriptions.row_count() {
-        let spw = descriptions.spectral_window_id(id).map_err(ms_error)?;
-        if spws.contains(&spw) {
-            selected_descriptions.insert(id as i32);
-        }
-    }
-    let read = |name| {
-        table
-            .column_accessor(name)
-            .and_then(|column| column.scalar_cells_owned_for_rows(rows))
-            .map_err(ms_error)
-    };
-    let times = read("TIME")?;
-    let ddids = read("DATA_DESC_ID")?;
-    let field_ids = if fields.is_empty() {
-        None
-    } else {
-        Some(read("FIELD_ID")?)
-    };
-    let mut earliest = f64::INFINITY;
-    for (slot, &row) in rows.iter().enumerate() {
-        let time = scalar_f64(times[slot].as_ref(), "TIME", row)?;
-        if !time.is_finite() || time >= earliest {
-            continue;
-        }
-        let ddid = scalar_i32(ddids[slot].as_ref(), "DATA_DESC_ID", row)?;
-        if selected_descriptions.contains(&ddid)
-            && match &field_ids {
-                None => true,
-                Some(ids) => fields.contains(&scalar_i32(ids[slot].as_ref(), "FIELD_ID", row)?),
+    let mut ddid = 0;
+    for table in description_tables {
+        let descriptions = MsDataDescription::new(table);
+        for row in 0..descriptions.row_count() {
+            let spw = descriptions.spectral_window_id(row).map_err(ms_error)?;
+            if spws.contains(&spw) {
+                selected_descriptions.insert(ddid);
             }
-        {
-            earliest = time;
+            ddid += 1;
         }
     }
-    if earliest.is_finite() {
-        Ok(earliest)
-    } else {
-        crate::subtables::get_f64(table, rows.first().copied().unwrap_or(0), "TIME")
-            .map_err(ms_error)
-    }
+    let mut times = Vec::new();
+    let mut descriptions = Vec::new();
+    let mut field_ids = Vec::new();
+    let mut columns = [
+        RequiredScalarColumnDestination::new(
+            "TIME",
+            RequiredScalarColumnValuesMut::Float64(&mut times),
+        ),
+        RequiredScalarColumnDestination::new(
+            "DATA_DESC_ID",
+            RequiredScalarColumnValuesMut::Int32(&mut descriptions),
+        ),
+        RequiredScalarColumnDestination::new(
+            "FIELD_ID",
+            RequiredScalarColumnValuesMut::Int32(&mut field_ids),
+        ),
+    ];
+    let count = if fields.is_empty() { 2 } else { 3 };
+    table
+        .required_scalar_columns_for_rows_into(rows, &mut columns[..count])
+        .map_err(ms_error)?;
+    let first = *times
+        .first()
+        .ok_or_else(|| ms_error("No working MAIN rows"))?;
+    let seconds = times
+        .iter()
+        .zip(descriptions)
+        .enumerate()
+        .filter_map(|(slot, (&time, description))| {
+            (time.is_finite()
+                && selected_descriptions.contains(&description)
+                && (fields.is_empty() || fields.contains(&field_ids[slot])))
+            .then_some(time)
+        })
+        .min_by(f64::total_cmp)
+        .unwrap_or(first);
+    let reference = detect_epoch_reference(table, "TIME", EpochRef::UTC);
+    Ok(MEpoch::from_mjd_seconds(seconds, reference))
 }
 
 /// Calculate the frequency centres for an MS tool spectral grid without writing a table.

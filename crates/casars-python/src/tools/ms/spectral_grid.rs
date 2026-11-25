@@ -4,8 +4,9 @@ use casa_ms::SubtableId;
 use casa_ms::selection::MsSelectionIoBudget;
 use casa_ms::subtables::{MsSpectralWindow, linked_subtable_row};
 use casa_ms::transform::{
-    MsRegridOptions, MsTransformError, ToolGridPhaseCentre, ToolSpectralWindow,
-    tool_channel_frequencies, tool_spectral_grid_frame,
+    MsRegridOptions, MsTransformError, ToolGridFrameTables, ToolGridPhaseCentre,
+    ToolSpectralWindow, tool_channel_frequencies, tool_grid_frame_at_epoch,
+    tool_grid_reference_epoch, tool_spectral_grid_frame,
 };
 use casa_types::measures::epoch::{EpochRef, MEpoch};
 use casa_types::quanta::Quantity;
@@ -123,17 +124,49 @@ impl PyMsTool {
                 .map_err(runtime_error)?
                 .available_bytes;
             let centres = tool_channel_frequencies(windows, &options, budget, || {
-                let (source, selected) = link.source_and_rows().map_err(|error| {
-                    MsTransformError::OpenMeasurementSet {
-                        path: ms.path.display().to_string(),
-                        source: error,
-                    }
-                })?;
+                let source_error = |error| MsTransformError::OpenMeasurementSet {
+                    path: ms.path.display().to_string(),
+                    source: error,
+                };
+                let selected = link.selected_rows().map_err(source_error)?;
+                let geometry_ids = [
+                    SubtableId::Observation,
+                    SubtableId::Antenna,
+                    SubtableId::DataDescription,
+                ];
+                let count = if epoch.is_some() { 2 } else { 3 };
+                let geometry = ms
+                    .subtables
+                    .read_range(&ms.main, &geometry_ids[..count])
+                    .map_err(source_error)?;
+                let epoch = match epoch {
+                    Some(epoch) => epoch,
+                    None => tool_grid_reference_epoch(
+                        &ms.main,
+                        selected.as_deref(),
+                        &geometry[&SubtableId::DataDescription],
+                        &spwids,
+                        &fieldids,
+                    )?,
+                };
+                let tables = ToolGridFrameTables {
+                    main: &ms.main,
+                    first_row: selected
+                        .as_deref()
+                        .and_then(|rows| rows.first())
+                        .copied()
+                        .unwrap_or(0),
+                    antenna: &geometry[&SubtableId::Antenna],
+                    field: &tables[&SubtableId::Field],
+                    observation: &geometry[&SubtableId::Observation],
+                };
+                if let Some(frame) = tool_grid_frame_at_epoch(tables, &epoch, &phase)? {
+                    return Ok(frame);
+                }
+                let (source, _) = link.source_and_rows().map_err(source_error)?;
                 tool_spectral_grid_frame(
                     &source.ms,
-                    selected.as_deref(),
-                    (&spwids, &fieldids),
-                    epoch,
+                    &epoch,
                     &phase,
                     options.outframe.eq_ignore_ascii_case("SOURCE"),
                 )

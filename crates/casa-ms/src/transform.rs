@@ -81,7 +81,8 @@ use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 pub use input_view::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use main_arrays::MainArrayBlock;
 pub use regrid::{
-    ToolGridPhaseCentre, ToolSpectralWindow, tool_channel_frequencies, tool_spectral_grid_frame,
+    ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow, tool_channel_frequencies,
+    tool_grid_frame_at_epoch, tool_grid_reference_epoch, tool_spectral_grid_frame,
 };
 pub(crate) use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;
