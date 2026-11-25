@@ -83,9 +83,9 @@
       "status": "Partial"
     },
     "plotindex": {
-      "scope": "Index to address a subplot (0-based)",
+      "scope": "Use index 0 for a static plot. The public task preserves CASA’s invalid negative index and nonzero index with clearplots=True diagnostics.",
       "evidence": [
-        "remaining"
+        "ms-static-display-and-refusals"
       ],
       "behaviors": [
         "pages"
@@ -377,14 +377,15 @@
       "status": "Partial"
     },
     "selectdata": {
-      "scope": "Enable data selection parameters",
+      "scope": "Enable selection expressions. With selectdata=False, ignore the populated selectors and use the full MeasurementSet. The pinned CASA wrapper instead raises its documented argument error.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-display-and-refusals"
       ],
       "behaviors": [
         "selection"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "field": {
       "scope": "Field names or ids (blank for all)",
@@ -559,7 +560,8 @@
       "evidence": [
         "paired",
         "ms-effective-float-averages",
-        "ms-combined-spw-baseline-antenna-ids"
+        "ms-combined-spw-baseline-antenna-ids",
+        "ms-static-display-and-refusals"
       ],
       "behaviors": [
         "averaging"
@@ -940,7 +942,7 @@
     "extendflag": {
       "scope": "Extend flagging to other data points not plotted",
       "evidence": [
-        "remaining"
+        "ms-static-display-and-refusals"
       ],
       "behaviors": [
         "advanced"
@@ -949,7 +951,7 @@
     "extcorr": {
       "scope": "Extend flags based on correlation",
       "evidence": [
-        "remaining"
+        "ms-static-display-and-refusals"
       ],
       "behaviors": [
         "advanced"
@@ -958,7 +960,7 @@
     "extchannel": {
       "scope": "Extend flags based on channel",
       "evidence": [
-        "remaining"
+        "ms-static-display-and-refusals"
       ],
       "behaviors": [
         "advanced"
@@ -1531,19 +1533,20 @@
       "status": "Implemented"
     },
     "showgui": {
-      "scope": "Show GUI",
+      "scope": "Show one Matplotlib figure when requested. Static exports run without DISPLAY and showgui=False leaves no displayed figure.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-display-and-refusals"
       ],
       "behaviors": [
         "export"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "clearplots": {
-      "scope": "Remove any existing plots so new ones can replace them.",
+      "scope": "Keep clearplots=True for each one-shot static figure.",
       "evidence": [
-        "remaining"
+        "ms-static-display-and-refusals"
       ],
       "behaviors": [
         "pages"
@@ -1642,7 +1645,8 @@
         "ms-ordinary-visibility",
         "legacy-calibration",
         "ms-feed-selection",
-        "ms-row-axes"
+        "ms-row-axes",
+        "ms-static-display-and-refusals"
       ],
       "gap": "Remaining MeasurementSet selection paths are open under #1032 and #215."
     },
@@ -1709,7 +1713,8 @@
       "evidence": [
         "paired",
         "ms-static-grid-placement",
-        "ms-iterated-grid-start"
+        "ms-iterated-grid-start",
+        "ms-static-display-and-refusals"
       ],
       "gap": "Other offset iteration combinations, calibration-table placement, persistent pages and additional presentation modes remain open."
     },
@@ -1742,7 +1747,8 @@
         "callibrary",
         "legacy-calibration",
         "ms-raw-flag-symbols",
-        "ms-static-export-formats"
+        "ms-static-export-formats",
+        "ms-static-display-and-refusals"
       ],
       "gap": "More export, multi-plot state and interactive display forms remain open."
     },
@@ -1758,7 +1764,8 @@
         "remaining",
         "callibrary",
         "ms-reporting-frequency-and-wavelengths",
-        "ms-phasecenter-compositions"
+        "ms-phasecenter-compositions",
+        "ms-static-display-and-refusals"
       ],
       "gap": "Remaining shared PlotMS forms are tracked in #1032 and #215."
     }
@@ -3468,6 +3475,21 @@
         "https://github.com/bglenden/casa-rs/pull/2319",
         "https://github.com/bglenden/casa-rs/pull/2268",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/PlotMSIndexer.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362"
+      ]
+    },
+    "ms-static-display-and-refusals": {
+      "kind": "Static MeasurementSet display and default-only control qualification",
+      "state": "passed",
+      "scope": "Public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on the fixed Columns MS. One selected export and one mocked Matplotlib display. Five default-only controls, both invalid index diagnostics, no DISPLAY, disabled selection and disabled averaging.",
+      "result": "Verify all five issue-linked native refusals without creating output and match the pinned class and message for both invalid indices. Headless native export matches the selected CASA 12 coordinates. One mocked Figure.show receives the selected data. Disabled selection matches the 1800 unfiltered CASA samples and accepts the documented CASA argument-error divergence. Disabled averaging retains all 12 selected samples in both providers with incompatible averaging knobs populated. Visibility data and flags stay unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "90540c4b3dd39805d1c629345fe41f495030e937",
+      "source_revision": "90540c4b3dd39805d1c629345fe41f495030e937",
+      "command": "casa-python tools/casa-compat/plotms_ms_static_controls_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-static-controls-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/issues/1032",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/casaplotms/private/task_plotms.py?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362"
       ]
     }
   }
