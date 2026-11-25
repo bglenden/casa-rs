@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Scan and field colors for final per-antenna time averages.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::{MsColorAxis, MsScatterPlotMsAverageIds, MsScatterSeries};
+use super::{MsColorAxis, MsPlotSpec, MsScatterPlotMsAverageIds, MsScatterSeries};
 use crate::subtables::field::MsField;
 
 // PMS::COLORS_LIST, shared by the plotted points and legend bins.
@@ -12,70 +12,88 @@ const COLORS: [&str; 10] = [
     "#0066f0", "#a868d8",
 ];
 
-pub(super) fn group(axis: MsColorAxis, id: i32, field: &MsField<'_>) -> (String, String) {
-    match axis {
-        MsColorAxis::Scan => (format!("scan-{id}"), format!("Scan {id}")),
-        MsColorAxis::Field => {
-            let name = usize::try_from(id)
-                .ok()
-                .and_then(|row| field.name(row).ok())
-                .filter(|name| !name.is_empty());
-            let label = match name {
-                Some(name) => format!("Field {id}: {name}"),
-                None => format!("Field {id}"),
-            };
-            (format!("field-{id}"), label)
-        }
-        _ => unreachable!("antenna averages use scan or field colors"),
+pub(super) fn axis(spec: &MsPlotSpec) -> Option<MsColorAxis> {
+    (spec.averaging.avgantenna
+        && spec.averaging.avgtime.is_some()
+        && !spec.averaging.scalar
+        && (spec.averaging.avgscan || spec.averaging.avgfield)
+        && matches!(spec.color_by, MsColorAxis::Scan | MsColorAxis::Field))
+    .then_some(spec.color_by)
+}
+
+pub(super) fn category(axis: MsColorAxis, &(scan, field, _): &(i32, i32, i32)) -> i32 {
+    if axis == MsColorAxis::Scan {
+        scan
+    } else {
+        field
     }
 }
 
-pub(super) fn palette(series: &[MsScatterSeries]) -> BTreeMap<&str, &'static str> {
-    let mut colors = series
-        .iter()
-        .filter_map(|item| {
-            if !matches!(
-                item.plotms_averaged_ids,
-                Some(MsScatterPlotMsAverageIds::ScanFieldAndAntenna(_))
-            ) {
-                return None;
-            }
-            let group = item.color_group.as_str();
-            let id = group
-                .strip_prefix("scan-")
-                .or_else(|| group.strip_prefix("field-"))?
-                .parse::<i32>()
-                .ok()?;
-            // PlotMS uses the unsigned palette size in this modulo, including for Scan -1.
-            Some((group, COLORS[id as usize % COLORS.len()]))
+fn key(axis: MsColorAxis, id: i32) -> String {
+    format!("{}-{id}", axis.as_str())
+}
+
+fn category_ids(axis: MsColorAxis, rows: &[(i32, i32, i32)]) -> Vec<i32> {
+    let mut seen = BTreeSet::new();
+    rows.iter()
+        .map(|row| category(axis, row))
+        .filter(|&id| seen.insert(id))
+        .collect()
+}
+
+pub(super) fn groups(
+    axis: MsColorAxis,
+    rows: &[(i32, i32, i32)],
+    field: &MsField<'_>,
+) -> Vec<(i32, String, String)> {
+    let ids = category_ids(axis, rows);
+    let Some(maximum) = ids.iter().max() else {
+        return Vec::new();
+    };
+    let width = maximum.to_string().len() + 1;
+    ids.into_iter()
+        .map(|id| {
+            let label = if axis == MsColorAxis::Scan {
+                format!("Scan{id:>width$}")
+            } else {
+                let name = usize::try_from(id)
+                    .ok()
+                    .and_then(|row| field.name(row).ok())
+                    .unwrap_or_default();
+                format!("Field{id:>width$}: {name}")
+            };
+            (id, key(axis, id), label)
         })
-        .collect::<BTreeMap<_, _>>();
-    if colors.len() > 1
-        && colors
-            .values()
-            .all(|color| color == colors.values().next().unwrap())
-    {
-        // If every numeric ID would have the same color, use the order of the
-        // final averaged rows, which is also the cache order used by PlotMS.
-        let mut first = BTreeMap::new();
-        for item in series {
-            let group = item.color_group.as_str();
-            if colors.contains_key(group)
-                && let Some(order) = item
-                    .plotms_metadata
-                    .iter()
-                    .filter_map(|point| point.averaging_group)
-                    .min()
-            {
-                let first_row = first.entry(group).or_insert(order);
-                *first_row = (*first_row).min(order);
-            }
-        }
-        let mut ordered = first.into_iter().collect::<Vec<_>>();
-        ordered.sort_unstable_by_key(|&(_, first_row)| first_row);
-        for (index, (group, _)) in ordered.into_iter().enumerate() {
-            colors.insert(group, COLORS[index % COLORS.len()]);
-        }
-    }
-    colors
+        .collect()
+}
+
+pub(super) fn palette(
+    axis: MsColorAxis,
+    series: &[MsScatterSeries],
+) -> BTreeMap<String, &'static str> {
+    let Some(rows) = series
+        .iter()
+        .find_map(|item| match &item.plotms_averaged_ids {
+            Some(MsScatterPlotMsAverageIds::ScanFieldAndAntenna(rows)) => Some(rows),
+            _ => None,
+        })
+    else {
+        return BTreeMap::new();
+    };
+    let ids = category_ids(axis, rows);
+    // PlotMS uses the unsigned palette size in this modulo, including for Scan -1.
+    let bin = |id: i32| id as usize % COLORS.len();
+    // Equal numeric bins across every category switch to cache encounter order.
+    let use_order = ids.len() > 1 && ids.iter().all(|&id| bin(id) == bin(ids[0]));
+    ids.into_iter()
+        .enumerate()
+        .map(|(index, id)| {
+            let index = if use_order {
+                index % COLORS.len()
+            } else {
+                bin(id)
+            };
+            (key(axis, id), COLORS[index])
+        })
+        .collect()
 }
