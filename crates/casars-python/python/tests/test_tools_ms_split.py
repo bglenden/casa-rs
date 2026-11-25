@@ -138,6 +138,25 @@ def test_split_selects_correlation_axis(native_dataset, tmp_path, concat_api):
         np.testing.assert_array_equal(table.getcell("CORR_TYPE", 0), [5])
         assert table.close()
 
+def test_split_keeps_missing_state_ids_when_the_state_table_is_empty(native_dataset, tmp_path):
+    change_table(native_dataset / "STATE", lambda table: table.removerows(list(range(table.nrows()))))
+    assert counts(tools, native_dataset, ("STATE",)) == [0]
+    change_table(native_dataset, lambda table: table.putcol(
+        "STATE_ID", np.full(table.nrows(), -1, dtype=np.int32),
+    ))
+    output = tmp_path / "split.ms"
+    ms = tools.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.split(str(output), step=[2])
+    assert ms.close()
+    for reader in (tools, pinned_casa()):
+        assert counts(reader, output, ("STATE",)) == [0]
+        table = reader.table()
+        assert table.open(str(output))
+        np.testing.assert_array_equal(table.getcol("STATE_ID"), -1)
+        assert table.close()
+
+
 def test_split_time_uses_flags_on_the_selected_correlation(native_dataset, tmp_path, concat_api):
     epochs = []
 

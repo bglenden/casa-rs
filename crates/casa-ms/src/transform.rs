@@ -8,6 +8,7 @@
 //! preserving the standard subtables and updating spectral-window channel
 //! metadata.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -2141,6 +2142,18 @@ fn mstransform_staged(
                 touched_spws.insert(spw_id);
                 continue;
             }
+            // TimeProjection already put the legacy weights on this grid.
+            let projected_legacy_weight = legacy
+                && averaging_time
+                && spectra.fill_standard
+                && spectra_cells.weight.is_some_and(|weight| {
+                    weight.shape() == flags.shape()
+                        && weight.shape().get(1) == Some(&bins.len())
+                        && bins
+                            .iter()
+                            .enumerate()
+                            .all(|(i, bin)| bin.as_slice() == [i])
+                });
             let (mut weight, mut sigma, task_spectra) = if let Some(SpectralOperation {
                 kernel: SpectrumOperator::Convolution(kernel),
                 ..
@@ -2178,7 +2191,7 @@ fn mstransform_staged(
                         .fill_standard
                         .then_some((averages.weight_spectrum, averages.sigma_spectrum)),
                 )
-            } else if spectra.fill_standard {
+            } else if spectra.fill_standard && !projected_legacy_weight {
                 let values = unaveraged_spectra(
                     &weight,
                     &sigma,
@@ -2244,6 +2257,9 @@ fn mstransform_staged(
                 let transformed = match name {
                     "WEIGHT_SPECTRUM" if legacy_weight_spectrum.is_some() => {
                         legacy_weight_spectrum.take().flatten()
+                    }
+                    "WEIGHT_SPECTRUM" if projected_legacy_weight => {
+                        source_spectrum(name).and_then(|index| row_spectra[index].take())
                     }
                     "WEIGHT_SPECTRUM"
                         if grammar == RowGrammar::Transform && (!legacy || averaging_time) =>
@@ -3305,11 +3321,7 @@ fn push_complex32_array_row(
             reason: format!("{column} row {row} is not rank-2"),
         });
     }
-    let values = (0..array.shape()[1])
-        .flat_map(|channel| {
-            (0..array.shape()[0]).map(move |correlation| array[[correlation, channel]])
-        })
-        .collect::<Vec<_>>();
+    let values = array_in_storage_order(array);
     session
         .push_complex32_row(column, array.shape(), &values)
         .map_err(|error| MsTransformError::WriteMeasurementSet {
@@ -3331,7 +3343,7 @@ fn push_bool_array_row(
             reason: format!("{column} row {row} is not Bool"),
         });
     };
-    let values = array.t().iter().copied().collect::<Vec<_>>();
+    let values = array_in_storage_order(array);
     session
         .push_bool_row(column, array.shape(), &values)
         .map_err(|error| MsTransformError::WriteMeasurementSet {
@@ -3353,7 +3365,7 @@ fn push_f64_array_row(
             reason: format!("{column} row {row} is not Float64"),
         });
     };
-    let values = array.t().iter().copied().collect::<Vec<_>>();
+    let values = array_in_storage_order(array);
     session
         .push_f64_row(column, array.shape(), &values)
         .map_err(|error| MsTransformError::WriteMeasurementSet {
@@ -3375,24 +3387,28 @@ fn push_f32_array_row(
             reason: format!("{column} row {row} is not Float32"),
         });
     };
-    let values = match array.ndim() {
-        1 => array.iter().copied().collect::<Vec<_>>(),
-        2 => (0..array.shape()[1])
-            .flat_map(|axis1| (0..array.shape()[0]).map(move |axis0| array[[axis0, axis1]]))
-            .collect::<Vec<_>>(),
-        rank => {
-            return Err(MsTransformError::WriteMeasurementSet {
-                path: output_path.display().to_string(),
-                reason: format!("{column} row {row} has unsupported rank {rank}"),
-            });
-        }
-    };
+    let rank = array.ndim();
+    if !matches!(rank, 1 | 2) {
+        return Err(MsTransformError::WriteMeasurementSet {
+            path: output_path.display().to_string(),
+            reason: format!("{column} row {row} has unsupported rank {rank}"),
+        });
+    }
+    let values = array_in_storage_order(array);
     session
         .push_f32_row(column, array.shape(), &values)
         .map_err(|error| MsTransformError::WriteMeasurementSet {
             path: output_path.display().to_string(),
             reason: error.to_string(),
         })
+}
+
+fn array_in_storage_order<T: Copy>(array: &ArrayD<T>) -> Cow<'_, [T]> {
+    let storage_order = array.t();
+    match storage_order.to_slice() {
+        Some(values) => Cow::Borrowed(values),
+        None => Cow::Owned(storage_order.iter().copied().collect()),
+    }
 }
 
 fn materialize_empty_main_table(

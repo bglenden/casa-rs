@@ -12157,3 +12157,10 @@ exception. A negative width also leaves a partial output before CASA raises
 `RuntimeError`. Casa-rs raises the corresponding error and preserves the
 destination. Scalar integers, numeric lists, and NumPy arrays still work
 (#1030).
+
+## Channel split can write dangling STATE_ID references
+
+The CASA 6.7.6.14 `ms.split(field=[0], step=[5])` path maps the only
+input `STATE_ID` of `-1` to output row zero, even when the STATE subtable
+is empty. Casa-rs retains `-1`, the missing-state marker. The output
+STATE table remains empty (#1030).
