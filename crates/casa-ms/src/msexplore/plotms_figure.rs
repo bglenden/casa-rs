@@ -58,6 +58,8 @@ pub(super) fn prepare(
         && second.is_none()
         && grid.iteraxis == MsIterationAxis::Scan
         && ([x, y] == [MsAxis::Time, MsAxis::Row]
+            || x.is_pointing()
+            || y.is_pointing()
             || plotms_row_axes::metadata_coordinate_pair(x, y).is_some())
     {
         label_iteration_panels(task, &mut document, grid)?;

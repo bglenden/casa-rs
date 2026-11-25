@@ -26,6 +26,11 @@ from plotms_ms_columns_oracle import (
     request,
     rows,
 )
+from plotms_pointing_controls_oracle import (
+    compare_pointing_averaging,
+    compare_pointing_lists,
+    compare_pointing_partners,
+)
 from record_casa_returns import make_cal_ms
 
 SPEED_OF_LIGHT = 299_792_458.0
@@ -1440,7 +1445,8 @@ def main():
                                            "averaged-coordinates", "array-horizontal-axes",
                                            "antenna-horizontal-axes", "antenna-horizontal-same-epoch",
                                            "ephemeris-axes", "static-metadata-coordinates",
-                                           "metadata-flag-symbols", "pointing", "pointing-lists"))
+                                           "metadata-flag-symbols", "pointing", "pointing-lists",
+                                           "pointing-partners", "pointing-averaging"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1456,11 +1462,14 @@ def main():
             compare(root, native)
         if args.only in (None, "pointing"):
             compare_pointing_axes(root, native)
-        if args.only in (None, "pointing-lists"):
-            from plotms_pointing_controls_oracle import compare_pointing_lists
-
-            work = root / "pointing-lists"
-            compare_pointing_lists(work, native, make_pointing_fixture(work))
+        for name, compare_pointing in (
+            ("pointing-lists", compare_pointing_lists),
+            ("pointing-partners", compare_pointing_partners),
+            ("pointing-averaging", compare_pointing_averaging),
+        ):
+            if args.only in (None, name):
+                work = root / name
+                compare_pointing(work, native, make_pointing_fixture(work))
         if args.only in (None, "averaged-coordinates"):
             compare_averaged_coordinates(root, native)
         if args.only in (None, "array-horizontal-axes"):
