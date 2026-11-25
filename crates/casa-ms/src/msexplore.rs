@@ -4262,6 +4262,7 @@ fn build_generic_visibility_scatter(
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
     let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
+    let paged_iteration = iterated_ordinate_list || plotms_row_axes::uses_scan_row_iteration(spec);
     let calibrated_ordinate_list = calibration
         .is_some_and(|input| input.rows.is_some() && input.secondary_y_data_column.is_some());
     let order_ordinate_list = iterated_ordinate_list || calibrated_ordinate_list;
@@ -4332,8 +4333,8 @@ fn build_generic_visibility_scatter(
     let requested_freqframe = parse_frequency_frame(spec.transforms.freqframe.as_deref())?;
     let field = ms.field().map_err(|error| error.to_string())?;
     let spectral_window = ms.spectral_window().map_err(|error| error.to_string())?;
-    if uses_row_numbers && (spectral_window.row_count() > 1 || requested_freqframe.is_some()) {
-        return Err("PlotMS Row coordinates for multiple spectral windows or a reporting frame are pending (#1032)".into());
+    if uses_row_numbers && requested_freqframe.is_some() {
+        return Err("PlotMS Row coordinates with a reporting frame are pending (#1032)".into());
     }
     let polarization = ms.polarization().map_err(|error| error.to_string())?;
     let data_description = ms.data_description().map_err(|error| error.to_string())?;
@@ -4447,7 +4448,12 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
+    let mixed_row_geometry = plotms_row_axes::uses_mixed_row_geometry(spec);
+    let mean_antenna_position = mixed_row_geometry
+        .then(|| plotms_row_axes::mean_antenna_position(ms))
+        .transpose()?;
     let geometry_dedup_required = !use_ordinate_masks
+        && !mixed_row_geometry
         && (spec.x_axis.uses_derived_geometry()
             || spec
                 .y_axes
@@ -4799,6 +4805,18 @@ fn build_generic_visibility_scatter(
             uvw: row_uvw_value,
             observatory_geometry: use_ordinate_masks,
         };
+        let mixed_elevation = mean_antenna_position
+            .as_ref()
+            .map(|position| {
+                let engine = derived_engine.as_ref().expect("mixed Row elevation engine");
+                let field = usize::try_from(field_id_value)
+                    .map_err(|_| format!("invalid FIELD_ID {field_id_value} for elevation axis"))?;
+                engine
+                    .azel_at_position(row_time_value, field, position.clone())
+                    .map(|(_, elevation)| elevation.to_degrees())
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()?;
         let spectral_context = resolve_spectral_context(
             spec,
             spw_id,
@@ -4942,6 +4960,11 @@ fn build_generic_visibility_scatter(
                 }
                 let axis_started = timing_enabled.then(Instant::now);
                 let axis_value = |axis_slot, axis| {
+                    if axis == MsAxis::Elevation
+                        && let Some(elevation) = mixed_elevation
+                    {
+                        return Ok(Some(elevation));
+                    }
                     if let Some(values) = pointing_values
                         && let Some(value) = values[axis_slot]
                     {
@@ -5167,7 +5190,7 @@ fn build_generic_visibility_scatter(
             visibility_columns.column(1).unwrap_or(spec.data_column),
         )
     });
-    if iterated_ordinate_list {
+    if paged_iteration {
         panel_order.sort_by_key(|key| panels[key].iteration_rank);
     }
     let mut panels = panel_order
@@ -5222,7 +5245,7 @@ fn build_generic_visibility_scatter(
         );
     }
     if let Some(iteraxis) = iteraxis {
-        let (gridrows, gridcols) = if iterated_ordinate_list {
+        let (gridrows, gridcols) = if paged_iteration {
             (spec.layout.gridrows, spec.layout.gridcols)
         } else {
             resolve_iterated_grid(panels.len(), spec.layout.gridrows, spec.layout.gridcols)?
