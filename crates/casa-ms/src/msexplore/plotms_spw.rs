@@ -54,6 +54,13 @@ struct SpectralWindowChannels {
 }
 
 impl SpectralAverageGroups {
+    pub(super) fn output_window(&self, group: usize) -> Option<i32> {
+        self.averages
+            .get(group)?
+            .as_ref()
+            .map(|average| average.spectral_window)
+    }
+
     pub(super) fn observe(
         &mut self,
         group: usize,

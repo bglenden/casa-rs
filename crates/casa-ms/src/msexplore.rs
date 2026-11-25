@@ -30,6 +30,7 @@ pub mod cli;
 mod plotms_atmosphere;
 mod plotms_columns;
 mod plotms_figure;
+mod plotms_iteration;
 mod plotms_model;
 mod plotms_ordinates;
 mod plotms_phasecenter;
@@ -1203,6 +1204,12 @@ pub enum MsIterationAxis {
     SpectralWindow,
     /// Iterate one panel per selected correlation product.
     Correlation,
+    /// Iterate one panel per selected antenna, including either baseline endpoint.
+    Antenna,
+    /// Iterate one panel per selected antenna pair.
+    Baseline,
+    /// Iterate one panel per selected integration epoch.
+    Time,
 }
 
 impl MsIterationAxis {
@@ -1210,12 +1217,19 @@ impl MsIterationAxis {
         matches!(self, Self::Correlation | Self::Scan | Self::Field)
     }
 
+    fn groups_by_row(self) -> bool {
+        matches!(self, Self::Antenna | Self::Baseline | Self::Time)
+    }
+
     /// All currently implemented iteration axes.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 7] = [
         Self::Field,
         Self::Scan,
         Self::SpectralWindow,
         Self::Correlation,
+        Self::Antenna,
+        Self::Baseline,
+        Self::Time,
     ];
 
     /// Stable machine-readable identifier.
@@ -1225,6 +1239,9 @@ impl MsIterationAxis {
             Self::Scan => "scan",
             Self::SpectralWindow => "spw",
             Self::Correlation => "correlation",
+            Self::Antenna => "antenna",
+            Self::Baseline => "baseline",
+            Self::Time => "time",
         }
     }
 
@@ -1235,6 +1252,9 @@ impl MsIterationAxis {
             Self::Scan => "Scan",
             Self::SpectralWindow => "Spectral Window",
             Self::Correlation => "Correlation",
+            Self::Antenna => "Antenna",
+            Self::Baseline => "Baseline",
+            Self::Time => "Time",
         }
     }
 
@@ -1245,6 +1265,9 @@ impl MsIterationAxis {
             "scan" => Ok(Self::Scan),
             "spw" | "spectral_window" | "spectralwindow" => Ok(Self::SpectralWindow),
             "correlation" | "corr" => Ok(Self::Correlation),
+            "antenna" => Ok(Self::Antenna),
+            "baseline" => Ok(Self::Baseline),
+            "time" => Ok(Self::Time),
             other => Err(format!(
                 "unsupported msexplore iteraxis {other:?}; expected one of {}",
                 Self::ALL
@@ -1793,11 +1816,7 @@ impl MsPlotSpec {
         iterated_ordinates: bool,
     ) -> Result<(), String> {
         let iterated = self.iteration.iteraxis.is_some();
-        self.validate_common(
-            independent_ordinates,
-            pointing,
-            iterated && self.y_axes.len() > 1 && iterated_ordinates,
-        )?;
+        self.validate_common(independent_ordinates, pointing, iterated_ordinates)?;
         if self.layout.rowindex != 0 || self.layout.colindex != 0 || self.layout.plotindex != 0 {
             return Err(
                 "msexplore per-plot rowindex/colindex/plotindex placement is reserved for multi-plot page composition".to_string(),
@@ -1844,7 +1863,7 @@ impl MsPlotSpec {
         &self,
         independent_ordinates: bool,
         pointing: bool,
-        plotms_shared_axes: bool,
+        plotms_iteration: bool,
     ) -> Result<(), String> {
         if self.y_axes.is_empty() {
             return Err("msexplore requires at least one y axis per plot".to_string());
@@ -1863,6 +1882,8 @@ impl MsPlotSpec {
         if self.style.symbol_size.is_some_and(|size| size == 0) {
             return Err("msexplore symbolsize must be a positive integer".to_string());
         }
+        let plotms_shared_axes =
+            plotms_iteration && self.iteration.iteraxis.is_some() && self.y_axes.len() > 1;
         if !plotms_shared_axes && self.iteration.xselfscale && self.iteration.xsharedaxis {
             return Err(
                 "msexplore x-axis iteration scaling cannot request both self-scaled and shared axes".to_string(),
@@ -1885,6 +1906,16 @@ impl MsPlotSpec {
         if self.averaging.avgbaseline && self.averaging.avgantenna {
             return Err("msexplore avgbaseline and avgantenna are mutually exclusive".to_string());
         }
+        if self
+            .iteration
+            .iteraxis
+            .is_some_and(MsIterationAxis::groups_by_row)
+            && uses_extended_averaging(self)
+        {
+            return Err(
+                "averaged PlotMS antenna, baseline or time iteration is pending (#1032)".into(),
+            );
+        }
         if self.averaging.avgscan && self.iteration.iteraxis == Some(MsIterationAxis::Scan) {
             return Err(
                 "msexplore cannot iterate by scan while averaging across scans".to_string(),
@@ -1895,7 +1926,9 @@ impl MsPlotSpec {
                 "msexplore cannot iterate by field while averaging across fields".to_string(),
             );
         }
-        if self.averaging.avgspw && self.iteration.iteraxis == Some(MsIterationAxis::SpectralWindow)
+        if self.averaging.avgspw
+            && self.iteration.iteraxis == Some(MsIterationAxis::SpectralWindow)
+            && (!plotms_iteration || self.averaging.avgtime.is_some())
         {
             return Err(
                 "msexplore cannot iterate by spectral window while averaging across spectral windows"
@@ -4351,6 +4384,8 @@ fn build_generic_visibility_scatter(
     let array_horizontal = calibration.is_some_and(|input| input.rows.is_none())
         && spec.y_axes.len() == 1
         && plotms_row_axes::array_horizontal_pair(spec.x_axis, spec.y_axis());
+    let correlation_metadata_panels =
+        array_horizontal && spec.iteration.iteraxis == Some(MsIterationAxis::Correlation);
     let antenna_horizontal = spec
         .y_axes
         .iter()
@@ -4451,10 +4486,10 @@ fn build_generic_visibility_scatter(
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
     let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
+    let row_iteration = spec.iteration.iteraxis.filter(|axis| axis.groups_by_row());
     let paged_iteration = iterated_ordinate_list
-        || plotms_row_axes::uses_scan_row_iteration(spec)
-        || (coordinate_mask.is_some() || pointing.is_some())
-            && spec.iteration.iteraxis == Some(MsIterationAxis::Scan);
+        || calibration.is_some_and(|input| input.rows.is_none())
+            && spec.iteration.iteraxis.is_some();
     let calibrated_ordinate_list = calibration
         .is_some_and(|input| input.rows.is_some() && input.secondary_y_data_column.is_some());
     let order_ordinate_list = iterated_ordinate_list || calibrated_ordinate_list;
@@ -4465,7 +4500,9 @@ fn build_generic_visibility_scatter(
         || coordinate_mask.is_some()
         || pointing.is_some()
         || raw_symbols.is_some()
+        || paged_iteration
         || phase_shift.is_some()
+        || row_iteration.is_some()
         || channel_derived
         || channel_only_visibility
         || order_ordinate_list
@@ -5121,7 +5158,11 @@ fn build_generic_visibility_scatter(
         } else {
             selected_correlations.len()
         };
-        for (corr_index, corr_label) in &selected_correlations[..correlation_visits] {
+        for (correlation_slot, (corr_index, corr_label)) in selected_correlations
+            [..correlation_visits]
+            .iter()
+            .enumerate()
+        {
             let grouping_started = timing_enabled.then(Instant::now);
             let statistics = statistics_kinds.map(|kinds| {
                 plotms_columns::ChannelStatistics::from_bins(
@@ -5315,8 +5356,13 @@ fn build_generic_visibility_scatter(
                                 channel: true,
                                 baseline: !y_axis.uses_derived_geometry(),
                             });
+                        let mask_ordinate = if correlation_metadata_panels {
+                            correlation_slot * spec.y_axes.len() + y_index
+                        } else {
+                            *y_index
+                        };
                         let Some(point) = mask.project_sample(
-                            *y_index,
+                            mask_ordinate,
                             row_slot,
                             bin.ordinal,
                             dimensions,
@@ -5326,7 +5372,11 @@ fn build_generic_visibility_scatter(
                         };
                         (
                             point.row,
-                            selected_correlations[point.correlation].0,
+                            if correlation_metadata_panels {
+                                *corr_index
+                            } else {
+                                selected_correlations[point.correlation].0
+                            },
                             &channel_bins[point.channel],
                         )
                     } else if let Some(visit) = antenna_visit {
@@ -5521,7 +5571,7 @@ fn build_generic_visibility_scatter(
         .filter_map(|panel_key| {
             let panel = panels.remove(&panel_key)?;
             let mut series = panel.series.into_values().collect::<Vec<_>>();
-            if calibration.is_none() {
+            if calibration.is_none() && row_iteration.is_none() {
                 for entry in &mut series {
                     entry
                         .points
@@ -5537,6 +5587,7 @@ fn build_generic_visibility_scatter(
                     || pointing.is_some()
                     || raw_symbols.is_some()
                     || phase_shift.is_some()
+                    || row_iteration.is_some()
                     || channel_derived
                     || channel_only_visibility
                     || order_ordinate_list
@@ -5560,6 +5611,23 @@ fn build_generic_visibility_scatter(
             })
         })
         .collect::<Vec<_>>();
+    if let Some(axis) = row_iteration {
+        let series = panels.pop().map_or_else(Vec::new, |panel| panel.series);
+        panels = plotms_iteration::partition(
+            ms,
+            axis,
+            &row_numbers,
+            [&selected_antenna1, &selected_antenna2],
+            &selected_times,
+            series,
+            point_budget,
+        )?;
+        contributing_points = panels
+            .iter()
+            .flat_map(|panel| &panel.series)
+            .map(|series| series.points.len())
+            .sum();
+    }
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("sort_and_pack_series", &mut checkpoint_started);
         scatter_timing.report(
@@ -6671,6 +6739,13 @@ fn build_generic_visibility_scatter_with_averaging(
             load_spectrum()?
         };
 
+        let panel_spw = if iteraxis == Some(MsIterationAxis::SpectralWindow) {
+            group
+                .and_then(|group| spw_groups.as_ref()?.output_window(group))
+                .unwrap_or(spw_id)
+        } else {
+            spw_id
+        };
         let baseline_tokens = if time_antenna {
             vec![AveragingBaselineToken::Baseline(
                 antenna1_value,
@@ -6762,7 +6837,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         iteraxis,
                         representative_field,
                         &field,
-                        spw_id,
+                        panel_spw,
                         &spectral_window,
                         representative_scan,
                         Some((
@@ -9009,7 +9084,10 @@ fn iteration_group(
     correlation: Option<(&str, i32)>,
 ) -> (String, String, i32) {
     match iteraxis {
-        None => ("all".to_string(), "All data".to_string(), 0),
+        None
+        | Some(MsIterationAxis::Antenna | MsIterationAxis::Baseline | MsIterationAxis::Time) => {
+            ("all".to_string(), "All data".to_string(), 0)
+        }
         Some(MsIterationAxis::Field) => {
             let field_name = if field_id >= 0 && (field_id as usize) < field.row_count() {
                 field

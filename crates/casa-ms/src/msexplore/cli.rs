@@ -276,6 +276,18 @@ fn run_task(
         let visibility_document = calibration.is_some() || atmosphere.is_some();
         let (mut options, visibility_document) =
             plotms_options::options_from_plotms(task, visibility_document)?;
+        if options.avgbaseline && options.iteraxis == Some(MsIterationAxis::Antenna) {
+            // CASA disables antenna iteration when all baselines are combined.
+            options.iteraxis = None;
+        }
+        if options.iteraxis.is_some_and(MsIterationAxis::groups_by_row)
+            && (calibration.is_some() || atmosphere.is_some())
+        {
+            return Err(TaskFailure::validation(
+                "PlotMS antenna, baseline or time iteration with a callibrary or overlays is pending (#1032)",
+            )
+            .at("iteraxis"));
+        }
         let phasecenter = super::plotms_phasecenter::requested(task)?
             .map(|value| {
                 options.plotms_phasecenter(&value, calibration.is_none() && atmosphere.is_none())
@@ -380,10 +392,9 @@ fn run_visibility_plot(
     load_models: Option<PlotMsModelLoader>,
     phasecenter: Option<casa_types::measures::direction::MDirection>,
 ) -> Result<TaskSuccess, TaskFailure> {
-    let offset_scan_grid =
-        calibration.is_none() && atmosphere.is_none() && options.supports_offset_scan_grid();
+    let offset_grid = calibration.is_none() && atmosphere.is_none();
     let static_grid =
-        super::plotms_figure::static_grid(task, options.iteraxis.is_some(), offset_scan_grid)?;
+        super::plotms_figure::static_grid(task, options.iteraxis.is_some(), offset_grid)?;
     if static_grid.is_some() {
         // The scatter computation receives a single plot. The grid places it on the page.
         options.gridrows = 1;

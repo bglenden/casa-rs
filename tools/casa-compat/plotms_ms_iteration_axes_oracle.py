@@ -122,6 +122,46 @@ def compare_case(root, native, name, controls, axis, labels, counts, *, check_cu
                 coords = np.array([point[:2] for point in values], dtype=float)
                 np.testing.assert_allclose(xy, coords, rtol=1.2e-5, atol=1e-7)
     print(f'{name}: {points} paired TXT points, {sum(counts)} points across {len(pages)} PNG pages', flush=True)
+    return sections
+
+
+def compare_disabled_antenna_iteration(root, native, controls):
+    options = controls | STYLE | dict(averagedata=True, avgbaseline=True, iteraxis='antenna',
+                                      gridrows=2, gridcols=2, exprange='all')
+    expected, actual = (root / f'baseline-average.{engine}.txt' for engine in ('casa', 'native'))
+    assert reference(**options, expformat='txt', plotfile=str(expected)) is None
+    assert native(**options, expformat='txt', plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 6
+    assert '# iteraxis:' not in expected.read_text()
+    for name, task in (('casa', reference), ('native', native)):
+        path = root / f'baseline-average.{name}.png'
+        assert task(**(options | PAINT), plotfile=str(path)) is None
+        assert occupied_marker_cells(path, GRID) == {(0, 0)}
+        assert list(root.glob(f'baseline-average.{name}*.png')) == [path]
+    print('baseline average: six paired points and one page with antenna iteration disabled', flush=True)
+    conflict = options | dict(avgantenna=True, expformat='txt')
+    for engine, task in (('casa', reference), ('native', native)):
+        output = root / f'conflicting-averages.{engine}.txt'
+        try:
+            task(**conflict, plotfile=str(output))
+        except ValueError as error:
+            assert 'mutually exclusive' in str(error), error
+        else:
+            raise AssertionError(f'{engine} accepted conflicting antenna and baseline averages')
+        assert not output.exists()
+
+
+def check_invalid_cell(root, native, controls):
+    options = controls | PAINT | dict(iteraxis='scan', rowindex=2, colindex=0)
+    for engine, task in (('casa', reference), ('native', native)):
+        output = root / f'invalid-iteration-cell.{engine}.png'
+        try:
+            task(**options, plotfile=str(output))
+        except ValueError as error:
+            assert 'row/col index out of range' in str(error), error
+        else:
+            raise AssertionError(f'{engine} accepted an out-of-range iteration cell')
+        assert not output.exists()
 
 
 def compare_axes(root, native):
@@ -136,8 +176,9 @@ def compare_axes(root, native):
     compare_case(root, native, 'corr-offset', base | offset | dict(vis=str(reversed_vis), iteraxis='corr',
                  correlation='XX,YY', spw='0:1~3'), 'Corr', ('XX', 'YY'), [24, 36])
     win = make_fixture(root, integrations=2)
-    compare_case(root, native, 'spw', base | dict(vis=str(win), field='', spw='0:1,1:1', iteraxis='spw'),
-                 'Spw', ('0', '1'), [2, 2])
+    spw = base | dict(vis=str(win), field='', spw='0:1,1:1', iteraxis='spw')
+    compare_case(root, native, 'spw', spw, 'Spw', ('0', '1'), [2, 2])
+    compare_case(root, native, 'spw-averaged', spw | dict(averagedata=True, avgspw=True), 'Spw', ('0',), [2])
     triad = base | dict(antenna='A0&A1;A0&A2;A1&A2')
     compare_case(root, native, 'antenna', triad | dict(iteraxis='antenna'),
                  'Antenna', ('A0@P0', 'A1@P1', 'A2@P2'), [12, 12, 12])
@@ -146,6 +187,8 @@ def compare_axes(root, native):
     compare_case(root, native, 'time', base | dict(iteraxis='time', correlation='XX,YY', spw='0:1~3'), 'Time',
                  ('21:52:15.2961', '21:52:25.2961', '21:52:35.2961', '21:52:45.2961', '21:52:55.2961',
                   '21:53:05.2961'), [5] * 6)
+    compare_disabled_antenna_iteration(root, native, triad)
+    check_invalid_cell(root, native, base)
 
 
 def main():
