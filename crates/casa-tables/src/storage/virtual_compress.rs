@@ -425,6 +425,25 @@ impl ComplexCompression {
         Ok((packed, previous))
     }
 
+    /// Pack a visibility cell for a new row. A row-specific codec needs
+    /// initialized scale and offset values even when later writes use them
+    /// unchanged.
+    pub fn encode_new_visibility_cell(
+        &self,
+        values: &ArrayD<Complex32>,
+    ) -> Result<(ArrayD<i32>, (f32, f32)), crate::TableError> {
+        let scale = match &self.scale {
+            ComplexScale::Fixed { scale, offset } => (*scale, *offset),
+            ComplexScale::PerRow {
+                automatic: true, ..
+            } => (0.0, 0.0),
+            ComplexScale::PerRow {
+                automatic: false, ..
+            } => scale_offset(self.range(values.iter())),
+        };
+        self.encode_visibility_cell(values, None, scale, None)
+    }
+
     fn range<'a>(&self, values: impl Iterator<Item = &'a Complex32>) -> Option<(f32, f32)> {
         values
             .filter(|value| value.re.is_finite() && value.im.is_finite())

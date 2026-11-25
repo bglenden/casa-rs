@@ -12048,3 +12048,13 @@ The scan-offset calculation takes the minimum of the empty SCAN_NUMBER
 column. The uncaught casacore ArrayError aborts the process after CASA
 has started reconciling subtables. Casa-rs completes the requested
 metadata reconciliation and appends zero visibility rows (#1030).
+
+## Physical concatenation can zero manually scaled compressed visibilities
+
+In CASA 6.7.6.14, append a MeasurementSet with MODEL_DATA cells filled
+with `3+4j` to a MeasurementSet whose CompressComplex MODEL_DATA uses
+per-row scale and offset columns with autoscaling disabled. CASA reports
+success and reads back `0+0j` in the appended cells because the new row
+scales remain zero. Casa-rs chooses a scale and offset for each new cell,
+writes both physical scalar columns and preserves the configured policy
+for subsequent writes (#1030).

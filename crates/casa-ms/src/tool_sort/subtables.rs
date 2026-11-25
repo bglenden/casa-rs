@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use casa_tables::{Table, TableOptions, TablePartNames, add_directory, strip_directory};
 use casa_types::{RecordValue, ScalarValue, Value};
 
+use crate::ms::subtable_path_from_main;
 use crate::{MsError, MsResult, SubtableId};
 
 pub(crate) fn check_named_output(input: &Table, output: &Path) -> MsResult<()> {
@@ -104,12 +105,13 @@ pub(crate) fn copy_concatenation_links(
         copying: Vec::new(),
         held,
     };
-    let mut keywords = donor.keywords().clone();
+    let mut keywords = standard_link_keywords(donor, donor_path);
     keywords.remove("SORTED_TABLE");
+    let attached_keywords = standard_link_keywords(attached, attached_path);
     overlay_copied_links(
         &mut copies,
         &mut keywords,
-        attached.keywords(),
+        &attached_keywords,
         attached_path,
         donor_path,
         output,
@@ -137,6 +139,22 @@ pub(crate) fn copy_concatenation_links(
         output_table.set_column_keywords(name, keywords);
     }
     Ok(())
+}
+
+fn standard_link_keywords(table: &Table, root: &Path) -> RecordValue {
+    let mut keywords = table.keywords().clone();
+    for &id in SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(SubtableId::ALL_OPTIONAL)
+    {
+        if let Some(path) = subtable_path_from_main(table, root, id) {
+            keywords.upsert(
+                id.name(),
+                Value::TableRef(path.to_string_lossy().into_owned()),
+            );
+        }
+    }
+    keywords
 }
 
 fn anchor_links(keywords: &mut RecordValue, input: &Path) {

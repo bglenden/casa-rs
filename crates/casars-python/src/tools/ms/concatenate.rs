@@ -93,6 +93,11 @@ impl PyMsTool {
             if !ms.writable {
                 return Err(runtime_error("the attached MeasurementSet is not writable"));
             }
+            if physical.is_some() && ms.selected_rows.is_some() {
+                return Err(runtime_error(
+                    "cannot concatenate a selected MeasurementSet view",
+                ));
+            }
             let metadata = ms.working_metadata_link();
             metadata.verify_directory().map_err(runtime_error)?;
             let donor = table_cache_name(Path::new(&msfile)).map_err(runtime_error)?;

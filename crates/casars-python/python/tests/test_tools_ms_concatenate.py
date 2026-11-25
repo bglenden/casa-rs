@@ -294,3 +294,173 @@ def test_named_output_retains_donor_keywords(native_dataset, tmp_path, concat_ap
         assert tab.getkeyword("PROJECT_NOTE") == "incoming"
         assert tab.getcolkeyword("DATA", "PROJECT_NOTE") == "incoming"
         assert tab.close()
+
+
+@pytest.mark.parametrize("named", [True, False])
+def test_empty_destination_copies_fixed_optional_spectrum(native_dataset, tmp_path, concat_api, named):
+    original, donor = copy_inputs(native_dataset, tmp_path)
+    spectrum = np.full((2, 4), 7.0, dtype=np.float32)
+
+    def seed_fixed_spectrum(table):
+        name = "WEIGHT_SPECTRUM"
+        if name in table.colnames():
+            assert table.removecols([name])
+        descriptor = {
+            "valueType": "float",
+            "dataManagerType": "StandardStMan",
+            "dataManagerGroup": "fixed-weight",
+            "option": 4,
+            "ndim": 2,
+            "shape": np.array([2, 4], dtype=np.int32),
+        }
+        assert table.addcols({name: descriptor})
+        for row in range(table.nrows()):
+            assert table.putcell(name, row, spectrum)
+
+    for path in (original, donor):
+        change_table(path, seed_fixed_spectrum)
+    output = tmp_path / "output.ms"
+    if named:
+        attached = original
+    else:
+        attached = output
+        copy_empty_main(original, attached)
+
+    m = concat_api.ms()
+    assert m.open(str(attached), nomodify=False)
+    assert m.concatenate(str(donor), "1Hz", "1mas", destmsfile=str(output) if named else "")
+    assert m.close()
+    for reader in (tools, pinned_casa()):
+        table = reader.table()
+        assert table.open(str(output))
+        np.testing.assert_array_equal(table.getcell("WEIGHT_SPECTRUM", 0), spectrum)
+        assert table.close()
+
+
+@pytest.mark.parametrize("link_representation", ["string", "fallback"])
+def test_named_output_normalizes_legacy_subtable_links(native_dataset, tmp_path, link_representation):
+    first, donor = copy_inputs(native_dataset, tmp_path)
+    for path in (first, donor):
+        def seed(table):
+            assert table.removekeyword("FIELD")
+            if link_representation == "string":
+                assert table.putkeyword("FIELD", "././FIELD")
+        change_table(path, seed)
+
+    m = tools.ms()
+    assert m.open(str(first), nomodify=False)
+    output = tmp_path / "named.ms"
+    assert m.concatenate(str(donor), "1Hz", "1mas", destmsfile=str(output))
+    assert m.close()
+    relocated = tmp_path / "relocated.ms"
+    output.rename(relocated)
+    assert (relocated / "FIELD" / "table.dat").is_file()
+    for reader in (tools, pinned_casa()):
+        probe = reader.ms()
+        assert probe.open(str(relocated))
+        assert probe.range(["fields"])["fields"].tolist() == ["F"]
+        assert probe.close()
+
+
+@pytest.mark.parametrize("codec", ["fixed", "automatic", "manual"])
+def test_existing_compressed_model_data_accepts_new_rows(native_dataset, tmp_path, concat_api, codec):
+    first, donor = copy_inputs(native_dataset, tmp_path)
+    before = np.full((2, 4), 1 + 2j, dtype=np.complex64)
+    incoming = np.full((2, 4), 3 + 4j, dtype=np.complex64)
+    casa = pinned_casa()
+
+    for path in (first, donor):
+        table = casa.table()
+        assert table.open(str(path), nomodify=False)
+        model = table.getcoldesc("DATA")
+        model.update(dataManagerType="StandardStMan", dataManagerGroup="model-storage",
+                     option=4, ndim=2, shape=np.array([2, 4], dtype=np.int32))
+        if path == first:
+            packed = dict(model, valueType="int", dataManagerGroup="packed-model")
+            assert table.addcols({"PACKED": packed})
+            spec = {"SOURCENAME": "MODEL_DATA", "TARGETNAME": "PACKED", "AUTOSCALE": False}
+            if codec == "fixed":
+                spec.update(SCALE=1.0, OFFSET=0.0)
+            else:
+                spec.update(SCALENAME="PACK_SCALE", OFFSETNAME="PACK_OFFSET",
+                            AUTOSCALE=codec == "automatic")
+                for name in ("PACK_SCALE", "PACK_OFFSET"):
+                    scalar = dict(table.getcoldesc("EXPOSURE"), valueType="float",
+                                  dataManagerType="StandardStMan", dataManagerGroup=f"physical-{name}")
+                    assert table.addcols({name: scalar})
+                if codec == "manual":
+                    assert table.putcol("PACK_SCALE", np.ones(table.nrows(), dtype=np.float32))
+            assert table.addcols({"MODEL_DATA": model}, {
+                "TYPE": "CompressComplex",
+                "NAME": "compressed-model",
+                "COLUMNS": ["MODEL_DATA"],
+                "SPEC": spec,
+            })
+        else:
+            assert table.addcols({"MODEL_DATA": model})
+        for row in range(table.nrows()):
+            assert table.putcell("MODEL_DATA", row, before if path == first else incoming)
+        assert table.close()
+
+    m = concat_api.ms()
+    assert m.open(str(first), nomodify=False)
+    original = m.nrow()
+    assert m.concatenate(str(donor), "1Hz", "1mas")
+    assert m.close()
+    expected = np.zeros_like(incoming) if codec == "manual" and concat_api is casa else incoming
+    for reader in (tools, casa):
+        table = reader.table()
+        assert table.open(str(first))
+        np.testing.assert_allclose(table.getcell("MODEL_DATA", 0), before, atol=3e-5, rtol=0)
+        np.testing.assert_allclose(table.getcell("MODEL_DATA", original), expected, atol=3e-5, rtol=0)
+        assert table.close()
+
+
+def test_selected_view_does_not_mutate_physical_root(native_dataset, tmp_path, concat_api):
+    first, donor = copy_inputs(native_dataset, tmp_path)
+    before = counts(tools, first, (".", "POINTING", "FIELD"))
+    history = counts(tools, donor, ("HISTORY",))
+    m = concat_api.ms()
+    assert m.open(str(first), nomodify=False)
+    assert m.msselect({"taql": "ROWID() < 2"})
+    assert m.nrow(selected=True) == 2
+    with pytest.raises(RuntimeError):
+        m.concatenate(str(donor), "1Hz", "1mas")
+    assert m.close()
+    for reader in (tools, pinned_casa()):
+        assert counts(reader, first, (".", "POINTING", "FIELD")) == before
+        assert counts(reader, donor, ("HISTORY",)) == history
+
+
+def test_encoded_append_after_a_materialized_rewrite(native_dataset, tmp_path, concat_api):
+    first, donor = copy_inputs(native_dataset, tmp_path)
+    reverse = tmp_path / "reverse.ms"
+    copytree(native_dataset, reverse)
+    pattern = np.arange(8, dtype=np.float32).reshape(2, 4).astype(np.complex64)
+
+    def data(table):
+        for row in range(table.nrows()):
+            assert table.putcell("DATA", row, pattern)
+
+    for path in (first, donor, reverse):
+        change_table(path, data)
+    change_table(reverse / "SPECTRAL_WINDOW", lambda table: table.putcell(
+        "CHAN_FREQ", 0, table.getcell("CHAN_FREQ", 0)[::-1].copy(),
+    ))
+
+    m = concat_api.ms()
+    assert m.open(str(first), nomodify=False)
+    original = m.nrow()
+    for index, path in enumerate((donor, reverse, donor), start=2):
+        assert m.concatenate(str(path), "1Hz", "1mas")
+        assert m.nrow() == index * original
+    assert m.close()
+    for reader in (tools, pinned_casa()):
+        table = reader.table()
+        assert table.open(str(first))
+        for block in range(4):
+            np.testing.assert_array_equal(
+                table.getcell("DATA", block * original + 1),
+                pattern[:, ::-1] if block == 2 else pattern,
+            )
+        assert table.close()

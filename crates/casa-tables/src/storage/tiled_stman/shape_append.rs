@@ -2,7 +2,8 @@
 //! Append independently encoded TiledShapeStMan hypercubes without rewriting
 //! the existing data files or decoding the appended cells.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
 use std::fs;
 
 use super::{
@@ -42,11 +43,17 @@ impl ShapeAppend {
     ) -> Result<Self, StorageError> {
         let target_dat = table_control::read_table_dat(&target.join("table.dat"))?;
         let donor_dat = table_control::read_table_dat(&donor.join("table.dat"))?;
+        let payload_names = fs::read_dir(target)?
+            .map(|entry| entry.map(|entry| entry.file_name()))
+            .collect::<std::io::Result<BTreeSet<_>>>()?;
         let mut managers = BTreeMap::new();
         for &column in columns {
-            if let Some((sequence, manager)) =
-                prepare_manager((target, &target_dat), (donor, &donor_dat), column)?
-            {
+            if let Some((sequence, manager)) = prepare_manager(
+                (target, &target_dat),
+                (donor, &donor_dat),
+                column,
+                &payload_names,
+            )? {
                 managers.insert(sequence, manager);
             }
         }
@@ -119,6 +126,7 @@ fn prepare_manager(
     (target, target_dat): (&Path, &TableDatContents),
     (donor, donor_dat): (&Path, &TableDatContents),
     column: &str,
+    payload_names: &BTreeSet<OsString>,
 ) -> Result<Option<(u32, Manager)>, StorageError> {
     let Some((target_seq, target_desc)) = shape_column(target_dat, column) else {
         return Ok(None);
@@ -141,8 +149,18 @@ fn prepare_manager(
     {
         return Ok(None);
     }
-    let Some(files) = splice_shape_header(&mut variant, &mut header, &donor_variant, &donor_header)
-    else {
+    let reserved = |index| {
+        let path = tsm_data_path(target, target_seq, index);
+        path.file_name()
+            .is_some_and(|name| payload_names.contains(name))
+    };
+    let Some(files) = splice_shape_header(
+        &mut variant,
+        &mut header,
+        &donor_variant,
+        &donor_header,
+        reserved,
+    ) else {
         return Ok(None);
     };
     Ok(Some((
@@ -248,6 +266,7 @@ fn splice_shape_header(
     target: &mut TiledStManHeader,
     donor_variant: &TiledVariant,
     donor: &TiledStManHeader,
+    reserved: impl Fn(u32) -> bool,
 ) -> Option<Vec<(u32, u32, u64)>> {
     let TiledVariant::Shape {
         nr_used_row_map: count,
@@ -298,7 +317,13 @@ fn splice_shape_header(
         if file.seq_nr as usize != old_index || file.length < 0 {
             return None;
         }
-        let next = u32::try_from(target.files.len()).ok()?;
+        let mut next = u32::try_from(target.files.len()).ok()?;
+        // A materialized rewrite can leave unused payload files behind.
+        // Leave those files alone and keep a vacant entry for each index.
+        while reserved(next) {
+            next = next.checked_add(1)?;
+        }
+        target.files.resize(next as usize, None);
         files.push((file.seq_nr, next, u64::try_from(file.length).ok()?));
         target.files.push(Some(TsmFileInfo {
             seq_nr: next,
@@ -432,6 +457,8 @@ mod tests {
         )
         .unwrap();
         let writer = Table::open(TableOptions::new(&target)).unwrap();
+        let unused_payload = tsm_data_path(&target, 0, 1);
+        fs::write(&unused_payload, b"unused prior payload").unwrap();
         let encoded = writer
             .plan_encoded_array_append(&reader, &["VALUES"])
             .unwrap();
@@ -476,6 +503,7 @@ mod tests {
             2
         );
         assert_eq!(fs::read(&existing_data).unwrap(), existing_bytes);
-        assert!(!tsm_data_path(&target, 0, 1).exists());
+        assert_eq!(fs::read(unused_payload).unwrap(), b"unused prior payload");
+        assert!(!tsm_data_path(&target, 0, 2).exists());
     }
 }

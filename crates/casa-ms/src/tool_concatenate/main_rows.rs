@@ -3,12 +3,13 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use casa_tables::{EncodedArrayAppend, RecordAppendOptions, Table};
+use casa_tables::{ArrayShapeContract, ColumnType, EncodedArrayAppend, RecordAppendOptions, Table};
 use casa_types::{ArrayValue, RecordField, RecordValue, ScalarValue, Value};
 use ndarray::{ArrayD, Axis, IxDyn};
 use rayon::prelude::*;
 
 use super::{MainRowMap, MetadataPlan, required_table, spectral::row_id};
+use crate::write_session::VisibilityWriteDestination;
 use crate::{MeasurementSet, MsError, MsResult, SubtableId, subtables::get_array};
 
 const SCALARS: &[&str] = &[
@@ -112,7 +113,10 @@ pub(super) fn prepare(
             let cells = source
                 .column_accessor(name)?
                 .array_cells_owned_uncached(&rows)?;
-            Ok((name, cells.into_iter()))
+            Ok((
+                VisibilityWriteDestination::for_append(destination, name)?,
+                cells.into_iter(),
+            ))
         })
         .collect::<MsResult<Vec<_>>>()?;
     let mut arrays = arrays;
@@ -120,12 +124,10 @@ pub(super) fn prepare(
     for (row, order) in order.into_iter().enumerate() {
         let mut fields = Vec::with_capacity(SCALARS.len() + arrays.len());
         append_scalars(&mut fields, &mut scalars, row, order, map, &scans)?;
-        for (name, cells) in &mut arrays {
+        for (column, cells) in &mut arrays {
             if let Some(Some(array)) = cells.next() {
-                fields.push(RecordField::new(
-                    *name,
-                    Value::Array(kernels.apply(name, order, array)?),
-                ));
+                let array = kernels.apply(column.name(), order, array)?;
+                column.append_cell(array, &mut fields)?;
             }
         }
         records.push(RecordValue::new(fields));
@@ -383,16 +385,30 @@ fn array_names(
         return Err(invalid(format!("MeasurementSet is missing {visibility}")));
     }
     for name in ["FLAG_CATEGORY", "WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"] {
-        if destination.row_count() != 0
-            && contains(destination, name)
+        if contains(destination, name)
             && contains(source, name)
-            && first_array_is_defined(destination, name)?
+            && first_output_cell_defined(destination, name)?
             && first_array_is_defined(source, name)?
         {
             columns.push(name);
         }
     }
     Ok(columns)
+}
+
+fn first_output_cell_defined(table: &Table, name: &str) -> MsResult<bool> {
+    if table.row_count() != 0 {
+        return first_array_is_defined(table, name);
+    }
+    // Fixed-shape cells are already defined after CASA allocates its
+    // destination rows, including a newly created named output.
+    Ok(matches!(
+        table
+            .schema()
+            .and_then(|schema| schema.column(name))
+            .map(|column| column.column_type()),
+        Some(ColumnType::Array(ArrayShapeContract::Fixed { .. }))
+    ))
 }
 
 fn first_array_is_defined(table: &Table, column: &str) -> MsResult<bool> {
