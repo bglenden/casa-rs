@@ -349,8 +349,9 @@ pub(super) fn array_names(
         if needs_optional(name)
             && contains(destination, name)
             && contains(source, name)
-            && first_output_cell_defined(destination, name)?
-            && (std::ptr::eq(source, destination) || first_array_is_defined(source, name)?)
+            && (std::ptr::eq(source, destination)
+                || (first_output_cell_defined(destination, name)?
+                    && first_array_is_defined(source, name)?))
         {
             columns.push(name);
         }
@@ -420,7 +421,7 @@ fn polarization_swaps(
 
 pub(super) struct ArrayTransform {
     polarizations: BTreeMap<usize, Vec<usize>>,
-    any_flipped: bool,
+    pub(super) any_flipped: bool,
     any_reversed: bool,
     scale: f32,
 }

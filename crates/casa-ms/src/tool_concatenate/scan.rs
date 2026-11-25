@@ -6,7 +6,7 @@ use std::{
     fmt::Write as _,
 };
 
-use super::main_rows::{ScalarColumns, integer};
+use super::main_rows::{ScalarColumns, integer, sparse_id};
 use crate::{MsError, MsResult};
 
 #[derive(Default)]
@@ -42,6 +42,23 @@ impl ScanBounds {
                 *max = (*max).max(scan);
             }
         }
+    }
+
+    pub(super) fn remap_observations(self, ids: &[usize]) -> MsResult<Self> {
+        if ids.is_empty() {
+            return Ok(self);
+        }
+        let mut remapped = Self::default();
+        for id in self.order {
+            let (first, last) = self.ranges[&id];
+            let target = sparse_id(ids, id)?;
+            remapped.observe(target, first);
+            remapped.observe(target, last);
+        }
+        // The stored final line contains the last donor's maximum scan.
+        // It can differ from the largest scan in the accumulated ranges.
+        remapped.max_scan = self.max_scan;
+        Ok(remapped)
     }
 
     pub(super) fn offsets(

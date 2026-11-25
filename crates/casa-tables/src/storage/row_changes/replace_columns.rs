@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use super::{
-    ByteOrder, ColumnDescContents, CompositeStorage, DataManagerEntry, ScalarValue, StagedEdit,
-    StorageError, Value, incremental_stman, standard_stman,
+    ColumnDescContents, CompositeStorage, DataManagerEntry, ScalarValue, StagedEdit, StorageError,
+    Value, incremental_stman, standard_stman,
 };
 
 impl StagedEdit<'_> {
@@ -14,7 +14,6 @@ impl StagedEdit<'_> {
         columns: &[ColumnDescContents],
         replacements: &BTreeMap<String, Vec<Option<Value>>>,
         rows: u64,
-        order: ByteOrder,
     ) -> Result<bool, StorageError> {
         if !matches!(
             manager.type_name.as_str(),
@@ -98,12 +97,13 @@ impl StagedEdit<'_> {
             )?
         } else {
             let manager_name = standard_stman::dm_name_from_blob(&manager.data).unwrap_or_default();
-            standard_stman::write_ssm_file_scalar_columns(
+            standard_stman::rewrite_ssm_columns(
+                &old,
                 &staged,
                 columns,
-                &columns_values,
-                order == ByteOrder::BigEndian,
+                rows as usize,
                 &manager_name,
+                |column, row| Ok(columns_values[column][row].clone().map(Value::Scalar)),
             )?
         };
         Ok(true)

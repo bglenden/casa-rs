@@ -86,7 +86,7 @@ impl ScanFile {
         observations: &[usize],
     ) -> MsResult<ScanBounds> {
         if let Some(bounds) = self.initial.take() {
-            return Ok(bounds);
+            return bounds.remap_observations(observations);
         }
         let columns = if let Some(selected) = selected {
             attached.required_scalar_columns_owned_for_rows(SCAN_COLUMNS, selected)?

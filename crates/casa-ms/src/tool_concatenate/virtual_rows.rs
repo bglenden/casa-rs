@@ -25,7 +25,7 @@ type RequiredScalars = HashMap<String, RequiredScalarColumnValues>;
 pub(super) fn int32_column<'a>(scalar: &'a RequiredScalars, name: &str) -> MsResult<&'a [i32]> {
     match scalar.get(name) {
         Some(RequiredScalarColumnValues::Int32(values)) => Ok(values),
-        _ => Err(invalid(format!("MAIN {name} must contain int32 values"))),
+        _ => Err(invalid(format!("column {name} must contain int32 values"))),
     }
 }
 
@@ -44,16 +44,7 @@ pub(super) fn attached_replacements(
         ("OBSERVATION_ID", &map.attached_observations),
         ("PROCESSOR_ID", &map.attached_processors),
     ] {
-        if mapping.is_empty() || table.row_count() == 0 {
-            continue;
-        }
-        let scalars = table.required_scalar_columns_owned(&[name])?;
-        let original = int32_column(&scalars, name)?;
-        let updated = original
-            .iter()
-            .map(|&id| sparse_id(mapping, id))
-            .collect::<MsResult<Vec<_>>>()?;
-        replace(&mut columns, name, original, updated);
+        remap_ids(table, name, mapping, &mut columns)?;
     }
     if map.attached_has_state && !map.donor_has_state && table.row_count() > 0 {
         let missing = Some(Value::Scalar(ScalarValue::Int32(-1)));
@@ -81,6 +72,25 @@ pub(super) fn attached_replacements(
         columns,
         channel_selection: None,
     })
+}
+
+pub(super) fn remap_ids(
+    table: &Table,
+    name: &str,
+    mapping: &[usize],
+    columns: &mut BTreeMap<String, Vec<Option<Value>>>,
+) -> MsResult<()> {
+    if mapping.is_empty() || table.row_count() == 0 {
+        return Ok(());
+    }
+    let scalars = table.required_scalar_columns_owned(&[name])?;
+    let original = int32_column(&scalars, name)?;
+    let updated = original
+        .iter()
+        .map(|&id| sparse_id(mapping, id))
+        .collect::<MsResult<Vec<_>>>()?;
+    replace(columns, name, original, updated);
+    Ok(())
 }
 
 pub(super) fn prepare(
@@ -125,6 +135,9 @@ pub(super) fn prepare(
         .map(|bounds| prepare_scans(bounds, &scalar, &mut output.columns, map))
         .transpose()?;
     let kernels = ArrayTransform::new(donor, &order, scale)?;
+    if kernels.any_flipped {
+        replace_feeds(table, &order, &mut output.columns)?;
+    }
     let columns = if table.row_count() == 0 {
         Vec::new()
     } else {
@@ -148,6 +161,31 @@ pub(super) fn prepare(
         }
     }
     Ok((output, auxiliary))
+}
+
+fn replace_feeds(
+    table: &Table,
+    order: &[RowOrder],
+    columns: &mut BTreeMap<String, Vec<Option<Value>>>,
+) -> MsResult<()> {
+    let feeds = table.required_scalar_columns_owned(&["FEED1", "FEED2"])?;
+    let first = int32_column(&feeds, "FEED1")?;
+    let second = int32_column(&feeds, "FEED2")?;
+    let (new_first, new_second) = first
+        .iter()
+        .zip(second)
+        .zip(order)
+        .map(|((&first, &second), row)| {
+            if row.flipped {
+                (second, first)
+            } else {
+                (first, second)
+            }
+        })
+        .unzip();
+    replace(columns, "FEED1", first, new_first);
+    replace(columns, "FEED2", second, new_second);
+    Ok(())
 }
 
 fn scalar_replacements(
@@ -254,6 +292,9 @@ fn transform_column(
     let arrays = table
         .column_accessor(column)?
         .array_cells_owned_uncached(&rows)?;
+    if arrays.iter().all(Option::is_none) {
+        return Ok(Vec::new());
+    }
     let arrays = arrays
         .into_iter()
         .zip(order)

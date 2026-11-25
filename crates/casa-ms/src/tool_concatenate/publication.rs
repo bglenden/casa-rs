@@ -117,7 +117,11 @@ fn concatenate(
     leaf_writers.extend(incoming.write_paths(false));
     let pointing = physical.is_some_and(|mode| mode.handling < 2);
     if pointing {
-        leaf_writers.extend(attached.pointing_path().map(Path::to_path_buf));
+        leaf_writers.extend(
+            attached
+                .subtable_path(SubtableId::Pointing)
+                .map(Path::to_path_buf),
+        );
     }
     held.acquire(leaf_writers)?;
     validate_inputs(&attached, &incoming)?;
@@ -156,23 +160,40 @@ fn concatenate(
     if virtual_pointing {
         held.acquire(
             incoming
-                .pointing_path()
+                .subtable_path(SubtableId::Pointing)
                 .map(Path::to_path_buf)
                 .into_iter()
                 .collect(),
         )?;
     }
     let donor_pointing = incoming
-        .pointing_path()
+        .subtable_path(SubtableId::Pointing)
         .filter(|_| pointing || virtual_pointing)
         .map(|path| open_pointing(path, virtual_pointing))
         .transpose()?;
     let target_pointing = attached
-        .pointing_path()
+        .subtable_path(SubtableId::Pointing)
         .filter(|_| pointing || virtual_pointing)
         .map(|path| open_pointing(path, pointing))
         .transpose()?;
+    let attached_history = attached
+        .subtable_path(SubtableId::History)
+        .filter(|_| !plan.row_map.attached_observations.is_empty())
+        .map(|path| -> MsResult<_> {
+            held.acquire(BTreeSet::from([path.to_path_buf()]))?;
+            Ok(Table::open(TableOptions::new(path))?)
+        })
+        .transpose()?;
     let mut requests = metadata_edits(&plan, &target_ms, &incoming, &target, &held.guards)?;
+    if let Some(history) = &attached_history {
+        prepare_attached_history(
+            history,
+            &plan.row_map.attached_observations,
+            &incoming,
+            &target,
+            &mut requests,
+        )?;
+    }
     if let Some((left, right)) = target_pointing.as_ref().zip(donor_pointing.as_ref()) {
         let (table, opposite, root) = if virtual_pointing {
             (right, &attached, &donor)
@@ -269,6 +290,30 @@ fn concatenate(
 fn validate_inputs(attached: &InputTables, incoming: &InputTables) -> MsResult<()> {
     let (attached, incoming) = rayon::join(|| attached.validate(), || incoming.validate());
     attached.and(incoming)
+}
+
+fn prepare_attached_history<'a>(
+    history: &'a Table,
+    observations: &[usize],
+    incoming: &InputTables,
+    target: &Path,
+    requests: &mut BTreeMap<PathBuf, EditRequest<'a>>,
+) -> MsResult<()> {
+    let mut columns = BTreeMap::new();
+    virtual_rows::remap_ids(history, "OBSERVATION_ID", observations, &mut columns)?;
+    if columns.is_empty() {
+        return Ok(());
+    }
+    let path = output_path(history, incoming, target)?;
+    let values = MainReplacement {
+        columns,
+        channel_selection: None,
+    };
+    insert_edit(
+        requests,
+        path,
+        EditRequest::Columns(history, Box::new(values)),
+    )
 }
 
 fn prepare_table_edit<'a>(

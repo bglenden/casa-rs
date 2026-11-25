@@ -107,7 +107,7 @@ impl<'a> StagedEdit<'a> {
                 {
                     continue;
                 }
-                if edit.stage_replaced_scalars(manager, &columns, values, old_rows, order)? {
+                if edit.stage_replaced_scalars(manager, &columns, values, old_rows)? {
                     continue;
                 }
             }
