@@ -258,11 +258,56 @@ def figures(root, vis, amplitude):
     print(f"Rendered {len(values)} matching coordinates at 500 by 360 pixels.")
 
 
+def compare_independent_ordinates(root, native, vis, amplitude, bandpass, flagged):
+    from plotms_ms_iterated_ordinates_oracle import compare_figures
+
+    controls = dict(vis=str(vis), xaxis="channel", yaxis=["real", "real"],
+                    ydatacolumn=["data", "corrected"], yaxislocation=["left", "right"],
+                    antenna="A0&A1", spw="0:0~3", correlation="XX", showgui=False,
+                    overwrite=True, callib=[library_entry(amplitude), library_entry(bandpass, True)],
+                    exprange="all", title="Selected calibrated visibilities", xlabel="Calibration channel bin")
+    binned = dict(avgchannel="2")
+    cases = (
+        ("callib-two-raw", {}, 96),
+        ("callib-two-channel", binned, 48),
+        ("callib-two-channel-scan", binned | dict(iteraxis="scan", gridrows=2), 48),
+        ("callib-two-flagged-channel", binned | dict(
+            callib=[library_entry(amplitude), library_entry(flagged, True)]), 48),
+    )
+    before = snapshot(vis)
+    points = {}
+    for name, changes, count in cases:
+        options = controls | changes
+        expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected), expformat="txt") is None
+        rows = [line.split() for line in expected.read_text().splitlines() if not line.startswith("#")]
+        assert len(rows) == count
+        assert {point[3] for point in rows} == {"1", "2"}
+        points[name] = rows
+        assert native(**options, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching independent calibrated coordinates", flush=True)
+        if name == "callib-two-channel-scan":
+            assert [row[3] for row in rows] == ["1"] * 24 + ["2"] * 24
+            values = np.array([point[:2] for point in rows], dtype=float)
+            pages = [[(label, panel)] for label, panel in zip(("1", "2"), np.split(values, 2), strict=True)]
+            compare_figures(root, native, "calibrated-ordinate-panels", options | dict(gridrows=1),
+                            pages, ["Scan1", "Scan2_2"],
+                            [("left", "Real", [0]), ("right", "Real:corrected", [1])])
+    clear = points["callib-two-channel"]
+    masked = points["callib-two-flagged-channel"]
+    assert clear[:24] == masked[:24], "Calibration changed the stored ordinate"
+    assert [row[2:] for row in clear] == [row[2:] for row in masked]
+    assert sum(a[1] != b[1] for a, b in zip(clear[24:], masked[24:], strict=True)) == 12
+    verify_source(vis, before)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True, help="Built calibrate executable")
     parser.add_argument("--app-run", type=Path)
+    parser.add_argument("--only", choices=("ordinates", "existing"))
     args = parser.parse_args()
     root = args.work.resolve()
     root.mkdir()
@@ -271,24 +316,27 @@ def main():
 
     assert casa.version_string() == "6.7.6.14"
     vis, amplitude, bandpass, flagged, flagged_gain = fixture(root)
-    persisted = root / "persisted-correction.ms"
-    copy_ms(vis, persisted)
-    casa.clearcal(str(persisted))
-    with opened(persisted, True) as table:
-        table.putcol("CORRECTED_DATA", 7 * table.getcol("DATA"))
-    cases = list(requests(root, amplitude, bandpass, flagged, flagged_gain))
-    cases.extend(spectral_weight_requests(root, vis, amplitude, bandpass))
-    cases.append(("preserve-existing-corrected-data", {
-        "vis": str(persisted), "callib": library_entry(amplitude),
-    }))
     # CASA can create temporary sorted MeasurementSets in its working directory.
     previous = Path.cwd()
     os.chdir(root)
     try:
         with plotms_launcher(args.app_run):
-            compare(root, vis, cases, native)
-            figures(root, vis, amplitude)
-            disabled_selection(root, vis, amplitude, native)
+            if args.only != "existing":
+                compare_independent_ordinates(root, native, vis, amplitude, bandpass, flagged)
+            if args.only != "ordinates":
+                persisted = root / "persisted-correction.ms"
+                copy_ms(vis, persisted)
+                casa.clearcal(str(persisted))
+                with opened(persisted, True) as table:
+                    table.putcol("CORRECTED_DATA", 7 * table.getcol("DATA"))
+                cases = list(requests(root, amplitude, bandpass, flagged, flagged_gain))
+                cases.extend(spectral_weight_requests(root, vis, amplitude, bandpass))
+                cases.append(("preserve-existing-corrected-data", {
+                    "vis": str(persisted), "callib": library_entry(amplitude),
+                }))
+                compare(root, vis, cases, native)
+                figures(root, vis, amplitude)
+                disabled_selection(root, vis, amplitude, native)
     finally:
         os.chdir(previous)
 
