@@ -157,6 +157,16 @@ impl MetadataLink {
         Ok(())
     }
 
+    /// Drop the cached view so current metadata is read with the same rows.
+    pub(super) fn invalidate_view(&self) -> MsResult<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        state.view = None;
+        Ok(())
+    }
+
     /// Open the source MAIN and its subtables, with the view's row indices
     /// separately for callers that can project selected rows directly.
     pub(super) fn source_and_rows(&self) -> MsResult<SourceAndRows> {

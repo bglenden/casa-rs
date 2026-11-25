@@ -11547,6 +11547,24 @@ an ambiguous trailing axis using the most recent read of writable
 visibility data. A subsequent ordinary row-axis read restores row
 ordering for such arrays (#1030).
 
+## Adding an attached ephemeris can delete its source or change FIELD TIME outside the observation
+
+In CASA 6.7.6.14, call `ms.addephemeris()` with an ephemeris table
+already installed under the requested ID in FIELD. CASA removes the
+original before copying the input. The copy then fails and existing
+fields lose their ephemeris. Casa-rs copies the source to a staged FIELD
+before publishing the replacement. A selected FIELD on a read-only
+attachment fails before replacing any existing ephemeris.
+
+When FIELD TIME falls outside the observation, CASA's bounds test uses
+`minimum <= start || start <= maximum`. It can assign an ephemeris start
+that also falls outside the observation. Casa-rs updates FIELD TIME only
+when the ephemeris start lies within both observation bounds (#1030).
+
+Calling `addephemeris()` on an attached MS with the default empty
+`ephemerisname` can abort CASA with an uncaught string-range exception.
+Casa-rs raises a Python error before writing FIELD or HISTORY (#1030).
+
 ## An MS write after baseline downsampling can overwrite omitted rows with zeros
 
 On a writable MeasurementSet, read `getdata('data', ifraxis=True,
