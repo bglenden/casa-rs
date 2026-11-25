@@ -32,6 +32,10 @@ enum Update {
         target: PathBuf,
         original: Option<PathBuf>,
     },
+    PublishControl {
+        staged: PathBuf,
+        target: PathBuf,
+    },
 }
 
 impl Update {
@@ -54,7 +58,9 @@ impl Update {
                 ssm_retained_end,
                 ..
             } => rewrite(file, updated, *ssm_retained_end),
-            Self::Replace { staged, target, .. } => fs::rename(staged, target),
+            Self::Replace { staged, target, .. } | Self::PublishControl { staged, target } => {
+                fs::rename(staged, target)
+            }
         }
     }
 
@@ -86,6 +92,9 @@ impl Update {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
                 result => result,
             },
+            // The control file is the final update. A failed rename leaves
+            // its original in place, and success commits the transaction.
+            Self::PublishControl { .. } => Ok(()),
         }
     }
 }
@@ -163,10 +172,19 @@ impl StagedEdit<'_> {
             let name = entry.file_name();
             let staged = entry.path();
             let target = self.table.join(&name);
-            let ssm_retained_end = self.ssm_retained_end.get(&name).copied();
             // casacore reopens table.dat by name and publishes its own copy
             // by rename, so readers can always open a complete descriptor.
-            let retain_manager = self.preserve_file_identity && name != TABLE_CONTROL_FILE;
+            if name == TABLE_CONTROL_FILE {
+                match File::options().write(true).open(&target) {
+                    Ok(file) => fs::set_permissions(&staged, file.metadata()?.permissions())?,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+                changes.push(Update::PublishControl { staged, target });
+                continue;
+            }
+            let retain_manager = self.preserve_file_identity;
+            let ssm_retained_end = self.ssm_retained_end.get(&name).copied();
             let mut backup_name = OsString::from("original-");
             backup_name.push(&name);
             let backup = staging.join(backup_name);
@@ -233,6 +251,24 @@ impl StagedEdit<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_control_rename_preserves_the_descriptor_and_restores_the_manager() {
+        let table = tempfile::tempdir().unwrap();
+        let mut edit = StagedEdit::new(table.path()).unwrap();
+        edit.preserve_file_identity = true;
+        let control = table.path().join(TABLE_CONTROL_FILE);
+        let manager = table.path().join("table.f0");
+        fs::write(&control, b"old descriptor").unwrap();
+        fs::write(&manager, b"old manager file").unwrap();
+        fs::write(edit.staged.path().join("table.f0"), b"new manager file").unwrap();
+        // Renaming this directory over the file fails after the manager write.
+        fs::create_dir(edit.staged.path().join(TABLE_CONTROL_FILE)).unwrap();
+
+        assert!(edit.publish().is_err());
+        assert_eq!(fs::read(control).unwrap(), b"old descriptor");
+        assert_eq!(fs::read(manager).unwrap(), b"old manager file");
+    }
 
     #[test]
     fn rewrite_ssm_tail_keeps_published_buckets_and_restores_the_old_length() {
