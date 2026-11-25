@@ -2927,10 +2927,10 @@
       "kind": "Paired unaveraged MeasurementSet Row axes",
       "state": "passed",
       "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Static MeasurementSet Row coordinates with an independent Elevation ordinate, selected two-window visibility plots, separate scan pages for Time/Row, and the existing read-only callibrary control.",
-      "result": "Four TXT exports match 275 ordered coordinates and their metadata. The mixed case retains all 72 Row points and 72 Elevation points. The two-window case retains 16 selected Row IDs and omits the flagged channel. Time/Row exports 12 points across two scans and draws the matching two 500 by 420 PNG pages with the requested headings and labels. The one-window callibrary control matches 72 corrected coordinates and source arrays remain unchanged.",
+      "result": "Five TXT exports match 419 ordered coordinates and metadata. Both mixed cases preserve all 72 Row and 72 Elevation points each, including the separated-antenna case that distinguishes elevation at the Cartesian antenna mean from a single-antenna projection. Two-window Row coordinates retain 16 selected IDs and omit the flagged channel. Time/Row matches 12 points and two 500 by 420 scan PNGs with the requested headings and labels. The one-window callibrary control matches 72 corrected coordinates. Source visibility, flags and weights remain unchanged.",
       "casa_version": "6.7.6.14",
-      "revision": "d1910610736ff13d9c8f600d014c7e69d1de2a09",
-      "source_revision": "d1910610736ff13d9c8f600d014c7e69d1de2a09",
+      "revision": "c57a92bd86d8176b46bad050951a828caca3a96c",
+      "source_revision": "c57a92bd86d8176b46bad050951a828caca3a96c",
       "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only raw-row-axes --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
       "receipt": "resources/casa-compat/evidence/plotms-ms-unaveraged-row-axes-20261124.json",
       "links": [
