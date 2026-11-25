@@ -3194,7 +3194,7 @@ Evidence is scoped to its named revision, inputs and comparator. Historical repo
 **Paired static MeasurementSet metadata grids and scan pages — passed.** Four paired TXT exports match 38 ordered points and their selection metadata. The channel grid retains 14 points and the integration grid retains five. The ordinate values agree at printed precision. The four 500 by 420 scan PNGs match 19 coordinates, units, sides, local titles and filenames. Source visibility and flag cells are unchanged. The Frequency pages use an explicit right-hand ordinate. Both axis pairs export four matched empty TXT files in verbose and compact modes and two empty 500 by 360 PNGs when the selection contains only flagged cells. Channel/Frequency with active reporting frames remains pending consistent displayed and verbose frequencies (#1032). Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus Frequency and array Elevation versus Time on the reversed two-baseline MS, with both XX and YY and scans 11 and 19. The flag cube removes one integration and one additional channel and leaves five ordered integrations. One selected channel is clear only on the second baseline. The omitted integration contains a clear channel outside the selection.
 
 - [https://github.com/bglenden/casa-rs/pull/2297](https://github.com/bglenden/casa-rs/pull/2297)
-- Revision: `c66ba3e8f3e0a8cb6d800a5bca7f5c55bed8848d`; CASA: `6.7.6.14`.
+- Revision: `d116fa71fdd24c7ad473402ed4ffa68a2db3ac2d`; CASA: `6.7.6.14`.
 - Command: `casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only static-metadata-coordinates --work <new-dir> --native-bin <msexplore>`.
 - Receipt: `resources/casa-compat/evidence/plotms-ms-static-metadata-coordinates-20261124.json`.
 

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "execution_date": "2026-11-24",
-  "revision": "c66ba3e8f3e0a8cb6d800a5bca7f5c55bed8848d",
-  "source_revision": "c66ba3e8f3e0a8cb6d800a5bca7f5c55bed8848d",
+  "revision": "d116fa71fdd24c7ad473402ed4ffa68a2db3ac2d",
+  "source_revision": "d116fa71fdd24c7ad473402ed4ffa68a2db3ac2d",
   "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only static-metadata-coordinates --work <new-dir> --native-bin <msexplore>",
   "casa_version": "6.7.6.14",
   "casaplotms_version": "2.9.1",
