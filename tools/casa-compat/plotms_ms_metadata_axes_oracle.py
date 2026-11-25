@@ -642,6 +642,8 @@ def compare_ephemeris_axes(root, native, app_run):
 
 
 def compare_static_metadata_coordinates(root, native):
+    from casars.tasks import TaskExecutionError, TaskParameterError
+    from plotms_ms_columns_oracle import compare_empty_export
     from plotms_ms_iterated_ordinates_oracle import compare_figures
 
     work = root / "static-metadata-coordinates"
@@ -658,8 +660,13 @@ def compare_static_metadata_coordinates(root, native):
         scans[(fields == 0) & (times <= ordered[3])] = 11
         scans[(fields == 0) & (times > ordered[3])] = 19
         flags = table.getcol("FLAG")
-        flags[:, :, selected & (times == ordered[0])] = True
-        flags[:, 2, selected & (times == ordered[1])] = True
+        first = selected & (times == ordered[0])
+        flags[:, :, first] = True
+        flags[:, 0, first] = False  # This clear channel is outside the selection.
+        second = selected & (times == ordered[1])
+        flags[:, 2, second] = True
+        flags[:, 1, second & (antenna2 == 1)] = True
+        flags[:, 1, second & (antenna2 == 2)] = False
         table.putcol("FLAG", flags)
         table.putcol("SCAN_NUMBER", scans)
     before = snapshot(vis)
@@ -669,6 +676,10 @@ def compare_static_metadata_coordinates(root, native):
         ("channel-frequency", "channel", "frequency", 14, (8, 6), "Channel", "Frequency (GHz)"),
         ("elevation-time", "elevation", "time", 5, (3, 2), "Elevation (deg)", "Time (MJD seconds)"),
     )
+    empty = work / "all-flagged.ms"
+    copy_ms(vis, empty)
+    with opened(empty, True) as table:
+        table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
     for name, x, y, count, counts, xlabel, ylabel in cases:
         options = base | dict(xaxis=x, yaxis=[y])
         expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
@@ -692,6 +703,8 @@ def compare_static_metadata_coordinates(root, native):
         print(f"{name}: {count} matching ordered metadata coordinates and masks", flush=True)
 
         iteration = options | dict(iteraxis="scan", exprange="all", xlabel=xlabel)
+        side = "right" if y == "frequency" else "left"
+        iteration["yaxislocation"] = [side]
         expected, actual = (work / f"{name}-scans.{engine}.txt" for engine in ("casa", "native"))
         assert reference(**(iteration | dict(gridrows=2)), plotfile=str(expected)) is None
         assert rows(expected) == selected
@@ -703,8 +716,20 @@ def compare_static_metadata_coordinates(root, native):
             ("11", "19"), np.split(values, [counts[0]]), strict=True,
         )]
         compare_figures(work, native, f"{name}-pages", iteration, pages,
-                        ["Scan11", "Scan19_2"], [("left", ylabel, [0])],
+                        ["Scan11", "Scan19_2"], [(side, ylabel, [0])],
                         ordinate_atol=0.00051 if y == "time" else 5.001e-10)
+        empty_options = dict(options, vis=str(empty))
+        del empty_options["expformat"]
+        compare_empty_export(work, native, f"{name}-all-flagged", empty_options, (xlabel, ylabel))
+    transformed = base | dict(xaxis="channel", yaxis=["frequency"], transform=True, freqframe="LSRK")
+    output = work / "reporting-frame.native.txt"
+    try:
+        native(**transformed, plotfile=str(output))
+    except (TaskExecutionError, TaskParameterError) as error:
+        assert "Channel/Frequency reporting frames are pending (#1032)" in str(error)
+    else:
+        raise AssertionError("Reporting-frame TXT requires consistent ordinate and metadata frequencies")
+    assert not output.exists()
     verify_source(vis, before)
 
 

@@ -125,6 +125,15 @@ fn label_and_group_ordinates(
 ) -> Result<(), TaskFailure> {
     label_visibility_columns(task, document, [x, y], second, columns.base)?;
     let Some(second) = second else {
+        if plotms_row_axes::metadata_coordinate_pair(x, y).is_some()
+            && columns.right_ordinates.first() == Some(&true)
+        {
+            let axes = std::iter::once(&mut document.axes)
+                .chain(document.panels.iter_mut().map(|panel| &mut panel.axes));
+            for axis in axes.flatten().filter(|axis| axis.id == "y") {
+                axis.draws_on_trailing_edge = true;
+            }
+        }
         return Ok(());
     };
     if columns.additional.is_empty() && !matches!(payload, MsPlotPayload::ScatterGrid(_)) {

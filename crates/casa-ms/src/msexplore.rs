@@ -5357,7 +5357,9 @@ fn build_generic_visibility_scatter(
         VisibilityScatterTiming::checkpoint("expand_rows", &mut checkpoint_started);
     }
 
-    if contributing_points == 0 && (raw_symbols.is_none() || selected_row_count == 0) {
+    if contributing_points == 0
+        && (selected_row_count == 0 || raw_symbols.is_none() && coordinate_mask.is_none())
+    {
         return Err(format!(
             "{} produced no unflagged visibility points for the current selection",
             spec.preset
