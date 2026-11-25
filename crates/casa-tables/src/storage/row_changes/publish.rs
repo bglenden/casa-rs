@@ -3,9 +3,9 @@
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::storage::standard_stman::{DEFAULT_SSM_BUCKET_SIZE, SSM_HEADER_SIZE};
+use crate::storage::standard_stman::{DEFAULT_SSM_BUCKET_SIZE, SSM_HEADER_SIZE, StagedRecords};
 
 use super::{Extension, StagedEdit, StorageError, TABLE_CONTROL_FILE, tiled_stman};
 
@@ -25,7 +25,11 @@ enum Update {
         file: File,
         original: File,
         updated: File,
-        ssm_retained_end: Option<u64>,
+    },
+    AppendStandard {
+        file: File,
+        original: File,
+        records: StagedRecords,
     },
     Replace {
         staged: PathBuf,
@@ -52,12 +56,14 @@ impl Update {
                 old_len,
                 new_len,
             } => file.set_len((*new_len).max(*old_len)),
-            Self::Rewrite {
-                file,
-                updated,
-                ssm_retained_end,
-                ..
-            } => rewrite(file, updated, *ssm_retained_end),
+            Self::Rewrite { file, updated, .. } => rewrite(file, updated, None),
+            Self::AppendStandard { file, records, .. } => {
+                file.seek(SeekFrom::Start(records.retained_end))?;
+                std::io::copy(&mut records.tail, file)?;
+                file.set_len(records.new_end)?;
+                file.rewind()?;
+                file.write_all(&records.header)
+            }
             Self::Replace { staged, target, .. } | Self::PublishControl { staged, target } => {
                 fs::rename(staged, target)
             }
@@ -73,12 +79,12 @@ impl Update {
                 ..
             } => write_index(file, *offset, original),
             Self::Extend { file, old_len, .. } => file.set_len(*old_len),
-            Self::Rewrite {
+            Self::Rewrite { file, original, .. } => rewrite(file, original, None),
+            Self::AppendStandard {
                 file,
                 original,
-                ssm_retained_end,
-                ..
-            } => rewrite(file, original, *ssm_retained_end),
+                records,
+            } => rewrite(file, original, Some(records.retained_end)),
             Self::Replace {
                 target,
                 original: Some(original),
@@ -130,6 +136,12 @@ fn write_index(file: &mut File, offset: u64, data: &[u8]) -> std::io::Result<()>
     file.set_len(offset + data.len() as u64)
 }
 
+fn rollback_path(staging: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    let mut original = OsString::from("original-");
+    original.push(name);
+    staging.join(original)
+}
+
 impl StagedEdit<'_> {
     /// Publish under a write lock, with the control file last. Preflight
     /// every target before changing any and restore the previous files if
@@ -166,6 +178,23 @@ impl StagedEdit<'_> {
                         new_len: len,
                     });
                 }
+                Extension::StandardAppend { path, records } => {
+                    let file = match File::options().read(true).write(true).open(&path) {
+                        Ok(file) => file,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                            return Err(StorageError::MissingDataFile(path));
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
+                    let backup =
+                        rollback_path(staging, path.file_name().expect("manager filename"));
+                    fs::copy(&path, &backup)?;
+                    changes.push(Update::AppendStandard {
+                        file,
+                        original: File::open(backup)?,
+                        records,
+                    });
+                }
             }
         }
         for entry in files {
@@ -184,10 +213,7 @@ impl StagedEdit<'_> {
                 continue;
             }
             let retain_manager = self.preserve_file_identity;
-            let ssm_retained_end = self.ssm_retained_end.get(&name).copied();
-            let mut backup_name = OsString::from("original-");
-            backup_name.push(&name);
-            let backup = staging.join(backup_name);
+            let backup = rollback_path(staging, &name);
             let original = match File::options()
                 .read(retain_manager)
                 .write(true)
@@ -201,7 +227,6 @@ impl StagedEdit<'_> {
                         file,
                         original: File::open(backup)?,
                         updated: File::open(staged)?,
-                        ssm_retained_end,
                     });
                     continue;
                 }
@@ -210,12 +235,7 @@ impl StagedEdit<'_> {
                     fs::hard_link(&target, &backup)?;
                     Some(backup)
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    if ssm_retained_end.is_some() {
-                        return Err(StorageError::MissingDataFile(target));
-                    }
-                    None
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error.into()),
             };
             changes.push(Update::Replace {
@@ -275,31 +295,34 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("target");
         let original = dir.path().join("original");
-        let staged = dir.path().join("staged");
         let header = SSM_HEADER_SIZE as usize;
         let retained_end = header + 64;
         let bytes = [vec![1; header], vec![2; 64], vec![3; 32]].concat();
         fs::write(&target, &bytes).unwrap();
         fs::write(&original, &bytes).unwrap();
-        fs::write(
-            &staged,
-            [vec![5; header], vec![9; 64], vec![7; 96]].concat(),
-        )
-        .unwrap();
-
-        let mut update = Update::Rewrite {
-            file: File::options().write(true).open(&target).unwrap(),
-            original: File::open(original).unwrap(),
-            updated: File::open(staged).unwrap(),
-            ssm_retained_end: Some(retained_end as u64),
-        };
-        update.apply().unwrap();
-        assert_eq!(
-            fs::read(&target).unwrap(),
-            [vec![5; header], vec![2; 64], vec![7; 96]].concat()
-        );
-        update.undo().unwrap();
-        assert_eq!(fs::read(&target).unwrap(), bytes);
+        for memory_limit in [128, 0] {
+            let mut tail = tempfile::spooled_tempfile(memory_limit);
+            tail.write_all(&[7; 96]).unwrap();
+            assert_eq!(tail.is_rolled(), memory_limit == 0);
+            tail.rewind().unwrap();
+            let mut update = Update::AppendStandard {
+                file: File::options().write(true).open(&target).unwrap(),
+                original: File::open(&original).unwrap(),
+                records: StagedRecords {
+                    retained_end: retained_end as u64,
+                    new_end: (retained_end + 96) as u64,
+                    header: vec![5; header],
+                    tail,
+                },
+            };
+            update.apply().unwrap();
+            assert_eq!(
+                fs::read(&target).unwrap(),
+                [vec![5; header], vec![2; 64], vec![7; 96]].concat()
+            );
+            update.undo().unwrap();
+            assert_eq!(fs::read(&target).unwrap(), bytes);
+        }
     }
 
     #[test]
@@ -308,9 +331,16 @@ mod tests {
         let mut edit = StagedEdit::new(table.path()).unwrap();
         let name = "table.f0";
         let target = table.path().join(name);
-        fs::write(edit.staged.path().join(name), [0; 32]).unwrap();
         edit.preserve_file_identity = true;
-        edit.ssm_retained_end.insert(name.into(), SSM_HEADER_SIZE);
+        edit.extensions.push(Extension::StandardAppend {
+            path: target.clone(),
+            records: StagedRecords {
+                retained_end: SSM_HEADER_SIZE,
+                new_end: SSM_HEADER_SIZE,
+                header: vec![],
+                tail: tempfile::spooled_tempfile(0),
+            },
+        });
         assert!(matches!(
             edit.publish(),
             Err(StorageError::MissingDataFile(path)) if path == target

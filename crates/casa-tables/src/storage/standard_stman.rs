@@ -43,7 +43,7 @@ mod bucket_reader;
 use bucket_reader::{LastBucket, ReadBuckets};
 mod append;
 mod column_writer;
-pub(crate) use append::stage_records;
+pub(crate) use append::{StagedRecords, stage_records};
 pub(crate) use array_updates::save_ssm_array_rows_in_place;
 mod index;
 mod string_arrays;

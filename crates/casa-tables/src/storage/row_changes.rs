@@ -4,8 +4,6 @@
 //! manager that only extends an index, header or data file needs no copy
 //! of its existing payload.
 
-use std::collections::HashMap;
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -56,6 +54,10 @@ enum Extension {
         path: PathBuf,
         len: u64,
     },
+    StandardAppend {
+        path: PathBuf,
+        records: standard_stman::StagedRecords,
+    },
 }
 
 pub(crate) struct StagedEdit<'a> {
@@ -63,7 +65,6 @@ pub(crate) struct StagedEdit<'a> {
     pub(super) staged: tempfile::TempDir,
     extensions: Vec<Extension>,
     preserve_file_identity: bool,
-    ssm_retained_end: HashMap<OsString, u64>,
 }
 
 impl<'a> StagedEdit<'a> {
@@ -114,7 +115,6 @@ impl<'a> StagedEdit<'a> {
                 .tempdir_in(table)?,
             extensions: Vec::new(),
             preserve_file_identity: false,
-            ssm_retained_end: HashMap::new(),
         })
     }
 
@@ -214,7 +214,7 @@ impl<'a> StagedEdit<'a> {
                 let Rows::AppendRecords { records, defaults } = rows else {
                     unreachable!()
                 };
-                let retained_end = standard_stman::stage_records(
+                let records = standard_stman::stage_records(
                     &original,
                     &destination,
                     columns,
@@ -223,7 +223,10 @@ impl<'a> StagedEdit<'a> {
                     records,
                     defaults,
                 )?;
-                self.ssm_retained_end.insert(name.into(), retained_end);
+                self.extensions.push(Extension::StandardAppend {
+                    path: original,
+                    records,
+                });
             }
             "StandardStMan" | "StManAipsIO" => {
                 let values = self.manager_rows(columns, rows, old_rows, false)?;
