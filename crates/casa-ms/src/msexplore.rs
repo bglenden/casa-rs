@@ -4758,6 +4758,7 @@ fn build_generic_visibility_scatter(
         show_flagged.then(|| ("flagged".into(), "Flagged".into(), "flagged".into()));
     let mut ordinate_points = (use_ordinate_masks || metadata_pair.is_some())
         .then(plotms_ordinates::CollapsedPointMask::default);
+    let mut projected_flags = Vec::new();
     let mut buffer_geometry_value = None;
     let antenna_visits = antenna_axes
         .as_ref()
@@ -4837,28 +4838,8 @@ fn build_generic_visibility_scatter(
         };
         let flags = selected_flags
             .as_ref()
-            .map(|column| match column.get(row_slot)? {
-                ArrayValue::Bool(values) => {
-                    values.view().into_dimensionality::<Ix2>().map_err(|_| {
-                        "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
-                    })
-                }
-                other => Err(format!(
-                    "msexplore requires BOOL flag cells, found {:?}",
-                    other.primitive_type()
-                )),
-            })
+            .map(|column| visibility_flags(column, row_slot, [corr_count, chan_count]))
             .transpose()?;
-        if let Some(flags) = flags.as_ref()
-            && flags.shape() != [corr_count, chan_count]
-        {
-            return Err(format!(
-                "visibility flag shape {:?} does not match data shape [{}, {}]",
-                flags.shape(),
-                corr_count,
-                chan_count
-            ));
-        }
         let row_arrays_started = timing_enabled.then(Instant::now);
         let weight_values = selected_weights
             .as_ref()
@@ -4975,6 +4956,30 @@ fn build_generic_visibility_scatter(
                 &mut selected_channel_bins,
             )?
         };
+        if show_flagged
+            && let Some(dimensions) = metadata_pair
+            && (dimensions.baseline || buffer_starts[row_slot])
+        {
+            let next_row = row_slot + 1;
+            let end = if dimensions.baseline {
+                next_row
+            } else {
+                buffer_starts[next_row..]
+                    .iter()
+                    .position(|&start| start)
+                    .map_or(buffer_starts.len(), |offset| next_row + offset)
+            };
+            let column = selected_flags.as_ref().expect("metadata plots load flags");
+            let flags = (row_slot..end)
+                .map(|slot| visibility_flags(column, slot, [corr_count, chan_count]));
+            plotms_ordinates::metadata_symbol_flags(
+                &mut projected_flags,
+                dimensions,
+                flags,
+                &channel_bins,
+                &selected_correlations,
+            )?;
+        }
 
         let scan_number_value = selected_scan_numbers[row_slot];
         let antenna1_value = selected_antenna1[row_slot];
@@ -5110,8 +5115,26 @@ fn build_generic_visibility_scatter(
             let mut weight_spectrum_samples = Vec::<f64>::new();
             let mut sigma_spectrum_samples = Vec::<f64>::new();
             for (bin_index, bin) in channel_bins.iter().enumerate() {
+                if let Some(flags) = flags.as_ref() {
+                    collect_bin_flags_into(flags, *corr_index, bin, &mut flag_samples);
+                } else {
+                    flag_samples.clear();
+                }
+                let fully_flagged = || flag_samples.iter().all(|flag| *flag);
+                let displayed_flagged = show_flagged
+                    && if let Some(dimensions) =
+                        metadata_pair.filter(|_| !projected_flags.is_empty())
+                    {
+                        projected_flags[if dimensions.channel { bin.ordinal } else { 0 }]
+                    } else {
+                        fully_flagged()
+                    };
+                if !displayed_flagged && raw_symbols.is_some_and(|symbols| !symbols.unflagged) {
+                    continue;
+                }
                 let transformed_channel_weights = channel_weight_kinds.is_some() && bin.averaged;
                 if transformed_channel_weights
+                    && !displayed_flagged
                     && let Some((weights, flags)) = primary_weight_grid.zip(flags.as_ref())
                     && !plotms_columns::bin_has_weight(weights, *corr_index, bin, flags)
                 {
@@ -5132,17 +5155,8 @@ fn build_generic_visibility_scatter(
                             bin,
                         );
                     } else {
-                        buffer.collect(grid, flags, weights, *corr_index, bin, show_flagged);
+                        buffer.collect(grid, flags, weights, *corr_index, bin, displayed_flagged);
                     }
-                }
-                if let Some(flags) = flags.as_ref() {
-                    collect_bin_flags_into(flags, *corr_index, bin, &mut flag_samples);
-                } else {
-                    flag_samples.clear();
-                }
-                let displayed_flagged = show_flagged && flag_samples.iter().all(|flag| *flag);
-                if !displayed_flagged && raw_symbols.is_some_and(|symbols| !symbols.unflagged) {
-                    continue;
                 }
                 if let Some(statistics) = &statistics {
                     weight_spectrum_samples.clear();
@@ -5220,7 +5234,7 @@ fn build_generic_visibility_scatter(
                         .is_visibility_math()
                         && let Some(mask) = &mut ordinate_points
                     {
-                        if flag_samples.iter().all(|flag| *flag) {
+                        if projected_flags.is_empty() && fully_flagged() {
                             continue;
                         }
                         let dimensions =
@@ -5228,7 +5242,7 @@ fn build_generic_visibility_scatter(
                                 channel: true,
                                 baseline: !y_axis.uses_derived_geometry(),
                             });
-                        let Some(point) = mask.project_clear_sample(
+                        let Some(point) = mask.project_sample(
                             *y_index,
                             row_slot,
                             bin.ordinal,
@@ -7808,6 +7822,33 @@ fn axis_label(axis: MsAxis) -> String {
         MsAxis::FlagRow => "Flag Row".to_string(),
         _ => axis.display_name().to_string(),
     }
+}
+
+fn visibility_flags<'a>(
+    column: &'a SelectedArrayColumn<'_>,
+    row: usize,
+    [correlations, channels]: [usize; 2],
+) -> Result<ndarray::ArrayView2<'a, bool>, String> {
+    let flags = match column.get(row)? {
+        ArrayValue::Bool(values) => values.view().into_dimensionality::<Ix2>().map_err(|_| {
+            "msexplore expects FLAG cells with shape [num_corr, num_chan]".to_string()
+        })?,
+        other => {
+            return Err(format!(
+                "msexplore requires BOOL flag cells, found {:?}",
+                other.primitive_type()
+            ));
+        }
+    };
+    if flags.shape() != [correlations, channels] {
+        return Err(format!(
+            "visibility flag shape {:?} does not match data shape [{}, {}]",
+            flags.shape(),
+            correlations,
+            channels,
+        ));
+    }
+    Ok(flags)
 }
 
 fn float_axis_values(

@@ -1067,7 +1067,43 @@ pub(super) struct PointIndex {
     pub(super) correlation: usize,
 }
 
-/// Keep one clear sample per point in the pair's collapsed visibility shape.
+/// A collapsed metadata point is flagged when every selected cube cell it
+/// represents is flagged.
+pub(super) fn metadata_symbol_flags<'a>(
+    projected: &mut Vec<bool>,
+    dimensions: PointDimensions,
+    rows: impl Iterator<Item = Result<ArrayView2<'a, bool>, String>>,
+    channels: &[ChannelBin],
+    correlations: &[(usize, String)],
+) -> Result<(), String> {
+    projected.clear();
+    projected.resize(
+        if dimensions.channel {
+            channels.len()
+        } else {
+            1
+        },
+        true,
+    );
+    for flags in rows {
+        let flags = flags?;
+        for channel in channels {
+            let slot = if dimensions.channel {
+                channel.ordinal
+            } else {
+                0
+            };
+            if projected[slot] {
+                projected[slot] = correlations.iter().all(|(correlation, _)| {
+                    channel.channels().all(|index| flags[(*correlation, index)])
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Keep one sample per point in the pair's collapsed visibility shape.
 #[derive(Default)]
 pub(super) struct CollapsedPointMask {
     row: HashSet<(usize, usize)>,
@@ -1084,7 +1120,7 @@ impl CollapsedPointMask {
         }
     }
 
-    pub(super) fn project_clear_sample(
+    pub(super) fn project_sample(
         &mut self,
         ordinate: usize,
         row: usize,

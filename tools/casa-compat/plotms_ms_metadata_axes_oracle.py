@@ -357,24 +357,22 @@ def compare_array_horizontal_axes(root, native):
     assert compare_text(actual, expected) == 12
     print("beam-waveguide-parangle: 12 matching array angles above 360 degrees", flush=True)
 
-    for name, settings, count, correlations, refusal in (
-        ("array-correlation-iteration", dict(iteraxis="corr", correlation="XX,YY", gridcols=2, exprange="all"),
-         60, {"XX", "YY"}, "correlation iteration with array horizontal axes"),
-    ):
-        options = base | dict(yaxis="elevation") | settings
-        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
-        assert reference(**options, plotfile=str(expected)) is None
-        selected = rows(expected)
-        assert len(selected) == count and {row[12] for row in selected} == correlations
-        assert {row[2] for row in selected} == {"1", "2", "3"}
-        try:
-            native(**options, plotfile=str(actual))
-        except TaskParameterError as error:
-            assert refusal in str(error) and "#1032" in str(error)
-        else:
-            raise AssertionError(f"casa-rs accepted {name} and could export a partial result")
-        assert not list(work.glob(f"{name}.native*.txt"))
-        print(f"{name}: pinned CASA result and native refusal before export", flush=True)
+    name = "array-correlation-iteration"
+    options = base | dict(yaxis="elevation", iteraxis="corr", correlation="XX,YY",
+                          gridcols=2, exprange="all")
+    expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**options, plotfile=str(expected)) is None
+    selected = rows(expected)
+    assert len(selected) == 60 and {row[12] for row in selected} == {"XX", "YY"}
+    assert {row[2] for row in selected} == {"1", "2", "3"}
+    try:
+        native(**options, plotfile=str(actual))
+    except TaskParameterError as error:
+        assert "correlation iteration with array horizontal axes" in str(error) and "#1032" in str(error)
+    else:
+        raise AssertionError("casa-rs accepted array correlation iteration and could export a partial result")
+    assert not list(work.glob(f"{name}.native*.txt"))
+    print(f"{name}: pinned CASA result and native refusal before export", flush=True)
 
     compare_metadata_flag_modes(work, native, base | dict(yaxis="elevation"), "array-symbols",
                                 (24, 36, 12), ("Marked metadata", "Channel", "Elevation (deg)"))

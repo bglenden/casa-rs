@@ -151,8 +151,8 @@ impl CliOptions {
                 1 + usize::from(self.y_axis2.is_some()) + self.additional_ordinates.len();
             if (0..ordinate_count).any(|index| calibration::figure::shows_flagged(symbols, index))
                 && (calibrated_ordinates
-                    || !columns
-                        .is_some_and(|columns| self.supports_raw_visibility_symbols(columns)))
+                    || !columns.is_some_and(|columns| self.supports_visibility_symbols(columns))
+                        && !self.supports_metadata_flag_symbols())
             {
                 return Err(TaskFailure::validation(
                     "displaying flagged points for this MeasurementSet column plot is pending #1032",
@@ -276,16 +276,42 @@ impl CliOptions {
         }
     }
 
-    pub(super) fn supports_raw_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
+    fn supports_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
         self.x_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis2.is_none()
-            && !self.plotms_averaging_active()
+            && !self.plotms_extended_averaging()
+            && (!self.scalar || self.avgchannel.is_none_or(|width| width <= 1))
             && self.iteraxis.is_none()
             && self.color_by == MsColorAxis::None
             && columns[..2]
                 .iter()
                 .all(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
+    }
+
+    fn supports_metadata_flag_symbols(&self) -> bool {
+        self.x_axis == Some(MsAxis::Channel)
+            && matches!(self.y_axis, Some(MsAxis::Row | MsAxis::Elevation))
+            && self.y_axis2.is_none()
+            && !self.plotms_averaging_active()
+            && self.iteraxis.is_none()
+            && self.color_by == MsColorAxis::None
+    }
+
+    pub(super) fn plotms_symbol_visibility(
+        &self,
+        task: &TaskInvocation<'_>,
+        columns: Option<[MsDataColumn; 3]>,
+        calibrated: bool,
+        pointing: bool,
+    ) -> Option<RawSymbolVisibility> {
+        let visibility = pointing
+            || columns.is_some_and(|columns| self.supports_visibility_symbols(columns))
+                && (!calibrated || !self.plotms_averaging_active());
+        let metadata = !calibrated && self.supports_metadata_flag_symbols();
+        (visibility || metadata)
+            .then(|| raw_symbol_visibility(task))
+            .filter(|symbols| visibility || symbols.flagged || !symbols.unflagged)
     }
 
     pub(super) fn plotms_phasecenter(
@@ -438,7 +464,9 @@ impl CliOptions {
             ));
         }
         let symbols = raw_symbol_visibility(task);
-        if symbols.flagged || !symbols.unflagged {
+        if (symbols.flagged || !symbols.unflagged)
+            && (!self.supports_metadata_flag_symbols() || !task.texts("callib")?.is_empty())
+        {
             let label = if array_horizontal {
                 "array horizontal axes"
             } else {

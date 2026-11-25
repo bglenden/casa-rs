@@ -173,7 +173,7 @@ def compare_channel_averaged_flag_symbols(root, vis, native):
     marked = base | dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
                          flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
                          flaggedsymbolfill="fill", flaggedsymboloutline=False)
-    first_x = {"0": 1.5, "1": 4.0, "2": 5.5}
+    first_x = [1.5, 4.0, 5.5]
     modes = (
         ("channel-averages-clear", base, [0, 1]),
         ("channel-averages-marked", marked, [0, 1, 2]),
@@ -185,7 +185,7 @@ def compare_channel_averaged_flag_symbols(root, vis, native):
         points = rows(expected)
         assert [int(point[2]) for point in points] == channels * 6
         np.testing.assert_allclose([float(point[0]) for point in points[:len(channels)]],
-                                   [first_x[str(channel)] for channel in channels], rtol=1.2e-5)
+                                   [first_x[channel] for channel in channels], rtol=1.2e-5)
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == len(points)
         print(f"{name}: {len(points)} matching channel-average coordinates and flags", flush=True)
@@ -193,6 +193,30 @@ def compare_channel_averaged_flag_symbols(root, vis, native):
     with opened(selected_ms) as table:
         np.testing.assert_array_equal(table.getcol("FLAG"), flags)
         np.testing.assert_array_equal(table.getcol("FLAG_ROW"), flag_rows)
+    weighted = work / "weighted-flagged-channels.ms"
+    copy_ms(selected_ms, weighted)
+    spectra = {}
+    with opened(weighted, True) as table:
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        for name, pair in (("WEIGHT_SPECTRUM", [1, 9]), ("SIGMA_SPECTRUM", [1, 0.5])):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            values = np.resize(np.array(pair, dtype=np.float32), shape[1])[None, :, None]
+            spectra[name] = np.broadcast_to(values, shape)
+            table.putcol(name, spectra[name])
+    expected, actual = (work / f"weighted-marked.{engine}.txt" for engine in ("casa", "native"))
+    options = marked | dict(vis=str(weighted))
+    assert reference(**options, plotfile=str(expected)) is None
+    np.testing.assert_allclose([float(point[0]) for point in rows(expected)[:3]],
+                               [1.8, 4.0, 5.8], rtol=1.2e-5)
+    assert native(**options, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 18
+    with opened(weighted) as table:
+        np.testing.assert_array_equal(table.getcol("FLAG"), flags)
+        for name, values in spectra.items():
+            np.testing.assert_array_equal(table.getcol(name), values)
+    print("weighted-marked: 18 matching channel averages with flagged spectra", flush=True)
 
 
 def compare_flagged_figure(root, native, name, controls, marker_color, *,

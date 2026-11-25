@@ -428,9 +428,12 @@ fn run_visibility_plot(
     let implicit_derived_model = atmosphere.is_none()
         && (!options.avgfield
             || (options.avgtime.is_some() && !options.avgbaseline && !options.avgantenna));
-    let raw_symbols = (pointing.is_some()
-        || axis_columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
-    .then(|| plotms_options::raw_symbol_visibility(task));
+    let raw_symbols = options.plotms_symbol_visibility(
+        task,
+        axis_columns,
+        calibration.is_some(),
+        pointing.is_some(),
+    );
     let mut prefer_float_data = false;
     if calibration.is_none()
         && let Some(columns) = &mut axis_columns
