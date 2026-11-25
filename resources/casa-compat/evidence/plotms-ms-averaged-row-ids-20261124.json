@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "83b1761b02a313e949027066d3354abb9b2cc1d5",
+  "source_revision": "83b1761b02a313e949027066d3354abb9b2cc1d5",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only averaged-row-axes --work <new-dir> --native-bin <msexplore>",
+  "scope": "Row/visibility coordinates after ordinary vector time averaging on selected MeasurementSet channels, including merged integrations and chunks with independent Row numbering.",
+  "result": "passed",
+  "baseline_result": "The public task refuses an averaged Row identifier.",
+  "text_exports": 2,
+  "points": 81
+}
