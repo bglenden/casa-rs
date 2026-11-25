@@ -106,9 +106,13 @@ fn observation_start(table: &MsObservation<'_>, row: usize) -> Option<MvTime> {
         return None;
     }
     let reference = epoch_reference(table.table(), "TIME_RANGE", row, 0).ok()?;
-    let start = MEpoch::from_mjd_seconds(seconds, reference)
-        .convert_to(EpochRef::UTC, &MeasFrame::new())
-        .ok()?;
+    let start = MEpoch::from_mjd_seconds(seconds, reference);
+    let start = if reference == EpochRef::UTC {
+        start
+    } else {
+        let frame = MeasFrame::new().with_measures(crate::open_measures_runtime().ok()?);
+        start.convert_to(EpochRef::UTC, &frame).ok()?
+    };
     Some(MvTime::from_mjd_days(start.value().as_mjd()))
 }
 
