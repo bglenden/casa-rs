@@ -596,11 +596,12 @@ impl AveragedVisibility {
         weights: VectorTimeWeights<'_>,
         corr: usize,
         bin: &ChannelBin,
+        include_flagged: bool,
     ) -> bool {
         if bin.averaged {
             return self.add_time_channel_samples(grid, flags, weights, corr, bin);
         }
-        if flags[(corr, bin.start)] {
+        if !include_flagged && flags[(corr, bin.start)] {
             return false;
         }
         self.add_time_projection(TimeProjection::channel_sample(

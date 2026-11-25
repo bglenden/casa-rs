@@ -1010,7 +1010,7 @@ def compare_time_averaged_flag_symbols(root, native):
         flags[:, 3, :] = True
         table.putcol("FLAG", flags)
     before = snapshot(vis)
-    base = request(vis) | dict(yaxis="amp", avgtime="20", averagedata=True, expformat="txt",
+    base = request(vis) | dict(yaxis="amp", avgtime="20", averagedata=True,
                                title="Flagged visibility")
     marker_color = "dd2255"
     styles = dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
@@ -1033,7 +1033,7 @@ def compare_time_averaged_flag_symbols(root, native):
         for mode, options, channels in modes:
             name = f"time-{kind}-symbols-{mode}"
             expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
-            assert reference(**options, plotfile=str(expected)) is None
+            assert reference(**options, plotfile=str(expected), expformat="txt") is None
             points = rows(expected)
             assert [int(point[2]) for point in points] == channels * groups
             assert np.allclose([float(point[9]) for point in points[::len(channels)]],
@@ -1044,12 +1044,76 @@ def compare_time_averaged_flag_symbols(root, native):
                 for slot in (0, 2):
                     np.testing.assert_allclose([float(value) for value in points[slot][:2]],
                                                first, rtol=1.2e-5)
-            assert native(**options, plotfile=str(actual)) is None
+            assert native(**options, plotfile=str(actual), expformat="txt") is None
             assert compare_text(actual, expected) == len(points)
             print(f"{name}: {len(points)} matching time-averaged coordinates and flags", flush=True)
         compare_flagged_figure(work, native, f"time-{kind}-symbols-both", marked, marker_color,
                                labels=("Flagged visibility", "Amp", "Amp:corrected"),
                                is_flagged=lambda point: point[2] == "3")
+    compare_empty_export(work, native, "time-all-flagged", base | dict(spw="0:3"),
+                         ("Flagged visibility", "Amp", "Amp:corrected"))
+    verify_source(vis, before)
+
+
+def compare_reduced_flag_symbols(root, native):
+    from plotms_callibrary_oracle import snapshot, verify_source
+    from plotms_ms_spw_average_oracle import make_fixture
+
+    work = root / "reduced-flag-symbols"
+    work.mkdir()
+    vis = make_fixture(work, antenna_count=3)
+    with opened(vis, True) as table:
+        first_window = table.getcol("DATA_DESC_ID") == 0
+        first_baseline = table.getcol("ANTENNA2") == 1
+        flags = np.zeros_like(table.getcol("FLAG"))
+        flags[:, 2, first_window & first_baseline] = True
+        flags[:, 3, :] = True
+        table.putcol("FLAG", flags)
+        for name in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(name)
+            values *= np.where(first_baseline, 1, 2)
+            table.putcol(name, values)
+    before = snapshot(vis)
+    base = request(vis) | dict(yaxis="amp", averagedata=True, expformat="txt",
+                               title="Flagged visibility")
+    marker_color = "dd2255"
+    styles = dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
+                  flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
+                  flaggedsymbolfill="fill", flaggedsymboloutline=False)
+    cases = (
+        ("antenna", dict(avgantenna=True, antenna="A0&A1;A0&A2"),
+         "0", "-1", ((1, 0), (2, 0), (3, 0), (1, 1), (2, 1), (3, 1), (1, 2), (2, 2), (3, 2)),
+         {(3, 0), (2, 1), (3, 1), (3, 2)}),
+        ("spw", dict(avgspw=True, spw="0:1~3,1:1~3"),
+         "0", "1", ((1, 0), (2, 0), (3, 0)), {(3, 0)}),
+    )
+    def identity(point):
+        return int(point[2]), int(point[5])
+
+    for reduction, averaging, window, antenna2, identities, flagged in cases:
+        for kind, scalar in (("vector", False), ("scalar", True)):
+            clear = base | averaging | dict(scalar=scalar)
+            marked = clear | styles
+            names = (
+                ("clear", clear, tuple(key for key in identities if key not in flagged)),
+                ("both", marked, identities),
+                ("flagged", marked | dict(customsymbol=True, symbolshape="nosymbol"),
+                 tuple(key for key in identities if key in flagged)),
+            )
+            for mode, options, members in names:
+                name = f"{reduction}-{kind}-symbols-{mode}"
+                expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+                assert reference(**options, plotfile=str(expected)) is None
+                points = rows(expected)
+                assert tuple(map(identity, points)) == members * 2
+                assert {(point[11], point[6], point[12]) for point in points} == {(window, antenna2, "XX")}
+                assert native(**options, plotfile=str(actual)) is None
+                assert compare_text(actual, expected) == len(points)
+                print(f"{name}: {len(points)} matching coordinates, identifiers and flags", flush=True)
+            if not scalar:
+                compare_flagged_figure(work, native, f"{reduction}-{kind}-symbols-both", marked, marker_color,
+                                       labels=("Flagged visibility", "Amp", "Amp:corrected"),
+                                       is_flagged=lambda point: identity(point) in flagged)
     verify_source(vis, before)
 
 
@@ -2087,7 +2151,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("time-statistics", "channel-flag-symbols", "time-flag-symbols"))
+    parser.add_argument("--only", choices=("time-statistics", "channel-flag-symbols", "averaged-flag-symbols"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -2102,8 +2166,9 @@ def main():
         if args.only == "time-statistics":
             compare_time_averaged_statistics(root, native)
             return
-        if args.only == "time-flag-symbols":
+        if args.only == "averaged-flag-symbols":
             compare_time_averaged_flag_symbols(root, native)
+            compare_reduced_flag_symbols(root, native)
             return
         vis, source = fixture(root)
         if args.only == "channel-flag-symbols":
@@ -2122,6 +2187,7 @@ def main():
         compare_averaged_columns(root, native)
         compare_time_averaged_columns(root, native)
         compare_time_averaged_flag_symbols(root, native)
+        compare_reduced_flag_symbols(root, native)
         compare_time_averaged_statistics(root, native)
         compare_combined_averaged_columns(root, native)
         compare_time_scan_field_columns(root, native)
