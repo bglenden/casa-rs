@@ -12,7 +12,7 @@ use crate::ms::{measurement_set_main_table_bindings, measurement_set_table_optio
 use crate::transform::task_history::append_history_messages;
 use crate::{MeasurementSet, MsError, MsResult};
 
-mod subtables;
+pub(crate) mod subtables;
 pub(crate) use subtables::check_named_output as check_named_table_output;
 
 /// Write a sorted, independent MeasurementSet at a staging path.

@@ -184,6 +184,12 @@ impl InputTables {
         MeasurementSet::open_concatenation_metadata(root, links, donor)
     }
 
+    pub(super) fn pointing_path(&self) -> Option<&Path> {
+        self.subtables
+            .get(&SubtableId::Pointing)
+            .map(PathBuf::as_path)
+    }
+
     pub(super) fn hold_ephemerides(&self) -> MsResult<Vec<Table>> {
         self.ephemerides
             .iter()

@@ -4,7 +4,7 @@
 use std::ops::Range;
 
 use casa_tables::{ComplexCompression, ComplexScale, Table};
-use casa_types::{ArrayValue, Complex32, ScalarValue};
+use casa_types::{ArrayValue, Complex32, RecordField, ScalarValue, Value};
 
 use super::{
     MeasurementSetColumnStorage, MeasurementSetColumnWriteMode, MeasurementSetMutationColumnBatch,
@@ -27,6 +27,43 @@ impl<'a> VisibilityWriteDestination<'a> {
             compression.check_writable()?;
         }
         Ok(Self { name, compression })
+    }
+
+    pub(crate) fn for_append(table: &Table, name: &'a str) -> MsResult<Self> {
+        let destination = Self::new(table, name)?;
+        if table.is_virtual_column(name) && destination.compression.is_none() {
+            return Err(invalid(format!(
+                "cannot append through virtual column {name:?}"
+            )));
+        }
+        Ok(destination)
+    }
+
+    pub(crate) fn append_cell(
+        &self,
+        value: ArrayValue,
+        fields: &mut Vec<RecordField>,
+    ) -> MsResult<()> {
+        let Some(compression) = &self.compression else {
+            fields.push(RecordField::new(self.name, Value::Array(value)));
+            return Ok(());
+        };
+        let ArrayValue::Complex32(value) = value else {
+            return Err(invalid("compressed visibility append expects Complex32"));
+        };
+        let (packed, (new_scale, new_offset)) = compression.encode_new_visibility_cell(&value)?;
+        fields.push(RecordField::new(
+            &compression.stored,
+            Value::Array(ArrayValue::Int32(packed)),
+        ));
+        if let ComplexScale::PerRow { scale, offset, .. } = &compression.scale {
+            fields.extend(
+                [(scale, new_scale), (offset, new_offset)].map(|(name, value)| {
+                    RecordField::new(name, Value::Scalar(ScalarValue::Float32(value)))
+                }),
+            );
+        }
+        Ok(())
     }
 
     /// Name of the logical visibility column.

@@ -19,8 +19,10 @@ use rayon::prelude::*;
 use tempfile::TempDir;
 
 use super::{
-    MetadataPlan, SubtableChange, TestConcatenation,
+    MetadataPlan, PhysicalConcatenation, SubtableChange, TestConcatenation,
     locking::{InputTables, WriteGuards, held_reader},
+    main_rows::{self, MainAppend},
+    named_output::NamedOutput,
     required_table,
 };
 use crate::tool_history::history_rows;
@@ -30,6 +32,25 @@ pub(super) fn metadata_only(
     target: &Path,
     donor: &Path,
     request: &TestConcatenation<'_>,
+    retained: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> MsResult<()> {
+    concatenate(target, donor, request, None, retained)
+}
+
+pub(super) fn physical(
+    target: &Path,
+    donor: &Path,
+    request: &PhysicalConcatenation<'_>,
+    retained: &mut BTreeMap<PathBuf, TableWriteLock>,
+) -> MsResult<()> {
+    concatenate(target, donor, &request.metadata, Some(request), retained)
+}
+
+fn concatenate(
+    target: &Path,
+    donor: &Path,
+    request: &TestConcatenation<'_>,
+    physical: Option<&PhysicalConcatenation<'_>>,
     retained: &mut BTreeMap<PathBuf, TableWriteLock>,
 ) -> MsResult<()> {
     let target = target.canonicalize().map_err(io)?;
@@ -50,6 +71,10 @@ pub(super) fn metadata_only(
     let incoming = incoming?;
     let mut leaf_writers = attached.write_paths(true);
     leaf_writers.extend(incoming.write_paths(false));
+    let pointing = physical.is_some_and(|mode| mode.handling < 2);
+    if pointing {
+        leaf_writers.extend(attached.pointing_path().map(Path::to_path_buf));
+    }
     held.acquire(leaf_writers)?;
     attached.validate()?;
     incoming.validate()?;
@@ -61,6 +86,10 @@ pub(super) fn metadata_only(
     let target_calibration = open_calibration(&attached.calibration, false)?;
     let donor_calibration = open_calibration(&incoming.calibration, true)?;
     super::layout::check(&target_ms, &donor_ms)?;
+    let named = physical
+        .and_then(|mode| mode.output)
+        .map(|output| NamedOutput::stage(output, &target_ms, &donor_ms))
+        .transpose()?;
     let plan = MetadataPlan::reconcile(
         &target_ms,
         &donor_ms,
@@ -70,43 +99,49 @@ pub(super) fn metadata_only(
         request.respect_name,
     )?;
 
-    let mut requests = BTreeMap::new();
-    for change in &plan.changes {
-        let table = required_table(&target_ms, change.table)?;
-        let path = output_path(table, &incoming, &target)?;
-        let replacement = !change.updated.is_empty()
-            || !change.removed.is_empty()
-            || (change.table == SubtableId::Field
-                && (plan.add_ephemeris_column || !plan.ephemerides.is_empty()));
-        let request = if replacement {
-            EditRequest::Replace(Box::new(StagedTable::prepare_change(
-                path.clone(),
-                change,
-                &plan,
-                &held.guards,
-            )?))
-        } else {
-            EditRequest::Append(table, matching_fields(table, &change.appended))
-        };
-        insert_edit(&mut requests, path, request)?;
-    }
-    for (table, records) in &plan.calibration {
-        let path = output_path(table, &incoming, &target)?;
-        insert_edit(
-            &mut requests,
-            path,
-            EditRequest::Append(table, matching_fields(table, records)),
-        )?;
+    let mut requests = metadata_edits(&plan, &target_ms, &incoming, &target, &held.guards)?;
+    let donor_pointing = incoming
+        .pointing_path()
+        .filter(|_| pointing)
+        .map(held_reader)
+        .transpose()?;
+    let target_pointing = attached
+        .pointing_path()
+        .filter(|_| pointing)
+        .map(|path| Table::open(TableOptions::new(path)))
+        .transpose()?;
+    if let Some((left, right)) = target_pointing.as_ref().zip(donor_pointing.as_ref()) {
+        let path = output_path(left, &incoming, &target)?;
+        if let Some(edit) = prepare_pointing(left, right, &plan, path.clone(), &held.guards)? {
+            insert_edit(&mut requests, path, edit)?;
+        }
     }
     let history = required_table(&donor_ms, SubtableId::History)?;
     let history_path = output_path(history, &attached, &donor)?;
-    let logs = prepare_history(history, request)?;
+    let logs = prepare_history(history, request, physical)?;
     insert_edit(
         &mut requests,
         history_path,
         EditRequest::Append(history, Cow::Owned(logs)),
     )?;
-
+    if let Some(mode) = physical.filter(|mode| mode.handling % 2 == 0 && named.is_none())
+        && let Some(rows) = main_rows::prepare(
+            &target_ms,
+            &donor_ms,
+            target_ms.main_table(),
+            &plan,
+            mode.weight_scale,
+        )?
+    {
+        insert_edit(
+            &mut requests,
+            target.clone(),
+            EditRequest::Main(target_ms.main_table(), Box::new(rows)),
+        )?;
+    }
+    let named_held = named
+        .as_ref()
+        .map(|_| held.guards.keys().cloned().collect::<BTreeSet<_>>());
     // Canonical paths are distinct. Iterate the map to borrow each guard
     // once and hold it across all fallible edits and synchronization.
     let work = held
@@ -124,11 +159,110 @@ pub(super) fn metadata_only(
                 table.prepare_record_append(&rows, guard)?,
             )),
             EditRequest::Replace(staged) => Ok(TableEdit::Replace(*staged, guard)),
+            EditRequest::Main(table, rows) => Ok(TableEdit::Append(
+                table.prepare_record_append_with_options(&rows.records, rows.options(), guard)?,
+            )),
         })
         .collect::<MsResult<Vec<_>>>()?;
     attached.validate()?;
     incoming.validate()?;
-    publish_batch(edits)
+    publish_batch_then(edits, || {
+        if let Some(named) = named {
+            let mode = physical.expect("named physical request");
+            named.finish(
+                &target_ms,
+                &donor_ms,
+                &plan,
+                mode,
+                &named_held.expect("named output lock paths"),
+            )?;
+        }
+        Ok(())
+    })
+}
+
+fn metadata_edits<'a>(
+    plan: &'a MetadataPlan<'a>,
+    target_ms: &'a crate::MeasurementSet,
+    incoming: &InputTables,
+    target: &Path,
+    held: &BTreeMap<PathBuf, TableWriteLock>,
+) -> MsResult<BTreeMap<PathBuf, EditRequest<'a>>> {
+    let mut requests = BTreeMap::new();
+    for change in &plan.changes {
+        let table = required_table(target_ms, change.table)?;
+        let path = output_path(table, incoming, target)?;
+        let replacement = !change.updated.is_empty()
+            || !change.removed.is_empty()
+            || (change.table == SubtableId::Field
+                && (plan.add_ephemeris_column || !plan.ephemerides.is_empty()));
+        let request = if replacement {
+            EditRequest::Replace(Box::new(StagedTable::prepare_change(
+                path.clone(),
+                change,
+                plan,
+                held,
+            )?))
+        } else {
+            EditRequest::Append(table, matching_fields(table, &change.appended))
+        };
+        insert_edit(&mut requests, path, request)?;
+    }
+    for (table, records) in &plan.calibration {
+        let path = output_path(table, incoming, target)?;
+        insert_edit(
+            &mut requests,
+            path,
+            EditRequest::Append(table, matching_fields(table, records)),
+        )?;
+    }
+    Ok(requests)
+}
+
+fn prepare_pointing<'a>(
+    target: &'a Table,
+    donor: &Table,
+    plan: &MetadataPlan<'_>,
+    path: PathBuf,
+    held: &BTreeMap<PathBuf, TableWriteLock>,
+) -> MsResult<Option<EditRequest<'a>>> {
+    if target.row_count() == 0 {
+        return Ok(None);
+    }
+    if donor.row_count() == 0 {
+        let change = SubtableChange {
+            table: SubtableId::Pointing,
+            appended: Vec::new(),
+            updated: Vec::new(),
+            removed: (0..target.row_count()).collect(),
+        };
+        return Ok(Some(EditRequest::Replace(Box::new(
+            StagedTable::prepare_change(path, &change, plan, held)?,
+        ))));
+    }
+    let rows = donor
+        .rows()?
+        .iter()
+        .map(|record| {
+            let Some(Value::Scalar(ScalarValue::Int32(antenna))) = record.get("ANTENNA_ID") else {
+                return Err(io("POINTING entry has no antenna ID"));
+            };
+            let id = usize::try_from(*antenna)
+                .ok()
+                .and_then(|id| plan.row_map.antennas.get(id))
+                .ok_or_else(|| io(format!("POINTING antenna ID {antenna} is invalid")))?;
+            let mut row = record.clone();
+            row.upsert(
+                "ANTENNA_ID",
+                Value::Scalar(ScalarValue::Int32(super::spectral::row_id(*id)?)),
+            );
+            Ok(row)
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    Ok(Some(EditRequest::Append(
+        target,
+        Cow::Owned(matching_fields(target, &rows).into_owned()),
+    )))
 }
 
 fn open_calibration(
@@ -148,7 +282,32 @@ fn open_calibration(
         .collect()
 }
 
-fn prepare_history(table: &Table, request: &TestConcatenation<'_>) -> MsResult<Vec<RecordValue>> {
+fn prepare_history(
+    table: &Table,
+    request: &TestConcatenation<'_>,
+    physical: Option<&PhysicalConcatenation<'_>>,
+) -> MsResult<Vec<RecordValue>> {
+    if let Some(mode) = physical {
+        let message = format!(
+            "{} appended to {}",
+            request.donor_name,
+            request.attached_name.display()
+        );
+        let destination = mode
+            .output
+            .map(|output| output.to_string_lossy())
+            .unwrap_or_default();
+        let command = format!(
+            "msfile='{}' freqTol='{}' dirTol='{}' respectname='{}' handling= {} destmsfile='{}'",
+            request.donor_name,
+            request.frequency_text,
+            request.direction_text,
+            u8::from(request.respect_name),
+            mode.handling,
+            destination,
+        );
+        return history_rows(table, &[message], &command, "ms::concatenate()", "ms");
+    }
     let message = format!(
         "Subtables from {} appended to those from {}",
         request.donor_name,
@@ -178,6 +337,7 @@ fn output_path(table: &Table, opposite: &InputTables, own_root: &Path) -> MsResu
 
 enum EditRequest<'a> {
     Append(&'a Table, Cow<'a, [RecordValue]>),
+    Main(&'a Table, Box<MainAppend>),
     Replace(Box<StagedTable>),
 }
 
@@ -196,7 +356,10 @@ fn insert_edit<'a>(
     }
 }
 
-fn publish_batch(mut edits: Vec<TableEdit<'_>>) -> MsResult<()> {
+fn publish_batch_then(
+    mut edits: Vec<TableEdit<'_>>,
+    finish: impl FnOnce() -> MsResult<()>,
+) -> MsResult<()> {
     let publish = edits
         .par_iter_mut()
         .map(TableEdit::publish)
@@ -211,7 +374,8 @@ fn publish_batch(mut edits: Vec<TableEdit<'_>>) -> MsResult<()> {
                 .collect::<Vec<_>>()
                 .into_iter()
                 .collect()
-        });
+        })
+        .and_then(|()| finish());
     if let Err(error) = result {
         let failures: Vec<_> = edits
             .into_iter()

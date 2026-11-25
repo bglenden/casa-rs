@@ -12019,3 +12019,42 @@ and call `ms.testconcatenate()` with default tolerances in CASA 6.7.6.14.
 The tool appends a field to the linked table, which also adds it to the
 donor. Casa-rs checks the physical destinations against both inputs and
 refuses changes to a table used by the other input (#1030).
+
+## Physical MS concatenation can misalign visibility flags when it reverses channels
+
+In CASA 6.7.6.14, concatenate two MeasurementSets that match spectrally
+with their channel frequencies in opposite orders. CASA reverses
+the DATA channels while FLAG remains in the donor's original channel
+order. The same happens with defined FLAG_CATEGORY, WEIGHT_SPECTRUM,
+and SIGMA_SPECTRUM cells. When the antenna mapping also reverses a
+baseline, CASA swaps correlations and leaves the channel axes out of
+step. Casa-rs applies the same channel permutation to the visibility,
+flag, weight, and sigma spectra (#1030).
+
+## An invalid named concatenation destination can change the attached MS
+
+With nonempty POINTING tables, call `ms.concatenate()` in CASA 6.7.6.14
+with a named output that already exists as an ordinary file or populated
+directory. CASA can append donor POINTING rows to the attached MS before
+it reports that the output cannot be replaced. Casa-rs checks the
+destination before writing and retains the previous table edits for
+rollback until the output is published (#1030).
+
+## Concatenating a donor with no MAIN rows can abort CASA
+
+In CASA 6.7.6.14, call `ms.concatenate()` with an empty donor MAIN
+created by deep-copying an empty row selection of a valid MeasurementSet.
+The scan-offset calculation takes the minimum of the empty SCAN_NUMBER
+column. The uncaught casacore ArrayError aborts the process after CASA
+has started reconciling subtables. Casa-rs completes the requested
+metadata reconciliation and appends zero visibility rows (#1030).
+
+## Physical concatenation can zero manually scaled compressed visibilities
+
+In CASA 6.7.6.14, append a MeasurementSet with MODEL_DATA cells filled
+with `3+4j` to a MeasurementSet whose CompressComplex MODEL_DATA uses
+per-row scale and offset columns with autoscaling disabled. CASA reports
+success and reads back `0+0j` in the appended cells because the new row
+scales remain zero. Casa-rs chooses a scale and offset for each new cell,
+writes both physical scalar columns and preserves the configured policy
+for subsequent writes (#1030).

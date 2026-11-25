@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_aipsio::ByteOrder;
-use casa_types::{RecordField, RecordValue};
+use casa_types::{RecordField, RecordValue, ScalarValue, Value};
 
 use super::table_control::{ColumnDescContents, DataManagerEntry, TableDatContents};
 use super::{
@@ -27,6 +27,8 @@ pub(crate) enum Rows<'a> {
     AppendRecords {
         records: &'a [RecordValue],
         defaults: &'a RecordValue,
+        encoded: Option<&'a tiled_stman::shape_append::ShapeAppend>,
+        existing_scalar: Option<(&'a str, &'a ScalarValue)>,
     },
     Keep(&'a [usize]),
 }
@@ -145,8 +147,18 @@ impl<'a> StagedEdit<'a> {
         let defined = matches!(rows, Rows::AppendRecords { records, .. } if records.iter().any(|record| {
             columns.iter().any(|column| record.get(&column.col_name).is_some())
         }));
+        let override_values = matches!(rows, Rows::AppendRecords { existing_scalar: Some((name, _)), .. }
+            if columns.iter().any(|column| column.col_name == *name));
+        if let Rows::AppendRecords {
+            encoded: Some(encoded),
+            ..
+        } = rows
+            && encoded.stage(self.staged.path(), manager.seq_nr, defined)?
+        {
+            return Ok(());
+        }
         match manager.type_name.as_str() {
-            "IncrementalStMan" if append && !defined && old_rows > 0 => {
+            "IncrementalStMan" if append && !defined && !override_values && old_rows > 0 => {
                 let (offset, bytes) =
                     incremental_stman::appended_ism_index(&original, old_rows, new_rows)?;
                 self.extensions.push(Extension::Index {
@@ -200,6 +212,23 @@ impl<'a> StagedEdit<'a> {
                 }
             }
             "IncrementalStMan" if append => {
+                if old_rows > 0
+                    && !override_values
+                    && columns
+                        .iter()
+                        .all(|column| !column.is_array && !column.is_record())
+                    && let Rows::AppendRecords { records, .. } = rows
+                    && incremental_stman::stage_scalar_append(
+                        &original,
+                        &destination,
+                        columns,
+                        &manager.data,
+                        records,
+                        old_rows,
+                    )?
+                {
+                    return Ok(());
+                }
                 let values = self.manager_rows(columns, rows, old_rows, true)?;
                 let (endian, size, cache) = incremental_stman::ism_layout(&original)?;
                 incremental_stman::write_ism_with_layout(
@@ -211,8 +240,11 @@ impl<'a> StagedEdit<'a> {
                     cache,
                 )?;
             }
-            "StandardStMan" if matches!(rows, Rows::AppendRecords { .. }) => {
-                let Rows::AppendRecords { records, defaults } = rows else {
+            "StandardStMan" if !override_values && matches!(rows, Rows::AppendRecords { .. }) => {
+                let Rows::AppendRecords {
+                    records, defaults, ..
+                } = rows
+                else {
                     unreachable!()
                 };
                 let records = standard_stman::stage_records(
@@ -291,7 +323,19 @@ impl<'a> StagedEdit<'a> {
                 existing.extend(std::iter::repeat_n(project(defaults, defaults), count));
                 Ok(existing)
             }
-            Rows::AppendRecords { records, defaults } => {
+            Rows::AppendRecords {
+                records,
+                defaults,
+                existing_scalar,
+                ..
+            } => {
+                if let Some((name, value)) = existing_scalar
+                    && names.contains(&name)
+                {
+                    for record in &mut existing {
+                        record.upsert(name, Value::Scalar(value.clone()));
+                    }
+                }
                 for record in records {
                     let base = if inherit_previous {
                         existing.last().unwrap_or(defaults)

@@ -42,9 +42,11 @@ use super::table_control::ColumnDescContents;
 use super::{ColumnSources, EncodedCells, RequiredScalarColumnData, StorageError};
 use crate::table::GeneratedScalarValueRun;
 
+mod append_records;
 mod cells;
 mod check_layout;
 mod write_columns;
+pub(super) use append_records::stage_scalar_append;
 pub(crate) use write_columns::write_ism_file_column_sources;
 
 pub use check_layout::IncrementalCorruption;
@@ -100,9 +102,13 @@ thread_local! {
 
 #[derive(Debug, Clone)]
 struct IsmHeader {
+    version: u32,
     bucket_size: u32,
     nr_buckets: u32,
     pers_cache_size: u32,
+    uniq_nr: u32,
+    nr_free_buckets: u32,
+    first_free_bucket: i32,
     big_endian: bool,
     io_order: ByteOrder,
 }
@@ -174,15 +180,19 @@ fn parse_ism_header(file: &mut (impl Read + Seek)) -> Result<IsmHeader, StorageE
     let bucket_size = buf.read_u32()?;
     let nr_buckets = buf.read_u32()?;
     let pers_cache_size = buf.read_u32()?;
-    let _uniq_nr = buf.read_u32()?;
-    let _nr_free_buckets = buf.read_u32()?;
-    let _first_free_bucket = buf.read_i32()?;
+    let uniq_nr = buf.read_u32()?;
+    let nr_free_buckets = buf.read_u32()?;
+    let first_free_bucket = buf.read_i32()?;
     buf.getend()?;
 
     Ok(IsmHeader {
+        version,
         bucket_size,
         nr_buckets,
         pers_cache_size,
+        uniq_nr,
+        nr_free_buckets,
+        first_free_bucket,
         big_endian,
         io_order,
     })
@@ -2347,32 +2357,39 @@ fn serialize_ism_header(
     big_endian: bool,
     cache_size: u32,
 ) -> Result<Vec<u8>, StorageError> {
-    let io_order = if big_endian {
-        ByteOrder::BigEndian
-    } else {
-        ByteOrder::LittleEndian
-    };
-    let mut buf = AipsIoBufferWriter::new(io_order);
+    encode_ism_header(&IsmHeader {
+        version: if big_endian { 4 } else { 5 },
+        bucket_size,
+        nr_buckets,
+        pers_cache_size: cache_size,
+        uniq_nr: 0,
+        nr_free_buckets: 0,
+        first_free_bucket: -1,
+        big_endian,
+        io_order: if big_endian {
+            ByteOrder::BigEndian
+        } else {
+            ByteOrder::LittleEndian
+        },
+    })
+}
 
-    // v5 for LE tables (includes endian flag), v4 for BE tables
-    let version = if big_endian { 4 } else { 5 };
-    buf.putstart("IncrementalStMan", version)?;
-
-    if version >= 5 {
-        buf.put_bool(big_endian);
+fn encode_ism_header(header: &IsmHeader) -> Result<Vec<u8>, StorageError> {
+    let mut buf = AipsIoBufferWriter::new(header.io_order);
+    buf.putstart("IncrementalStMan", header.version)?;
+    if header.version >= 5 {
+        buf.put_bool(header.big_endian);
     }
-
-    buf.put_u32(bucket_size); // bucketSize
-    buf.put_u32(nr_buckets); // nbucketInit
-    buf.put_u32(cache_size); // persCacheSize
-    buf.put_u32(0); // uniqnr
-    buf.put_u32(0); // nFreeBucket
-    buf.put_i32(-1); // firstFreeBucket
+    buf.put_u32(header.bucket_size);
+    buf.put_u32(header.nr_buckets);
+    buf.put_u32(header.pers_cache_size);
+    buf.put_u32(header.uniq_nr);
+    buf.put_u32(header.nr_free_buckets);
+    buf.put_i32(header.first_free_bucket);
     buf.putend()?;
-
-    let mut header = buf.into_bytes();
-    header.resize(ISM_HEADER_SIZE as usize, 0);
-    Ok(header)
+    let mut bytes = buf.into_bytes();
+    bytes.resize(ISM_HEADER_SIZE as usize, 0);
+    Ok(bytes)
 }
 
 fn serialize_ism_index(
@@ -2385,6 +2402,14 @@ fn serialize_ism_index(
     } else {
         ByteOrder::LittleEndian
     };
+    encode_ism_index(rows, bucket_nrs, io_order)
+}
+
+fn encode_ism_index(
+    rows: &[u64],
+    bucket_nrs: &[u32],
+    io_order: ByteOrder,
+) -> Result<Vec<u8>, StorageError> {
     let mut buf = AipsIoBufferWriter::new(io_order);
     let nused = bucket_nrs.len() as u32;
 

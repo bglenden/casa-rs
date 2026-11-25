@@ -19,6 +19,7 @@ use crate::{MeasurementSet, MsError, MsResult};
 
 pub(super) struct FieldRows {
     pub(super) additions: Vec<RecordValue>,
+    pub(super) ids: Vec<i32>,
     pub(super) matched: bool,
     pub(super) ephemerides: Vec<(PathBuf, String)>,
     pub(super) add_ephemeris_column: bool,
@@ -51,6 +52,7 @@ pub(super) fn reconcile(
         .is_some_and(|schema| schema.contains_column("EPHEMERIS_ID"));
     let mut output = FieldRows {
         additions: Vec::new(),
+        ids: Vec::with_capacity(donor_rows.len()),
         matched: false,
         ephemerides: Vec::new(),
         add_ephemeris_column: donor_field
@@ -118,6 +120,7 @@ pub(super) fn reconcile(
                     })
                 });
             if same_kind && covers && (!respect_name || other.name == entry.name) {
+                output.ids.push(super::spectral::row_id(id)?);
                 output.matched = true;
                 continue;
             }
@@ -167,6 +170,7 @@ pub(super) fn reconcile(
         } else if target_ephemeris_column || output.add_ephemeris_column {
             record.upsert("EPHEMERIS_ID", integer(-1));
         }
+        output.ids.push(super::spectral::row_id(known.len())?);
         known.push(entry);
         output.additions.push(record);
     }

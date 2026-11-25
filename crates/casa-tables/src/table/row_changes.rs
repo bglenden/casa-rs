@@ -4,6 +4,29 @@ use crate::TableWriteLock;
 use crate::lock::WriteSyncCheckpoint;
 use crate::storage::column_changes::ColumnGroupPayload;
 use crate::storage::row_changes::{ReversibleEdit, Rows, StagedEdit};
+use crate::storage::tiled_stman::shape_append::ShapeAppend;
+
+/// Appended array cells that can be copied directly from the donor's
+/// encoded storage. Other cells still need to be supplied as records.
+pub struct EncodedArrayAppend(ShapeAppend);
+
+/// Optional changes applied in the same staged edit as appended records.
+#[derive(Default)]
+pub struct RecordAppendOptions<'a> {
+    /// Whole-donor array cells supplied directly from encoded storage.
+    pub encoded_arrays: Option<&'a EncodedArrayAppend>,
+    /// Set an existing scalar column before appending the new rows.
+    pub existing_scalar: Option<(&'a str, &'a ScalarValue)>,
+    /// Set a column keyword in the new table descriptor.
+    pub column_keyword: Option<(&'a str, &'a str, &'a Value)>,
+}
+
+impl EncodedArrayAppend {
+    /// Columns for which every appended cell is provided by the encoded plan.
+    pub fn columns(&self) -> impl Iterator<Item = &str> {
+        self.0.columns()
+    }
+}
 
 /// One column to install in an existing disk table.
 pub struct ColumnAddition {
@@ -219,6 +242,8 @@ impl Table {
             Rows::AppendRecords {
                 records,
                 defaults: &defaults,
+                encoded: None,
+                existing_scalar: None,
             },
             reload,
         )
@@ -238,6 +263,48 @@ impl Table {
         records: &[RecordValue],
         lock: &'lock mut TableWriteLock,
     ) -> Result<PreparedRecordAppend<'lock>, TableError> {
+        self.prepare_record_append_with_options(records, RecordAppendOptions::default(), lock)
+    }
+
+    /// Identify compatible tiled array columns for a whole-donor append.
+    ///
+    /// Open the donor and target under their read and write locks and retain
+    /// both locks through staging. Only supply names whose cells can be
+    /// copied without transformation. Read the remaining cells normally.
+    ///
+    /// # Errors
+    /// The donor or target is unpersisted, or its headers cannot be read.
+    pub fn plan_encoded_array_append(
+        &self,
+        donor: &Self,
+        columns: &[&str],
+    ) -> Result<EncodedArrayAppend, TableError> {
+        let target = self.path().ok_or(TableError::PreparedRowRequiresSchema)?;
+        let incoming = donor.path().ok_or(TableError::PreparedRowRequiresSchema)?;
+        if columns.is_empty() || self.kind != TableKind::Plain || donor.kind != TableKind::Plain {
+            return Ok(EncodedArrayAppend(ShapeAppend::empty(
+                target,
+                self.row_count(),
+                donor.row_count(),
+            )));
+        }
+        Ok(EncodedArrayAppend(ShapeAppend::plan(
+            target, incoming, columns,
+        )?))
+    }
+
+    /// Stage distinct appended records with additional atomic edits. Records
+    /// omit columns already supplied by the encoded donor plan.
+    ///
+    /// # Errors
+    /// As in [`Self::prepare_record_append`], or the options conflict with
+    /// the target schema, current storage, or supplied records.
+    pub fn prepare_record_append_with_options<'lock>(
+        &self,
+        records: &[RecordValue],
+        options: RecordAppendOptions<'_>,
+        lock: &'lock mut TableWriteLock,
+    ) -> Result<PreparedRecordAppend<'lock>, TableError> {
         let path = self.path().ok_or(TableError::PreparedRowRequiresSchema)?;
         if records.is_empty()
             || self.kind != TableKind::Plain
@@ -248,14 +315,44 @@ impl Table {
                 "preparing an append requires a clean, locked plain table and records".into(),
             ));
         }
-        let dat = crate::storage::table_control::read_table_dat(
+        let mut dat = crate::storage::table_control::read_table_dat(
             &path.join(crate::storage::TABLE_CONTROL_FILE),
         )?;
         let old = self.require_persisted_rows(path, &dat)?;
+        let encoded = options.encoded_arrays.map(|encoded| &encoded.0);
+        if let Some(encoded) = encoded {
+            encoded.validate(path, old, records.len())?;
+        }
+        if let Some((name, value)) = options.existing_scalar {
+            let column = self
+                .schema()
+                .and_then(|schema| schema.column(name))
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: name.into(),
+                })?;
+            super::columns::validate_cell_against_schema_column(
+                0,
+                column,
+                Some(&Value::Scalar(value.clone())),
+            )?;
+        }
+        if let Some((name, key, value)) = options.column_keyword {
+            let column = dat
+                .table_desc
+                .columns
+                .iter_mut()
+                .find(|column| column.col_name == name)
+                .ok_or_else(|| TableError::SchemaColumnUnknown {
+                    column: name.into(),
+                })?;
+            column.keywords.upsert(key, value.clone());
+        }
         let defaults = self.record_append_defaults(records)?;
         let rows = Rows::AppendRecords {
             records,
             defaults: &defaults,
+            encoded,
+            existing_scalar: options.existing_scalar,
         };
         let edit = StagedEdit::stage(path, dat, old, rows)?.prepare_publication(true)?;
         let original_sync = lock.checkpoint_sync()?;

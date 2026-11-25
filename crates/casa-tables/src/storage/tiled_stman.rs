@@ -385,6 +385,7 @@ pub(crate) use selected_cells::cell_read_buffer_bytes;
 use selected_cells::load_selected_rows_from_touched_cubes;
 mod selected_tiles;
 use selected_tiles::{SelectedTiles, copy_pixels};
+pub(crate) mod shape_append;
 mod shape_cube;
 mod spec;
 #[cfg(test)]
@@ -1737,17 +1738,6 @@ fn array_memory_order_values<T: Clone>(array: &ArrayD<T>) -> Cow<'_, [T]> {
                 .to_vec(),
         )
     }
-}
-
-fn is_fortran_contiguous(shape: &[usize], strides: &[isize]) -> bool {
-    let mut expected = 1isize;
-    for (&dim, &stride) in shape.iter().zip(strides.iter()) {
-        if dim > 1 && stride != expected {
-            return false;
-        }
-        expected = expected.saturating_mul(dim.max(1) as isize);
-    }
-    true
 }
 
 // ---------------------------------------------------------------------------

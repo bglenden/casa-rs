@@ -21,21 +21,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (msfile = None, freqtol = None, dirtol = None, weightscale = None, handling = None, destmsfile = None, respectname = None), text_signature = "($self, msfile='', freqtol=[], dirtol=[], weightscale=1.0, handling=0, destmsfile='', respectname=False)")]
-    fn concatenate(
-        &self,
-        msfile: Option<&Bound<'_, PyAny>>,
-        freqtol: Option<&Bound<'_, PyAny>>,
-        dirtol: Option<&Bound<'_, PyAny>>,
-        weightscale: Option<&Bound<'_, PyAny>>,
-        handling: Option<&Bound<'_, PyAny>>,
-        destmsfile: Option<&Bound<'_, PyAny>>,
-        respectname: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("concatenate")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (field = None, fitspw = None, spw = None, solint = None, fitorder = None, mode = None), text_signature = "($self, field=[], fitspw=[], spw=[], solint=[], fitorder=0, mode='subtract')")]
     fn continuumsub(
         &self,
