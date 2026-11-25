@@ -1990,6 +1990,13 @@ def compare_effective_float_averages(root, native):
         ("mixed-time-explicit", mixed, interval, [-0.8, 1.2] * 3, False),
         ("mixed-time-scalar", mixed, interval | dict(scalar=True),
          [-8 / 11, 2 - 8 / 11, -4 / 19, 2 - 4 / 19], False),
+        ("mixed-time-scalar-data", mixed, interval | dict(scalar=True, ydatacolumn="data"),
+         [8 / 11, 2, 4 / 19, 2], False),
+        ("only-time-channel", only, interval | channel, [-0.8] * 3, False),
+        ("mixed-time-channel-scalar-float", mixed, interval | channel | dict(scalar=True),
+         [-8 / 3, -4 / 3], False),
+        ("mixed-time-channel-scalar-data", mixed, interval | channel | dict(scalar=True, ydatacolumn="data"),
+         [4 / 3, 4 / 9], False),
         ("disabled-amp", mixed, channel | interval | dict(averagedata=False, ydatacolumn="data"),
          [-4, -2, 0, 2] * 3, False),
         ("disabled-real", mixed, channel | interval | dict(averagedata=False, ydatacolumn="data", yaxis="real"),
@@ -2016,6 +2023,10 @@ def compare_effective_float_averages(root, native):
             output = work / f"{name}-real.native.txt"
             assert native(**(options | dict(yaxis="real")), plotfile=str(output), expformat="txt") is None
             assert compare_text(output, real_reference) == len(values)
+        if name == "weighted-channel":
+            figure = options | dict(title="Float channel averages", xlabel="Channel bin")
+            compare_figure(work, native, figure, expected,
+                           ("Float channel averages", "Channel bin", "Amp:float"))
         print(f"{name}: {len(points)} matching signed values, IDs and metadata", flush=True)
     refusal = work / "only-channel-real.casa.txt"
     options = request(only) | channel | dict(xaxis="channel", xdatacolumn="", yaxis="real", ydatacolumn="float")

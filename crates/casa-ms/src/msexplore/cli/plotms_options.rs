@@ -88,6 +88,24 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
+    pub(super) fn supports_effective_float_averaging(&self) -> bool {
+        let channel = self.avgchannel.is_some_and(|width| width > 1);
+        let time = self.avgtime.is_some();
+        (channel || time)
+            && (!self.avgspw || (channel && !time))
+            && !(self.avgbaseline || self.avgantenna || self.avgscan || self.avgfield)
+            && self.iteraxis.is_none()
+            && self.freqframe.is_none()
+            && self.y_axis2.is_none()
+            && self.additional_ordinates.is_empty()
+            && self
+                .y_axis
+                .is_some_and(|axis| matches!(axis, MsAxis::Amplitude | MsAxis::Real))
+            && self.x_axis.is_some_and(|axis| {
+                matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
+            })
+    }
+
     pub(super) fn supports_averaged_ordinate_iteration(&self) -> bool {
         self.iteraxis
             .is_some_and(MsIterationAxis::supports_averaged_ordinates)

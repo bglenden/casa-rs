@@ -11115,6 +11115,21 @@ paired fixture checks the selected bins and metadata in both modes (#1032).
 [Pinned transform setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/mstransform/MSTransform/MSTransformManager.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 [Pinned time averager](https://open-bitbucket.nrao.edu/projects/CASA/repos/casa6/browse/casatools/src/code/msvis/MSVis/AveragingTvi2.cc?at=9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2)
 
+## PlotMS can terminate while exporting Real from FLOAT_DATA
+
+With CASA 6.7.6.14 and casaplotms 2.9.1, select XX and channels 1 through
+3 from a float-only MeasurementSet. Use Channel versus Real with
+`ydatacolumn="float"` and `avgchannel="2"`. The CASA plot server
+terminates with signal 11 and returns an unavailable RPC without a text
+product. The explicit float cache fills the signed amplitude cube for
+both amplitude and real, then the Real export requests its own cube.
+
+casa-rs exports the same signed real samples for the Real and Amp axes
+on an explicit float column, keeping each axis label. The paired test
+reproduces the failed Real request and uses the signed CASA Amp export
+to check the corrected native values and point IDs (#1032).
+[Pinned PlotMS cache](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+
 ## PlotMS can stall while exporting phase-shifted coordinates to text
 
 In CASA 6.7.6.14 with casaplotms 2.9.1, plot U in metres against observed

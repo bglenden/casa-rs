@@ -444,6 +444,7 @@ fn run_visibility_plot(
             *columns,
             axes,
             options.plotms_averaging_active(),
+            options.supports_effective_float_averaging(),
         )?;
         if let Some((storage, axis)) = options.derived_average_storage(*columns, adjusted) {
             plotms_columns::check_averaged_derived_storage(
@@ -478,8 +479,13 @@ fn run_visibility_plot(
     }
     let averaging = options.plotms_averaging_active();
     for (axis, column) in &mut options.additional_ordinates {
-        let ([resolved], _) =
-            plotms_columns::resolve_storage_columns(&ms, [*column], [Some(*axis)], averaging)?;
+        let ([resolved], _) = plotms_columns::resolve_storage_columns(
+            &ms,
+            [*column],
+            [Some(*axis)],
+            averaging,
+            false,
+        )?;
         *column = resolved;
     }
     if !options.selection.selectdata {

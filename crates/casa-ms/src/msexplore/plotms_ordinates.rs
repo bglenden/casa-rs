@@ -76,7 +76,24 @@ impl<'a> VisibilityColumns<'a> {
     }
 
     pub(super) fn column(&self, ordinate: usize) -> Option<MsDataColumn> {
-        self.axes[ordinate + 1].map(|index| self.sources[index].0)
+        self.column_on_axis(ordinate + 1)
+    }
+
+    pub(super) fn column_on_axis(&self, axis: usize) -> Option<MsDataColumn> {
+        self.axes[axis].map(|index| self.sources[index].0)
+    }
+
+    pub(super) fn projection_axis(&self, index: usize, axis: MsAxis) -> MsAxis {
+        if axis == MsAxis::Amplitude
+            && self.axes[index].is_some_and(|source| {
+                matches!(&self.sources[source].1, PreparedSelectedDataSource::Single(column)
+                    if column.column == "FLOAT_DATA")
+            })
+        {
+            MsAxis::Real
+        } else {
+            axis
+        }
     }
 
     pub(super) fn grid<'b>(
@@ -515,6 +532,7 @@ pub(super) struct ScalarTimeSample<'a> {
     pub(super) row_weight: f64,
     pub(super) channel_spectra: Option<[Option<&'a FloatGrid>; 2]>,
     pub(super) conjugate: bool,
+    pub(super) preserve_float_sign: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -678,6 +696,7 @@ impl AveragedVisibility {
         samples: VisibilityBinSamples<'_>,
         weight: f64,
         conjugate: bool,
+        preserve_float_sign: bool,
     ) {
         let (values, weights) = self.weighted_mut();
         let sample_weights = samples
@@ -686,7 +705,11 @@ impl AveragedVisibility {
             .copied()
             .chain(std::iter::repeat(weight));
         for (value, weight) in samples.values.iter().zip(sample_weights) {
-            let packed = Complex64::new(value.norm(), value.arg());
+            let packed = if preserve_float_sign {
+                *value
+            } else {
+                Complex64::new(value.norm(), value.arg())
+            };
             values.push(if conjugate { packed.conj() } else { packed });
             weights.push(super::plotms_columns::baseline_weight(weight));
         }
@@ -727,7 +750,11 @@ impl AveragedVisibility {
             } else {
                 value
             };
-            Complex32::new(value.norm(), value.arg()) * weight
+            if options.preserve_float_sign {
+                value * weight
+            } else {
+                Complex32::new(value.norm(), value.arg()) * weight
+            }
         });
         sample.total_weights = [weight; 2];
         self.add_time_projection(sample);
