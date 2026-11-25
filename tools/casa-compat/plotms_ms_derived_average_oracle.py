@@ -142,6 +142,26 @@ def compare_operand_edges(root, native, vis):
         print(f"{name}: 6 matching nonfinite coordinates with finite observed ordinates", flush=True)
 
 
+def weighted_reduction_fixture(root, source):
+    vis = root / "weighted.ms"
+    copy_ms(source, vis)
+    with opened(vis, True) as table:
+        time = table.getcol("TIME")
+        late = time >= time.min() + 10
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        for name, weights in (("WEIGHT_SPECTRUM", np.where(late, 9, 1)),
+                              ("SIGMA_SPECTRUM", np.where(late, 2, 1))):
+            table.addcols({name: dict(descriptor, valueType="float", dataManagerType="StandardStMan",
+                                      dataManagerGroup=name)})
+            table.putcol(name, np.broadcast_to(weights.astype(np.float32), shape))
+        for name, scale in (("DATA", 4), ("CORRECTED_DATA", 2)):
+            values = table.getcol(name)
+            values[:, :, late] *= scale
+            table.putcol(name, values)
+    return vis
+
+
 def compare_reduced_expressions(root, native):
     from plotms_ms_spw_average_oracle import export, make_fixture, stagger_windows
 
@@ -158,6 +178,7 @@ def compare_reduced_expressions(root, native):
     for window, flux, frequency in ((0, 7.25, "90GHz"), (1, 3.25, "100GHz")):
         assert casa.setjy(str(virtual), field="FLUX", spw=str(window), standard="manual", usescratch=False,
                           fluxdensity=[flux, 0, 0, 0], reffreq=frequency)
+    weighted = str(weighted_reduction_fixture(root, stored))
 
     title = "Averaged residual and model ratio"
     base = request(stored) | dict(xaxis="real", xdatacolumn="corrected-model_vector",
@@ -175,6 +196,10 @@ def compare_reduced_expressions(root, native):
         ("virtual-time-channel-antenna", antenna | dict(vis=str(virtual), avgchannel="2", spw="0:0~3"),
          [(.25, .462635), (10.25, 1.07948), (.25, .206897), (10.25, .482759), (.25, .462635), (10.25, 1.07948)]),
         ("stored-scalar-antenna", antenna | dict(scalar=True), [(11.1484, 1)] * 3),
+        ("weighted-vector-spw", windows | dict(vis=weighted), [(17.3, 1.29564)]),
+        ("weighted-vector-spw-channels", windows | dict(vis=weighted, avgchannel="2", spw="0:0~3,1:0~3"),
+         [(11.6, .971732), (34.4, 2.26737)]),
+        ("weighted-scalar-antenna", antenna | dict(vis=weighted, scalar=True), [(25.2068, 3.7)] * 3),
     )
     for name, changes, values in cases:
         controls = base | changes
@@ -186,7 +211,7 @@ def compare_reduced_expressions(root, native):
             compare_figure(root, native, controls, expected,
                            (title, "Real:corrected-model (vector)", "Amp:data/model (scalar)"))
         print(f"{name}: {len(values)} matching reduced residual and ratio pairs", flush=True)
-    for source in (stored, virtual):
+    for source in (stored, virtual, weighted):
         with opened(source) as table:
             np.testing.assert_array_equal(table.getcol("MODEL_DATA"), original_model)
 

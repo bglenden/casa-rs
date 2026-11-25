@@ -6308,9 +6308,18 @@ fn build_generic_visibility_scatter_with_averaging(
                         // masks every bin in the selection.
                         continue;
                     }
-                    let scalar_weight = antenna_weight.map_or(scalar_weight, |(_, weight)| {
-                        plotms_columns::baseline_weight(f64::from(weight))
-                    });
+                    let scalar_weight =
+                        if extended_derived && scalar_antenna_time && !scalar_channels {
+                            let weight =
+                                weight_spectrum_grid.as_ref().map_or(scalar_weight, |grid| {
+                                    grid.values[*corr_index * grid.chan_count + bin.start]
+                                });
+                            plotms_columns::baseline_weight(weight)
+                        } else {
+                            antenna_weight.map_or(scalar_weight, |(_, weight)| {
+                                plotms_columns::baseline_weight(f64::from(weight))
+                            })
+                        };
                     // Later channel and antenna reductions use the sums of
                     // weights from the vector time transform.
                     let primary_weight = primary_weight_grid
