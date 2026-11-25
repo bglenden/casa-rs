@@ -48,7 +48,7 @@ pub(crate) use row_grammar::{
 pub mod spw_expr;
 pub mod syntax;
 mod taql_geometry;
-mod taql_selection;
+pub mod taql_selection;
 pub mod time_expr;
 mod tool_indices;
 mod uv_expr;

@@ -5,8 +5,12 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use casa_ms::selection::MsSelectionIndices;
-use casa_ms::{MeasurementSet, MsSelection};
-use casa_tables::RequiredScalarColumnValues;
+use casa_ms::selection::taql_selection::select_projected_scalar_rows;
+use casa_ms::subtables::{
+    MsDataDescription, MsPolarization, MsSpectralWindow, linked_subtable_row,
+};
+use casa_ms::{MsSelection, SubtableId};
+use casa_tables::{RequiredScalarColumnValues, Table, TableOptions};
 use casa_types::{RecordField, RecordValue};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -121,14 +125,25 @@ impl AttachedMs {
             self.legacy_selection.rows = initial.rows.clone();
             return Ok(true);
         }
-        let (snapshot, working_rows) = self
-            .working_metadata_link()
-            .source_and_rows()
-            .map_err(runtime_error)?;
-        let ms = &snapshot.ms;
-        let descriptions = ms.data_description().map_err(runtime_error)?;
-        let requested = requested.filter(|_| descriptions.row_count() > 1);
-        let table = ms.main_table();
+        let working = self.working_metadata_link();
+        let working_rows = working.selected_rows().map_err(runtime_error)?;
+        let refreshed = self.refresh_legacy_main()?;
+        let table = refreshed.as_ref().unwrap_or(&self.main);
+        let uncached = super::subtable_queries::Subtables::default();
+        let subtables = if refreshed.is_some() {
+            &uncached
+        } else {
+            &self.subtables
+        };
+        let links = [
+            SubtableId::DataDescription,
+            SubtableId::SpectralWindow,
+            SubtableId::Polarization,
+        ];
+        let subtables = subtables.read_range(table, &links).map_err(runtime_error)?;
+        let descriptions = &subtables[&SubtableId::DataDescription];
+        let description_count = descriptions.iter().map(Table::row_count).sum::<usize>();
+        let requested = requested.filter(|_| description_count > 1);
         let columns = match working_rows {
             Some(rows) => table.required_scalar_columns_owned_for_rows(&["DATA_DESC_ID"], &rows),
             None => table.required_scalar_columns_owned(&["DATA_DESC_ID"]),
@@ -146,7 +161,12 @@ impl AttachedMs {
                 rows.push((relative, id));
             }
         }
-        let same_shape = common_visibility_shape(ms, &ids)?;
+        let same_shape = common_visibility_shape(
+            descriptions,
+            &subtables[&SubtableId::SpectralWindow],
+            &subtables[&SubtableId::Polarization],
+            &ids,
+        )?;
         if !same_shape && let Some(first) = ids.first().copied() {
             rows.retain(|&(_, id)| id == first);
             ids.retain(|&id| id == first);
@@ -160,6 +180,18 @@ impl AttachedMs {
         });
         self.legacy_selection.rows = rows;
         Ok(same_shape)
+    }
+
+    fn refresh_legacy_main(&self) -> PyResult<Option<Table>> {
+        self.working_metadata_link()
+            .verify_directory()
+            .map_err(runtime_error)?;
+        if self.main_stamp.is_some() && self.main_files.same_descriptor(self.main_stamp) {
+            return Ok(None);
+        }
+        Table::open(TableOptions::new(&self.path))
+            .map(Some)
+            .map_err(runtime_error)
     }
 
     fn prepare_legacy_filter(&mut self) -> PyResult<bool> {
@@ -183,19 +215,36 @@ impl AttachedMs {
 
     fn apply_legacy_taql(&mut self, text: String) -> PyResult<bool> {
         let previous = self.legacy_selection.rows.as_deref();
-        let snapshot = self
-            .working_metadata_link()
-            .snapshot_relative_rows(previous)
-            .map_err(runtime_error)?;
-        let ms = &snapshot.ms;
-        let selection = MsSelection {
-            msselect: Some(text),
-            ..MsSelection::default()
+        let working = self.working_metadata_link();
+        let outer = working.selected_rows().map_err(runtime_error)?;
+        let projected;
+        let physical_rows = match (outer.as_deref(), previous) {
+            (Some(base), Some(relative)) => {
+                projected = relative.iter().map(|&row| base[row]).collect::<Vec<_>>();
+                Some(projected.as_slice())
+            }
+            (base, relative) => relative.or(base),
         };
-        let parsed = ms
-            .parse_ms_tool_selection(&selection, &mut MsSelectionIndices::default())
-            .map_err(runtime_error)?;
-        let rows = parsed.select_rows(ms).map_err(runtime_error)?;
+        let refreshed = self.refresh_legacy_main()?;
+        let table = refreshed.as_ref().unwrap_or(&self.main);
+        let fast =
+            select_projected_scalar_rows(table, &text, physical_rows).map_err(runtime_error)?;
+        let rows = if let Some(rows) = fast {
+            rows
+        } else {
+            let snapshot = working
+                .snapshot_relative_rows(previous)
+                .map_err(runtime_error)?;
+            let ms = &snapshot.ms;
+            let selection = MsSelection {
+                msselect: Some(text),
+                ..MsSelection::default()
+            };
+            let parsed = ms
+                .parse_ms_tool_selection(&selection, &mut MsSelectionIndices::default())
+                .map_err(runtime_error)?;
+            parsed.select_rows(ms).map_err(runtime_error)?
+        };
         let nonempty = !rows.is_empty();
         self.legacy_selection.rows = Some(
             rows.into_iter()
@@ -222,6 +271,11 @@ impl AttachedMs {
     }
 
     fn apply_legacy_record_field(&mut self, field: RecordField) -> PyResult<()> {
+        // MSSelectionKeywords looks up the legacy spelling before the
+        // C++ selector uppercases it to find the physical column.
+        if field.name.bytes().any(|byte| byte.is_ascii_uppercase()) {
+            return Ok(());
+        }
         let label = field.name.to_ascii_uppercase();
         let selector = RecordSelector::from_label(&label).expect("converted selection field");
         let predicate = match selector {
@@ -349,21 +403,36 @@ fn legacy_range_predicate(
     Ok(Some(predicate))
 }
 
-fn common_visibility_shape(ms: &MeasurementSet, ids: &BTreeSet<i32>) -> PyResult<bool> {
-    let descriptions = ms.data_description().map_err(runtime_error)?;
-    let spw = ms.spectral_window().map_err(runtime_error)?;
-    let pol = ms.polarization().map_err(runtime_error)?;
+fn common_visibility_shape(
+    descriptions: &[Table],
+    spectral_windows: &[Table],
+    polarizations: &[Table],
+    ids: &BTreeSet<i32>,
+) -> PyResult<bool> {
     let mut previous = None;
     for &id in ids {
-        let spw_id = descriptions
-            .spectral_window_id(id as usize)
-            .map_err(runtime_error)?;
-        let pol_id = descriptions
-            .polarization_id(id as usize)
-            .map_err(runtime_error)?;
+        let (table, row) =
+            linked_subtable_row(descriptions, id as usize, SubtableId::DataDescription)
+                .map_err(runtime_error)?;
+        let description = MsDataDescription::new(table);
+        let spw_id = description.spectral_window_id(row).map_err(runtime_error)?;
+        let pol_id = description.polarization_id(row).map_err(runtime_error)?;
+        let (spw, spw_row) = linked_subtable_row(
+            spectral_windows,
+            spw_id as usize,
+            SubtableId::SpectralWindow,
+        )
+        .map_err(runtime_error)?;
+        let (pol, pol_row) =
+            linked_subtable_row(polarizations, pol_id as usize, SubtableId::Polarization)
+                .map_err(runtime_error)?;
         let shape = (
-            spw.num_chan(spw_id as usize).map_err(runtime_error)?,
-            pol.num_corr(pol_id as usize).map_err(runtime_error)?,
+            MsSpectralWindow::new(spw)
+                .num_chan(spw_row)
+                .map_err(runtime_error)?,
+            MsPolarization::new(pol)
+                .num_corr(pol_row)
+                .map_err(runtime_error)?,
         );
         if previous.is_some_and(|previous| previous != shape) {
             return Ok(false);

@@ -72,7 +72,8 @@ def test_legacy_record_selects_numeric_columns_and_uvw(native_dataset):
     distance = np.hypot(u, v)
     pair = antenna1[0] * 1000 + antenna2[0]
     examples = (
-        ({"ANTENNA1": int(antenna1[0])}, antenna1 == antenna1[0]),
+        ({"ANTENNA1": int(antenna1[0])}, np.ones(len(antenna1), dtype=bool)),
+        ({"antenna1": int(antenna1[0])}, antenna1 == antenna1[0]),
         ({"ifr_number": [int(pair)]}, antenna1 * 1000 + antenna2 == pair),
         ({"time": [float(time[2]), float(time[-2])]}, (time >= time[2]) & (time <= time[-2])),
         ({"times": np.unique(time)[::2]}, np.isin(time, np.unique(time)[::2])),

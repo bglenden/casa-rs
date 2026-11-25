@@ -148,12 +148,7 @@ impl MetadataLink {
     /// separately for callers that can project selected rows directly.
     pub(super) fn source_and_rows(&self) -> MsResult<SourceAndRows> {
         self.verify_directory()?;
-        let rows = self
-            .state
-            .lock()
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?
-            .selected
-            .clone();
+        let rows = self.selected_rows()?;
         let snapshot = if rows.is_some() {
             Arc::new(MetadataSnapshot::open(&self.path)?)
         } else {
@@ -161,6 +156,13 @@ impl MetadataLink {
         };
         self.verify_directory()?;
         Ok((snapshot, rows))
+    }
+
+    pub(super) fn selected_rows(&self) -> MsResult<Option<Arc<[usize]>>> {
+        self.state
+            .lock()
+            .map(|state| state.selected.clone())
+            .map_err(|error| MsError::InvalidInput(error.to_string()))
     }
 
     pub(super) fn snapshot_relative_rows(
@@ -171,12 +173,7 @@ impl MetadataLink {
             return self.snapshot(None);
         };
         self.verify_directory()?;
-        let working = self
-            .state
-            .lock()
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?
-            .selected
-            .clone();
+        let working = self.selected_rows()?;
         let projected;
         let rows = if let Some(working) = working {
             projected = rows.iter().map(|&row| working[row]).collect::<Vec<_>>();
