@@ -262,7 +262,7 @@ fn select_rows_impl(
     }
 
     if project_groups {
-        return apply_view_limits(sel, row_indices);
+        return apply_view_limits(row_indices, sel.offset.as_ref(), sel.limit.as_ref());
     }
 
     // 4. OFFSET
@@ -284,14 +284,26 @@ fn select_rows_impl(
     Ok(row_indices)
 }
 
-fn apply_view_limits(
-    sel: &SelectStatement,
+/// Apply casacore's signed row-view OFFSET and LIMIT to selected row indices.
+/// A zero limit preserves the rows after the offset.
+///
+/// # Errors
+/// An offset or limit is not a constant integer expression.
+pub fn apply_view_limits(
     mut rows: Vec<usize>,
+    offset: Option<&Expr>,
+    limit: Option<&Expr>,
 ) -> Result<Vec<usize>, TaqlError> {
     let count = rows.len() as i64;
-    let from_end = |value| if value < 0 { (count + value).max(0) } else { value };
-    let offset = sel.offset.as_ref().map(eval_const_int).transpose()?.unwrap_or(0);
-    let limit = sel.limit.as_ref().map(eval_const_int).transpose()?.unwrap_or(0);
+    let from_end = |value: i64| {
+        if value < 0 {
+            (count + value).max(0)
+        } else {
+            value
+        }
+    };
+    let offset = offset.map(eval_const_int).transpose()?.unwrap_or(0);
+    let limit = limit.map(eval_const_int).transpose()?.unwrap_or(0);
     let start = from_end(offset).min(count);
     let end = if limit == 0 {
         count

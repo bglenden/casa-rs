@@ -134,9 +134,16 @@ impl ScalarComparison {
     }
 }
 
-/// Try a scalar TaQL predicate on an ordered projection of a MeasurementSet's
-/// MAIN table. Returned row numbers are relative to the projection.
-/// A more general expression returns `None` for the full TaQL planner.
+/// Rows selected by a legacy TaQL expression and its optional named output.
+pub struct LegacyTaqlSelection {
+    /// Row indices relative to the input selector's ordered projection.
+    pub rows: Vec<usize>,
+    /// Optional result destination and table type.
+    pub giving: Option<GivingClause>,
+}
+
+/// Try a scalar TaQL predicate, row limits, and named output on an ordered
+/// MAIN projection. A more general query returns `None` for the full planner.
 ///
 /// # Errors
 /// The expression has invalid syntax or a selected scalar cell cannot be read.
@@ -144,12 +151,23 @@ pub fn select_projected_scalar_rows(
     table: &Table,
     expression: &str,
     source_rows: Option<&[usize]>,
-) -> MsResult<Option<Vec<usize>>> {
+) -> MsResult<Option<LegacyTaqlSelection>> {
     let statement = taql::parse(&format!("SELECT * WHERE {expression}")).map_err(taql_error)?;
-    let Statement::Select(select) = statement else {
+    let Statement::Select(mut select) = statement else {
         return Ok(None);
     };
-    select_simple_rows(table, &select, None, source_rows)
+    let giving = select.giving.take();
+    let offset = select.offset.take();
+    let limit = select.limit.take();
+    let Some(rows) = select_simple_rows(table, &select, None, source_rows)? else {
+        return Ok(None);
+    };
+    let rows = if offset.is_some() || limit.is_some() {
+        taql::exec::apply_view_limits(rows, offset.as_ref(), limit.as_ref()).map_err(taql_error)?
+    } else {
+        rows
+    };
+    Ok(Some(LegacyTaqlSelection { rows, giving }))
 }
 
 /// Evaluate a legacy selector query against the ordered legacy row view.
@@ -159,10 +177,7 @@ pub fn select_projected_scalar_rows(
 ///
 /// # Errors
 /// The selection syntax is invalid or the query cannot run on MAIN.
-pub fn select_legacy_rows(
-    ms: &MeasurementSet,
-    expression: &str,
-) -> MsResult<(Vec<usize>, Option<GivingClause>)> {
+pub fn select_legacy_rows(ms: &MeasurementSet, expression: &str) -> MsResult<LegacyTaqlSelection> {
     let statement = selection_query(ms, &format!("SELECT * WHERE {expression}"), None)?;
     let Statement::Select(select) = statement else {
         return Err(MsError::InvalidInput(
@@ -175,7 +190,10 @@ pub fn select_legacy_rows(
         ));
     }
     let rows = taql::exec::select_view_rows(&select, ms.main_table()).map_err(taql_error)?;
-    Ok((rows, select.giving))
+    Ok(LegacyTaqlSelection {
+        rows,
+        giving: select.giving,
+    })
 }
 
 fn select_simple_rows(

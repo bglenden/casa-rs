@@ -229,19 +229,20 @@ impl AttachedMs {
         let table = refreshed.as_ref().unwrap_or(&self.main);
         let fast = select_projected_scalar_rows(table, &text, physical_rows.as_deref())
             .map_err(runtime_error)?;
-        let (rows, giving) = if let Some(rows) = fast {
-            (rows, None)
+        let selection = if let Some(selection) = fast {
+            selection
         } else {
             let snapshot = working
                 .snapshot_relative_rows(previous)
                 .map_err(runtime_error)?;
             select_legacy_rows(&snapshot.ms, &text).map_err(runtime_error)?
         };
-        let selected = rows
+        let selected = selection
+            .rows
             .into_iter()
             .map(|row| previous.map_or(row, |previous| previous[row]))
             .collect::<Arc<[usize]>>();
-        if let Some(giving) = giving {
+        if let Some(giving) = selection.giving {
             if giving.output_type.is_some() {
                 return Err(PyNotImplementedError::new_err(
                     "ms.selecttaqlold GIVING with an explicit output type is not implemented in casa-rs (#1030)",
