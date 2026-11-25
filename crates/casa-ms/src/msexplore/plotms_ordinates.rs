@@ -7,6 +7,7 @@ use casa_types::{Complex32, Complex64};
 use ndarray::ArrayView2;
 
 use super::MsAxis;
+use super::plotms_time_baselines::Integration;
 use super::{
     ChannelBin, ComplexGrid, FloatGrid, MsAverageSpec, MsDataColumn, MsPlotSpec, MsScatterSeries,
     PlotMsInput, PreparedSelectedDataSource, VisibilityBinSamples, VisibilityColumnProjection,
@@ -17,7 +18,9 @@ use super::{
 use crate::MeasurementSet;
 use crate::selection::ChannelRange;
 use crate::subtables::data_description::MsDataDescription;
-use crate::transform::{WeightKind, sigma_from_weight, weight_from_sigma};
+use crate::transform::{
+    WeightKind, centered_time_and_interval, sigma_from_weight, weight_from_sigma,
+};
 
 pub(super) struct VisibilityColumns<'a> {
     sources: Vec<(MsDataColumn, PreparedSelectedDataSource<'a>)>,
@@ -860,9 +863,9 @@ impl AveragedVisibility {
 }
 
 pub(super) struct VisibilityTimeBounds {
-    first: f64,
-    last: f64,
-    last_unflagged: Option<f64>,
+    first: Integration,
+    last: Integration,
+    last_unflagged: Option<Integration>,
 }
 
 #[derive(Default)]
@@ -1011,32 +1014,44 @@ pub(super) fn has_unflagged_input(
 }
 
 impl VisibilityTimeBounds {
-    pub(super) fn new(time: f64) -> Self {
+    pub(super) fn new(integration: Integration) -> Self {
         Self {
-            first: time,
-            last: time,
+            first: integration,
+            last: integration,
             last_unflagged: None,
         }
     }
 
-    pub(super) fn observe(&mut self, time: f64, unflagged: bool) {
-        self.first = self.first.min(time);
-        self.last = self.last.max(time);
-        if unflagged {
-            self.last_unflagged = Some(self.last_unflagged.map_or(time, |last| last.max(time)));
+    pub(super) fn observe(&mut self, integration: Integration, unflagged: bool) {
+        if integration.time < self.first.time {
+            self.first = integration;
+        }
+        if integration.time >= self.last.time {
+            self.last = integration;
+        }
+        if unflagged
+            && self
+                .last_unflagged
+                .is_none_or(|last| integration.time >= last.time)
+        {
+            self.last_unflagged = Some(integration);
         }
     }
 
     pub(super) fn midpoint(&self) -> Option<f64> {
         // CASA anchors on the first integration and ends at the last usable one.
         self.last_unflagged
-            .map(|last| self.first + (last - self.first) / 2.0)
+            .map(|last| self.first.time + (last.time - self.first.time) / 2.0)
     }
 
-    pub(super) fn buffer_midpoint(&self) -> f64 {
-        // A fully flagged first baseline still supplies the cache's buffer time.
+    pub(super) fn buffer_integration(&self) -> Integration {
+        // A fully flagged first baseline still supplies the cache's time and interval.
         let last = self.last_unflagged.unwrap_or(self.last);
-        self.first + (last - self.first) / 2.0
+        let (time, interval) = centered_time_and_interval(
+            (self.first.time, self.first.interval),
+            (last.time, last.interval),
+        );
+        Integration { time, interval }
     }
 }
 

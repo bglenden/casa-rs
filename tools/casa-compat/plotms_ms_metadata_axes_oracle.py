@@ -134,6 +134,140 @@ def compare(root, native):
     compare_averaged_row_axes(root, native, row_axis_request(row_fixture))
 
 
+def compare_averaged_coordinates(root, native):
+    work = root / "time-averaged-coordinates"
+    work.mkdir()
+    vis, uvw, intervals, _, _, frequencies = make_fixture(work, reverse_times=True)
+    with opened(vis, True) as table:
+        timestamps = table.getcol("TIME")
+        antenna2 = table.getcol("ANTENNA2")
+        selected = (table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+        baselines = {}
+        for antenna in (1, 2):
+            candidates = np.flatnonzero(selected & (antenna2 == antenna))
+            baselines[antenna] = candidates[np.argsort(timestamps[candidates])]
+            assert len(candidates) == 6
+        for antenna, indices in baselines.items():
+            integration = np.arange(len(indices))
+            uvw[0, indices] = 1 + 2 * integration + 20 * (antenna - 1)
+            uvw[2, indices] = -4 - 5 * integration
+        table.putcol("UVW", uvw)
+        weights = table.getcol("WEIGHT")
+        sigmas = table.getcol("SIGMA")
+        observed = np.arange(1, 7)
+        calibrated = 2 * observed - 1
+        for indices in baselines.values():
+            weights[:, indices] = calibrated
+            sigmas[:, indices] = 1 / np.sqrt(observed)
+        table.putcol("WEIGHT", weights)
+        table.putcol("SIGMA", sigmas)
+        flags = table.getcol("FLAG")
+        flags[:, :, baselines[1][2:4]] = True
+        table.putcol("FLAG", flags)
+    before = snapshot(vis)
+    title = "Averaged MeasurementSet coordinates"
+    base = controls(vis) | dict(antenna="A0&A1;A0&A2", spw="0:1~3", title=title, expformat="txt")
+    cases = (
+        ("averaged-interval", dict(xaxis="interval"), 2, 0, None, None),
+        ("single-integration-interval", dict(xaxis="interval", ydatacolumn="corrected"), 1, 0, None, None),
+        ("averaged-uwave", dict(xaxis="uwave"), 2, 0, 0, observed),
+        ("calibrated-uwave", dict(xaxis="uwave", ydatacolumn="corrected"), 2, 0, 0, calibrated),
+        ("averaged-wwave-ordinate", dict(xaxis="real", xdatacolumn="data", yaxis="wwave"), 2, 1, 2, observed),
+    )
+    for name, changes, width, side, component, role_weights in cases:
+        options = base | changes | dict(avgtime=str(10 * width if width == 2 else 5))
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        points = rows(expected)
+        expected_samples, expected_coordinates = [], []
+        for start in range(0, 6, width):
+            stop = start + width
+            first, last = baselines[1][[start, stop - 1]]
+            timestamp = timestamps[first] + (timestamps[last] - timestamps[first]) / 2
+            interval = timestamps[last] - timestamps[first] + (intervals[first] + intervals[last]) / 2
+            for antenna, indices in baselines.items():
+                if antenna == 1 and 2 <= start < 4:
+                    continue
+                for channel in (1, 3):
+                    expected_samples.append((channel, antenna, timestamp))
+                    coordinate = interval
+                    if component is not None:
+                        metres = np.average(uvw[component, indices[start:stop]], weights=role_weights[start:stop])
+                        coordinate = metres / SPEED_OF_LIGHT * frequencies[channel]
+                    expected_coordinates.append(coordinate)
+        assert [(int(row[2]), int(row[6])) for row in points] == [key[:2] for key in expected_samples]
+        assert {row[12] for row in points} == {"XX"}
+        np.testing.assert_allclose([float(row[9]) for row in points], [key[2] for key in expected_samples],
+                                   rtol=0, atol=0.00051)
+        np.testing.assert_allclose([float(row[side]) for row in points], expected_coordinates, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(expected_samples)
+        print(f"{name}: {len(points)} matching averaged geometry coordinates", flush=True)
+    mixed = base | dict(xaxis="real", xdatacolumn="data", yaxis=["interval", "u"],
+                        ydatacolumn=["data", "data"], yaxislocation=["left", "right"], avgtime="20")
+    expected, actual = (work / f"mixed-time-geometry.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**mixed, plotfile=str(expected)) is None
+    points = rows(expected)
+    interval_points = rows(work / "averaged-interval.casa.txt")
+    wavelengths = rows(work / "averaged-uwave.casa.txt")
+    assert [row[2:] for row in points] == [row[2:] for row in interval_points + wavelengths]
+    expected_ordinates = [float(row[0]) for row in interval_points] + [
+        float(row[0]) / frequencies[int(row[2])] * SPEED_OF_LIGHT for row in wavelengths
+    ]
+    np.testing.assert_allclose([float(row[1]) for row in points], expected_ordinates, rtol=1.2e-5)
+    assert native(**mixed, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 20
+    print("mixed-time-geometry: 20 matching paired Interval and U ordinates", flush=True)
+    for axis, label in (("interval", "Interval (s)"), ("uwave", "Uwave (λ)")):
+        compare_figure(work, native, base | dict(xaxis=axis, avgtime="20"),
+                       work / f"averaged-{axis}.casa.txt", (title, label, "Amp"))
+    verify_source(vis, before)
+    with opened(vis) as table:
+        np.testing.assert_array_equal(table.getcol("UVW"), uvw)
+        np.testing.assert_array_equal(table.getcol("INTERVAL"), intervals)
+        np.testing.assert_array_equal(table.getcol("TIME"), timestamps)
+    compare_wavelength_frame_selection(work, native)
+
+
+def compare_wavelength_frame_selection(work, native):
+    from casars.tasks import TaskExecutionError
+    from plotms_ms_spw_average_oracle import make_fixture as make_spw_fixture
+
+    topo = make_spw_fixture(work)
+    with opened(topo, True) as table:
+        uvw = np.zeros_like(table.getcol("UVW"))
+        uvw[0, :] = 10
+        table.putcol("UVW", uvw)
+    mixed = work / "mixed-native-frames.ms"
+    copy_ms(topo, mixed)
+    with opened(mixed / "SPECTRAL_WINDOW", True) as table:
+        np.testing.assert_array_equal(table.getcol("MEAS_FREQ_REF"), [5, 5])  # TOPO
+        table.putcell("MEAS_FREQ_REF", 1, 1)  # LSRK
+    selection = controls(topo) | dict(xaxis="uwave", spw="0:1,1:1", avgtime="20", expformat="txt")
+    expected, actual = (work / f"same-wavelength-frame.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**selection, plotfile=str(expected)) is None
+    assert native(**selection, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 2
+
+    selection["vis"] = str(mixed)
+    expected, actual = (work / f"mixed-wavelength-frame.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**selection, plotfile=str(expected)) is None
+    points = rows(expected)
+    assert [row[11] for row in points] == ["0", "1"]
+    # CASA keeps the first window TOPO and converts the second window from LSRK.
+    np.testing.assert_allclose([float(row[10]) for row in points], [90.001, 100.003287289], rtol=0, atol=1e-6)
+    np.testing.assert_allclose([float(row[0]) for row in points],
+                               [10 * float(row[10]) * 1e9 / SPEED_OF_LIGHT for row in points], rtol=1.2e-5)
+    try:
+        native(**selection, plotfile=str(actual))
+    except TaskExecutionError as error:
+        assert "different native spectral frames require reporting-frame transforms (#1032)" in str(error)
+    else:
+        raise AssertionError("An unconverted mixed-frame wavelength export would use the wrong frequency")
+    assert not actual.exists()
+    print("wavelength-frames: two paired same-frame points and one mixed-frame refusal", flush=True)
+
+
 def compare_flags_and_calibration(root, native, vis):
     base = controls(vis) | dict(xaxis="uwave", expformat="txt")
 
@@ -793,7 +927,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes"))
+    parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes", "averaged-coordinates"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -808,6 +942,8 @@ def main():
         if args.only is None:
             compare(root, native)
             compare_pointing_axes(root, native)
+        if args.only in (None, "averaged-coordinates"):
+            compare_averaged_coordinates(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
@@ -815,7 +951,7 @@ def main():
                 compare_unaveraged_row_axes(root, native, row_axis_request(vis))
             else:
                 compare_averaged_row_axes(root, native, row_axis_request(vis))
-        else:
+        elif args.only in (None, "compound-selection"):
             compare_compound_selection(root, native)
 
 

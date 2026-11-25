@@ -93,19 +93,27 @@ pub(super) fn uses_direct_vector_time_projection(
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
-    spec.averaging.avgtime.is_some()
+    let time_geometry = uses_averaged_geometry_coordinates(spec);
+    let uvw = |axis: MsAxis| axis.uses_uvw_metres() || (time_geometry && axis.uses_wavelengths());
+    uses_unbinned_vector_time_averaging(spec)
+        && ((uvw(spec.x_axis) && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math))
+            || (spec.x_axis.is_visibility_math()
+                && ((spec.y_axes.len() == 1 && uvw(spec.y_axis()))
+                    || (time_geometry && spec.y_axes.iter().copied().any(uvw)))))
+}
+
+pub(super) fn uses_averaged_geometry_coordinates(spec: &MsPlotSpec) -> bool {
+    uses_unbinned_vector_time_averaging(spec)
+        && spec.transforms.freqframe.is_none()
+        && std::iter::once(spec.x_axis)
+            .chain(spec.y_axes.iter().copied())
+            .any(MsAxis::is_interval_or_wavelength)
+}
+
+fn uses_unbinned_vector_time_averaging(spec: &MsPlotSpec) -> bool {
+    uses_ordinary_time_averaging(spec)
         && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
         && !spec.averaging.scalar
-        && !spec.averaging.avgscan
-        && !spec.averaging.avgfield
-        && !spec.averaging.avgbaseline
-        && !spec.averaging.avgantenna
-        && !spec.averaging.avgspw
-        && ((spec.x_axis.uses_uvw_metres()
-            && spec.y_axes.iter().copied().all(MsAxis::is_visibility_math))
-            || (spec.x_axis.is_visibility_math()
-                && spec.y_axes.len() == 1
-                && spec.y_axis().uses_uvw_metres()))
 }
 
 pub(super) fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
