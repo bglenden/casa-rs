@@ -1055,6 +1055,31 @@ def compare_time_averaged_flag_symbols(root, native):
     compare_empty_export(work, native, "time-all-flagged", base | dict(spw="0:3"),
                          ("Amp", "Amp:corrected"))
     verify_source(vis, before)
+    edge = work / "time-flagged-nonfinite.ms"
+    copy_ms(vis, edge)
+    with opened(edge, True) as table:
+        times = table.getcol("TIME")
+        data = table.getcol("DATA")
+        data[:, 3, (times == origin) | (times >= origin + 30)] = np.nan
+        table.putcol("DATA", data)
+    before = snapshot(edge)
+    controls = base | styles | dict(vis=str(edge), spw="0:3", scalar=True,
+                                    customsymbol=True, symbolshape="nosymbol")
+    compare_flagged_average_edge(work, native, "scalar-time-nonfinite", controls,
+                                 [(np.nan, 26.3636), (np.nan, 28.9474)])
+    verify_source(edge, before)
+
+
+def compare_flagged_average_edge(root, native, name, controls, coordinates):
+    expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**(controls | dict(plotfile=str(expected), expformat="txt"))) is None
+    assert native(**(controls | dict(plotfile=str(actual), expformat="txt"))) is None
+    points = rows(expected)
+    assert {point[2] for point in points} == {"3"}
+    np.testing.assert_allclose(np.array([point[:2] for point in points], dtype=float),
+                               coordinates, rtol=1.2e-5, equal_nan=True)
+    assert compare_text(actual, expected) == len(coordinates)
+    print(f"{name}: {len(points)} matching flagged coordinates with low weights or NaNs", flush=True)
 
 
 def compare_reduced_flag_symbols(root, native):
@@ -1118,6 +1143,31 @@ def compare_reduced_flag_symbols(root, native):
                                        labels=("Flagged visibility", "Amp", "Amp:corrected"),
                                        is_flagged=lambda point: identity(point) in flagged)
     verify_source(vis, before)
+    edge = work / "reduced-flagged-weights.ms"
+    copy_ms(vis, edge)
+    with opened(edge, True) as table:
+        times = table.getcol("TIME")
+        first_window = table.getcol("DATA_DESC_ID") == 0
+        first_baseline = table.getcol("ANTENNA2") == 1
+        data = table.getcol("DATA")
+        data[:, 3, first_window & first_baseline & (times > times[first_window].min())] = np.nan
+        table.putcol("DATA", data)
+        weights = table.getcol("WEIGHT")
+        weights[:, first_window & first_baseline] = 0
+        weights[:, first_window & ~first_baseline] = np.finfo(np.float32).tiny
+        table.putcol("WEIGHT", weights)
+    before = snapshot(edge)
+    controls = base | styles | dict(vis=str(edge), customsymbol=True, symbolshape="nosymbol")
+    antenna = controls | dict(avgantenna=True, antenna="A0&A1;A0&A2", spw="0:3")
+    compare_flagged_average_edge(
+        work, native, "antenna-low-weights-and-nonfinite", antenna,
+        [(13.4164, 46.8615), (8.94427, 31.241), (17.8885, 62.482),
+         (np.nan, 46.8615), (np.nan, 31.241), (17.8885, 62.482)],
+    )
+    spw = controls | dict(avgspw=True, spw="0:3,1:3")
+    compare_flagged_average_edge(work, native, "spw-nonfinite", spw,
+                                 [(20, 42.5206), (np.nan, 42.5206)])
+    verify_source(edge, before)
 
 
 def compare_time_averaged_statistics(root, native):

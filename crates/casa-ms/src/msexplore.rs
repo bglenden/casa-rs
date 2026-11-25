@@ -5173,7 +5173,12 @@ fn build_generic_visibility_scatter(
                             displayed_flagged && fully_flagged(),
                         );
                     } else {
-                        buffer.collect(grid, flags, weights, *corr_index, bin, displayed_flagged);
+                        let mask = if displayed_flagged {
+                            plotms_ordinates::BinSampleMask::IncludeFlagged
+                        } else {
+                            plotms_ordinates::BinSampleMask::Clear
+                        };
+                        buffer.collect(grid, flags, weights, *corr_index, bin, mask);
                     }
                 }
                 if let Some(statistics) = &statistics {
@@ -5841,11 +5846,10 @@ fn build_generic_visibility_scatter_with_averaging(
         scalar_average || scalar_spw_time || (extended_derived && scalar_antenna_time);
     let scalar_channels = scalar_operands && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
+    let standalone_antenna =
+        antenna_average && spec.averaging.avgtime.is_none() && !average_channels;
     // The unbinned antenna reducer uses the selected visibility cube flags.
-    let antenna_cube_flags = antenna_average
-        && (spec.y_axes.len() > 2 || symbols.is_some())
-        && spec.averaging.avgtime.is_none()
-        && !average_channels;
+    let antenna_cube_flags = standalone_antenna && (spec.y_axes.len() > 2 || symbols.is_some());
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
     let vector_span_models = !spw_average
@@ -6726,14 +6730,12 @@ fn build_generic_visibility_scatter_with_averaging(
                                 false,
                             );
                         } else {
-                            buffer.collect(
-                                grid,
-                                &flags,
-                                spectrum,
-                                *corr_index,
-                                bin,
-                                flagged_sample,
-                            );
+                            let mask = if flagged_sample {
+                                plotms_ordinates::BinSampleMask::FlaggedAverage
+                            } else {
+                                plotms_ordinates::BinSampleMask::Clear
+                            };
+                            buffer.collect(grid, &flags, spectrum, *corr_index, bin, mask);
                             if channel_baselines || spw_channels {
                                 buffer.normalize_vector_average();
                             }
@@ -6907,12 +6909,18 @@ fn build_generic_visibility_scatter_with_averaging(
                                 }
                             }
                         } else {
-                            accumulator
-                                .x_visibility
-                                .add(x_samples, scalar_weight, conjugate);
-                            accumulator
-                                .y_visibility
-                                .add(y_samples, scalar_weight, conjugate);
+                            accumulator.x_visibility.add(
+                                x_samples,
+                                scalar_weight,
+                                conjugate,
+                                standalone_antenna,
+                            );
+                            accumulator.y_visibility.add(
+                                y_samples,
+                                scalar_weight,
+                                conjugate,
+                                standalone_antenna,
+                            );
                         }
                         if calibration.is_some()
                             && spec.averaging.avgtime.is_some()
@@ -8521,7 +8529,7 @@ fn collect_bin_samples_into(
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
     bin: &ChannelBin,
-    show_flagged: bool,
+    mask: plotms_ordinates::BinSampleMask,
     mut weights: Option<(&FloatGrid, &mut Vec<f64>)>,
     samples: &mut Vec<Complex64>,
 ) {
@@ -8533,12 +8541,16 @@ fn collect_bin_samples_into(
         return;
     }
     for channel in bin.channels() {
-        if channel >= grid.chan_count || (!show_flagged && flags[(corr_index, channel)]) {
+        if channel >= grid.chan_count
+            || (mask == plotms_ordinates::BinSampleMask::Clear && flags[(corr_index, channel)])
+        {
             continue;
         }
         let index = corr_index * grid.chan_count + channel;
         let value = grid.values[index];
-        if value.re.is_finite() && value.im.is_finite() {
+        if mask == plotms_ordinates::BinSampleMask::FlaggedAverage
+            || (value.re.is_finite() && value.im.is_finite())
+        {
             samples.push(value);
             if let Some((spectrum, values)) = &mut weights {
                 values.push(spectrum.values[index]);
