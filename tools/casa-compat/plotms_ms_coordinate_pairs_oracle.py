@@ -107,6 +107,11 @@ def compare_uv(root, native):
         with patch.object(_plotms_plot, "configure", record):
             native(**render, plotfile=str(native_png))
         [axis] = captured
+        labels = {"u": "U (m)", "v": "V (m)", "w": "W (m)", "uvdist": "UV Distance (m)",
+                  "uwave": "Uwave (λ)", "vwave": "Vwave (λ)"}
+        assert (axis.get_xlabel(), axis.get_ylabel()) == tuple(
+            labels[request[name]] for name in ("xaxis", "yaxis")
+        )
         rendered = np.concatenate([line.get_xydata() for line in axis.lines])
         expected_rendered = np.concatenate([points, -points]) if mirrored else points
         np.testing.assert_allclose(
