@@ -838,14 +838,12 @@ def compare_scalar_antenna_time_averages(root, native, weighted, start, base):
                                     lambda table: table.getcol("FLAG_ROW"))
     compare_average_shape_refusal(root, native, controls | dict(vis=str(mixed), expformat="txt"))
     print("scalar-antenna-time: matching unequal-shape refusal in a row-flagged buffer", flush=True)
-    compare_averaged_virtual_model_guard(root, native, source, controls, "scalar-antenna-time-virtual", 6)
+    compare_averaged_virtual_model(root, native, source, controls, "scalar-antenna-time-virtual", 6)
     compare_vector_antenna_time_averages(root, native, source, start, controls, amplitudes, turns)
     compare_antenna_scan_field_spans(root, native, source, start, controls, amplitudes, turns)
 
 
-def compare_averaged_virtual_model_guard(root, native, source, base, name, reference_points):
-    from casars.tasks import TaskExecutionError
-
+def compare_averaged_virtual_model(root, native, source, base, name, reference_points):
     virtual = root / f"{name}.ms"
     copy_ms(source, virtual)
     with opened(virtual, True) as table:
@@ -859,16 +857,11 @@ def compare_averaged_virtual_model_guard(root, native, source, base, name, refer
     assert reference(**request_args, plotfile=str(expected)) is None
     assert len(rows(expected)) == reference_points
     assert {float(point[1]) for point in rows(expected)} == {7.25}
-    try:
-        native(**request_args, plotfile=str(actual))
-    except TaskExecutionError as error:
-        assert "PlotMS virtual MeasurementSet models are pending #1032" in str(error), error
-    else:
-        raise AssertionError("PlotMS used stored MODEL_DATA for an averaged virtual-model field")
-    assert not actual.exists()
+    assert native(**request_args, plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == reference_points
     with opened(virtual) as table:
         np.testing.assert_array_equal(table.getcol("MODEL_DATA"), physical)
-    print(f"{name}: refusing the pending averaged virtual model", flush=True)
+    print(f"{name}: {reference_points} matching virtual-model coordinates", flush=True)
 
 
 def compare_vector_antenna_time_averages(root, native, source, start, base, amplitudes, turns):
@@ -1370,8 +1363,8 @@ def compare_direct_stored_vector_time_channels(
                          ("Real", "Imag:corrected"))
     compare_empty_export(root, native, "direct-vector-time-channel-zero-observed",
                          base | dict(vis=str(zero_observed)), ("Real", "Imag:corrected"))
-    compare_averaged_virtual_model_guard(root, native, Path(base["vis"]), base,
-                                         "direct-vector-time-channel-virtual", 12)
+    compare_averaged_virtual_model(root, native, Path(base["vis"]), base,
+                                   "direct-vector-time-channel-virtual", 12)
 
 
 def compare_stored_model_time_channels(root, native, vis, base, start):
