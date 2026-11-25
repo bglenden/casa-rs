@@ -86,6 +86,15 @@ impl VisibilityColumns {
         &self.0
     }
 
+    pub(super) fn promote_singleton_visibility(&mut self) {
+        use OptionalMainColumn::{CorrectedData, Data, ModelData};
+        if let [copy] = self.0.as_mut_slice()
+            && matches!(copy.source, CorrectedData | ModelData)
+        {
+            copy.output = Data;
+        }
+    }
+
     pub(super) fn contains_output(&self, name: &str) -> bool {
         self.0.iter().any(|copy| copy.output.name() == name)
     }

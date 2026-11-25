@@ -124,6 +124,10 @@ impl<'a> InputStatistic<'a> {
             .as_ref()
             .map_or_else(|| self.scalar[corr], |array| array.get(corr, chan))
     }
+
+    pub(super) fn scalar(&self, corr: usize) -> f32 {
+        self.scalar[corr]
+    }
 }
 
 pub(super) struct AveragedStatistics {

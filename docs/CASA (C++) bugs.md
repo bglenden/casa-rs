@@ -12113,6 +12113,9 @@ MeasurementSets (#1030).
 
 On the upstream `ngc5921_ut.ms` fixture, call CASA 6.7.6.14
 `ms.partition(outputms, timebin="120s")`. The process exits with
-SIGSEGV and leaves a partial output directory. Casa-rs computes the time
-averages through the native MeasurementSet transform and publishes the
+SIGSEGV and leaves a partial output directory. Casa-rs keeps the legacy
+visibility chunk boundaries, averages each processor and feed pair on
+its own baseline, and normalizes spectral weights within each integration.
+The time-bin calculations are checked against the shared CASA averager
+through `ms.split()` and against analytic fixtures. Casa-rs publishes the
 output after the write completes (#1030).

@@ -7,8 +7,8 @@ use casa_ms::{
     selection::MsSelection,
     tool_sort::check_named_sort_output,
     transform::{
-        MsTransformError, MsTransformRequest, MsTransformTaskOptions, MsTransformTiling,
-        TimeAverageOptions, TransformDataColumn, mstransform_task,
+        LegacyTimeOptions, MsTransformError, MsTransformRequest, MsTransformTaskOptions,
+        MsTransformTiling, TimeAverageOptions, TransformDataColumn, mstransform_task,
     },
 };
 use casa_tables::publication::{check_write_access, lock_table_tree_for_replacement};
@@ -59,8 +59,9 @@ impl PyMsTool {
         let options = MsTransformTaskOptions {
             visibility_columns: columns,
             preserve_ids: true,
-            preserve_flag_commands: true,
-            preserve_scalar_weights: true,
+            legacy_partition: Some(LegacyTimeOptions {
+                combine_observations: combine.to_ascii_lowercase().contains("obs"),
+            }),
             time_averaging: time_average(timebin.as_ref(), &combine)?,
             tiling: tile_layout(tileshape.as_ref())?,
             ..MsTransformTaskOptions::default()
@@ -231,7 +232,7 @@ fn time_average(timebin: Option<&Variant>, combine: &str) -> PyResult<Option<Tim
         interval_seconds: seconds,
         span_scans: combine.contains("scan"),
         span_states: combine.contains("state"),
-        span_fields: combine.contains("field"),
+        span_fields: false,
         max_uvw_distance: 0.0,
     }))
 }

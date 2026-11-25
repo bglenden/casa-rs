@@ -51,6 +51,7 @@ mod hanning;
 mod hanning_tool;
 pub use hanning_tool::{HanningColumns, HanningDataColumn, smooth_ms_hanning};
 mod input_view;
+mod legacy_time;
 mod main_arrays;
 mod multi_ms;
 mod output_layout;
@@ -142,10 +143,8 @@ pub struct MsTransformTaskOptions {
     /// Explicit visibility columns for callers that accept arbitrary combinations.
     /// Ordinary task surfaces select a predefined combination on the request.
     pub visibility_columns: Option<Vec<OptionalMainColumn>>,
-    /// Copy the saved flag commands verbatim when the surface preserves spectral IDs.
-    pub preserve_flag_commands: bool,
-    /// Copy row WEIGHT and SIGMA independently when neither axis is averaged.
-    pub preserve_scalar_weights: bool,
+    /// Preserve the metadata and noise columns expected by the Python partition tool.
+    pub legacy_partition: Option<LegacyTimeOptions>,
     /// Create and fill weight and sigma spectra even when the input has none.
     pub use_weight_spectrum: bool,
     /// CASA task preference for the output's array storage.
@@ -182,6 +181,13 @@ pub struct MsTransformTaskOptions {
     pub multi_ms: Option<MsTransformMultiMsOptions>,
     /// Computed arrays to read in place of stored input values.
     pub input_view: Option<Arc<dyn TransformInputView>>,
+}
+
+/// Additional chunk boundaries used by the legacy MeasurementSet tools.
+#[derive(Debug, Clone, Copy)]
+pub struct LegacyTimeOptions {
+    /// Permit one time bin to contain integrations from multiple observations.
+    pub combine_observations: bool,
 }
 
 /// Partition allocation for a new Multi-MS product.
@@ -699,13 +705,16 @@ fn mstransform_staged(
                 reason: source.to_string(),
             })?;
     let view_factory = options.input_view.as_deref();
-    let visibility = VisibilityColumns::resolve(
+    let mut visibility = VisibilityColumns::resolve(
         &input,
         request.data_column,
         options.visibility_columns.as_deref(),
         &request.input_ms,
         view_factory,
     )?;
+    if options.legacy_partition.is_some() {
+        visibility.promote_singleton_visibility();
+    }
     let TransformSelection {
         selection,
         correlations,
@@ -878,7 +887,31 @@ fn mstransform_staged(
     let stage_started_at = Instant::now();
     let time_groups = options
         .time_averaging
-        .map(|options| time_average::plan(&input, &rows, options, order, None))
+        .map(|time| {
+            if let Some(legacy) = options.legacy_partition {
+                let dimensions = transform_array_dimensions(
+                    &input,
+                    &selected_ddids,
+                    &ddid_to_spw,
+                    &channel_bins,
+                    correlations.as_ref(),
+                    None,
+                )?;
+                let per_block = flag_filter_read_plan(rows.len(), budget, dimensions.values())
+                    .map_err(selection_error)?;
+                let (valid, _) =
+                    keep_unflagged_rows(&input, &selected_rows, &selected_ddids, per_block)?;
+                let groups = legacy_time::plan(&input, &rows, valid, time, legacy)?;
+                if groups.is_empty() {
+                    return Err(MsTransformError::EmptySelection {
+                        path: request.input_ms.display().to_string(),
+                    });
+                }
+                Ok(groups)
+            } else {
+                time_average::plan(&input, &rows, time, order, None)
+            }
+        })
         .transpose()?;
     drop(rows);
     let selection_metadata::OrderedMainRows {
@@ -894,6 +927,13 @@ fn mstransform_staged(
         selection_metadata::OrderedMainRows {
             rows,
             descriptions,
+            starts_visibility_buffer: Vec::new(),
+            phase_reference_rows: Vec::new(),
+        }
+    } else if options.legacy_partition.is_some() {
+        selection_metadata::OrderedMainRows {
+            rows: selected_rows,
+            descriptions: selected_ddids,
             starts_visibility_buffer: Vec::new(),
             phase_reference_rows: Vec::new(),
         }
@@ -1020,19 +1060,23 @@ fn mstransform_staged(
             Some(SpectralOperation { kernel: SpectrumOperator::Baseline(kernel), .. })
                 if kernel.reads_spectral_weights()
         );
-    let mut spectra = SpectrumProjection::resolve(
-        input.main_table(),
-        first_selected_row,
-        grammar,
-        options.use_weight_spectrum,
-        (
-            task_average,
-            averaging_time,
-            convolving || combination.is_some() || regrid.is_some(),
-            hanning,
-        ),
-        &visibility,
-    )
+    let mut spectra = if options.legacy_partition.is_some() {
+        SpectrumProjection::partition(input.main_table(), first_selected_row, averaging_time)
+    } else {
+        SpectrumProjection::resolve(
+            input.main_table(),
+            first_selected_row,
+            grammar,
+            options.use_weight_spectrum,
+            (
+                task_average,
+                averaging_time,
+                convolving || combination.is_some() || regrid.is_some(),
+                hanning,
+            ),
+            &visibility,
+        )
+    }
     .map_err(|source| MsTransformError::MutateMeasurementSet {
         path: request.input_ms.display().to_string(),
         source: Box::new(source),
@@ -1099,6 +1143,7 @@ fn mstransform_staged(
         &visibility,
         grammar,
         &spectra,
+        options.legacy_partition.is_some(),
     )?;
     maybe_log_transform_progress(
         "materialize_selected_main",
@@ -1106,10 +1151,16 @@ fn mstransform_staged(
         started_at.elapsed(),
     );
     let stage_started_at = Instant::now();
-    copy_subtables(&input, metadata_path, &request.output_ms, &mut output_main)?;
+    copy_subtables(
+        &input,
+        metadata_path,
+        &request.output_ms,
+        &mut output_main,
+        options.legacy_partition.is_some(),
+    )?;
     if grammar == RowGrammar::Transform
         && (task_average || !matches!(request.spw.as_str(), "" | "*"))
-        && !options.preserve_flag_commands
+        && options.legacy_partition.is_none()
     {
         flag_commands::rewrite(
             &input,
@@ -1222,7 +1273,7 @@ fn mstransform_staged(
             reason: error.to_string(),
         }
     })?;
-    let tile = options
+    let mut tile = options
         .tiling
         .map(|mode| {
             output_layout::resolve_tiling(
@@ -1237,6 +1288,14 @@ fn mstransform_staged(
             )
         })
         .transpose()?;
+    if tile.is_none() && options.legacy_partition.is_some() {
+        tile = Some(output_layout::partition_tiling(
+            &input,
+            &visibility,
+            &channel_selection,
+            &selected_ddids,
+        )?);
+    }
     let (write_plan, input_batch_rows) = transform_array_write_plan(
         &input,
         TransformArrayRows {
@@ -1248,6 +1307,7 @@ fn mstransform_staged(
                 time_groups.as_deref()
             },
             output_rows,
+            output_schema: &output_main,
             regrid: regrid.as_ref(),
             tile,
             combined: combined_grid
@@ -1305,7 +1365,7 @@ fn mstransform_staged(
         &partitioned_rows
     };
     let mut output_column_overrides = gather_selected_main_column_overrides(
-        input.main_table(),
+        (input.main_table(), &output_main),
         scalar_input_rows,
         &request.output_ms,
         batch_rows,
@@ -1410,6 +1470,7 @@ fn mstransform_staged(
             && !averaging_time
             && !read_spectral_weights
             && combination.is_none()
+            && options.legacy_partition.is_none()
         {
             input_block.resolve_buffer_spectra(
                 row_spectrum_names,
@@ -2011,7 +2072,7 @@ fn mstransform_staged(
                 && !hanning
                 && combination.is_none()
                 && regrid.is_none()
-                && !options.preserve_scalar_weights
+                && options.legacy_partition.is_none()
             {
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
             }
@@ -2033,7 +2094,12 @@ fn mstransform_staged(
                 task_spectra.map_or((None, None), |(weight, sigma)| (Some(weight), Some(sigma)));
             for &name in &spectra.output {
                 let transformed = match name {
-                    "WEIGHT_SPECTRUM" if grammar == RowGrammar::Transform => task_weight.take(),
+                    "WEIGHT_SPECTRUM"
+                        if grammar == RowGrammar::Transform
+                            && (options.legacy_partition.is_none() || averaging_time) =>
+                    {
+                        task_weight.take()
+                    }
                     "SIGMA_SPECTRUM" if grammar == RowGrammar::Transform => task_sigma.take(),
                     _ => source_spectrum(name)
                         .and_then(|index| row_spectra[index].take())
@@ -2394,6 +2460,7 @@ struct TransformArrayRows<'a> {
     selected_ddids: &'a [i32],
     groups: Option<&'a [time_average::TimeGroup]>,
     output_rows: usize,
+    output_schema: &'a Table,
     combined: Option<CombinedArrayRows<'a>>,
     regrid: Option<&'a regrid::Plan>,
     tile: Option<output_layout::OutputTiling>,
@@ -2415,6 +2482,7 @@ fn transform_array_write_plan(
         selected_ddids,
         groups,
         output_rows,
+        output_schema,
         combined,
         regrid,
         tile,
@@ -2606,7 +2674,7 @@ fn transform_array_write_plan(
     let writer = MeasurementSetWritePlan::variable_array_creation(
         output_rows,
         columns,
-        transform_scalar_column_plans(input.main_table()),
+        transform_scalar_column_plans(output_schema),
         resources,
     )
     .map_err(|error| MsTransformError::WriteMeasurementSet {
@@ -2636,6 +2704,24 @@ struct SpectrumProjection {
 }
 
 impl SpectrumProjection {
+    fn partition(
+        table: &Table,
+        selected_row: usize,
+        averaging_time: bool,
+    ) -> Result<Self, TableError> {
+        let name = "WEIGHT_SPECTRUM";
+        let present = table
+            .schema()
+            .is_some_and(|schema| schema.contains_column(name));
+        let defined = present && table.array_shape_uncached(selected_row, name)?.is_some();
+        Ok(Self {
+            source: defined.then_some(name).into_iter().collect(),
+            output: vec![name],
+            propagate_weights: defined,
+            fill_standard: defined && averaging_time,
+        })
+    }
+
     fn resolve(
         table: &Table,
         selected_row: usize,
@@ -3126,6 +3212,7 @@ fn materialize_empty_main_table(
     visibility: &VisibilityColumns,
     grammar: RowGrammar,
     spectra: &SpectrumProjection,
+    legacy_partition: bool,
 ) -> Result<Table, MsTransformError> {
     let mut table = Table::open_metadata_for_construction(TableOptions::new(input_path), row_count)
         .map_err(|source| MsTransformError::MutateMeasurementSet {
@@ -3159,7 +3246,13 @@ fn materialize_empty_main_table(
         .flat_map(|schema| schema.columns())
         .filter(|column| {
             let name = column.name();
-            (is_visibility_column(name) && !visibility.contains_output(name))
+            (legacy_partition
+                && !crate::schema::main_table::REQUIRED_COLUMNS
+                    .iter()
+                    .any(|column| column.name == name)
+                && !visibility.contains_output(name)
+                && !spectra.output.contains(&name))
+                || (is_visibility_column(name) && !visibility.contains_output(name))
                 || (MAIN_SPECTRA.contains(&name) && !spectra.output.contains(&name))
         })
         .map(|column| column.name().to_string())
@@ -3245,7 +3338,7 @@ fn materialize_empty_main_table(
 }
 
 fn gather_selected_main_column_overrides(
-    table: &Table,
+    (table, output): (&Table, &Table),
     selected_rows: &[usize],
     output_path: &Path,
     batch_rows: usize,
@@ -3253,7 +3346,7 @@ fn gather_selected_main_column_overrides(
     row_id_maps: &selection_metadata::RowIdMaps,
     (averaging_time, averaging_polarization, combining): (bool, bool, bool),
 ) -> Result<ColumnOverrides, MsTransformError> {
-    let schema = table
+    let schema = output
         .schema()
         .ok_or_else(|| MsTransformError::MutateMeasurementSet {
             path: output_path.display().to_string(),

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -15,7 +16,10 @@ pub(super) fn copy_subtables(
     metadata_path: &Path,
     output_path: &Path,
     main: &mut Table,
+    copy_external_links: bool,
 ) -> Result<(), MsTransformError> {
+    fs::create_dir_all(output_path).map_err(|error| copy_error(output_path, error))?;
+    let mut copied = BTreeMap::new();
     for id in SubtableId::ALL_REQUIRED
         .iter()
         .chain(SubtableId::ALL_OPTIONAL)
@@ -27,20 +31,30 @@ pub(super) fn copy_subtables(
             continue;
         };
         let destination = output_path.join(id.name());
-        let source_kind = Table::immediate_part_names(source, source).map_err(|error| {
-            MsTransformError::MutateMeasurementSet {
-                path: source.display().to_string(),
-                source: Box::new(error),
-            }
-        })?;
-        if matches!(source_kind, TablePartNames::Plain(_)) {
-            copy_dir_recursive(source, &destination)
-                .map_err(|error| copy_error(output_path, error))?;
-        } else {
-            copy_attached_subtable(source, output_path, &destination)?;
+        copy_attached_subtable(source, output_path, &destination)?;
+        if copy_external_links {
+            copied.insert(
+                destination,
+                source
+                    .canonicalize()
+                    .map_err(|error| copy_error(output_path, error))?,
+            );
         }
         main.keywords_mut()
             .upsert(id.name(), Value::TableRef(id.name().into()));
+    }
+
+    if copy_external_links {
+        return crate::tool_sort::subtables::copy_additional_links(
+            metadata_path,
+            main,
+            output_path,
+            copied,
+        )
+        .map_err(|error| MsTransformError::PrepareOutput {
+            path: output_path.display().to_string(),
+            reason: error.to_string(),
+        });
     }
 
     // CASA copies CALDEVICE, SYSPOWER and ASDM metadata alongside the
@@ -141,21 +155,5 @@ pub(super) fn attached_subtable_name(
 }
 
 pub(super) fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let source_path = entry.path();
-        let destination_path = destination.join(entry.file_name());
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &destination_path)?;
-        } else if file_type.is_file() {
-            fs::copy(&source_path, &destination_path)?;
-        } else if file_type.is_symlink() {
-            let target = fs::read_link(&source_path)?;
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(target, &destination_path)?;
-        }
-    }
-    Ok(())
+    casa_tables::publication::copy_locked_table_tree(&source.canonicalize()?, destination)
 }
