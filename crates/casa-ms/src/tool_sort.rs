@@ -13,7 +13,6 @@ use crate::transform::task_history::append_history_messages;
 use crate::{MeasurementSet, MsError, MsResult};
 
 pub(crate) mod subtables;
-pub(crate) use subtables::check_named_output as check_named_table_output;
 
 /// Write a sorted, independent MeasurementSet at a staging path.
 ///
@@ -79,7 +78,11 @@ pub fn write_sorted_measurement_set(
 /// Reject a named output that would replace or be staged inside a backing
 /// subtable. A new direct child of the source MAIN remains allowed.
 pub fn check_named_sort_output(input: &MeasurementSet, output: &Path) -> MsResult<()> {
-    check_named_output_path(subtables::table_path(input.main_table())?, output)
+    check_named_table_output(input.main_table(), output)
+}
+
+pub(crate) fn check_named_table_output(input: &Table, output: &Path) -> MsResult<()> {
+    check_named_output_path(subtables::table_path(input)?, output)
 }
 
 /// Check a canonical named output against the persisted input and its linked tables.
