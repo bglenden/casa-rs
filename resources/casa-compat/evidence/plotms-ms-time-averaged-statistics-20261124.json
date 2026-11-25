@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "114fcd853944685b958a8b5b6b9da2a46a17e544",
+  "source_revision": "114fcd853944685b958a8b5b6b9da2a46a17e544",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --only time-statistics --work <new-dir> --native-bin <msexplore>",
+  "scope": "CASA public MeasurementSet Weight Spectrum, Sigma Spectrum and weighted amplitude on selected XX channels, with physical and fallback spectra and vector time and channel averaging. The weighted amplitude is tested on both axes before averaging.",
+  "result": "passed",
+  "baseline_result": "Main exports the wrong averaged spectrum and visibility and refuses the weighted-amplitude axis.",
+  "text_exports": 13,
+  "points": 108,
+  "figures": 1,
+  "rendered_coordinates": 6,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "refusal_cases": 4
+}
