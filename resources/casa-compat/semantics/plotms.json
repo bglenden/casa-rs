@@ -33,7 +33,8 @@
         "ms-iterated-visibility-ordinates",
         "ms-averaged-iterated-visibility-ordinates",
         "ms-iteration-axes-and-offset-pages",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-page-header-metadata"
       ],
       "behaviors": [
         "pages"
@@ -48,7 +49,8 @@
         "ms-iterated-grid-start",
         "ms-averaged-iterated-visibility-ordinates",
         "ms-iteration-axes-and-offset-pages",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-page-header-metadata"
       ],
       "behaviors": [
         "pages"
@@ -972,7 +974,8 @@
         "ms-pointing-sample-masks-and-pages",
         "ms-phasecenter-compositions",
         "ms-iteration-axes-and-offset-pages",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-page-header-metadata"
       ],
       "behaviors": [
         "pages"
@@ -1226,7 +1229,8 @@
       "scope": "Title at top of plot",
       "evidence": [
         "paired",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-page-header-metadata"
       ],
       "behaviors": [
         "presentation"
@@ -1544,15 +1548,15 @@
       "status": "Partial"
     },
     "headeritems": {
-      "scope": "Render requested page headers and metadata on current calibration tables and supported MeasurementSet figures. Shared MeasurementSet figure coverage is tracked separately.",
+      "scope": "Render requested page headers for static MeasurementSet and calibration-table figures. MeasurementSet field and observation values come from the first selected MAIN row, with the earliest matching SOURCE direction or an empty direction label. Iteration pages share the selection header values. The supported labels include filename, ordinate columns, start date/time, observer, project ID, telescope and target name/direction.",
       "evidence": [
         "calibration-controls",
-        "remaining"
+        "ms-page-header-metadata"
       ],
       "behaviors": [
         "presentation"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "showatm": {
       "scope": "Overlay atmospheric transmission on MeasurementSets and current calibration tables. Static transmission can accompany two independent visibility ordinates on sparse virtual-model grids or a spectral-window average.",
@@ -1699,14 +1703,15 @@
       "id": "presentation",
       "title": "Render the shared plot document",
       "status": "Partial",
-      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time. Static MeasurementSet iteration supports common per-side limits and shared grid labels. Time displays UTC clock and date ticks, and Channel bins label their averaging. Static fonts, grids and legend placement are paired with the pinned task. MeasurementSet figures apply independent marker styles to each ordinate and distinguish all three mesh categories. Connector controls preserve the same unconnected MeasurementSet figure as CASA.",
+      "scope": "Transfer native arrays through the existing binary payload and draw them in the shared Matplotlib renderer. Apply plot titles, labels, marker size and shape, connectors, grids, legend, page headers and export sizing. Show or hide the clear and flagged symbols independently for unaveraged MeasurementSet visibility pairs. Page selected MeasurementSet iteration panels in CASA order, including offset rows and titles and filenames for antenna, baseline and time. Static MeasurementSet iteration supports common per-side limits and shared grid labels. Time displays UTC clock and date ticks, and Channel bins label their averaging. Static fonts, grids and legend placement are paired with the pinned task. MeasurementSet figures apply independent marker styles to each ordinate and distinguish all three mesh categories. Connector controls preserve the same unconnected MeasurementSet figure as CASA. Static MeasurementSet headers use the selected table metadata and remain above the title on later exports.",
       "evidence": [
         "paired",
         "calibration-controls",
         "ms-raw-flag-symbols",
         "ms-iteration-axes-and-offset-pages",
         "ms-axis-ranges-clock-labels-and-style",
-        "ms-marker-groups-and-connector-controls"
+        "ms-marker-groups-and-connector-controls",
+        "ms-page-header-metadata"
       ],
       "gap": "Renderer-specific marker fill patterns and interactive editing remain open."
     },
@@ -3401,6 +3406,21 @@
         "https://github.com/bglenden/casa-rs/pull/2315",
         "https://github.com/bglenden/casa-rs/pull/2196",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Plots/PlotMSPlot.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362#659"
+      ]
+    },
+    "ms-page-header-metadata": {
+      "kind": "Same-input static MeasurementSet page metadata and layout",
+      "state": "passed",
+      "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Select the named baseline in a two-field, five-scan MS with different observation values and SOURCE rows. Export all scan and field pages, the PHASE selection, the observation date/time, telescope and two-ordinate labels, and a single page with no matching SOURCE.",
+      "result": "Match the nine requested header values and their order across eight PNG pairs. The first selected row supplies the values on every page. The earliest matching wildcard SOURCE row wins against a later exact-SPW row and an earlier wrong-SPW row. A missing match leaves the direction label blank. Both sets of headers are above the title with no overlap. The existing calibration-table header and transform controls pass.",
+      "casa_version": "6.7.6.14",
+      "revision": "cb530dd6b1e757095055031acfa9fecd883c8795",
+      "source_revision": "cb530dd6b1e757095055031acfa9fecd883c8795",
+      "command": "casa-python tools/casa-compat/plotms_ms_page_headers_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-page-headers-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2317",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362#2484"
       ]
     }
   }

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "cb530dd6b1e757095055031acfa9fecd883c8795",
+  "source_revision": "cb530dd6b1e757095055031acfa9fecd883c8795",
+  "baseline_revision": "3273338ac5b81f0afc91c757a7e900e6af0a0214",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_page_headers_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Select the named baseline in a two-field, five-scan MS with different observation values and SOURCE rows. Export all scan and field pages, the PHASE selection, the observation date/time, telescope and two-ordinate labels, and a single page with no matching SOURCE.",
+  "result": "passed",
+  "baseline_result": "Native public PlotMS refuses the named baseline when listobs resolves its page headers, before producing a figure.",
+  "png_pairs": 8,
+  "scan_pages": 3,
+  "field_pages": 2,
+  "other_pages": 3,
+  "calibration_control": "tools/casa-compat/plotms_calibration_controls_oracle.py"
+}
