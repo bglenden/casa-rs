@@ -31,7 +31,8 @@ impl PointingAxes {
         task: &TaskInvocation<'_>,
         [x, y]: [Option<MsAxis>; 2],
     ) -> Result<Option<Self>, TaskFailure> {
-        if y.is_some_and(MsAxis::is_pointing) {
+        let y_is_pointing = y.is_some_and(MsAxis::is_pointing);
+        if y_is_pointing {
             let frame = control_list(task, "yframe")?;
             let interp = control_list(task, "yinterp")?;
             let sides = control_list(task, "yaxislocation")?;
@@ -74,10 +75,13 @@ impl PointingAxes {
         if pair.iter().all(Option::is_none) {
             return Ok(None);
         }
-        let side = control_list(task, "yaxislocation")?;
+        let right = match control_list(task, "yaxislocation")? {
+            Control::Scalar(side) => side == "right",
+            Control::List(sides) => y_is_pointing && sides.first() == Some(&"right"),
+        };
         Ok(Some(Self {
             pairs: vec![pair],
-            right_ordinates: vec![side.first() == "right"],
+            right_ordinates: vec![right],
         }))
     }
 
@@ -157,13 +161,6 @@ enum Control<'a> {
 }
 
 impl<'a> Control<'a> {
-    fn first(&self) -> &'a str {
-        match self {
-            Self::Scalar(value) => value,
-            Self::List(values) => values.first().copied().unwrap_or_default(),
-        }
-    }
-
     fn parallel(&self, name: &str, index: usize, len: usize) -> Result<&'a str, TaskFailure> {
         match self {
             Self::Scalar(value) => Ok(value),
@@ -183,6 +180,9 @@ fn control_list<'a>(task: &'a TaskInvocation<'_>, name: &str) -> Result<Control<
     {
         let values =
             super::calibration::axis_names(task.value(name)).map_err(TaskFailure::validation)?;
+        if name != "yaxislocation" && values.contains(&"") {
+            return Err(TaskFailure::validation(format!("invalid {name} value ''")).at(name));
+        }
         return Ok(Control::List(values));
     }
     scalar_control(task, name).map(Control::Scalar)

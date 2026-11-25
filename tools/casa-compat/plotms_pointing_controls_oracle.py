@@ -26,15 +26,14 @@ def compare_pointing_lists(work, native, vis):
         assert compare_text(actual, expected) == 12
         print(f"{name}: 12 directly paired samples", flush=True)
 
-    one = base | dict(yinterp=["nearest"], yaxislocation="right")
-    one_text = work / "one-broadcast.casa.txt"
-    assert reference(**one, plotfile=str(one_text), expformat="txt") is None
-    image = work / "one-broadcast.casa.png"
-    assert reference(**one, plotfile=str(image), expformat="png", width=500, height=360, dpi=100) is None
-    with Image.open(image) as rendered:
-        assert rendered.size == (500, 360)
-    check_list_figure(native, work / "one-broadcast.native.png", one, [one_text],
-                      "Time (MJD seconds)", [("right", "ICRS Declination (degrees)", [0])])
+    for name, options, xlabel, side, ylabel in (
+        ("one-broadcast", base | dict(yinterp=["nearest"], yaxislocation="right"),
+         "Time (MJD seconds)", "right", "ICRS Declination (degrees)"),
+        ("time-side-list", base | dict(xaxis="ant-ra", xframe="j2000", xinterp="nearest",
+                                      yaxis="time", yaxislocation=["right"]),
+         "J2000 Right Ascension (degrees)", "left", "Time (MJD seconds)"),
+    ):
+        check_direct_figure(work, native, name, options, xlabel, side, ylabel)
 
     parallel = independent | dict(yframe=["j2000", "galactic"], yinterp=["nearest", "spline"],
                                   yaxislocation=["left", "right"])
@@ -53,6 +52,18 @@ def compare_pointing_lists(work, native, vis):
     ):
         check_scalar_layers(work, native, name, options, scalars, xlabel, labels)
     check_refusals(work, native, independent, parallel)
+
+
+def check_direct_figure(work, native, name, options, xlabel, side, ylabel):
+    text = work / f"{name}.casa.txt"
+    assert reference(**options, plotfile=str(text), expformat="txt") is None
+    image = work / f"{name}.casa.png"
+    assert reference(**options, plotfile=str(image), expformat="png", width=500, height=360, dpi=100) is None
+    with Image.open(image) as rendered:
+        assert rendered.size == (500, 360)
+    check_list_figure(native, work / f"{name}.native.png", options, [text],
+                      xlabel, [(side, ylabel, [0])])
+    print(f"{name}: 12 matching rendered coordinates, labels, dimensions and side", flush=True)
 
 
 def check_scalar_layers(work, native, name, options, scalars, xlabel, labels):
@@ -93,10 +104,12 @@ def check_list_figure(native, output, options, expected, xlabel, labels):
             for artist, index in zip(rendered.lines, indices, strict=True):
                 points = np.array([point[:2] for point in rows(expected[index])], dtype=float)
                 actual = artist.get_xydata()
-                np.testing.assert_allclose(actual[:, 0], points[:, 0], rtol=0,
-                                           atol=0.00051 if options["xaxis"] == "time" else 2.1e-5)
-                np.testing.assert_allclose(actual[:, 1], points[:, 1], rtol=0, atol=2.1e-5)
-                for values, limits in zip(actual.T, (rendered.get_xlim(), rendered.get_ylim()), strict=True):
+                for values, reference_values, limits, axis_name in zip(
+                    actual.T, points.T, (rendered.get_xlim(), rendered.get_ylim()),
+                    (options["xaxis"], options["yaxis"]), strict=True,
+                ):
+                    np.testing.assert_allclose(values, reference_values, rtol=0,
+                                               atol=0.00051 if axis_name == "time" else 2.1e-5)
                     assert min(limits) <= min(values) <= max(values) <= max(limits)
                 captured.append(len(points))
         return figure, axis
@@ -113,6 +126,10 @@ def check_refusals(work, native, independent, parallel):
         ("x-frame-list", dict(xframe=["j2000", "galactic"]), "cStr"),
         ("x-interpolation-list", dict(xinterp=["nearest", "spline"]), "cStr"),
         ("x-empty-lists", dict(xframe=[], xinterp=[]), "cStr"),
+        ("one-item-ordinate-list", dict(yaxis=["ant-dec"], yinterp=["nearest", "spline"]),
+         "currently not supported: multiple y-axes involving ant-ra or ant-dec"),
+        ("empty-frame-entry", dict(yframe=[""], yinterp=["nearest"]), "invalid yframe value"),
+        ("empty-interpolation-entry", dict(yinterp=[""]), "invalid yinterp value"),
         ("unequal-frame-length", dict(yframe=["j2000", "galactic"], yinterp=["nearest"]), "Length mismatch: yframe"),
         ("unequal-side-length", dict(yinterp=["nearest", "spline"], yaxislocation=["left"]), "Length mismatch: yaxislocation"),
         ("frame-only-list", dict(yframe=["j2000"]), "not yet implemented: yframe=list"),

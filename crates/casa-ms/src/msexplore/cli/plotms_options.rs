@@ -623,12 +623,22 @@ pub(super) fn options_from_plotms(
             MsAxis::parse(&axis.to_ascii_lowercase())
         })
         .map_err(TaskFailure::validation)?;
-    let mut ordinates = calibration::axis_names(task.value("yaxis"))
+    let y_value = task.value("yaxis");
+    let mut ordinates = calibration::axis_names(y_value)
         .map_err(TaskFailure::validation)?
         .into_iter()
         .map(|axis| MsAxis::parse(&axis.to_ascii_lowercase()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(TaskFailure::validation)?;
+    if matches!(y_value, Some(ParameterValue::Array(_)))
+        && !ordinates.is_empty()
+        && (x_axis.is_pointing() || ordinates.iter().any(|axis| axis.is_pointing()))
+    {
+        return Err(TaskFailure::validation(
+            "currently not supported: multiple y-axes involving ant-ra or ant-dec",
+        )
+        .at("yaxis"));
+    }
     if ordinates.is_empty() {
         ordinates.push(MsAxis::Amplitude);
     }
