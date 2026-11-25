@@ -7,9 +7,10 @@ use casa_types::measures::position::MPosition;
 
 use super::plotms_ordinates::PointDimensions;
 use super::{
-    MsAxis, MsDataColumn, MsIterationAxis, MsPlotSpec, plotms_columns, selected_i32_values,
-    uses_extended_averaging,
+    MsAxis, MsDataColumn, MsIterationAxis, MsPlotSpec, normalize_signed_degrees, plotms_columns,
+    selected_i32_values, uses_extended_averaging,
 };
+use crate::derived::engine::MsCalEngine;
 use crate::subtables::get_string;
 use crate::{MeasurementSet, SubtableId};
 
@@ -27,6 +28,10 @@ pub(super) fn metadata_pair(spec: &MsPlotSpec) -> Option<PointDimensions> {
             baseline: matches!(y, MsAxis::Row | MsAxis::Antenna1 | MsAxis::Antenna2),
         },
     )
+}
+
+pub(super) fn array_horizontal_pair(x: MsAxis, y: MsAxis) -> bool {
+    x == MsAxis::Channel && y.uses_derived_geometry()
 }
 
 pub(super) fn uses_scan_row_iteration(spec: &MsPlotSpec) -> bool {
@@ -73,6 +78,44 @@ pub(super) fn mean_antenna_position(ms: &MeasurementSet) -> Result<MPosition, St
     }
     let [x, y, z] = sum.map(|coordinate| coordinate / count as f64);
     Ok(MPosition::new_itrf(x, y, z))
+}
+
+pub(super) fn array_horizontal_value(
+    engine: &MsCalEngine,
+    axis: MsAxis,
+    time: f64,
+    field_id: i32,
+    position: MPosition,
+) -> Result<f64, String> {
+    let field = usize::try_from(field_id)
+        .map_err(|_| format!("invalid FIELD_ID {field_id} for {axis} axis"))?;
+    let value =
+        match axis {
+            MsAxis::Azimuth | MsAxis::Elevation => engine
+                .azel_at_position(time, field, position)
+                .map(|(azimuth, elevation)| {
+                    if axis == MsAxis::Azimuth {
+                        normalize_signed_degrees(azimuth.to_degrees())
+                    } else {
+                        elevation.to_degrees()
+                    }
+                }),
+            MsAxis::HourAngle => engine
+                .hour_angle_at_position(time, field, position)
+                .map(|angle| normalize_signed_degrees(angle.to_degrees()) / 15.0),
+            MsAxis::ParallacticAngle => engine
+                .array_feed_angle_at_position(time, field, position)
+                .map(|angle| {
+                    let degrees = f64::from(angle as f32).to_degrees();
+                    if degrees < 0.0 {
+                        degrees + 360.0
+                    } else {
+                        degrees
+                    }
+                }),
+            _ => unreachable!("only array horizontal axes use the antenna-position mean"),
+        };
+    value.map_err(|error| error.to_string())
 }
 
 pub(super) fn validate(spec: &MsPlotSpec) -> Result<(), String> {

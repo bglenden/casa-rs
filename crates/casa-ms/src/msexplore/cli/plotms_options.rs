@@ -7,7 +7,9 @@ use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::MDirection;
 
-use super::super::{RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter};
+use super::super::{
+    RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter, plotms_row_axes,
+};
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
     MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count, legend_position, number,
@@ -367,6 +369,32 @@ impl CliOptions {
         }
         Ok(())
     }
+
+    fn validate_array_horizontal_controls(
+        &self,
+        task: &TaskInvocation<'_>,
+    ) -> Result<(), TaskFailure> {
+        if self.y_axis2.is_some()
+            || !self
+                .x_axis
+                .zip(self.y_axis)
+                .is_some_and(|(x, y)| plotms_row_axes::array_horizontal_pair(x, y))
+        {
+            return Ok(());
+        }
+        if self.iteraxis == Some(MsIterationAxis::Correlation) {
+            return Err(TaskFailure::validation(
+                "PlotMS correlation iteration with array horizontal axes is pending (#1032)",
+            ));
+        }
+        let symbols = raw_symbol_visibility(task);
+        if symbols.flagged || !symbols.unflagged {
+            return Err(TaskFailure::validation(
+                "PlotMS flag-symbol filtering with array horizontal axes is pending (#1032)",
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn raw_symbol_visibility(task: &TaskInvocation<'_>) -> RawSymbolVisibility {
@@ -484,6 +512,7 @@ pub(super) fn options_from_plotms(
         || y_axis.is_visibility_math()
         || (avgtime.is_some_and(|interval| interval != 0.0)
             && [x_axis, y_axis].contains(&MsAxis::WeightSpectrum))
+        || plotms_row_axes::array_horizontal_pair(x_axis, y_axis)
         // PlotMS falls back to scalar SIGMA for undefined spectral cells;
         // the raw explorer deliberately requires the requested stored cell.
         || x_axis == MsAxis::SigmaSpectrum
@@ -605,5 +634,6 @@ pub(super) fn options_from_plotms(
         plot_format,
     };
     options.validate_plotms_weight_averaging()?;
+    options.validate_array_horizontal_controls(task)?;
     Ok((options, visibility_document))
 }

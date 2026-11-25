@@ -742,11 +742,29 @@ impl MsCalEngine {
 
     /// Compute the array-fiducial hour angle (radians) using the observatory position.
     pub fn hour_angle_observatory(&self, time_mjd_sec: f64, field_id: usize) -> MsResult<f64> {
-        let frame =
-            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        self.hour_angle_at_position(time_mjd_sec, field_id, self.observatory_position.clone())
+    }
+
+    pub(crate) fn hour_angle_at_position(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        position: MPosition,
+    ) -> MsResult<f64> {
+        self.hadec_at_position(time_mjd_sec, field_id, position)
+            .map(|(hour_angle, _)| hour_angle)
+    }
+
+    fn hadec_at_position(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        position: MPosition,
+    ) -> MsResult<(f64, f64)> {
+        let frame = self.make_frame_with_position(time_mjd_sec, position)?;
         let dir = self.direction_at(time_mjd_sec, field_id)?;
         let hadec = dir.convert_to(DirectionRef::HADEC, &frame)?;
-        Ok(hadec.longitude_rad())
+        Ok(hadec.as_angles())
     }
 
     /// Compute the array-fiducial parallactic angle (radians) using the observatory position.
@@ -755,8 +773,20 @@ impl MsCalEngine {
         time_mjd_sec: f64,
         field_id: usize,
     ) -> MsResult<f64> {
-        let frame =
-            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        self.parallactic_angle_at_position(
+            time_mjd_sec,
+            field_id,
+            self.observatory_position.clone(),
+        )
+    }
+
+    pub(crate) fn parallactic_angle_at_position(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        position: MPosition,
+    ) -> MsResult<f64> {
+        let frame = self.make_frame_with_position(time_mjd_sec, position)?;
         Ok(self
             .direction_at(time_mjd_sec, field_id)?
             .parallactic_angle(&frame)?)
