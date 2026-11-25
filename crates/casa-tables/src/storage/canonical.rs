@@ -297,6 +297,19 @@ pub(crate) fn read_f64_slice_le(src: &[u8], count: usize) -> Vec<f64> {
 // Tests
 // ---------------------------------------------------------------------------
 
+/// Test whether memory order is also logical column-major order.
+/// Contiguous arrays with a negative stride still need to be reordered.
+pub(super) fn is_fortran_contiguous(shape: &[usize], strides: &[isize]) -> bool {
+    let mut expected = 1isize;
+    for (&dim, &stride) in shape.iter().zip(strides.iter()) {
+        if dim > 1 && stride != expected {
+            return false;
+        }
+        expected = expected.saturating_mul(dim.max(1) as isize);
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

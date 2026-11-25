@@ -43,6 +43,7 @@ mod typed;
 pub(crate) use typed::CanonicalArrayElement;
 
 use super::StorageError;
+use super::canonical::is_fortran_contiguous;
 use super::data_type::CasacoreDataType;
 
 // ---------------------------------------------------------------------------
@@ -815,11 +816,10 @@ fn fortran_flat_iter<T: Clone>(arr: &ArrayD<T>) -> Cow<'_, [T]> {
         return Cow::Borrowed(&[]);
     }
     // Contiguous Fortran-order values need no temporary allocation.
-    if let Some(slice) = arr.as_slice_memory_order() {
-        let is_fortran = arr.ndim() <= 1 || arr.strides().first().is_some_and(|&s| s == 1);
-        if is_fortran {
-            return Cow::Borrowed(slice);
-        }
+    if is_fortran_contiguous(arr.shape(), arr.strides())
+        && let Some(slice) = arr.as_slice_memory_order()
+    {
+        return Cow::Borrowed(slice);
     }
     // Fallback: manual iteration for non-contiguous or C-order arrays.
     let shape = arr.shape();
@@ -848,6 +848,21 @@ fn fortran_flat_iter<T: Clone>(arr: &ArrayD<T>) -> Cow<'_, [T]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reversed_array_axes_are_written_in_logical_fortran_order() {
+        use ndarray::{Axis, ShapeBuilder};
+
+        let mut matrix =
+            ArrayD::from_shape_vec(IxDyn(&[2, 3]).f(), vec![1, 2, 3, 4, 5, 6]).unwrap();
+        matrix.invert_axis(Axis(1));
+        assert_eq!(fortran_flat_iter(&matrix).as_ref(), [5, 6, 3, 4, 1, 2]);
+
+        let mut vector = ArrayD::from_shape_vec(IxDyn(&[3]), vec![1, 2, 3]).unwrap();
+        vector.invert_axis(Axis(0));
+        assert_eq!(fortran_flat_iter(&vector).as_ref(), [3, 2, 1]);
+    }
+
     use ndarray::array;
     use tempfile::TempDir;
 

@@ -1740,17 +1740,6 @@ fn array_memory_order_values<T: Clone>(array: &ArrayD<T>) -> Cow<'_, [T]> {
     }
 }
 
-fn is_fortran_contiguous(shape: &[usize], strides: &[isize]) -> bool {
-    let mut expected = 1isize;
-    for (&dim, &stride) in shape.iter().zip(strides.iter()) {
-        if dim > 1 && stride != expected {
-            return false;
-        }
-        expected = expected.saturating_mul(dim.max(1) as isize);
-    }
-    true
-}
-
 // ---------------------------------------------------------------------------
 // Load interface (read columns from tiled DM)
 // ---------------------------------------------------------------------------
