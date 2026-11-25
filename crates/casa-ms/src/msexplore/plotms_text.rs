@@ -30,13 +30,23 @@ pub(super) fn requests_text(
     task: &TaskInvocation<'_>,
     output: Option<&Path>,
 ) -> Result<bool, TaskFailure> {
+    let Some(output) = output else {
+        return Ok(false);
+    };
     let format = task.text("expformat")?.filter(|ext| !ext.is_empty());
-    Ok(output.is_some_and(|path| {
-        format
-            .as_deref()
-            .or_else(|| path.extension().and_then(std::ffi::OsStr::to_str))
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("txt"))
-    }))
+    let format = format
+        .as_deref()
+        .or_else(|| output.extension().and_then(std::ffi::OsStr::to_str))
+        .unwrap_or_default();
+    match format.to_ascii_lowercase().as_str() {
+        "txt" | "text" => Ok(true),
+        "png" | "jpg" | "jpeg" | "pdf" | "ps" => Ok(false),
+        _ => Err(TaskFailure::validation(format!(
+            "Cannot determine PlotMS export format for {}",
+            output.display()
+        ))
+        .at("plotfile")),
+    }
 }
 
 pub(super) fn write_export(

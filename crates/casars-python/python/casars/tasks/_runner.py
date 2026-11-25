@@ -2196,18 +2196,20 @@ def _render_task_plots(plots, payload: Path, workspace: Path, plotms=None) -> No
             figure, panel_axes = render_document(plot["document"], payload=mapped)
             completed = False
             try:
+                output = workspace / plot["output_file"] if plot["output_file"] is not None else None
                 if plotms is not None:
                     from ._plotms_plot import configure
 
-                    if plot["output_file"] is not None:
-                        dpi = _size_plotms_figure(figure, plotms)
+                    if output is not None:
+                        encoding = (plotms.get("expformat") or output.suffix.lstrip(".") or "png").lower()
+                        dpi = _size_plotms_figure(figure, plotms, plot["document"], encoding)
                     configure(figure, panel_axes, plot["document"], plotms)
-                if plot["output_file"] is not None:
-                    output = workspace / plot["output_file"]
+                if output is not None:
                     if plotms is None:
                         _save_figure(figure, output)
                     else:
-                        _save_plotms_figure(figure, output, plotms, dpi)
+                        _save_figure(figure, output, replace_existing=plotms.get("overwrite"),
+                                     format=encoding, dpi=dpi)
                 if plot["show"]:
                     figure.show()
                 completed = True
@@ -2218,22 +2220,25 @@ def _render_task_plots(plots, payload: Path, workspace: Path, plotms=None) -> No
         del mapped
 
 
-def _size_plotms_figure(figure, options):
+def _size_plotms_figure(figure, options, document, encoding):
     dpi = options.get("dpi")
-    if dpi <= 0:
-        dpi = 300 if options.get("highres") else figure.dpi
     width, height = options.get("width"), options.get("height")
+    if document["id"] == "plotms-visibility" and encoding in ("png", "jpg", "jpeg"):
+        # The pinned headless Qt exporter uses one canvas size for every page.
+        # Screen resolution also switches to this raster mode in ActionExport.
+        dpi = dpi if dpi > 0 else 96
+        width = width if width > 0 else 751
+        height = height if height > 0 else 567
+        if document["header_lines"]:
+            height += 113
+    elif dpi <= 0:
+        dpi = 300 if options.get("highres") else figure.dpi
     if width > 0 or height > 0:
         current_width, current_height = figure.get_size_inches()
         figure.set_size_inches(width / dpi if width > 0 else current_width,
                                height / dpi if height > 0 else current_height)
     figure.set_dpi(dpi)
     return dpi
-
-
-def _save_plotms_figure(figure, destination: Path, options, dpi) -> None:
-    format_ = options.get("expformat") or destination.suffix.lstrip(".") or "png"
-    _save_figure(figure, destination, replace_existing=options.get("overwrite"), format=format_.lower(), dpi=dpi)
 
 
 def _save_figure(figure, destination: Path, *, replace_existing=True, **options) -> None:

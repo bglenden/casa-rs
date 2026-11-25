@@ -11226,6 +11226,17 @@ the centered CASA grid to compare the numeric text and the active
 offset CASA PNGs to check pagination and placement (#1032).
 [Pinned export action](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Actions/ActionExport.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
 
+## PlotMS writes PDF bytes for a PostScript export
+
+CASA 6.7.6.14 with casaplotms 2.9.1 exports the selected Channel versus Amp
+figure as a PDF when `expformat="ps"` or when `expformat=""` and the filename
+ends with `.ps`. The bytes begin with `%PDF-1.4` and identify Qt as the PDF
+producer. The public format catalog describes these exports as PostScript.
+
+Casa-rs writes the requested PostScript encoding. The paired oracle decodes
+both single-page products and compares their visible visibility marks.
+[Paired public PlotMS oracle](../tools/casa-compat/plotms_ms_exports_oracle.py)
+
 ## PlotMS can ignore the requested major grid color
 
 CASA 6.7.6.14 with casaplotms 2.9.1 draws gray major grid lines for the static

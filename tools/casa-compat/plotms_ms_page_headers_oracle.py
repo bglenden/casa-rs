@@ -20,6 +20,7 @@ from plotms_ms_iteration_axes_oracle import data_fixture
 
 
 WIDTH, HEIGHT = 700, 450
+PAGE_HEIGHT = 563
 TITLE = "Selected targets"
 HEADERS = "filename,observer,projid,targname,targdir"
 FLUX = ("Clara", "FLUX-PROJECT", "FLUX", "00:00:00.000000 -30.00.00.00000 J2000")
@@ -77,7 +78,7 @@ def ocr(image, region, scale=3):
 
 def check_pinned(path, expected):
     with Image.open(path) as image:
-        assert image.width == WIDTH
+        assert image.size == (WIDTH, PAGE_HEIGHT)
         # At this width Qt arranges the requested items in two columns.
         regions = [(392 if index % 2 else 0, 4 + 30 * (index // 2),
                     WIDTH if index % 2 else 385, 29 + 30 * (index // 2))
@@ -118,7 +119,7 @@ def compare_pages(root, native, name, controls, suffixes, expected):
                   if text.get_text().startswith(TITLE) and text.get_visible()]
         assert len(headers) == len(lines) and titles
         bounds = [text.get_window_extent() for text in headers]
-        assert all(0 <= box.x0 < box.x1 <= WIDTH and 0 <= box.y0 < box.y1 <= HEIGHT for box in bounds)
+        assert all(0 <= box.x0 < box.x1 <= WIDTH and 0 <= box.y0 < box.y1 <= PAGE_HEIGHT for box in bounds)
         assert all(upper.y0 > lower.y1 for upper, lower in zip(bounds, bounds[1:]))
         assert all(title.get_window_extent().y1 < bounds[-1].y0 for title in titles)
         seen.append(normalized)
@@ -129,7 +130,7 @@ def compare_pages(root, native, name, controls, suffixes, expected):
     assert {file.name for file in actual.glob("*.png")} == set(names)
     for filename in names:
         with Image.open(actual / filename) as image:
-            assert image.size == (WIDTH, HEIGHT)
+            assert image.size == (WIDTH, PAGE_HEIGHT)
     print(f"{name}: {len(names)} paired pages, {expected}", flush=True)
     return len(names)
 
