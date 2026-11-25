@@ -14,6 +14,8 @@ use casa_tables::{Table, TableOptions, TablePartNames};
 use casa_types::ScalarValue;
 use pyo3::prelude::*;
 
+#[cfg(unix)]
+use super::attachment_info::FileStamp;
 use super::attachment_info::{TableFiles, TableStamp};
 use super::{AttachedMs, PyMsTool, runtime_error};
 use crate::convert::value::CasaValue;
@@ -36,10 +38,15 @@ impl Subtables {
         main: &Table,
         refresh_field: bool,
     ) -> MsResult<(Ref<'_, [Table]>, Ref<'_, [Table]>)> {
-        let windows = self.spectral_window.read_using(true, || {
+        let windows = self.spectral_window.read_using(CellReads::Published, || {
             MeasurementSet::linked_subtable_paths(main, SubtableId::SpectralWindow)
         })?;
-        let fields = self.field.read_using(refresh_field, || {
+        let field_reads = if refresh_field {
+            CellReads::Published
+        } else {
+            CellReads::Descriptor
+        };
+        let fields = self.field.read_using(field_reads, || {
             MeasurementSet::linked_subtable_paths(main, SubtableId::Field)
         })?;
         Ok((windows, fields))
@@ -49,6 +56,23 @@ impl Subtables {
         &self,
         main: &Table,
         ids: &[SubtableId],
+    ) -> MsResult<HashMap<SubtableId, Ref<'_, [Table]>>> {
+        self.read_tables(main, ids, CellReads::Fresh)
+    }
+
+    pub(super) fn spectral_grid_geometry(
+        &self,
+        main: &Table,
+        ids: &[SubtableId],
+    ) -> MsResult<HashMap<SubtableId, Ref<'_, [Table]>>> {
+        self.read_tables(main, ids, CellReads::Published)
+    }
+
+    fn read_tables(
+        &self,
+        main: &Table,
+        ids: &[SubtableId],
+        cells: CellReads,
     ) -> MsResult<HashMap<SubtableId, Ref<'_, [Table]>>> {
         let mut links = None;
         ids.iter()
@@ -62,7 +86,7 @@ impl Subtables {
                     SubtableId::SpectralWindow => &self.spectral_window,
                     _ => return Err(MsError::MissingSubtable(id.name().into())),
                 };
-                let tables = subtable.read_using(true, || {
+                let tables = subtable.read_using(cells, || {
                     if links.is_none() {
                         links = Some(MeasurementSet::linked_subtables(main, ids)?);
                     }
@@ -80,34 +104,132 @@ impl Subtables {
 #[derive(Default)]
 struct Subtable(RefCell<Option<SubtableSnapshot>>);
 
+#[derive(Clone, Copy)]
+enum CellReads {
+    Descriptor,
+    Fresh,
+    Published,
+}
+
 struct SubtableSnapshot {
     tables: Vec<Table>,
     publication: Vec<(TableFiles, TableStamp)>,
+    payloads: Option<Vec<SubtablePayload>>,
+}
+
+impl SubtableSnapshot {
+    fn is_current(&mut self, reads: CellReads) -> bool {
+        if self.publication.len() != self.tables.len()
+            || self
+                .publication
+                .iter()
+                .any(|(files, stamp)| files.stamp() != Some(*stamp))
+        {
+            return false;
+        }
+        match reads {
+            CellReads::Descriptor => return true,
+            CellReads::Fresh => {}
+            CellReads::Published
+                if self
+                    .payloads
+                    .as_ref()
+                    .is_some_and(|payloads| payloads.iter().all(SubtablePayload::is_current)) =>
+            {
+                return true;
+            }
+            CellReads::Published => {}
+        }
+        if !self.tables.iter_mut().all(Table::try_clear_read_cells) {
+            return false;
+        }
+        self.capture_payloads(reads);
+        true
+    }
+
+    fn capture_payloads(&mut self, reads: CellReads) {
+        self.payloads = if matches!(reads, CellReads::Published)
+            && self.publication.len() == self.tables.len()
+        {
+            self.tables.iter().map(SubtablePayload::capture).collect()
+        } else {
+            None
+        };
+    }
+}
+
+#[cfg(unix)]
+struct SubtablePayload(Vec<(PathBuf, FileStamp)>);
+#[cfg(not(unix))]
+struct SubtablePayload;
+
+impl SubtablePayload {
+    fn capture(table: &Table) -> Option<Self> {
+        #[cfg(unix)]
+        {
+            // These managers keep the cell payloads in table.f* files in
+            // the table directory, including indirect-array side files.
+            if table.data_manager_info().iter().any(|manager| {
+                !matches!(
+                    manager.dm_type.as_str(),
+                    "StandardStMan" | "IncrementalStMan"
+                )
+            }) {
+                return None;
+            }
+            let root = table.path()?;
+            let mut files = vec![(root.to_path_buf(), FileStamp::read(root).ok()?)];
+            for entry in root.read_dir().ok()? {
+                let entry = entry.ok()?;
+                if entry.file_name().to_str()?.starts_with("table.f") {
+                    let path = entry.path();
+                    let stamp = FileStamp::read(&path).ok()?;
+                    files.push((path, stamp));
+                }
+            }
+            Some(Self(files))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = table;
+            None
+        }
+    }
+
+    fn is_current(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.0
+                .iter()
+                .all(|(path, stamp)| FileStamp::read(path).ok() == Some(*stamp))
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
 }
 
 impl Subtable {
     fn read(&self, main: &Table, id: SubtableId) -> MsResult<Ref<'_, [Table]>> {
-        self.read_using(false, || MeasurementSet::linked_subtable_paths(main, id))
+        self.read_using(CellReads::Descriptor, || {
+            MeasurementSet::linked_subtable_paths(main, id)
+        })
     }
 
     fn read_using(
         &self,
-        refresh_cells: bool,
+        reads: CellReads,
         paths: impl FnOnce() -> MsResult<Vec<PathBuf>>,
     ) -> MsResult<Ref<'_, [Table]>> {
         let mut cached = self.0.borrow_mut();
-        let current = cached.as_mut().is_some_and(|snapshot| {
-            snapshot.publication.len() == snapshot.tables.len()
-                && snapshot
-                    .publication
-                    .iter()
-                    .all(|(files, stamp)| files.stamp() == Some(*stamp))
-                // The descriptor can stay current when casacore writes a
-                // cell in place without updating table.dat or table.lock.
-                && (!refresh_cells || snapshot.tables.iter_mut().all(Table::try_clear_read_cells))
-        });
-        if !current {
-            *cached = Some(Self::open(paths()?)?);
+        if !cached
+            .as_mut()
+            .is_some_and(|snapshot| snapshot.is_current(reads))
+        {
+            let mut snapshot = Self::open(paths()?)?;
+            snapshot.capture_payloads(reads);
+            *cached = Some(snapshot);
         }
         drop(cached);
         Ok(Ref::map(self.0.borrow(), |snapshot| {
@@ -148,6 +270,7 @@ impl Subtable {
         Ok(SubtableSnapshot {
             tables,
             publication,
+            payloads: None,
         })
     }
 }

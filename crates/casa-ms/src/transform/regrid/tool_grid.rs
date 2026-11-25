@@ -4,18 +4,22 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use casa_tables::{RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, Table};
+use casa_tables::{
+    RequiredScalarColumnDestination, RequiredScalarColumnValues, RequiredScalarColumnValuesMut,
+    Table,
+};
 use casa_types::measures::direction::MDirection;
-use casa_types::measures::epoch::{EpochRef, MEpoch};
+use casa_types::measures::epoch::MEpoch;
 use casa_types::measures::frequency::FrequencyRef;
 use casa_types::measures::frequency_conversion::PreparedFrequencyConversion;
 use casa_types::measures::position::MPosition;
 use casa_types::measures::{MeasFrame, MeasuresProvider};
 
-use crate::derived::engine::{MsCalEngine, detect_epoch_reference};
+use crate::derived::engine::MsCalEngine;
 use crate::spectral_selection::combine_windows;
+use crate::subtables::measured_columns::antenna_position;
 use crate::subtables::{
-    FieldDirectionColumn, MsAntenna, MsDataDescription, MsField, get_i32, get_string,
+    FieldDirectionColumn, MsDataDescription, MsField, epoch_reference, get_i32, get_string,
     linked_subtable_row,
 };
 use crate::{MeasurementSet, SubtableId};
@@ -103,12 +107,17 @@ pub fn tool_grid_frame_at_epoch(
     } else {
         None
     };
-    let (antenna, row) =
-        linked_subtable_row(tables.antenna, 0, SubtableId::Antenna).map_err(ms_error)?;
-    let [x, y, z] = MsAntenna::new(antenna).position(row).map_err(ms_error)?;
-    let fallback = MPosition::new_itrf(x, y, z);
-    let position =
-        MPosition::casa_array_reference(telescope.as_deref(), Some(&fallback), measures.as_ref());
+    let position = match telescope
+        .as_deref()
+        .and_then(|name| MPosition::casa_observatory(name, measures.as_ref()))
+    {
+        Some(position) => position,
+        None => {
+            let (antenna, row) =
+                linked_subtable_row(tables.antenna, 0, SubtableId::Antenna).map_err(ms_error)?;
+            antenna_position(antenna, row).map_err(ms_error)?
+        }
+    };
     Ok(Some(
         MeasFrame::new()
             .with_epoch(epoch.clone())
@@ -163,7 +172,9 @@ pub fn tool_spectral_grid_frame(
 /// Return the earliest working epoch for the requested fields and windows.
 ///
 /// When that cross-selection contains no rows, use the first working row.
-/// The result retains the epoch scale stored in MAIN.
+/// The result retains the epoch scale stored in MAIN. The caller may select
+/// direct on-disk reads by identifying a plain rather than a reference or
+/// concatenated MAIN table.
 ///
 /// # Errors
 ///
@@ -174,6 +185,7 @@ pub fn tool_grid_reference_epoch(
     description_tables: &[Table],
     spws: &[i32],
     fields: &[i32],
+    plain_main: bool,
 ) -> Result<MEpoch, MsTransformError> {
     let all_rows;
     let rows = if let Some(rows) = working_rows {
@@ -212,13 +224,41 @@ pub fn tool_grid_reference_epoch(
         ),
     ];
     let count = if fields.is_empty() { 2 } else { 3 };
-    table
-        .required_scalar_columns_for_rows_into(rows, &mut columns[..count])
-        .map_err(ms_error)?;
+    let names = ["TIME", "DATA_DESC_ID", "FIELD_ID"];
+    if plain_main
+        && names[..count]
+            .iter()
+            .all(|name| !table.is_virtual_column(name))
+    {
+        table
+            .required_scalar_columns_for_rows_into(rows, &mut columns[..count])
+            .map_err(ms_error)?;
+    } else {
+        let mut values = table
+            .required_scalar_columns_owned_for_rows(&names[..count], rows)
+            .map_err(ms_error)?;
+        let Some(RequiredScalarColumnValues::Float64(input_times)) = values.remove("TIME") else {
+            return Err(ms_error("MAIN TIME is not Float64"));
+        };
+        let Some(RequiredScalarColumnValues::Int32(input_descriptions)) =
+            values.remove("DATA_DESC_ID")
+        else {
+            return Err(ms_error("MAIN DATA_DESC_ID is not Int32"));
+        };
+        times = input_times;
+        descriptions = input_descriptions;
+        if count == 3 {
+            let Some(RequiredScalarColumnValues::Int32(input_fields)) = values.remove("FIELD_ID")
+            else {
+                return Err(ms_error("MAIN FIELD_ID is not Int32"));
+            };
+            field_ids = input_fields;
+        }
+    }
     let first = *times
         .first()
         .ok_or_else(|| ms_error("No working MAIN rows"))?;
-    let seconds = times
+    let (slot, seconds) = times
         .iter()
         .zip(descriptions)
         .enumerate()
@@ -226,11 +266,11 @@ pub fn tool_grid_reference_epoch(
             (time.is_finite()
                 && selected_descriptions.contains(&description)
                 && (fields.is_empty() || fields.contains(&field_ids[slot])))
-            .then_some(time)
+            .then_some((slot, time))
         })
-        .min_by(f64::total_cmp)
-        .unwrap_or(first);
-    let reference = detect_epoch_reference(table, "TIME", EpochRef::UTC);
+        .min_by(|left, right| left.1.total_cmp(&right.1))
+        .unwrap_or((0, first));
+    let reference = epoch_reference(table, "TIME", rows[slot], 0).map_err(ms_error)?;
     Ok(MEpoch::from_mjd_seconds(seconds, reference))
 }
 

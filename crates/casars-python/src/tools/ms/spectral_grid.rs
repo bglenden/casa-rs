@@ -148,7 +148,7 @@ impl PyMsTool {
                 let count = if epoch.is_some() { 2 } else { 3 };
                 let geometry = ms
                     .subtables
-                    .read_range(&ms.main, &geometry_ids[..count])
+                    .spectral_grid_geometry(&ms.main, &geometry_ids[..count])
                     .map_err(source_error)?;
                 let epoch = match epoch {
                     Some(epoch) => epoch,
@@ -158,6 +158,7 @@ impl PyMsTool {
                         &geometry[&SubtableId::DataDescription],
                         &spwids,
                         &fieldids,
+                        ms.plain_rows.is_some(),
                     )?,
                 };
                 let tables = ToolGridFrameTables {
@@ -219,12 +220,12 @@ fn axis_argument(mode: &str, value: Option<Variant>) -> String {
 
 impl AttachedMs {
     fn spectral_query_measures(&self) -> MsResult<Arc<dyn MeasuresProvider>> {
-        if let Some(measures) = self.spectral_grid_measures.get() {
+        if let Some(measures) = self.visibility.time_measures.get() {
             return Ok(Arc::clone(measures));
         }
         let measures = casa_ms::open_measures_runtime()?;
         Ok(Arc::clone(
-            self.spectral_grid_measures.get_or_init(|| measures),
+            self.visibility.time_measures.get_or_init(|| measures),
         ))
     }
 }

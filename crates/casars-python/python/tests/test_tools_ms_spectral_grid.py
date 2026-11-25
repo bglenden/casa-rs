@@ -67,3 +67,59 @@ def test_cvelfreqs_keeps_observatory_position_independent_of_verbosity(native_da
         results.append(centres)
         assert ms.close()
     np.testing.assert_allclose(results[1], results[0], rtol=0, atol=0.05)
+
+
+
+@pytest.mark.parametrize("writer", ["casa", "casa-rs"])
+def test_cvelfreqs_reads_implicit_epoch_from_persisted_reference(native_dataset, writer):
+    casa = pinned_casa()
+    table = (casa if writer == "casa" else tools).table()
+    path = native_dataset.with_name("working.ms")
+    assert table.open(str(native_dataset))
+    selection = table.selectrows(np.array([5, 2, 5], dtype=np.int64), str(path))
+    assert selection.done()
+    assert table.done()
+
+    axes = []
+    for api in (casa, tools):
+        ms = api.ms()
+        assert ms.open(str(path))
+        axis = ms.cvelfreqs(outframe="BARY", nchan=3)
+        assert axis.shape == (3,)
+        assert axis.dtype == np.float64
+        assert ms.nrow() == 3
+        assert ms.done()
+        axes.append(axis)
+    np.testing.assert_allclose(axes[1], axes[0], rtol=0, atol=0.05)
+
+
+
+@pytest.mark.parametrize("writer", ["casa", "casa-rs"])
+def test_cvelfreqs_reads_updated_metadata_on_the_same_attachment(native_dataset, writer):
+    casa = pinned_casa()
+    api = casa if writer == "casa" else tools
+    ms = tools.ms()
+    assert ms.open(str(native_dataset))
+    params = dict(outframe="BARY", nchan=2, verbose=True)
+    previous = ms.cvelfreqs(**params)
+    np.testing.assert_array_equal(ms.cvelfreqs(**params), previous)
+
+    for subtable, column, update in (
+        ("SPECTRAL_WINDOW", "CHAN_FREQ", lambda value: value + 1e6),
+        ("FIELD", "PHASE_DIR", lambda value: value + 0.2),
+        ("", "TIME", lambda value: value - 7 * 86400.),
+    ):
+        table = api.table()
+        assert table.open(str(native_dataset / subtable), nomodify=False)
+        assert table.putcell(column, 0, update(table.getcell(column, 0)))
+        assert table.done()
+        reference = casa.ms()
+        assert reference.open(str(native_dataset))
+        expected = reference.cvelfreqs(**params)
+        assert reference.done()
+        updated = ms.cvelfreqs(**params)
+        assert np.max(np.abs(expected - previous)) > 1.0
+        np.testing.assert_allclose(updated, expected, rtol=0, atol=0.05)
+        np.testing.assert_array_equal(ms.cvelfreqs(**params), updated)
+        previous = updated
+    assert ms.done()
