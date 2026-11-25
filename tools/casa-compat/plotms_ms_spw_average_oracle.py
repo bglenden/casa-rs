@@ -772,6 +772,8 @@ def compare_ordinate_list_uvw(root, native, options, vis):
 
     controls = options | dict(vis=str(vis), xaxis="u", avgtime="20")
     before = snapshot(vis)
+    with opened(vis) as table:
+        original_model = table.getcol("MODEL_DATA")
     expected = export(root, "spw-list-u.casa", reference, controls)
     assert len(rows(expected)) == 3
     assert compare_text(export(root, "spw-list-u.native", native, controls), expected) == 3
@@ -781,6 +783,8 @@ def compare_ordinate_list_uvw(root, native, options, vis):
     actual = export(root, "time-list-u.native", native, ordinary_time)
     assert compare_text(actual, expected) == 6
     verify_source(vis, before)
+    with opened(vis) as table:
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), original_model)
     print("uvw-spw-ordinates: three combined and six ordinary time coordinates matched", flush=True)
 
     heavier = root / "weighted-uvw-windows.ms"
@@ -819,6 +823,8 @@ def compare_ordinate_list_uvw(root, native, options, vis):
         ("flagged-spw-u", flagged, {}, 18.4091),
     ):
         before = snapshot(source)
+        with opened(source) as table:
+            original_model = table.getcol("MODEL_DATA")
         request = controls | dict(vis=str(source)) | changes
         expected = export(root, f"{name}.casa", reference, request)
         actual = export(root, f"{name}.native", native, request)
@@ -829,9 +835,12 @@ def compare_ordinate_list_uvw(root, native, options, vis):
         verify_source(source, before)
         with opened(source) as table:
             np.testing.assert_array_equal(table.getcol("UVW"), uvw)
+            np.testing.assert_array_equal(table.getcol("MODEL_DATA"), original_model)
         print(f"{name}: three matching coordinates at U={u_metres} m", flush=True)
     multiple = controls | dict(vis=str(equal), antenna="A0&A1;A0&A2")
     before = snapshot(equal)
+    with opened(equal) as table:
+        original_model = table.getcol("MODEL_DATA")
     expected = export(root, "baselines-spw-u.casa", reference, multiple)
     selected = rows(expected)
     assert [row[5:7] for row in selected] == [["0", "1"], ["0", "2"]] * 3
@@ -839,6 +848,9 @@ def compare_ordinate_list_uvw(root, native, options, vis):
     actual = export(root, "baselines-spw-u.native", native, multiple)
     assert compare_text(actual, expected) == 6
     verify_source(equal, before)
+    with opened(equal) as table:
+        np.testing.assert_array_equal(table.getcol("UVW"), uvw)
+        np.testing.assert_array_equal(table.getcol("MODEL_DATA"), original_model)
     print("baselines-spw-u: six coordinates preserve distinct retained baselines", flush=True)
     compare_sides(root, native, controls | dict(vis=str(heavier)), expected_x="U (m)",
                   expected_right="Imag:corrected", name="weighted-spw-u")

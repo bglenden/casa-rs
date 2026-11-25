@@ -5841,7 +5841,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
-    let mut time_uvws = weighted_time_uvw.then(HashMap::<usize, TimeUvwAverage>::new);
+    let mut time_uvws = weighted_time_uvw.then(HashMap::<(usize, i32, i32), TimeUvwAverage>::new);
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut averaged_rows = std::collections::BTreeSet::new();
@@ -6166,7 +6166,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     })
                     .sum();
                 let _ = time_uvws
-                    .entry(group)
+                    .entry((group, antenna1_value, antenna2_value))
                     .or_default()
                     .add(row_uvw_value, !unflagged, weight);
             }
@@ -6921,11 +6921,17 @@ fn build_generic_visibility_scatter_with_averaging(
                     ) => groups[group].as_ref().map(|window| window.channel(ordinal)),
                     _ => None,
                 };
-                (group, order, spectral_channel, point)
+                let uvw = time_uvws.as_ref().and_then(|uvws| {
+                    let AveragingBaselineToken::Baseline(antenna1, antenna2) = key.baseline else {
+                        return None;
+                    };
+                    uvws.get(&(group?, antenna1, antenna2)).copied()
+                });
+                (group, order, spectral_channel, uvw, point)
             });
             let mut plot_order = calibration.filter(|_| !spw_average).map(|_| {
                 let mut ordered = points.by_ref().collect::<Vec<_>>();
-                ordered.sort_by_key(|(_, order, _, entry)| {
+                ordered.sort_by_key(|(_, order, _, _, entry)| {
                     entry
                         .representative
                         .as_ref()
@@ -6937,7 +6943,7 @@ fn build_generic_visibility_scatter_with_averaging(
                 Some(points) => points.next(),
                 None => points.next(),
             });
-            for (group, order, spectral_channel, accumulator) in ordered {
+            for (group, order, spectral_channel, uvw, accumulator) in ordered {
                 if !accumulator.has_usable_weight() {
                     continue;
                 }
@@ -6973,9 +6979,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     } else if axis == MsAxis::Row {
                         Some(*averaged_row_numbers?.get(group?)? as f64)
                     } else if weighted_time_uvw && axis.uses_uvw_metres() {
-                        group
-                            .and_then(|group| time_uvws.as_ref()?.get(&group))
-                            .map(|&uvw| uvw_metres_coordinate(axis, uvw))
+                        uvw.map(|uvw| uvw_metres_coordinate(axis, uvw))
                     } else if scalar_visibility && axis.is_visibility_math() {
                         let samples = if x_axis {
                             &accumulator.x_visibility
