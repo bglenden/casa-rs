@@ -35,6 +35,43 @@ pub(super) fn array_horizontal_pair(x: MsAxis, y: MsAxis) -> bool {
     x == MsAxis::Channel && y.uses_derived_geometry()
 }
 
+pub(super) fn metadata_coordinate_pair(x: MsAxis, y: MsAxis) -> Option<PointDimensions> {
+    let channel = match (x, y) {
+        (MsAxis::Channel, MsAxis::Frequency) => true,
+        (MsAxis::Elevation, MsAxis::Time) => false,
+        _ => return None,
+    };
+    Some(PointDimensions {
+        channel,
+        baseline: false,
+    })
+}
+
+pub(super) fn unaveraged_coordinate_mask(
+    spec: &MsPlotSpec,
+    raw_plotms: bool,
+) -> Result<Option<PointDimensions>, String> {
+    let [y] = spec.y_axes.as_slice() else {
+        return Ok(None);
+    };
+    let mask = metadata_coordinate_pair(spec.x_axis, *y);
+    if mask.is_some() && *y == MsAxis::Frequency && spec.transforms.freqframe.is_some() {
+        return Err("PlotMS Channel/Frequency reporting frames are pending (#1032)".into());
+    }
+    if mask.is_some()
+        && (!raw_plotms
+            || uses_extended_averaging(spec)
+            || spec.averaging.avgchannel.is_some_and(|width| width > 1)
+            || spec
+                .iteration
+                .iteraxis
+                .is_some_and(|axis| axis != MsIterationAxis::Scan))
+    {
+        return Err("This PlotMS metadata coordinate combination is pending (#1032)".into());
+    }
+    Ok(mask)
+}
+
 pub(super) struct AntennaAxes {
     axis: MsAxis,
     count: usize,

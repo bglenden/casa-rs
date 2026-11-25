@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "d116fa71fdd24c7ad473402ed4ffa68a2db3ac2d",
+  "source_revision": "d116fa71fdd24c7ad473402ed4ffa68a2db3ac2d",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only static-metadata-coordinates --work <new-dir> --native-bin <msexplore>",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "Channel versus Frequency and array Elevation versus Time on the reversed two-baseline MS, with both XX and YY and scans 11 and 19. The flag cube removes one integration and one additional channel and leaves five ordered integrations. One selected channel is clear only on the second baseline. The omitted integration contains a clear channel outside the selection.",
+  "result": "passed",
+  "baseline_result": "The native public task refuses the Frequency and Time ordinates of these metadata pairs.",
+  "text_exports": 4,
+  "points": 38,
+  "figures": 4,
+  "rendered_coordinates": 19,
+  "figure_size_px": [
+    500,
+    420
+  ],
+  "empty_text_exports": 4,
+  "empty_figures": 2,
+  "empty_figure_size_px": [
+    500,
+    360
+  ],
+  "reporting_frame_guard_cases": 1
+}

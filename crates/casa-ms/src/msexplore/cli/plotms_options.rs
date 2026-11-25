@@ -8,7 +8,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::MDirection;
 
 use super::super::{
-    RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter, plotms_row_axes,
+    RawSymbolVisibility, calibration, plotms_columns, plotms_figure::VisibilityAxisColumns,
+    plotms_phasecenter, plotms_row_axes,
 };
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
@@ -62,6 +63,25 @@ impl CliOptions {
             self.data_column,
             self.secondary_y_data_column.unwrap_or(self.data_column),
         ])
+    }
+
+    pub(super) fn figure_axis_columns(
+        &self,
+        columns: Option<[MsDataColumn; 3]>,
+        calibrated: bool,
+    ) -> Option<VisibilityAxisColumns<'_>> {
+        columns
+            .or_else(|| {
+                let (x, y) = self.x_axis.zip(self.y_axis)?;
+                plotms_row_axes::metadata_coordinate_pair(x, y).map(|_| [self.data_column; 3])
+            })
+            .filter(|_| !calibrated || self.secondary_y_data_column.is_some())
+            .map(|base| VisibilityAxisColumns {
+                base,
+                secondary_axis: self.y_axis2,
+                additional: &self.additional_ordinates,
+                right_ordinates: &self.right_ordinates,
+            })
     }
 
     pub(super) fn plotms_averaging_active(&self) -> bool {
@@ -400,24 +420,33 @@ impl CliOptions {
             }
             return Ok(());
         }
-        if self.y_axis2.is_some()
-            || !self
-                .x_axis
-                .zip(self.y_axis)
-                .is_some_and(|(x, y)| plotms_row_axes::array_horizontal_pair(x, y))
-        {
+        let Some((x, y)) = self
+            .x_axis
+            .zip(self.y_axis)
+            .filter(|_| self.y_axis2.is_none())
+        else {
+            return Ok(());
+        };
+        let array_horizontal = plotms_row_axes::array_horizontal_pair(x, y);
+        let static_coordinates = plotms_row_axes::metadata_coordinate_pair(x, y).is_some();
+        if !array_horizontal && !static_coordinates {
             return Ok(());
         }
-        if self.iteraxis == Some(MsIterationAxis::Correlation) {
+        if array_horizontal && self.iteraxis == Some(MsIterationAxis::Correlation) {
             return Err(TaskFailure::validation(
                 "PlotMS correlation iteration with array horizontal axes is pending (#1032)",
             ));
         }
         let symbols = raw_symbol_visibility(task);
         if symbols.flagged || !symbols.unflagged {
-            return Err(TaskFailure::validation(
-                "PlotMS flag-symbol filtering with array horizontal axes is pending (#1032)",
-            ));
+            let label = if array_horizontal {
+                "array horizontal axes"
+            } else {
+                "metadata coordinate axes"
+            };
+            return Err(TaskFailure::validation(format!(
+                "PlotMS flag-symbol filtering with {label} is pending (#1032)"
+            )));
         }
         Ok(())
     }
@@ -539,6 +568,7 @@ pub(super) fn options_from_plotms(
         || (avgtime.is_some_and(|interval| interval != 0.0)
             && [x_axis, y_axis].contains(&MsAxis::WeightSpectrum))
         || plotms_row_axes::array_horizontal_pair(x_axis, y_axis)
+        || plotms_row_axes::metadata_coordinate_pair(x_axis, y_axis).is_some()
         || y_axis.is_antenna_horizontal()
         || x_axis.is_ephemeris()
         || y_axis.is_ephemeris()

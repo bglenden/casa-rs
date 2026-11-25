@@ -548,14 +548,7 @@ fn run_visibility_plot(
                 figure_file,
                 show,
                 &overlays,
-                axis_columns
-                    .filter(|_| calibrated.is_none() || options.secondary_y_data_column.is_some())
-                    .map(|columns| super::plotms_figure::VisibilityAxisColumns {
-                        base: columns,
-                        secondary_axis: options.y_axis2,
-                        additional: &options.additional_ordinates,
-                        right_ordinates: &options.right_ordinates,
-                    }),
+                options.figure_axis_columns(axis_columns, calibrated.is_some()),
             )?;
             if let Some(layout) = static_grid {
                 plots[0].document.layout = Some(layout);

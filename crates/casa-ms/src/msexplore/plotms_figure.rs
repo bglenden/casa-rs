@@ -10,7 +10,7 @@ use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
 use super::{
     MsAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsScatterGridPayload,
-    MsScatterPanelPayload, MsScatterSeries, plotms_text,
+    MsScatterPanelPayload, MsScatterSeries, plotms_row_axes, plotms_text,
 };
 use crate::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
@@ -54,8 +54,9 @@ pub(super) fn prepare(
     }
     if let Some(grid) = grid
         && second.is_none()
-        && [x, y] == [MsAxis::Time, MsAxis::Row]
         && grid.iteraxis == MsIterationAxis::Scan
+        && ([x, y] == [MsAxis::Time, MsAxis::Row]
+            || plotms_row_axes::metadata_coordinate_pair(x, y).is_some())
     {
         label_iteration_panels(task, &mut document, grid)?;
     }
@@ -124,6 +125,15 @@ fn label_and_group_ordinates(
 ) -> Result<(), TaskFailure> {
     label_visibility_columns(task, document, [x, y], second, columns.base)?;
     let Some(second) = second else {
+        if plotms_row_axes::metadata_coordinate_pair(x, y).is_some()
+            && columns.right_ordinates.first() == Some(&true)
+        {
+            let axes = std::iter::once(&mut document.axes)
+                .chain(document.panels.iter_mut().map(|panel| &mut panel.axes));
+            for axis in axes.flatten().filter(|axis| axis.id == "y") {
+                axis.draws_on_trailing_edge = true;
+            }
+        }
         return Ok(());
     };
     if columns.additional.is_empty() && !matches!(payload, MsPlotPayload::ScatterGrid(_)) {
