@@ -131,6 +131,7 @@ def compare(root, native):
     feed_fixture = compare_feed_selection(root, native)
     row_fixture = compare_row_axes(root, native, feed_fixture)
     compare_metadata_pairs(root, native, row_fixture)
+    compare_averaged_row_axes(root, native, row_axis_request(row_fixture))
 
 
 def compare_flags_and_calibration(root, native, vis):
@@ -745,13 +746,54 @@ def compare_compound_selection(root, native):
     print("compound selection: both refusal controls matched and input arrays are unchanged", flush=True)
 
 
+def compare_averaged_row_axes(root, native, base):
+    from plotms_ms_spw_average_oracle import make_fixture as make_spw_fixture
+
+    work = root / "averaged-row-axes"
+    work.mkdir()
+    multi = Path(base["vis"])
+    with opened(multi) as table:
+        selected = table.getcol("FIELD_ID") == 0
+        times = np.unique(table.getcol("TIME")[selected])
+    simple = make_spw_fixture(work, integrations=5, channel_count=8)
+    with opened(simple, True) as table:
+        epochs, slots = np.unique(table.getcol("TIME"), return_inverse=True)
+        data = table.getcol("DATA")
+        data.real += 10 * slots
+        table.putcol("DATA", data)
+    before = {vis: snapshot(vis) for vis in (multi, simple)}
+    average = dict(avgtime="20")
+    cases = (
+        ("chunk-local-row-ids", base | average,
+         np.repeat([0, 1, 2, 3, 0, 1, 0, 1, 0, 1, 2, 3], 6),
+         np.repeat(times[[0, 0, 2, 2, 1, 1, 4, 4, 3, 3, 5, 5]], 6), None),
+        ("merged-row-ids", base | average | dict(vis=str(simple), antenna="A0&A1", correlation="XX"),
+         np.repeat([0, 1, 2], 3), np.repeat(epochs[[0, 2, 4]] + [5, 5, 0], 3),
+         [7, 9, 11, 27, 29, 31, 42, 44, 46]),
+    )
+    for name, controls, identifiers, timestamps, visibility in cases:
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**controls, plotfile=str(expected), expformat="txt") is None
+        assert native(**controls, plotfile=str(actual), expformat="txt") is None
+        assert compare_text(actual, expected) == len(identifiers)
+        for path in (expected, actual):
+            points = rows(path)
+            np.testing.assert_array_equal([int(point[0]) for point in points], identifiers)
+            np.testing.assert_allclose([float(point[9]) for point in points], timestamps, rtol=0, atol=0.00051)
+            if visibility is not None:
+                np.testing.assert_allclose([float(point[1]) for point in points], visibility, rtol=1.2e-5)
+        print(f"{name}: {len(identifiers)} matching time-averaged visibility samples and Row IDs", flush=True)
+    for vis, previous in before.items():
+        verify_source(vis, previous)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("compound-selection", "raw-row-axes"))
+    parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -766,10 +808,13 @@ def main():
         if args.only is None:
             compare(root, native)
             compare_pointing_axes(root, native)
-        if args.only == "raw-row-axes":
+        if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
-            compare_unaveraged_row_axes(root, native, row_axis_request(vis))
+            if args.only == "raw-row-axes":
+                compare_unaveraged_row_axes(root, native, row_axis_request(vis))
+            else:
+                compare_averaged_row_axes(root, native, row_axis_request(vis))
         else:
             compare_compound_selection(root, native)
 

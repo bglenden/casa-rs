@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use casa_types::measures::position::MPosition;
 
 use super::plotms_ordinates::PointDimensions;
-use super::{MsAxis, MsIterationAxis, MsPlotSpec, selected_i32_values, uses_extended_averaging};
+use super::{
+    MsAxis, MsDataColumn, MsIterationAxis, MsPlotSpec, plotms_columns, selected_i32_values,
+    uses_extended_averaging,
+};
 use crate::subtables::get_string;
 use crate::{MeasurementSet, SubtableId};
 
@@ -40,6 +43,20 @@ pub(super) fn uses_mixed_row_geometry(spec: &MsPlotSpec) -> bool {
         )
 }
 
+pub(super) fn uses_time_row_averaging(spec: &MsPlotSpec) -> bool {
+    spec.x_axis == MsAxis::Row
+        && matches!(spec.y_axes.as_slice(), [axis] if axis.is_visibility_math())
+        && matches!(
+            spec.data_column,
+            MsDataColumn::Data | MsDataColumn::Corrected
+        )
+        && spec.iteration.iteraxis.is_none()
+        && spec.transforms.freqframe.is_none()
+        && !spec.averaging.scalar
+        && spec.averaging.avgchannel.is_none_or(|width| width <= 1)
+        && plotms_columns::uses_ordinary_time_averaging(spec)
+}
+
 pub(super) fn mean_antenna_position(ms: &MeasurementSet) -> Result<MPosition, String> {
     let antenna = ms.antenna().map_err(|error| error.to_string())?;
     let count = antenna.row_count();
@@ -63,7 +80,11 @@ pub(super) fn validate(spec: &MsPlotSpec) -> Result<(), String> {
         return Ok(());
     }
     if uses_extended_averaging(spec) || spec.averaging.avgchannel.is_some_and(|width| width > 1) {
-        return Err("averaged PlotMS row identifiers are pending (#1032)".into());
+        return if uses_time_row_averaging(spec) {
+            Ok(())
+        } else {
+            Err("averaged PlotMS row identifiers are pending (#1032)".into())
+        };
     }
     if metadata_pair(spec).is_some() {
         return if spec.iteration.iteraxis.is_some() && !uses_scan_row_iteration(spec) {
