@@ -321,24 +321,6 @@ fn memory<T>(array: &ArrayD<T>) -> MsResult<&[T]> {
         .ok_or_else(|| input("visibility block is not contiguous"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bounds_and_overlap() {
-        let view = VisibilityChannels::new(2, 0, 3, 1, 4).unwrap();
-        assert_eq!(view.count(), 2);
-        assert_eq!(view.width(), 3);
-        assert_eq!(view.ranges().collect::<Vec<_>>(), [0..3, 1..4]);
-        assert!(VisibilityChannels::new(3, 0, 1, 2, 4).is_none());
-        assert!(VisibilityChannels::new(1, 4, 1, 1, 4).is_none());
-        assert!(VisibilityChannels::new(0, 0, 1, 1, 4).is_none());
-        assert!(VisibilityChannels::new(1, 0, 0, 1, 4).is_none());
-        assert!(VisibilityChannels::new(i64::MAX, 0, 1, 4, 4).is_none());
-    }
-}
-
 pub(super) fn axis_info(
     ms: &MeasurementSet,
     ids: &[i32],
@@ -429,4 +411,22 @@ pub(super) fn axis_info(
         ),
         RecordField::new("freq_axis", Value::Record(freq)),
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounds_and_overlap() {
+        let view = VisibilityChannels::new(2, 0, 3, 1, 4).unwrap();
+        assert_eq!(view.count(), 2);
+        assert_eq!(view.width(), 3);
+        assert_eq!(view.ranges().collect::<Vec<_>>(), [0..3, 1..4]);
+        assert!(VisibilityChannels::new(3, 0, 1, 2, 4).is_none());
+        assert!(VisibilityChannels::new(1, 4, 1, 1, 4).is_none());
+        assert!(VisibilityChannels::new(0, 0, 1, 1, 4).is_none());
+        assert!(VisibilityChannels::new(1, 0, 0, 1, 4).is_none());
+        assert!(VisibilityChannels::new(i64::MAX, 0, 1, 4, 4).is_none());
+    }
 }
