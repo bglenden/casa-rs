@@ -5550,7 +5550,9 @@ fn build_generic_visibility_scatter_with_averaging(
     let time_bins = calibration.and_then(|input| input.time_bins);
     let averaged_row_numbers = time_bins.and_then(PlotTimeGroups::row_numbers);
     let extended_derived = calibration.is_some_and(|input| input.extended_derived);
-    let weighted_time_uvw = time_bins.is_some() && plotms_columns::uses_weighted_time_uvw(spec);
+    let weighted_time_uvw = time_bins.is_some()
+        && (plotms_columns::uses_weighted_time_uvw(spec)
+            || plotms_columns::uses_weighted_spw_time_u(spec));
     let uncalibrated = calibration.is_some_and(|input| input.rows.is_none());
     let spw_average = uncalibrated && plotms_columns::uses_spectral_window_average(spec);
     let time_spw = spw_average && time_bins.is_some();
@@ -5839,7 +5841,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut visibility_grids = Vec::new();
     let mut bin_buffers = visibility_columns.buffers();
     let mut time_bounds = HashMap::<usize, plotms_ordinates::VisibilityTimeBounds>::new();
-    let mut time_uvws = weighted_time_uvw.then(HashMap::<usize, TimeUvwAverage>::new);
+    let mut time_uvws = weighted_time_uvw.then(HashMap::<(usize, i32, i32), TimeUvwAverage>::new);
     let mut baseline_groups = plotms_ordinates::BaselineIntegrationGroups::default();
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut averaged_rows = std::collections::BTreeSet::new();
@@ -6164,7 +6166,7 @@ fn build_generic_visibility_scatter_with_averaging(
                     })
                     .sum();
                 let _ = time_uvws
-                    .entry(group)
+                    .entry((group, antenna1_value, antenna2_value))
                     .or_default()
                     .add(row_uvw_value, !unflagged, weight);
             }
@@ -6791,12 +6793,6 @@ fn build_generic_visibility_scatter_with_averaging(
                 })
                 .collect::<Vec<_>>()
         });
-    let time_uvws = time_uvws.map(|averages| {
-        averages
-            .into_iter()
-            .map(|(group, average)| (group, average.mean()))
-            .collect::<HashMap<_, _>>()
-    });
     let spw_groups = spw_groups.map(|groups| {
         groups.into_averages(
             scalar_spans.as_ref(),
@@ -6855,6 +6851,24 @@ fn build_generic_visibility_scatter_with_averaging(
         .enumerate()
         .map(|(order, row)| (row, order))
         .collect::<HashMap<_, _>>();
+    let time_uvws = time_uvws.map(|mut averages| {
+        let plan = time_baseline_plan.as_ref().filter(|_| time_spw);
+        if let Some(plan) = plan {
+            averages = plan.combine_uvws(averages);
+        }
+        averages
+            .into_iter()
+            .filter_map(|(key, average)| {
+                // The exported SPW rows have a distinct index for each baseline.
+                let order = if plan.is_some() {
+                    *averaged_order.get(&key)?
+                } else {
+                    key.0
+                };
+                Some((order, average.mean()))
+            })
+            .collect::<HashMap<_, _>>()
+    });
     let retain_empty_panel = average_operands
         || spw_average
         || antenna_channels
@@ -6968,8 +6982,8 @@ fn build_generic_visibility_scatter_with_averaging(
                     } else if axis == MsAxis::Row {
                         Some(*averaged_row_numbers?.get(group?)? as f64)
                     } else if weighted_time_uvw && axis.uses_uvw_metres() {
-                        group
-                            .and_then(|group| time_uvws.as_ref()?.get(&group))
+                        order
+                            .and_then(|order| time_uvws.as_ref()?.get(&order))
                             .map(|&uvw| uvw_metres_coordinate(axis, uvw))
                     } else if scalar_visibility && axis.is_visibility_math() {
                         let samples = if x_axis {

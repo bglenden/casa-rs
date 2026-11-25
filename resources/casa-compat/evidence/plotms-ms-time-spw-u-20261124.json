@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "3dbc8d40b9df689687679e379a164413aa72a0e2",
+  "source_revision": "3dbc8d40b9df689687679e379a164413aa72a0e2",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only ordinate-list-uvw --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "The U abscissa in metres with three independent stored visibility ordinates, on vector time and spectral-window averages with unequal row weights, selected window order and flags.",
+  "result": "passed",
+  "baseline_result": "Main refuses the request. The initial implementation merged U=13.75 and 113.75 m into 63.75 m across two baselines.",
+  "text_exports": 7,
+  "points": 27,
+  "figures": 1,
+  "rendered_coordinates": 3,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
