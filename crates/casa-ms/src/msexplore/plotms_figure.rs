@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use casa_task_runtime::{TaskFailure, TaskInvocation};
+use casa_types::measures::frequency::FrequencyRef;
 
 use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
@@ -13,11 +14,13 @@ use super::{
     MsAxis, MsColorAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsPlotSpec,
     MsScatterGridPayload, MsScatterPanelPayload, MsScatterSeries, plotms_row_axes, plotms_text,
 };
+use crate::columns::frequency_columns::ChanFreqColumn;
 use crate::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
     PlotLayerKind, PlotLayerStyle, PlotLayout, PlotPayloadStrategy, PlotPayloadWriter, label_unit,
     plotms_visibility_document, series_y_bounds,
 };
+use crate::subtables::SubTable;
 
 pub(super) struct VisibilityAxisColumns<'a> {
     pub(super) base: [MsDataColumn; 3],
@@ -31,6 +34,7 @@ pub(super) struct AxisPresentation<'a> {
     pub(super) columns: Option<VisibilityAxisColumns<'a>>,
     pub(super) spec: &'a MsPlotSpec,
     pub(super) clock_reference: Option<i64>,
+    pub(super) frequency_frame: Option<FrequencyRef>,
 }
 
 pub(super) fn prepare(
@@ -46,6 +50,7 @@ pub(super) fn prepare(
         columns,
         spec,
         clock_reference,
+        frequency_frame,
     } = presentation;
     let (x, y, second, grid) = match payload {
         MsPlotPayload::Scatter(plot) => (plot.x_axis, plot.y_axis, plot.secondary_y_axis, None),
@@ -89,6 +94,12 @@ pub(super) fn prepare(
             second == Some(MsAxis::Frequency),
         ],
         limits,
+        x_axis: x,
+        frequency_frame,
+        label_frame: [
+            !task.text("xlabel")?.is_some_and(|s| !s.is_empty()),
+            !task.text("ylabel")?.is_some_and(|s| !s.is_empty()),
+        ],
         averaged_antenna_color: super::plotms_averaged_colors::axis(spec),
         colorize: task.flag("colorizeoverlay")?
             && task
@@ -134,6 +145,56 @@ pub(super) fn prepare(
             .map_err(|error| TaskFailure::execution(error.to_string()))?;
     }
     Ok(figures)
+}
+
+pub(super) fn reporting_frame(
+    ms: &crate::MeasurementSet,
+    spec: &MsPlotSpec,
+    payload: &MsPlotPayload,
+) -> Option<FrequencyRef> {
+    if !std::iter::once(spec.x_axis)
+        .chain(spec.y_axes.iter().copied())
+        .any(|axis| matches!(axis, MsAxis::Frequency | MsAxis::Velocity))
+    {
+        return None;
+    }
+    if let Some(frame) = spec.transforms.freqframe.as_deref() {
+        return frame.parse().ok();
+    }
+    let windows = ms.spectral_window().ok()?;
+    let frequencies = ChanFreqColumn::new(windows.table());
+    let mut frames = (0..windows.row_count()).map(|row| frequencies.frequency_reference(row).ok());
+    if let Some(Some(frame)) = frames.next()
+        && frames.all(|other| other == Some(frame))
+    {
+        return Some(frame);
+    }
+    let series = match payload {
+        MsPlotPayload::Scatter(plot) => vec![plot.series.as_slice()],
+        MsPlotPayload::ScatterGrid(grid) => {
+            grid.panels.iter().map(|p| p.series.as_slice()).collect()
+        }
+        _ => return None,
+    };
+    let rows = series
+        .into_iter()
+        .flatten()
+        .flat_map(|series| series.provenance.iter().map(|point| point.row))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let descriptions = ms.data_description().ok()?;
+    let ids = super::selected_i32_values(ms.main_table(), "DATA_DESC_ID", &rows).ok()?;
+    let mut unique = ids
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|id| {
+            let spw = descriptions.spectral_window_id(id.try_into().ok()?).ok()?;
+            frequencies.frequency_reference(spw.try_into().ok()?).ok()
+        });
+    let first = unique.next()??;
+    unique.all(|frame| frame == Some(first)).then_some(first)
 }
 
 pub(super) fn reference_midnight(times: impl Iterator<Item = f64>) -> Option<i64> {
@@ -524,6 +585,9 @@ pub(super) fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
 struct PanelStyle {
     frequency: [bool; 3],
     limits: [f64; 4],
+    x_axis: MsAxis,
+    frequency_frame: Option<FrequencyRef>,
+    label_frame: [bool; 2],
     averaged_antenna_color: Option<MsColorAxis>,
     colorize: bool,
 }
@@ -555,6 +619,13 @@ impl PanelStyle {
                 if axis.label == "Frequency (Hz)" {
                     axis.label = "Frequency (GHz)".into();
                 }
+            }
+            if let Some(frame) = self.frequency_frame
+                && self.label_frame[usize::from(axis.id != "x")]
+                && (axis.label.starts_with("Frequency (") || axis.label.starts_with("Velocity ("))
+            {
+                axis.label.push(' ');
+                axis.label.push_str(frame.as_str());
             }
             let offset = if axis.id == "x" { 0 } else { 2 };
             if self.limits[offset] != 0.0 || self.limits[offset + 1] != 0.0 {
@@ -594,20 +665,21 @@ impl PanelStyle {
                     1.0
                 },
             );
-            let x = writer
-                .values(
-                    std::mem::take(&mut layer.x_values)
-                        .into_iter()
-                        .map(|v| v / x_scale),
-                )
-                .map_err(write_failure)?;
-            let y = writer
-                .values(
-                    std::mem::take(&mut layer.y_values)
-                        .into_iter()
-                        .map(|v| v / y_scale),
-                )
-                .map_err(write_failure)?;
+            let conjugate = self.x_axis.is_uv_plane_axis() && source.y_axis.is_uv_plane_axis();
+            let mut values = |data: &mut Vec<f64>, scale| {
+                let data = std::mem::take(data);
+                writer
+                    .values(
+                        data.iter().map(|v| v / scale).chain(
+                            data.iter()
+                                .take(if conjugate { data.len() } else { 0 })
+                                .map(|v| -v / scale),
+                        ),
+                    )
+                    .map_err(write_failure)
+            };
+            let x = values(&mut layer.x_values, x_scale)?;
+            let y = values(&mut layer.y_values, y_scale)?;
             layer.data = Some(PlotLayerData::Points { x, y });
             layer.payload_strategy = PlotPayloadStrategy::BinaryArrays;
             layer.style = Some(PlotLayerStyle {
@@ -619,7 +691,29 @@ impl PanelStyle {
         if let Some(curves) = overlays {
             self.append_curves(panel, writer, axes, layers, curves)?;
         }
+        self.uv_bounds(axes, series);
         Ok(())
+    }
+
+    fn uv_bounds(&self, axes: &mut [PlotDocumentAxis], series: &[MsScatterSeries]) {
+        if !self.x_axis.is_uv_plane_axis()
+            || series.is_empty()
+            || !series.iter().all(|entry| entry.y_axis.is_uv_plane_axis())
+        {
+            return;
+        }
+        let extent = |axis: &PlotDocumentAxis| axis.lower.abs().max(axis.upper.abs());
+        let square = self.limits == [0.0; 4];
+        let maximum = axes.iter().map(extent).fold(0.0, f64::max);
+        for axis in axes {
+            let offset = if axis.id == "x" { 0 } else { 2 };
+            if self.limits[offset..offset + 2] == [0.0; 2] {
+                let limit = if square { maximum } else { extent(axis) };
+                let limit = limit.max(1.0) * 1.05;
+                axis.lower = -limit;
+                axis.upper = limit;
+            }
+        }
     }
 
     fn append_curves(

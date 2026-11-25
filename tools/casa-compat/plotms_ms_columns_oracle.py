@@ -285,7 +285,8 @@ def compare_flagged_figure(root, native, name, controls, marker_color, *,
     with patch.object(_plotms_plot, "configure", record):
         assert native(**figure, plotfile=str(actual)) is None
     [ordinary, flagged] = sorted(captured, key=lambda line: -len(line.get_xydata()))
-    assert flagged.get_marker() == "D" and flagged.get_markersize() == 4
+    assert flagged.get_marker() == "D"
+    np.testing.assert_allclose(flagged.get_markersize() * flagged.figure.dpi / 72, 4)
     assert to_rgba(flagged.get_markerfacecolor()) == to_rgba(f"#{marker_color}")
     points = rows(root / f"{name}.casa.txt")
     for artist, masked in ((ordinary, False), (flagged, True)):

@@ -535,6 +535,7 @@ fn run_visibility_plot(
                     ),
                     spec: plot,
                     clock_reference,
+                    frequency_frame: super::plotms_figure::reporting_frame(&ms, plot, &payload),
                 },
             )?;
             if let Some(layout) = static_grid {

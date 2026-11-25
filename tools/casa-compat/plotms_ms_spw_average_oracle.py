@@ -102,7 +102,7 @@ def compare_coordinates(root, native, base, vis):
             assert [p[0] for p in rows(actual)] == [p[0] for p in selected]
         print(f"{name}: {len(anchors)} matching SPW-average coordinates", flush=True)
     compare_figure(root, native, base | frequency, root / "frequency.casa.txt",
-                   (base["title"], "Frequency (GHz)", "Amp:corrected"))
+                   (base["title"], "Frequency (GHz) TOPO", "Amp:corrected"))
 
 
 def compare_sparse_baselines(root, native, base):
@@ -604,7 +604,7 @@ def compare_vector_time(root, native, base, vis):
             assert [p[0] for p in rows(actual)] == [p[0] for p in selected]
         print(f"{name}: {len(anchors)} matching vector time and SPW coordinates", flush=True)
     compare_figure(root, native, options | dict(xaxis="frequency", xdatacolumn=""),
-                   root / "vector-time-frequency.casa.txt", (options["title"], "Frequency (GHz)", "Imag:corrected"))
+                   root / "vector-time-frequency.casa.txt", (options["title"], "Frequency (GHz) TOPO", "Imag:corrected"))
 
     source = make_fixture(root, "vector-baselines-source", antenna_count=3)
     vis, start = stagger_windows(root, source, "vector-sparse-baselines")
@@ -794,7 +794,7 @@ def compare_ordinate_lists(root, native, base, source, *, only):
         else:
             assert [point[0] for point in rows(actual)] == ["90.001000000"] * 6
         print(f"{name}: six matching SPW-averaged coordinates", flush=True)
-    compare_sides(root, native, options, expected_x="Frequency (GHz)", expected_right="Imag:corrected",
+    compare_sides(root, native, options, expected_x="Frequency (GHz) TOPO", expected_right="Imag:corrected",
                   name="vector-spw-ordinates")
     compare_ordinate_list_masks(root, native, options, vis, combined)
     compare_ordinate_list_spans(root, native, options | combined, vis)
@@ -1016,7 +1016,7 @@ def compare_virtual_spw_models(root, native):
         assert compare_text(actual, expected) == len(values)
         print(f"{name}: {len(values)} matching virtual model coordinates", flush=True)
         if name == "channel-virtual-model-spw":
-            compare_figure(root, native, controls, expected, (title, "Frequency (GHz)", "Real:model"))
+            compare_figure(root, native, controls, expected, (title, "Frequency (GHz) TOPO", "Real:model"))
     for source in (vis, sloped, shifted, reversed_windows, masked):
         with opened(source) as table:
             np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
@@ -1158,7 +1158,7 @@ def compare_virtual_spw_model_spans(root, native):
         assert compare_text(export(root, f"{label}.native", native, controls), expected) == 2
         print(f"{label}: 2 matching selected time/channel/SPW coordinates", flush=True)
         if not scalar:
-            compare_figure(root, native, controls, expected, (base["title"], "Frequency (GHz)", "Real:model"))
+            compare_figure(root, native, controls, expected, (base["title"], "Frequency (GHz) TOPO", "Real:model"))
     for source in (scans, fields, both):
         with opened(source) as table:
             np.testing.assert_array_equal(table.getcol("MODEL_DATA"), 19)
@@ -1231,7 +1231,7 @@ def compare_spw_ordinate_order(root, native, source):
         np.testing.assert_allclose(coordinates(rows(expected))[:, 1], values, rtol=1.2e-5, atol=1e-7)
         actual = export(root, f"{name}.native", native, controls)
         assert compare_text(actual, expected) == len(values)
-        compare_ordinate_figure(root, name, native, controls, "Frequency (GHz)", ["Real:model", "Imag:model"])
+        compare_ordinate_figure(root, name, native, controls, "Frequency (GHz) TOPO", ["Real:model", "Imag:model"])
         print(f"{name}: {len(values)} matching coordinates in requested ordinate order", flush=True)
 
 
@@ -1299,7 +1299,7 @@ def compare_two_spw_ordinates(root, native, vis):
         actual = export(root, f"{name}.native", native, controls)
         assert compare_text(actual, expected) == len(values)
         if name == "virtual-two-time-channel-spw-ordinates":
-            compare_ordinate_figure(root, name, native, controls, "Frequency (GHz)",
+            compare_ordinate_figure(root, name, native, controls, "Frequency (GHz) TOPO",
                                     ["Real:model", "Imag:corrected"])
         print(f"{name}: {len(values)} matching selected coordinates across both ordinates", flush=True)
     with opened(vis) as table:

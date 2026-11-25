@@ -118,6 +118,13 @@ pub(super) fn uses_direct_vector_time_projection(
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
+    if uses_ordinary_time_averaging(spec)
+        && !spec.averaging.scalar
+        && spec.x_axis.is_uv_plane_axis()
+        && spec.y_axes.iter().copied().all(MsAxis::is_uv_plane_axis)
+    {
+        return true;
+    }
     let time_geometry = uses_averaged_geometry_coordinates(spec);
     let uvw = |axis: MsAxis| axis.uses_uvw_metres() || (time_geometry && axis.uses_wavelengths());
     uses_unbinned_vector_time_averaging(spec)

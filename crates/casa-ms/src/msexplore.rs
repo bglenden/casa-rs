@@ -746,6 +746,10 @@ impl MsAxis {
         self.uses_uvw_metres() || self.uses_wavelengths()
     }
 
+    fn is_uv_plane_axis(self) -> bool {
+        matches!(self, Self::U | Self::V | Self::UWave | Self::VWave)
+    }
+
     fn uses_uvw_metres(self) -> bool {
         matches!(self, Self::UvDistance | Self::U | Self::V | Self::W)
     }
@@ -2094,8 +2098,10 @@ impl MsPlotSpec {
             return Err("PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)".into());
         }
         if self.y_axes.iter().copied().any(|y| {
-            (self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
-                || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math())
+            let uv_plane = self.x_axis.is_uv_plane_axis() && y.is_uv_plane_axis();
+            !uv_plane
+                && ((self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
+                    || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math()))
         }) {
             return Err("PlotMS interval and wavelength plots without a visibility axis are pending (#1032)".into());
         }
@@ -4417,11 +4423,8 @@ fn build_generic_visibility_scatter(
     let ephemeris_ordinate = spec.y_axes.iter().copied().any(MsAxis::is_ephemeris);
     if ephemeris_ordinate
         && (calibration.is_none_or(|input| input.rows.is_some())
-            || !matches!(
-                (spec.x_axis, spec.y_axes.as_slice()),
-                (MsAxis::Channel, [MsAxis::RadialVelocity])
-                    | (MsAxis::Time, [MsAxis::EphemerisDistance])
-            )
+            || !matches!(spec.x_axis, MsAxis::Channel | MsAxis::Time)
+            || !spec.y_axes.iter().copied().all(MsAxis::is_ephemeris)
             || uses_extended_averaging(spec)
             || spec.averaging.avgchannel.is_some_and(|width| width > 1)
             || spec.iteration.iteraxis.is_some())
@@ -4719,7 +4722,7 @@ fn build_generic_visibility_scatter(
     {
         return Err("ephemeris data is not available for this MeasurementSet".into());
     }
-    let buffer_geometry_axis = if array_horizontal || ephemeris_ordinate {
+    let buffer_geometry_axis = if array_horizontal {
         Some(spec.y_axis())
     } else if coordinate_mask.is_some() && spec.x_axis == MsAxis::Elevation {
         Some(spec.x_axis)
@@ -4874,6 +4877,7 @@ fn build_generic_visibility_scatter(
         .then(plotms_ordinates::CollapsedPointMask::default);
     let mut projected_flags = Vec::new();
     let mut buffer_geometry_value = None;
+    let mut ephemeris = plotms_row_axes::BufferEphemeris::default();
     let antenna_visits = antenna_axes
         .as_ref()
         .map(|axes| axes.visits(&buffer_starts));
@@ -5114,22 +5118,24 @@ fn build_generic_visibility_scatter(
             uvw: row_uvw_value,
             observatory_geometry: use_ordinate_masks,
         };
-        if let Some(axis) = buffer_geometry_axis
-            && buffer_starts[row_slot]
-        {
-            let engine = derived_engine.as_ref().expect("buffer geometry engine");
-            buffer_geometry_value = Some(match &mean_antenna_position {
-                Some(position) => plotms_row_axes::array_horizontal_value(
-                    engine,
+        if buffer_starts[row_slot] {
+            if let Some(axis) = buffer_geometry_axis {
+                buffer_geometry_value = Some(plotms_row_axes::array_horizontal_value(
+                    derived_engine.as_ref().expect("buffer geometry engine"),
                     axis,
                     row_time_value,
                     field_id_value,
-                    position.clone(),
-                )?,
-                None => {
-                    plotms_row_axes::ephemeris_value(engine, axis, row_time_value, field_id_value)?
-                }
-            });
+                    mean_antenna_position.clone().expect("array mean position"),
+                )?);
+            }
+            if ephemeris_ordinate {
+                ephemeris = plotms_row_axes::BufferEphemeris::read(
+                    derived_engine.as_ref().expect("ephemeris engine"),
+                    &spec.y_axes,
+                    row_time_value,
+                    field_id_value,
+                )?;
+            }
         }
         let antenna_geometry = antenna_axes
             .as_ref()
@@ -5321,8 +5327,10 @@ fn build_generic_visibility_scatter(
                     if antenna_horizontal && axis == spec.y_axis() {
                         return Ok(antenna_geometry);
                     }
-                    if buffer_geometry_axis == Some(axis) {
-                        return Ok(buffer_geometry_value);
+                    if let Some(value) = ephemeris.get(axis).or_else(|| {
+                        buffer_geometry_value.filter(|_| buffer_geometry_axis == Some(axis))
+                    }) {
+                        return Ok(Some(value));
                     }
                     if let Some(values) = pointing_values.get(axis_slot.saturating_sub(1))
                         && let Some(value) = values[axis_slot.min(1)]
@@ -5965,6 +5973,11 @@ fn build_generic_visibility_scatter_with_averaging(
         && (phase_shift.is_some()
             || plotms_columns::uses_weighted_time_uvw(spec)
             || plotms_columns::uses_weighted_spw_time_u(spec));
+    let collapsed_uv = weighted_time_uvw
+        && matches!(spec.x_axis, MsAxis::U | MsAxis::V)
+        && matches!(spec.y_axes.as_slice(), [MsAxis::U | MsAxis::V])
+        && spec.color_by != MsColorAxis::Correlation
+        && spec.iteration.iteraxis != Some(MsIterationAxis::Correlation);
     let time_geometry =
         time_bins.is_some() && plotms_columns::uses_averaged_geometry_coordinates(spec);
     let time_reporting_axes =
@@ -6276,6 +6289,7 @@ fn build_generic_visibility_scatter_with_averaging(
     }
 
     let mut selected_channel_bins = HashMap::new();
+    let mut uv_selections = HashMap::new();
     let mut panel_order = Vec::<String>::new();
     let mut panels = std::collections::BTreeMap::<String, AveragedPanelAccumulator>::new();
     let mut contributing_rows = std::collections::BTreeSet::<usize>::new();
@@ -6528,7 +6542,8 @@ fn build_generic_visibility_scatter_with_averaging(
         if selected_correlations.is_empty() {
             continue;
         }
-        let correlation_required = spec.x_axis.uses_correlation_slots()
+        let correlation_required = collapsed_uv
+            || spec.x_axis.uses_correlation_slots()
             || spec
                 .y_axes
                 .iter()
@@ -6612,6 +6627,15 @@ fn build_generic_visibility_scatter_with_averaging(
                     starts_buffer,
                 )?;
             }
+        }
+        if collapsed_uv {
+            uv_selections.entry(ddid).or_insert_with(|| {
+                let correlations = selected_correlations
+                    .iter()
+                    .map(|(slot, _)| *slot)
+                    .collect::<Vec<_>>();
+                (correlations, channel_bins.to_vec())
+            });
         }
         let representative_row = row_numbers[representative_slot];
         let metadata_slot = if vector_span_models {
@@ -6807,7 +6831,12 @@ fn build_generic_visibility_scatter_with_averaging(
                 plotms_columns::baseline_weight(weight)
             });
         let mut row_panels = std::collections::BTreeSet::<String>::new();
-        for (selected_slot, (corr_index, corr_label)) in selected_correlations.iter().enumerate() {
+        let visible_correlations = if collapsed_uv {
+            &selected_correlations[..1]
+        } else {
+            &selected_correlations
+        };
+        for (selected_slot, (corr_index, corr_label)) in visible_correlations.iter().enumerate() {
             let row_weight = weight_values[*corr_index];
             let row_sigma = sigma_values[*corr_index];
             let mut flag_samples = Vec::<bool>::new();
@@ -6821,7 +6850,8 @@ fn build_generic_visibility_scatter_with_averaging(
                 let conjugate = matches!(baseline_token, AveragingBaselineToken::Antenna(_))
                     && endpoint == 1
                     && (antenna_average || spw_antenna || antenna1_value != antenna2_value);
-                for bin in channel_bins.iter() {
+                let bin_count = if collapsed_uv { 1 } else { channel_bins.len() };
+                for bin in channel_bins.iter().take(bin_count) {
                     let antenna_weight = antenna_channels.then(|| {
                         if skip_flagged_row {
                             (true, 0.0)
@@ -7346,7 +7376,7 @@ fn build_generic_visibility_scatter_with_averaging(
             .collect();
     }
     let buffer_integrations = time_bins
-        .filter(|_| extended_derived || direct_time_projection)
+        .filter(|_| extended_derived || direct_time_projection || collapsed_uv)
         .map(|groups| {
             // PlotMS caches the first averaged baseline's integration for the whole buffer.
             groups
@@ -7575,9 +7605,31 @@ fn build_generic_visibility_scatter_with_averaging(
                 if !accumulator.has_usable_weight() {
                     continue;
                 }
-                let Some(representative) = accumulator.representative.clone() else {
+                let Some(mut representative) = accumulator.representative.clone() else {
                     continue;
                 };
+                let mut display_channel = accumulator.display_channel;
+                if collapsed_uv {
+                    let group = group.expect("collapsed UV uses time groups");
+                    if time_bounds
+                        .get(&group)
+                        .and_then(plotms_ordinates::VisibilityTimeBounds::midpoint)
+                        .is_none()
+                    {
+                        continue;
+                    }
+                    let time = time_bins.expect("collapsed UV uses a buffer plan");
+                    let buffers = time.buffers();
+                    let buffer = &buffers[buffers.partition_point(|buffer| buffer.end <= group)];
+                    let index = group - buffer.start;
+                    let ddid = selected_data_desc_ids[time.first_row_slot(group)] as usize;
+                    let (correlations, channels) = &uv_selections[&ddid];
+                    let channel = &channels[index % channels.len()];
+                    representative.corr = correlations[index % correlations.len()];
+                    representative.chan_start = channel.start;
+                    representative.chan_end = channel.end;
+                    display_channel = channel.display_channel();
+                }
                 let channel_start = representative.chan_start;
                 // The phase-shifting TVI is above AveragingTvi2. Use the
                 // averaged baseline before projecting its complex visibilities.
@@ -7821,8 +7873,7 @@ fn build_generic_visibility_scatter_with_averaging(
                         .plotms_reporting_frequencies_hz
                         .extend(reporting_frequency);
                     output.plotms_metadata.push(MsScatterPlotMsMetadata {
-                        channel: spectral_channel
-                            .map_or(accumulator.display_channel, |channel| channel.number),
+                        channel: spectral_channel.map_or(display_channel, |channel| channel.number),
                         average_time: spec
                             .averaging
                             .avgtime

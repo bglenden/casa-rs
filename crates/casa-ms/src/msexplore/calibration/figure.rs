@@ -443,6 +443,9 @@ fn axis(
     [mut lower, mut upper]: [f64; 2],
     limits: [f64; 2],
 ) -> PlotDocumentAxis {
+    let clock = (axis == Axis::Time)
+        .then(|| super::super::plotms_figure::reference_midnight(std::iter::once(lower)))
+        .flatten();
     if lower > upper {
         [lower, upper] = [0.0, 1.0];
     }
@@ -478,7 +481,11 @@ fn axis(
         unit: unit.into(),
         lower,
         upper,
-        scale: PlotAxisScale::Linear,
+        scale: clock.map_or(PlotAxisScale::Linear, |reference_mjd_seconds| {
+            PlotAxisScale::MjdSecondsClock {
+                reference_mjd_seconds,
+            }
+        }),
         lane_labels: Vec::new(),
         draws_on_trailing_edge: false,
     }
