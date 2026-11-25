@@ -405,10 +405,15 @@ fn filter_rows_for_save(
         .collect()
 }
 
+struct RowFieldReorder {
+    names: Vec<String>,
+    swaps: Vec<(usize, usize)>,
+}
+
 fn full_projection_layout(
     fields: &[RecordField],
     names: &[(&String, &String)],
-) -> Option<(Vec<String>, Vec<(usize, usize)>)> {
+) -> Option<RowFieldReorder> {
     let layout: Vec<_> = fields.iter().map(|field| field.name.clone()).collect();
     let wanted: Vec<_> = names
         .iter()
@@ -429,7 +434,10 @@ fn full_projection_layout(
             swaps.push((current, target));
         }
     }
-    Some((layout, swaps))
+    Some(RowFieldReorder {
+        names: layout,
+        swaps,
+    })
 }
 
 fn override_value_for_row(
@@ -3903,17 +3911,17 @@ impl CompositeStorage {
                 .flatten();
             for &row in &reference.row_map {
                 let index = row as usize;
-                if let Some((layout, swaps)) = &move_layout
-                    && parent.rows[index].fields().len() == layout.len()
+                if let Some(reorder) = &move_layout
+                    && parent.rows[index].fields().len() == reorder.names.len()
                     && parent.rows[index]
                         .fields()
                         .iter()
-                        .zip(layout)
+                        .zip(&reorder.names)
                         .all(|(field, name)| &field.name == name)
                 {
                     let mut owned = std::mem::take(&mut parent.rows[index]);
                     let fields = owned.fields_mut();
-                    for &(a, b) in swaps {
+                    for &(a, b) in &reorder.swaps {
                         fields.swap(a, b);
                     }
                     rows.push(owned);
