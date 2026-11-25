@@ -65,8 +65,7 @@ impl Table {
                 // On reopen, casacore constructs this manager with the
                 // persisted type as its name. The column's declared group
                 // can still describe the materialized storage layout.
-                manager.dm_type == TYPE
-                    && manager.columns.iter().any(|name| name == column)
+                manager.dm_type == TYPE && manager.columns.iter().any(|name| name == column)
             })
             .map(|manager| AsdmBdfIndex::new(path.to_owned(), manager.seq_nr))
     }

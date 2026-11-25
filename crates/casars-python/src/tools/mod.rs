@@ -14,7 +14,6 @@ pub(crate) mod agentflagger;
 pub(crate) mod atmosphere;
 pub(crate) mod calanalysis;
 pub(crate) mod calibrater;
-pub(crate) mod casacore_path;
 pub(crate) mod componentlist;
 pub(crate) mod coordsys;
 pub(crate) mod image;

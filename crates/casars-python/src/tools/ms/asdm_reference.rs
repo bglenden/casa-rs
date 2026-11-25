@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read and retarget the original ASDM files used by a lazy MeasurementSet.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use casa_tables::TableWriteLock;
@@ -32,14 +33,24 @@ impl AttachedMs {
     fn asdm_reference(&mut self, new_path: PyResult<String>) -> PyResult<String> {
         let link = self.working_metadata_link();
         link.verify_directory().map_err(runtime_error)?;
-        let captured =
-            if self.plain_rows.is_some() && self.main_files.same_descriptor(self.main_stamp) {
-                None
-            } else {
-                Some(self.visibility.current_main(&self.path)?)
-            };
-        let source = captured.as_ref().map_or(&self.main, |layout| &layout.table);
-        let Some(index) = source.asdm_bdf_index().map_err(runtime_error)? else {
+        let stable_plain =
+            self.plain_rows.is_some() && self.main_files.same_descriptor(self.main_stamp);
+        let captured = if stable_plain {
+            None
+        } else {
+            Some(self.visibility.current_main(&self.path)?)
+        };
+        let fresh;
+        let binding = if let Some(layout) = &captured {
+            fresh = layout.table.asdm_bdf_index().map_err(runtime_error)?;
+            &fresh
+        } else {
+            if self.asdm_index.is_none() {
+                self.asdm_index = Some(self.main.asdm_bdf_index().map_err(runtime_error)?);
+            }
+            self.asdm_index.as_ref().expect("cached plain ASDM binding")
+        };
+        let Some(index) = binding else {
             return Ok(String::new());
         };
         let new_path = new_path?;
@@ -49,11 +60,15 @@ impl AttachedMs {
 
         // CASA permits this explicit index retarget even on a nomodify
         // attachment. The cells themselves remain read-only.
-        let root = index.table_path().canonicalize().map_err(runtime_error)?;
-        let mut temporary = if self.write_locks.contains_key(&root) {
+        let root = if stable_plain {
+            Cow::Borrowed(self.path.as_path())
+        } else {
+            Cow::Owned(index.table_path().canonicalize().map_err(runtime_error)?)
+        };
+        let temporary = if self.write_locks.contains_key(root.as_ref()) {
             None
         } else {
-            Some(TableWriteLock::acquire_to_reread(&root, 0).map_err(runtime_error)?)
+            Some(TableWriteLock::acquire_to_reread(root.as_ref(), 0).map_err(runtime_error)?)
         };
         link.verify_directory().map_err(runtime_error)?;
         if let Some(layout) = &captured {
@@ -65,8 +80,8 @@ impl AttachedMs {
         }
         let lock = self
             .write_locks
-            .get_mut(&root)
-            .or(temporary.as_mut())
+            .get(root.as_ref())
+            .or(temporary.as_ref())
             .expect("ASDM index update holds its physical table lock");
         let relocated = index.relocate(&new_path, lock).map_err(runtime_error)?;
         if let Some(lock) = temporary {

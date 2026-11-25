@@ -14,7 +14,7 @@ use super::{PyMeasures, State, arguments};
 use crate::convert::holder::MeasureValue;
 use crate::convert::value::CasaValue;
 use crate::tools::LogLine;
-use crate::tools::casacore_path::expand_path;
+use casa_tables::expand_casacore_path;
 
 pub(super) const COMET_UNAVAILABLE: &str = "No or outside range comet table specified";
 
@@ -60,7 +60,7 @@ fn load(state: &mut State, name: &str, lines: &mut Vec<LogLine>) -> CasaValue {
     if name.is_empty() {
         return CasaValue::Bool(false);
     }
-    let loaded = expand_path(name)
+    let loaded = expand_casacore_path(name)
         .and_then(|name| resolve(Path::new(name.as_ref())))
         .ok_or_else(|| MeasuresDataError::MissingData(format!("comet table {name}")))
         .and_then(|table| CometTable::open(&table));

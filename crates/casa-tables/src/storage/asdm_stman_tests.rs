@@ -173,17 +173,15 @@ fn retargeting_a_saved_view_preserves_cross_endian_visibility_cells() {
         let relocated = root.path().join("relocated-asdm");
         std::fs::rename(initial, &relocated).unwrap();
 
-        let mut lock = TableWriteLock::acquire(&source, 1).unwrap();
-        assert_eq!(
-            index
-                .relocate(relocated.to_str().unwrap(), &mut lock)
-                .unwrap(),
-            relocated.to_str().unwrap()
-        );
+        let lock = TableWriteLock::acquire(&source, 1).unwrap();
+        let spelling = format!("{}/{}", relocated.display(), "/");
+        assert_eq!(index.relocate(&spelling, &lock).unwrap(), spelling);
         lock.release().unwrap();
+        let reference = format!("{}/", relocated.display());
+        assert_eq!(index.reference().unwrap(), reference);
         let reopened = Table::open(TableOptions::new(&source)).unwrap();
         let current = reopened.asdm_bdf_index().unwrap().unwrap();
-        assert_eq!(current.reference().unwrap(), relocated.to_str().unwrap());
+        assert_eq!(current.reference().unwrap(), reference);
         assert_eq!(read(&reopened), expected);
     }
 }
