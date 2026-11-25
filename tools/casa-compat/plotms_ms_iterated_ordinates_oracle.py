@@ -189,8 +189,9 @@ def compare_review_cases(root, native, vis, base, polarizations, sides):
 
     shared_axes = base | dict(vis=str(shared), gridcols=2, yselfscale=True, ysharedaxis=True)
     coordinates = compare_text_pages(root, native, "shared-ordinates", shared_axes, polarizations)
-    # Share the union of the two panel ranges, including their ordinary 4% padding.
-    right_bounds = (10 - 0.04 * (70 - 10), 700 + 0.04 * (700 - 100))
+    # Pinned CASA shows this scale on both right axes with yselfscale and
+    # individual labels. Sharing the labels keeps the same data limits.
+    right_bounds = (0, 700)
     compare_figures(root, native, "shared-ordinates", shared_axes,
                     [list(zip(("XX", "YY"), coordinates, strict=True))], ["CorrXX,YY"], sides,
                     shared_right=right_bounds)

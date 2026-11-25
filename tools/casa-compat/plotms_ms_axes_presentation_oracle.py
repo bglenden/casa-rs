@@ -6,6 +6,7 @@ import argparse
 from contextlib import chdir
 from datetime import datetime, timezone
 from importlib.metadata import version
+from itertools import combinations
 import os
 from pathlib import Path
 from unittest.mock import patch
@@ -88,6 +89,7 @@ def compare_ranges(root, native):
 
     def capture(figure, primary, document, arguments):
         configure(figure, primary, document, arguments)
+        figure.canvas.draw()
         axes = primary if isinstance(primary, list) else [primary]
         page = []
         for axis in axes:
@@ -95,6 +97,7 @@ def compare_ranges(root, native):
             sides = [a for a in figure.axes if a.get_subplotspec() == cell and a.lines]
             assert len(sides) == 2
             page.append((axis, sides))
+        check_grid_labels(figure, page)
         pages.append(page)
 
     last = {}
@@ -184,6 +187,24 @@ def check_panel_ranges(pages, samples, name, controls, limits):
         assert [values[0] for values in bounds] == [tuple(limits[:2]), tuple(limits[2:]), tuple(limits[2:])]
     else:
         assert bounds[1] != bounds[2], (name, bounds)
+        for dimension, expected, measured in zip("xyy", ((10, 70), (20, 140), (100, 550)), bounds, strict=True):
+            if controls.get(f"{dimension}selfscale"):
+                assert measured == [expected] * 5, (name, dimension, measured)
+
+
+def check_grid_labels(figure, page):
+    label_boxes = []
+    for axis, sides in page:
+        texts = [axis.title]
+        for direction in (axis.xaxis, *(side.yaxis for side in sides)):
+            texts.append(direction.label)
+            for tick in direction._update_ticks():
+                texts.extend((tick.label1, tick.label2))
+        boxes = [text.get_window_extent() for text in texts if text.get_visible() and text.get_text()]
+        assert all(figure.bbox.contains(*box.p0) and figure.bbox.contains(*box.p1) for box in boxes)
+        label_boxes.append(boxes)
+    for first, second in combinations(label_boxes, 2):
+        assert all(not a.overlaps(b) for a in first for b in second)
 
 
 def paired_axis(root, native, name, controls, dimension, expected, ticks=()):
@@ -246,6 +267,8 @@ def compare_clock(root, native):
         ("custom-clock", 86_360, dict(xlabel="Elapsed UTC"), "x", "Elapsed UTC", ((86_410, "24:00:10"),)),
         ("averaged-clock", 86_360, dict(averagedata=True, avgtime="28"), "x", f"Average {date_label}",
          ((86_410, "24:00:10"),)),
+        ("first-average-next-day", 86_395, dict(averagedata=True, avgtime="28"), "x",
+         "Average Time (from 2020/08/23) (hh:mm:ss)", ((86_410, "00:00:10"),)),
     ):
         with opened(vis, True) as table:
             times = table.getcol("TIME")
@@ -312,6 +335,8 @@ def compare_grid_style(root, native):
             ticks = getattr(axis, f"{coord}axis")
             assert ticks.label.get_text() == base[f"{coord}label"]
             assert ticks.label.get_fontsize() == base[f"{coord}axisfont"]
+            label_box = ticks.label.get_window_extent()
+            assert figure.bbox.contains(*label_box.p0) and figure.bbox.contains(*label_box.p1)
             ticklist = ticks.get_major_ticks() if name == "major-grid" else ticks.get_minor_ticks()
             active = [tick.gridline for tick in ticklist if tick.gridline.get_visible()]
             assert active
@@ -328,6 +353,7 @@ def compare_grid_style(root, native):
         legend_bbox = legend.get_window_extent()
         if position == "exteriorRight":
             assert axis.bbox.xmax <= legend_bbox.xmin < legend_bbox.xmax <= figure.bbox.xmax
+            assert 0 <= axis.bbox.ymax - legend_bbox.ymax <= 14
         else:
             assert axis.bbox.contains(*legend_bbox.p0)
             assert axis.bbox.contains(*legend_bbox.p1)

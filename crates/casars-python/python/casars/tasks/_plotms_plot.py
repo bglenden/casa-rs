@@ -87,10 +87,9 @@ def configure(figure, panel_axes, document, options):
         else:
             figure.suptitle(document["title"], fontsize=font, y=title_y)
     measurement_set = document["id"] == "plotms-visibility"
-    calendar_axes = []
     if measurement_set:
         primary = panel_axes if isinstance(panel_axes, list) else [panel_axes]
-        calendar_axes = _format_measurement_set_axes(primary, document, options)
+        _format_measurement_set_axes(primary, document, options)
         if not document["panels"] and not positioned:
             panel_axes.set_title("")
     layout = document.get("layout")
@@ -115,8 +114,6 @@ def configure(figure, panel_axes, document, options):
                     linewidth=options.get(f"{which}width"),
                     color=_color(options.get(f"{which}color")),
                 )
-    if calendar_axes:
-        _fit_calendar_labels(figure, calendar_axes)
     layers = {
         layer["id"]: layer
         for panel in (document["panels"] or [document])
@@ -140,10 +137,13 @@ def configure(figure, panel_axes, document, options):
                 legend.remove()
         position = options.get("legendposition") or "upperRight"
         location, anchor = _LEGEND[position]
+        if measurement_set and position in ("exteriorRight", "exteriorLeft"):
+            location = "upper left" if position == "exteriorRight" else "upper right"
+            anchor = (anchor[0], 1.0)
         if handles:
-            legend = figure.axes[0].legend(handles, labels, loc=location, bbox_to_anchor=anchor)
-            if measurement_set and anchor is not None:
-                _fit_exterior_legend(figure, legend, position)
+            figure.axes[0].legend(handles, labels, loc=location, bbox_to_anchor=anchor)
+    if measurement_set:
+        figure.tight_layout(rect=(0, 0, 1, title_y if title_y is not None else 1))
 
 
 def _layout_page_headers(figure, headers):
@@ -162,52 +162,19 @@ def _layout_page_headers(figure, headers):
     return top
 
 
-def _fit_exterior_legend(figure, legend, position):
-    bounds = legend.get_window_extent()
-    width, height = figure.bbox.size
-    padding = figure.dpi * 4 / 72
-    edges = figure.subplotpars
-    if position == "exteriorRight" and bounds.xmax + padding > width:
-        spill = (bounds.xmax + padding - width) / width
-        figure.subplots_adjust(right=max(edges.left + 0.05, edges.right - spill))
-    elif position == "exteriorLeft" and bounds.xmin < padding:
-        spill = (padding - bounds.xmin) / width
-        figure.subplots_adjust(left=min(edges.right - 0.05, edges.left + spill))
-    elif position == "exteriorTop" and bounds.ymax + padding > height:
-        spill = (bounds.ymax + padding - height) / height
-        figure.subplots_adjust(top=max(edges.bottom + 0.05, edges.top - spill))
-    elif position == "exteriorBottom" and bounds.ymin < padding:
-        spill = (padding - bounds.ymin) / height
-        figure.subplots_adjust(bottom=min(edges.top - 0.05, edges.bottom + spill))
-
-
-def _fit_calendar_labels(figure, axes):
-    bounds = [axis.yaxis.get_tightbbox() for axis in axes]
-    left = min((box.xmin for box in bounds if box is not None), default=figure.bbox.xmax)
-    padding = figure.dpi * 4 / 72
-    if left < padding:
-        edges = figure.subplotpars
-        margin = (padding - left) / figure.bbox.width
-        figure.subplots_adjust(left=min(edges.right - 0.05, edges.left + margin))
-
-
 def _format_measurement_set_axes(primary, document, options):
     averaged = options.get("averagedata")
     binned_channels = averaged and float(options.get("avgchannel") or 0) > 1
     binned_time = averaged and float(options.get("avgtime") or 0) > 0
-    calendar_axes = []
     for axis, panel in zip(primary, document["panels"] or [document], strict=True):
         for dimension, data in zip("xy", panel["axes"]):
             scale = data["scale"]
             kind = options.get(f"{dimension}axis")
             if isinstance(scale, dict):
                 _format_clock(axis, dimension, scale["mjd_seconds_clock"], options, binned_time)
-                if dimension == "y":
-                    calendar_axes.append(axis)
             elif binned_channels and isinstance(kind, str) and kind.lower() in ("chan", "channel"):
                 set_label = getattr(axis, f"set_{dimension}label")
                 set_label(f"Average {data['label']}")
-    return calendar_axes
 
 
 def _format_clock(axis, dimension, clock, options, averaged):

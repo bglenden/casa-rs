@@ -68,18 +68,20 @@ pub(super) fn prepare(
     if let Some(reference) = clock_reference {
         prepare_clock_axes(&mut document, spec, reference);
     }
+    let limits = plot_limits(task.value("plotrange"))?;
     if let Some(grid) = grid {
         label_iteration_panels(task, &mut document, grid)?;
-        if task.flag("xselfscale")? {
-            unite_panel_bounds(&mut document, "x");
+        let auto_visibility = |axis: MsAxis| axis.is_visibility_math() && axis != MsAxis::Phase;
+        if task.flag("xselfscale")? && limits[..2] == [0.0, 0.0] {
+            unite_panel_bounds(&mut document, "x", auto_visibility(spec.x_axis));
         }
-        if task.flag("yselfscale")? {
-            unite_panel_bounds(&mut document, "y");
-            unite_panel_bounds(&mut document, "y-secondary");
+        if task.flag("yselfscale")? && limits[2..] == [0.0, 0.0] {
+            let autoscale = spec.y_axes.iter().copied().all(auto_visibility);
+            unite_panel_bounds(&mut document, "y", autoscale);
+            unite_panel_bounds(&mut document, "y-secondary", autoscale);
         }
     }
     document.show_legend = task.flag("showlegend")?;
-    let limits = plot_limits(task.value("plotrange"))?;
     let style = PanelStyle {
         frequency: [
             x == MsAxis::Frequency,
@@ -141,6 +143,22 @@ pub(super) fn reference_midnight(times: impl Iterator<Item = f64>) -> Option<i64
 }
 
 fn prepare_clock_axes(document: &mut PlotDocument, spec: &MsPlotSpec, reference: i64) {
+    let time_axis = if spec.x_axis == MsAxis::Time {
+        "x"
+    } else {
+        "y"
+    };
+    let reference = if spec.averaging.avgtime.is_some() {
+        let times = axis_samples(&document.layers, time_axis).chain(
+            document
+                .panels
+                .iter()
+                .flat_map(|panel| axis_samples(&panel.layers, time_axis)),
+        );
+        reference_midnight(times).unwrap_or(reference)
+    } else {
+        reference
+    };
     let axes = std::iter::once((&mut document.axes, &document.layers)).chain(
         document
             .panels
@@ -161,16 +179,7 @@ fn prepare_clock_axes(document: &mut PlotDocument, spec: &MsPlotSpec, reference:
             axis.scale = PlotAxisScale::MjdSecondsClock {
                 reference_mjd_seconds: reference,
             };
-            let values = layers.iter().filter_map(|layer| {
-                if x && layer.x_axis_id == axis.id {
-                    Some(&layer.x_values)
-                } else if !x && layer.y_axis_id == axis.id {
-                    Some(&layer.y_values)
-                } else {
-                    None
-                }
-            });
-            if let Some((lower, upper)) = plotms_clock_bounds(values.flatten().copied()) {
+            if let Some((lower, upper)) = plotms_clock_bounds(axis_samples(layers, &axis.id)) {
                 axis.lower = lower;
                 axis.upper = upper;
             }
@@ -179,15 +188,8 @@ fn prepare_clock_axes(document: &mut PlotDocument, spec: &MsPlotSpec, reference:
 }
 
 fn plotms_clock_bounds(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
-    let (lower, upper) = values
-        .filter(|value| value.is_finite())
-        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| {
-            (low.min(value), high.max(value))
-        });
+    let (lower, upper) = data_bounds(values)?;
     let span = upper - lower;
-    if span < 0.0 {
-        return None;
-    }
     // PlotMS sets a time range before Qwt autoscales other axes.
     let padding = if span == 0.0 {
         2.0
@@ -199,6 +201,34 @@ fn plotms_clock_bounds(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> 
         0.0
     };
     Some((lower - padding, upper + padding))
+}
+
+fn axis_samples<'a>(
+    layers: &'a [PlotDocumentLayer],
+    id: &'a str,
+) -> impl Iterator<Item = f64> + 'a {
+    layers
+        .iter()
+        .filter_map(move |layer| {
+            if layer.x_axis_id == id {
+                Some(&layer.x_values)
+            } else if layer.y_axis_id == id {
+                Some(&layer.y_values)
+            } else {
+                None
+            }
+        })
+        .flatten()
+        .copied()
+}
+
+fn data_bounds(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
+    let (lower, upper) = values
+        .filter(|value| value.is_finite())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| {
+            (low.min(value), high.max(value))
+        });
+    (lower <= upper).then_some((lower, upper))
 }
 
 fn label_and_group_ordinates(
@@ -289,22 +319,29 @@ fn label_iteration_panels(
     Ok(())
 }
 
-fn unite_panel_bounds(document: &mut PlotDocument, axis_id: &str) {
-    let bounds = document
+fn unite_panel_bounds(document: &mut PlotDocument, axis_id: &str, autoscale: bool) {
+    let raw = document
         .panels
         .iter()
-        .filter(|panel| {
-            panel.layers.iter().any(|layer| {
-                !layer.x_values.is_empty()
-                    && (layer.x_axis_id == axis_id || layer.y_axis_id == axis_id)
+        .flat_map(|panel| axis_samples(&panel.layers, axis_id));
+    let automatic = autoscale.then(|| plotms_auto_bounds(raw)).flatten();
+    let bounds = automatic.unwrap_or_else(|| {
+        document
+            .panels
+            .iter()
+            .filter(|panel| {
+                panel.layers.iter().any(|layer| {
+                    !layer.x_values.is_empty()
+                        && (layer.x_axis_id == axis_id || layer.y_axis_id == axis_id)
+                })
             })
-        })
-        .flat_map(|panel| &panel.axes)
-        .filter(|axis| axis.id == axis_id)
-        .fold(
-            (f64::INFINITY, f64::NEG_INFINITY),
-            |(lower, upper), axis| (lower.min(axis.lower), upper.max(axis.upper)),
-        );
+            .flat_map(|panel| &panel.axes)
+            .filter(|axis| axis.id == axis_id)
+            .fold(
+                (f64::INFINITY, f64::NEG_INFINITY),
+                |(lower, upper), axis| (lower.min(axis.lower), upper.max(axis.upper)),
+            )
+    });
     if !bounds.0.is_finite() || !bounds.1.is_finite() {
         return;
     }
@@ -316,6 +353,25 @@ fn unite_panel_bounds(document: &mut PlotDocument, axis_id: &str) {
     {
         (axis.lower, axis.upper) = bounds;
     }
+}
+
+fn plotms_auto_bounds(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
+    let (lower, upper) = data_bounds(values)?;
+    // Qwt's linear scale uses at most eight major steps and aligns to
+    // powers of ten and their 2x and 5x multiples.
+    let interval = (upper - lower) * (1.0 - 1e-6) / 8.0;
+    if !interval.is_normal() {
+        return None;
+    }
+    let decade = 10.0_f64.powf(interval.log10().floor());
+    let step = [decade, 2.0 * decade, 5.0 * decade, 10.0 * decade]
+        .into_iter()
+        .find(|&step| interval <= step)?;
+    let tolerance = step * 1e-6;
+    Some((
+        ((lower + tolerance) / step).floor() * step,
+        ((upper - tolerance) / step).ceil() * step,
+    ))
 }
 
 fn group_ordinate_sides(
