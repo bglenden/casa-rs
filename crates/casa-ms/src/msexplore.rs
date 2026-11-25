@@ -3334,15 +3334,12 @@ fn build_uncalibrated_plotms_payload(
         pointing: columns.pointing,
         phasecenter: columns.phasecenter,
     };
+    let times = selected
+        .selected_rows
+        .iter()
+        .map(|row| row.time_mjd_seconds);
     let reference = clock_labels
-        .then(|| {
-            plotms_figure::reference_midnight(
-                selected
-                    .selected_rows
-                    .iter()
-                    .map(|row| row.time_mjd_seconds),
-            )
-        })
+        .then(|| plotms_figure::reference_midnight(times))
         .flatten();
     build_msexplore_payload_internal(ms, spec, true, Some(&input)).map(|plot| (plot, reference))
 }
