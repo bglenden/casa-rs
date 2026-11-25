@@ -309,9 +309,7 @@ impl CliOptions {
             || columns.is_some_and(|columns| self.supports_visibility_symbols(columns))
                 && (!calibrated || !self.plotms_averaging_active());
         let metadata = !calibrated && self.supports_metadata_flag_symbols();
-        (visibility || metadata)
-            .then(|| raw_symbol_visibility(task))
-            .filter(|symbols| visibility || symbols.flagged || !symbols.unflagged)
+        (visibility || metadata).then(|| raw_symbol_visibility(task))
     }
 
     pub(super) fn plotms_phasecenter(

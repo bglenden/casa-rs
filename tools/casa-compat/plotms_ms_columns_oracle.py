@@ -217,6 +217,44 @@ def compare_channel_averaged_flag_symbols(root, vis, native):
         for name, values in spectra.items():
             np.testing.assert_array_equal(table.getcol(name), values)
     print("weighted-marked: 18 matching channel averages with flagged spectra", flush=True)
+    compare_flagged_channel_edge_values(work, weighted, native, marked)
+
+
+def compare_flagged_channel_edge_values(work, weighted, native, marked):
+    from plotms_callibrary_oracle import snapshot, verify_source
+
+    vis = work / "flagged-channel-edge-values.ms"
+    copy_ms(weighted, vis)
+    with opened(vis, True) as table:
+        selected = ((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+                    & (table.getcol("ANTENNA2") == 1))
+        sigma = table.getcol("SIGMA_SPECTRUM")
+        sigma[0, :2, selected] = 0
+        table.putcol("SIGMA_SPECTRUM", sigma)
+        data = table.getcol("DATA")
+        data[0, 4, np.flatnonzero(selected)[0]] = np.complex64(np.nan + 0j)
+        table.putcol("DATA", data)
+    before = snapshot(vis)
+    modes = (
+        ("clear", dict(customflaggedsymbol=False), [1]),
+        ("both", {}, [0, 1, 2]),
+        ("flagged", dict(customsymbol=True, symbolshape="nosymbol"), [0, 2]),
+    )
+    for mode, style, channels in modes:
+        expected, actual = (work / f"edge-values-{mode}.{engine}.txt" for engine in ("casa", "native"))
+        options = marked | dict(vis=str(vis)) | style
+        assert reference(**options, plotfile=str(expected)) is None
+        points = rows(expected)
+        assert [int(point[2]) for point in points] == channels * 6
+        if mode == "both":
+            assert float(points[0][0]) == 0 and np.isnan(float(points[2][0]))
+            np.testing.assert_allclose([float(points[index][1]) for index in (0, 2)],
+                                       [64.6538, 22.1412], rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == len(points)
+        print(f"edge-values-{mode}: {len(points)} matching zero-weight and nonfinite coordinates",
+              flush=True)
+    verify_source(vis, before)
 
 
 def compare_flagged_figure(root, native, name, controls, marker_color, *,

@@ -1084,7 +1084,7 @@ def check_metadata_flagged_symbols(work, native, base):
 
 
 def compare_metadata_flag_modes(work, native, base, name, counts, labels):
-    from plotms_ms_columns_oracle import compare_flagged_figure
+    from plotms_ms_columns_oracle import compare_empty_export, compare_flagged_figure
 
     vis = Path(base["vis"])
     before = snapshot(vis)
@@ -1111,6 +1111,13 @@ def compare_metadata_flag_modes(work, native, base, name, counts, labels):
     assert selected["clear"] | selected["flagged"] == selected["both"]
     compare_flagged_figure(work, native, f"{name}-both", marked, marker_color, labels=labels,
                            is_flagged=lambda point: tuple(point) in selected["flagged"])
+    empty = work / f"{name}-all-flagged.ms"
+    copy_ms(vis, empty)
+    with opened(empty, True) as table:
+        table.putcol("FLAG", np.ones_like(table.getcol("FLAG")))
+    empty_options = dict(base, vis=str(empty))
+    del empty_options["expformat"]
+    compare_empty_export(work, native, f"{name}-all-flagged", empty_options, labels[1:])
     verify_source(vis, before)
 
 

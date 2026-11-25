@@ -5121,22 +5121,24 @@ fn build_generic_visibility_scatter(
                     flag_samples.clear();
                 }
                 let fully_flagged = || flag_samples.iter().all(|flag| *flag);
+                let transformed_channel_weights = channel_weight_kinds.is_some() && bin.averaged;
+                let zero_primary_weight = transformed_channel_weights
+                    && primary_weight_grid
+                        .zip(flags.as_ref())
+                        .is_some_and(|(weights, flags)| {
+                            !plotms_columns::bin_has_weight(weights, *corr_index, bin, flags)
+                        });
                 let displayed_flagged = show_flagged
                     && if let Some(dimensions) =
                         metadata_pair.filter(|_| !projected_flags.is_empty())
                     {
                         projected_flags[if dimensions.channel { bin.ordinal } else { 0 }]
                     } else {
-                        fully_flagged()
+                        fully_flagged() || zero_primary_weight
                     };
-                if !displayed_flagged && raw_symbols.is_some_and(|symbols| !symbols.unflagged) {
-                    continue;
-                }
-                let transformed_channel_weights = channel_weight_kinds.is_some() && bin.averaged;
-                if transformed_channel_weights
-                    && !displayed_flagged
-                    && let Some((weights, flags)) = primary_weight_grid.zip(flags.as_ref())
-                    && !plotms_columns::bin_has_weight(weights, *corr_index, bin, flags)
+                if !displayed_flagged
+                    && (zero_primary_weight
+                        || raw_symbols.is_some_and(|symbols| !symbols.unflagged))
                 {
                     continue;
                 }
@@ -5146,13 +5148,14 @@ fn build_generic_visibility_scatter(
                 {
                     let flags = flags.as_ref().expect("visibility data loads flags");
                     let weights = column_weights.get(index).copied().flatten();
-                    if channel_derived && bin.averaged {
+                    if bin.averaged && (channel_derived || displayed_flagged) {
                         buffer.collect_channel_average(
                             grid,
                             flags,
                             [weights, model_weights],
                             *corr_index,
                             bin,
+                            displayed_flagged && fully_flagged(),
                         );
                     } else {
                         buffer.collect(grid, flags, weights, *corr_index, bin, displayed_flagged);
@@ -6697,6 +6700,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                 [spectrum, None],
                                 *corr_index,
                                 bin,
+                                false,
                             );
                         } else {
                             buffer.collect(grid, &flags, spectrum, *corr_index, bin, false);
