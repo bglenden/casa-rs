@@ -14,6 +14,33 @@ use crate::MsResult;
 
 pub(super) type Locations = BTreeMap<PathBuf, PathBuf>;
 
+/// Return the top-level member containing the base when the entire
+/// reference chain moves into the private MultiMS stage.
+pub(super) fn owned_reference_base(
+    path: &Path,
+    locations: &Locations,
+) -> MsResult<Option<PathBuf>> {
+    let mut path = path.to_path_buf();
+    for _ in 0..64 {
+        match Table::immediate_part_names(&path, &path)? {
+            TablePartNames::Reference(parent) => {
+                path = parent.canonicalize().map_err(invalid)?;
+                if !locations.keys().any(|member| path.starts_with(member)) {
+                    return Ok(None);
+                }
+            }
+            TablePartNames::Plain(_) => {
+                return Ok(locations
+                    .keys()
+                    .find(|member| path.starts_with(member))
+                    .cloned());
+            }
+            TablePartNames::Concatenation { .. } => return Ok(None),
+        }
+    }
+    Err(invalid("member reference chain is too deep"))
+}
+
 pub(super) enum MemberEdit {
     None,
     Parts(Vec<PathBuf>),

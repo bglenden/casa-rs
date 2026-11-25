@@ -149,6 +149,7 @@ fn assemble(stage: Assembly<'_>) -> MsResult<()> {
                     omit,
                     locks,
                     mode != CopyMode::CopyNested,
+                    product,
                 )?;
             }
         }
@@ -207,16 +208,10 @@ fn copy_modes(
         let mode = match Table::immediate_part_names(path, path)? {
             TablePartNames::Plain(_) => CopyMode::CopySubtables,
             TablePartNames::Reference(_) => {
-                let root = subtables::reference_root(path)?;
-                if locations.contains_key(&root)
-                    && matches!(
-                        Table::immediate_part_names(&root, &root)?,
-                        TablePartNames::Plain(_)
-                    )
-                {
+                if let Some(base_member) = relocation::owned_reference_base(path, locations)? {
                     // RefTable keyword writes go to its base. Stage that base
                     // before changing the view or its inherited keywords.
-                    private_bases.insert(root);
+                    private_bases.insert(base_member);
                     CopyMode::CopySubtables
                 } else {
                     CopyMode::Materialize
@@ -448,4 +443,50 @@ fn output_path(path: &Path) -> MsResult<PathBuf> {
 
 fn invalid(error: impl std::fmt::Display) -> MsError {
     MsError::InvalidInput(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{MeasurementSet, builder::MeasurementSetBuilder};
+
+    #[test]
+    fn failed_multims_copy_leaves_keywords_on_the_original_reference_base() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.ms");
+        let intermediate = directory.path().join("intermediate.ms");
+        let view = directory.path().join("view.ms");
+        let output = directory.path().join("out.ms");
+        MeasurementSet::create(&source, MeasurementSetBuilder::new()).unwrap();
+        let main = Table::open(TableOptions::new(&source)).unwrap();
+        let keywords = main.keywords().clone();
+        for path in [&intermediate, &view] {
+            main.select_rows(&[])
+                .unwrap()
+                .save(TableOptions::new(path))
+                .unwrap();
+        }
+        Table::set_staged_table_parts(&view, std::slice::from_ref(&intermediate)).unwrap();
+        let error = create_multi_ms(
+            &output,
+            &[source.clone(), view.clone()],
+            &["MISSING".into()],
+            Some(&[]),
+        )
+        .expect_err("joining an absent subtable must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("MultiMS subtable MISSING is missing")
+        );
+        assert!(!output.exists());
+        assert!(view.exists() && intermediate.exists());
+        assert_eq!(
+            Table::open(TableOptions::new(&source)).unwrap().keywords(),
+            &keywords
+        );
+        create_multi_ms(&output, &[source, view], &[], Some(&[])).unwrap();
+        assert!(intermediate.is_dir());
+        assert!(output.join("SUBMSS/view.ms/ANTENNA/table.dat").is_file());
+    }
 }

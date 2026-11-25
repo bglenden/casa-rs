@@ -33,7 +33,13 @@ pub(super) fn copy_from_first(
     omit: &[String],
     held: &[casa_tables::TableWriteLock],
     save_keywords: bool,
+    stage: &Path,
 ) -> MsResult<()> {
+    if save_keywords && !reference_root(target)?.starts_with(stage) {
+        return Err(invalid(
+            "cannot update a reference base outside the MultiMS stage",
+        ));
+    }
     let source = first.path().expect("persisted member");
     let mut output = Table::open(TableOptions::new(target))?;
     let mut copies = SubtableCopies {
@@ -149,7 +155,7 @@ impl SubtableCopies<'_> {
     }
 }
 
-pub(super) fn reference_root(path: &Path) -> MsResult<PathBuf> {
+fn reference_root(path: &Path) -> MsResult<PathBuf> {
     let mut path = path.to_path_buf();
     for _ in 0..64 {
         let TablePartNames::Reference(parent) = Table::immediate_part_names(&path, &path)? else {
