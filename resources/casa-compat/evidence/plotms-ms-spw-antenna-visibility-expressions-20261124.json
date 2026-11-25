@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "9d98c47d6ba87bfe443aa787a89ad1fd9b0a9fe7",
+  "source_revision": "9d98c47d6ba87bfe443aa787a89ad1fd9b0a9fe7",
+  "baseline_revision": "702db3dfbe27705e7906846a9e846497e975bd12",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_derived_average_oracle.py --only reduced --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Independent residual and model ratio axes through supported spectral-window and per-antenna time averages, using stored or virtual models, scalar/vector reduction and optional channel bins.",
+  "result": "passed",
+  "baseline_result": "Main refuses derived residual and ratio axes with SPW or antenna averaging.",
+  "text_exports": 12,
+  "points": 30,
+  "figures": 1,
+  "rendered_coordinates": 2,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}

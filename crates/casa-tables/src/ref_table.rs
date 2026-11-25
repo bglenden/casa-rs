@@ -522,6 +522,50 @@ mod tests {
     }
 
     #[test]
+    fn full_row_projection_preserves_schema_field_order() {
+        use crate::table::{ColumnBinding, DataManagerKind, TableOptions};
+
+        let dir = tempfile::tempdir().unwrap();
+        let parent_path = dir.path().join("parent.tbl");
+        let bindings = std::collections::HashMap::from([(
+            "id".to_owned(),
+            ColumnBinding {
+                data_manager: DataManagerKind::IncrementalStMan,
+                tile_shape: None,
+            },
+        )]);
+        test_table()
+            .save_with_bindings(
+                TableOptions::new(&parent_path).with_data_manager(DataManagerKind::StandardStMan),
+                &bindings,
+            )
+            .unwrap();
+        let table = Table::open(TableOptions::new(&parent_path)).unwrap();
+        for (filename, indices) in [("unique", &[4, 0, 2][..]), ("repeated", &[4, 1, 4][..])] {
+            let path = dir.path().join(filename);
+            table
+                .select_rows(indices)
+                .unwrap()
+                .save(TableOptions::new(&path))
+                .unwrap();
+            let projected = Table::open(TableOptions::new(&path)).unwrap();
+            for (row, &id) in projected.rows().unwrap().iter().zip(indices) {
+                assert_eq!(
+                    row.fields()
+                        .iter()
+                        .map(|field| field.name.as_str())
+                        .collect::<Vec<_>>(),
+                    ["id", "name"],
+                );
+                assert_eq!(
+                    row.get("id"),
+                    Some(&Value::Scalar(ScalarValue::Int32(id as i32)))
+                );
+            }
+        }
+    }
+
+    #[test]
     fn selected_scalar_reads_follow_reference_column_and_row_maps() {
         use crate::storage::table_control::{
             TableDatResult, read_table_dat_dispatch, write_ref_table_dat,

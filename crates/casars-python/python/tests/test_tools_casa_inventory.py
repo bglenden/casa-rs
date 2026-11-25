@@ -74,8 +74,8 @@ IMPLEMENTED["ms"] = {
     "getscansummary", "ismultims", "iswritable",
     "iterend", "iterinit", "iternext", "iterorigin", "listhistory", "lister",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
-    "open", "range", "reset", "select", "selectinit", "selecttaql",
-    "statistics", "statisticsold", "statwt", "summary", "uvsub",
+    "open", "range", "reset", "select", "selectinit", "selecttaql", "sort",
+    "statistics", "statisticsold", "statwt", "summary", "timesort", "uvsub",
     "writehistory", "writehistory_batch",
 }
 IMPLEMENTED["agentflagger"] = {

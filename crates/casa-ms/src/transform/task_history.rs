@@ -26,6 +26,24 @@ pub fn append_task_history(
     output: &Path,
     history: &TransformTaskHistory,
 ) -> Result<(), MsTransformError> {
+    let heading = [
+        format!("taskname={}", history.task),
+        format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
+    ];
+    let messages = heading.into_iter().chain(
+        history
+            .parameters
+            .iter()
+            .map(|(name, value)| format!("{name:<11} = {value}")),
+    );
+    append_history_messages(output, &history.task, messages)
+}
+
+pub(crate) fn append_history_messages(
+    output: &Path,
+    origin: &str,
+    messages: impl IntoIterator<Item = String>,
+) -> Result<(), MsTransformError> {
     let main = Table::open(TableOptions::new(output)).map_err(|source| {
         MsTransformError::MutateMeasurementSet {
             path: output.display().to_string(),
@@ -40,17 +58,7 @@ pub fn append_task_history(
         source: Box::new(source),
     };
     let mut table = open_staged_subtable_for_write(&path).map_err(failure)?;
-    let heading = [
-        format!("taskname={}", history.task),
-        format!("version: casa-rs {}", env!("CARGO_PKG_VERSION")),
-    ];
-    let messages = heading.into_iter().chain(
-        history
-            .parameters
-            .iter()
-            .map(|(name, value)| format!("{name:<11} = {value}")),
-    );
-    let mut rows = Vec::with_capacity(history.parameters.len() + 2);
+    let mut rows = Vec::new();
     for message in messages {
         let time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -67,7 +75,7 @@ pub fn append_task_history(
             ("MESSAGE", text(&message)),
             ("OBJECT_ID", Value::Scalar(ScalarValue::Int32(0))),
             ("OBSERVATION_ID", Value::Scalar(ScalarValue::Int32(-1))),
-            ("ORIGIN", text(&history.task)),
+            ("ORIGIN", text(origin)),
             ("PRIORITY", text("INFO")),
             ("TIME", Value::Scalar(ScalarValue::Float64(time))),
         ] {
