@@ -1409,7 +1409,8 @@
       "evidence": [
         "paired",
         "ms-per-antenna-export",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "export"
@@ -1417,7 +1418,7 @@
       "status": "Partial"
     },
     "expformat": {
-      "scope": "Export format type. If not provided, plotfile extension will be used to determine type.",
+      "scope": "Export TXT, PNG, JPG, PDF or PS. A supplied format takes precedence over the filename. The rendered MeasurementSet exporter’s extension inference is case-insensitive and recognizes .text and .jpeg aliases. That exporter rejects an omitted format without a recognized extension. Native PS is PostScript.",
       "evidence": [
         "paired",
         "ms-empty-combined-averages",
@@ -1430,7 +1431,8 @@
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
         "ms-phasecenter-compositions",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "export"
@@ -1442,7 +1444,8 @@
       "evidence": [
         "paired",
         "ms-raw-flag-symbols",
-        "ms-empty-combined-averages"
+        "ms-empty-combined-averages",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "export"
@@ -1458,7 +1461,8 @@
         "ms-iterated-visibility-ordinates",
         "ms-averaged-iterated-visibility-ordinates",
         "ms-spw-iteration-and-ordinate-order",
-        "ms-iteration-axes-and-offset-pages"
+        "ms-iteration-axes-and-offset-pages",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "pages"
@@ -1466,50 +1470,55 @@
       "status": "Implemented"
     },
     "highres": {
-      "scope": "Use high resolution",
+      "scope": "Use the pinned headless raster export mode for MeasurementSets. CASA routes both screen and high-resolution PNG/JPG requests through the same mode.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "presentation"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "dpi": {
-      "scope": "DPI of exported plot",
+      "scope": "Set raster density. Static MeasurementSet PNG/JPG files use 96 DPI when no positive value is supplied.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "presentation"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "width": {
-      "scope": "Width in pixels of exported plot",
+      "scope": "Set PNG/JPG width in pixels. Static MeasurementSet canvases default to 751 pixels wide.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "presentation"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "height": {
-      "scope": "Height in pixels of exported plot",
+      "scope": "Set PNG/JPG canvas height in pixels. Static MeasurementSet canvases default to 567 pixels high and add 113 pixels when headers are visible.",
       "evidence": [
-        "paired"
+        "paired",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "presentation"
       ],
-      "status": "Partial"
+      "status": "Implemented"
     },
     "overwrite": {
       "scope": "Overwrite plot file if it already exists",
       "evidence": [
         "paired",
-        "ms-static-grid-placement"
+        "ms-static-grid-placement",
+        "ms-static-export-formats"
       ],
       "behaviors": [
         "export"
@@ -1719,14 +1728,15 @@
       "id": "export",
       "title": "Save and publish selected plot products",
       "status": "Partial",
-      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export ordinary MeasurementSet visibility coordinates and independent stored visibility columns as text and figures. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves. Write a successful empty text section and figure for fully hidden raw visibility pairs.",
+      "scope": "Write current and legacy calibration coordinates and metadata as text and render figures through the shared Python presenter. Publish requested files and preserve existing files when overwrite is false. Export ordinary MeasurementSet visibility coordinates and independent stored visibility columns as text and figures. Export calibrated MeasurementSet text and paginated figures, including atmospheric curves. Write a successful empty text section and figure for fully hidden raw visibility pairs. Static MeasurementSet format inference and the headless raster size and density match pinned CASA. Separate pages preserve their selected scan names. Figure publication preserves the previous product if rendering fails.",
       "evidence": [
         "paired",
         "ms-columns",
         "ms-ordinary-visibility",
         "callibrary",
         "legacy-calibration",
-        "ms-raw-flag-symbols"
+        "ms-raw-flag-symbols",
+        "ms-static-export-formats"
       ],
       "gap": "More export, multi-plot state and interactive display forms remain open."
     },
@@ -3421,6 +3431,21 @@
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2317",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362#2484"
+      ]
+    },
+    "ms-static-export-formats": {
+      "kind": "Same-input static MeasurementSet export formats and publication",
+      "state": "passed",
+      "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus Amp on the Columns MS, explicit and inferred TXT/PNG/JPG/PDF/PS, aliases, the default and one-sided raster dimensions, high resolution and header canvas, current/all scan pages, format refusals and failed overwrite. The raster pass also tests explicit width 410 at 100 DPI and default width at 88 DPI on supported Matplotlib 3.9.",
+      "result": "Match 36 TXT coordinates and 22 paired static products. PNG/JPG dimensions and DPI follow the pinned canvas. Single-page vector files and the raster types show both Channel bands in their expected vertical order. Pinned PostScript requests contain PDF. Native PostScript uses its requested encoding. Format, empty-input and overwrite refusals preserve destinations. An injected native render failure preserves the full prior file and cleans its staging file. The restored explorer fallback keeps its original format acceptance.",
+      "casa_version": "6.7.6.14",
+      "revision": "f5fa51ba3c3b67bd5b23b33c93e9c4f4b95236f8",
+      "source_revision": "f5fa51ba3c3b67bd5b23b33c93e9c4f4b95236f8",
+      "command": "casa-python tools/casa-compat/plotms_ms_exports_oracle.py --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-export-formats-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2318",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Actions/ActionExport.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362"
       ]
     }
   }
