@@ -151,6 +151,7 @@ fn write_subtraction(
         ms,
         rows.iter().map(|row| row.row_index).collect(),
         &[CORRECTED],
+        input,
         create,
         false,
         lock,

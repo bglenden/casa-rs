@@ -286,3 +286,87 @@ def test_hanningsmooth_checks_spectrum_at_first_logical_row(
             table.getcell("WEIGHT_SPECTRUM", 1), SPECTRUM.astype(np.float64), strict=True,
         )
         assert table.done()
+
+
+def test_hanningsmooth_writes_float_data(native_dataset, writer_api):
+    casa = pytest.importorskip("casatools")
+    write_input(casa, native_dataset)
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    values = table.getcol("DATA").real.copy()
+    assert table.addcols({"FLOAT_DATA": {"valueType": "float", "ndim": 2}})
+    for row in range(table.nrows()):
+        assert table.putcell("FLOAT_DATA", row, values[:, :, row].astype(np.float32))
+    assert table.removecols("DATA")
+    assert table.done()
+    tool = writer_api.ms()
+    assert tool.open(str(native_dataset), nomodify=False)
+    assert tool.hanningsmooth("data")
+    assert tool.done()
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(str(native_dataset))
+        assert table.getcoldesc("FLOAT_DATA")["valueType"] == "float"
+        np.testing.assert_array_equal(
+            table.getcell("FLOAT_DATA", 0),
+            np.broadcast_to(SMOOTHED.real.astype(np.float64), (2, 4)),
+            strict=True,
+        )
+        assert table.done()
+
+
+def test_hanningsmooth_writes_compressed_corrected_cells(native_dataset, writer_api):
+    casa = pytest.importorskip("casatools")
+    write_input(casa, native_dataset)
+    calibrater = casa.calibrater()
+    assert calibrater.open(str(native_dataset), compress=True, addcorr=True, addmodel=False)
+    assert calibrater.close()
+    table = casa.table()
+    assert table.open(str(native_dataset))
+    raw_before = table.getcell("CORRECTED_DATA_COMPRESSED", 0)
+    assert table.done()
+
+    tool = writer_api.ms()
+    assert tool.open(str(native_dataset), nomodify=False)
+    assert tool.hanningsmooth("corrected")
+    assert tool.done()
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(str(native_dataset))
+        np.testing.assert_array_equal(
+            table.getcell("DATA", 0), expected_visibilities(OBSERVED), strict=True,
+        )
+        np.testing.assert_allclose(
+            table.getcell("CORRECTED_DATA", 0), expected_visibilities(SMOOTHED),
+            rtol=0, atol=3e-4, strict=True,
+        )
+        raw = table.getcell("CORRECTED_DATA_COMPRESSED", 0)
+        assert raw.shape == raw_before.shape and raw.dtype == raw_before.dtype
+        assert not np.array_equal(raw, raw_before)
+        assert table.done()
+
+
+def test_hanningsmooth_leaves_two_channel_data_unchanged(native_dataset, tmp_path, writer_api):
+    casa = pytest.importorskip("casatools")
+    write_input(casa, native_dataset)
+    path = str(tmp_path / "short.ms")
+    source = casa.ms()
+    assert source.open(str(native_dataset))
+    assert source.split(path, spw="0:0~1")
+    assert source.done()
+    columns = ("DATA", "FLAG", "WEIGHT")
+    table = casa.table()
+    assert table.open(path)
+    before = [table.getcol(name) for name in columns]
+    assert before[0].shape[1] == 2
+    assert table.done()
+    tool = writer_api.ms()
+    assert tool.open(path, nomodify=False)
+    assert tool.hanningsmooth("data")
+    assert tool.done()
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(path)
+        for name, values in zip(columns, before):
+            np.testing.assert_array_equal(table.getcol(name), values, strict=True)
+        assert table.done()

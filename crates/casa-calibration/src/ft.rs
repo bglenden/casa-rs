@@ -38,7 +38,7 @@ use casa_tables::TableWriteLock;
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, Axis, IxDyn};
 
-use crate::model_columns::{ScratchDestination, scratch_write_plan};
+use crate::model_columns::{ScratchDestination, observed_column, scratch_write_plan};
 use crate::solve::grouping::VisibilityModels;
 
 const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
@@ -126,6 +126,7 @@ pub(crate) fn write_model_scratch(
         ms,
         selected.row_indices().collect(),
         &[MODEL],
+        observed_column(ms),
         false,
         clear_virtual,
         lock,

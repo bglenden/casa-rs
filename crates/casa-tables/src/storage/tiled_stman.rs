@@ -7916,9 +7916,7 @@ fn save_single_column_tiled_shape_stman(
         file_offset: 0,
     }];
     let mut all_files = Vec::new();
-    let mut row_map_vec = Vec::new();
-    let mut cube_map_vec = Vec::new();
-    let mut pos_map_vec = Vec::new();
+    let mut row_locations = Vec::new();
 
     let nrdim = if col_desc.nrdim > 0 {
         (col_desc.nrdim + 1) as u32
@@ -8075,47 +8073,11 @@ fn save_single_column_tiled_shape_stman(
         });
 
         for (pos_in_cube, &row_idx) in group_rows.iter().enumerate() {
-            row_map_vec.push(row_idx as u32);
-            cube_map_vec.push(cube_idx as u32);
-            pos_map_vec.push(pos_in_cube as u32);
+            row_locations.push((row_idx as u32, cube_idx as u32, pos_in_cube as u32));
         }
     }
 
-    {
-        let mut indices: Vec<usize> = (0..row_map_vec.len()).collect();
-        indices.sort_by_key(|&idx| row_map_vec[idx]);
-        let sorted_row: Vec<u32> = indices.iter().map(|&idx| row_map_vec[idx]).collect();
-        let sorted_cube: Vec<u32> = indices.iter().map(|&idx| cube_map_vec[idx]).collect();
-        let sorted_pos: Vec<u32> = indices.iter().map(|&idx| pos_map_vec[idx]).collect();
-        row_map_vec = sorted_row;
-        cube_map_vec = sorted_cube;
-        pos_map_vec = sorted_pos;
-    }
-
-    {
-        let mut merged_row = Vec::new();
-        let mut merged_cube = Vec::new();
-        let mut merged_pos = Vec::new();
-        for idx in 0..row_map_vec.len() {
-            if !merged_row.is_empty() {
-                let last = merged_row.len() - 1;
-                if merged_cube[last] == cube_map_vec[idx]
-                    && merged_row[last] + 1 == row_map_vec[idx]
-                    && merged_pos[last] + 1 == pos_map_vec[idx]
-                {
-                    merged_row[last] = row_map_vec[idx];
-                    merged_pos[last] = pos_map_vec[idx];
-                    continue;
-                }
-            }
-            merged_row.push(row_map_vec[idx]);
-            merged_cube.push(cube_map_vec[idx]);
-            merged_pos.push(pos_map_vec[idx]);
-        }
-        row_map_vec = merged_row;
-        cube_map_vec = merged_cube;
-        pos_map_vec = merged_pos;
-    }
+    let (row_map_vec, cube_map_vec, pos_map_vec) = shape_row_intervals(&mut row_locations);
     if let Some(profiler) = profiler.as_mut() {
         profiler.mark_with_detail("row_map", Some(format!("intervals={}", row_map_vec.len())));
     }
@@ -8156,6 +8118,39 @@ fn save_single_column_tiled_shape_stman(
     }
 
     Ok(())
+}
+
+/// Each entry covers all rows from the previous endpoint through this one.
+/// Casacore represents a gap before a defined cell with an interval in cube 0.
+/// Rows after the final endpoint are implicitly undefined.
+fn shape_row_intervals(locations: &mut [(u32, u32, u32)]) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    locations.sort_unstable_by_key(|&(row, _, _)| row);
+    let mut rows = Vec::new();
+    let mut cubes = Vec::new();
+    let mut positions = Vec::<u32>::new();
+    let mut next_row = 0u64;
+    for &(row, cube, position) in locations.iter() {
+        if u64::from(row) > next_row {
+            rows.push(row - 1);
+            cubes.push(0);
+            positions.push(0);
+        }
+        if u64::from(row) == next_row
+            && cubes.last() == Some(&cube)
+            && positions
+                .last()
+                .is_some_and(|&last| last.checked_add(1) == Some(position))
+        {
+            *rows.last_mut().expect("interval row endpoint") = row;
+            *positions.last_mut().expect("interval cube endpoint") = position;
+        } else {
+            rows.push(row);
+            cubes.push(cube);
+            positions.push(position);
+        }
+        next_row = u64::from(row) + 1;
+    }
+    (rows, cubes, positions)
 }
 
 /// Compute the shared byte-aware default tile for a tiled column.
@@ -8505,9 +8500,7 @@ fn save_tiled_shape_stman(
         file_offset: 0,
     }];
     let mut all_files = Vec::new();
-    let mut row_map_vec = Vec::new();
-    let mut cube_map_vec = Vec::new();
-    let mut pos_map_vec = Vec::new();
+    let mut row_locations = Vec::new();
 
     let nrdim = if col_descs[0].nrdim > 0 {
         (col_descs[0].nrdim + 1) as u32
@@ -8636,51 +8629,11 @@ fn save_tiled_shape_stman(
 
         // Build row map entries — one per row for now; merged and sorted below.
         for (pos_in_cube, &row_idx) in group_rows.iter().enumerate() {
-            row_map_vec.push(row_idx as u32);
-            cube_map_vec.push(cube_idx as u32);
-            pos_map_vec.push(pos_in_cube as u32);
+            row_locations.push((row_idx as u32, cube_idx as u32, pos_in_cube as u32));
         }
     }
 
-    // Sort entries by row number (C++ binary search requires sorted order).
-    {
-        let mut indices: Vec<usize> = (0..row_map_vec.len()).collect();
-        indices.sort_by_key(|&i| row_map_vec[i]);
-        let sorted_row: Vec<u32> = indices.iter().map(|&i| row_map_vec[i]).collect();
-        let sorted_cube: Vec<u32> = indices.iter().map(|&i| cube_map_vec[i]).collect();
-        let sorted_pos: Vec<u32> = indices.iter().map(|&i| pos_map_vec[i]).collect();
-        row_map_vec = sorted_row;
-        cube_map_vec = sorted_cube;
-        pos_map_vec = sorted_pos;
-    }
-
-    // Merge adjacent intervals: same cube, contiguous rows and positions.
-    // C++ format: rowMap[i] = last row, posMap[i] = last position in cube.
-    {
-        let mut merged_row = Vec::new();
-        let mut merged_cube = Vec::new();
-        let mut merged_pos = Vec::new();
-        for i in 0..row_map_vec.len() {
-            if !merged_row.is_empty() {
-                let last = merged_row.len() - 1;
-                if merged_cube[last] == cube_map_vec[i]
-                    && merged_row[last] + 1 == row_map_vec[i]
-                    && merged_pos[last] + 1 == pos_map_vec[i]
-                {
-                    // Extend: update to last row/pos of interval.
-                    merged_row[last] = row_map_vec[i];
-                    merged_pos[last] = pos_map_vec[i];
-                    continue;
-                }
-            }
-            merged_row.push(row_map_vec[i]);
-            merged_cube.push(cube_map_vec[i]);
-            merged_pos.push(pos_map_vec[i]);
-        }
-        row_map_vec = merged_row;
-        cube_map_vec = merged_cube;
-        pos_map_vec = merged_pos;
-    }
+    let (row_map_vec, cube_map_vec, pos_map_vec) = shape_row_intervals(&mut row_locations);
     if let Some(profiler) = profiler.as_mut() {
         profiler.mark_with_detail("row_map", Some(format!("intervals={}", row_map_vec.len())));
     }
@@ -12995,6 +12948,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn shape_row_intervals_exclude_undefined_cells_before_and_between_cubes() {
+        let mut locations = [(6, 2, 0), (2, 1, 1), (5, 1, 2), (1, 1, 0)];
+        assert_eq!(
+            shape_row_intervals(&mut locations),
+            (
+                vec![0, 2, 4, 5, 6],
+                vec![0, 1, 0, 1, 2],
+                vec![0, 1, 0, 2, 0]
+            ),
+        );
     }
 
     #[test]

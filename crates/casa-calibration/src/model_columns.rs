@@ -3,7 +3,7 @@
 
 mod compression;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 
 use casa_ms::schema::main_table::{
@@ -18,7 +18,7 @@ use casa_ms::write_session::{
 };
 use casa_ms::{MeasurementSet, MsError, MsResult, MsSelection};
 use casa_tables::TableWriteLock;
-use casa_types::{ArrayValue, Complex32};
+use casa_types::{ArrayValue, Complex32, PrimitiveType};
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
 use crate::session::resolve_casa_calibration_selection;
@@ -252,36 +252,86 @@ fn reset(
     clear_virtual: bool,
     mut lock: TableWriteLock,
 ) -> MsResult<TableWriteLock> {
-    reset_holding(ms, selected, columns, create, clear_virtual, &mut lock)?;
+    let observed = observed_column(ms);
+    reset_holding(
+        ms,
+        selected,
+        columns,
+        observed,
+        create,
+        clear_virtual,
+        &mut lock,
+    )?;
     Ok(lock)
 }
 
-/// Initialize scratch data needed by the legacy Hanning tool when corrected
-/// samples are absent. Preserve existing model samples.
+/// Initialize missing Hanning scratch columns for the physical rows in the
+/// current attachment. Existing model samples are preserved.
 ///
 /// # Errors
 /// The caller's MAIN lock is stale, or a required column cannot be filled.
 pub fn initialize_hanning_scratch_holding(
     ms: &mut MeasurementSet,
+    rows: &[usize],
+    observed: &str,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
-    check_main_lock(ms, lock)?;
-    if has_column(ms, CORRECTED) {
+    if !ms.path().is_some_and(|path| lock.matches_table_path(path)) {
+        return Err(invalid(
+            "the Hanning write lock does not protect physical MAIN",
+        ));
+    }
+    if rows.is_empty() || has_column(ms, CORRECTED) {
         return Ok(());
     }
-    let missing = if has_column(ms, MODEL) {
-        &[CORRECTED][..]
-    } else {
-        &[CORRECTED, MODEL][..]
-    };
-    let all = resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
-    reset_holding(ms, all, missing, true, false, lock)
+    let whole_table = rows.iter().copied().eq(0..ms.row_count());
+    if whole_table && can_clone_tiled_observed(ms, observed) {
+        scratch_columns::prepare_write_holding(ms, CORRECTED, true, lock)?;
+        add_scratch_schema(ms, CORRECTED, observed)?;
+        lock.record_write();
+        ms.main_table_mut().prepare_write().add_tiled_column_clone(
+            observed,
+            CORRECTED.name(),
+            "TiledCORRECTED_DATA",
+        )?;
+    }
+    let missing = [CORRECTED, MODEL]
+        .into_iter()
+        .filter(|&col| !has_column(ms, col))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut selection =
+        resolve_casa_calibration_selection(ms, &MsSelection::default()).map_err(invalid)?;
+    if !whole_table {
+        let selected: HashSet<_> = rows.iter().copied().collect();
+        selection
+            .selected_rows
+            .retain(|row| selected.contains(&row.row_index));
+    }
+    reset_holding(ms, selection, &missing, observed, true, false, lock)
+}
+
+fn can_clone_tiled_observed(ms: &MeasurementSet, observed: &str) -> bool {
+    let table = ms.main_table();
+    table.schema().is_some_and(|schema| {
+        schema.column(observed).and_then(|col| col.data_type()) == Some(PrimitiveType::Complex32)
+            && !schema
+                .columns()
+                .iter()
+                .any(|col| table.is_virtual_column(col.name()))
+    }) && table
+        .data_manager_info()
+        .iter()
+        .any(|manager| manager.dm_type == "TiledShapeStMan" && manager.columns == [observed])
 }
 
 fn reset_holding(
     ms: &mut MeasurementSet,
     selected: ResolvedMsSelection,
     columns: &[VisibilityDataColumn],
+    observed: &str,
     create: bool,
     clear_virtual: bool,
     lock: &mut TableWriteLock,
@@ -290,6 +340,7 @@ fn reset_holding(
         ms,
         selected.row_indices().collect(),
         columns,
+        observed,
         create,
         clear_virtual,
         lock,
@@ -312,7 +363,8 @@ fn reset_holding(
         invalid,
         |session, ms| {
             for rows in selected.selected_rows.chunks(batch_rows) {
-                let batch = reset_batch(ms, rows, &destinations, &ranges, &polarizations)?;
+                let batch =
+                    reset_batch(ms, observed, rows, &destinations, &ranges, &polarizations)?;
                 session.write_mutation_batch(ms, batch).map_err(invalid)?;
             }
             Ok(())
@@ -325,6 +377,7 @@ pub(crate) fn scratch_write_plan(
     ms: &mut MeasurementSet,
     row_indices: Vec<usize>,
     columns: &[VisibilityDataColumn],
+    observed: &str,
     create: bool,
     clear_virtual: bool,
     lock: &mut TableWriteLock,
@@ -341,22 +394,7 @@ pub(crate) fn scratch_write_plan(
             scratch_columns::prepare_write_holding(ms, column, true, lock)?;
         }
         for &column in columns {
-            let keyword = (column == CORRECTED)
-                .then(|| ms.main_table().column_keywords(observed_column(ms)))
-                .flatten()
-                .cloned();
-            let schema =
-                casa_ms::column_def::build_table_schema(&[*column.optional_column().column_def()])
-                    .map_err(invalid)?;
-            let definition = schema
-                .column(column.name())
-                .expect("scratch column schema")
-                .clone();
-            ms.main_table_mut().add_column(definition, None)?;
-            if let Some(keyword) = keyword {
-                ms.main_table_mut()
-                    .set_column_keywords(column.name(), keyword);
-            }
+            add_scratch_schema(ms, column, observed)?;
         }
     }
     let sizes = maximum_visibility_cell_elements(ms).map_err(invalid)?;
@@ -369,6 +407,29 @@ pub(crate) fn scratch_write_plan(
         MeasurementSetWritePlan::selected_row_mutation(row_indices, write_columns, resources)
             .map_err(invalid)?;
     Ok((plan, destinations))
+}
+
+fn add_scratch_schema(
+    ms: &mut MeasurementSet,
+    column: VisibilityDataColumn,
+    observed: &str,
+) -> MsResult<()> {
+    let keyword = (column == CORRECTED)
+        .then(|| ms.main_table().column_keywords(observed))
+        .flatten()
+        .cloned();
+    let schema = casa_ms::column_def::build_table_schema(&[*column.optional_column().column_def()])
+        .map_err(invalid)?;
+    let definition = schema
+        .column(column.name())
+        .expect("scratch column schema")
+        .clone();
+    ms.main_table_mut().add_column(definition, None)?;
+    if let Some(keyword) = keyword {
+        ms.main_table_mut()
+            .set_column_keywords(column.name(), keyword);
+    }
+    Ok(())
 }
 
 fn model_polarizations(ms: &MeasurementSet) -> MsResult<BTreeMap<i32, Vec<Complex32>>> {
@@ -387,6 +448,7 @@ fn model_polarizations(ms: &MeasurementSet) -> MsResult<BTreeMap<i32, Vec<Comple
 
 fn reset_batch(
     ms: &MeasurementSet,
+    observed: &str,
     rows: &[ResolvedMsSelectionRow],
     columns: &[ScratchDestination],
     ranges: &BTreeMap<i32, Range<usize>>,
@@ -394,7 +456,7 @@ fn reset_batch(
 ) -> MsResult<MeasurementSetMutationBatch> {
     let row_indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
     let main = ms.main_table();
-    let data = main.column_accessor(observed_column(ms))?;
+    let data = main.column_accessor(observed)?;
     let shapes = data.array_shapes_uncached(&row_indices)?;
     let mut data = columns
         .iter()

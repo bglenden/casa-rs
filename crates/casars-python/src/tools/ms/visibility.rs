@@ -553,6 +553,11 @@ impl AttachedMs {
             names.push(observed);
         }
         let targets = main.write_targets(&rows, &names)?;
+        let spectrum_anchor = if spectral {
+            main.write_targets(&rows[..1], &["WEIGHT_SPECTRUM"])?.pop()
+        } else {
+            None
+        };
         let mut temporary = BTreeMap::new();
         let mut written = BTreeSet::new();
         for target in &targets {
@@ -565,6 +570,18 @@ impl AttachedMs {
         }
         link.verify_directory().map_err(runtime_error)?;
         main.verify_write_layout(&BTreeSet::new())?;
+        let use_spectrum = if let Some(anchor) = spectrum_anchor {
+            let row = *anchor.rows.first_key_value().expect("one anchor row").0;
+            let source = Table::open(TableOptions::new(anchor.path)).map_err(runtime_error)?;
+            source
+                .column_accessor(&anchor.names[0])
+                .and_then(|column| column.array_shapes_uncached(&[row]))
+                .map_err(runtime_error)?[0]
+                .as_ref()
+                .is_some_and(|shape| !shape.is_empty() && !shape.contains(&0))
+        } else {
+            false
+        };
         let current =
             |layout: &VisibilityMain| layout.verify_write_layout(&BTreeSet::new()).is_ok();
         let modern = self
@@ -597,9 +614,15 @@ impl AttachedMs {
                 .or_else(|| temporary.get_mut(&target.path))
                 .expect("physical MAIN write lock was acquired");
             let mut ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
+            let rows = target.rows.into_keys().collect::<Vec<_>>();
             if create_corrected {
-                casa_calibration::initialize_hanning_scratch_holding(&mut ms, lock)
-                    .map_err(runtime_error)?;
+                casa_calibration::initialize_hanning_scratch_holding(
+                    &mut ms,
+                    &rows,
+                    &target.names[visibility_index],
+                    lock,
+                )
+                .map_err(runtime_error)?;
             }
             let visibilities = if create_corrected {
                 vec!["CORRECTED_DATA"]
@@ -613,9 +636,8 @@ impl AttachedMs {
                 visibilities: &visibilities,
                 flag: &target.names[0],
                 weight: &target.names[1],
-                spectrum: spectral.then(|| target.names[2].as_str()),
+                spectrum: use_spectrum.then(|| target.names[2].as_str()),
             };
-            let rows = target.rows.into_keys().collect::<Vec<_>>();
             smooth_ms_hanning(&mut ms, &rows, columns, lock).map_err(runtime_error)?;
         }
         self.refresh_written_readers(&main, &written, [modern, legacy, vi1, grid])?;
