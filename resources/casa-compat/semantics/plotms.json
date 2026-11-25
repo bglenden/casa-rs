@@ -3033,11 +3033,11 @@
     "ms-antenna-horizontal-axes": {
       "kind": "Paired raw antenna horizontal coordinates",
       "state": "passed",
-      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Selected Channel versus antenna azimuth, elevation and feed parallactic angle on the reversed two-field MeasurementSet. Two selected baselines use three channels, including one flagged on both baselines. The parallactic-angle plots test a nonzero first receptor, a right beam-waveguide mount and dual-correlation selection.",
-      "result": "Four TXT exports match 720 ordered coordinates and associated channel, baseline, and correlation identities. Each buffer exports all five antenna positions on the selected channels. Antenna parallactic angle includes the feed-zero receptor angle and retains signed values. The antenna elevation PNG matches 180 coordinates, labels and units at 500 by 360 pixels. MAIN cells, ANTENNA positions and mounts, and FEED receptor angles are unchanged.",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Selected Channel versus antenna azimuth, elevation and feed parallactic angle on the reversed two-field MeasurementSet. Two selected baselines use three channels, including one flagged on both baselines. The parallactic-angle plots test a nonzero first receptor, a right beam-waveguide mount and dual-correlation selection. The feed parallactic angle cases use CASA's ant-parang and ant-parallacticangle aliases.",
+      "result": "Four TXT exports match 720 ordered coordinates and associated channel, baseline, and correlation identities. Each buffer exports all five antenna positions on the selected channels. Antenna parallactic angle includes the feed-zero receptor angle and retains signed values. The antenna elevation PNG matches 180 coordinates, labels and units at 500 by 360 pixels. MAIN cells, ANTENNA positions and mounts, and FEED receptor angles are unchanged. On the separate same-timestamp fixture, all 30 joint native elevation points match the separate CASA selections. CASA's joint plot reuses first-field coordinates, as described in the CASA bugs reference.",
       "casa_version": "6.7.6.14",
-      "revision": "66196b4f9e76e81933883b95e869f7774eaa78f0",
-      "source_revision": "66196b4f9e76e81933883b95e869f7774eaa78f0",
+      "revision": "979cc3cc94892a80950ab57e0e26350b59d1b7e5",
+      "source_revision": "979cc3cc94892a80950ab57e0e26350b59d1b7e5",
       "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only antenna-horizontal-axes --work <new-dir> --native-bin <msexplore>",
       "receipt": "resources/casa-compat/evidence/plotms-ms-antenna-horizontal-20261124.json",
       "links": [

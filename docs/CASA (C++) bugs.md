@@ -4752,6 +4752,23 @@ every window, and states no receptors where it has neither. Where `FEED`'s
 rows are all -1 or all name windows, which is how CASA's simulator, ALMA
 and casa-rs's MSv2 writer write it, the receptors are the same.
 
+## PlotMS reuses antenna angles when fields share a timestamp
+
+- Date noted: 2026-11-24
+- Status: casa-rs evaluates each buffer at its selected field's phase centre (#1032)
+- Affected code: CASA `VisibilityIteratorImpl2::configureNewChunk`,
+  `azel` and `feed_pa`, called by the PlotMS MeasurementSet cache
+
+CASA 6.7.6.14 with casaplotms 2.9.1 keys the antenna azimuth, elevation
+and feed parallactic angle caches only by time. Two consecutive field
+buffers with the same timestamp reuse the first field's coordinates when
+both are selected. For Channel/Ant-Elevation, CASA's separate plots give
+82.98457° and 75.14170° for the first antenna, while the joint plot shows
+82.98457° for both fields. The casa-rs joint plot agrees with the separate
+CASA selections for all 30 plotted points and their identities
+(`plotms_ms_metadata_axes_oracle.py --only antenna-horizontal-same-epoch`).
+The same joint-cache issue was observed for Ant-Azimuth and Ant-ParAngle.
+
 ## `spw` "no match" warnings refuse the expression
 
 - Date noted: 2026-11-02
