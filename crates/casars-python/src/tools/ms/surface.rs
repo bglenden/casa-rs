@@ -443,7 +443,7 @@ const METHODS: &[Method] = &[
             param("blocksize", K::Int, Int(10)),
         ],
         R::Record,
-        Status::Partial,
+        Yes,
     ),
     method(
         "regridspw",
