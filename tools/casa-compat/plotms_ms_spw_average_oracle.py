@@ -768,25 +768,69 @@ def compare_ordinate_list_spans(root, native, options, source):
 
 
 def compare_ordinate_list_uvw(root, native, options, vis):
-    from casars.tasks import TaskParameterError
+    from plotms_callibrary_oracle import snapshot, verify_source
 
     controls = options | dict(vis=str(vis), xaxis="u", avgtime="20")
+    before = snapshot(vis)
     expected = export(root, "spw-list-u.casa", reference, controls)
     assert len(rows(expected)) == 3
-    output = root / "spw-list-u.native.txt"
-    try:
-        native(**controls, plotfile=str(output), expformat="txt")
-    except TaskParameterError as error:
-        assert "#1032" in str(error), error
-    else:
-        raise AssertionError("PlotMS accepted pending SPW averaging against a U abscissa")
-    assert not output.exists()
+    assert compare_text(export(root, "spw-list-u.native", native, controls), expected) == 3
 
     ordinary_time = controls | dict(avgspw=False)
     expected = export(root, "time-list-u.casa", reference, ordinary_time)
     actual = export(root, "time-list-u.native", native, ordinary_time)
     assert compare_text(actual, expected) == 6
-    print("uvw-spw-ordinates: pending SPW U guard and six ordinary time U coordinates verified", flush=True)
+    verify_source(vis, before)
+    print("uvw-spw-ordinates: three combined and six ordinary time coordinates matched", flush=True)
+
+    equal = root / "equal-uvw-windows.ms"
+    heavier = root / "weighted-uvw-windows.ms"
+    flagged = root / "flagged-uvw-window.ms"
+    copy_ms(vis, equal)
+    with opened(equal, True) as table:
+        windows = table.getcol("DATA_DESC_ID")
+        times = table.getcol("TIME")
+        later = np.empty_like(times, dtype=bool)
+        for window in (0, 1):
+            local = windows == window
+            later[local] = times[local] > times[local].min()
+        uvw = np.zeros_like(table.getcol("UVW"))
+        uvw[0] = np.where(windows == 0, 1 + 2 * later, 10 + 20 * later)
+        table.putcol("UVW", uvw)
+        weights = table.getcol("WEIGHT")
+        weights[:] = np.where(later, 3, 1)
+        table.putcol("WEIGHT", weights)
+    copy_ms(equal, heavier)
+    with opened(heavier, True) as table:
+        weights = table.getcol("WEIGHT")
+        weights[:, windows == 1] *= 10
+        table.putcol("WEIGHT", weights)
+    copy_ms(heavier, flagged)
+    with opened(flagged, True) as table:
+        flags = table.getcol("FLAG")
+        flags[:, :, windows == 1] = True
+        table.putcol("FLAG", flags)
+
+    for name, source, changes, u_metres in (
+        ("equal-spw-u", equal, {}, 13.75),
+        ("weighted-spw-u", heavier, {}, 22.9545),
+        ("reordered-spw-u", heavier, dict(spw="1:1,0:1"), 22.9545),
+        ("flagged-spw-u", flagged, {}, 18.4091),
+    ):
+        before = snapshot(source)
+        request = controls | dict(vis=str(source)) | changes
+        expected = export(root, f"{name}.casa", reference, request)
+        actual = export(root, f"{name}.native", native, request)
+        selected = rows(expected)
+        assert compare_text(actual, expected) == 3
+        assert {row[11] for row in selected} == {"0"}
+        np.testing.assert_allclose(coordinates(selected)[:, 0], u_metres, rtol=1.2e-5)
+        verify_source(source, before)
+        with opened(source) as table:
+            np.testing.assert_array_equal(table.getcol("UVW"), uvw)
+        print(f"{name}: three matching coordinates at U={u_metres} m", flush=True)
+    compare_sides(root, native, controls | dict(vis=str(heavier)), expected_x="U (m)",
+                  expected_right="Imag:corrected", name="weighted-spw-u")
 
 
 def virtual_spw_models(root, name, *, spectral_index=0, stokes_q=0, integrations=2):
