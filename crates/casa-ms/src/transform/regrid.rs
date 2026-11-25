@@ -2,6 +2,7 @@
 //! Plan the reference spectral grid, and project each visibility buffer onto it.
 
 mod axis;
+pub use axis::LegacySpectralGrid;
 mod interpolate;
 mod partition;
 mod shift;
@@ -77,7 +78,7 @@ const MIN_SOURCE_VELOCITY_M_PER_S: f64 = 1e-6;
 impl Plan {
     pub(super) fn new(
         input: &MeasurementSet,
-        options: &MsRegridOptions,
+        (options, legacy): (&MsRegridOptions, Option<LegacySpectralGrid>),
         combined: Option<&mut combine::Grid>,
         channel_selection: &BTreeMap<i32, TransformChannelSelection>,
         channel_bins: &mut BTreeMap<i32, Vec<Vec<usize>>>,
@@ -111,7 +112,7 @@ impl Plan {
                 .map(|channel| channel.width)
                 .collect::<Vec<_>>();
             let window = Window::new(
-                options,
+                (options, legacy),
                 method,
                 (&centres, &widths, source),
                 &mut grid.bins,
@@ -144,7 +145,7 @@ impl Plan {
                     }
                 }
                 let window = Window::new(
-                    options,
+                    (options, legacy),
                     method,
                     (&centres, &widths, source),
                     bins,
@@ -373,7 +374,7 @@ impl GridBudget {
 
 impl Window {
     fn new(
-        options: &MsRegridOptions,
+        (options, legacy): (&MsRegridOptions, Option<LegacySpectralGrid>),
         method: Method,
         (source_frequencies, source_widths, frame): (&[f64], &[f64], FrequencyRef),
         bins: &mut Vec<Vec<usize>>,
@@ -381,7 +382,7 @@ impl Window {
         budget: &mut GridBudget,
     ) -> Result<Self, MsTransformError> {
         let needs_weight_scaling =
-            conversion.is_some_and(|target| frame != target.target_reference);
+            legacy.is_some() || conversion.is_some_and(|target| frame != target.target_reference);
         let converted_frame = conversion
             .map(|target| target.prepare(frame, &target.target))
             .transpose()?;
@@ -416,7 +417,20 @@ impl Window {
             })
             .collect::<Vec<_>>();
         let maximum_channels = budget.maximum_output_channels(frequencies.len())?;
-        let axis = axis::output_axis(options, &converted, &converted_widths, maximum_channels)?;
+        let axis = match legacy {
+            Some(LegacySpectralGrid::CenteredChannels {
+                centre,
+                bandwidth,
+                channel_width,
+            }) => axis::centered_channel_bounds(
+                &converted,
+                &converted_widths,
+                centre,
+                bandwidth,
+                channel_width,
+            )?,
+            _ => axis::output_axis(options, &converted, &converted_widths, maximum_channels)?,
+        };
         let count = axis.centres_hz.len();
         budget.charge(frequencies.len(), count)?;
         let mut noise_scale = if needs_weight_scaling {
@@ -431,7 +445,12 @@ impl Window {
         let pre_bin = (ratio + 0.001).floor() as usize;
         let mut sample_grid = axis.centres_hz.clone();
         let mut channel_map = None;
-        if bins.iter().all(|bin| bin.len() == 1) && pre_bin >= 2 && pre_bin <= frequencies.len() / 2
+        // SubMS writes interpolation at the output centres directly. The
+        // fine intermediate grid is specific to the mstransform iterator.
+        if legacy.is_none()
+            && bins.iter().all(|bin| bin.len() == 1)
+            && pre_bin >= 2
+            && pre_bin <= frequencies.len() / 2
         {
             if options.preaverage {
                 let selected = bins.iter().flatten().copied().collect::<Vec<_>>();
@@ -754,6 +773,25 @@ impl Projection<'_> {
                 "Unexpected regridded visibility type.".into(),
             )),
         }
+    }
+
+    pub(super) fn scale_noise(
+        &self,
+        values: &mut ArrayValue,
+        sigma: bool,
+    ) -> Result<(), TableError> {
+        let ArrayValue::Float32(values) = values else {
+            return Err(TableError::Schema(
+                "Spectral weights and sigma must be Float32.".into(),
+            ));
+        };
+        let scale = if sigma {
+            self.noise_scale.sqrt().recip()
+        } else {
+            self.noise_scale
+        };
+        values.mapv_inplace(|value| value * scale);
+        Ok(())
     }
 
     pub(super) fn statistics(

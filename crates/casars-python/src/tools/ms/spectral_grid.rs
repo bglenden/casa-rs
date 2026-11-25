@@ -264,7 +264,7 @@ fn grid_direction(
     })
 }
 
-fn axis_argument(mode: &str, value: Option<Variant>) -> String {
+pub(super) fn axis_argument(mode: &str, value: Option<Variant>) -> String {
     let Some(value) = value.filter(|value| !value.is_empty_sequence()) else {
         return String::new();
     };

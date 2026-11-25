@@ -81,8 +81,8 @@ use correlation_metadata::{CorrelationSelection, select_visibility_axes};
 pub use input_view::{PreparedTransformInputView, TransformInputColumns, TransformInputView};
 use main_arrays::MainArrayBlock;
 pub use regrid::{
-    ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow, tool_channel_frequencies,
-    tool_grid_frame_at_epoch, tool_grid_reference_epoch,
+    LegacySpectralGrid, ToolGridFrameTables, ToolGridPhaseCentre, ToolSpectralWindow,
+    tool_channel_frequencies, tool_grid_frame_at_epoch, tool_grid_reference_epoch,
 };
 pub(crate) use selection_metadata::selected_plotms_integration_order;
 use single_dish_polarization::PolarizationProjection;
@@ -197,6 +197,8 @@ pub enum LegacyMsTool {
     Partition(LegacyTimeOptions),
     /// Compact subtable IDs while keeping partial channel bins.
     Split(LegacyTimeOptions),
+    /// Preserve the spectral calculation and layout of the legacy regrid tools.
+    Regrid(LegacySpectralGrid),
 }
 
 /// Additional chunk boundaries used by the legacy MeasurementSet tools.
@@ -679,7 +681,11 @@ fn mstransform_staged(
     };
     let legacy_time = match options.legacy_tool {
         Some(LegacyMsTool::Partition(time) | LegacyMsTool::Split(time)) => Some(time),
-        None => None,
+        _ => None,
+    };
+    let legacy_grid = match options.legacy_tool {
+        Some(LegacyMsTool::Regrid(grid)) => Some(grid),
+        _ => None,
     };
     let legacy = legacy_time.is_some();
     let splitting = matches!(options.legacy_tool, Some(LegacyMsTool::Split(_)));
@@ -945,7 +951,7 @@ fn mstransform_staged(
         .map(|options| {
             regrid::Plan::new(
                 &input,
-                options,
+                (options, legacy_grid),
                 combined_grid.as_mut(),
                 &channel_selection,
                 &mut channel_bins,
@@ -1148,6 +1154,8 @@ fn mstransform_staged(
         );
     let mut spectra = if legacy {
         SpectrumProjection::partition(input.main_table(), first_selected_row, averaging_time)
+    } else if legacy_grid.is_some() {
+        Ok(SpectrumProjection::existing(input.main_table()))
     } else {
         SpectrumProjection::resolve(
             input.main_table(),
@@ -1849,7 +1857,10 @@ fn mstransform_staged(
             } else {
                 transform_flag_channels(flags.clone(), bins).map_err(mutation_error)?
             };
-            let hanning_noise = if let (true, Some(noise)) = (hanning, noise.as_ref()) {
+            let hanning_noise = if hanning && legacy_grid.is_some() {
+                hanning::flag(&mut transformed_flags);
+                None
+            } else if let (true, Some(noise)) = (hanning, noise.as_ref()) {
                 let statistics = hanning::statistics(
                     noise,
                     spectra_cells,
@@ -1871,7 +1882,14 @@ fn mstransform_staged(
                 .transpose()
                 .map_err(mutation_error)?
                 .flatten();
-            let combined_noise = if let Some(regrid) = &regrid {
+            let combined_noise = if let Some(regrid) = &regrid
+                && legacy_grid.is_some()
+            {
+                transformed_flags = regrid
+                    .apply(transformed_flags, None)
+                    .map_err(mutation_error)?;
+                None
+            } else if let Some(regrid) = &regrid {
                 let source_noise = if let Some(statistics) =
                     hanning_noise.or_else(|| averages.as_ref().map(ChannelAverages::statistics))
                 {
@@ -2210,7 +2228,16 @@ fn mstransform_staged(
             } else {
                 (weight, sigma, None)
             };
-            if continuum.is_some()
+            if let Some(regrid) = &regrid
+                && legacy_grid.is_some()
+            {
+                regrid
+                    .scale_noise(&mut weight, false)
+                    .map_err(mutation_error)?;
+                regrid
+                    .scale_noise(&mut sigma, true)
+                    .map_err(mutation_error)?;
+            } else if continuum.is_some()
                 && !task_average
                 && !convolving
                 && !hanning
@@ -2262,6 +2289,18 @@ fn mstransform_staged(
                 .map(legacy_split::ChannelAverages::weight_spectrum);
             for &name in &spectra.output {
                 let transformed = match name {
+                    _ if legacy_grid.is_some() => {
+                        let projector = regrid.as_ref().expect("legacy spectral rewrite grid");
+                        source_spectrum(name)
+                            .and_then(|index| row_spectra[index].take())
+                            .map(|value| {
+                                let mut output = projector.apply(value, fft_flags.as_ref())?;
+                                projector.scale_noise(&mut output, name == "SIGMA_SPECTRUM")?;
+                                Ok(output)
+                            })
+                            .transpose()
+                            .map_err(mutation_error)?
+                    }
                     "WEIGHT_SPECTRUM" if legacy_weight_spectrum.is_some() => {
                         legacy_weight_spectrum.take().flatten()
                     }
@@ -2878,6 +2917,23 @@ struct SpectrumProjection {
 }
 
 impl SpectrumProjection {
+    fn existing(table: &Table) -> Self {
+        let source = MAIN_SPECTRA
+            .into_iter()
+            .filter(|name| {
+                table
+                    .schema()
+                    .is_some_and(|schema| schema.contains_column(name))
+            })
+            .collect::<Vec<_>>();
+        Self {
+            output: source.clone(),
+            source,
+            propagate_weights: false,
+            fill_standard: false,
+        }
+    }
+
     fn partition(
         table: &Table,
         selected_row: usize,
@@ -2910,16 +2966,7 @@ impl SpectrumProjection {
                 .is_some_and(|schema| schema.contains_column(name))
         };
         if grammar != RowGrammar::Transform {
-            let source = MAIN_SPECTRA
-                .into_iter()
-                .filter(|&name| exists(name))
-                .collect::<Vec<_>>();
-            return Ok(Self {
-                output: source.clone(),
-                source,
-                propagate_weights: false,
-                fill_standard: false,
-            });
+            return Ok(Self::existing(table));
         }
         let defined = |row, name| -> Result<bool, TableError> {
             Ok(exists(name) && table.array_shape_uncached(row, name)?.is_some())
