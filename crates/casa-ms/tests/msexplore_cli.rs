@@ -814,6 +814,21 @@ fn msexplore_scan_iteration_payload_resolves_grid_and_scaling() {
 }
 
 #[test]
+fn msexplore_direct_plot_builder_does_not_use_legacy_averaging_for_geometry() {
+    let temp = tempdir().expect("tempdir");
+    let path = create_msexplore_averaging_fixture_ms(temp.path());
+    let ms = MeasurementSet::open(&path).expect("open fixture");
+    let mut spec = MsPlotSpec::from_preset(MsPlotPreset::AmplitudeVsTime);
+    spec.averaging.avgtime = Some(20.0);
+    for axis in [MsAxis::Interval, MsAxis::UWave] {
+        spec.x_axis = axis;
+        let error = build_msexplore_plot_payload(&ms, &MsSelection::default(), &spec)
+            .expect_err("time-averaged geometry requires the PlotMS iterator");
+        assert!(error.contains("with a callibrary or direct msexplore are pending"));
+    }
+}
+
+#[test]
 fn msexplore_dual_y_payload_tracks_secondary_axis_and_style_flags() {
     let temp = tempdir().expect("tempdir");
     let ms_path = create_msexplore_fixture_ms(temp.path());
