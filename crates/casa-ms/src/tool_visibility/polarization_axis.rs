@@ -13,7 +13,7 @@ use crate::selection::ToolCorrelationSelection;
 use crate::{MeasurementSet, MsResult};
 
 mod conversion;
-use conversion::Conversion;
+pub(super) use conversion::Conversion;
 
 /// In-row selection of recorded correlation products or derived Stokes values.
 pub struct VisibilityPolarization {
@@ -29,6 +29,21 @@ enum Projection {
         plans: HashMap<i32, Conversion>,
         recorded: Option<RecordedCorrelations>,
     },
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum WritePolarization<'a> {
+    Stored(&'a [usize]),
+    Converted { count: usize, plan: &'a Conversion },
+}
+
+impl WritePolarization<'_> {
+    pub(super) fn count(self) -> usize {
+        match self {
+            Self::Stored(indices) => indices.len(),
+            Self::Converted { count, .. } => count,
+        }
+    }
 }
 
 impl VisibilityPolarization {
@@ -140,14 +155,33 @@ impl VisibilityPolarization {
         matches!(self.project, Projection::Converted { .. })
     }
 
-    pub(super) fn write_indices(&self, id: i32) -> MsResult<&[usize]> {
+    /// Whether a legacy stored selection needs a permutation or a subset of
+    /// three or more correlations. The legacy complex writer refuses those
+    /// projections because they cannot be represented by its column slice.
+    pub fn legacy_noncanonical_complex_write(&self, recorded_count: usize) -> bool {
         let Projection::Stored(plans) = &self.project else {
-            return Err(input("putdata cannot write derived polarization"));
+            return false;
         };
-        plans
-            .get(&id)
-            .map(|plan| plan.indices.as_slice())
-            .ok_or_else(|| missing_description(id))
+        plans.values().next().is_some_and(|plan| {
+            !plan.indices.is_sorted()
+                || (plan.indices.len() > 2 && plan.indices.len() != recorded_count)
+        })
+    }
+
+    pub(super) fn write_projection(&self, id: i32) -> MsResult<WritePolarization<'_>> {
+        match &self.project {
+            Projection::Stored(plans) => plans
+                .get(&id)
+                .map(|plan| WritePolarization::Stored(&plan.indices))
+                .ok_or_else(|| missing_description(id)),
+            Projection::Converted { types, plans, .. } => plans
+                .get(&id)
+                .map(|plan| WritePolarization::Converted {
+                    count: types.len(),
+                    plan,
+                })
+                .ok_or_else(|| missing_description(id)),
+        }
     }
 
     pub(super) fn types(&self, id: i32) -> MsResult<&[StokesType]> {

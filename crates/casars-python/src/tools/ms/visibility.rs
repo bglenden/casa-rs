@@ -19,7 +19,7 @@ use pyo3::types::{PyInt, PyList, PyListMethods, PyString};
 
 use super::attachment_info::{TableFiles, TableStamp};
 use super::iteration::VisibilityIteration;
-use super::metadata_link::{MetadataLink, MetadataSnapshot};
+use super::metadata_link::{MetadataLink, MetadataSnapshot, compose_rows};
 use super::owned_record::visibility_record;
 use super::subtable_queries::Subtables;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -102,6 +102,13 @@ impl VisibilityState {
             self.range_subtables = Subtables::default();
         }
         Ok(self.main.as_deref().expect("MAIN table was opened"))
+    }
+
+    pub(super) fn current_main(&mut self, path: &Path) -> PyResult<Arc<VisibilityMain>> {
+        self.main(path)?;
+        Ok(Arc::clone(
+            self.main.as_ref().expect("MAIN table was opened"),
+        ))
     }
 
     pub(super) fn range_for_rows(
@@ -195,7 +202,7 @@ impl VisibilityMain {
         Ok(())
     }
 
-    fn verify_write_layout(&self, written: &BTreeSet<PathBuf>) -> PyResult<()> {
+    pub(super) fn verify_write_layout(&self, written: &BTreeSet<PathBuf>) -> PyResult<()> {
         if self.publication.iter().all(|source| {
             source.files.same_descriptor(source.stamp)
                 || (!written.is_empty()
@@ -461,12 +468,7 @@ impl AttachedMs {
             layout.verify_write_layout(&BTreeSet::new())?;
             layout
         } else {
-            self.visibility.main(&self.path)?;
-            self.visibility
-                .main
-                .as_ref()
-                .expect("MAIN table was opened")
-                .clone()
+            self.visibility.current_main(&self.path)?
         };
         let rows = if let Some(iteration) = &self.visibility.iteration {
             iteration.cursor.rows().map_err(runtime_error)?.to_vec()
@@ -490,6 +492,14 @@ impl AttachedMs {
         } else {
             None
         };
+        let polarization = self
+            .visibility
+            .iteration
+            .as_ref()
+            .map_or(self.visibility.polarization.as_ref(), |iteration| {
+                iteration.polarization.as_ref()
+            })
+            .cloned();
         let options = tool_visibility::VisibilityWriteOptions {
             baseline_gap: layout.map(|(gap, _)| gap),
             sampled_baselines: layout.is_some_and(|(_, increment)| {
@@ -497,34 +507,87 @@ impl AttachedMs {
             }),
             recent_baseline_read: self.visibility.recent_baseline_read,
             baseline_pairs: baseline_pairs.as_deref(),
-            polarization: self
-                .visibility
-                .iteration
-                .as_ref()
-                .map_or(self.visibility.polarization.as_deref(), |iteration| {
-                    iteration.polarization.as_deref()
-                }),
+            polarization: polarization.as_deref(),
             iterator: self.visibility.iteration.is_some(),
         };
         let record = tool_visibility::VisibilityWriteRecord::new(&main.table, rows, items, options)
             .map_err(runtime_error)?;
-        let names = record.column_names().collect::<Vec<_>>();
-        if names.is_empty() {
+        if record.column_names().len() == 0 {
             return Ok(false);
         }
-        let targets = main.write_targets(record.rows(), &names)?;
         let refresh_cursor = self
             .visibility
             .iteration
             .as_ref()
             .is_some_and(|iteration| iteration.layout.is_some());
+        self.write_visibility_records(&link, &main, &[record], refresh_cursor)?;
+        Ok(true)
+    }
+
+    pub(super) fn put_legacy_data_rows(&mut self, items: RecordValue) -> PyResult<bool> {
+        if !self.prepare_legacy_filter()? {
+            return Ok(false);
+        }
+        let link = self.working_metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        let base = link.selected_rows().map_err(runtime_error)?;
+        let main = self.visibility.current_main(&self.path)?;
+        let rows = compose_rows(base.as_deref(), self.legacy_selection.rows()).map_or_else(
+            || (0..main.table.row_count()).collect(),
+            |rows| rows.into_owned(),
+        );
+        if rows.is_empty() {
+            return Ok(false);
+        }
+        let axes = &self.legacy_selection.axes;
+        let baseline = axes
+            .baseline_read
+            .as_ref()
+            .and_then(|read| read.write_grid(base.as_deref(), &self.legacy_selection));
+        let polarization = axes.polarization.clone();
+        let options = tool_visibility::LegacyVisibilityWriteOptions {
+            baseline,
+            channels: axes.channels,
+            polarization: polarization.as_deref(),
+            noncanonical_complex_polarization: axes.noncanonical_complex_polarization,
+        };
+        let Some(records) =
+            tool_visibility::VisibilityWriteRecord::new_legacy(&main.table, rows, items, options)
+                .map_err(runtime_error)?
+        else {
+            return Ok(false);
+        };
+        if !records.is_empty() {
+            self.write_visibility_records(&link, &main, &records, false)?;
+        }
+        Ok(true)
+    }
+
+    fn write_visibility_records(
+        &mut self,
+        link: &MetadataLink,
+        main: &VisibilityMain,
+        records: &[tool_visibility::VisibilityWriteRecord<'_>],
+        refresh_cursor: bool,
+    ) -> PyResult<()> {
+        let mut targets = Vec::new();
+        for record in records {
+            let names = record.column_names().collect::<Vec<_>>();
+            targets.extend(
+                main.write_targets(record.rows(), &names)?
+                    .into_iter()
+                    .map(|target| (record, target)),
+            );
+        }
         let mut written = BTreeSet::new();
         let mut temporary = BTreeMap::new();
-        for target in &targets {
-            if refresh_cursor {
+        let has_legacy_grid = self.legacy_selection.axes.baseline_read.is_some();
+        for (_, target) in &targets {
+            if refresh_cursor || has_legacy_grid {
                 written.insert(target.path.clone());
             }
-            if !self.write_locks.contains_key(&target.path) {
+            if !self.write_locks.contains_key(&target.path) && !temporary.contains_key(&target.path)
+            {
                 let lock =
                     TableWriteLock::acquire_to_reread(&target.path, 0).map_err(runtime_error)?;
                 temporary.insert(target.path.clone(), lock);
@@ -532,18 +595,24 @@ impl AttachedMs {
         }
         link.verify_directory().map_err(runtime_error)?;
         main.verify_write_layout(&BTreeSet::new())?;
+        let refresh_legacy_grid = self
+            .legacy_selection
+            .axes
+            .baseline_read
+            .as_ref()
+            .is_some_and(|read| read.has_current_descriptor());
         let prepared = targets
             .into_iter()
-            .map(|target| {
+            .map(|(record, target)| {
                 let ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
                 let part = record
                     .prepare_part(&ms, target.rows.into_iter().collect(), target.names)
                     .map_err(runtime_error)?;
-                Ok((target.path, ms, part))
+                Ok((record, target.path, ms, part))
             })
             .collect::<PyResult<Vec<_>>>()?;
         self.visibility.main = None;
-        for (path, mut ms, part) in prepared {
+        for (record, path, mut ms, part) in prepared {
             let lock = self
                 .write_locks
                 .get_mut(&path)
@@ -553,23 +622,25 @@ impl AttachedMs {
                 .write_part(&mut ms, lock, part)
                 .map_err(runtime_error)?;
         }
-        if let Some(iteration) = self
-            .visibility
-            .iteration
-            .as_mut()
-            .filter(|_| refresh_cursor)
-        {
+        if refresh_cursor || refresh_legacy_grid {
             // Refresh data read bindings and the stamps changed by our own
             // write without accepting a different saved view projection.
             main.verify_write_layout(&written)?;
-            let refreshed = VisibilityMain::open(&self.path)?;
+            let refreshed = Arc::new(VisibilityMain::open(&self.path)?);
             main.verify_write_layout(&written)?;
-            iteration.layout = Some(Arc::new(refreshed));
+            if refresh_cursor && let Some(iteration) = self.visibility.iteration.as_mut() {
+                iteration.layout = Some(Arc::clone(&refreshed));
+            }
+            if refresh_legacy_grid
+                && let Some(read) = self.legacy_selection.axes.baseline_read.as_mut()
+            {
+                read.refresh_descriptor(refreshed);
+            }
         }
         for (_, lock) in temporary {
             lock.release().map_err(runtime_error)?;
         }
-        Ok(true)
+        Ok(())
     }
 
     pub(super) fn visibility_range(&mut self, request: &ToolRangeRequest) -> PyResult<CasaValue> {

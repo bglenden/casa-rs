@@ -11480,6 +11480,38 @@ casa-rs rejects the sampled baseline-axis record before
 mutation. A fresh read with `increment=1` supplies a complete writable
 grid (#1030).
 
+## Legacy baseline writes can modify omitted rows and discard the first row
+
+Read a baseline-axis record with `ms.getdataold(..., ifraxis=True,
+increment=2)` and write it with `ms.putdataold()`. CASA 6.7.6.14 can
+write the first contiguous rows instead of the rows selected by the
+stride. Its baseline-axis FLAG_ROW, WEIGHT, and SIGMA writeback also
+skips the first row because the inverse mapping tests `row > 0`.
+On the stock fixture the first physical WEIGHT and SIGMA cells become
+zero even though the supplied baseline record contains nonzero values.
+Casa-rs writes only the occupied slots of the captured row projection,
+including physical row zero, and rejects a baseline record after that
+projection changes (#1030).
+
+## Legacy flag writes can abort on channel bins starting after channel zero
+
+In CASA 6.7.6.14, configure `ms.selectchannelold(2, 1, 2, 3)` and pass
+the resulting FLAG shape to `ms.putdataold()`. The legacy writer applies
+the starting channel a second time to an already sliced buffer and
+aborts. Casa-rs expands each bin into its selected physical channels
+once and keeps the channels between bins and outside the selection
+unchanged (#1030).
+
+## Legacy Float-data writes can swap recorded correlations
+
+On a MeasurementSet with recorded RR and LL, select `['LL', 'RR']` with
+`ms.selectpolarizationold()`. CASA 6.7.6.14 returns FLOAT_DATA in the
+requested order but writes an unchanged `getdataold('float_data')`
+record in the recorded order. This swaps the two physical correlation
+planes. Casa-rs writes each input plane to the recorded correlation
+named by the selected order, preserving the original cells on a round
+trip (#1030).
+
 ## Observed MS statistics take inverse squares of the stored weights
 
 For weighted observed `DATA` and `FLOAT_DATA` statistics, CASA 6.7.6.14's

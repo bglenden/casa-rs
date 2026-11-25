@@ -1,23 +1,31 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Channel, polarization, and visibility reads on the legacy selector view.
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
 use casa_coordinates::StokesType;
 use casa_ms::tool_visibility::{
-    LegacyVisibilityAxes, VisibilityChannels, VisibilityPolarization, VisibilityReadOptions,
+    LegacyVisibilityAxes, LegacyVisibilityWriteGrid, VisibilityChannels, VisibilityPolarization,
+    VisibilityReadOptions,
 };
 use pyo3::prelude::*;
 
 use super::legacy_selection::{LegacySelection, deprecation};
 use super::metadata_link::compose_rows;
-use super::visibility::{channel_argument, integer_argument, requested_strings, sampled_rows};
+use super::visibility::{
+    VisibilityMain, channel_argument, integer_argument, requested_strings, sampled_rows,
+};
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
 
 #[derive(Default)]
 pub(super) struct LegacyAxes {
-    channels: Option<VisibilityChannels>,
-    polarization: Option<VisibilityPolarization>,
+    pub(super) channels: Option<VisibilityChannels>,
+    pub(super) polarization: Option<Arc<VisibilityPolarization>>,
+    pub(super) noncanonical_complex_polarization: bool,
     labels: Option<Vec<String>>,
+    pub(super) baseline_read: Option<LegacyBaselineRead>,
 }
 
 impl LegacySelection {
@@ -25,13 +33,48 @@ impl LegacySelection {
         VisibilityReadOptions {
             baseline_pairs: self.baselines.as_deref(),
             channels: self.axes.channels,
-            polarization: self.axes.polarization.as_ref(),
+            polarization: self.axes.polarization.as_deref(),
             legacy_axes: Some(LegacyVisibilityAxes {
                 descriptions: self.descriptions(),
                 correlation_labels: self.axes.labels.as_deref(),
             }),
             ..VisibilityReadOptions::default()
         }
+    }
+}
+
+pub(super) struct LegacyBaselineRead {
+    main: Arc<VisibilityMain>,
+    working_rows: Option<Arc<[usize]>>,
+    selected_rows: Option<Arc<[usize]>>,
+    baselines: Option<Vec<(i32, i32)>>,
+    rows: Vec<usize>,
+    gap: i32,
+}
+
+impl LegacyBaselineRead {
+    pub(super) fn has_current_descriptor(&self) -> bool {
+        self.main.verify_write_layout(&BTreeSet::new()).is_ok()
+    }
+
+    pub(super) fn refresh_descriptor(&mut self, main: Arc<VisibilityMain>) {
+        self.main = main;
+    }
+
+    pub(super) fn write_grid(
+        &self,
+        working_rows: Option<&[usize]>,
+        selection: &LegacySelection,
+    ) -> Option<LegacyVisibilityWriteGrid<'_>> {
+        (self.working_rows.as_deref() == working_rows
+            && self.selected_rows.as_deref() == selection.rows()
+            && self.baselines.as_deref() == selection.baselines.as_deref()
+            && self.has_current_descriptor())
+        .then_some(LegacyVisibilityWriteGrid {
+            rows: &self.rows,
+            baseline_pairs: self.baselines.as_deref(),
+            gap: self.gap,
+        })
     }
 }
 
@@ -128,9 +171,11 @@ impl PyMsTool {
             }
             if !types.is_empty() {
                 let (description_count, codes) = ms.legacy_correlation_layout()?;
-                ms.legacy_selection.axes.polarization = Some(
-                    VisibilityPolarization::legacy_selected(description_count, &codes, types),
-                );
+                let polarization =
+                    VisibilityPolarization::legacy_selected(description_count, &codes, types);
+                ms.legacy_selection.axes.noncanonical_complex_polarization =
+                    polarization.legacy_noncanonical_complex_write(codes.len());
+                ms.legacy_selection.axes.polarization = Some(Arc::new(polarization));
             }
             ms.legacy_selection.axes.labels = Some(wanted);
             Ok(true)
@@ -182,26 +227,40 @@ impl AttachedMs {
             link.row_count().map_err(runtime_error)?
         };
         let stride = sampled_rows(count, count, i64::from(increment as i32))?;
-        let projected = compose_rows(rows.as_deref(), Some(&stride));
+        let projected = match rows {
+            Some(rows) => stride.into_iter().map(|row| rows[row]).collect(),
+            None => stride,
+        };
         let snapshot = items
             .iter()
             .any(|name| name.eq_ignore_ascii_case("axis_info"))
             .then(|| link.snapshot(None))
             .transpose()
             .map_err(runtime_error)?;
-        let main = self.visibility.main(&self.path)?;
+        let main = self.visibility.current_main(&self.path)?;
         let options = VisibilityReadOptions {
             average: options.average,
             baseline_gap: options.baseline_gap,
             ..self.legacy_selection.visibility_options()
         };
         let record = main.read_rows(
-            projected.as_deref().expect("sampled rows are present"),
+            &projected,
             items,
             snapshot.as_ref().map(|snapshot| &snapshot.ms),
             options,
         )?;
         link.verify_directory().map_err(runtime_error)?;
+        self.legacy_selection.axes.baseline_read = options
+            .baseline_gap
+            .filter(|_| !options.average)
+            .map(|gap| LegacyBaselineRead {
+                main,
+                working_rows: base,
+                selected_rows: self.legacy_selection.shared_rows(),
+                baselines: self.legacy_selection.baselines.clone(),
+                rows: projected,
+                gap,
+            });
         Ok(record)
     }
 }

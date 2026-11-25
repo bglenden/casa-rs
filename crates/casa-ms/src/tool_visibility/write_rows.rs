@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use casa_tables::{
     ArrayShapeContract, ColumnType, RequiredScalarColumnValues, Table, TableWriteLock,
 };
-use casa_types::{ArrayValue, PrimitiveType, RecordValue, ScalarValue};
+use casa_types::{ArrayValue, RecordValue, ScalarValue};
 use ndarray::{ArrayD, ArrayViewD, Axis, IxDyn};
 
+use super::polarization_axis::WritePolarization;
 use super::write_record::{Column, WriteColumn, write_columns};
 use super::{BaselineGrid, VisibilityPolarization, input, rows_by_time};
 use crate::write_session::{
@@ -18,6 +19,11 @@ use crate::write_session::{
     MeasurementSetWriteResources, MeasurementSetWriteSession, TARGET_BATCH_BYTES,
 };
 use crate::{MeasurementSet, MsError, MsResult};
+
+mod cell_selection;
+mod legacy;
+use cell_selection::{patch_cell, patch_converted_flags};
+pub use legacy::{LegacyVisibilityWriteGrid, LegacyVisibilityWriteOptions};
 
 /// The baseline-axis layout established by `getdata` for a visibility write.
 #[derive(Clone, Copy, Default)]
@@ -46,15 +52,26 @@ struct WriteGrid {
 #[derive(Clone, Copy)]
 struct RecordedLayout<'a> {
     shape: [usize; 2],
-    projection: Option<&'a [usize]>,
+    projection: Option<WritePolarization<'a>>,
 }
 
-impl RecordedLayout<'_> {
-    fn projected_shape(&self) -> [usize; 2] {
+impl<'a> RecordedLayout<'a> {
+    fn polarization(&self, field: &WriteColumn) -> Option<WritePolarization<'a>> {
+        self.projection.filter(|_| field.select_polarization)
+    }
+
+    fn patches(&self, field: &WriteColumn) -> bool {
+        self.polarization(field).is_some() || field.channels.is_some()
+    }
+
+    fn projected_shape(&self, field: &WriteColumn) -> [usize; 2] {
         let [correlations, channels] = self.shape;
         [
-            self.projection.map_or(correlations, <[usize]>::len),
-            channels,
+            self.polarization(field)
+                .map_or(correlations, WritePolarization::count),
+            field
+                .channels
+                .map_or(channels, |selection| selection.count()),
         ]
     }
 }
@@ -113,7 +130,7 @@ impl<'a> VisibilityWriteRecord<'a> {
         items: RecordValue,
         options: VisibilityWriteOptions<'a>,
     ) -> MsResult<Self> {
-        let columns = write_columns(main, items)?;
+        let columns = write_columns(main, items, false)?;
         let full_grid = columns
             .iter()
             .any(|field| field.values.ndim() == field.column.cell_rank() + 2);
@@ -198,7 +215,10 @@ impl<'a> VisibilityWriteRecord<'a> {
             .iter()
             .any(|field| field.column.cell_rank() > 0)
         {
-            recorded_cell_layouts(ms, &rows, self.polarization)?
+            let polarization = self
+                .polarization
+                .filter(|_| self.columns.iter().any(|field| field.select_polarization));
+            recorded_cell_layouts(ms, &rows, polarization)?
         } else {
             Vec::new()
         };
@@ -220,7 +240,8 @@ impl<'a> VisibilityWriteRecord<'a> {
             .min(TARGET_BATCH_BYTES.max(bytes_per_row));
         let plan = MeasurementSetWritePlan::selected_row_mutation(rows.clone(), plans, resources)
             .map_err(write_error)?;
-        if layouts.iter().any(|layout| layout.projection.is_some()) {
+        if self.polarization.is_some() || self.columns.iter().any(|field| field.channels.is_some())
+        {
             // Test every original cell needed to preserve recorded hands before
             // publishing any member or batch of the public write.
             for (field, name) in self.columns.iter().zip(&names) {
@@ -232,15 +253,8 @@ impl<'a> VisibilityWriteRecord<'a> {
                     .chunks(plan.batch_rows())
                     .zip(layouts.chunks(plan.batch_rows()))
                 {
-                    if layouts.iter().any(|layout| layout.projection.is_some()) {
-                        read_projected_originals(
-                            ms.main_table(),
-                            name,
-                            rows,
-                            layouts,
-                            rank,
-                            field.values.primitive_type(),
-                        )?;
+                    if layouts.iter().any(|layout| layout.patches(field)) {
+                        read_projected_originals(ms.main_table(), name, rows, layouts, field)?;
                     }
                 }
             }
@@ -358,14 +372,20 @@ fn recorded_cell_layouts<'a>(
                 nonnegative(windows.num_chan(window)?, "NUM_CHAN")?,
             ];
             let projection = requested
-                .map(|selected| selected.write_indices(id))
+                .map(|selected| selected.write_projection(id))
                 .transpose()?;
-            if projection.is_some_and(|indices| {
-                indices.is_empty() || indices.iter().any(|&index| index >= shape[0])
-            }) {
-                return Err(input(
-                    "selected polarization is outside the recorded correlations",
-                ));
+            match projection {
+                Some(WritePolarization::Stored(indices))
+                    if indices.is_empty() || indices.iter().any(|&index| index >= shape[0]) =>
+                {
+                    return Err(input(
+                        "selected polarization is outside the recorded correlations",
+                    ));
+                }
+                Some(WritePolarization::Converted { plan, .. }) => {
+                    let _ = plan.flag_dependencies(shape[0])?;
+                }
+                _ => {}
             }
             let layout = RecordedLayout { shape, projection };
             layouts.insert(id, layout);
@@ -406,21 +426,25 @@ fn row_column_plan(
             "putdata physical column {name} has an incompatible type or shape"
         )));
     }
-    if layouts
-        .iter()
-        .any(|layout| layout.projected_shape()[..rank] != shape[..rank])
-    {
+    if layouts.iter().any(|layout| {
+        layout.projected_shape(field)[..rank] != shape[..rank]
+            || field.channels.is_some_and(|channels| {
+                channels
+                    .ranges()
+                    .last()
+                    .is_some_and(|span| span.end > layout.shape[1])
+            })
+    }) {
         return Err(input(format!(
             "putdata {name} shape {shape:?} differs from the recorded cell shape"
         )));
     }
-    let max_correlations = layouts.iter().map(|layout| layout.shape[0]).max();
     let mut physical_shape = [1, 1];
     physical_shape[..rank].copy_from_slice(&shape[..rank]);
-    if rank > 0
-        && let Some(correlations) = max_correlations
-    {
-        physical_shape[0] = correlations;
+    for (axis, length) in physical_shape[..rank].iter_mut().enumerate() {
+        if let Some(maximum) = layouts.iter().map(|layout| layout.shape[axis]).max() {
+            *length = maximum;
+        }
     }
     let bytes_per_row =
         physical_shape[..rank]
@@ -473,7 +497,7 @@ fn row_column_batch(
         _ => unreachable!("putdata arrays have been normalized to storage precision"),
     };
     if let MeasurementSetMutationColumnValues::Arrays(new) = &mut values {
-        patch_recorded_correlations(table, name, rows, layouts, field, new)?;
+        patch_recorded_cells(table, name, rows, layouts, field, new)?;
     }
     Ok(MeasurementSetMutationColumnBatch {
         name: name.into(),
@@ -481,7 +505,7 @@ fn row_column_batch(
     })
 }
 
-fn patch_recorded_correlations(
+fn patch_recorded_cells(
     table: &Table,
     name: &str,
     rows: &[usize],
@@ -489,41 +513,53 @@ fn patch_recorded_correlations(
     field: &WriteColumn,
     values: &mut [ArrayValue],
 ) -> MsResult<()> {
-    if layouts.iter().all(|layout| layout.projection.is_none()) {
+    if layouts.iter().all(|layout| !layout.patches(field)) {
         return Ok(());
     }
-    let old = read_projected_originals(
-        table,
-        name,
-        rows,
-        layouts,
-        field.column.cell_rank(),
-        field.values.primitive_type(),
-    )?;
+    let old = read_projected_originals(table, name, rows, layouts, field)?;
     for ((mut original, layout), value) in old.into_iter().zip(layouts).zip(values) {
-        let Some(indices) = layout.projection else {
+        if !layout.patches(field) {
             continue;
-        };
+        }
         let previous = original.as_mut().expect("projected original was validated");
-        macro_rules! patch {
-            ($old:ident, $new:ident) => {
-                for (input, &output) in indices.iter().enumerate() {
-                    $old.index_axis_mut(Axis(0), output)
-                        .assign(&$new.index_axis(Axis(0), input));
-                }
-            };
-        }
-        match (previous, &*value) {
-            (ArrayValue::Bool(old), ArrayValue::Bool(new)) => patch!(old, new),
-            (ArrayValue::Float32(old), ArrayValue::Float32(new)) => patch!(old, new),
-            (ArrayValue::Complex32(old), ArrayValue::Complex32(new)) => patch!(old, new),
-            _ => {
-                return Err(input(format!(
-                    "putdata recorded {name} cell has an incompatible type"
-                )));
-            }
-        }
+        patch_recorded_cell(previous, value, layout.polarization(field), field.channels)?;
         *value = original.expect("original cell was available");
+    }
+    Ok(())
+}
+
+fn patch_recorded_cell(
+    original: &mut ArrayValue,
+    selected: &ArrayValue,
+    polarization: Option<WritePolarization<'_>>,
+    channels: Option<super::VisibilityChannels>,
+) -> MsResult<()> {
+    let correlations = match polarization {
+        Some(WritePolarization::Stored(indices)) => Some(indices),
+        Some(WritePolarization::Converted { plan, .. }) => {
+            let (ArrayValue::Bool(original), ArrayValue::Bool(selected)) = (original, selected)
+            else {
+                return Err(input("putdataold can only invert a converted FLAG"));
+            };
+            let dependencies = plan
+                .flag_dependencies(original.shape()[0])?
+                .collect::<Vec<_>>();
+            patch_converted_flags(original, selected, &dependencies, channels);
+            return Ok(());
+        }
+        None => None,
+    };
+    match (original, selected) {
+        (ArrayValue::Bool(old), ArrayValue::Bool(new)) => {
+            patch_cell(old, new, correlations, channels)
+        }
+        (ArrayValue::Float32(old), ArrayValue::Float32(new)) => {
+            patch_cell(old, new, correlations, channels)
+        }
+        (ArrayValue::Complex32(old), ArrayValue::Complex32(new)) => {
+            patch_cell(old, new, correlations, channels)
+        }
+        _ => return Err(input("putdata recorded cell has an incompatible type")),
     }
     Ok(())
 }
@@ -533,22 +569,28 @@ fn read_projected_originals(
     name: &str,
     rows: &[usize],
     layouts: &[RecordedLayout<'_>],
-    rank: usize,
-    primitive: PrimitiveType,
+    field: &WriteColumn,
 ) -> MsResult<Vec<Option<ArrayValue>>> {
     let originals = table
         .column_accessor(name)?
         .array_cells_owned_uncached(rows)?;
     for (original, layout) in originals.iter().zip(layouts) {
-        if layout.projection.is_none() {
+        if !layout.patches(field) {
             continue;
         }
         let original = original.as_ref().ok_or_else(|| {
+            let axis = if field.channels.is_some() {
+                "samples"
+            } else {
+                "correlations"
+            };
             input(format!(
-                "putdata cannot update selected correlations of undefined {name}"
+                "putdata cannot update selected {axis} of undefined {name}"
             ))
         })?;
-        if original.shape() != &layout.shape[..rank] || original.primitive_type() != primitive {
+        if original.shape() != &layout.shape[..field.column.cell_rank()]
+            || original.primitive_type() != field.values.primitive_type()
+        {
             return Err(input(format!(
                 "putdata recorded {name} cell has an incompatible type or shape"
             )));
