@@ -524,7 +524,8 @@
       "scope": "Enable data averaging parameters An explicit false leaves populated averaging controls inactive.",
       "evidence": [
         "paired",
-        "ms-effective-float-averages"
+        "ms-effective-float-averages",
+        "ms-combined-spw-baseline-antenna-ids"
       ],
       "behaviors": [
         "averaging"
@@ -582,7 +583,8 @@
         "callibrary-independent-ordinates",
         "ms-time-averaged-statistics",
         "ms-channel-metadata-flag-symbols",
-        "ms-effective-float-averages"
+        "ms-effective-float-averages",
+        "ms-combined-spw-baseline-antenna-ids"
       ],
       "behaviors": [
         "averaging"
@@ -647,7 +649,8 @@
         "ms-time-averaged-statistics",
         "ms-time-antenna-spw-flag-symbols",
         "ms-effective-float-averages",
-        "ms-antenna-time-window-correlation-shapes"
+        "ms-antenna-time-window-correlation-shapes",
+        "ms-combined-spw-baseline-antenna-ids"
       ],
       "behaviors": [
         "averaging"
@@ -718,7 +721,8 @@
         "ms-virtual-model-averaged-expressions",
         "ms-baseline-visibility-ordinate-lists",
         "ms-virtual-antenna-baseline-models",
-        "ms-time-averaged-statistics"
+        "ms-time-averaged-statistics",
+        "ms-combined-spw-baseline-antenna-ids"
       ],
       "behaviors": [
         "averaging"
@@ -726,7 +730,7 @@
       "status": "Partial"
     },
     "avgantenna": {
-      "scope": "Average per antenna (mutually exclusive with avgbaseline) Static per-antenna visibility exports at individual integrations use the averaged antenna ID and name and follow integration, antenna, channel and correlation order. Scalar antenna averages use independently averaged amplitude and phase with a common visibility weight. They include the conjugated contribution from each second endpoint. Extended antenna averages remain partial. Complex channels can be averaged before per-antenna reduction. The per-antenna stage uses the transformed spectral weight and retains the output antenna identity and order. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Ordinary vector time averages can feed per-antenna reduction using the transformed weight spectrum and closed second-stage time intervals. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Scalar and vector per-antenna time averaging can span scans, fields or both. Each unselected span retains its barrier and exports use the averaged buffer identifiers. Vector and scalar per-antenna averaging accept three or more independent stored visibility ordinates. Per-antenna time reductions with independent stored ordinate lists can span scans and fields. Supported vector and scalar per-antenna averages can use read-only virtual model cells. Supported time-averaged antenna plots can use stored and virtual model residuals or ratios. PlotMS refuses weight and sigma axes with per-antenna averaging. Per-antenna time averaging requires consistent selected correlation counts in each spectral window, including separate time bins. Different windows can retain different shapes.",
+      "scope": "Average per antenna (mutually exclusive with avgbaseline) Static per-antenna visibility exports at individual integrations use the averaged antenna ID and name and follow integration, antenna, channel and correlation order. Scalar antenna averages use independently averaged amplitude and phase with a common visibility weight. They include the conjugated contribution from each second endpoint. Extended antenna averages remain partial. Complex channels can be averaged before per-antenna reduction. The per-antenna stage uses the transformed spectral weight and retains the output antenna identity and order. Scalar per-antenna averages can use closed time intervals with their original buffer interval centers, including after complex channel averaging. Ordinary vector time averages can feed per-antenna reduction using the transformed weight spectrum and closed second-stage time intervals. Vector time and complex channel averages compose before antenna reduction, using the transformed weight spectrum to reduce by antenna. Scalar and vector per-antenna time averaging can span scans, fields or both. Each unselected span retains its barrier and exports use the averaged buffer identifiers. Vector and scalar per-antenna averaging accept three or more independent stored visibility ordinates. Per-antenna time reductions with independent stored ordinate lists can span scans and fields. Supported vector and scalar per-antenna averages can use read-only virtual model cells. Supported time-averaged antenna plots can use stored and virtual model residuals or ratios. PlotMS refuses weight and sigma axes with per-antenna averaging. Per-antenna time averaging requires consistent selected correlation counts in each spectral window, including separate time bins. Different windows can retain different shapes. Standalone SPW/antenna averages retain per-antenna identities, spectral coordinates and antenna-major row order.",
       "evidence": [
         "paired",
         "ms-per-antenna-export",
@@ -742,7 +746,8 @@
         "ms-spw-antenna-visibility-expressions",
         "ms-time-averaged-statistics",
         "ms-time-antenna-spw-flag-symbols",
-        "ms-antenna-time-window-correlation-shapes"
+        "ms-antenna-time-window-correlation-shapes",
+        "ms-combined-spw-baseline-antenna-ids"
       ],
       "behaviors": [
         "averaging"
@@ -750,7 +755,7 @@
       "status": "Partial"
     },
     "avgspw": {
-      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer. Ordinary vector time and SPW averages first reduce each baseline and window with the selected visibility spectra, then form closed PlotMS groups from the returned buffers. Vector time and SPW averages can also use complex channel bins after the visibility time transform and span scans or fields independently. Vector and scalar spectral-window averaging accepts independent stored visibility ordinate lists. Supported spectral-window averages predict selected virtual model cells using the input buffer recipe and correlation slots. Supported spectral-window averages with virtual models can span scans and fields in time. Static scan, field and correlation iteration accepts supported SPW visibility averages and preserves the requested ordinate order. Standalone spectral-window averages support two independent stored or virtual visibility ordinates. Supported spectral-window time averages can project independent residual and model ratio coordinates. Spectral-window averaging can use the selected reporting grid for atmospheric transmission. Supported vector time and spectral-window averages can use U in metres. PlotMS refuses weight and sigma axes with spectral-window averaging. The supported two-window float ordinate composes its channel averages before reducing windows.",
+      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer. Ordinary vector time and SPW averages first reduce each baseline and window with the selected visibility spectra, then form closed PlotMS groups from the returned buffers. Vector time and SPW averages can also use complex channel bins after the visibility time transform and span scans or fields independently. Vector and scalar spectral-window averaging accepts independent stored visibility ordinate lists. Supported spectral-window averages predict selected virtual model cells using the input buffer recipe and correlation slots. Supported spectral-window averages with virtual models can span scans and fields in time. Static scan, field and correlation iteration accepts supported SPW visibility averages and preserves the requested ordinate order. Standalone spectral-window averages support two independent stored or virtual visibility ordinates. Supported spectral-window time averages can project independent residual and model ratio coordinates. Spectral-window averaging can use the selected reporting grid for atmospheric transmission. Supported vector time and spectral-window averages can use U in metres. PlotMS refuses weight and sigma axes with spectral-window averaging. The supported two-window float ordinate composes its channel averages before reducing windows. Standalone scalar and vector SPW averages can combine baselines or reduce by antenna, and export the corresponding output identities.",
       "evidence": [
         "paired",
         "ms-spw-average-coordinates",
@@ -767,7 +772,8 @@
         "ms-time-spw-u",
         "ms-time-averaged-statistics",
         "ms-time-antenna-spw-flag-symbols",
-        "ms-effective-float-averages"
+        "ms-effective-float-averages",
+        "ms-combined-spw-baseline-antenna-ids"
       ],
       "behaviors": [
         "averaging"
@@ -811,7 +817,8 @@
         "ms-time-averaged-statistics",
         "ms-time-antenna-spw-flag-symbols",
         "ms-effective-float-averages",
-        "ms-antenna-time-window-correlation-shapes"
+        "ms-antenna-time-window-correlation-shapes",
+        "ms-combined-spw-baseline-antenna-ids"
       ],
       "behaviors": [
         "averaging"
@@ -3165,6 +3172,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-antenna-time-window-correlation-shapes-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2304"
+      ]
+    },
+    "ms-combined-spw-baseline-antenna-ids": {
+      "kind": "Paired combined spectral-window baseline and antenna averages",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Public scalar/vector SPW+antenna and SPW+baseline averaging on a sparse two-window three-baseline MS. XX, three selected channels per window, partially masked cells, nonuniform stored spectra, explicit zero intervals and invalid reducer controls.",
+      "result": "Ten paired TXT exports match 120 ordered coordinates, times, channels, frequencies and identifiers. Scalar, vector, zero-interval and both weighted baseline cases retain six points each. Scalar, vector, zero-interval and both weighted antenna cases retain 18 points each and use the output antenna IDs with antenna2=-1. The antenna reducer uses stored spectral weights and the baseline reducer uses row weights. Six shifted-selection baseline points match the aligned CASA reference for the documented selection correction. Both public tasks reject negative time, negative channel count and simultaneous baseline and antenna averages before export. Source FLAG, FLAG_ROW, visibility, weight and spectral cells are unchanged. The standalone and iterated SPW export controls also pass.",
+      "casa_version": "6.7.6.14",
+      "revision": "c772936d0cd3cbdfc85ddd2fb6fd40abb81a079c",
+      "source_revision": "c772936d0cd3cbdfc85ddd2fb6fd40abb81a079c",
+      "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only combined-reducers --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-combined-spw-baseline-antenna-ids-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2305"
       ]
     }
   }
