@@ -27,6 +27,39 @@ def paired_text(root, native, request, options, name):
     return first
 
 
+def time_presentation(root, native, gain):
+    from casars.tasks import _plotms_plot
+
+    with opened(gain, True) as table:
+        times = table.getcol("TIME")
+        table.putcol("TIME", times.min() + 300 * np.searchsorted(np.unique(times), times))
+    title = "Gain amplitude and phase over time"
+    request = dict(caltable=str(gain), xaxis="time", yaxis=["gainamp", "gainphase"],
+                   yaxislocation=["left", "right"], antenna="A0,A2,A3",
+                   showgui=False, overwrite=True, title=title)
+    paired_text(root, native, request, {}, "clock")
+    export = request | dict(expformat="png", width=940, height=610, dpi=100)
+    reference(**export, plotfile=str(root / "clock.casa.png"))
+    configure = _plotms_plot.configure
+    captures = []
+
+    def capture(figure, axis, document, params):
+        configure(figure, axis, document, params)
+        figure.canvas.draw()
+        titles = [text.get_text() for text in figure.texts] + [axis.get_title()]
+        assert titles.count(title) == 1
+        assert axis.get_xlabel().startswith("Time (from ")
+        clock = axis.xaxis.get_major_formatter()
+        assert all(clock(tick).endswith(":00") for tick in axis.get_xticks())
+        assert axis.get_position().width > 0.83
+        captures.append(figure)
+
+    with patch.object(_plotms_plot, "configure", capture):
+        native(**export, plotfile=str(root / "clock.native.png"))
+    assert len(captures) == 1
+    print("Calibration clock labels, single title and data area verified.", flush=True)
+
+
 def figures(root, native, request, headers):
     from casars.tasks import _plotms_plot
 
@@ -148,6 +181,7 @@ def main():
             assert output.read_bytes() == base
         figures(root, native, controls, headers)
         page_metadata(root, native, controls, product)
+        time_presentation(root, native, root / "gain.cal")
     print('Three paired exports and both active native transform cases preserved the calibration coordinates.', flush=True)
 
 

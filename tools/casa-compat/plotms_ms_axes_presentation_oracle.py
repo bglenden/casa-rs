@@ -208,7 +208,9 @@ def check_panel_ranges(pages, samples, name, controls, limits):
         assert bounds[1] != bounds[2], (name, bounds)
         for dimension, expected, measured in zip("xyy", ((10, 70), (20, 140), (100, 550)), bounds, strict=True):
             if controls.get(f"{dimension}selfscale"):
-                assert measured == [expected] * 5, (name, dimension, measured)
+                # Shared automatic limits now leave clearance at both extrema.
+                assert all(lower < expected[0] and upper > expected[1]
+                           for lower, upper in measured), (name, dimension, measured)
 
 
 def check_grid_labels(figure, page):
@@ -250,6 +252,9 @@ def paired_axis(root, native, name, controls, dimension, expected, ticks=()):
     [axis] = captured
     values = np.array([row[:2] for row in rows(text[0])], dtype=float)
     np.testing.assert_allclose(axis.lines[0].get_xydata(), values, rtol=1.2e-5)
+    for samples, (lower, upper) in zip(axis.lines[0].get_xydata().T,
+                                       (axis.get_xlim(), axis.get_ylim()), strict=True):
+        assert lower < min(samples) <= max(samples) < upper
     assert getattr(axis, f"get_{dimension}label")() == expected
     label_bounds = getattr(axis, f"{dimension}axis").label.get_window_extent()
     assert axis.figure.bbox.contains(*label_bounds.p0) and axis.figure.bbox.contains(*label_bounds.p1)
@@ -265,8 +270,12 @@ def paired_axis(root, native, name, controls, dimension, expected, ticks=()):
         for timestamp, label in ticks:
             assert formatter(timestamp) == label, (timestamp, formatter(timestamp), label)
         limits = getattr(axis, f"get_{dimension}lim")()
-        np.testing.assert_allclose(limits, [min(values[:, index]) - 1, max(values[:, index]) + 1],
-                                   rtol=0, atol=0.00051)
+        if np.ptp(values[:, index]) < 120:
+            np.testing.assert_allclose(limits, [min(values[:, index]) - 1, max(values[:, index]) + 1],
+                                       rtol=0, atol=0.00051)
+        else:
+            major = getattr(axis, f"get_{dimension}ticks")()
+            assert len(major) >= 2 and all(formatter(tick).endswith(":00") for tick in major)
     print(f"{name}: {count} paired coordinates and rendered {dimension.upper()} label {expected!r}", flush=True)
 
 
@@ -288,10 +297,11 @@ def compare_clock(root, native):
          ((86_410, "24:00:10"),)),
         ("first-average-next-day", 86_395, dict(averagedata=True, avgtime="28"), "x",
          "Average Time (from 2020/08/23) (hh:mm:ss)", ((86_410, "00:00:10"),)),
+        ("long-clock", 33_315, {}, "x", date_label, ((33_600, "09:20:00"),)),
     ):
         with opened(vis, True) as table:
             times = table.getcol("TIME")
-            offset = np.searchsorted(np.unique(times), times) * 15.0
+            offset = np.searchsorted(np.unique(times), times) * (300.0 if name == "long-clock" else 15.0)
             for column in ("TIME", "TIME_CENTROID"):
                 table.putcol(column, midnight + start + offset)
         paired_axis(root, native, name, base | settings, dimension, label,

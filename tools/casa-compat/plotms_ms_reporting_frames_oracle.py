@@ -207,7 +207,7 @@ def compare_channel_frequency_transform(work, native, base, raw):
 
     def record(*args, **kwargs):
         figure, axis = render(*args, **kwargs)
-        assert (axis.get_xlabel(), axis.get_ylabel()) == ('Channel', 'Frequency (GHz)')
+        assert (axis.get_xlabel(), axis.get_ylabel()) == ('Channel', 'Frequency (GHz) LSRK')
         points = axis.lines[0].get_xydata()
         np.testing.assert_array_equal(points[:, 0], [int(p[0]) for p in raw])
         np.testing.assert_allclose(points[:, 1], freqs, rtol=0, atol=1e-7)
@@ -279,6 +279,8 @@ def check_active_figure(native, output, options, figure, coordinates, raw, artis
     label = SPECTRAL_LABELS[options['xaxis']]
     velocity = options['xaxis'] == 'velocity'
     wavelength = options['xaxis'].endswith('wave')
+    if not wavelength:
+        label += f" {options['freqframe']}"
 
     def record(*args, **kwargs):
         page, axis = render(*args, **kwargs)

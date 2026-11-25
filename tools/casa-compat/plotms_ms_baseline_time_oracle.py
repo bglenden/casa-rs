@@ -1123,7 +1123,7 @@ def compare_vector_antenna_time_channels(root, native, source, controls, start, 
         assert native(**request_args, plotfile=str(actual), expformat="txt") is None
         assert compare_text(actual, expected) == len(coordinates)
         if request_args["xaxis"] == "frequency":
-            compare_figure(root, native, request_args, expected, (args["title"], "Frequency (GHz)", "Imag:corrected"))
+            compare_figure(root, native, request_args, expected, (args["title"], "Frequency (GHz) TOPO", "Imag:corrected"))
         print(f"{name}: {len(coordinates)} matching vector time, channel and antenna coordinates", flush=True)
     compare_empty_export(root, native, "vector-time-channel-antenna-zero-corrected",
                          args | dict(vis=str(zero_corrected)), ("Real", "Imag:corrected"))

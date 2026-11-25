@@ -403,8 +403,11 @@ impl CliOptions {
     }
 
     fn supports_metadata_flag_symbols(&self) -> bool {
-        self.x_axis == Some(MsAxis::Channel)
-            && matches!(self.y_axis, Some(MsAxis::Row | MsAxis::Elevation))
+        let channel_metadata = self.x_axis == Some(MsAxis::Channel)
+            && matches!(self.y_axis, Some(MsAxis::Row | MsAxis::Elevation));
+        let uvw_pair =
+            self.x_axis.is_some_and(MsAxis::uses_uvw) && self.y_axis.is_some_and(MsAxis::uses_uvw);
+        (channel_metadata || uvw_pair)
             && self.y_axis2.is_none()
             && !self.plotms_averaging_active()
             && self.iteraxis.is_none()

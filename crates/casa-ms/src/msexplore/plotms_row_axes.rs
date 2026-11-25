@@ -15,6 +15,17 @@ use crate::observation_io::{Feeds, read_feeds};
 use crate::subtables::get_string;
 use crate::{MeasurementSet, SubtableId};
 
+pub(super) fn averaged_uvw_cache_index(
+    groups: &crate::transform::PlotTimeGroups,
+    group: usize,
+    bins: usize,
+    channel: usize,
+) -> usize {
+    let buffers = groups.buffers();
+    let buffer = &buffers[buffers.partition_point(|buffer| buffer.end <= group)];
+    (group - buffer.start) * bins + channel
+}
+
 pub(super) fn requested(spec: &MsPlotSpec) -> bool {
     spec.x_axis.is_row_identifier() || spec.y_axes.iter().copied().any(MsAxis::is_row_identifier)
 }
@@ -36,6 +47,12 @@ pub(super) fn array_horizontal_pair(x: MsAxis, y: MsAxis) -> bool {
 }
 
 pub(super) fn metadata_coordinate_pair(x: MsAxis, y: MsAxis) -> Option<PointDimensions> {
+    if x.uses_uvw() && y.uses_uvw() {
+        return Some(PointDimensions {
+            channel: x.uses_wavelengths() || y.uses_wavelengths(),
+            baseline: true,
+        });
+    }
     let channel = match (x, y) {
         (MsAxis::Channel, MsAxis::Frequency) => true,
         (MsAxis::Elevation, MsAxis::Time) => false,
@@ -55,6 +72,9 @@ pub(super) fn unaveraged_coordinate_mask(
         return Ok(None);
     };
     let mask = metadata_coordinate_pair(spec.x_axis, *y);
+    if spec.x_axis.uses_uvw() && y.uses_uvw() {
+        return Ok(mask.filter(|_| raw_plotms));
+    }
     if mask.is_some()
         && (!raw_plotms
             || uses_extended_averaging(spec)
@@ -248,7 +268,41 @@ pub(super) fn array_horizontal_value(
     value.map_err(|error| error.to_string())
 }
 
-pub(super) fn ephemeris_value(
+/// The requested ephemeris scalars sampled once per selected visibility buffer.
+#[derive(Default)]
+pub(super) struct BufferEphemeris {
+    distance: Option<f64>,
+    radial_velocity: Option<f64>,
+}
+
+impl BufferEphemeris {
+    pub(super) fn read(
+        engine: &MsCalEngine,
+        axes: &[MsAxis],
+        time: f64,
+        field: i32,
+    ) -> Result<Self, String> {
+        let value = |axis| {
+            axes.contains(&axis)
+                .then(|| ephemeris_value(engine, axis, time, field))
+                .transpose()
+        };
+        Ok(Self {
+            distance: value(MsAxis::EphemerisDistance)?,
+            radial_velocity: value(MsAxis::RadialVelocity)?,
+        })
+    }
+
+    pub(super) fn get(&self, axis: MsAxis) -> Option<f64> {
+        match axis {
+            MsAxis::EphemerisDistance => self.distance,
+            MsAxis::RadialVelocity => self.radial_velocity,
+            _ => None,
+        }
+    }
+}
+
+fn ephemeris_value(
     engine: &MsCalEngine,
     axis: MsAxis,
     time: f64,

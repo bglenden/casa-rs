@@ -16,6 +16,10 @@ from PIL import Image
 from plotms_ms_columns_oracle import compare_text, fixture, opened, plotms_launcher, reference, request, rows
 
 
+def marker_pixels(line):
+    return round(line.get_markersize() * line.figure.dpi / 72, 8)
+
+
 def images(root, name, task, controls):
     path = root / f"{name}.png"
     assert task(**controls, width=500, height=360, dpi=100, expformat="png", plotfile=str(path)) is None
@@ -92,7 +96,7 @@ def compare_ordinate_styles(root, native):
         actual = images(root, "sides-native", native, controls)
     assert [side for side, _ in observed] == ["left", "right"]
     assert [line.get_marker() for _, line in observed] == ["o", "s"]
-    assert [line.get_markersize() for _, line in observed] == [7, 13]
+    assert [marker_pixels(line) for _, line in observed] == [7, 13]
     assert [to_hex(line.get_markeredgecolor()) for _, line in observed] == ["#000000", "#00aa44"]
     assert to_hex(observed[0][1].get_markerfacecolor()) == "#800080"
     for pixels in (pinned, actual):
@@ -118,7 +122,9 @@ def compare_ordinate_styles(root, native):
         assert to_hex(left.get_markeredgecolor()) == "#000000"
         assert to_hex(right.get_markerfacecolor()) != "#800080"
         if name == "scalar-style":
-            assert right.get_markersize() == 13
+            # The scalar shape only programs the first ordinate. The other
+            # one retains PlotMS autoscaling, which selects six pixels here.
+            assert marker_pixels(right) == 6
             assert to_hex(right.get_markerfacecolor()) == to_hex(right.get_markeredgecolor()) == "#0000ff"
         for (_, line), points in zip(observed, np.split(source, 2), strict=True):
             np.testing.assert_allclose(line.get_xydata(), points, rtol=1.2e-5)
@@ -177,7 +183,7 @@ def compare_color_groups(root, native):
             label = line.get_label()
             flagged = label.lower() == "flagged"
             if groups:
-                assert label in groups and line.get_marker() == "s" and line.get_markersize() == 7
+                assert label in groups and line.get_marker() == "s" and marker_pixels(line) == 7
                 marker_color = to_hex(line.get_markerfacecolor())
                 assert marker_color == to_hex(line.get_markeredgecolor())
                 rgb = np.array(to_rgb(marker_color)) * 255
@@ -185,7 +191,7 @@ def compare_color_groups(root, native):
                 clear_colors.add(marker_color)
                 points = [row for row in selected if row[field] == groups[label]]
             elif flagged:
-                assert line.get_marker() == "D" and line.get_markersize() == 6
+                assert line.get_marker() == "D" and marker_pixels(line) == 6
                 assert to_hex(line.get_markerfacecolor()) == "#dd2255"
                 points = [row for row in selected if row[2] == "2" and row[12] == "XX"]
             else:

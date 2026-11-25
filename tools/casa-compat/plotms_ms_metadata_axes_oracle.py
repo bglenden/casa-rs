@@ -686,7 +686,7 @@ def compare_static_metadata_coordinates(root, native):
     base = controls(vis) | dict(antenna="A0&A1;A0&A2", spw="0:1~3", correlation="XX,YY",
                                expformat="txt", title="Metadata coordinate masks")
     cases = (
-        ("channel-frequency", "channel", "frequency", 14, (8, 6), "Channel", "Frequency (GHz)"),
+        ("channel-frequency", "channel", "frequency", 14, (8, 6), "Channel", "Frequency (GHz) TOPO"),
         ("elevation-time", "elevation", "time", 5, (3, 2), "Elevation (deg)", "Time (MJD seconds)"),
     )
     empty = work / "all-flagged.ms"

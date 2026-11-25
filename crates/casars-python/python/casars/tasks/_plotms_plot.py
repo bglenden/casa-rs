@@ -4,6 +4,7 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 from functools import lru_cache
+from math import ceil, floor, isfinite, log10
 
 _MJD_EPOCH = datetime(1858, 11, 17)
 
@@ -88,11 +89,10 @@ def configure(figure, panel_axes, document, options):
         else:
             figure.suptitle(document["title"], fontsize=font, y=title_y)
     measurement_set = document["id"] == "plotms-visibility"
-    if measurement_set:
-        primary = panel_axes if isinstance(panel_axes, list) else [panel_axes]
-        _format_measurement_set_axes(primary, document, options)
-        if not document["panels"] and not positioned:
-            panel_axes.set_title("")
+    primary = panel_axes if isinstance(panel_axes, list) else [panel_axes]
+    _format_axes(figure, primary, document, options)
+    if not document["panels"] and not positioned:
+        panel_axes.set_title("")
     layout = document.get("layout")
     if layout and document["panels"]:
         if measurement_set:
@@ -120,11 +120,19 @@ def configure(figure, panel_axes, document, options):
         for panel in (document["panels"] or [document])
         for layer in panel["layers"]
     }
+    counts = defaultdict(int)
     for axis in figure.axes:
         for line in axis.lines:
             layer = layers.get(line.get_gid())
             if layer is not None:
-                _line(line, layer, options, measurement_set=measurement_set)
+                counts[_symbol_group(axis, layer)] += layer["source_sample_count"]
+    for axis in figure.axes:
+        for line in axis.lines:
+            layer = layers.get(line.get_gid())
+            if layer is not None:
+                _line(line, layer, options, measurement_set=measurement_set,
+                      point_count=counts[_symbol_group(axis, layer)])
+    _fit_axes(figure, options)
     if options.get("showlegend") and figure.axes:
         handles, labels = [], []
         for axis in figure.axes:
@@ -144,8 +152,9 @@ def configure(figure, panel_axes, document, options):
         if handles:
             figure.axes[0].legend(handles, labels, loc=location, bbox_to_anchor=anchor)
     # Positioned pages reserve their grid cells even when some are empty.
-    if measurement_set and not positioned:
-        figure.tight_layout(rect=(0, 0, 1, title_y if title_y is not None else 1))
+    if not positioned:
+        figure.tight_layout(pad=0.65, w_pad=1.2, h_pad=1.0,
+                            rect=(0, 0, 1, title_y if title_y is not None else 1))
 
 
 def _layout_page_headers(figure, headers):
@@ -164,23 +173,66 @@ def _layout_page_headers(figure, headers):
     return top
 
 
-def _format_measurement_set_axes(primary, document, options):
+def _format_axes(figure, primary, document, options):
     averaged = options.get("averagedata")
     binned_channels = averaged and float(options.get("avgchannel") or 0) > 1
     binned_time = averaged and float(options.get("avgtime") or 0) > 0
     for axis, panel in zip(primary, document["panels"] or [document], strict=True):
-        for dimension, data in zip("xy", panel["axes"]):
+        targets = [a for a in figure.axes if a.get_subplotspec() == axis.get_subplotspec()]
+        for (dimension, target), data in zip(
+            [("x", axis), *[("y", a) for a in targets]], panel["axes"], strict=True,
+        ):
             scale = data["scale"]
             kind = options.get(f"{dimension}axis")
             if isinstance(scale, dict):
-                _format_clock(axis, dimension, scale["mjd_seconds_clock"], options, binned_time)
+                _format_clock(target, dimension, scale["mjd_seconds_clock"], options, binned_time)
             elif binned_channels and isinstance(kind, str) and kind.lower() in ("chan", "channel"):
-                set_label = getattr(axis, f"set_{dimension}label")
+                set_label = getattr(target, f"set_{dimension}label")
                 set_label(f"Average {data['label']}")
 
 
+def _fit_axes(figure, options):
+    """Keep visible marker centers clear of the spines on automatic axes."""
+    from matplotlib.ticker import MaxNLocator
+
+    explicit = options.get("plotrange")
+    if explicit is None or len(explicit) == 0:
+        explicit = (0, 0, 0, 0)
+    for dimension, offset in (("x", 0), ("y", 2)):
+        if any(explicit[offset:offset + 2]):
+            continue
+        seen = set()
+        for axis in figure.axes:
+            if axis in seen or getattr(axis, f"get_{dimension}scale")() != "linear":
+                continue
+            siblings = getattr(axis, f"get_shared_{dimension}_axes")().get_siblings(axis)
+            seen.update(siblings)
+            intervals = [getattr(a.dataLim, f"interval{dimension}") for a in siblings]
+            data = [value for interval in intervals for value in interval if isfinite(value)]
+            if not data:
+                continue
+            low, high = min(data), max(data)
+            current_low, current_high = getattr(axis, f"get_{dimension}lim")()
+            shared = options.get(f"{dimension}selfscale")
+            if shared:
+                low, high = current_low, current_high
+            span = high - low or current_high - current_low
+            locator = getattr(axis, f"{dimension}axis").get_major_locator()
+            margin = span * (0.02 if isinstance(locator, MaxNLocator) else 0.008)
+            bounds = min(current_low, low - margin), max(current_high, high + margin)
+            if bounds == (current_low, current_high):
+                continue
+            if isinstance(locator, MaxNLocator) and low < high:
+                rounding = MaxNLocator(nbins=8) if shared else locator
+                ticks = rounding.tick_values(*bounds)
+                # Keep a rounded endpoint only when it adds little empty space.
+                bounds = tuple(tick if abs(tick - edge) <= 0.05 * span else edge
+                               for tick, edge in zip((ticks[0], ticks[-1]), bounds, strict=True))
+            getattr(axis, f"set_{dimension}lim")(*bounds)
+
+
 def _format_clock(axis, dimension, clock, options, averaged):
-    from matplotlib.ticker import FuncFormatter, MaxNLocator
+    from matplotlib.ticker import FuncFormatter, Locator
 
     midnight = clock["reference_mjd_seconds"]
     date = _MJD_EPOCH + timedelta(seconds=midnight)
@@ -197,7 +249,25 @@ def _format_clock(axis, dimension, clock, options, averaged):
         return timestamp.strftime("%Y/%m/%d\n%H:%M:%S")
 
     rendered_axis = getattr(axis, f"{dimension}axis")
-    rendered_axis.set_major_locator(MaxNLocator(nbins=8, steps=[1, 2, 2.5, 5, 10]))
+    class ClockLocator(Locator):
+        def __call__(self):
+            lower, upper = sorted(self.axis.get_view_interval())
+            bins = min(8, max(2, self.axis.get_tick_space()))
+            interval = (upper - lower) / bins
+            steps = (1, 2, 5, 10, 15, 20, 30, 60, 120, 180, 300, 600, 900,
+                     1200, 1800, 3600, 7200, 10800, 14400, 21600, 43200, 86400)
+            if interval < 1:
+                power = 10 ** floor(log10(interval))
+                step = next(multiplier * power for multiplier in (1, 2, 5, 10)
+                            if multiplier * power >= interval)
+            else:
+                step = next((step for step in steps if step >= interval),
+                            86400 * ceil(interval / 86400))
+            first = ceil((lower - midnight) / step)
+            last = floor((upper - midnight) / step)
+            return self.raise_if_exceeds([midnight + i * step for i in range(first, last + 1)])
+
+    rendered_axis.set_major_locator(ClockLocator())
     rendered_axis.set_major_formatter(FuncFormatter(tick))
     label = options.get(f"{dimension}label")
     if not label:
@@ -250,7 +320,19 @@ def _share_measurement_set_axes(figure, primary, layout, options):
                     axis.set_ylabel("")
 
 
-def _line(line, layer, options, *, measurement_set):
+def _symbol_group(axis, layer):
+    return axis, layer["id"].partition("-")[0], layer["color_group"].rsplit("::", 1)[-1] == "flagged"
+
+
+def _auto_symbol(point_count):
+    if point_count > 1_000_000:
+        return ",", 1
+    if point_count > 10_000:
+        return "o", 2
+    return "o", 4 if point_count > 1_000 else 6
+
+
+def _line(line, layer, options, *, measurement_set, point_count):
     index = layer["id"].partition("-")[0]
     series = int(index) if index.isdigit() else 0
     group = layer["color_group"]
@@ -263,15 +345,17 @@ def _line(line, layer, options, *, measurement_set):
     def option(name, default):
         return _per_series(options.get(name), series, default, broadcast=not measurement_set)
 
+    pixels_to_points = 72.0 / line.figure.dpi
     if option(custom, False):
         shape = option(f"{prefix}shape", "circle" if flagged else "autoscaling")
         color = option(f"{prefix}color", "ff0000" if flagged else "0000ff")
         fill = option(f"{prefix}fill", "fill").lower()
         outline = option(f"{prefix}outline", False)
-        size = option(f"{prefix}size", 2)
+        marker, pixels = (_auto_symbol(point_count) if shape == "autoscaling"
+                          else (_MARKERS[shape.lower()], option(f"{prefix}size", 2)))
+        size = pixels * pixels_to_points
         # Explicit PlotMS marker colors carry their own opacity.
         line.set_alpha(None)
-        marker = _MARKERS[shape.lower()]
         if measurement_set and group not in ("", "all", "flagged"):
             color = line.get_color()
         else:
@@ -279,6 +363,7 @@ def _line(line, layer, options, *, measurement_set):
         line.set_marker(marker)
         line.set_markersize(size)
         line.set_markeredgecolor("black" if outline else color)
+        line.set_markeredgewidth(pixels_to_points if outline or fill != "fill" else 0)
         patterned = measurement_set and fill in ("mesh1", "mesh2", "mesh3") and marker in ("o", "s", "D")
         line.set_markerfacecolor("none" if patterned or fill == "nofill" else color)
         if patterned:
@@ -287,8 +372,13 @@ def _line(line, layer, options, *, measurement_set):
                 marker=_mesh_marker(marker, fill), s=size ** 2, facecolor=color,
                 linewidth=0, zorder=line.get_zorder() - 0.01,
             )
+    elif layer["kind"] != "line":
+        marker, pixels = _auto_symbol(point_count)
+        line.set_marker(marker)
+        line.set_markersize(pixels * pixels_to_points)
+        line.set_markeredgewidth(0)
     else:
-        line.set_markersize(layer["symbol_size"])
+        line.set_markersize(layer["symbol_size"] * pixels_to_points)
     if not measurement_set and options.get("xconnector") == "step":
         line.set_linestyle("-")
         line.set_drawstyle("steps-mid")

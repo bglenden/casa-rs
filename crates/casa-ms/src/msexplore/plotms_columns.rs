@@ -118,6 +118,12 @@ pub(super) fn uses_direct_vector_time_projection(
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
+    if uses_ordinary_time_averaging(spec)
+        && !spec.averaging.scalar
+        && spec.has_uvw_coordinate_axes()
+    {
+        return true;
+    }
     let time_geometry = uses_averaged_geometry_coordinates(spec);
     let uvw = |axis: MsAxis| axis.uses_uvw_metres() || (time_geometry && axis.uses_wavelengths());
     uses_unbinned_vector_time_averaging(spec)
@@ -128,7 +134,10 @@ pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
 }
 
 pub(super) fn uses_averaged_geometry_coordinates(spec: &MsPlotSpec) -> bool {
-    uses_unbinned_vector_time_averaging(spec)
+    (uses_unbinned_vector_time_averaging(spec)
+        || (uses_ordinary_time_averaging(spec)
+            && !spec.averaging.scalar
+            && spec.has_uvw_coordinate_axes()))
         && std::iter::once(spec.x_axis)
             .chain(spec.y_axes.iter().copied())
             .any(MsAxis::is_interval_or_wavelength)
