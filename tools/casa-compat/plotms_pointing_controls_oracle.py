@@ -6,7 +6,7 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
-from plotms_ms_columns_oracle import compare_figure, compare_text, reference, rows
+from plotms_ms_columns_oracle import compare_figure, compare_text, opened, reference, rows
 
 
 def compare_pointing_lists(work, native, vis):
@@ -161,6 +161,10 @@ def check_refusals(work, native, independent, parallel):
 
 
 def compare_pointing_partners(work, native, vis):
+    with opened(vis, True) as table:
+        correlation, channel, row = np.indices(table.getcol('DATA').shape)
+        data = 100 * correlation + 10 * channel + row
+        table.putcol('DATA', data.astype(np.complex64))
     base = dict(vis=str(vis), antenna='A0&&&;A0&A1', spw='0:1~3^2', correlation='YY',
                 showgui=False, overwrite=True)
     for name, overrides, axis_labels in (
@@ -178,6 +182,8 @@ def compare_pointing_partners(work, native, vis):
         assert {p[12] for p in points} == {'YY'}
         assert sum(p[6] == '0' for p in points) == 21
         assert sum(p[6] == '1' for p in points) == 24
+        if name == 'latitude-real':
+            assert all(float(point[1]) >= 100 for point in points)
         assert native(**options, plotfile=str(actual), expformat='txt') is None
         assert compare_text(actual, expected) == 45
         compare_figure(work, native, options, expected, (name, *axis_labels))
@@ -216,6 +222,32 @@ def compare_pointing_averaging(work, native, vis):
         compare_figure(work, native, options, expected, (name, *labels))
         print(f'{name}: {count} paired raw coordinates with the averaging request', flush=True)
     compare_pointing_scan_pages(work, native, base)
+    check_invalid_time_averaging(work, native, base)
+
+
+def check_invalid_time_averaging(work, native, base):
+    from casars.tasks import TaskParameterError
+
+    options = base | dict(xaxis='time', yaxis='ant-ra', averagedata=True)
+    for fmt in ('txt', 'png'):
+        negative = work / f'invalid-avgtime-1.casa.{fmt}'
+        try:
+            reference(**options, avgtime='-1', expformat=fmt, plotfile=str(negative))
+        except ValueError as error:
+            assert 'avgtime' in str(error)
+        else:
+            raise AssertionError('CASA accepted a negative pointing averaging interval')
+        assert not negative.exists()
+        for interval in ('-1', 'NaN', 'inf'):
+            output = work / f'invalid-avgtime-{interval}.native.{fmt}'
+            try:
+                native(**options, avgtime=interval, expformat=fmt, plotfile=str(output))
+            except (ValueError, TaskParameterError) as error:
+                assert 'avgtime' in str(error)
+            else:
+                raise AssertionError(f'Native {fmt} accepted avgtime={interval}')
+            assert not output.exists()
+    print('invalid-avgtime: consistent native TXT and PNG rejection without product', flush=True)
 
 
 def compare_pointing_scan_pages(work, native, base):

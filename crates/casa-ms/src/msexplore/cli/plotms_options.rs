@@ -100,6 +100,7 @@ impl CliOptions {
             ));
         }
         if averaging {
+            calibration::averaging::options(task)?;
             // CASA's metadata-only iterator requests no visibility column. It reports
             // the requested averaging in the export but retains the selected raw grid.
             self.avgtime = None;
