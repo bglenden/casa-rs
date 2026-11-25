@@ -54,6 +54,14 @@ impl ScanBounds {
             .try_fold(i32::MAX, |minimum, scan| {
                 Ok::<_, MsError>(minimum.min(scan?))
             })?;
+        Ok(self.offsets_from_minimum(min_donor, observation_map))
+    }
+
+    pub(super) fn offsets_from_minimum(
+        &self,
+        min_donor: i32,
+        observation_map: &[usize],
+    ) -> ScanOffsets {
         let counterpart: BTreeSet<_> = observation_map.iter().copied().collect();
         let mut offsets = BTreeMap::new();
         let mut previous_max = None;
@@ -67,10 +75,10 @@ impl ScanBounds {
             offsets.insert(id, shift.max(0));
             previous_max = Some(max);
         }
-        Ok(ScanOffsets {
+        ScanOffsets {
             offsets,
             default: (i64::from(self.max_scan) + 1 - i64::from(min_donor)).max(0),
-        })
+        }
     }
 
     pub(super) fn parse(text: &str) -> MsResult<Self> {

@@ -625,18 +625,33 @@ mod prepared_append_tests {
         use std::collections::BTreeMap;
 
         let root = tempfile::tempdir().unwrap();
-        for manager in [
-            DataManagerKind::StandardStMan,
-            DataManagerKind::IncrementalStMan,
+        for (manager, endian) in [
+            (
+                DataManagerKind::StandardStMan,
+                crate::EndianFormat::BigEndian,
+            ),
+            (
+                DataManagerKind::StandardStMan,
+                crate::EndianFormat::LittleEndian,
+            ),
+            (
+                DataManagerKind::IncrementalStMan,
+                crate::EndianFormat::BigEndian,
+            ),
         ] {
-            let path = root.path().join(format!("{manager:?}"));
+            let path = root.path().join(format!("{manager:?}-{endian:?}"));
             let schema = TableSchema::new(vec![
                 ColumnSchema::scalar("id", PrimitiveType::Int32),
                 ColumnSchema::scalar("keep", PrimitiveType::Float64),
             ])
             .unwrap();
             let mut table = Table::with_schema(schema);
-            for id in 0..24 {
+            let rows = if manager == DataManagerKind::StandardStMan {
+                3000
+            } else {
+                69
+            };
+            for id in 0..rows {
                 table
                     .add_row(RecordValue::new(vec![
                         RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
@@ -648,15 +663,21 @@ mod prepared_append_tests {
                     .unwrap();
             }
             table
-                .save(TableOptions::new(&path).with_data_manager(manager))
+                .save(
+                    TableOptions::new(&path)
+                        .with_data_manager(manager)
+                        .with_endian_format(endian),
+                )
                 .unwrap();
             let mut guard = TableWriteLock::acquire_to_reread(&path, 1).unwrap();
             let table = Table::open(TableOptions::new(&path)).unwrap();
             let before = table.scalar_columns_owned(&["id", "keep"]).unwrap();
+            let manager_file = path.join("table.f0");
+            let original = std::fs::read(&manager_file).unwrap();
             let replacement = BTreeMap::from([(
                 "id".to_owned(),
-                (3..27)
-                    .map(|id| Some(Value::Scalar(ScalarValue::Int32(id))))
+                (0..rows)
+                    .map(|id| Some(Value::Scalar(ScalarValue::Int32(id ^ 1))))
                     .collect(),
             )]);
             let mut staged = table
@@ -671,11 +692,24 @@ mod prepared_append_tests {
                     .unwrap()
             };
             let after = reopen();
-            assert_eq!(after["id"][0], Some(ScalarValue::Int32(3)));
-            assert_eq!(after["id"][23], Some(ScalarValue::Int32(26)));
+            assert_eq!(
+                after["id"],
+                (0..rows)
+                    .map(|id| Some(ScalarValue::Int32(id ^ 1)))
+                    .collect::<Vec<_>>(),
+            );
             assert_eq!(after["keep"], before["keep"]);
+            if manager == DataManagerKind::StandardStMan {
+                let edited = std::fs::read(&manager_file).unwrap();
+                assert_eq!(edited.len(), original.len());
+                assert_eq!(
+                    edited.iter().zip(&original).filter(|(a, b)| a != b).count(),
+                    rows as usize
+                );
+            }
             staged.restore().unwrap();
             assert_eq!(reopen(), before);
+            assert_eq!(std::fs::read(&manager_file).unwrap(), original);
         }
     }
 

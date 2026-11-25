@@ -12074,6 +12074,16 @@ reverses both visibility axes but only reorders the correlations in FLAG.
 Casa-rs applies the same channel and correlation permutations to the flags
 and their visibilities (#1030).
 
+## Virtual concatenation can retain invalid IDs after removing duplicate rows
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` two identical attached OBSERVATION
+or PROCESSOR rows and a distinct incoming row. CASA removes the duplicate
+but can leave attached IDs unchanged when the scan file is omitted, and
+can store a donor ID of 2 for a two-row merged subtable. The same stale
+observation ID can enter EARTH_ORIENTATION. Casa-rs computes the final IDs
+after removing duplicates and updates all attached references and donor
+references that are remapped for virtual concatenation (#1030).
+
 ## Virtual concatenation can overwrite a truncated auxiliary scan file
 
 Give `ms.virtconcatenate()` in CASA 6.7.6.14 an auxiliary file that declares

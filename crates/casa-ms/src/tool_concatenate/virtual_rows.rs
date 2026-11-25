@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Remap donor MAIN in place so it can be used with the attached MS's subtables.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use casa_tables::Table;
+use casa_tables::{RequiredScalarColumnValues, Table};
 use casa_types::{ArrayValue, ScalarValue, Value};
 use rayon::prelude::*;
 
 use super::{
     MainRowMap,
-    main_rows::{
-        self, ArrayTransform, RowOrder, ScalarColumns, integer, lookup, optional_id, sparse_id,
-    },
+    main_rows::{self, ArrayTransform, RowOrder, lookup, optional_id, sparse_id},
     scan::ScanBounds,
 };
 use crate::{
@@ -19,19 +17,70 @@ use crate::{
     write_session::{MeasurementSetMutationColumnValues, VisibilityWriteDestination},
 };
 
-const SCALARS: &[&str] = &[
-    "ANTENNA1",
-    "ANTENNA2",
-    "DATA_DESC_ID",
-    "FIELD_ID",
-    "STATE_ID",
-];
+const SCALARS: &[&str] = &["ANTENNA1", "ANTENNA2", "DATA_DESC_ID", "FIELD_ID"];
 pub(super) const SCAN_COLUMNS: &[&str] = &["OBSERVATION_ID", "SCAN_NUMBER"];
-const AUX_SCALARS: &[&str] = &["OBSERVATION_ID", "SCAN_NUMBER", "PROCESSOR_ID"];
+
+type RequiredScalars = HashMap<String, RequiredScalarColumnValues>;
+
+pub(super) fn int32_column<'a>(scalar: &'a RequiredScalars, name: &str) -> MsResult<&'a [i32]> {
+    match scalar.get(name) {
+        Some(RequiredScalarColumnValues::Int32(values)) => Ok(values),
+        _ => Err(invalid(format!("MAIN {name} must contain int32 values"))),
+    }
+}
 
 pub(super) struct MainReplacement {
     pub(super) columns: BTreeMap<String, Vec<Option<Value>>>,
     pub(super) channel_selection: Option<Value>,
+}
+
+pub(super) fn attached_replacements(
+    table: &Table,
+    map: &MainRowMap,
+    selected: Option<&[usize]>,
+) -> MsResult<MainReplacement> {
+    let mut columns = BTreeMap::new();
+    for (name, mapping) in [
+        ("OBSERVATION_ID", &map.attached_observations),
+        ("PROCESSOR_ID", &map.attached_processors),
+    ] {
+        if mapping.is_empty() || table.row_count() == 0 {
+            continue;
+        }
+        let scalars = table.required_scalar_columns_owned(&[name])?;
+        let original = int32_column(&scalars, name)?;
+        let updated = original
+            .iter()
+            .map(|&id| sparse_id(mapping, id))
+            .collect::<MsResult<Vec<_>>>()?;
+        replace(&mut columns, name, original, updated);
+    }
+    if map.attached_has_state && !map.donor_has_state && table.row_count() > 0 {
+        let missing = Some(Value::Scalar(ScalarValue::Int32(-1)));
+        let states = if let Some(selected) = selected {
+            let mut persisted = table.scalar_columns_owned(&["STATE_ID"])?;
+            let mut states = persisted
+                .remove("STATE_ID")
+                .expect("requested STATE_ID")
+                .into_iter()
+                .map(|value| value.map(Value::Scalar))
+                .collect::<Vec<_>>();
+            for &row in selected {
+                let state = states
+                    .get_mut(row)
+                    .ok_or_else(|| invalid("attached selection changed during concatenation"))?;
+                *state = missing.clone();
+            }
+            states
+        } else {
+            vec![missing; table.row_count()]
+        };
+        columns.insert("STATE_ID".into(), states);
+    }
+    Ok(MainReplacement {
+        columns,
+        channel_selection: None,
+    })
 }
 
 pub(super) fn prepare(
@@ -39,29 +88,53 @@ pub(super) fn prepare(
     donor: &MeasurementSet,
     map: &MainRowMap,
     scale: f32,
-    bounds: Option<ScanBounds>,
+    read_bounds: Option<impl FnOnce() -> MsResult<ScanBounds> + Send>,
 ) -> MsResult<(MainReplacement, Option<String>)> {
     let table = donor.main_table();
     let mut names = SCALARS.to_vec();
-    if bounds.is_some() {
-        names.extend(AUX_SCALARS);
+    if map.attached_has_state && map.donor_has_state {
+        names.push("STATE_ID");
     }
-    let scalar = main_rows::scalar_columns(table, &names)?;
+    if read_bounds.is_some() {
+        names.extend(SCAN_COLUMNS);
+        names.push("PROCESSOR_ID");
+    }
+    let read_scalar = || table.required_scalar_columns_owned(&names);
+    // Attached scan bounds and donor scalar columns come from separate,
+    // already captured and locked inputs.
+    let (scalar, bounds) = if let Some(read_bounds) = read_bounds {
+        let (scalar, bounds) = rayon::join(read_scalar, read_bounds);
+        (scalar?, Some(bounds?))
+    } else {
+        (read_scalar()?, None)
+    };
+    let first = int32_column(&scalar, "ANTENNA1")?;
+    let second = int32_column(&scalar, "ANTENNA2")?;
+    let descriptions = int32_column(&scalar, "DATA_DESC_ID")?;
     let reorder = map.antennas.iter().copied().ne(0..map.antennas.len());
-    let order = main_rows::row_orders(table.row_count(), &scalar, map, reorder)?;
+    let order = first
+        .iter()
+        .zip(second)
+        .zip(descriptions)
+        .map(|((&first, &second), &description)| {
+            main_rows::row_order(map, first, second, description, reorder)
+        })
+        .collect::<MsResult<Vec<_>>>()?;
     let mut output = scalar_replacements(&scalar, &order, map)?;
     let auxiliary = bounds
-        .map(|bounds| prepare_scans(bounds, &scalar, &mut output.columns, map, table.row_count()))
+        .map(|bounds| prepare_scans(bounds, &scalar, &mut output.columns, map))
         .transpose()?;
+    let kernels = ArrayTransform::new(donor, &order, scale)?;
     let columns = if table.row_count() == 0 {
         Vec::new()
     } else {
-        main_rows::array_names(attached.main_table(), table, table)?
+        main_rows::array_names(attached.main_table(), table, table, |name| {
+            kernels.changes(name)
+        })?
     };
     if columns.contains(&"MODEL_DATA") {
         output.channel_selection = Some(main_rows::model_channel_selection(donor, None)?);
     }
-    let kernels = ArrayTransform::new(donor, &order, scale)?;
     let transformed = columns
         .into_par_iter()
         .filter(|name| kernels.changes(name))
@@ -78,44 +151,42 @@ pub(super) fn prepare(
 }
 
 fn scalar_replacements(
-    scalar: &ScalarColumns,
+    scalar: &RequiredScalars,
     order: &[RowOrder],
     map: &MainRowMap,
 ) -> MsResult<MainReplacement> {
     let mut columns = BTreeMap::new();
     replace(
         &mut columns,
-        scalar,
         "ANTENNA1",
+        int32_column(scalar, "ANTENNA1")?,
         order.iter().map(|order| order.first).collect(),
     );
     replace(
         &mut columns,
-        scalar,
         "ANTENNA2",
+        int32_column(scalar, "ANTENNA2")?,
         order.iter().map(|order| order.second).collect(),
     );
     replace(
         &mut columns,
-        scalar,
         "DATA_DESC_ID",
+        int32_column(scalar, "DATA_DESC_ID")?,
         order.iter().map(|order| order.description).collect(),
     );
-    let fields = (0..order.len())
-        .map(|row| {
-            Ok(*lookup(
-                &map.fields,
-                integer(scalar, "FIELD_ID", row)?,
-                "FIELD_ID",
-            )?)
-        })
+    let old_fields = int32_column(scalar, "FIELD_ID")?;
+    let fields = old_fields
+        .iter()
+        .map(|&id| lookup(&map.fields, id, "FIELD_ID").copied())
         .collect::<MsResult<_>>()?;
-    replace(&mut columns, scalar, "FIELD_ID", fields);
+    replace(&mut columns, "FIELD_ID", old_fields, fields);
     if map.attached_has_state && map.donor_has_state {
-        let states = (0..order.len())
-            .map(|row| optional_id(&map.states, integer(scalar, "STATE_ID", row)?, "STATE_ID"))
+        let old_states = int32_column(scalar, "STATE_ID")?;
+        let states = old_states
+            .iter()
+            .map(|&id| optional_id(&map.states, id, "STATE_ID"))
             .collect::<MsResult<_>>()?;
-        replace(&mut columns, scalar, "STATE_ID", states);
+        replace(&mut columns, "STATE_ID", old_states, states);
     }
     Ok(MainReplacement {
         columns,
@@ -125,46 +196,42 @@ fn scalar_replacements(
 
 fn prepare_scans(
     mut bounds: ScanBounds,
-    scalar: &ScalarColumns,
+    scalar: &RequiredScalars,
     columns: &mut BTreeMap<String, Vec<Option<Value>>>,
     map: &MainRowMap,
-    count: usize,
 ) -> MsResult<String> {
-    let offsets = bounds.offsets(scalar, &map.observations)?;
+    let old_observations = int32_column(scalar, "OBSERVATION_ID")?;
+    let old_scans = int32_column(scalar, "SCAN_NUMBER")?;
+    let old_processors = int32_column(scalar, "PROCESSOR_ID")?;
+    let minimum = old_scans.iter().copied().min().unwrap_or(i32::MAX);
+    let offsets = bounds.offsets_from_minimum(minimum, &map.observations);
+    let count = old_observations.len();
     let mut observations = Vec::with_capacity(count);
     let mut scans = Vec::with_capacity(count);
     let mut processors = Vec::with_capacity(count);
     let mut max_scan = 0;
-    for row in 0..count {
-        let old = integer(scalar, "OBSERVATION_ID", row)?;
+    for ((&old, &scan), &processor) in old_observations.iter().zip(old_scans).zip(old_processors) {
         let new = sparse_id(&map.observations, old)?;
-        let scan = offsets.remap(old, new, integer(scalar, "SCAN_NUMBER", row)?)?;
+        let scan = offsets.remap(old, new, scan)?;
         bounds.observe(new, scan);
         max_scan = max_scan.max(scan);
         observations.push(new);
         scans.push(scan);
-        processors.push(sparse_id(
-            &map.processors,
-            integer(scalar, "PROCESSOR_ID", row)?,
-        )?);
+        processors.push(sparse_id(&map.processors, processor)?);
     }
-    replace(columns, scalar, "OBSERVATION_ID", observations);
-    replace(columns, scalar, "SCAN_NUMBER", scans);
-    replace(columns, scalar, "PROCESSOR_ID", processors);
+    replace(columns, "OBSERVATION_ID", old_observations, observations);
+    replace(columns, "SCAN_NUMBER", old_scans, scans);
+    replace(columns, "PROCESSOR_ID", old_processors, processors);
     Ok(bounds.render(max_scan))
 }
 
 fn replace(
     columns: &mut BTreeMap<String, Vec<Option<Value>>>,
-    scalar: &ScalarColumns,
     column: &str,
+    original: &[i32],
     updated: Vec<i32>,
 ) {
-    if updated
-        .iter()
-        .zip(&scalar[column])
-        .any(|(&new, old)| *old != Some(ScalarValue::Int32(new)))
-    {
+    if updated != original {
         columns.insert(
             column.into(),
             updated

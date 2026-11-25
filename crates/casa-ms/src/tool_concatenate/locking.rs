@@ -85,7 +85,6 @@ struct LinkedLocation {
 }
 
 pub(super) struct InputTables {
-    main: Table,
     subtables: BTreeMap<SubtableId, PathBuf>,
     pub(super) calibration: BTreeMap<&'static str, PathBuf>,
     links: BTreeMap<PathBuf, LinkedLocation>,
@@ -93,10 +92,9 @@ pub(super) struct InputTables {
 }
 
 impl InputTables {
-    pub(super) fn capture(root: &Path) -> MsResult<Self> {
+    pub(super) fn capture(root: &Path) -> MsResult<(Self, Table)> {
         let main = Table::open(TableOptions::new(root))?;
         let mut result = Self {
-            main,
             subtables: BTreeMap::new(),
             calibration: BTreeMap::new(),
             links: BTreeMap::new(),
@@ -106,7 +104,7 @@ impl InputTables {
             .iter()
             .chain(SubtableId::ALL_OPTIONAL)
         {
-            if let Some(name) = subtable_path_from_main(&result.main, root, id) {
+            if let Some(name) = subtable_path_from_main(&main, root, id) {
                 let path = result.capture_link(name)?;
                 result.subtables.insert(id, path);
             }
@@ -123,20 +121,20 @@ impl InputTables {
             }
         }
         for &name in CALIBRATION {
-            if let Some(Value::TableRef(value)) = result.main.keywords().get(name) {
+            if let Some(Value::TableRef(value)) = main.keywords().get(name) {
                 let path = result.capture_link(add_directory(value, root))?;
                 result.calibration.insert(name, path);
             }
         }
         let mut other_links = Vec::new();
-        gather_links(result.main.keywords(), root, &mut other_links);
+        gather_links(main.keywords(), root, &mut other_links);
         for name in other_links {
             if name.is_dir() {
                 result.capture_link(name)?;
             }
         }
         result.capture_link(root.to_path_buf())?;
-        Ok(result)
+        Ok((result, main))
     }
 
     fn capture_link(&mut self, name: PathBuf) -> MsResult<PathBuf> {
@@ -173,15 +171,14 @@ impl InputTables {
             .collect()
     }
 
-    pub(super) fn open(&self, donor: bool) -> MsResult<MeasurementSet> {
+    pub(super) fn open(&self, main: Table, donor: bool) -> MsResult<MeasurementSet> {
         let links = self
             .subtables
             .iter()
             .filter(|(id, _)| participates(**id, donor))
             .map(|(&id, path)| (id, path.clone()))
             .collect::<Vec<_>>();
-        let root = self.main.path().expect("existing MeasurementSet");
-        MeasurementSet::open_concatenation_metadata(root, links, donor)
+        MeasurementSet::open_concatenation_metadata(main, links, donor)
     }
 
     pub(super) fn pointing_path(&self) -> Option<&Path> {
@@ -254,7 +251,7 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let path = scratch.path().join("attached.ms");
         MeasurementSet::create(&path, crate::MeasurementSetBuilder::new()).unwrap();
-        let inputs = InputTables::capture(&path).unwrap();
+        let (inputs, _) = InputTables::capture(&path).unwrap();
         let pointing = path.join("POINTING").canonicalize().unwrap();
         let retained = TableWriteLock::acquire_to_reread(&pointing, 1).unwrap();
         let mut previous = BTreeMap::from([(pointing.clone(), retained)]);

@@ -9,8 +9,11 @@ use casa_tables::{Table, publication::check_write_access};
 use tempfile::NamedTempFile;
 
 use super::{
-    locking::same_identity, main_rows::scalar_columns, publication::io, scan::ScanBounds,
-    virtual_rows::SCAN_COLUMNS,
+    locking::same_identity,
+    main_rows::sparse_id,
+    publication::io,
+    scan::ScanBounds,
+    virtual_rows::{SCAN_COLUMNS, int32_column},
 };
 use crate::MsResult;
 
@@ -80,26 +83,24 @@ impl ScanFile {
         &mut self,
         attached: &Table,
         selected: Option<&[usize]>,
+        observations: &[usize],
     ) -> MsResult<ScanBounds> {
         if let Some(bounds) = self.initial.take() {
             return Ok(bounds);
         }
         let columns = if let Some(selected) = selected {
-            SCAN_COLUMNS
-                .iter()
-                .map(|&name| {
-                    Ok((
-                        name.to_owned(),
-                        attached
-                            .column_accessor(name)?
-                            .scalar_cells_owned_for_rows(selected)?,
-                    ))
-                })
-                .collect::<MsResult<_>>()?
+            attached.required_scalar_columns_owned_for_rows(SCAN_COLUMNS, selected)?
         } else {
-            scalar_columns(attached, SCAN_COLUMNS)?
+            attached.required_scalar_columns_owned(SCAN_COLUMNS)?
         };
-        ScanBounds::from_main(&columns)
+        let mut bounds = ScanBounds::default();
+        for (&id, &scan) in int32_column(&columns, "OBSERVATION_ID")?
+            .iter()
+            .zip(int32_column(&columns, "SCAN_NUMBER")?)
+        {
+            bounds.observe(sparse_id(observations, id)?, scan);
+        }
+        Ok(bounds)
     }
 
     pub(super) fn stage(&mut self, text: &str) {

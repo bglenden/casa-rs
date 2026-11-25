@@ -88,7 +88,7 @@ pub(super) fn prepare(
     let mut scalars = scalars?;
     let order = row_orders(source.row_count(), &scalars, map, true)?;
     let kernels = ArrayTransform::new(donor, &order, scale)?;
-    let array_names = array_names(attached.main_table(), source, destination)?;
+    let array_names = array_names(attached.main_table(), source, destination, |_| true)?;
     let channel_selection = if array_names.contains(&"MODEL_DATA") {
         Some(model_channel_selection(attached, Some(plan))?)
     } else {
@@ -161,32 +161,36 @@ pub(super) fn row_orders(
 ) -> MsResult<Vec<RowOrder>> {
     (0..rows)
         .map(|row| {
-            let a = row_id(*lookup(
-                &map.antennas,
+            row_order(
+                map,
                 integer(scalar, "ANTENNA1", row)?,
-                "ANTENNA1",
-            )?)?;
-            let b = row_id(*lookup(
-                &map.antennas,
                 integer(scalar, "ANTENNA2", row)?,
-                "ANTENNA2",
-            )?)?;
-            let description = lookup(
-                &map.descriptions,
                 integer(scalar, "DATA_DESC_ID", row)?,
-                "DATA_DESC_ID",
-            )?;
-            let flipped = reorder && a > b;
-            Ok(RowOrder {
-                first: if flipped { b } else { a },
-                second: if flipped { a } else { b },
-                description: description.id,
-                polarization: description.polarization,
-                flipped,
-                reverse: description.reverse,
-            })
+                reorder,
+            )
         })
         .collect()
+}
+
+pub(super) fn row_order(
+    map: &MainRowMap,
+    first: i32,
+    second: i32,
+    description: i32,
+    reorder: bool,
+) -> MsResult<RowOrder> {
+    let a = row_id(*lookup(&map.antennas, first, "ANTENNA1")?)?;
+    let b = row_id(*lookup(&map.antennas, second, "ANTENNA2")?)?;
+    let description = lookup(&map.descriptions, description, "DATA_DESC_ID")?;
+    let flipped = reorder && a > b;
+    Ok(RowOrder {
+        first: if flipped { b } else { a },
+        second: if flipped { a } else { b },
+        description: description.id,
+        polarization: description.polarization,
+        flipped,
+        reverse: description.reverse,
+    })
 }
 
 fn append_scalars(
@@ -297,7 +301,7 @@ pub(super) fn model_channel_selection(
             .iter()
             .find(|change| change.table == SubtableId::SpectralWindow)
     }) {
-        for row in &change.appended {
+        for row in &change.rows.appended {
             let Some(Value::Scalar(ScalarValue::Int32(channels))) = row.get("NUM_CHAN") else {
                 return Err(invalid("SPECTRAL_WINDOW has no channel count"));
             };
@@ -318,6 +322,7 @@ pub(super) fn array_names(
     attached: &Table,
     source: &Table,
     destination: &Table,
+    needs_optional: impl Fn(&str) -> bool,
 ) -> MsResult<Vec<&'static str>> {
     let contains = |table: &Table, name| {
         table
@@ -341,10 +346,11 @@ pub(super) fn array_names(
         return Err(invalid(format!("MeasurementSet is missing {visibility}")));
     }
     for name in ["FLAG_CATEGORY", "WEIGHT_SPECTRUM", "SIGMA_SPECTRUM"] {
-        if contains(destination, name)
+        if needs_optional(name)
+            && contains(destination, name)
             && contains(source, name)
             && first_output_cell_defined(destination, name)?
-            && first_array_is_defined(source, name)?
+            && (std::ptr::eq(source, destination) || first_array_is_defined(source, name)?)
         {
             columns.push(name);
         }

@@ -133,7 +133,7 @@ pub fn virtual_concatenate(
 struct MetadataPlan<'a> {
     changes: Vec<SubtableChange>,
     row_map: MainRowMap,
-    calibration: Vec<(&'a Table, Vec<RecordValue>)>,
+    calibration: Vec<(&'a Table, TableRowsChange)>,
     ephemerides: Vec<(PathBuf, String)>,
     add_ephemeris_column: bool,
 }
@@ -147,10 +147,17 @@ struct MainRowMap {
     donor_has_state: bool,
     observations: Vec<usize>,
     processors: Vec<usize>,
+    attached_observations: Vec<usize>,
+    attached_processors: Vec<usize>,
 }
 
 struct SubtableChange {
     table: SubtableId,
+    rows: TableRowsChange,
+}
+
+#[derive(Default)]
+struct TableRowsChange {
     appended: Vec<RecordValue>,
     updated: Vec<(usize, RecordValue)>,
     removed: Vec<usize>,
@@ -164,17 +171,22 @@ impl<'a> MetadataPlan<'a> {
         frequency_hz: f64,
         direction_rad: f64,
         respect_name: bool,
+        coalesce_attached: bool,
     ) -> MsResult<Self> {
-        let legacy_identity =
-            |table, reconcile: fn(&Table, &Table) -> MsResult<identity::IdentityRows>| {
-                reconcile(
-                    required_table(target, table)?,
-                    required_table(donor, table)?,
-                )
-            };
-        let states = legacy_identity(SubtableId::State, identity::states)?;
-        let observations = legacy_identity(SubtableId::Observation, identity::observations)?;
-        let processors = legacy_identity(SubtableId::Processor, identity::processors)?;
+        let states = identity::states(
+            required_table(target, SubtableId::State)?,
+            required_table(donor, SubtableId::State)?,
+        )?;
+        let observations = identity::observations(
+            required_table(target, SubtableId::Observation)?,
+            required_table(donor, SubtableId::Observation)?,
+            coalesce_attached,
+        )?;
+        let processors = identity::processors(
+            required_table(target, SubtableId::Processor)?,
+            required_table(donor, SubtableId::Processor)?,
+            coalesce_attached,
+        )?;
         let spectral = spectral::reconcile(target, donor, frequency_hz)?;
         let antennas = antenna::reconcile(target, donor, &spectral.window_ids)?;
         let mut sources = source::reconcile(target, donor, &spectral.window_ids)?;
@@ -189,7 +201,7 @@ impl<'a> MetadataPlan<'a> {
             &antennas.antenna_ids,
             &spectral.window_ids,
             !spectral.windows.is_empty(),
-            &observations.donor_ids,
+            [&observations.attached_ids, &observations.donor_ids],
         )?;
         let mut plan = Self {
             changes: Vec::new(),
@@ -202,6 +214,8 @@ impl<'a> MetadataPlan<'a> {
                 donor_has_state: required_table(donor, SubtableId::State)?.row_count() > 0,
                 observations: observations.donor_ids,
                 processors: processors.donor_ids,
+                attached_observations: observations.attached_ids,
+                attached_processors: processors.attached_ids,
             },
             calibration,
             ephemerides: fields.ephemerides,
@@ -223,14 +237,37 @@ impl<'a> MetadataPlan<'a> {
         {
             plan.changes.push(SubtableChange {
                 table: SubtableId::Source,
-                appended: sources.additions,
-                updated: sources.updates,
-                removed: sources.removed,
+                rows: TableRowsChange {
+                    appended: sources.additions,
+                    updated: sources.updates,
+                    removed: sources.removed,
+                },
             });
         }
         plan.add(SubtableId::Field, fields.additions, Vec::new());
-        plan.add(SubtableId::Observation, observations.additions, Vec::new());
-        plan.add(SubtableId::Processor, processors.additions, Vec::new());
+        for (table, appended, removed) in [
+            (
+                SubtableId::Observation,
+                observations.additions,
+                observations.removed,
+            ),
+            (
+                SubtableId::Processor,
+                processors.additions,
+                processors.removed,
+            ),
+        ] {
+            if !appended.is_empty() || !removed.is_empty() {
+                plan.changes.push(SubtableChange {
+                    table,
+                    rows: TableRowsChange {
+                        appended,
+                        removed,
+                        ..TableRowsChange::default()
+                    },
+                });
+            }
+        }
         Ok(plan)
     }
 
@@ -246,9 +283,11 @@ impl<'a> MetadataPlan<'a> {
         {
             self.changes.push(SubtableChange {
                 table,
-                appended,
-                updated,
-                removed: Vec::new(),
+                rows: TableRowsChange {
+                    appended,
+                    updated,
+                    ..TableRowsChange::default()
+                },
             });
         }
     }

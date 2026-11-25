@@ -39,6 +39,18 @@ impl StagedEdit<'_> {
         {
             return Ok(true);
         }
+        if manager.type_name == "StandardStMan"
+            && standard_stman::stage_int32_replacement(
+                &old,
+                &staged,
+                manager,
+                columns,
+                replacements,
+                rows,
+            )?
+        {
+            return Ok(true);
+        }
         let unchanged = columns
             .iter()
             .map(|column| column.col_name.as_str())
