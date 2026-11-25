@@ -160,6 +160,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
+    parser.add_argument("--only", choices=("compositions",))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -169,8 +170,12 @@ def main():
     calibrate = args.calibrate_bin or args.native_bin.with_name("calibrate")
     os.environ["CASARS_CALIBRATE_BIN"] = str(calibrate.resolve())
     from casars.tasks import plotms as native
+    from plotms_ms_phasecenter_compositions_oracle import compare_phasecenter_compositions
 
     with chdir(root), plotms_launcher(args.app_run):
+        if args.only == "compositions":
+            compare_phasecenter_compositions(root / "compositions", native, PHASE_CENTER)
+            return
         vis, original_columns = fixture(root)
         with opened(vis, True) as table:
             row = np.arange(table.nrows())
@@ -204,6 +209,7 @@ def main():
         with opened(vis) as table:
             for name, values in (original_columns | {"UVW": uvw}).items():
                 np.testing.assert_array_equal(table.getcol(name), values)
+        compare_phasecenter_compositions(root / "compositions", native, PHASE_CENTER)
 
 
 if __name__ == "__main__":
