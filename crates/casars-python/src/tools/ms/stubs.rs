@@ -87,26 +87,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (spwids = None, fieldids = None, obstime = None, mode = None, nchan = None, start = None, width = None, phasec = None, restfreq = None, outframe = None, veltype = None, verbose = None), text_signature = "($self, spwids=[0], fieldids=[0], obstime='', mode='channel', nchan=-1, start=[], width=[], phasec=[], restfreq=[], outframe='', veltype='radio', verbose=True)")]
-    fn cvelfreqs(
-        &self,
-        spwids: Option<&Bound<'_, PyAny>>,
-        fieldids: Option<&Bound<'_, PyAny>>,
-        obstime: Option<&Bound<'_, PyAny>>,
-        mode: Option<&Bound<'_, PyAny>>,
-        nchan: Option<&Bound<'_, PyAny>>,
-        start: Option<&Bound<'_, PyAny>>,
-        width: Option<&Bound<'_, PyAny>>,
-        phasec: Option<&Bound<'_, PyAny>>,
-        restfreq: Option<&Bound<'_, PyAny>>,
-        outframe: Option<&Bound<'_, PyAny>>,
-        veltype: Option<&Bound<'_, PyAny>>,
-        verbose: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("cvelfreqs")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (msfile = None, fitsfile = None, nomodify = None, lock = None, obstype = None, host = None, forcenewserver = None, antnamescheme = None), text_signature = "($self, msfile='', fitsfile='', nomodify=True, lock=False, obstype=0, host='', forcenewserver=False, antnamescheme='old')")]
     fn fromfits(
         &self,

@@ -7,6 +7,7 @@ use casa_measures_data::CometTable;
 use casa_tables::Table;
 use casa_types::measures::direction::MDirection;
 use casa_types::measures::ephemeris::offset_true_angle;
+use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
 use casa_types::measures::{EpochRef, MEpoch, MeasFrame};
 use casa_types::quanta::casacore::casacore_unit;
 use casa_types::quanta::{Dimension, UnitDim};
@@ -81,6 +82,33 @@ impl MsField<'_> {
         seconds: f64,
     ) -> MsResult<MetadataDirection> {
         self.metadata_direction(row, column, DirectionTime::FieldSeconds(seconds))
+    }
+
+    pub(crate) fn metadata_radial_velocity_at_seconds(
+        &self,
+        row: usize,
+        seconds: f64,
+    ) -> MsResult<Option<MRadialVelocity>> {
+        let Some(path) = self.ephemeris_path(row)? else {
+            return Ok(None);
+        };
+        let (seconds, origin, reference) =
+            self.direction_time(row, DirectionTime::FieldSeconds(seconds))?;
+        let mjd = ephemeris_mjd(seconds, origin, reference)?;
+        let table =
+            CometTable::open(&path).map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        let velocity = table
+            .radial_velocity_m_s(mjd)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?
+            .ok_or_else(|| {
+                MsError::InvalidInput(format!("No valid field ephemeris entry for MJD {mjd}"))
+            })?;
+        let reference = if table.topocentre_m().is_some() {
+            RadialVelocityRef::TOPO
+        } else {
+            RadialVelocityRef::GEO
+        };
+        Ok(Some(MRadialVelocity::new(velocity, reference)))
     }
 
     fn metadata_direction(
@@ -207,16 +235,7 @@ fn ephemeris_direction(
     reference: EpochRef,
 ) -> MsResult<MDirection> {
     let table = CometTable::open(path).map_err(|error| MsError::InvalidInput(error.to_string()))?;
-    let time = if seconds == 0. { origin } else { seconds };
-    let utc_mjd = if reference == EpochRef::UTC {
-        time / 86400.
-    } else {
-        let frame = MeasFrame::new().with_measures(open_measures_runtime()?);
-        MEpoch::from_mjd_seconds(time, reference)
-            .convert_to(EpochRef::UTC, &frame)?
-            .value()
-            .as_mjd()
-    };
+    let utc_mjd = ephemeris_mjd(seconds, origin, reference)?;
     table
         .direction_at(utc_mjd)
         .map_err(|error| MsError::InvalidInput(error.to_string()))?
@@ -224,6 +243,18 @@ fn ephemeris_direction(
         .ok_or_else(|| {
             MsError::InvalidInput(format!("No valid field ephemeris entry for MJD {utc_mjd}"))
         })
+}
+
+fn ephemeris_mjd(seconds: f64, origin: f64, reference: EpochRef) -> MsResult<f64> {
+    let time = if seconds == 0. { origin } else { seconds };
+    if reference == EpochRef::UTC {
+        return Ok(time / 86_400.);
+    }
+    let frame = MeasFrame::new().with_measures(open_measures_runtime()?);
+    Ok(MEpoch::from_mjd_seconds(time, reference)
+        .convert_to(EpochRef::UTC, &frame)?
+        .value()
+        .as_mjd())
 }
 
 pub(super) fn signed_angles(direction: &MDirection) -> [f64; 2] {

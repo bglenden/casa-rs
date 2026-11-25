@@ -97,7 +97,7 @@ pub(crate) fn flatten(
 }
 
 /// casatools reads numeric prefixes in string elements, defaulting to zero.
-fn number_prefix(value: &str) -> i64 {
+pub(crate) fn number_prefix(value: &str) -> i64 {
     let value = value.trim_start();
     let bytes = value.as_bytes();
     let mut i = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
