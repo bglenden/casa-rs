@@ -173,6 +173,8 @@ def compare_spw_reducers(root, native):
         ("vector-baseline", baseline, (-1,), (17.1382, 42.6576)),
         ("scalar-baseline", baseline | dict(scalar=True), (-1,), (19.1502, 42.6589)),
         ("zero-baseline", baseline | zero, (-1,), (17.1382, 42.6576)),
+        ("weighted-vector-baseline", baseline | dict(vis=str(weighted)), (-1,), (17.1382, 42.6576)),
+        ("weighted-scalar-baseline", baseline | dict(vis=str(weighted), scalar=True), (-1,), (19.1502, 42.6589)),
         ("vector-antenna", antenna, (0, 1, 2), (12.3744, 34.7365)),
         ("scalar-antenna", antenna | dict(scalar=True), (0, 1, 2), (15.0816, 34.7381)),
         ("zero-antenna", antenna | zero, (0, 1, 2), (12.3744, 34.7365)),
@@ -209,6 +211,7 @@ def compare_spw_reducers(root, native):
                 raise AssertionError(f"{engine} accepted {name}")
             assert not output.exists()
         print(f"{name}: matching parameter refusal before export", flush=True)
+    compare_shifted_reducer_channels(root, native, base | baseline, vis)
     verify_source(vis, before)
     verify_source(weighted, before_weighted)
 
@@ -349,6 +352,33 @@ def compare_channel_weights(root, native, base, vis):
                          ("Real", "Imag:corrected"))
 
 
+def align_second_window(vis, aligned, target_channels, source_channels):
+    copy_ms(vis, aligned)
+    with opened(aligned, True) as table:
+        high = table.getcol("DATA_DESC_ID") == 1
+        for name in ("DATA", "CORRECTED_DATA", "FLAG"):
+            values = table.getcol(name)
+            values[:, target_channels, high] = values[:, source_channels, high]
+            table.putcol(name, values)
+
+
+def compare_shifted_reducer_channels(root, native, base, vis):
+    controls = base | dict(spw="0:0~2,1:1~3")
+    original = rows(export(root, "shifted-baseline.casa", reference, controls))
+    aligned = root / "aligned-reducer-channels.ms"
+    align_second_window(vis, aligned, slice(0, 3), slice(1, 4))
+    expected = rows(export(root, "aligned-baseline.casa", reference,
+                           controls | dict(vis=str(aligned), spw="0:0~2,1:0~2")))
+    assert [point[2] for point in original] == [point[2] for point in expected] == ["0", "1", "2"] * 2
+    assert not np.allclose(coordinates(original), coordinates(expected))
+    actual = export(root, "shifted-baseline.native", native, controls)
+    assert "# spw: 0:0~2,1:1~3" in actual.read_text()
+    selected = rows(actual)
+    assert [point[2:] for point in selected] == [point[2:] for point in expected]
+    np.testing.assert_allclose(coordinates(selected), coordinates(expected), rtol=1.2e-5)
+    print("shifted-baseline: 6 matching selected channels against the aligned CASA control", flush=True)
+
+
 def compare_selection(root, native, base, vis):
     separate = base | dict(spw="0:0,1:2", avgspw=False)
     raw = export(root, "raw.casa", reference, separate)
@@ -360,13 +390,7 @@ def compare_selection(root, native, base, vis):
     # CASA uses window 0's selected indices for both windows. A control places
     # window 1's explicitly selected sample at that index without changing its value.
     aligned = root / "aligned-channels.ms"
-    copy_ms(vis, aligned)
-    with opened(aligned, True) as table:
-        high = table.getcol("DATA_DESC_ID") == 1
-        for name in ("DATA", "CORRECTED_DATA", "FLAG"):
-            values = table.getcol(name)
-            values[:, 0, high] = values[:, 2, high]
-            table.putcol(name, values)
+    align_second_window(vis, aligned, 0, 2)
     options = separate | dict(avgspw=True)
     original = rows(export(root, "different-channels.casa", reference, options))
     np.testing.assert_allclose(coordinates(original)[:, 0], abs((1 + 2j + 3 * (3 - 4j)) / 4), rtol=1.2e-5)

@@ -5827,6 +5827,7 @@ fn build_generic_visibility_scatter_with_averaging(
     let spw_average = uncalibrated && plotms_columns::uses_spectral_window_average(spec);
     let time_spw = spw_average && time_bins.is_some();
     let spw_antenna = spw_average && spec.averaging.avgantenna;
+    let spw_baseline = spw_average && spec.averaging.avgbaseline;
     let scalar_average = uncalibrated && plotms_columns::uses_scalar_visibility_average(spec);
     let antenna_average = uncalibrated && plotms_columns::uses_antenna_visibility_average(spec);
     let time_antenna = antenna_average && time_bins.is_some();
@@ -5837,7 +5838,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let scalar_visibility =
         scalar_average || ((antenna_average || spw_average) && spec.averaging.scalar);
     let collapse_baselines = (plotms_columns::uses_vector_baseline_average(spec)
-        || (scalar_average && spec.averaging.avgbaseline))
+        || (scalar_average && spec.averaging.avgbaseline)
+        || spw_baseline)
         && uncalibrated;
     let retain_empty_ordinate_list = uncalibrated
         && spec.y_axes.len() > 2
@@ -7324,6 +7326,9 @@ fn build_generic_visibility_scatter_with_averaging(
                     }
                     AveragingBaselineToken::Antenna(antenna) if antenna_average || spw_antenna => {
                         averaged_order[&(group, antenna, -1)]
+                    }
+                    AveragingBaselineToken::Averaged if spw_baseline => {
+                        averaged_order[&(group, -1, -1)]
                     }
                     _ => group,
                 });
