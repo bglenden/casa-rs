@@ -93,14 +93,16 @@ pub(super) fn uses_direct_vector_time_projection(
         && spec.data_column == MsDataColumn::Model
         && x_column.is_none_or(|column| column == MsDataColumn::Model)
         && supports_ordinary_time_axes(spec);
-    let stored_visibility_pair = spec.x_axis.is_visibility_math()
+    let stored_visibility = (spec.x_axis.is_visibility_math() || spec.x_axis == MsAxis::Time)
         && spec.y_axis().is_visibility_math()
         && matches!(
             spec.data_column,
             MsDataColumn::Data | MsDataColumn::Corrected
         )
-        && x_column
-            .is_none_or(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
+        && (spec.x_axis == MsAxis::Time
+            || x_column.is_none_or(|column| {
+                matches!(column, MsDataColumn::Data | MsDataColumn::Corrected)
+            }))
         && supports_ordinary_time_axes(spec);
     let shared_or_channel = supports_reduced_visibility_axes(spec)
         && (spec.secondary_y_axis().is_some()
@@ -112,7 +114,7 @@ pub(super) fn uses_direct_vector_time_projection(
         && supports_ordinary_time_axes(spec);
     uses_time_averaging(spec, spec.y_axes.len() > 2)
         && !spec.averaging.scalar
-        && (model_only || stored_visibility_pair || shared_or_channel || effective_float)
+        && (model_only || stored_visibility || shared_or_channel || effective_float)
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {

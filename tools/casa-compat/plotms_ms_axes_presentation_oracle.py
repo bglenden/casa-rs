@@ -198,6 +198,7 @@ def paired_axis(root, native, name, controls, dimension, expected, ticks=()):
 
     def record(figure, axis, document, options):
         configure(figure, axis, document, options)
+        figure.canvas.draw()
         captured.append(axis)
 
     for task, path in zip((reference, native), text, strict=True):
@@ -210,6 +211,9 @@ def paired_axis(root, native, name, controls, dimension, expected, ticks=()):
     values = np.array([row[:2] for row in rows(text[0])], dtype=float)
     np.testing.assert_allclose(axis.lines[0].get_xydata(), values, rtol=1.2e-5)
     assert getattr(axis, f"get_{dimension}label")() == expected
+    label_bounds = getattr(axis, f"{dimension}axis").label.get_window_extent()
+    assert axis.figure.bbox.contains(*label_bounds.p0) and axis.figure.bbox.contains(*label_bounds.p1)
+    assert axis.get_title() == "" and axis.figure._suptitle.get_text() == controls["title"]
     for path in images:
         with Image.open(path) as image:
             assert image.size == (760, 480)
