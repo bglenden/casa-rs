@@ -354,32 +354,6 @@ impl Table {
         Ok(())
     }
 
-    /// Atomically publish table keywords while preserving column keywords,
-    /// the table information file, and all row storage.
-    ///
-    /// Hold the table's write lock from the metadata read until publication
-    /// when updating an existing table.
-    ///
-    /// # Errors
-    /// Returns an error if the destination is not a plain table with a
-    /// writable regular control file, or the new keywords cannot be saved.
-    pub fn save_keywords_atomically(&self, path: &Path) -> Result<(), TableError> {
-        crate::storage::table_keyword_write::save_keywords(
-            path,
-            persisted_rows::published_row_count(path),
-            self.inner.keywords(),
-        )?;
-        self.note_persisted_write(path);
-        if self
-            .source_path
-            .as_deref()
-            .is_some_and(|source| super::locking::same_directory(source, path))
-        {
-            self.inner.note_metadata_saved();
-        }
-        Ok(())
-    }
-
     /// Save the table with per-column data manager bindings.
     ///
     /// Columns listed in `bindings` are stored using their specified DM;

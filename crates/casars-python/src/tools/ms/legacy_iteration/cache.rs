@@ -142,7 +142,7 @@ impl AttachedMs {
             .or(temporary.as_mut())
             .expect("legacy iteration holds the source write lock");
         lock.record_write();
-        if let Err(error) = main.save_keywords_atomically(&root) {
+        if let Err(error) = main.save_cache_keywords_atomically(&root) {
             let restored = restore_output(staged, &output, replaced_table, existed);
             return match restored {
                 Ok(()) => Err(runtime_error(error)),

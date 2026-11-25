@@ -109,6 +109,56 @@ fn edit_hypercolumns(private_keywords: &mut RecordValue, edit: impl Fn(&mut Vec<
 }
 
 impl Table {
+    /// Atomically publish table keywords while preserving column keywords,
+    /// the table information file, and all row storage.
+    ///
+    /// Hold the table's write lock from the metadata read until publication
+    /// when updating an existing table.
+    ///
+    /// # Errors
+    /// Returns an error if the destination is not a plain table with a
+    /// writable regular control file, or the new keywords cannot be saved.
+    pub fn save_keywords_atomically(&self, path: &Path) -> Result<(), TableError> {
+        self.save_keywords_with_sync(path, std::fs::File::sync_all)
+    }
+
+    /// Publish keywords for a cache that can be rebuilt from persisted rows.
+    ///
+    /// The same write-lock and atomic-replacement contract as
+    /// [`Self::save_keywords_atomically`] applies. The staged descriptor
+    /// is synchronized with ordinary filesystem `fsync`.
+    ///
+    /// # Errors
+    /// Returns an error when the destination cannot be atomically updated.
+    pub fn save_cache_keywords_atomically(&self, path: &Path) -> Result<(), TableError> {
+        self.save_keywords_with_sync(
+            path,
+            crate::storage::table_keyword_write::sync_cache_keywords,
+        )
+    }
+
+    fn save_keywords_with_sync(
+        &self,
+        path: &Path,
+        sync: fn(&std::fs::File) -> std::io::Result<()>,
+    ) -> Result<(), TableError> {
+        crate::storage::table_keyword_write::save_keywords(
+            path,
+            persisted_rows::published_row_count(path),
+            self.inner.keywords(),
+            sync,
+        )?;
+        self.note_persisted_write(path);
+        if self
+            .source_path
+            .as_deref()
+            .is_some_and(|source| super::locking::same_directory(source, path))
+        {
+            self.inner.note_metadata_saved();
+        }
+        Ok(())
+    }
+
     /// Renames column `old` to `new` in the table on disk, without loading
     /// its rows or touching a storage manager's file.
     ///
