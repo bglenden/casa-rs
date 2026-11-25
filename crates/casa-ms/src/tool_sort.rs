@@ -118,6 +118,13 @@ fn compare_keys(a: Option<&ScalarValue>, b: Option<&ScalarValue>) -> Ordering {
         (Some(ScalarValue::Complex64(a)), Some(ScalarValue::Complex64(b))) => {
             a.norm_sqr().total_cmp(&b.norm_sqr())
         }
+        // CASA treats the two zero representations as equal sort keys.
+        (Some(ScalarValue::Float32(a)), Some(ScalarValue::Float32(b))) => {
+            a.partial_cmp(b).unwrap_or_else(|| a.total_cmp(b))
+        }
+        (Some(ScalarValue::Float64(a)), Some(ScalarValue::Float64(b))) => {
+            a.partial_cmp(b).unwrap_or_else(|| a.total_cmp(b))
+        }
         (Some(a), Some(b)) => a.sort_cmp(b).unwrap_or(Ordering::Equal),
         (Some(_), None) => Ordering::Less,
         (None, Some(_)) => Ordering::Greater,

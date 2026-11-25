@@ -11579,3 +11579,12 @@ unmaterialized table name. casa-rs creates the named copy of the
 selected rows and preserves the source attachment. It requires a named
 destination for the transient selection to protect unselected rows from
 in-place replacement (#1030).
+
+## MS sorting can leave finite keys out of order beside NaNs
+
+In CASA 6.7.6.14, `ms.timesort('sorted.ms')` on TIME keys beginning
+`[NaN, 3, NaN, 1, 0, 2]` with the remaining keys equal to `5` can place
+`3` and `1` after the `5`s and intermingle them with the NaNs. The
+casacore comparator cannot consistently order a NaN against another key.
+casa-rs orders the finite keys numerically and places NaNs in deterministic
+positions according to their floating-point representation (#1030).

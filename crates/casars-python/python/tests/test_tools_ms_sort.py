@@ -82,6 +82,37 @@ def test_ms_sort_matches_pinned_order_history_and_attachment(native_dataset, tmp
         assert actual.dtype == expected.dtype
 
 
+@pytest.mark.parametrize("keys,check_casa", [
+    ([0.0, -1.0, -0.0, 1.0, 0.0, -2.0], True),
+    ([np.nan, 3.0, np.nan, 1.0, 0.0, 2.0], False),
+], ids=["signed-zero-ties", "finite-order-with-nans"])
+def test_ms_timesort_numeric_keys(native_dataset, tmp_path, keys, check_casa):
+    casa = pinned_casa()
+    writer = casa.table()
+    assert writer.open(str(native_dataset), nomodify=False)
+    ids = np.arange(writer.nrows(), dtype=np.int32)
+    times = np.full(len(ids), 5.0)
+    times[:len(keys)] = keys
+    assert writer.putcol("TIME", times)
+    assert writer.putcol("SCAN_NUMBER", ids)
+    assert writer.flush()
+    assert writer.done()
+    np.testing.assert_array_equal(np.signbit(read_columns(native_dataset, "TIME")[0]),
+                                  np.signbit(times))
+
+    order = np.argsort(times, kind="stable")
+    implementations = (casa, tools) if check_casa else (tools,)
+    for index, api in enumerate(implementations):
+        tool = api.ms()
+        assert tool.open(str(native_dataset))
+        output = tmp_path / f"sorted-{index}.ms"
+        assert tool.timesort(str(output))
+        assert tool.done()
+        time_column, scan_column = read_columns(output, "TIME", "SCAN_NUMBER")
+        np.testing.assert_array_equal(time_column, times[order])
+        np.testing.assert_array_equal(scan_column, ids[order])
+
+
 def test_ms_sorted_named_selection_preserves_source_and_unrelated_target(native_dataset, tmp_path):
     tool = tools.ms()
     assert tool.open(str(native_dataset))
