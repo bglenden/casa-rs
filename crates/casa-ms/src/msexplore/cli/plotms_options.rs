@@ -7,7 +7,9 @@ use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::MDirection;
 
-use super::super::{RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter};
+use super::super::{
+    RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter, plotms_row_axes,
+};
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
     MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count, legend_position, number,
@@ -484,6 +486,7 @@ pub(super) fn options_from_plotms(
         || y_axis.is_visibility_math()
         || (avgtime.is_some_and(|interval| interval != 0.0)
             && [x_axis, y_axis].contains(&MsAxis::WeightSpectrum))
+        || plotms_row_axes::array_horizontal_pair(x_axis, y_axis)
         // PlotMS falls back to scalar SIGMA for undefined spectral cells;
         // the raw explorer deliberately requires the requested stored cell.
         || x_axis == MsAxis::SigmaSpectrum

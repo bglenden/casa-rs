@@ -280,6 +280,16 @@ def compare_array_horizontal_axes(root, native):
         position[:2] = np.array([[cosine, -sine], [sine, cosine]]) @ position[:2]
         table.putcell("POSITION", 1, position)
         positions = table.getcol("POSITION")
+    with opened(vis, True) as table:
+        selected = ((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+                    & (table.getcol("ANTENNA2") == 1))
+        rows_in_baseline = np.flatnonzero(selected)
+        times = table.getcol("TIME")
+        first = rows_in_baseline[np.argmin(times[rows_in_baseline])]
+        flags = table.getcol("FLAG")
+        # The same channel is still clear on the second selected baseline.
+        flags[0, 1, first] = True
+        table.putcol("FLAG", flags)
     before = snapshot(vis)
     title = "Array horizontal coordinates"
     base = controls(vis) | dict(xaxis="channel", antenna="A0&A1;A0&A2", field="",

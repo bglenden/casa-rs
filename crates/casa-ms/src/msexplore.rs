@@ -591,7 +591,9 @@ impl MsAxis {
             "azimuth" => Ok(Self::Azimuth),
             "elevation" => Ok(Self::Elevation),
             "hourang" | "hourangle" | "hour_angle" | "hour-angle" => Ok(Self::HourAngle),
-            "parang" | "parallactic_angle" | "parallactic-angle" => Ok(Self::ParallacticAngle),
+            "parang" | "parangle" | "parallactic_angle" | "parallactic-angle" => {
+                Ok(Self::ParallacticAngle)
+            }
             "wt" | "weight" => Ok(Self::Weight),
             "wt*amp" | "weighted_amplitude" => Ok(Self::WeightedAmplitude),
             "sigma" => Ok(Self::Sigma),
@@ -4252,10 +4254,18 @@ fn build_generic_visibility_scatter(
     if needs_row_axes && calibration.is_none() {
         return Err("MeasurementSet row identifier axes require the public plotms task".into());
     }
+    let array_horizontal = calibration.is_some_and(|input| input.rows.is_none())
+        && spec.y_axes.len() == 1
+        && plotms_row_axes::array_horizontal_pair(spec.x_axis, spec.y_axis());
     let metadata_pair = if pointing.is_some() {
         Some(plotms_ordinates::PointDimensions {
             channel: false,
             baseline: true,
+        })
+    } else if array_horizontal {
+        Some(plotms_ordinates::PointDimensions {
+            channel: true,
+            baseline: false,
         })
     } else if needs_row_axes {
         plotms_row_axes::metadata_pair(spec)
@@ -4318,6 +4328,7 @@ fn build_generic_visibility_scatter(
         .is_some_and(|input| input.rows.is_some() && input.secondary_y_data_column.is_some());
     let order_ordinate_list = iterated_ordinate_list || calibrated_ordinate_list;
     let use_iterator_order = needs_row_axes
+        || array_horizontal
         || pointing.is_some()
         || raw_symbols.is_some()
         || phase_shift.is_some()
@@ -4501,12 +4512,18 @@ fn build_generic_visibility_scatter(
     } else {
         None
     };
-    let mixed_row_geometry = plotms_row_axes::uses_mixed_row_geometry(spec);
-    let mean_antenna_position = mixed_row_geometry
-        .then(|| plotms_row_axes::mean_antenna_position(ms))
+    let array_geometry_axis = if array_horizontal {
+        Some(spec.y_axis())
+    } else if plotms_row_axes::uses_mixed_row_geometry(spec) {
+        Some(MsAxis::Elevation)
+    } else {
+        None
+    };
+    let mean_antenna_position = array_geometry_axis
+        .map(|_| plotms_row_axes::mean_antenna_position(ms))
         .transpose()?;
     let geometry_dedup_required = !use_ordinate_masks
-        && !mixed_row_geometry
+        && array_geometry_axis.is_none()
         && (spec.x_axis.uses_derived_geometry()
             || spec
                 .y_axes
@@ -4641,6 +4658,7 @@ fn build_generic_visibility_scatter(
         show_flagged.then(|| ("flagged".into(), "Flagged".into(), "flagged".into()));
     let mut ordinate_points = (use_ordinate_masks || metadata_pair.is_some())
         .then(plotms_ordinates::CollapsedPointMask::default);
+    let mut array_geometry_value = None;
     for (row_slot, _) in row_numbers.iter().enumerate() {
         if let Some(mask) = &mut ordinate_points {
             mask.begin_row(row_slot, buffer_starts[row_slot]);
@@ -4858,18 +4876,19 @@ fn build_generic_visibility_scatter(
             uvw: row_uvw_value,
             observatory_geometry: use_ordinate_masks,
         };
-        let mixed_elevation = mean_antenna_position
-            .as_ref()
-            .map(|position| {
-                let engine = derived_engine.as_ref().expect("mixed Row elevation engine");
-                let field = usize::try_from(field_id_value)
-                    .map_err(|_| format!("invalid FIELD_ID {field_id_value} for elevation axis"))?;
-                engine
-                    .azel_at_position(row_time_value, field, position.clone())
-                    .map(|(_, elevation)| elevation.to_degrees())
-                    .map_err(|error| error.to_string())
-            })
-            .transpose()?;
+        if let Some((axis, position)) = array_geometry_axis.zip(mean_antenna_position.as_ref())
+            && buffer_starts[row_slot]
+        {
+            array_geometry_value = Some(plotms_row_axes::array_horizontal_value(
+                derived_engine
+                    .as_ref()
+                    .expect("array horizontal geometry engine"),
+                axis,
+                row_time_value,
+                field_id_value,
+                position.clone(),
+            )?);
+        }
         let spectral_context = resolve_spectral_context(
             spec,
             spw_id,
@@ -5013,10 +5032,8 @@ fn build_generic_visibility_scatter(
                 }
                 let axis_started = timing_enabled.then(Instant::now);
                 let axis_value = |axis_slot, axis| {
-                    if axis == MsAxis::Elevation
-                        && let Some(elevation) = mixed_elevation
-                    {
-                        return Ok(Some(elevation));
+                    if array_geometry_axis == Some(axis) {
+                        return Ok(array_geometry_value);
                     }
                     if let Some(values) = pointing_values
                         && let Some(value) = values[axis_slot]
@@ -5260,6 +5277,7 @@ fn build_generic_visibility_scatter(
             } else {
                 series.sort_by_key(|entry| entry.y_index);
                 if needs_row_axes
+                    || array_horizontal
                     || pointing.is_some()
                     || raw_symbols.is_some()
                     || phase_shift.is_some()
