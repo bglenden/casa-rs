@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "d1910610736ff13d9c8f600d014c7e69d1de2a09",
+  "source_revision": "d1910610736ff13d9c8f600d014c7e69d1de2a09",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only raw-row-axes --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Static MeasurementSet Row coordinates with an independent Elevation ordinate, selected two-window visibility plots, separate scan pages for Time/Row, and the existing read-only callibrary control.",
+  "result": "passed",
+  "text_exports": 4,
+  "points": 275,
+  "figures": 2,
+  "rendered_coordinates": 12,
+  "figure_size_px": [
+    500,
+    420
+  ]
+}
