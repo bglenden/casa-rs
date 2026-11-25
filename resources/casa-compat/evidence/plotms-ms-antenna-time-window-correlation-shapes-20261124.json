@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "74a32c9ed71a8f4ead3ab16707ceccfee5be3a64",
+  "source_revision": "74a32c9ed71a8f4ead3ab16707ceccfee5be3a64",
+  "command": "casa-python tools/casa-compat/plotms_ms_baseline_time_oracle.py --only separated-antenna-shapes --work <new-dir> --native-bin <msexplore>",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "Public scalar and vector 20-second per-antenna averages on a MeasurementSet with 4- and 1-correlation data descriptions in one SPW and separate time bins. Positive controls select common XX or keep the unequal correlation or channel counts in independent spectral windows.",
+  "result": "passed",
+  "baseline_result": "Main writes 27 points for a mixed same-window request that CASA refuses.",
+  "text_exports": 8,
+  "points": 192,
+  "paired_refusals": 2
+}

@@ -6129,6 +6129,8 @@ fn build_generic_visibility_scatter_with_averaging(
     let mut scalar_time_bounds = HashMap::<usize, (f64, f64)>::new();
     let mut averaged_rows = std::collections::BTreeSet::new();
     let mut scalar_shapes = plotms_ordinates::VisibilityAverageShapes::default();
+    let mut antenna_correlation_counts = (time_antenna || scalar_antenna_time).then(HashMap::new);
+    let mut antenna_correlation_conflict = None;
     let mut spw_groups = spw_average.then(plotms_spw::SpectralAverageGroups::default);
     let mut time_baseline_stats = (time_baselines || time_antenna || time_spw)
         .then(plotms_time_baselines::TimeBaselineStatistics::default);
@@ -6352,6 +6354,16 @@ fn build_generic_visibility_scatter_with_averaging(
         } else {
             vec![selected_correlations[0].clone()]
         };
+
+        // The antenna-time cache requires a consistent selected polarization
+        // shape in each spectral window, including across separate time bins.
+        if let Some(counts) = &mut antenna_correlation_counts {
+            let actual = selected_correlations.len();
+            let expected = *counts.entry(spw_id).or_insert(actual);
+            if expected != actual {
+                antenna_correlation_conflict.get_or_insert((spw_id, expected, actual));
+            }
+        }
 
         let channel_bins = plot_channel_bins_for_window(
             chan_count,
@@ -7136,6 +7148,11 @@ fn build_generic_visibility_scatter_with_averaging(
         .zip(time_bins)
         .map(|(statistics, groups)| statistics.plan(groups, &row_numbers, &spec.averaging))
         .transpose()?;
+    if let Some((spw_id, expected, actual)) = antenna_correlation_conflict {
+        return Err(format!(
+            "PlotMS antenna time averaging requires the same selected correlation count within spectral window {spw_id} (#1032). Expected {expected}, found {actual}"
+        ));
+    }
     if let Some(plan) = time_baseline_plan
         .as_ref()
         .filter(|_| time_antenna || time_spw)
