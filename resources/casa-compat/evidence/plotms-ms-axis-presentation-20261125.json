@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "scope": "Public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs on the same MeasurementSets. Five-scan independent and common ranges, shared grid axes, calendar day and midnight clocks, raw and binned Channel labels, and 500 by 360 grid, font and legend controls.",
+  "result": "passed",
+  "casa_version": "6.7.6.14",
+  "revision": "475594354bb7ecb69a334f5058dd72c7b3f65460",
+  "source_revision": "475594354bb7ecb69a334f5058dd72c7b3f65460",
+  "command": "casa-python tools/casa-compat/plotms_ms_axes_presentation_oracle.py --work <new-dir> --native-bin <msexplore>",
+  "baseline_revision": "1dd280026561c0d55d4b5c6650d5046fa96d41a7",
+  "casaplotms_version": "2.9.1",
+  "baseline_result": "Five-scan selfscale-only plots retained local limits. Time figures displayed raw MJD seconds, raw visibility/Time was refused, and the averaged Time/DATA case used calibrated rather than observed weights. Binned Channel retained the raw label. The exteriorRight legend could extend outside the 500-pixel export.",
+  "matched_text_coordinates": 117,
+  "png_pairs": 22,
+  "shared_range_coordinates": 48,
+  "clock_coordinates": 27,
+  "channel_label_coordinates": 42,
+  "paired_refusals": 3
+}
