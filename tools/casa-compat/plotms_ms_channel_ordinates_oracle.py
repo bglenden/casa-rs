@@ -51,7 +51,8 @@ def virtual_fixtures(root, vis):
     return virtual, mixed, model
 
 
-def compare_sides(root, native, controls, *, expected_x="Channel"):
+def compare_sides(root, native, controls, *, expected_x="Channel", expected_right="Real:corrected",
+                  name="three-ordinates"):
     from casars import _plot_document
 
     captured = []
@@ -65,24 +66,26 @@ def compare_sides(root, native, controls, *, expected_x="Channel"):
         return figure, primary
 
     options = controls | dict(expformat="png", width=500, height=360, dpi=100)
-    expected, actual = (root / f"three-ordinates.{engine}.png" for engine in ("casa", "native"))
+    expected, actual = (root / f"{name}.{engine}.png" for engine in ("casa", "native"))
     assert reference(**options, plotfile=str(expected)) is None
     with patch.object(_plot_document, "render_document", record):
         assert native(**options, plotfile=str(actual)) is None
     [(xlabel, axes)] = captured
     assert xlabel == expected_x
     assert [(side, label) for side, label, _ in axes] == [
-        ("left", "Real, Real:model"), ("right", "Real:corrected")
+        ("left", "Real, Real:model"), ("right", expected_right)
     ]
-    selected = np.array([p[:2] for p in rows(root / "three-ordinates.casa.txt")], dtype=float)
+    selected = np.array([p[:2] for p in rows(root / f"{name}.casa.txt")], dtype=float)
     sections = np.split(selected, 3)
     for (_, _, layers), order in zip(axes, ((0, 2), (1,)), strict=True):
         for layer, index in zip(layers, order, strict=True):
             np.testing.assert_allclose(layer, sections[index], rtol=1.2e-5)
+            if controls["xaxis"] == "time":
+                np.testing.assert_allclose(layer[:, 0], sections[index][:, 0], rtol=0, atol=.00051)
     for image in (expected, actual):
         with Image.open(image) as opened_image:
             assert opened_image.size == (500, 360)
-    print(f"three ordinates: matched both sides and all {len(selected)} rendered coordinates", flush=True)
+    print(f"{name}: matched both sides and all {len(selected)} rendered coordinates", flush=True)
 
 
 def compare(root, native):

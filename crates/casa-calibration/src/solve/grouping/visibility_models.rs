@@ -36,9 +36,10 @@ impl VisibilityModels {
     pub(crate) fn for_transform(
         ms: &MeasurementSet,
         rows: &[ResolvedMsSelectionRow],
+        recipe_slots: Option<&[usize]>,
     ) -> Result<Self, GainSolveError> {
         let fields = scratch_columns::virtual_model_fields(ms);
-        let (rows, states) = transform_model_rows(ms, rows, &fields)?;
+        let (rows, states) = transform_model_rows(ms, rows, &fields, recipe_slots)?;
         let models = ModelInputs::new(ms, &rows, GainSolveModelSource::FromMeasurementSet)?;
         Self::with_models(ms, rows, models, GainSolveCombine::default(), Some(&states))
     }
@@ -112,6 +113,31 @@ impl VisibilityModels {
         self
     }
 
+    pub(crate) fn set_plot_phase_references(
+        &mut self,
+        rows: &[ResolvedMsSelectionRow],
+        slots: &[usize],
+    ) -> Result<(), GainSolveError> {
+        if slots.len() != rows.len() {
+            return Err(GainSolveError::VirtualModel(
+                "PlotMS phase reference slots do not match the selected rows".into(),
+            ));
+        }
+        for (row, &slot) in rows.iter().zip(slots) {
+            if !self.rows.contains_key(&row.row_index) {
+                continue;
+            }
+            let reference = rows.get(slot).ok_or_else(|| {
+                GainSolveError::VirtualModel(format!("invalid PlotMS phase reference slot {slot}"))
+            })?;
+            self.models.plot_phase_references.insert(
+                row.row_index,
+                (reference.field_id, reference.time_mjd_seconds),
+            );
+        }
+        Ok(())
+    }
+
     fn with_models(
         ms: &MeasurementSet,
         rows: Vec<SelectedSolveRow>,
@@ -146,6 +172,12 @@ impl VisibilityModels {
 
     pub(crate) fn reads_column(&self, field: i32) -> bool {
         self.models.reads_column(field)
+    }
+
+    pub(crate) fn reads_transform_column(&self, row: usize) -> bool {
+        self.rows
+            .get(&row)
+            .is_none_or(|row| self.models.reads_column(row.field_id))
     }
 
     pub(crate) fn has_virtual_refusals(&self) -> bool {
@@ -196,27 +228,52 @@ fn transform_model_rows(
     ms: &MeasurementSet,
     rows: &[ResolvedMsSelectionRow],
     fields: &std::collections::BTreeSet<i32>,
+    recipe_slots: Option<&[usize]>,
 ) -> Result<(Vec<SelectedSolveRow>, BTreeMap<usize, i32>), GainSolveError> {
+    if recipe_slots.is_some_and(|slots| {
+        slots.len() != rows.len() || slots.iter().any(|&slot| slot >= rows.len())
+    }) {
+        return Err(GainSolveError::VirtualModel(
+            "PlotMS recipe slots do not match the selected rows".into(),
+        ));
+    }
     let rows = rows
         .iter()
-        .filter(|row| fields.contains(&row.field_id))
+        .enumerate()
+        .filter_map(|(slot, row)| {
+            let recipe = recipe_slots.map_or(row, |slots| &rows[slots[slot]]);
+            fields.contains(&recipe.field_id).then_some((row, recipe))
+        })
         .collect::<Vec<_>>();
-    let indices = rows.iter().map(|row| row.row_index).collect::<Vec<_>>();
-    let read = |name| {
+    let indices = rows
+        .iter()
+        .map(|(row, _)| row.row_index)
+        .collect::<Vec<_>>();
+    let recipe_indices = (recipe_slots.is_some()
+        && rows
+            .iter()
+            .any(|(row, recipe)| row.row_index != recipe.row_index))
+    .then(|| {
+        rows.iter()
+            .map(|(_, recipe)| recipe.row_index)
+            .collect::<Vec<_>>()
+    });
+    let recipe_rows = recipe_indices.as_deref().unwrap_or(&indices);
+    let read = |name, indices| {
         ms.main_table()
             .column_accessor(name)
-            .and_then(|column| column.scalar_cells_owned_for_rows(&indices))
+            .and_then(|column| column.scalar_cells_owned_for_rows(indices))
             .map_err(|source| GainSolveError::VirtualModel(source.to_string()))
     };
-    let arrays = read("ARRAY_ID")?;
-    let observations = read("OBSERVATION_ID")?;
-    let scans = read("SCAN_NUMBER")?;
-    let states = read("STATE_ID")?;
-    let centroids = read("TIME_CENTROID")?;
-    let intervals = read("INTERVAL")?;
+    let arrays = read("ARRAY_ID", &indices)?;
+    let observations = read("OBSERVATION_ID", &indices)?;
+    let scans = read("SCAN_NUMBER", recipe_rows)?;
+    let states = read("STATE_ID", recipe_rows)?;
+    let centroids = read("TIME_CENTROID", &indices)?;
+    let intervals = read("INTERVAL", &indices)?;
     let mut selected = Vec::with_capacity(rows.len());
     let mut state_ids = BTreeMap::new();
-    for (slot, row) in rows.into_iter().enumerate() {
+    for (slot, (row, recipe)) in rows.into_iter().enumerate() {
         let error = |name| {
             GainSolveError::VirtualModel(format!("invalid {name} in MAIN row {}", row.row_index))
         };
@@ -232,10 +289,10 @@ fn transform_model_rows(
         selected.push(SelectedSolveRow {
             row_index: row.row_index,
             array_id: integer(&arrays, "ARRAY_ID")?,
-            field_id: row.field_id,
+            field_id: recipe.field_id,
             observation_id: integer(&observations, "OBSERVATION_ID")?,
             data_desc_id: row.data_desc_id,
-            data_spw_id: row.spectral_window_id,
+            data_spw_id: recipe.spectral_window_id,
             channel_selection: None,
             antenna1: row.antenna1_id,
             antenna2: row.antenna2_id,

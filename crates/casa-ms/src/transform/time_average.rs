@@ -17,31 +17,31 @@ use super::{MsTransformError, TimeAverageOptions, scalar_i32};
 /// The columns used by the visibility iterator to establish a chunk.
 /// A dimension selected by `timespan` is zeroed before building this key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) struct TimeChunk([i32; 8]);
+pub(crate) struct TimeChunk(pub(crate) [i32; 8]);
 
 /// Row metadata needed to decide the averaging group before reading visibility arrays.
 #[derive(Clone, Copy, Debug)]
-pub(super) struct TimeSample {
-    pub(super) row: usize,
-    pub(super) description: i32,
-    pub(super) chunk: TimeChunk,
-    pub(super) time: f64,
-    pub(super) antenna_pair: [i32; 2],
-    pub(super) uvw: [f64; 3],
+pub(crate) struct TimeSample {
+    pub(crate) row: usize,
+    pub(crate) description: i32,
+    pub(crate) chunk: TimeChunk,
+    pub(crate) time: f64,
+    pub(crate) antenna_pair: [i32; 2],
+    pub(crate) uvw: [f64; 3],
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(super) struct TimeInputRow {
-    pub(super) physical: usize,
-    pub(super) buffer_first: usize,
+pub(crate) struct TimeInputRow {
+    pub(crate) physical: usize,
+    pub(crate) buffer_first: usize,
 }
 
 /// A baseline accumulation, anchored on the first selected physical row.
 #[derive(Debug)]
-pub(super) struct TimeGroup {
-    pub(super) first: TimeSample,
-    pub(super) rows: Vec<TimeInputRow>,
-    pub(super) row_in_chunk: usize,
+pub(crate) struct TimeGroup {
+    pub(crate) first: TimeSample,
+    pub(crate) rows: Vec<TimeInputRow>,
+    pub(crate) row_in_chunk: usize,
     completed_before: Option<usize>,
 }
 
@@ -200,6 +200,7 @@ pub(crate) struct PlotTimeGroups {
     first_row_slots: Vec<usize>,
     buffers: Vec<Range<usize>>,
     input_buffer_first_slots: Vec<usize>,
+    model_phase_reference_slots: Option<Vec<usize>>,
 }
 
 impl PlotTimeGroups {
@@ -222,6 +223,23 @@ impl PlotTimeGroups {
     pub(crate) fn input_buffer_first_slot(&self, row_slot: usize) -> Option<usize> {
         self.input_buffer_first_slots.get(row_slot).copied()
     }
+
+    /// Slots supplying the input buffer's recipe for each selected row.
+    pub(crate) fn input_buffer_first_slots(&self) -> &[usize] {
+        &self.input_buffer_first_slots
+    }
+
+    /// Input buffer rows supplying metadata for the vector time groups.
+    pub(crate) fn model_metadata_slots(&self) -> impl Iterator<Item = usize> + '_ {
+        self.first_row_slots
+            .iter()
+            .map(|&slot| self.input_buffer_first_slots[slot])
+    }
+
+    /// The first selected row of each input chunk supplies its phase center.
+    pub(crate) fn model_phase_reference_slots(&self) -> Option<&[usize]> {
+        self.model_phase_reference_slots.as_deref()
+    }
 }
 
 /// Plan vector time groups for the selected PlotMS rows and scan/field barriers.
@@ -231,6 +249,7 @@ pub(crate) fn selected_plot_time_groups(
     options: TimeAverageOptions,
     collect_buffers: bool,
     combine_spectral_windows: bool,
+    collect_model_phase_references: bool,
 ) -> Result<PlotTimeGroups, MsTransformError> {
     let order = if combine_spectral_windows {
         MainRowOrder::SpectralWindowAverage
@@ -251,13 +270,41 @@ pub(crate) fn selected_plot_time_groups(
     let mut group_by_row_slot = vec![0; rows.len()];
     let mut first_row_slots = Vec::with_capacity(groups.len());
     let mut input_buffer_first_slots = vec![0; if collect_buffers { rows.len() } else { 0 }];
+    let mut model_phase_reference_slots =
+        collect_model_phase_references.then(|| vec![0; rows.len()]);
+    let mut chunk_heads = BTreeMap::<TimeChunk, TimeSample>::new();
+    if collect_model_phase_references {
+        for group in &groups {
+            let first = group.first;
+            chunk_heads
+                .entry(first.chunk)
+                .and_modify(|head| {
+                    if first
+                        .time
+                        .total_cmp(&head.time)
+                        .then_with(|| first.row.cmp(&head.row))
+                        .is_lt()
+                    {
+                        *head = first;
+                    }
+                })
+                .or_insert(first);
+        }
+    }
     for (index, group) in groups.into_iter().enumerate() {
         first_row_slots.push(row_slots[&group.first.row]);
+        let phase_reference =
+            collect_model_phase_references.then(|| row_slots[&chunk_heads[&group.first.chunk].row]);
         for row in group.rows {
             let slot = row_slots[&row.physical];
             group_by_row_slot[slot] = index;
             if collect_buffers {
                 input_buffer_first_slots[slot] = row_slots[&row.buffer_first];
+            }
+            if let (Some(slots), Some(reference)) =
+                (&mut model_phase_reference_slots, phase_reference)
+            {
+                slots[slot] = reference;
             }
         }
     }
@@ -266,6 +313,7 @@ pub(crate) fn selected_plot_time_groups(
         first_row_slots,
         buffers,
         input_buffer_first_slots,
+        model_phase_reference_slots,
     })
 }
 
@@ -283,7 +331,7 @@ fn plot_time_buffers(groups: &[TimeGroup]) -> Vec<Range<usize>> {
         .collect()
 }
 
-pub(super) fn group_baselines(
+pub(crate) fn group_baselines(
     mut samples: Vec<TimeSample>,
     timebin: f64,
     max_uvw_distance: f64,

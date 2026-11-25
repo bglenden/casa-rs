@@ -66,16 +66,39 @@ impl CliOptions {
         self.avgchannel.is_some_and(|width| width > 1) || self.plotms_extended_averaging()
     }
 
-    pub(super) fn supports_visibility_ordinate_averaging(&self) -> bool {
-        let ordinary_time = self.avgtime.is_some()
-            && !self.avgscan
-            && !self.avgfield
-            && !self.avgbaseline
-            && !self.avgantenna
-            && !self.avgspw
+    pub(super) fn supports_averaged_ordinate_iteration(&self) -> bool {
+        self.iteraxis
+            .is_some_and(MsIterationAxis::supports_averaged_ordinates)
             && self.freqframe.is_none()
-            && self.plotms_independent_average();
-        (!self.plotms_extended_averaging() || ordinary_time)
+            && self.x_axis.is_some_and(|axis| {
+                axis.is_visibility_math()
+                    || matches!(axis, MsAxis::Time | MsAxis::Channel | MsAxis::Frequency)
+            })
+            && (self.supports_visibility_ordinate_averaging(true)
+                || (self.avgspw
+                    && !self.avgscan
+                    && !self.avgfield
+                    && self.supports_visibility_ordinate_averaging(false)))
+    }
+
+    pub(super) fn supports_visibility_ordinate_averaging(&self, ordinary_only: bool) -> bool {
+        let spans = self.avgscan || self.avgfield;
+        let time_average = self.avgtime.is_some()
+            && (!ordinary_only || !spans)
+            && !self.avgbaseline
+            && !self.avgantenna;
+        let other_reduction = !ordinary_only
+            && ((self.avgantenna && (!spans || self.avgtime.is_some()))
+                || ((self.avgbaseline || self.avgspw) && !spans));
+        let supported_reduction = (time_average || other_reduction)
+            && self.freqframe.is_none()
+            && self.plotms_independent_average(!ordinary_only);
+        let colors_spanned_antenna = self.avgantenna
+            && !self.scalar
+            && ((self.avgscan && self.color_by == MsColorAxis::Scan)
+                || (self.avgfield && self.color_by == MsColorAxis::Field));
+        (!self.plotms_extended_averaging() || supported_reduction)
+            && !colors_spanned_antenna
             && !self.has_mixed_ordinate_dimensions()
             && self.plotms_axis_columns().is_some_and(|columns| {
                 columns
@@ -212,23 +235,35 @@ impl CliOptions {
         plotms_phasecenter::parse(value)
     }
 
-    pub(super) fn plotms_independent_average(&self) -> bool {
+    pub(super) fn plotms_independent_average(&self, allow_extended_list: bool) -> bool {
         let transforms_frequency =
             self.x_axis == Some(MsAxis::Frequency) && self.freqframe.is_some();
         let crosses_boundary = self.avgscan || self.avgfield;
         let time_average = self.avgtime.is_some()
             && !self.avgbaseline
-            && !(transforms_frequency && crosses_boundary);
-        let baseline_average =
-            self.avgbaseline && (!crosses_boundary || self.scalar) && !transforms_frequency;
-        let channel_average = self.avgchannel.is_some_and(|width| width > 1);
-        let ordinary_time =
-            time_average && !transforms_frequency && !crosses_boundary && !channel_average;
-        let scalar_time = time_average && !transforms_frequency;
-        (time_average || baseline_average)
             && !self.avgantenna
+            && !(transforms_frequency && crosses_boundary);
+        let baseline_average = self.avgbaseline
+            && !self.avgantenna
+            && (!crosses_boundary || self.scalar)
+            && !transforms_frequency;
+        let list_reduction = allow_extended_list
+            && !self.avgbaseline
+            && (!crosses_boundary || self.avgtime.is_some())
+            && self.freqframe.is_none();
+        let antenna_average = list_reduction && self.avgantenna;
+        let spectral_window_average = list_reduction && self.avgspw && !self.avgantenna;
+        let channel_average = self.avgchannel.is_some_and(|width| width > 1);
+        let ordinary_time = time_average
             && !self.avgspw
-            && (!self.scalar || scalar_time || baseline_average)
+            && !transforms_frequency
+            && !crosses_boundary
+            && !channel_average;
+        let scalar_time = time_average && !transforms_frequency;
+        (spectral_window_average
+            || (!self.avgspw
+                && (time_average || baseline_average || antenna_average)
+                && (!self.scalar || scalar_time || baseline_average || antenna_average)))
             && !self.has_mixed_ordinate_dimensions()
             && self.x_axis.is_some_and(|axis| {
                 axis.is_visibility_math()

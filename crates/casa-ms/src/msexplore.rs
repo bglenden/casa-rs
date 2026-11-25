@@ -1144,6 +1144,10 @@ pub enum MsIterationAxis {
 }
 
 impl MsIterationAxis {
+    fn supports_averaged_ordinates(self) -> bool {
+        matches!(self, Self::Correlation | Self::Scan | Self::Field)
+    }
+
     /// All currently implemented iteration axes.
     pub const ALL: [Self; 4] = [
         Self::Field,
@@ -3007,23 +3011,23 @@ fn build_uncalibrated_plotms_payload(
     let antenna_average = plot.is_some_and(plotms_columns::uses_antenna_visibility_average);
     let time_antenna = antenna_average
         && plot.is_some_and(|plot| plot.averaging.avgtime.is_some() && !plot.averaging.scalar);
+    let needs_model_references = plot.is_some_and(|plot| {
+        plotms_model::needs_model_references(ms, &selected.selected_rows, plot, &columns)
+    });
+    let vector_span_models = needs_model_references
+        && !spw_average
+        && plot.is_some_and(|plot| plot.averaging.avgscan || plot.averaging.avgfield);
     let direct_time_projection = !extended_derived
-        && plot.is_some_and(|plot| {
-            plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
-        });
+        && (vector_span_models
+            || plot.is_some_and(|plot| {
+                plotms_columns::uses_direct_vector_time_projection(plot, columns.x)
+            }));
     if (extended_derived && !scalar_average) || time_antenna || time_spw || direct_time_projection {
         // Accumulate the Float sums in the chronological order of the iterator.
         selected
             .selected_rows
             .sort_by(|left, right| left.time_mjd_seconds.total_cmp(&right.time_mjd_seconds));
     }
-    let models = plotms_model::selected_model_cells(
-        ms,
-        &selected.selected_rows,
-        plot,
-        &columns,
-        load_models,
-    )?;
     let vector_baselines = plot.is_some_and(plotms_columns::uses_vector_baseline_average);
     let time_baselines =
         vector_baselines && plot.is_some_and(|plot| plot.averaging.avgtime.is_some());
@@ -3058,11 +3062,15 @@ fn build_uncalibrated_plotms_payload(
                     || extended_derived
                     || direct_time_projection,
                 time_spw,
+                needs_model_references,
             )
             .map_err(|error| error.to_string())
         })
         .transpose()?;
-    let (row_order, starts_visibility_buffer) = if (vector_baselines && !time_baselines)
+    let spw_model_references = needs_model_references && spw_average;
+    let ordered_spw_references = spw_model_references && !time_spw;
+    let (row_order, starts_visibility_buffer, phase_reference_rows) = if (vector_baselines
+        && !time_baselines)
         || scalar_average
         || (spw_average && !time_spw)
         || (antenna_average && !time_antenna)
@@ -3071,15 +3079,26 @@ fn build_uncalibrated_plotms_payload(
             .selected_rows
             .iter()
             .map(|row| (row.row_index, row.data_desc_id));
-        crate::transform::selected_plotms_integration_order(ms, rows, spw_average)
-            .map_err(|error| error.to_string())?
+        let ordered = crate::transform::selected_plotms_integration_order(
+            ms,
+            rows,
+            spw_average,
+            ordered_spw_references,
+        )
+        .map_err(|error| error.to_string())?;
+        (
+            ordered.rows,
+            ordered.starts_visibility_buffer,
+            ordered.phase_reference_rows,
+        )
     } else {
         (
             selected
                 .selected_rows
-                .into_iter()
+                .iter()
                 .map(|row| row.row_index)
                 .collect(),
+            Vec::new(),
             Vec::new(),
         )
     };
@@ -3096,6 +3115,44 @@ fn build_uncalibrated_plotms_payload(
     for &range in selection.channel_list() {
         channels.entry(range.spw_id as i32).or_default().push(range);
     }
+    let spectral_windows = spw_model_references.then_some(cli::PlotMsModelSpwSelection {
+        channels: &channels,
+        correlations: &selected.correlation_types,
+    });
+    let ordered_model_slots = ordered_spw_references.then(|| {
+        plotms_model::ordered_model_reference_slots(
+            &selected.selected_rows,
+            &row_order,
+            &starts_visibility_buffer,
+            &phase_reference_rows,
+        )
+    });
+    let model_references = time_bins
+        .as_ref()
+        .and_then(|groups| {
+            Some(cli::PlotMsModelReferences {
+                phase_slots: groups.model_phase_reference_slots()?,
+                recipe_slots: groups.input_buffer_first_slots(),
+                spectral_windows,
+            })
+        })
+        .or_else(|| {
+            ordered_model_slots
+                .as_ref()
+                .map(|(phase_slots, recipe_slots)| cli::PlotMsModelReferences {
+                    phase_slots,
+                    recipe_slots,
+                    spectral_windows,
+                })
+        });
+    let models = plotms_model::selected_model_cells(
+        ms,
+        &selected.selected_rows,
+        plot,
+        &columns,
+        model_references,
+        load_models,
+    )?;
     let input = PlotMsInput {
         row_order: &row_order,
         starts_visibility_buffer: &starts_visibility_buffer,
@@ -4006,6 +4063,7 @@ impl Default for AveragedSeriesAccumulator {
 #[derive(Debug, Default)]
 struct AveragedPanelAccumulator {
     label: String,
+    iteration_rank: i32,
     series: std::collections::BTreeMap<String, AveragedSeriesAccumulator>,
     contributing_rows: std::collections::BTreeSet<usize>,
 }
@@ -4201,9 +4259,7 @@ fn build_generic_visibility_scatter(
         && calibration.is_some_and(|input| input.rows.is_none())
         && spec.averaging.avgchannel.is_some_and(|width| width > 1)
         && !uses_extended_averaging(spec);
-    let iterated_ordinate_list = calibration.is_some_and(|input| input.rows.is_none())
-        && spec.iteration.iteraxis.is_some()
-        && spec.secondary_y_axis().is_some();
+    let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
     let use_iterator_order = needs_row_axes
         || pointing.is_some()
         || raw_symbols.is_some()
@@ -4223,12 +4279,14 @@ fn build_generic_visibility_scatter(
                     .any(MsAxis::is_interval_or_wavelength));
     let (row_numbers, buffer_starts) = if use_iterator_order {
         let descriptions = selected_i32_values(ms.main_table(), "DATA_DESC_ID", &row_numbers)?;
-        crate::transform::selected_plotms_integration_order(
+        let ordered = crate::transform::selected_plotms_integration_order(
             ms,
             row_numbers.into_iter().zip(descriptions),
             false,
+            false,
         )
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+        (ordered.rows, ordered.starts_visibility_buffer)
     } else {
         (row_numbers, Vec::new())
     };
@@ -4770,14 +4828,17 @@ fn build_generic_visibility_scatter(
                 .as_ref()
                 .map_or(sigma_values[*corr_index], |statistics| statistics.sigma);
             let (group_key, group_label) = group_for(row_slot, Some(corr_label));
-            let (panel_key, panel_label) = iteration_group(
+            let (panel_key, panel_label, iteration_rank) = iteration_group(
                 iteraxis,
                 field_id_value,
                 &field,
                 spw_id,
                 &spectral_window,
                 scan_number_value,
-                Some(corr_label),
+                Some((
+                    corr_label,
+                    corr_types.get(*corr_index).copied().unwrap_or_default(),
+                )),
             );
             if !panels.contains_key(&panel_key) {
                 panel_order.push(panel_key.clone());
@@ -4785,15 +4846,7 @@ fn build_generic_visibility_scatter(
                     panel_key.clone(),
                     ScatterPanelAccumulator {
                         label: panel_label.clone(),
-                        iteration_rank: match iteraxis {
-                            Some(MsIterationAxis::Correlation) => {
-                                corr_types.get(*corr_index).copied().unwrap_or_default()
-                            }
-                            Some(MsIterationAxis::Scan) => scan_number_value,
-                            Some(MsIterationAxis::Field) => field_id_value,
-                            Some(MsIterationAxis::SpectralWindow) => spw_id,
-                            None => 0,
-                        },
+                        iteration_rank,
                         ..Default::default()
                     },
                 );
@@ -5465,20 +5518,37 @@ fn build_generic_visibility_scatter_with_averaging(
     let collapse_baselines = (plotms_columns::uses_vector_baseline_average(spec)
         || (scalar_average && spec.averaging.avgbaseline))
         && uncalibrated;
+    let retain_empty_ordinate_list = uncalibrated
+        && spec.y_axes.len() > 2
+        && (collapse_baselines
+            || antenna_average
+            || ((spec.averaging.avgscan || spec.averaging.avgfield)
+                && (time_bins.is_some() || scalar_average)
+                && !spw_average));
     let time_baselines = collapse_baselines && time_bins.is_some();
     let average_channels = spec.averaging.avgchannel.is_some_and(|width| width > 1);
     let channel_baselines = collapse_baselines && average_channels && !time_baselines;
     let scalar_channels = (scalar_average || scalar_spw_time) && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
+    // The unbinned antenna reducer uses the selected visibility cube flags.
+    let antenna_cube_flags = antenna_average
+        && spec.y_axes.len() > 2
+        && spec.averaging.avgtime.is_none()
+        && !average_channels;
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
+    let vector_span_models = !spw_average
+        && (spec.averaging.avgscan || spec.averaging.avgfield)
+        && time_bins.is_some_and(|groups| groups.model_phase_reference_slots().is_some())
+        && calibration.is_some_and(|input| input.models.is_some());
     let direct_time_projection = uncalibrated
         && time_bins.is_some()
         && !extended_derived
-        && plotms_columns::uses_direct_vector_time_projection(
-            spec,
-            calibration.and_then(|input| input.x_data_column),
-        );
+        && (vector_span_models
+            || plotms_columns::uses_direct_vector_time_projection(
+                spec,
+                calibration.and_then(|input| input.x_data_column),
+            ));
     let average_operands = extended_derived
         || scalar_channels
         || scalar_spw_time
@@ -5596,6 +5666,9 @@ fn build_generic_visibility_scatter_with_averaging(
         .map_err(|error| error.to_string())?;
 
     let iteraxis = spec.iteration.iteraxis;
+    let iterated_ordinate_list = iterates_plotms_ordinates(spec, calibration);
+    let paged_iteration = iterated_ordinate_list
+        || (spw_average && iteraxis.is_some_and(MsIterationAxis::supports_averaged_ordinates));
     let include_row_flagged_points =
         spec.x_axis.uses_flag_rows() || spec.y_axes.iter().copied().any(MsAxis::uses_flag_rows);
     let use_spectral_weights = calibration.is_some()
@@ -5736,6 +5809,7 @@ fn build_generic_visibility_scatter_with_averaging(
             && !include_row_flagged_points
             && time_bins.is_none()
             && !collapse_baselines
+            && !antenna_cube_flags
             && !spw_average
             && !scalar_intervals;
         if skip_flagged_row && !antenna_average {
@@ -6003,14 +6077,19 @@ fn build_generic_visibility_scatter_with_averaging(
             }
         }
         let representative_row = row_numbers[representative_slot];
+        let metadata_slot = if vector_span_models {
+            time_bins
+                .and_then(|groups| groups.input_buffer_first_slot(representative_slot))
+                .unwrap_or(representative_slot)
+        } else {
+            representative_slot
+        };
         let span_metadata =
             group.and_then(|group| scalar_spans.as_ref().map(|spans| spans.metadata(group)));
-        let representative_field = span_metadata
-            .map_or(selected_field_ids[representative_slot], |metadata| {
-                metadata.field
-            });
+        let representative_field =
+            span_metadata.map_or(selected_field_ids[metadata_slot], |metadata| metadata.field);
         let representative_scan = span_metadata
-            .map_or(selected_scan_numbers[representative_slot], |metadata| {
+            .map_or(selected_scan_numbers[metadata_slot], |metadata| {
                 metadata.scan
             });
         if let Some(group) = time_group {
@@ -6190,17 +6269,26 @@ fn build_generic_visibility_scatter_with_averaging(
                         },
                         |(masked, _)| masked,
                     );
-                    if channel_masked && !(scalar_channels || antenna_channels || spw_channels) {
+                    if channel_masked
+                        && !(scalar_channels
+                            || antenna_channels
+                            || spw_channels
+                            || retain_empty_ordinate_list
+                            || iterated_ordinate_list)
+                    {
                         continue;
                     }
-                    let (panel_key, panel_label) = iteration_group(
+                    let (panel_key, panel_label, iteration_rank) = iteration_group(
                         iteraxis,
                         representative_field,
                         &field,
                         spw_id,
                         &spectral_window,
                         representative_scan,
-                        Some(corr_label),
+                        Some((
+                            corr_label,
+                            corr_types.get(*corr_index).copied().unwrap_or_default(),
+                        )),
                     );
                     if !panels.contains_key(&panel_key) {
                         panel_order.push(panel_key.clone());
@@ -6208,6 +6296,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             panel_key.clone(),
                             AveragedPanelAccumulator {
                                 label: panel_label,
+                                iteration_rank,
                                 ..Default::default()
                             },
                         );
@@ -6671,6 +6760,12 @@ fn build_generic_visibility_scatter_with_averaging(
             })
             .collect();
         Some(MsScatterPlotMsAverageIds::ScanFieldAndAntenna(ids))
+    } else if vector_span_models && let Some(groups) = time_bins {
+        let ids = groups
+            .model_metadata_slots()
+            .map(|slot| (selected_scan_numbers[slot], selected_field_ids[slot]))
+            .collect();
+        Some(MsScatterPlotMsAverageIds::ScanAndField(ids))
     } else if let Some(spans) = &scalar_spans {
         let ids = averaged_rows
             .iter()
@@ -6698,6 +6793,8 @@ fn build_generic_visibility_scatter_with_averaging(
         || spw_average
         || antenna_channels
         || scalar_antenna_time
+        || retain_empty_ordinate_list
+        || iterated_ordinate_list
         || (scalar_average
             && spec.secondary_y_axis().is_some()
             && iteraxis.is_none()
@@ -6706,6 +6803,9 @@ fn build_generic_visibility_scatter_with_averaging(
         || (combined_vector_average && !collapse_baselines && iteraxis.is_none());
     let mut contributing_points = 0usize;
     let mut finalized_panels = Vec::new();
+    if paged_iteration {
+        panel_order.sort_by_key(|key| panels[key].iteration_rank);
+    }
     for panel_key in panel_order {
         let Some(panel) = panels.remove(&panel_key) else {
             continue;
@@ -6856,7 +6956,12 @@ fn build_generic_visibility_scatter_with_averaging(
                 series_entries.push(output);
             }
         }
-        if time_weight_kinds.is_some() || collapse_baselines || scalar_average || antenna_average {
+        if time_weight_kinds.is_some()
+            || collapse_baselines
+            || scalar_average
+            || antenna_average
+            || spw_average
+        {
             series_entries.sort_by_key(|entry| entry.y_index);
         }
         if series_entries.is_empty() && !retain_empty_panel {
@@ -6897,11 +7002,15 @@ fn build_generic_visibility_scatter_with_averaging(
     }
 
     if let Some(iteraxis) = iteraxis {
-        let (gridrows, gridcols) = resolve_iterated_grid(
-            finalized_panels.len(),
-            spec.layout.gridrows,
-            spec.layout.gridcols,
-        )?;
+        let (gridrows, gridcols) = if paged_iteration {
+            (spec.layout.gridrows, spec.layout.gridcols)
+        } else {
+            resolve_iterated_grid(
+                finalized_panels.len(),
+                spec.layout.gridrows,
+                spec.layout.gridcols,
+            )?
+        };
         let share_x_bounds =
             share_axis_bounds(spec.iteration.xselfscale, spec.iteration.xsharedaxis);
         let share_y_bounds =
@@ -8033,6 +8142,12 @@ fn visibility_group(
     }
 }
 
+fn iterates_plotms_ordinates(spec: &MsPlotSpec, input: Option<&PlotMsInput<'_>>) -> bool {
+    input.is_some_and(|input| input.rows.is_none())
+        && spec.iteration.iteraxis.is_some()
+        && spec.secondary_y_axis().is_some()
+}
+
 fn iteration_group(
     iteraxis: Option<MsIterationAxis>,
     field_id: i32,
@@ -8040,10 +8155,10 @@ fn iteration_group(
     spw_id: i32,
     spectral_window: &crate::subtables::MsSpectralWindow<'_>,
     scan_number: i32,
-    correlation_label: Option<&str>,
-) -> (String, String) {
+    correlation: Option<(&str, i32)>,
+) -> (String, String, i32) {
     match iteraxis {
-        None => ("all".to_string(), "All data".to_string()),
+        None => ("all".to_string(), "All data".to_string(), 0),
         Some(MsIterationAxis::Field) => {
             let field_name = if field_id >= 0 && (field_id as usize) < field.row_count() {
                 field
@@ -8052,11 +8167,13 @@ fn iteration_group(
             } else {
                 format!("Field {field_id}")
             };
-            (format!("field-{field_id}"), field_name)
+            (format!("field-{field_id}"), field_name, field_id)
         }
-        Some(MsIterationAxis::Scan) => {
-            (format!("scan-{scan_number}"), format!("Scan {scan_number}"))
-        }
+        Some(MsIterationAxis::Scan) => (
+            format!("scan-{scan_number}"),
+            format!("Scan {scan_number}"),
+            scan_number,
+        ),
         Some(MsIterationAxis::SpectralWindow) => {
             let spw_name = if spw_id >= 0 && (spw_id as usize) < spectral_window.row_count() {
                 spectral_window
@@ -8065,11 +8182,11 @@ fn iteration_group(
             } else {
                 format!("SPW {spw_id}")
             };
-            (format!("spw-{spw_id}"), spw_name)
+            (format!("spw-{spw_id}"), spw_name, spw_id)
         }
         Some(MsIterationAxis::Correlation) => {
-            let label = correlation_label.unwrap_or("corr").to_string();
-            (format!("corr-{label}"), label)
+            let (label, code) = correlation.unwrap_or(("corr", 0));
+            (format!("corr-{label}"), label.to_string(), code)
         }
     }
 }

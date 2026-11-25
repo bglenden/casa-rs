@@ -47,22 +47,16 @@ pub(super) fn write_export(
     match payload {
         MsPlotPayload::Scatter(plot) => {
             writeln!(writer, "# From plot {index}").map_err(io)?;
-            if plot.series.is_empty() {
-                for &y in ordinates {
-                    write_empty_section(&mut writer, name(plot.x_axis), name(y), verbose)
-                        .map_err(io)?;
-                }
-            } else {
-                write_series(
-                    &mut writer,
-                    &mut metadata,
-                    plot.x_axis,
-                    &plot.series,
-                    verbose,
-                    library.is_empty(),
-                )
-                .map_err(io)?;
-            }
+            write_series(
+                &mut writer,
+                &mut metadata,
+                plot.x_axis,
+                &plot.series,
+                ordinates,
+                verbose,
+                library.is_empty(),
+            )
+            .map_err(io)?;
             if let Some(curves) = overlays.first() {
                 write_curves(&mut writer, &mut metadata, plot.x_axis, curves, verbose)
                     .map_err(io)?;
@@ -84,6 +78,7 @@ pub(super) fn write_export(
                     &mut metadata,
                     grid.x_axis,
                     &plot.series,
+                    ordinates,
                     verbose,
                     library.is_empty(),
                 )
@@ -179,9 +174,16 @@ fn write_series(
     metadata: &mut Metadata<'_>,
     x_axis: MsAxis,
     data: &[MsScatterSeries],
+    ordinates: &[MsAxis],
     verbose: bool,
     channel_major: bool,
 ) -> std::io::Result<()> {
+    if data.is_empty() {
+        for &y in ordinates {
+            write_empty_section(output, name(x_axis), name(y), verbose)?;
+        }
+        return Ok(());
+    }
     for section in
         data.chunk_by(|left, right| left.y_index == right.y_index && left.y_axis == right.y_axis)
     {

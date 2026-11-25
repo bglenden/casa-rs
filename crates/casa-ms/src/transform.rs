@@ -57,7 +57,7 @@ mod single_dish_polarization;
 mod spectral_metadata;
 mod subtable_copy;
 mod task_history;
-mod time_average;
+pub(crate) mod time_average;
 mod time_projection;
 mod visibility_columns;
 
@@ -866,6 +866,7 @@ fn mstransform_staged(
         rows: selected_rows,
         descriptions: selected_ddids,
         starts_visibility_buffer,
+        ..
     } = if let Some(groups) = &time_groups {
         let (rows, descriptions) = groups
             .iter()
@@ -875,6 +876,7 @@ fn mstransform_staged(
             rows,
             descriptions,
             starts_visibility_buffer: Vec::new(),
+            phase_reference_rows: Vec::new(),
         }
     } else {
         selection_metadata::sort_selected_rows(
@@ -883,6 +885,7 @@ fn mstransform_staged(
             selected_rows,
             selected_ddids,
             order,
+            false,
         )?
     };
     if let Some(SpectralOperation {

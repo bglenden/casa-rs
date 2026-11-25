@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "2222fd0333c1cad3a8508325adf793c05e9fb989",
+  "source_revision": "2222fd0333c1cad3a8508325adf793c05e9fb989",
+  "baseline_revision": "10fb59e3b796a6afa23fdc752a0bda822accd4a0",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_virtual_derived_oracle.py --only scalar-field-spans --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "Scalar time averaging across scans and fields with selected virtual MeasurementSet models, including independent visibility coordinates and supported residuals and ratios.",
+  "result": "passed",
+  "baseline_result": "Main refuses the same public scalar requests for a virtual model across scan or field spans, and requires stored MODEL_DATA for field-spanning expressions.",
+  "text_exports": 7,
+  "points": 9,
+  "figures": 1,
+  "rendered_coordinates": 1,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "stored_models_written": 0
+}

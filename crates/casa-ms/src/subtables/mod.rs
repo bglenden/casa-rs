@@ -268,7 +268,7 @@ pub mod state;
 pub mod syscal;
 pub mod weather;
 
-pub use antenna::{MsAntenna, MsAntennaMut};
+pub use antenna::{MsAntenna, MsAntennaMut, antenna_observatory_offsets};
 pub use data_description::{MsDataDescription, MsDataDescriptionMut};
 pub use doppler::{MsDoppler, MsDopplerMut};
 pub use feed::{MsFeed, MsFeedMut};

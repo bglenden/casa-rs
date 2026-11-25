@@ -11131,6 +11131,13 @@ their output samples by bin position. The regression checks the shared
 physical grid against the single-window CASA request and verifies the
 two-window output against the weighted complex average (#1032).
 
+With two four-channel windows at 90 and 100 GHz, a virtual model, and
+`spw="0:1;200GHz,1:2"` with `avgspw=True`, the pinned PlotMS backend
+terminates when it receives the unmatched 200 GHz slice alongside valid
+channels. casa-rs skips that empty slice and retains the requested valid
+channels. Their averaged coordinates match the CASA control using
+`spw="0:1,1:2"` (#1032).
+
 ## Empty MS visibility strides can abort or change the attachment
 
 On a nonempty MS, `getdata(increment=4294967297)` can admit a
@@ -11443,6 +11450,54 @@ casa-rs rejects the sampled baseline-axis record before
 mutation. A fresh read with `increment=1` supplies a complete writable
 grid (#1030).
 
+## Observed MS statistics take inverse squares of the stored weights
+
+For weighted observed `DATA` and `FLOAT_DATA` statistics, CASA 6.7.6.14's
+`Vi2StatsSigmasCubeIterator` computes `1 / sigma²`, but the
+`VisBufferImpl2::getSigmaScaled(correlation, channel, row)` it calls reads
+`WEIGHT_SPECTRUM` or `WEIGHT`. In a fixture with first-row sigma
+`[2, 3]` and weight `[100, 200]`, CASA reports total weight 224.0004
+after filtering channel flags. casa-rs reads `SIGMA_SPECTRUM` or `SIGMA`,
+reports about 225.19444, and weights the moments by those inverse
+variances, as the observed-visibility time-averaging path does (#1030).
+
+## Observed MS statistics time averaging can ignore the flag and weight switches
+
+With `timeaverage=True` in CASA 6.7.6.14, the observed-data accumulator
+always reads the FLAG cube and weights data by inverse sigma squared,
+regardless of the four `useflags` and `useweights` combinations selected
+by the caller. In the controlled three-integration fixture all four
+CASA results have mean 126.68421. casa-rs applies both switches before
+reducing the averaged samples. With both enabled, it matches CASA.
+With both disabled, it reports the analytic unweighted, unmasked
+mean 119.5 (#1030).
+
+## MS statistics time averaging can ignore the requested UVW displacement
+
+In CASA 6.7.6.14, `ms.statistics('DATA', 'real', timeaverage=True,
+timebin='30s', maxuvwdistance=1.0)` averages integrations whose UVW
+positions move by 10 km. The call passes the numeric displacement, but
+does not enable the averaging option that uses it. In the three
+integration control, CASA reports 80 averaged samples with or without
+the limit. casa-rs applies the stated metre limit and returns statistics
+for all 240 separate samples (#1030).
+
+## Legacy MS statistics can pad ID columns with invented zero samples
+
+In CASA 6.7.6.14, `ms.statisticsold('FIELD_ID', useflags=False)` appends
+one scalar per iterator buffer to an array sized for all selected rows.
+The unused elements are zeros. On NGC 5921 the reported mean is about
+0.00362 because only 60 buffer IDs contributed to 22,653 array elements.
+The same append logic handles `ARRAY_ID` and `DATA_DESC_ID`. casa-rs reads
+the physical ID for each selected row and applies the requested row
+mask before reducing it (#1030).
+
+## Invalid maximum UVW distance can raise a Python binding SystemError
+
+CASA 6.7.6.14 raises a binding-level `SystemError` for
+`ms.statistics('DATA', 'amp', maxuvwdistance='1')`. casa-rs rejects the
+nonnumeric argument with `TypeError` and retains the attachment (#1030).
+
 ## MS record selection can misread non-native NumPy byte order
 
 In CASA 6.7.6.14 on a little-endian host, `ms.select({'antenna1': v})`
@@ -11461,6 +11516,52 @@ vector. casa-rs raises a Python `RuntimeError` when a numeric selection
 field has more than one non-singleton axis. It retains earlier successful
 fields in the same ordered record. A vector with a singleton axis, such
 as shape `(1, 4)`, is accepted (#1030).
+
+## MS summary can return success without writing the report
+
+On an attached MeasurementSet in CASA 6.7.6.14, call
+`ms.summary(listfile="missing-directory/report.txt")` with a missing
+parent. CASA returns a summary record even though it cannot create the
+report. casa-rs raises an I/O error and preserves the attachment so the
+caller can retry with a writable path (#1030).
+
+## MS summary misreports a nonnumeric cache-size argument
+
+In CASA 6.7.6.14, calling `ms.summary(cachesize="50")` on a detached
+tool raises a Python `SystemError` because the binding returns with a
+conversion exception pending. casa-rs reports the invalid argument
+with `TypeError`. Numeric arguments, including NumPy floating-point
+scalars, remain accepted (#1030).
+
+## A failed visibility listing can leave an output file
+
+In CASA 6.7.6.14, `ms.lister(datacolumn='model', listfile=...)` on a
+MeasurementSet without a stored `MODEL_DATA` opens the requested output
+before reporting the missing visibility product. The file remains after
+the error. casa-rs writes the report to a temporary file beside the
+destination and publishes it only after successful rendering, without
+replacing an existing output (#1030).
+
+## MS lister can report success for a missing float column or raise a binding error
+
+In CASA 6.7.6.14 on a MeasurementSet without `FLOAT_DATA`,
+`ms.lister(datacolumn='float_data', listfile=...)` logs a missing column,
+returns true and leaves an empty report. casa-rs reports the missing
+product as an error without publishing a report. Passing
+`pagerows=numpy.bool_(True)` can also create a report before CASA raises
+`SystemError`. casa-rs raises `TypeError` during argument conversion
+before touching the output. Python integers, booleans and NumPy integers
+retain the usual pagination semantics (#1030).
+
+## MS lister can reject an all-negative float visibility buffer
+
+CASA 6.7.6.14 computes the display amplitude range for
+`ms.lister(datacolumn='float_data')` by taking the minimum after masking
+negative values. If all samples in a buffer are negative the resulting
+empty mask raises an exception. casa-rs prints the signed float samples
+with enough space for the sign and magnitude. For example, a visibility
+buffer containing only `-7.0` produces a report with `-7.000` for each
+sample (#1030).
 
 ## The first MS history write can create HISTORY and then fail
 

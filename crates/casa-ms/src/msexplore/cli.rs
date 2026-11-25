@@ -25,6 +25,7 @@ use super::{
     build_msexplore_payload, build_uncalibrated_plotms_payload, export_msexplore_plot,
     preview_msexplore_flag_edit_for_request,
 };
+use crate::selection::ChannelRange;
 use crate::{MeasurementSet, MsSelection, ResolvedMsSelectionRow};
 use crate::{MeasurementSetSummary, MeasurementSetSummaryOutputFormat};
 
@@ -188,11 +189,35 @@ pub fn task_front_end_with_plot_payload(
 pub type PlotMsCalibrationLoader =
     fn(&MeasurementSet, &MsSelection, &[String]) -> Result<PlotMsCalibration, TaskFailure>;
 
+/// Iterator references for averaging virtual model cells. Both slot
+/// slices are indexed by input selection slot and contain slots in that same
+/// selection.
+#[derive(Debug, Clone, Copy)]
+pub struct PlotMsModelReferences<'a> {
+    /// The first row of the iterator chunk supplies FIELD direction and epoch.
+    pub phase_slots: &'a [usize],
+    /// The first row of each input visibility buffer supplies the model recipe.
+    pub recipe_slots: &'a [usize],
+    /// Selected cells for aligning predictions with the first input buffer
+    /// window. Only supplied for spectral-window averaging.
+    pub spectral_windows: Option<PlotMsModelSpwSelection<'a>>,
+}
+
+/// Physical selection to align with the prediction buffer by cell position.
+#[derive(Debug, Clone, Copy)]
+pub struct PlotMsModelSpwSelection<'a> {
+    /// Selected channel ranges in each physical spectral window.
+    pub channels: &'a BTreeMap<i32, Vec<ChannelRange>>,
+    /// Requested correlation types, or empty to select all physical slots.
+    pub correlations: &'a [i32],
+}
+
 /// Compute MODEL_DATA on the exact selected MAIN rows. Return None when the
-/// ordinary physical or default model supplies all selected cells.
+/// physical or default model supplies all selected cells.
 pub type PlotMsModelLoader = fn(
     &MeasurementSet,
     &[ResolvedMsSelectionRow],
+    Option<PlotMsModelReferences<'_>>,
 ) -> Result<Option<HashMap<usize, ArrayValue>>, String>;
 
 /// Use the existing PlotMS front end with caller-provided calibration and model sources.
@@ -255,9 +280,10 @@ fn run_task(
                 options.plotms_phasecenter(&value, calibration.is_none() && atmosphere.is_none())
             })
             .transpose()?;
+        let iterated_averaging = options.supports_averaged_ordinate_iteration();
         if options.iteraxis.is_some()
             && options.y_axis2.is_some()
-            && (options.plotms_averaging_active()
+            && ((options.plotms_averaging_active() && !iterated_averaging)
                 || options.has_mixed_ordinate_dimensions()
                 || calibration.is_some()
                 || atmosphere.is_some())
@@ -269,7 +295,7 @@ fn run_task(
         if !options.additional_ordinates.is_empty() {
             if calibration.is_some()
                 || (options.plotms_averaging_active()
-                    && !options.supports_visibility_ordinate_averaging())
+                    && !options.supports_visibility_ordinate_averaging(atmosphere.is_some()))
             {
                 return Err(TaskFailure::validation(
                     "more than two MeasurementSet ordinates with this averaging or a callibrary are pending #1032",
@@ -306,7 +332,11 @@ fn run_task(
                     options.plotms_averaging_active(),
                     options.plotms_extended_averaging()
                         && options.secondary_y_data_column.is_some()
-                        && !options.plotms_independent_average(),
+                        && !iterated_averaging
+                        && !options.plotms_independent_average(
+                            atmosphere.is_none()
+                                && (options.avgspw || !options.additional_ordinates.is_empty()),
+                        ),
                     options.supports_channel_derived(columns)
                         || options.supports_extended_derived(columns),
                     columns,
@@ -415,7 +445,9 @@ fn run_visibility_plot(
     let mut axis_columns = options.plotms_axis_columns();
     let extended_derived = calibration.is_none()
         && axis_columns.is_some_and(|columns| options.supports_extended_derived(columns));
-    let implicit_derived_model = atmosphere.is_none() && !options.avgfield;
+    let implicit_derived_model = atmosphere.is_none()
+        && (!options.avgfield
+            || (options.avgtime.is_some() && !options.avgbaseline && !options.avgantenna));
     let raw_symbols = (pointing.is_some()
         || axis_columns.is_some_and(|columns| options.supports_raw_visibility_symbols(columns)))
     .then(|| plotms_options::raw_symbol_visibility(task));

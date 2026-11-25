@@ -33,7 +33,7 @@ pub(super) struct VisibilityState {
     recent_baseline_read: bool,
     main: Option<Arc<VisibilityMain>>,
     range_subtables: Subtables,
-    time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
+    pub(super) time_measures: OnceLock<Arc<dyn MeasuresProvider>>,
     channels: Option<VisibilityChannels>,
     polarization: Option<Arc<VisibilityPolarization>>,
     pub(super) iteration: Option<VisibilityIteration>,

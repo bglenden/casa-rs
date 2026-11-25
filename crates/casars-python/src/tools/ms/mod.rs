@@ -6,6 +6,7 @@
 mod attachment_info;
 mod history;
 mod iteration;
+mod lister;
 pub(super) mod metadata_link;
 mod owned_record;
 mod putdata;
@@ -13,9 +14,11 @@ mod range;
 mod scan_summary;
 mod selection_indices;
 mod selection_record;
+mod statistics;
 mod statwt;
 mod stubs;
 mod subtable_queries;
+mod summary;
 pub(crate) mod surface;
 mod visibility;
 
@@ -54,6 +57,8 @@ struct AttachedMs {
     main: Table,
     main_files: attachment_info::TableFiles,
     main_stamp: Option<attachment_info::TableStamp>,
+    #[cfg(unix)]
+    history_snapshot: Option<history::HistorySnapshot>,
     subtables: subtable_queries::Subtables,
     writable: bool,
     original_rows: usize,
@@ -91,6 +96,8 @@ impl AttachedMs {
             main,
             main_files,
             main_stamp,
+            #[cfg(unix)]
+            history_snapshot: None,
             subtables: subtable_queries::Subtables::default(),
             writable,
             original_rows,

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use casa_ms::subtables::antenna_observatory_offsets;
 use casa_ms::{MeasurementSet, MsAntenna, MsError, MsResult, SubTable};
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::PositionRef;
@@ -193,20 +194,6 @@ fn observed_antennas(
         .collect())
 }
 
-fn geometry(xyz: [f64; 3]) -> (f64, f64, f64) {
-    let [x, y, z] = xyz;
-    let radius = (x * x + y * y + z * z).sqrt();
-    (
-        y.atan2(x),
-        if radius == 0.0 {
-            0.0
-        } else {
-            (z / radius).asin()
-        },
-        radius,
-    )
-}
-
 fn position_measure(antenna: &MsAntenna<'_>, row: usize) -> MsResult<Measure> {
     let description = TableMeasDesc::reconstruct(antenna.table(), "POSITION").ok_or_else(|| {
         MsError::InvalidInput("ANTENNA.POSITION has no measure descriptor".into())
@@ -389,25 +376,14 @@ impl PyMsMetadata {
         self.with_ms(py, |ms| {
             let antenna = ms.antenna()?;
             let row = scalar_row(&antenna, which, false)?;
-            let (longitude, latitude, radius) = geometry(position_metres(&antenna, row)?);
-            let (obs_longitude, obs_latitude, obs_radius) =
-                geometry(observatory_position(ms, 0)?.as_itrf());
+            let [longitude, latitude, elevation] = antenna_observatory_offsets(
+                position_metres(&antenna, row)?,
+                observatory_position(ms, 0)?.as_itrf(),
+            );
             Ok(CasaValue::record([
-                (
-                    "longitude offset",
-                    CasaValue::quantity(
-                        (longitude - obs_longitude) * obs_radius * obs_latitude.cos(),
-                        "m",
-                    ),
-                ),
-                (
-                    "latitude offset",
-                    CasaValue::quantity((latitude - obs_latitude) * obs_radius, "m"),
-                ),
-                (
-                    "elevation offset",
-                    CasaValue::quantity(radius - obs_radius, "m"),
-                ),
+                ("longitude offset", CasaValue::quantity(longitude, "m")),
+                ("latitude offset", CasaValue::quantity(latitude, "m")),
+                ("elevation offset", CasaValue::quantity(elevation, "m")),
             ]))
         })?
         .into_python(py)
