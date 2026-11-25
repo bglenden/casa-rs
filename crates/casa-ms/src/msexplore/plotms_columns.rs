@@ -156,10 +156,11 @@ pub(super) fn uses_scalar_visibility_average(spec: &MsPlotSpec) -> bool {
 pub(super) fn uses_spectral_window_average(spec: &MsPlotSpec) -> bool {
     let averaging = &spec.averaging;
     let spans = averaging.avgscan || averaging.avgfield;
+    let unbinned =
+        averaging.avgtime.is_none() && averaging.avgchannel.is_none_or(|width| width <= 1);
     averaging.avgspw
         && (averaging.avgtime.is_some() || !spans)
-        && !averaging.avgbaseline
-        && !averaging.avgantenna
+        && (!(averaging.avgbaseline || averaging.avgantenna) || unbinned)
         && (supports_reduced_visibility_axes(spec) || uses_weighted_spw_time_u(spec))
 }
 

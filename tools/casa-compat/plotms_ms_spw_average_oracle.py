@@ -134,6 +134,88 @@ def compare_sparse_baselines(root, native, base):
     print("sparse-baselines: 20 points use first-window channels in baseline-major order", flush=True)
 
 
+def compare_spw_reducers(root, native):
+    from plotms_callibrary_oracle import snapshot, verify_source
+
+    root.mkdir()
+    vis = make_fixture(root, antenna_count=3)
+    with opened(vis, True) as table:
+        windows = table.getcol("DATA_DESC_ID")
+        first, second = table.getcol("ANTENNA1"), table.getcol("ANTENNA2")
+        for name in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(name) * (1 + first + 0.5 * second)
+            table.putcol(name, values.astype(np.complex64))
+        flags = table.getcol("FLAG")
+        flags[:, 2, (windows == 0) & (second == 2)] = True
+        flags[:, 3, windows == 1] = True
+        table.putcol("FLAG", flags)
+        times = np.unique(table.getcol("TIME"))
+    weighted = root / "weighted-reducers.ms"
+    copy_ms(vis, weighted)
+    with opened(weighted, True) as table:
+        shape = table.getcol("DATA").shape
+        descriptor = table.getcoldesc("DATA")
+        table.addcols({"WEIGHT_SPECTRUM": dict(descriptor, name="WEIGHT_SPECTRUM", valueType="float",
+                                              dataManagerType="StandardStMan", dataManagerGroup="WeightSpec")})
+        low = table.getcol("DATA_DESC_ID") == 0
+        weights = np.where(low, np.array([1, 9, 1, 2], dtype=np.float32)[:, None],
+                           np.array([2, 1, 5, 7], dtype=np.float32)[:, None])
+        weights *= np.where(table.getcol("ANTENNA2") == 2, 2, 1)
+        table.putcol("WEIGHT_SPECTRUM", np.broadcast_to(weights, shape).copy())
+    before, before_weighted = snapshot(vis), snapshot(weighted)
+    base = request(vis) | dict(antenna="A0&A1;A0&A2;A1&A2", spw="0:1~3,1:1~3",
+                                   xaxis="amp", yaxis="amp", avgspw=True,
+                                   msselect="DATA_DESC_ID != 0 || ANTENNA1 != 1")
+    antenna = dict(avgantenna=True)
+    baseline = dict(avgbaseline=True)
+    zero = dict(avgtime="0", avgchannel="0")
+    cases = (
+        ("vector-baseline", baseline, (-1,), (17.1382, 42.6576)),
+        ("scalar-baseline", baseline | dict(scalar=True), (-1,), (19.1502, 42.6589)),
+        ("zero-baseline", baseline | zero, (-1,), (17.1382, 42.6576)),
+        ("weighted-vector-baseline", baseline | dict(vis=str(weighted)), (-1,), (17.1382, 42.6576)),
+        ("weighted-scalar-baseline", baseline | dict(vis=str(weighted), scalar=True), (-1,), (19.1502, 42.6589)),
+        ("vector-antenna", antenna, (0, 1, 2), (12.3744, 34.7365)),
+        ("scalar-antenna", antenna | dict(scalar=True), (0, 1, 2), (15.0816, 34.7381)),
+        ("zero-antenna", antenna | zero, (0, 1, 2), (12.3744, 34.7365)),
+        ("weighted-vector-antenna", antenna | dict(vis=str(weighted)), (0, 1, 2), (6.761, 29.6706)),
+        ("weighted-scalar-antenna", antenna | dict(vis=str(weighted), scalar=True), (0, 1, 2), (9.21236, 29.6715)),
+    )
+    for name, reducer, antennas, first in cases:
+        options = base | reducer
+        expected = export(root, f"{name}.casa", reference, options)
+        points = rows(expected)
+        identities = [
+            (str(channel), str(antenna_id), "-1", "0", "XX")
+            for antenna_id in antennas for channel in (1, 2, 3)
+        ]
+        assert [tuple(point[index] for index in (2, 5, 6, 11, 12)) for point in points] == identities * 2
+        np.testing.assert_allclose([float(p[9]) for p in points], np.repeat(times, len(identities)),
+                                   rtol=0, atol=.00051)
+        np.testing.assert_allclose(np.array(points[0][:2], dtype=float), first, rtol=1.2e-5)
+        actual = export(root, f"{name}.native", native, options)
+        assert compare_text(actual, expected) == len(points)
+        print(f"{name}: {len(points)} matching sparse reducer coordinates and IDs", flush=True)
+    for name, controls, message in (
+        ("negative-time", dict(avgtime="-1"), "avgtime value must be numerical string"),
+        ("negative-channel", dict(avgchannel="-1"), "cannot average negative number of channels"),
+        ("mutually-exclusive", baseline | antenna, "mutually exclusive with per-antenna averaging"),
+    ):
+        for engine, task in (("casa", reference), ("native", native)):
+            output = root / f"{name}.{engine}.txt"
+            try:
+                task(**(base | controls), plotfile=str(output), expformat="txt")
+            except ValueError as error:
+                assert message in str(error), error
+            else:
+                raise AssertionError(f"{engine} accepted {name}")
+            assert not output.exists()
+        print(f"{name}: matching parameter refusal before export", flush=True)
+    compare_shifted_reducer_channels(root, native, base | baseline, vis)
+    verify_source(vis, before)
+    verify_source(weighted, before_weighted)
+
+
 def compare_disjoint_channels(root, native, base):
     disjoint = make_fixture(root, "disjoint-channels", channel_count=8)
     controls = base | dict(vis=str(disjoint), xaxis="frequency", xdatacolumn="",
@@ -270,6 +352,33 @@ def compare_channel_weights(root, native, base, vis):
                          ("Real", "Imag:corrected"))
 
 
+def align_second_window(vis, aligned, target_channels, source_channels):
+    copy_ms(vis, aligned)
+    with opened(aligned, True) as table:
+        high = table.getcol("DATA_DESC_ID") == 1
+        for name in ("DATA", "CORRECTED_DATA", "FLAG"):
+            values = table.getcol(name)
+            values[:, target_channels, high] = values[:, source_channels, high]
+            table.putcol(name, values)
+
+
+def compare_shifted_reducer_channels(root, native, base, vis):
+    controls = base | dict(spw="0:0~2,1:1~3")
+    original = rows(export(root, "shifted-baseline.casa", reference, controls))
+    aligned = root / "aligned-reducer-channels.ms"
+    align_second_window(vis, aligned, slice(0, 3), slice(1, 4))
+    expected = rows(export(root, "aligned-baseline.casa", reference,
+                           controls | dict(vis=str(aligned), spw="0:0~2,1:0~2")))
+    assert [point[2] for point in original] == [point[2] for point in expected] == ["0", "1", "2"] * 2
+    assert not np.allclose(coordinates(original), coordinates(expected))
+    actual = export(root, "shifted-baseline.native", native, controls)
+    assert "# spw: 0:0~2,1:1~3" in actual.read_text()
+    selected = rows(actual)
+    assert [point[2:] for point in selected] == [point[2:] for point in expected]
+    np.testing.assert_allclose(coordinates(selected), coordinates(expected), rtol=1.2e-5)
+    print("shifted-baseline: 6 matching selected channels against the aligned CASA control", flush=True)
+
+
 def compare_selection(root, native, base, vis):
     separate = base | dict(spw="0:0,1:2", avgspw=False)
     raw = export(root, "raw.casa", reference, separate)
@@ -281,13 +390,7 @@ def compare_selection(root, native, base, vis):
     # CASA uses window 0's selected indices for both windows. A control places
     # window 1's explicitly selected sample at that index without changing its value.
     aligned = root / "aligned-channels.ms"
-    copy_ms(vis, aligned)
-    with opened(aligned, True) as table:
-        high = table.getcol("DATA_DESC_ID") == 1
-        for name in ("DATA", "CORRECTED_DATA", "FLAG"):
-            values = table.getcol(name)
-            values[:, 0, high] = values[:, 2, high]
-            table.putcol(name, values)
+    align_second_window(vis, aligned, 0, 2)
     options = separate | dict(avgspw=True)
     original = rows(export(root, "different-channels.casa", reference, options))
     np.testing.assert_allclose(coordinates(original)[:, 0], abs((1 + 2j + 3 * (3 - 4j)) / 4), rtol=1.2e-5)
@@ -1213,7 +1316,7 @@ def main():
                                            "malformed", "scalar-time", "vector-time", "vector-optional",
                                            "vector-channel-spans", "ordinate-lists", "ordinate-list-spans",
                                            "ordinate-list-uvw", "virtual-models", "virtual-model-spans", "iteration",
-                                           "iteration-layout", "two-ordinates"))
+                                           "iteration-layout", "two-ordinates", "combined-reducers"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1225,6 +1328,9 @@ def main():
     from casars.tasks import plotms as native
 
     with chdir(root), plotms_launcher(args.app_run):
+        if args.only == "combined-reducers":
+            compare_spw_reducers(root / "combined-reducers", native)
+            return
         if args.only == "virtual-models":
             compare_virtual_spw_models(root / "virtual-models", native)
             return
@@ -1255,6 +1361,8 @@ def main():
             compare_channel_weights(root, native, base, vis)
         if args.only in (None, "sparse"):
             compare_sparse_baselines(root, native, base)
+        if args.only is None:
+            compare_spw_reducers(root / "combined-reducers", native)
         if args.only in (None, "disjoint"):
             compare_disjoint_channels(root, native, base)
         if args.only in (None, "malformed"):
