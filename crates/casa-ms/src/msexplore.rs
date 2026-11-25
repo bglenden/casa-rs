@@ -8398,7 +8398,7 @@ impl TimePlotSpectrum {
         let frequencies_hz = bins
             .iter()
             .map(|bin| {
-                mean_selected_frequency_hz(&frequencies, bin)
+                mean_bin_frequency_hz(&frequencies, bin)
                     .ok_or("Missing selected channel frequency for PlotMS time averaging")
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -8412,18 +8412,15 @@ impl TimePlotSpectrum {
 
 impl SpectralContext {
     fn mean_frequency_hz(&self, bin: &ChannelBin) -> Option<f64> {
-        mean_selected_frequency_hz(&self.channel_frequencies_hz, bin)
+        mean_bin_frequency_hz(&self.channel_frequencies_hz, bin)
     }
 }
 
-fn mean_selected_frequency_hz(frequencies_hz: &[f64], bin: &ChannelBin) -> Option<f64> {
-    let mut sum = 0.0;
-    let mut count = 0;
-    for channel in bin.channels() {
-        sum += frequencies_hz.get(channel)?;
-        count += 1;
-    }
-    (count != 0).then(|| sum / f64::from(count))
+fn mean_bin_frequency_hz(frequencies_hz: &[f64], bin: &ChannelBin) -> Option<f64> {
+    // PlotMS takes frequencies from the full physical output span, including
+    // the channels between strided samples. Visibility uses the cache members.
+    let span = frequencies_hz.get(bin.start..bin.end)?;
+    (!span.is_empty()).then(|| span.iter().sum::<f64>() / span.len() as f64)
 }
 
 fn parse_frequency_frame(value: Option<&str>) -> Result<Option<FrequencyRef>, String> {
@@ -8522,7 +8519,7 @@ fn resolve_spectral_context(
             // The public PlotMS task defaults to the middle selected buffer channel.
             // The msexplore request defaults to the arithmetic centre of the window.
             plotms_rest_bin
-                .and_then(|bin| mean_selected_frequency_hz(&channel_frequencies_hz, bin))
+                .and_then(|bin| mean_bin_frequency_hz(&channel_frequencies_hz, bin))
                 .unwrap_or_else(|| {
                     channel_frequencies_hz.iter().sum::<f64>() / channel_frequencies_hz.len() as f64
                 })
