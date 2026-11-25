@@ -11,6 +11,7 @@ use casa_ms::tool_iteration::{
 };
 use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
+use casa_ms::transform::{HanningColumns, HanningDataColumn, smooth_ms_hanning};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames, TableWriteLock};
 use casa_types::RecordValue;
@@ -23,6 +24,7 @@ use super::attachment_info::{TableFiles, TableStamp};
 use super::iteration::VisibilityIteration;
 use super::metadata_link::{MetadataLink, MetadataSnapshot, compose_rows};
 use super::owned_record::visibility_record;
+use super::selection_indices::selection_text;
 use super::subtable_queries::Subtables;
 use super::vi1::Vi1Iteration;
 use super::{AttachedMs, PyMsTool, runtime_error, strict_bool};
@@ -402,6 +404,21 @@ impl VisibilityMain {
 
 #[pymethods]
 impl PyMsTool {
+    #[pyo3(signature = (datacolumn = HanningDataColumn::Corrected), text_signature = "($self, datacolumn='corrected')")]
+    fn hanningsmooth(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = hanning_column)] datacolumn: HanningDataColumn,
+    ) -> PyResult<bool> {
+        py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            match attached.as_mut().filter(|ms| ms.writable) {
+                Some(ms) => ms.hanning_rows(datacolumn),
+                None => Ok(false),
+            }
+        })
+    }
+
     #[pyo3(signature = (items = None, ifraxis = false, ifraxisgap = 0, increment = 1, average = false), text_signature = "($self, items=[], ifraxis=False, ifraxisgap=0, increment=1, average=False)")]
     fn getdata(
         &self,
@@ -501,6 +518,152 @@ impl PyMsTool {
 }
 
 impl AttachedMs {
+    fn hanning_rows(&mut self, mode: HanningDataColumn) -> PyResult<bool> {
+        let link = self.working_metadata_link();
+        link.verify_directory().map_err(runtime_error)?;
+        let main = self.visibility.current_main(&self.path)?;
+        let rows = self.selected_rows.as_ref().map_or_else(
+            || (0..main.table.row_count()).collect::<Vec<_>>(),
+            |rows| rows.to_vec(),
+        );
+        let empty = rows.is_empty();
+        let has = |name| {
+            main.table
+                .schema()
+                .is_some_and(|schema| schema.contains_column(name))
+        };
+        let observed = if has("FLOAT_DATA") {
+            "FLOAT_DATA"
+        } else {
+            "DATA"
+        };
+        let spectral = has("WEIGHT_SPECTRUM");
+        let create_corrected = mode == HanningDataColumn::Corrected && !has("CORRECTED_DATA");
+        let mut names = vec!["FLAG", "WEIGHT"];
+        if spectral {
+            names.push("WEIGHT_SPECTRUM");
+        }
+        let visibility_index = names.len();
+        if mode != HanningDataColumn::Observed && has("CORRECTED_DATA") {
+            names.push("CORRECTED_DATA");
+        }
+        if mode != HanningDataColumn::Corrected || create_corrected {
+            names.push(observed);
+        }
+        let targets = main.write_targets(&rows, &names)?;
+        let spectrum_anchor = if spectral && !empty {
+            main.write_targets(&rows[..1], &["WEIGHT_SPECTRUM"])?.pop()
+        } else {
+            None
+        };
+        let mut temporary = BTreeMap::new();
+        let mut written = BTreeSet::new();
+        for target in &targets {
+            if !self.write_locks.contains_key(&target.path) {
+                let lock =
+                    TableWriteLock::acquire_to_reread(&target.path, 0).map_err(runtime_error)?;
+                temporary.insert(target.path.clone(), lock);
+            }
+            written.insert(target.path.clone());
+        }
+        link.verify_directory().map_err(runtime_error)?;
+        main.verify_write_layout(&BTreeSet::new())?;
+        let use_spectrum = if let Some(anchor) = spectrum_anchor {
+            let row = *anchor.rows.first_key_value().expect("one anchor row").0;
+            let source = Table::open(TableOptions::new(anchor.path)).map_err(runtime_error)?;
+            source
+                .column_accessor(&anchor.names[0])
+                .and_then(|column| column.array_shapes_uncached(&[row]))
+                .map_err(runtime_error)?[0]
+                .as_ref()
+                .is_some_and(|shape| !shape.is_empty() && !shape.contains(&0))
+        } else {
+            false
+        };
+        let current =
+            |layout: &VisibilityMain| layout.verify_write_layout(&BTreeSet::new()).is_ok();
+        let modern = self
+            .visibility
+            .iteration
+            .as_ref()
+            .and_then(|cursor| cursor.layout.as_deref())
+            .is_some_and(current);
+        let legacy = self
+            .legacy_selection
+            .iteration
+            .as_ref()
+            .is_some_and(|cursor| current(&cursor.main));
+        let vi1 = self
+            .visibility
+            .vi1
+            .as_ref()
+            .is_some_and(|cursor| current(&cursor.main));
+        let grid = self
+            .legacy_selection
+            .axes
+            .baseline_read
+            .as_ref()
+            .is_some_and(|read| read.has_current_descriptor());
+        self.visibility.main = None;
+        for target in targets {
+            let lock = self
+                .write_locks
+                .get_mut(&target.path)
+                .or_else(|| temporary.get_mut(&target.path))
+                .expect("physical MAIN write lock was acquired");
+            let mut ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
+            let rows = target.rows.into_keys().collect::<Vec<_>>();
+            if empty && ms.spectral_window().map_err(runtime_error)?.row_count() == 0 {
+                return Err(runtime_error(
+                    "There are no valid spectral windows in the MeasurementSet",
+                ));
+            }
+            let corrected = if create_corrected {
+                let name = initialize_hanning_scratch(
+                    &main,
+                    &mut ms,
+                    &rows,
+                    &target.names[visibility_index],
+                    lock,
+                    &mut written,
+                )?;
+                link.invalidate_view().map_err(runtime_error)?;
+                Some(name)
+            } else {
+                None
+            };
+            if empty {
+                continue;
+            }
+            let visibilities = if let Some(name) = &corrected {
+                vec![name.as_str()]
+            } else {
+                target.names[visibility_index..]
+                    .iter()
+                    .map(String::as_str)
+                    .collect()
+            };
+            let columns = HanningColumns {
+                visibilities: &visibilities,
+                flag: &target.names[0],
+                weight: &target.names[1],
+                spectrum: use_spectrum.then(|| target.names[2].as_str()),
+            };
+            smooth_ms_hanning(&mut ms, &rows, columns, lock).map_err(runtime_error)?;
+        }
+        self.refresh_written_readers(&main, &written, [modern, legacy, vi1, grid])?;
+        for (_, lock) in temporary {
+            lock.release().map_err(runtime_error)?;
+        }
+        if empty {
+            Err(runtime_error(
+                "MSIter::construct - Input MeasurementSet.has zero selected rows",
+            ))
+        } else {
+            Ok(true)
+        }
+    }
+
     pub(super) fn putdata_rows(&mut self, items: RecordValue) -> PyResult<bool> {
         if items.fields().is_empty()
             || self
@@ -702,12 +865,39 @@ impl AttachedMs {
                 .write_part(&mut ms, lock, part)
                 .map_err(runtime_error)?;
         }
+        self.refresh_written_readers(
+            main,
+            &written,
+            [
+                refresh_cursor,
+                refresh_legacy_cursor,
+                refresh_vi1,
+                refresh_legacy_grid,
+            ],
+        )?;
+        for (_, lock) in temporary {
+            lock.release().map_err(runtime_error)?;
+        }
+        Ok(())
+    }
+
+    fn refresh_written_readers(
+        &mut self,
+        main: &VisibilityMain,
+        written: &BTreeSet<PathBuf>,
+        [
+            refresh_cursor,
+            refresh_legacy_cursor,
+            refresh_vi1,
+            refresh_legacy_grid,
+        ]: [bool; 4],
+    ) -> PyResult<()> {
         if refresh_cursor || refresh_legacy_grid || refresh_legacy_cursor || refresh_vi1 {
             // Refresh data read bindings and the stamps changed by our own
             // write without accepting a different saved view projection.
-            main.verify_write_layout(&written)?;
+            main.verify_write_layout(written)?;
             let refreshed = Arc::new(VisibilityMain::open(&self.path)?);
-            main.verify_write_layout(&written)?;
+            main.verify_write_layout(written)?;
             if refresh_cursor && let Some(iteration) = self.visibility.iteration.as_mut() {
                 iteration.layout = Some(Arc::clone(&refreshed));
             }
@@ -724,9 +914,6 @@ impl AttachedMs {
             {
                 read.refresh_descriptor(refreshed);
             }
-        }
-        for (_, lock) in temporary {
-            lock.release().map_err(runtime_error)?;
         }
         Ok(())
     }
@@ -1087,6 +1274,57 @@ impl AttachedMs {
         link.verify_directory().map_err(runtime_error)?;
         Ok(reply)
     }
+}
+
+fn hanning_column(value: &Bound<'_, PyAny>) -> PyResult<HanningDataColumn> {
+    let text = selection_text(value, "datacolumn")?;
+    Ok(if text.eq_ignore_ascii_case("data") {
+        HanningDataColumn::Observed
+    } else if text.eq_ignore_ascii_case("all") {
+        HanningDataColumn::Both
+    } else {
+        HanningDataColumn::Corrected
+    })
+}
+
+fn initialize_hanning_scratch(
+    main: &VisibilityMain,
+    ms: &mut MeasurementSet,
+    rows: &[usize],
+    observed: &str,
+    lock: &mut TableWriteLock,
+    written: &mut BTreeSet<PathBuf>,
+) -> PyResult<String> {
+    let publication = if main.plain {
+        None
+    } else {
+        main.table
+            .prepare_reference_columns_holding(&["MODEL_DATA", "CORRECTED_DATA"], lock)
+            .map_err(runtime_error)?
+    };
+    let [model, corrected] = publication
+        .as_ref()
+        .map_or(["MODEL_DATA", "CORRECTED_DATA"], |plan| {
+            [plan.columns[0].as_str(), plan.columns[1].as_str()]
+        });
+    casa_calibration::initialize_hanning_scratch_holding(
+        ms,
+        rows,
+        observed,
+        [corrected, model],
+        lock,
+    )
+    .map_err(runtime_error)?;
+    let corrected = corrected.to_owned();
+    if let Some(publication) = publication {
+        main.verify_write_layout(written)?;
+        written.extend(
+            publication
+                .publish(ms.main_table(), lock)
+                .map_err(runtime_error)?,
+        );
+    }
+    Ok(corrected)
 }
 
 fn requested_items(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {

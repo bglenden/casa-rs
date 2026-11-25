@@ -30,10 +30,12 @@ use crate::{MeasurementSet, MsSelectionIoBudget, SubtableColumnOverrides};
 mod scalars;
 mod variable_budget;
 mod visibility_columns;
+mod visibility_destination;
 
 pub use scalars::ScalarColumnId;
 use scalars::ScalarWriters;
 pub use visibility_columns::VisibilityColumns;
+pub use visibility_destination::VisibilityWriteDestination;
 
 /// Bytes a visibility creation batch aims at, whatever the budget allows.
 pub const TARGET_BATCH_BYTES: usize = 32 * 1024 * 1024;
@@ -368,6 +370,10 @@ pub struct MeasurementSetWritePlan {
 }
 
 impl MeasurementSetWritePlan {
+    pub(crate) fn selected_rows(&self) -> &[usize] {
+        &self.selected_rows
+    }
+
     /// Maximum rows accepted in one producer batch.
     pub const fn batch_rows(&self) -> usize {
         self.batch_rows

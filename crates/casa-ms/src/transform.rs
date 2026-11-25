@@ -47,6 +47,8 @@ mod convolution;
 mod correlation_metadata;
 mod flag_commands;
 mod hanning;
+mod hanning_tool;
+pub use hanning_tool::{HanningColumns, HanningDataColumn, smooth_ms_hanning};
 mod input_view;
 mod main_arrays;
 mod multi_ms;

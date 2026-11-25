@@ -152,6 +152,94 @@ fn root_row_numbers_compose_reference_maps_and_keep_duplicates() {
 }
 
 #[test]
+fn reference_column_publication_keeps_an_ancestor_alias() {
+    use crate::TableWriteLock;
+    use crate::storage::table_control::write_ref_table_dat;
+
+    let parent = grouped_table("ref_columns", "", EndianFormat::BigEndian);
+    let root = Table::open(TableOptions::new(&parent)).unwrap();
+    let first = parent.with_file_name("first.table");
+    let outer = parent.with_file_name("outer.table");
+    root.select_rows(&[2, 0, 2])
+        .unwrap()
+        .save(TableOptions::new(&first))
+        .unwrap();
+    let control = first.join("table.dat");
+    let TableDatResult::Ref(mut first_dat) = read_table_dat_dispatch(&control).unwrap() else {
+        panic!("expected reference projection");
+    };
+    first_dat.column_names.push("scratch".into());
+    first_dat
+        .column_name_map
+        .push(("scratch".into(), "id".into()));
+    write_ref_table_dat(&control, &first_dat).unwrap();
+    let first = Table::open(TableOptions::new(&first)).unwrap();
+    first
+        .select_rows(&[2, 1])
+        .unwrap()
+        .save(TableOptions::new(&outer))
+        .unwrap();
+    let control = outer.join("table.dat");
+    let TableDatResult::Ref(mut projected) = read_table_dat_dispatch(&control).unwrap() else {
+        panic!("expected reference projection");
+    };
+    projected.column_names.retain(|name| name != "scratch");
+    projected
+        .column_name_map
+        .retain(|(name, _)| name != "scratch");
+    write_ref_table_dat(&control, &projected).unwrap();
+
+    let lock = TableWriteLock::acquire_to_reread(&parent, 0).unwrap();
+    let view = Table::open(TableOptions::new(&outer)).unwrap();
+    let plan = view
+        .prepare_reference_columns_holding(&["scratch"], &lock)
+        .unwrap()
+        .unwrap();
+    assert_eq!(plan.columns, ["id"]);
+    assert_eq!(
+        plan.publish(&root, &lock).unwrap(),
+        [outer.canonicalize().unwrap()]
+    );
+    lock.release().unwrap();
+    let view = Table::open(TableOptions::new(&outer)).unwrap();
+    assert_eq!(view.root_row_numbers().unwrap(), [2, 0]);
+    assert_eq!(
+        *view.get_scalar_cell(0, "scratch").unwrap(),
+        ScalarValue::Int32(2)
+    );
+    assert_eq!(
+        *view.get_scalar_cell(1, "scratch").unwrap(),
+        ScalarValue::Int32(0)
+    );
+}
+
+#[test]
+fn ref_descriptor_preserves_wide_parent_rows() {
+    use crate::storage::table_control::{RefTableDatContents, write_ref_table_dat};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("table.dat");
+    let wide = u64::from(u32::MAX) + 9;
+    let reference = RefTableDatContents {
+        nrrow: 2,
+        big_endian: true,
+        parent_relative_path: "../parent.table".into(),
+        column_name_map: vec![("alias".into(), "id".into())],
+        column_names: vec!["alias".into()],
+        parent_nrrow: wide + 1,
+        row_order: false,
+        row_map: vec![wide, 0],
+    };
+    write_ref_table_dat(&path, &reference).unwrap();
+    let TableDatResult::Ref(reopened) = read_table_dat_dispatch(&path).unwrap() else {
+        panic!("expected reference projection");
+    };
+    assert_eq!(reopened.parent_nrrow, wide + 1);
+    assert_eq!(reopened.row_map, [wide, 0]);
+    assert_eq!(reopened.parent_column("alias"), "id");
+}
+
+#[test]
 fn root_row_numbers_refuse_a_reference_cycle() {
     let parent = grouped_table("root_cycle", "", EndianFormat::BigEndian);
     let table = Table::open(TableOptions::new(&parent)).expect("open parent");

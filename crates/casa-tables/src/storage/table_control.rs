@@ -313,6 +313,19 @@ pub(crate) fn read_table_dat(path: &Path) -> Result<TableDatContents, StorageErr
 }
 
 /// Read the AipsIO "RefTable" object payload from inside the "Table" envelope.
+pub(crate) fn read_ref_table_file(
+    file: std::fs::File,
+) -> Result<RefTableDatContents, StorageError> {
+    let mut io = AipsIo::new_read_only(file);
+    let (_, rows, big_endian, kind) = read_table_header(&mut io)?;
+    if kind != "RefTable" {
+        return Err(StorageError::FormatMismatch(
+            "expected a saved reference table".into(),
+        ));
+    }
+    read_ref_table_payload(&mut io, rows, big_endian)
+}
+
 fn read_ref_table_payload(
     io: &mut AipsIo,
     nrrow: u64,
@@ -1118,16 +1131,27 @@ pub(crate) fn write_ref_table_dat(
     path: &Path,
     contents: &RefTableDatContents,
 ) -> Result<(), StorageError> {
-    let mut io = AipsIo::open(path, AipsOpenOption::New)?;
+    write_ref_table_stream(AipsIo::open(path, AipsOpenOption::New)?, contents)
+}
 
-    // Table envelope — version 2 (nrrow as u32).
-    io.putstart("Table", 2)?;
-    io.put_u32(contents.nrrow as u32)?;
+pub(crate) fn write_ref_table_stream(
+    mut io: AipsIo,
+    contents: &RefTableDatContents,
+) -> Result<(), StorageError> {
+    let limit = u64::from(u32::MAX);
+    let wide = contents.nrrow >= limit
+        || contents.parent_nrrow >= limit
+        || contents.row_map.iter().any(|&row| row >= limit);
+    io.putstart("Table", if contents.nrrow >= limit { 3 } else { 2 })?;
+    if contents.nrrow >= limit {
+        io.put_u64(contents.nrrow)?;
+    } else {
+        io.put_u32(contents.nrrow as u32)?;
+    }
     io.put_u32(if contents.big_endian { 0 } else { 1 })?;
     io.put_string("RefTable")?;
 
-    // RefTable payload — version 2 (32-bit row numbers).
-    io.putstart("RefTable", 2)?;
+    io.putstart("RefTable", if wide { 3 } else { 2 })?;
 
     // Parent table relative path.
     io.put_string(&contents.parent_relative_path)?;
@@ -1155,27 +1179,31 @@ pub(crate) fn write_ref_table_dat(
     }
     io.putend()?;
 
-    // Parent row count at save time.
-    io.put_u32(contents.parent_nrrow as u32)?;
+    if wide {
+        io.put_u64(contents.parent_nrrow)?;
+    } else {
+        io.put_u32(contents.parent_nrrow as u32)?;
+    }
 
     // Row order flag.
     io.put_bool(contents.row_order)?;
 
     // This RefTable's row count.
-    io.put_u32(contents.nrrow as u32)?;
+    if wide {
+        io.put_u64(contents.nrrow)?;
+    } else {
+        io.put_u32(contents.nrrow as u32)?;
+    }
 
     // Row number vector (chunked at 2^20, no count prefix).
     let max_chunk: usize = 1 << 20;
-    let mut done: usize = 0;
-    let total = contents.row_map.len();
-    while done < total {
-        let todo = std::cmp::min(total - done, max_chunk);
-        let chunk32: Vec<u32> = contents.row_map[done..done + todo]
-            .iter()
-            .map(|&r| r as u32)
-            .collect();
-        io.put_u32_slice(&chunk32, false)?;
-        done += todo;
+    for chunk in contents.row_map.chunks(max_chunk) {
+        if wide {
+            io.put_u64_slice(chunk, false)?;
+        } else {
+            let chunk32: Vec<u32> = chunk.iter().map(|&row| row as u32).collect();
+            io.put_u32_slice(&chunk32, false)?;
+        }
     }
 
     io.putend()?; // RefTable

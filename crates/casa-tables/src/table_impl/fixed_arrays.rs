@@ -29,7 +29,7 @@ impl TableImpl {
             .map_err(TableError::from)
     }
 
-    pub(crate) fn can_save_packed_complex_rows(&self, path: &Path, column: &str) -> bool {
+    pub(crate) fn can_save_packed_array_rows(&self, path: &Path, column: &str) -> bool {
         !self.rows_are_loaded()
             && !self.rows_reshaped()
             && !self.pending_array_cells.by_column.contains_key(column)
