@@ -198,6 +198,7 @@ pub(super) fn uvw_coordinates(uvw: Option<&ArrayValue>) -> Option<[f64; 3]> {
 pub(crate) struct PlotTimeGroups {
     group_by_row_slot: Vec<usize>,
     first_row_slots: Vec<usize>,
+    row_numbers: Option<Vec<usize>>,
     buffers: Vec<Range<usize>>,
     input_buffer_first_slots: Vec<usize>,
     model_phase_reference_slots: Option<Vec<usize>>,
@@ -212,6 +213,11 @@ impl PlotTimeGroups {
     /// Return the first chronological integration supplying the group's metadata.
     pub(crate) fn first_row_slot(&self, group: usize) -> usize {
         self.first_row_slots[group]
+    }
+
+    /// The averaged Row coordinate of each group within its iterator chunk.
+    pub(crate) fn row_numbers(&self) -> Option<&[usize]> {
+        self.row_numbers.as_deref()
     }
 
     /// The emitted subchunks needed by the downstream PlotMS baseline reducer.
@@ -250,6 +256,7 @@ pub(crate) fn selected_plot_time_groups(
     collect_buffers: bool,
     combine_spectral_windows: bool,
     collect_model_phase_references: bool,
+    collect_row_numbers: bool,
 ) -> Result<PlotTimeGroups, MsTransformError> {
     let order = if combine_spectral_windows {
         MainRowOrder::SpectralWindowAverage
@@ -270,6 +277,7 @@ pub(crate) fn selected_plot_time_groups(
     let mut group_by_row_slot = vec![0; rows.len()];
     let mut first_row_slots = Vec::with_capacity(groups.len());
     let mut input_buffer_first_slots = vec![0; if collect_buffers { rows.len() } else { 0 }];
+    let mut row_numbers = collect_row_numbers.then(|| Vec::with_capacity(groups.len()));
     let mut model_phase_reference_slots =
         collect_model_phase_references.then(|| vec![0; rows.len()]);
     let mut chunk_heads = BTreeMap::<TimeChunk, TimeSample>::new();
@@ -293,6 +301,9 @@ pub(crate) fn selected_plot_time_groups(
     }
     for (index, group) in groups.into_iter().enumerate() {
         first_row_slots.push(row_slots[&group.first.row]);
+        if let Some(numbers) = &mut row_numbers {
+            numbers.push(group.row_in_chunk);
+        }
         let phase_reference =
             collect_model_phase_references.then(|| row_slots[&chunk_heads[&group.first.chunk].row]);
         for row in group.rows {
@@ -311,6 +322,7 @@ pub(crate) fn selected_plot_time_groups(
     Ok(PlotTimeGroups {
         group_by_row_slot,
         first_row_slots,
+        row_numbers,
         buffers,
         input_buffer_first_slots,
         model_phase_reference_slots,
