@@ -136,7 +136,8 @@
         "ms-phasecenter-compositions",
         "ms-iteration-axes-and-offset-pages",
         "ms-axis-ranges-clock-labels-and-style",
-        "ms-marker-groups-and-connector-controls"
+        "ms-marker-groups-and-connector-controls",
+        "ms-gapped-channel-frequencies"
       ],
       "behaviors": [
         "coordinates"
@@ -406,7 +407,8 @@
         "ms-compound-selection",
         "ms-unaveraged-row-axes",
         "ms-antenna-time-window-correlation-shapes",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-gapped-channel-frequencies"
       ],
       "behaviors": [
         "selection"
@@ -624,7 +626,8 @@
         "ms-pointing-sample-masks-and-pages",
         "ms-reporting-frequency-and-wavelengths",
         "ms-phasecenter-compositions",
-        "ms-axis-ranges-clock-labels-and-style"
+        "ms-axis-ranges-clock-labels-and-style",
+        "ms-gapped-channel-frequencies"
       ],
       "behaviors": [
         "averaging"
@@ -1580,7 +1583,8 @@
       "evidence": [
         "atmosphere",
         "ms-atmosphere",
-        "ms-combined-atmosphere"
+        "ms-combined-atmosphere",
+        "ms-gapped-channel-frequencies"
       ],
       "behaviors": [
         "advanced"
@@ -1679,7 +1683,8 @@
         "ms-pointing-directions",
         "ms-pointing-list-controls",
         "ms-pointing-sample-masks-and-pages",
-        "ms-reporting-frequency-and-wavelengths"
+        "ms-reporting-frequency-and-wavelengths",
+        "ms-gapped-channel-frequencies"
       ],
       "gap": "Sample masks for other mixed visibility and metadata axes, additional averaging modes and additional MS column forms are open. Interval reporting-frame transforms and additional interval or wavelength averaging compositions remain open."
     },
@@ -1701,7 +1706,8 @@
         "ms-scalar-time-columns",
         "ms-channel-statistics",
         "ms-vector-time-uvw",
-        "ms-pointing-sample-masks-and-pages"
+        "ms-pointing-sample-masks-and-pages",
+        "ms-gapped-channel-frequencies"
       ],
       "gap": "Scalar combinations with other averaging controls, antenna and spectral-window averaging, fully masked exports, additional visibility averaging compositions, and additional flagged and weight coordinates remain under #1032."
     },
@@ -1765,7 +1771,8 @@
         "callibrary",
         "ms-reporting-frequency-and-wavelengths",
         "ms-phasecenter-compositions",
-        "ms-static-display-and-refusals"
+        "ms-static-display-and-refusals",
+        "ms-gapped-channel-frequencies"
       ],
       "gap": "Remaining shared PlotMS forms are tracked in #1032 and #215."
     }
@@ -3490,6 +3497,21 @@
       "links": [
         "https://github.com/bglenden/casa-rs/issues/1032",
         "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/casaplotms/private/task_plotms.py?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362"
+      ]
+    },
+    "ms-gapped-channel-frequencies": {
+      "kind": "MeasurementSet channel average physical frequency with a gapped selection",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and optimized casa-rs on the same atmospheric MeasurementSet, with Frequency versus Amp, spw=0:0~2;5~7, avgchannel=2, XX and A0&A1. The physical frequency grid drops partial bins while the visibility average reads the compressed buffer.",
+      "result": "The release regression moved 12 displayed points from 100.0055 GHz to 100.0035 GHz while verbose frequencies and amplitudes matched. The revised provider matches all 48 visibility and atmosphere coordinates, including all 24 displayed and verbose visibility frequencies and the selected row metadata. Maximum overlay normalized RMS is 3.24621e-6.",
+      "casa_version": "6.7.6.14",
+      "revision": "1fd6adb99d6f815f7dce8477b4160c7eb6734c79",
+      "source_revision": "1fd6adb99d6f815f7dce8477b4160c7eb6734c79",
+      "command": "casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --only average-gaps --work <new-dir> --native-bin <release-msexplore> --calibrate-bin <release-calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-gapped-channel-frequencies-20261125.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2322",
+        "https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Data/MSCache.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362"
       ]
     }
   }

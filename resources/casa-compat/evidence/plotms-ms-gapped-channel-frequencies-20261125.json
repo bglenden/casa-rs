@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-25",
+  "revision": "1fd6adb99d6f815f7dce8477b4160c7eb6734c79",
+  "source_revision": "1fd6adb99d6f815f7dce8477b4160c7eb6734c79",
+  "baseline_revision": "ca43ac6c4e8d25bd02b40d5341d4707b7056ea4f",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --only average-gaps --work <new-dir> --native-bin <release-msexplore> --calibrate-bin <release-calibrate>",
+  "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and optimized casa-rs on the same atmospheric MeasurementSet, with Frequency versus Amp, spw=0:0~2;5~7, avgchannel=2, XX and A0&A1. The physical frequency grid drops partial bins while the visibility average reads the compressed buffer.",
+  "result": "passed",
+  "provider_profile": "release",
+  "comparison": "Optimized patched msexplore against the retained public CASA result and same staged MeasurementSet from the release regression.",
+  "matched_txt_coordinates": 48,
+  "visibility_coordinates": 24,
+  "wrong_baseline_frequencies": 12,
+  "pinned_bin_frequencies_ghz": [
+    100.0005,
+    100.0055
+  ],
+  "max_overlay_nrms": 3.24621e-06
+}
