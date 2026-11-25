@@ -9,12 +9,12 @@ import os
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
 from plotms_ms_columns_oracle import (
     casa, compare_figure, compare_text, copy_ms, fixture, opened, plotms_launcher, reference, request, rows,
     write_model,
 )
+from plotms_ms_phasecenter_compositions_oracle import compare_phasecenter_compositions, marker_mask
 
 
 PHASE_CENTER = "J2000 00h00m02.00s -29d59m40.00s"
@@ -45,12 +45,6 @@ def compare_values(root, native, vis, shifted, name, axes, *, samples=UNFLAGGED_
     assert compare_text(inactive, original) == count
     print(f"{name}: {count} shifted and {count} unchanged selected coordinates", flush=True)
     return expected
-
-
-def marker_mask(path):
-    with Image.open(path) as image:
-        assert image.size == (500, 360)
-        return np.all(np.asarray(image.convert("RGB")) == [0xdd, 0x22, 0x55], axis=-1)
 
 
 def compare_shifted_figure(root, native, vis, shifted, controls, expected):
@@ -99,9 +93,9 @@ def check_unreadable_model(root, native, vis, expected):
     try:
         native(**(controls | dict(field="PHASE")), plotfile=str(virtual))
     except TaskExecutionError as error:
-        assert "phasecenter with a virtual model is pending (#1032)" in str(error), error
+        assert "missing.im" in str(error), error
     else:
-        raise AssertionError("PlotMS evaluated an unsupported virtual visibility model")
+        raise AssertionError("PlotMS accepted an unreadable virtual visibility model")
     assert not virtual.exists()
 
 
@@ -142,7 +136,6 @@ def check_refusals(root, native, vis):
     for name, options, diagnostic in (
         ("bad-value", dict(phasecenter="J2000 north west"), "Cannot interpret phasecenter"),
         ("other-frame", dict(phasecenter="AZELGEO 0deg 0deg"), "outside J2000 and Galactic"),
-        ("averaging", dict(averagedata=True, avgchannel="3"), "unaveraged"),
     ):
         output = root / f"{name}.native.txt"
         try:
@@ -170,7 +163,6 @@ def main():
     calibrate = args.calibrate_bin or args.native_bin.with_name("calibrate")
     os.environ["CASARS_CALIBRATE_BIN"] = str(calibrate.resolve())
     from casars.tasks import plotms as native
-    from plotms_ms_phasecenter_compositions_oracle import compare_phasecenter_compositions
 
     with chdir(root), plotms_launcher(args.app_run):
         if args.only == "compositions":

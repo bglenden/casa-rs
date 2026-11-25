@@ -471,8 +471,13 @@ impl TimeProjection {
     }
 
     fn project(&self, axis: MsAxis) -> Option<f64> {
+        self.project_after_shift(axis, None)
+    }
+
+    fn project_after_shift(&self, axis: MsAxis, phase: Option<Complex32>) -> Option<f64> {
         let means = std::array::from_fn(|operand| {
             let mean = self.time_mean(operand);
+            let mean = phase.map_or(mean, |phase| phase * mean);
             Complex64::new(f64::from(mean.re), f64::from(mean.im))
         });
         self.project_operands(axis, means)
@@ -914,6 +919,13 @@ impl AveragedVisibility {
             VisibilitySamples::TimeProjection(average) => average.project(axis),
             VisibilitySamples::TimeChannelProjection(projection) => projection.project(axis),
         }
+    }
+
+    pub(super) fn project_shifted_time(&self, axis: MsAxis, phase: Complex32) -> Option<f64> {
+        let VisibilitySamples::TimeProjection(average) = &self.0 else {
+            return None;
+        };
+        average.project_after_shift(axis, Some(phase))
     }
 }
 

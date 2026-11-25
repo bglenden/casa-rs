@@ -1,13 +1,30 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 """Pair public PlotMS phase shifts with the pinned CASA visibility iterator."""
 
-import numpy as np
-from casatools import measures, mstransformer
+from unittest.mock import patch
 
-from plotms_ms_columns_oracle import casa, compare_figure, compare_text, copy_ms, fixture, opened, reference, request, rows
+from grpc import RpcError, StatusCode
+import numpy as np
+from casatools import measures, mstransformer, quanta
+from PIL import Image
+
+from plotms_ms_columns_oracle import (
+    casa, compare_figure, compare_text, copy_ms, fixture, opened, reference, request, rows, write_model,
+)
+from plotms_ms_reporting_frames_oracle import reporting_frequencies
 
 
 GALACTIC_RMS = 1.2e-5
+MODEL_RMS = 1.2e-6
+MARKERS = dict(customsymbol=True, symbolshape='circle', symbolcolor='dd2255',
+               symbolsize=5, symbolfill='fill', symboloutline=False)
+PNG = dict(expformat='png', width=500, height=360, dpi=100)
+
+
+def marker_mask(path):
+    with Image.open(path) as image:
+        assert image.size == (500, 360)
+        return np.all(np.asarray(image.convert('RGB')) == [0xdd, 0x22, 0x55], axis=-1)
 
 
 def compare_phasecenter_compositions(root, native, phasecenter):
@@ -20,14 +37,17 @@ def compare_phasecenter_compositions(root, native, phasecenter):
     base = request(vis) | dict(xaxis='real', yaxis='imag', spw='0:1~3^2')
     galactic = galactic_direction(phasecenter)
     frame_coordinates = []
+    shifted_centers = {}
     for name, target in (('j2000', phasecenter), ('galactic', galactic)):
         shifted = materialize_shift(root / name, vis, target)
+        shifted_centers[name] = shifted
         reference_text = root / f'{name}.casa.txt'
         assert reference(**(base | dict(vis=str(shifted))), plotfile=str(reference_text), expformat='txt') is None
         actual = root / f'{name}.native.txt'
         assert native(**base, phasecenter=target, transform=True, plotfile=str(actual), expformat='txt') is None
         if name == 'galactic':
-            compare_galactic_text(actual, reference_text)
+            # The independent frame conversions differ by about 3e-11 radians.
+            compare_rotated_text(actual, reference_text, GALACTIC_RMS)
         else:
             assert compare_text(actual, reference_text) == 12
         frame_coordinates.append(np.asarray([p[:2] for p in rows(reference_text)], dtype=float))
@@ -38,9 +58,19 @@ def compare_phasecenter_compositions(root, native, phasecenter):
     options = base | dict(phasecenter=galactic, transform=True, title='Galactic phase center')
     compare_figure(root, native, options, reference_text, ('Galactic phase center', 'Real', 'Imag:corrected'),
                    coordinate_rms=GALACTIC_RMS)
-    compare_polynomial_shift(root, native, vis, phasecenter)
+    snapshots = original | {'UVW': uvw}
+    compare_polynomial_shift(root, native, vis, phasecenter, snapshots)
+    compare_reductions(root, native, vis, shifted_centers['j2000'], phasecenter)
+    compare_scan_iteration(root, native, vis, phasecenter, snapshots)
+    compare_reporting_frame(root, native, vis, phasecenter)
+    compare_virtual_model(root, native, vis, phasecenter, snapshots)
+    compare_combined_refusal(root, native, vis, phasecenter)
+    unchanged_columns(vis, snapshots)
+
+
+def unchanged_columns(vis, snapshots):
     with opened(vis) as table:
-        for name, values in (original | {'UVW': uvw}).items():
+        for name, values in snapshots.items():
             np.testing.assert_array_equal(table.getcol(name), values)
 
 
@@ -53,40 +83,44 @@ def galactic_direction(phasecenter):
         me.done()
 
 
-def compare_galactic_text(actual, expected):
+def compare_rotated_text(actual, expected, tolerance):
     headers = lambda path: [line for line in path.read_text().splitlines() if line.startswith('#')]
     assert headers(actual) == headers(expected)
     native_rows, casa_rows = rows(actual), rows(expected)
     assert len(native_rows) == len(casa_rows) == 12
     assert [p[2:] for p in native_rows] == [p[2:] for p in casa_rows]
     native_xy, casa_xy = (np.asarray([p[:2] for p in points], dtype=float) for points in (native_rows, casa_rows))
-    # The independent frame conversions differ by about 3e-11 radians. Use
-    # normalized RMS to compare the resulting visibility components near zero.
+    # Compare each component in units of its RMS over the selected samples.
+    # Roundoff in the complex rotation can be large relative to an isolated near-zero value.
     error = np.linalg.norm(native_xy - casa_xy, axis=0) / np.linalg.norm(casa_xy, axis=0)
-    assert np.all(error < GALACTIC_RMS), error
+    assert np.all(error < tolerance), error
+    print(f'{expected.name}: 12 points with relative RMS {error}', flush=True)
 
 
-def materialize_shift(folder, vis, phasecenter, *, polynomial=False):
+def materialize_shift(folder, vis, phasecenter):
     folder.mkdir()
     output = folder / vis.name
-    if polynomial:
-        # The phaseshift task's final FIELD update reads the entire mixed-shape column.
-        # Its iterator can materialize the shifted visibilities without that update.
-        tool = mstransformer()
-        try:
-            tool.config(dict(inputms=str(vis), outputms=str(output), datacolumn='ALL', reindex=False,
-                             tviphaseshift=True, tviphaseshiftlib={'phasecenter': phasecenter}))
-            tool.open()
-            tool.run()
-        finally:
-            tool.done()
-    else:
-        assert casa.phaseshift(vis=str(vis), outputvis=str(output), phasecenter=phasecenter,
-                               datacolumn='all') is None
+    assert casa.phaseshift(vis=str(vis), outputvis=str(output), phasecenter=phasecenter,
+                           datacolumn='all') is None
     return output
 
 
-def compare_polynomial_shift(root, native, vis, phasecenter):
+def materialize_iterator(folder, vis, phasecenter, **options):
+    folder.mkdir()
+    output = folder / vis.name
+    configuration = dict(inputms=str(vis), outputms=str(output), datacolumn='ALL', reindex=False,
+                         tviphaseshift=True, tviphaseshiftlib={'phasecenter': phasecenter})
+    tool = mstransformer()
+    try:
+        tool.config(configuration | options)
+        tool.open()
+        tool.run()
+    finally:
+        tool.done()
+    return output
+
+
+def compare_polynomial_shift(root, native, vis, phasecenter, snapshots):
     work = root / 'polynomial'
     work.mkdir()
     source = work / vis.name
@@ -103,16 +137,220 @@ def compare_polynomial_shift(root, native, vis, phasecenter):
             assert constant.shape == (2, 1)
             coefficients[name] = np.concatenate((constant, [[3e-8], [-5e-8]]), axis=1)
             table.putcell(name, 0, coefficients[name])
-    shifted = materialize_shift(work / 'shifted', source, phasecenter, polynomial=True)
+    # The wrapper's final FIELD update cannot read the whole mixed-shape column.
+    shifted = materialize_iterator(work / 'shifted', source, phasecenter)
     base = request(source) | dict(xaxis='real', yaxis='imag', spw='0:1~3^2')
     expected, actual = (work / f'polynomial.{engine}.txt' for engine in ('casa', 'native'))
     assert reference(**(base | dict(vis=str(shifted))), plotfile=str(expected), expformat='txt') is None
-    options = base | dict(phasecenter=phasecenter, transform=True, title='Polynomial FIELD')
+    options = base | MARKERS | dict(phasecenter=phasecenter, transform=True,
+                                   title='Polynomial FIELD', plotrange=[-5, 5, -15, 15])
     assert native(**options, plotfile=str(actual), expformat='txt') is None
     assert compare_text(actual, expected) == 12
     assert [point[3] for point in rows(expected)] == ['1'] * 6 + ['2'] * 6
     compare_figure(work, native, options, expected, ('Polynomial FIELD', 'Real', 'Imag:corrected'))
+    compare_control_markers(work, 'polynomial', options, base | dict(vis=str(shifted)))
+    unchanged_columns(source, snapshots | {'SCAN_NUMBER': scans})
     with opened(source / 'FIELD') as table:
         assert table.getcell('NUM_POLY', 0) == 1
         for name, values in coefficients.items():
             np.testing.assert_array_equal(table.getcell(name, 0), values)
+
+
+def compare_reductions(root, native, vis, shifted, phasecenter):
+    base = request(vis) | dict(xaxis='real', yaxis='imag', ydatacolumn='data', spw='0:0~3')
+    time = dict(averagedata=True, avgtime='20')
+    channel = dict(averagedata=True, avgchannel='2')
+    # MSTransformManager places PhaseShiftingTVI above the time averager
+    # and below the channel averager. Keep the source cell shape when
+    # materializing the time iterator, then select the four plotted channels.
+    time_shifted = materialize_iterator(
+        root / 'time-shifted', vis, phasecenter, datacolumn='DATA', spw='0',
+        field=base['field'], antenna=base['antenna'], timeaverage=True,
+        timebin='20', timespan='state',
+    )
+    for name, reduction, control, count in (
+        ('channel', channel, base | channel | dict(vis=str(shifted)), 12),
+        ('time', time, base | dict(vis=str(time_shifted)), 9),
+    ):
+        options = base | reduction | MARKERS | dict(
+            transform=True, phasecenter=phasecenter, title=name, plotrange=[-5, 5, -5, 5],
+        )
+        actual, expected = (root / f'{name}.{engine}.txt' for engine in ('native', 'casa'))
+        assert reference(**control, expformat='txt', plotfile=str(expected)) is None
+        if name == 'time':
+            # The materialized MS already contains averaged samples. Take
+            # the request's averaging header from a public unshifted export.
+            unshifted = root / 'time-unshifted.casa.txt'
+            assert reference(**base, **time, expformat='txt', plotfile=str(unshifted)) is None
+            materialized = expected.read_text().splitlines(keepends=True)
+            headers = [line for line in unshifted.read_text().splitlines(keepends=True) if line.startswith('#')]
+            assert [line for line in materialized if line.startswith('#')] == [
+                line for line in headers if not line.startswith(('# channel average:', '# time average:'))
+            ]
+            expected.write_text(''.join(headers + [line for line in materialized if not line.startswith('#')]))
+        assert native(**options, expformat='txt', plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        expected_channels = ['0', '1'] if name == 'channel' else ['0', '1', '3']
+        assert [p[2] for p in rows(expected)] == expected_channels * (count // len(expected_channels))
+        compare_figure(root, native, options, expected, (name, 'Real', 'Imag'))
+        compare_control_markers(root, name, options, control)
+
+
+def compare_control_markers(root, name, options, control):
+    output = root / f'{name}.control.png'
+    paint = MARKERS | dict(title=options['title'], plotrange=options['plotrange'])
+    assert reference(**(control | paint | PNG), plotfile=str(output)) is None
+    masks = [marker_mask(path) for path in (root / 'casa' / f'{name}.png', output)]
+    assert np.any(masks[0]) and np.array_equal(*masks), name
+
+
+def compare_scan_iteration(root, native, vis, phasecenter, snapshots):
+    from casars import _plot_document
+
+    work = root / 'scan'
+    work.mkdir()
+    source = work / vis.name
+    copy_ms(vis, source)
+    with opened(source, True) as table:
+        times = table.getcol('TIME')
+        scans = np.where(times < np.unique(times)[3], 1, 2).astype(np.int32)
+        table.putcol('SCAN_NUMBER', scans)
+    shifted = materialize_shift(work / 'shifted', source, phasecenter)
+    base = request(source) | dict(xaxis='real', yaxis='imag', spw='0:1~3^2',
+                                  iteraxis='scan', gridrows=1, gridcols=2, exprange='all')
+    control = base | dict(vis=str(shifted))
+    options = base | dict(transform=True, phasecenter=phasecenter)
+    actual, expected = (work / f'scan.{engine}.txt' for engine in ('native', 'casa'))
+    assert reference(**control, expformat='txt', plotfile=str(expected)) is None
+    assert native(**options, expformat='txt', plotfile=str(actual)) is None
+    assert compare_text(actual, expected) == 12
+    points = rows(expected)
+    assert [p[3] for p in points] == ['1'] * 6 + ['2'] * 6
+    render = _plot_document.render_document
+    panels = []
+
+    def record(*args, **kwargs):
+        figure, axes = render(*args, **kwargs)
+        panels.append([(axis.get_subplotspec().colspan.start, axis.lines[0].get_xydata()) for axis in axes])
+        return figure, axes
+
+    for engine, task in (('casa', reference), ('native', native)):
+        output = work / engine
+        output.mkdir()
+        if engine == 'native':
+            with patch.object(_plot_document, 'render_document', record):
+                assert task(**options, **PNG, plotfile=str(output / 'scan.png')) is None
+        else:
+            assert task(**options, **PNG, plotfile=str(output / 'scan.png')) is None
+        [image] = output.glob('*.png')
+        assert image.name == 'scan_Scan1,2.png'
+        with Image.open(image) as raster:
+            assert raster.size == (500, 360)
+    [page] = panels
+    assert [column for column, _ in page] == [0, 1]
+    for index, (_, xy) in enumerate(page):
+        expected_xy = np.array([p[:2] for p in points[index * 6:(index + 1) * 6]], dtype=float)
+        np.testing.assert_allclose(xy, expected_xy, rtol=1.2e-5, atol=1e-7)
+    unchanged_columns(source, snapshots | {'SCAN_NUMBER': scans})
+    print('phasecenter scan: 12 matching points in two ordered panels', flush=True)
+
+
+def compare_reporting_frame(root, native, vis, phasecenter):
+    # Leave FIELD at the input direction so pinned PlotMS converts frequency
+    # using the same reference as the active phase-shifting request.
+    shifted = materialize_iterator(root / 'reporting-shifted', vis, phasecenter)
+    base = request(vis) | dict(xaxis='real', yaxis='imag', spw='0:1~3^2')
+    control = base | dict(vis=str(shifted), transform=True, freqframe='LSRK')
+    options = base | MARKERS | dict(transform=True, freqframe='LSRK', phasecenter=phasecenter,
+                                   title='LSRK shift', plotrange=[-5, 5, -15, 15])
+    actual, expected = (root / f'lsrk.{engine}.txt' for engine in ('native', 'casa'))
+    assert reference(**(control | dict(transform=False)), expformat='txt', plotfile=str(expected)) is None
+    assert native(**options, expformat='txt', plotfile=str(actual)) is None
+    measured, original = rows(actual), rows(expected)
+    assert len(measured) == len(original) == 12
+    assert [p[2:10] + p[11:] for p in measured] == [p[2:10] + p[11:] for p in original]
+    np.testing.assert_allclose(np.array([p[:2] for p in measured], dtype=float),
+                               np.array([p[:2] for p in original], dtype=float), rtol=1.2e-5, atol=1e-7)
+    me, qa = measures(), quanta()
+    try:
+        with opened(vis / 'OBSERVATION') as table:
+            assert me.doframe(me.observatory(table.getcell('TELESCOPE_NAME', 0)))
+        with opened(vis / 'FIELD') as table:
+            longitude, latitude = table.getcell('PHASE_DIR', 0)[:, 0]
+        assert me.doframe(me.direction('J2000', qa.quantity(longitude, 'rad'), qa.quantity(latitude, 'rad')))
+        frequencies = reporting_frequencies(original, 'LSRK', me, qa)
+    finally:
+        me.done()
+        qa.done()
+    np.testing.assert_allclose([float(p[10]) for p in measured], frequencies, rtol=0, atol=1e-7)
+    compare_figure(root, native, options, expected, ('LSRK shift', 'Real', 'Imag:corrected'))
+    compare_control_markers(root, 'lsrk', options, control)
+
+
+def compare_virtual_model(root, native, vis, phasecenter, snapshots):
+    work = root / 'virtual'
+    work.mkdir()
+    source, physical = work / vis.name, work / 'physical' / vis.name
+    physical.parent.mkdir()
+    copy_ms(vis, source)
+    copy_ms(vis, physical)
+    with opened(source, True) as table:
+        table.removecols('MODEL_DATA')
+    with opened(source / 'FIELD') as table:
+        direction = table.getcell('PHASE_DIR', 0)[:, 0]
+    with opened(source / 'SPECTRAL_WINDOW') as table:
+        frequency = table.getcell('CHAN_FREQ', 0)[0]
+    image = work / 'point.im'
+    write_model(image, direction, frequency, 2.0, cell=5)
+    for ms, store in ((source, False), (physical, True)):
+        assert casa.ft(vis=str(ms), model=str(image), field='FLUX', usescratch=store) is None
+    with opened(source / 'SOURCE') as table:
+        key = table.getkeyword('definedmodel_field_0')
+        model_row = table.getkeyword(key)
+        model = table.getcell('SOURCE_MODEL', model_row)
+    shifted = materialize_shift(work / 'shifted', physical, phasecenter)
+    base = request(source) | dict(xaxis='real', yaxis='imag', xdatacolumn='model',
+                                  ydatacolumn='model', spw='0:1~3^2')
+    options = base | MARKERS | dict(transform=True, phasecenter=phasecenter,
+                                   title='Virtual MODEL shift', plotrange=[-3, 3, -3, 3])
+    control = base | dict(vis=str(shifted))
+    actual, expected = (work / f'model.{engine}.txt' for engine in ('native', 'casa'))
+    assert reference(**control, expformat='txt', plotfile=str(expected)) is None
+    assert native(**options, expformat='txt', plotfile=str(actual)) is None
+    # One Float rounding step in the 2 Jy model remains visible when its
+    # rotated imaginary component is close to zero.
+    compare_rotated_text(actual, expected, MODEL_RMS)
+    # Figure coordinates retain more digits than the six-significant-digit reference TXT.
+    compare_figure(work, native, options, expected, ('Virtual MODEL shift', 'Real:model', 'Imag:model'),
+                   coordinate_rms=3e-6)
+    compare_control_markers(work, 'model', options, control)
+    with opened(source) as table:
+        assert 'MODEL_DATA' not in table.colnames()
+    unchanged_columns(source, {name: values for name, values in snapshots.items() if name != 'MODEL_DATA'})
+    with opened(source / 'SOURCE') as table:
+        assert table.getkeyword('definedmodel_field_0') == key
+        assert table.getkeyword(key) == model_row
+        np.testing.assert_equal(table.getcell('SOURCE_MODEL', model_row), model)
+
+
+def compare_combined_refusal(root, native, vis, phasecenter):
+    from casars.tasks import TaskParameterError
+
+    options = request(vis) | dict(xaxis='real', yaxis='imag', transform=True, phasecenter=phasecenter,
+                                  averagedata=True, avgchannel='2', avgtime='20', spw='0:0~3')
+    for column in ('data', 'corrected'):
+        actual, expected = (root / f'combined-{column}.{engine}.png' for engine in ('native', 'casa'))
+        controls = options | PNG | dict(ydatacolumn=column)
+        try:
+            reference(**controls, plotfile=str(expected))
+        except RpcError as error:
+            assert error.code() == StatusCode.INVALID_ARGUMENT and error.details() == 'plot parameters failed'
+        else:
+            raise AssertionError('CASA accepted combined time and channel averaging with a phase shift')
+        try:
+            native(**controls, plotfile=str(actual))
+        except TaskParameterError as error:
+            assert 'simultaneous time and channel averaging is refused by CASA' in str(error), error
+        else:
+            raise AssertionError('casa-rs accepted combined time and channel averaging with a phase shift')
+        assert not actual.exists() and not expected.exists()

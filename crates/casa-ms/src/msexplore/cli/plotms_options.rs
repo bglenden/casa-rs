@@ -443,7 +443,7 @@ impl CliOptions {
         value: &str,
         without_calibration_or_overlays: bool,
     ) -> Result<MDirection, TaskFailure> {
-        let raw_visibility = |axis: MsAxis, column: MsDataColumn| {
+        let complex_visibility = |axis: MsAxis, column: MsDataColumn| {
             axis.is_visibility_math()
                 && matches!(
                     column,
@@ -452,20 +452,34 @@ impl CliOptions {
         };
         let x = self.x_axis.is_some_and(|axis| {
             axis.uses_uvw_metres()
-                || raw_visibility(axis, self.x_data_column.unwrap_or(self.data_column))
+                || complex_visibility(axis, self.x_data_column.unwrap_or(self.data_column))
         });
+        let channels = self.avgchannel.is_some_and(|width| width > 1);
+        let time = self.avgtime.is_some();
+        if channels && time {
+            return Err(TaskFailure::validation(
+                "PlotMS phasecenter with simultaneous time and channel averaging is refused by CASA 6.7.6.14",
+            )
+            .at("phasecenter"));
+        }
         if !x
             || !self
                 .y_axis
-                .is_some_and(|axis| raw_visibility(axis, self.data_column))
+                .is_some_and(|axis| complex_visibility(axis, self.data_column))
             || !without_calibration_or_overlays
             || self.y_axis2.is_some()
-            || self.plotms_averaging_active()
-            || self.iteraxis.is_some()
-            || self.freqframe.is_some()
+            || !self.additional_ordinates.is_empty()
+            || self.avgscan
+            || self.avgfield
+            || self.avgspw
+            || self.avgbaseline
+            || self.avgantenna
+            || self.scalar
+            || !matches!(self.iteraxis, None | Some(MsIterationAxis::Scan))
+            || ((channels || time) && (self.iteraxis.is_some() || self.freqframe.is_some()))
         {
             return Err(TaskFailure::validation(
-                "PlotMS phasecenter currently supports one unaveraged complex visibility ordinate and a complex visibility or UVW abscissa, with no iteration, reporting frame, callibrary or overlays (#1032)",
+                "This combination of PlotMS phasecenter with axes, averaging, iteration, callibrary or overlays is pending (#1032)",
             )
             .at("phasecenter"));
         }

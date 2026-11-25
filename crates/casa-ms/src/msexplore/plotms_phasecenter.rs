@@ -77,8 +77,34 @@ impl<'a> PhaseCenterShift<'a> {
         field_id: i32,
         spw: usize,
         time_mjd_seconds: f64,
-        [u, v, w]: [f64; 3],
+        uvw: [f64; 3],
         grids: &mut [ComplexGrid],
+    ) -> Result<[f64; 3], String> {
+        let uvw = self.prepare_row(ms, field_id, spw, time_mjd_seconds, uvw)?;
+        for grid in grids {
+            if grid.chan_count != self.phases.len() {
+                return Err(format!(
+                    "phasecenter shift requires {} channel frequencies, found {} in spectral window {spw}",
+                    grid.chan_count,
+                    self.phases.len(),
+                ));
+            }
+            for (value, phase) in grid.values.iter_mut().zip(self.phases.iter().cycle()) {
+                let visibility = Complex32::new(value.re as f32, value.im as f32);
+                let shifted = *phase * visibility;
+                *value = Complex64::new(f64::from(shifted.re), f64::from(shifted.im));
+            }
+        }
+        Ok(uvw)
+    }
+
+    pub(super) fn prepare_row(
+        &mut self,
+        ms: &MeasurementSet,
+        field_id: i32,
+        spw: usize,
+        time_mjd_seconds: f64,
+        [u, v, w]: [f64; 3],
     ) -> Result<[f64; 3], String> {
         let field_id = usize::try_from(field_id)
             .map_err(|_| format!("invalid FIELD_ID {field_id} for phasecenter"))?;
@@ -108,21 +134,14 @@ impl<'a> PhaseCenterShift<'a> {
             let (sin, cos) = (radians_per_hz * frequency).sin_cos();
             Complex32::new(cos as f32, sin as f32)
         }));
-        for grid in grids {
-            if grid.chan_count != self.phases.len() {
-                return Err(format!(
-                    "phasecenter shift requires {} channel frequencies, found {} in spectral window {spw}",
-                    grid.chan_count,
-                    self.phases.len(),
-                ));
-            }
-            for (value, phase) in grid.values.iter_mut().zip(self.phases.iter().cycle()) {
-                let visibility = Complex32::new(value.re as f32, value.im as f32);
-                let shifted = *phase * visibility;
-                *value = Complex64::new(f64::from(shifted.re), f64::from(shifted.im));
-            }
-        }
         Ok([-rotated_u, -rotated_v, rotated_w])
+    }
+
+    pub(super) fn phase(&self, channel: usize) -> Result<Complex32, String> {
+        self.phases
+            .get(channel)
+            .copied()
+            .ok_or_else(|| format!("Missing phasecenter frequency for channel {channel}"))
     }
 }
 

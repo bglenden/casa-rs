@@ -133,12 +133,6 @@ pub(super) fn selected_model_cells(
     if !visibility_columns.clone().any(MsDataColumn::needs_model) {
         return Ok(None);
     }
-    if columns.phasecenter.is_some() {
-        let fields = virtual_model_fields(ms);
-        if rows.iter().any(|row| fields.contains(&row.field_id)) {
-            return Err("PlotMS phasecenter with a virtual model is pending (#1032)".into());
-        }
-    }
     let extended = uses_extended_averaging(plot);
     let averaging = extended || plot.averaging.avgchannel.is_some_and(|width| width > 1);
     let ordinary_time = uses_ordinary_time_averaging(plot) && supports_ordinary_time_axes(plot);
