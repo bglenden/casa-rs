@@ -11574,6 +11574,12 @@ compares the original argument to lowercase `data` and can access the
 absent corrected column. Casa-rs uses the same case-insensitive route
 for both decisions (#1030).
 
+When an MS already has MODEL_DATA and lacks CORRECTED_DATA, the default
+corrected smoothing path in CASA removes the model while initializing
+the missing column. A non-unity model is replaced by unity. Casa-rs
+initializes the missing corrected column and keeps the existing model
+samples (#1030).
+
 ## An MS write after baseline downsampling can overwrite omitted rows with zeros
 
 On a writable MeasurementSet, read `getdata('data', ifraxis=True,

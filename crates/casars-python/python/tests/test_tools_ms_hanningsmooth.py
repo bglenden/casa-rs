@@ -1,5 +1,7 @@
 """In-place Hanning smoothing through the public MS tool."""
 
+from shutil import copytree
+
 import numpy as np
 import pytest
 
@@ -14,6 +16,11 @@ SMOOTHED = np.array([1, 3, 9.5, 14], dtype=np.complex64) + 1j
 CORRECTED = np.array([5, 9, 21, 45], dtype=np.complex64) - 2j
 SMOOTHED_CORRECTED = np.array([7, 11, 24, 33], dtype=np.complex64) - 2j
 SPECTRUM = np.array([[4, 0, 16, 8], [1, 2, 3, 4]], dtype=np.float32)
+
+
+def expected_visibilities(spectrum):
+    # Both table tools expose on-disk Complex32 arrays as Complex128.
+    return np.broadcast_to(spectrum.astype(np.complex128), (2, 4))
 
 
 def write_input(casa, dataset, corrected=False, spectrum=False):
@@ -61,8 +68,9 @@ def test_hanningsmooth_science(native_dataset, writer_api, mode, spectrum):
         table = api.table()
         assert table.open(str(native_dataset))
         expected_data = OBSERVED if mode == "corrected" else SMOOTHED
+        assert table.getcoldesc("DATA")["valueType"] == "complex"
         np.testing.assert_array_equal(
-            table.getcell("DATA", 0), np.broadcast_to(expected_data, (2, 4)), strict=True,
+            table.getcell("DATA", 0), expected_visibilities(expected_data), strict=True,
         )
         np.testing.assert_array_equal(
             table.getcell("FLAG", 0),
@@ -74,7 +82,7 @@ def test_hanningsmooth_science(native_dataset, writer_api, mode, spectrum):
             np.testing.assert_array_equal(table.getcell("WEIGHT", 0), weight, strict=True)
             np.testing.assert_allclose(
                 table.getcell("WEIGHT_SPECTRUM", 0),
-                np.array([[0, 0, 0, 0], [0, 4.8, 7.68, 0]], dtype=np.float32),
+                np.array([[0, 0, 0, 0], [0, 4.8, 7.68, 0]], dtype=np.float64),
                 atol=0, rtol=1e-7, strict=True,
             )
         else:
@@ -83,13 +91,14 @@ def test_hanningsmooth_science(native_dataset, writer_api, mode, spectrum):
                 strict=True,
             )
         if mode != "data":
+            assert table.getcoldesc("CORRECTED_DATA")["valueType"] == "complex"
             corrected = SMOOTHED_CORRECTED if mode == "all" else SMOOTHED
             np.testing.assert_array_equal(
-                table.getcell("CORRECTED_DATA", 0), np.broadcast_to(corrected, (2, 4)), strict=True,
+                table.getcell("CORRECTED_DATA", 0), expected_visibilities(corrected), strict=True,
             )
         if mode == "corrected":
             np.testing.assert_array_equal(
-                table.getcell("MODEL_DATA", 0), np.ones((2, 4), dtype=np.complex64), strict=True,
+                table.getcell("MODEL_DATA", 0), np.ones((2, 4), dtype=np.complex128), strict=True,
             )
         assert table.done()
 
@@ -103,6 +112,67 @@ def test_hanningsmooth_uppercase_data(native_dataset):
     assert tool.done()
     table = casa.table()
     assert table.open(str(native_dataset))
-    np.testing.assert_array_equal(table.getcell("DATA", 0), np.broadcast_to(SMOOTHED, (2, 4)), strict=True)
+    np.testing.assert_array_equal(table.getcell("DATA", 0), expected_visibilities(SMOOTHED), strict=True)
     assert "CORRECTED_DATA" not in table.colnames()
+    assert table.done()
+
+
+@pytest.mark.parametrize("kind", ["reference", "multims"])
+def test_hanningsmooth_persists_through_a_saved_view(native_dataset, tmp_path, writer_api, kind):
+    casa = pytest.importorskip("casatools")
+    write_input(casa, native_dataset)
+    target = tmp_path / "view.ms"
+    tool = casa.ms()
+    table = casa.table()
+    if kind == "reference":
+        assert table.open(str(native_dataset))
+        view = table.selectrows(np.array([2, 0, 2], dtype=np.int64), str(target))
+        assert view.done()
+        assert table.done()
+        parts = (str(native_dataset),)
+    else:
+        peer = tmp_path / "other.ms"
+        copytree(native_dataset, peer)
+        assert tool.createmultims(
+            str(target), list(map(str, (native_dataset, peer))), ["ANTENNA", "DATA_DESCRIPTION", "FEED"]
+        )
+        assert tool.done()
+        assert tool.open(str(target))
+        parts = tool.getreferencedtables()
+        assert tool.done()
+
+    tool = writer_api.ms()
+    assert tool.open(str(target), nomodify=False)
+    assert tool.hanningsmooth("data")
+    assert tool.done()
+    for part in parts:
+        for api in (casa, tools):
+            t = api.table()
+            assert t.open(part)
+            for row in range(t.nrows()):
+                smooth = kind == "multims" or row in (0, 2)
+                expected = expected_visibilities(SMOOTHED if smooth else OBSERVED)
+                np.testing.assert_array_equal(t.getcell("DATA", row), expected, strict=True)
+                expected_weight = np.float32(8 / 3) if smooth else 1.0
+                np.testing.assert_array_equal(t.getcell("WEIGHT", row), np.full(2, expected_weight, dtype=np.float64), strict=True)
+            assert t.done()
+
+
+def test_hanningsmooth_preserves_existing_model_when_adding_corrected(native_dataset):
+    casa = pytest.importorskip("casatools")
+    write_input(casa, native_dataset)
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    assert table.addcols({"MODEL_DATA": {"valueType": "complex", "ndim": 2}})
+    model = np.full((2, 4), 42j, dtype=np.complex64)
+    for row in range(table.nrows()):
+        assert table.putcell("MODEL_DATA", row, model)
+    assert table.done()
+    tool = tools.ms()
+    assert tool.open(str(native_dataset), nomodify=False)
+    assert tool.hanningsmooth()
+    assert tool.done()
+    assert table.open(str(native_dataset))
+    np.testing.assert_array_equal(table.getcell("MODEL_DATA", 0), model.astype(np.complex128), strict=True)
+    np.testing.assert_array_equal(table.getcell("CORRECTED_DATA", 0), expected_visibilities(SMOOTHED), strict=True)
     assert table.done()
