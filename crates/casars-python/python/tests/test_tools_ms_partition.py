@@ -66,6 +66,8 @@ def test_partition_refuses_channel_selection_and_no_rows(native_dataset, tmp_pat
     assert ms.open(str(native_dataset))
     assert ms.partition(str(output), spw="0:1~2") is False
     assert ms.partition(str(output), taql="ROWID() < 0") is False
+    with pytest.raises(RuntimeError, match="[Ff]ield"):
+        ms.partition(str(output), field=[99999])
     assert not output.exists()
     output.mkdir()
     marker = output / "marker"
@@ -88,6 +90,31 @@ def test_partition_argument_defaults(native_dataset, tmp_path, monkeypatch, conc
         ms.partition("bad.ms", whichcol=None)
     assert not (tmp_path / "bad.ms").exists()
     assert ms.close()
+
+
+@pytest.mark.parametrize(
+    ("requested", "actual"),
+    [([2, 2, 2], [2, 2, 2]), ([0, 2, 2], [2, 2, 2]), ([2, 2, 0], [2, 2, 8192])],
+)
+def test_partition_uses_requested_tile_shape(native_dataset, tmp_path, concat_api, requested, actual):
+    output = tmp_path / "partition.ms"
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.partition(str(output), tileshape=requested)
+    assert ms.close()
+    for reader in (tools, pinned_casa()):
+        table = reader.table()
+        assert table.open(str(output))
+        data_manager, = [
+            manager for manager in table.getdminfo().values()
+            if "DATA" in manager["COLUMNS"]
+        ]
+        assert data_manager["TYPE"] == "TiledShapeStMan"
+        details = data_manager["SPEC"]
+        np.testing.assert_array_equal(details["DEFAULTTILESHAPE"], requested)
+        cube, = details["HYPERCUBES"].values()
+        np.testing.assert_array_equal(cube["TileShape"], actual)
+        assert table.close()
 
 
 def test_partition_selects_multiple_named_visibility_columns(native_dataset, tmp_path, concat_api):
@@ -125,6 +152,7 @@ def test_partition_preserves_flag_commands_and_unaveraged_noise(native_dataset, 
     change_table(native_dataset / "DATA_DESCRIPTION", lambda table: copy_first_row(
         table, SPECTRAL_WINDOW_ID=1,
     ))
+
     def seed_main(table):
         assert table.putcol("DATA_DESC_ID", np.arange(table.nrows(), dtype=np.int32) % 2)
         for row in range(table.nrows()):

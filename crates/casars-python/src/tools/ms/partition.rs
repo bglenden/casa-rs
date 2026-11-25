@@ -112,7 +112,15 @@ impl PyMsTool {
                 keep_flags: true,
             };
             match mstransform_task(&request, &options) {
-                Err(MsTransformError::EmptySelection { .. }) => return Ok(false),
+                Err(MsTransformError::EmptySelection { .. }) => {
+                    if let Some(field) = &request.selection.field {
+                        source
+                            .ms
+                            .resolve_field_selector(field)
+                            .map_err(runtime_error)?;
+                    }
+                    return Ok(false);
+                }
                 result => result.map_err(runtime_error)?,
             };
             link.verify_directory().map_err(runtime_error)?;
@@ -235,9 +243,16 @@ fn tile_layout(tileshape: Option<&Variant>) -> PyResult<Option<MsTransformTiling
     let [correlations, channels, rows] = values.as_slice() else {
         return Ok(None);
     };
-    let tile = [*correlations, *channels, *rows].map(|value| value as usize);
-    if tile.contains(&0) {
-        return Err(runtime_error("partition tile dimensions must be positive"));
+    let dimensions = [*correlations, *channels, *rows];
+    if !dimensions
+        .iter()
+        .all(|value| (0.0..=f64::from(i32::MAX)).contains(value))
+    {
+        return Err(runtime_error(
+            "partition tile dimensions must be nonnegative 32-bit integers",
+        ));
     }
-    Ok(Some(MsTransformTiling::Explicit(tile)))
+    Ok(Some(MsTransformTiling::Fixed(
+        dimensions.map(|value| value as usize),
+    )))
 }

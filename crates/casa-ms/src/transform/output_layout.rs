@@ -20,6 +20,7 @@ pub(super) struct OutputTiling {
     visibility: [usize; 3],
     scalar_noise: [usize; 2],
     uvw: [usize; 2],
+    fixed_visibility: bool,
 }
 
 pub(super) fn resolve_tiling(
@@ -38,7 +39,7 @@ pub(super) fn resolve_tiling(
 ) -> Result<OutputTiling, MsTransformError> {
     let error = |reason| MsTransformError::Spectrum(reason);
     let visibility = match mode {
-        MsTransformTiling::Explicit(tile) => tile,
+        MsTransformTiling::Explicit(tile) | MsTransformTiling::Fixed(tile) => tile,
         MsTransformTiling::Standard | MsTransformTiling::FastMosaic => {
             let id = tile_window
                 .or_else(|| selected_spw_order(channels, spw).into_iter().next())
@@ -110,6 +111,7 @@ pub(super) fn resolve_tiling(
         visibility,
         scalar_noise: [corr, noise_rows],
         uvw: [3, uvw_rows],
+        fixed_visibility: matches!(mode, MsTransformTiling::Fixed(_)),
     })
 }
 
@@ -133,18 +135,19 @@ impl OutputTiling {
                 ValueType::Float64 | ValueType::Complex32 => 8,
             };
             for shape in &mut column.shapes {
-                shape.tile_shape = match column.name.as_str() {
-                    "UVW" | "WEIGHT" | "SIGMA" | "FLAG_CATEGORY" => {
-                        resolve_extensible_tile(&default, &shape.cell_shape)
-                    }
+                shape.tile_shape = if self.fixed_visibility
+                    || matches!(
+                        column.name.as_str(),
+                        "UVW" | "WEIGHT" | "SIGMA" | "FLAG_CATEGORY"
+                    ) {
+                    resolve_extensible_tile(&default, &shape.cell_shape)
+                } else {
                     // CASA explicitly assigns a 1 MiB visibility tile to
-                    // each shape when the first plane of that shape is written.
-                    _ => {
-                        let corr = shape.cell_shape[0];
-                        let chan = shape.cell_shape[1];
-                        let rows = (1_048_576 / corr / chan / bytes).max(1);
-                        vec![corr, chan, rows]
-                    }
+                    // each shape when mstransform writes its first plane.
+                    let corr = shape.cell_shape[0];
+                    let chan = shape.cell_shape[1];
+                    let rows = (1_048_576 / corr / chan / bytes).max(1);
+                    vec![corr, chan, rows]
                 };
                 for (tile, &cell) in shape.tile_shape.iter_mut().zip(&shape.cell_shape) {
                     *tile = (*tile).min(cell);

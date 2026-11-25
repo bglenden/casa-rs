@@ -214,7 +214,7 @@ pub struct MsTransformMultiMsOptions {
     pub multiple_spws: bool,
 }
 
-/// Tile layout options accepted by the CASA mstransform task.
+/// Tile layout options used by the CASA MeasurementSet transform surfaces.
 #[derive(Debug, Clone, Copy)]
 pub enum MsTransformTiling {
     /// Select the default layout for the first selected visibility shape.
@@ -223,6 +223,9 @@ pub enum MsTransformTiling {
     FastMosaic,
     /// Explicit default tile dimensions in correlation, channel, row order.
     Explicit([usize; 3]),
+    /// Use the explicit dimensions for stored visibility tiles as well as their defaults.
+    /// Zero extents use the corresponding cell axis or an automatic row extent.
+    Fixed([usize; 3]),
 }
 
 /// Spectral regridding arguments for the public mstransform task.
