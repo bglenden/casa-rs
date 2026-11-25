@@ -1,7 +1,11 @@
 """Attach CASA comet tables and read the persisted field through both tools."""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from shutil import copytree
+import subprocess
+import sys
+from time import monotonic, sleep
 
 import numpy as np
 import pytest
@@ -209,6 +213,8 @@ def test_addephemeris_with_a_retained_lock(ephemeris_dataset, tmp_path, writer_a
     tool = writer_api.ms()
     assert tool.open(str(dataset), nomodify=unselected, lock=True)
     assert tool.addephemeris(-1, str(external), "locked", [] if unselected else [0])
+    if writer_api is tools:
+        assert_external_write_refused(dataset / "FIELD")
     assert tool.done()
     ephemeris_id = 1 if unselected else 0
     assert (dataset / "FIELD" / f"EPHEM{ephemeris_id}_locked.tab").is_dir()
@@ -239,3 +245,137 @@ def test_addephemeris_refreshes_an_existing_metadata_tool(ephemeris_dataset, tmp
     assert current["m0"]["value"] - previous["m0"]["value"] == pytest.approx(
         np.deg2rad(3.0), abs=2e-11,
     )
+
+
+def assert_external_write_refused(path):
+    probe = (
+        "import sys; from casars.tools import table; t=table(); "
+        "assert t.open(sys.argv[1], lockoptions={'option': 'user'}, nomodify=False); "
+        "assert not t.lock(write=True, nattempts=1); assert t.done()"
+    )
+    subprocess.run([sys.executable, "-c", probe, str(path)], check=True, timeout=10)
+
+
+def test_addephemeris_holds_the_new_field_while_history_waits(ephemeris_dataset, tmp_path):
+    dataset, _ = ephemeris_dataset
+    external = tmp_path / "locked-source.tab"
+    copytree(dataset / "FIELD" / "EPHEM0_TEST.tab", external)
+    tool = tools.ms()
+    assert tool.open(str(dataset), nomodify=False)
+    holder = (
+        "import sys; from casars.tools import table; t=table(); "
+        "assert t.open(sys.argv[1], lockoptions={'option':'user'}, nomodify=False); "
+        "assert t.lock(write=True, nattempts=1); print('ready', flush=True); "
+        "sys.stdin.readline(); assert t.done()"
+    )
+    with subprocess.Popen(
+        [sys.executable, "-c", holder, str(dataset / "HISTORY")],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    ) as process:
+        try:
+            assert process.stdout.readline().strip() == "ready"
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(tool.addephemeris, 0, str(external), "pending", [0])
+                try:
+                    replacement = dataset / "FIELD" / "EPHEM0_pending.tab"
+                    limit = monotonic() + 10
+                    while not replacement.is_dir() and monotonic() < limit and not result.done():
+                        sleep(0.01)
+                    assert replacement.is_dir()
+                    assert not result.done()
+                    assert_external_write_refused(dataset / "FIELD")
+                    assert_external_write_refused(replacement)
+                finally:
+                    process.communicate("\n", timeout=10)
+                assert result.result(timeout=10)
+        finally:
+            if process.poll() is None:
+                process.kill()
+    assert tool.done()
+
+
+def test_addephemeris_restores_field_after_history_failure(ephemeris_dataset, tmp_path):
+    dataset, _ = ephemeris_dataset
+    field = dataset / "FIELD"
+    original = field / "EPHEM0_TEST.tab"
+    source = tmp_path / "source.tab"
+    copytree(original, source)
+    before = (original / "table.f0").read_bytes()
+    table = tools.table()
+    assert table.open(str(dataset / "HISTORY"), nomodify=False)
+    assert table.removecols("MESSAGE")
+    assert table.done()
+    tool = tools.ms()
+    assert tool.open(str(dataset), nomodify=False, lock=True)
+    with pytest.raises(RuntimeError):
+        tool.addephemeris(0, str(source), "uncommitted", [0])
+    assert (original / "table.f0").read_bytes() == before
+    assert not (field / "EPHEM0_uncommitted.tab").exists()
+    assert_external_write_refused(field)
+    assert tool.done()
+
+
+def test_addephemeris_copies_a_linked_source_payload(ephemeris_dataset, tmp_path):
+    casa = pytest.importorskip("casatools")
+    dataset, _ = ephemeris_dataset
+    source = tmp_path / "ephemeris.tab"
+    copytree(dataset / "FIELD" / "EPHEM0_TEST.tab", source)
+    data = source / "table.f0"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    data.rename(shared / "payload")
+    data.symlink_to(Path("../shared/payload"))
+    tool = tools.ms()
+    assert tool.open(str(dataset), nomodify=False)
+    assert tool.addephemeris(0, str(source), "materialized", [0])
+    assert tool.done()
+    assert data.is_symlink()
+    actual = dataset / "FIELD" / "EPHEM0_materialized.tab" / "table.f0"
+    assert not actual.is_symlink()
+    assert actual.read_bytes() == data.read_bytes()
+    tool = casa.ms()
+    assert tool.open(str(dataset))
+    assert tool.getfielddirmeas("EPHEMERIS_DIR", 0)["refer"] == "ICRS"
+    assert tool.done()
+
+
+def test_addephemeris_preserves_distinct_exact_time_and_metadata_views(ephemeris_dataset, tmp_path):
+    dataset, _ = ephemeris_dataset
+    source = tmp_path / "selected-source.tab"
+    copytree(dataset / "FIELD" / "EPHEM0_TEST.tab", source)
+    tool = tools.ms()
+    assert tool.open(str(dataset), nomodify=False)
+    times = tool.getdata("time")["time"]
+    assert tool.selectinit()
+    assert tool.select({"times": [float(times[0])]})
+    selected = tool.getdata("time")["time"]
+    assert selected.size < times.size
+    metadata = tool.metadata()
+    assert metadata.nrows(autoc=True) == times.size
+    assert tool.addephemeris(0, str(source), "selected", [0])
+    assert metadata.nrows(autoc=True) == times.size
+    np.testing.assert_array_equal(tool.getdata("time")["time"], selected, strict=True)
+    assert metadata.done()
+    assert tool.done()
+
+
+def test_addephemeris_checks_the_source_before_readonly_permission(
+    ephemeris_dataset, tmp_path, writer_api,
+):
+    dataset, _ = ephemeris_dataset
+    table = tools.table()
+    assert table.open(str(dataset / "FIELD"), nomodify=False)
+    assert table.removecols("EPHEMERIS_ID")
+    assert table.done()
+    tool = writer_api.ms()
+    assert tool.open(str(dataset))
+    missing = tmp_path / "missing.tab"
+    assert tool.addephemeris(ephemerisname=str(missing)) is False
+    missing.mkdir()
+    assert tool.addephemeris(ephemerisname=str(missing)) is False
+    with pytest.raises(RuntimeError):
+        tool.addephemeris(ephemerisname=str(dataset / "FIELD"))
+    if writer_api is tools:
+        with pytest.raises(RuntimeError, match="requires an ephemeris table name"):
+            tool.addephemeris()
+    assert tool.done()

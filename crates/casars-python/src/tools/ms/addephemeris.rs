@@ -65,12 +65,14 @@ impl PyMsTool {
                 writable: ms.writable,
             };
             let attached =
-                add_tool_ephemeris(main, &request, &mut ms.write_locks).map_err(runtime_error)?;
+                add_tool_ephemeris(main, &request, &mut ms.write_locks, &mut ms.read_locks)
+                    .map_err(runtime_error)?;
             if attached {
                 ms.subtables = Default::default();
-                link.set_selected(ms.selected_rows.clone())
-                    .map_err(runtime_error)?;
-                ms.exact_time_metadata = None;
+                link.invalidate_view().map_err(runtime_error)?;
+                if let Some(view) = &ms.exact_time_metadata {
+                    view.invalidate_view().map_err(runtime_error)?;
+                }
             }
             Ok(attached)
         })

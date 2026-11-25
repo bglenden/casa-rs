@@ -11540,6 +11540,10 @@ When FIELD TIME falls outside the observation, CASA's bounds test uses
 that also falls outside the observation. Casa-rs updates FIELD TIME only
 when the ephemeris start lies within both observation bounds (#1030).
 
+Calling `addephemeris()` on an attached MS with the default empty
+`ephemerisname` can abort CASA with an uncaught string-range exception.
+Casa-rs raises a Python error before writing FIELD or HISTORY (#1030).
+
 ## An MS write after baseline downsampling can overwrite omitted rows with zeros
 
 On a writable MeasurementSet, read `getdata('data', ifraxis=True,
