@@ -356,7 +356,11 @@ def _line(line, layer, options, *, measurement_set, point_count):
         size = pixels * pixels_to_points
         # Explicit PlotMS marker colors carry their own opacity.
         line.set_alpha(None)
-        if measurement_set and group not in ("", "all", "flagged"):
+        colorized = measurement_set or (
+            (options.get("coloraxis") or "").strip().lower() not in ("", "none")
+            and (layer["y_axis_id"] != "atmosphere" or options.get("colorizeoverlay"))
+        )
+        if colorized and group not in ("", "all", "flagged"):
             color = line.get_color()
         else:
             color = _color(color)
