@@ -11963,3 +11963,48 @@ reports original row numbers `[3, 3, 8, 7]`. Both occurrences of row 3
 sort together even though they occupy separate positions in the selector.
 casa-rs applies the same view-relative row IDs used by a WHERE predicate
 and returns `[3, 8, 7, 3]` (#1030).
+
+## Duplicate observations can interrupt a subtable-only concatenation
+
+With two identical OBSERVATION rows in the attached MeasurementSet and
+a matching row in the donor, CASA 6.7.6.14 schedules the donor row for
+deletion twice. `ms.testconcatenate()` can fail with a row-index error
+after changing FIELD. casa-rs maps the donor observation to the first
+equivalent attached row and keeps the existing row numbers so MAIN
+references remain valid (#1030).
+
+## Self-concatenation can fill the disk by growing OBSERVATION
+
+With a writable MeasurementSet containing an OBSERVATION row, pass its
+own path to `ms.testconcatenate()` in CASA 6.7.6.14. The tool can append
+to OBSERVATION while iterating over the same live row count. A probe
+was stopped after the private subtable grew to about 15 GiB. Casa-rs
+rejects identical input directories, including symbolic aliases, before
+changing either table (#1030).
+
+## Metadata-only concatenation can change FIELD before donor HISTORY fails
+
+In CASA 6.7.6.14, call `ms.testconcatenate()` with a donor that has no
+HISTORY table, or whose MAIN descriptor lacks write permission. Use
+default direction tolerance so the donor field is added. CASA errors
+when it reaches the HISTORY step, after persisting the additional
+attached FIELD row. Casa-rs checks the donor and stages its HISTORY
+append before publishing the attached metadata changes (#1030).
+
+## A partial FEED match can discard a donor feed during concatenation
+
+In CASA 6.7.6.14, place feed IDs 17 and 0 for an antenna at attached
+FEED rows 0 and 4. Place donor feed IDs 0 and 19 for the same antenna
+at donor FEED rows 0 and 4. CASA matches donor row 0 to attached row 4,
+then treats donor row 4 as matched. The result appends a duplicate feed
+0 and loses feed 19. CASA can also test the wrong antenna when matching
+reordered antennas. Casa-rs compares feeds using the mapped antenna
+and records donor and attached row numbers separately (#1030).
+
+## Concatenating distinct MeasurementSets can change their shared FIELD table
+
+Point the attached MeasurementSet's FIELD keyword at the donor's FIELD
+and call `ms.testconcatenate()` with default tolerances in CASA 6.7.6.14.
+The tool appends a field to the linked table, which also adds it to the
+donor. Casa-rs checks the physical destinations against both inputs and
+refuses changes to a table used by the other input (#1030).

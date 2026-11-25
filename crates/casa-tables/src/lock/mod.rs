@@ -21,6 +21,7 @@ pub use lock_file::{DelegatedTableWrite, table_holder};
 #[cfg(unix)]
 pub(crate) use lock_file::{LOCK_FILE_NAME, LockFile, LockOutcome};
 pub(crate) use sync_data::SyncData;
+pub(crate) use write_lock::WriteSyncCheckpoint;
 pub use write_lock::{TableUseLock, TableWriteLock};
 #[cfg(unix)]
 pub(crate) use write_lock::{publish_persisted_rows, publish_persisted_write};

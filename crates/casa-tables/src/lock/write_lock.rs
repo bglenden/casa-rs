@@ -213,6 +213,14 @@ pub struct TableWriteLock {
     table_dat_at_acquire: Option<Vec<u8>>,
 }
 
+pub(crate) struct WriteSyncCheckpoint {
+    written: bool,
+    #[cfg(unix)]
+    sync: Option<SyncData>,
+    #[cfg(unix)]
+    descriptor_before_write: Option<Vec<u8>>,
+}
+
 impl TableWriteLock {
     /// Inspect the last published modification counter before reading data.
     ///
@@ -443,6 +451,74 @@ impl TableWriteLock {
     /// reached is left unrecorded and publishes nothing.
     pub fn record_write(&mut self) {
         self.written = true;
+    }
+
+    pub(crate) fn checkpoint_sync(&self) -> Result<WriteSyncCheckpoint, TableError> {
+        Ok(WriteSyncCheckpoint {
+            written: self.written,
+            #[cfg(unix)]
+            descriptor_before_write: self.table_dat_at_acquire.clone(),
+            #[cfg(unix)]
+            sync: self
+                .sync_file()?
+                .read_sync_data()
+                .map_err(|error| self.sync_error(error))?,
+        })
+    }
+
+    pub(crate) fn sync_recorded_write(&mut self) -> Result<(), TableError> {
+        if !self.written {
+            return Ok(());
+        }
+        #[cfg(unix)]
+        {
+            let lock = self.sync_file()?;
+            publish_persisted_write(lock, &self.path, self.table_dat_at_acquire.as_deref())
+                .map_err(|error| self.sync_error(error))?;
+            self.table_dat_at_acquire =
+                std::fs::read(self.path.join(crate::storage::TABLE_CONTROL_FILE)).ok();
+        }
+        self.written = false;
+        Ok(())
+    }
+
+    pub(crate) fn restore_sync(
+        &mut self,
+        previous: WriteSyncCheckpoint,
+        attempted_sync: bool,
+    ) -> Result<(), TableError> {
+        #[cfg(unix)]
+        {
+            if attempted_sync {
+                let lock = self.sync_file()?;
+                match previous.sync {
+                    Some(sync) => lock.write_sync_data(&sync),
+                    None => lock.clear_sync_data(),
+                }
+                .map_err(|error| self.sync_error(error))?;
+            }
+            self.table_dat_at_acquire = previous.descriptor_before_write;
+        }
+        #[cfg(not(unix))]
+        let _ = attempted_sync;
+        self.written = previous.written;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn sync_file(&self) -> Result<&LockFile, TableError> {
+        self.lock_file
+            .as_ref()
+            .filter(|file| matches_table_identity(&self.path, self.directory_key, file))
+            .ok_or_else(|| self.sync_error("table directory or lock was replaced"))
+    }
+
+    #[cfg(unix)]
+    fn sync_error(&self, error: impl std::fmt::Display) -> TableError {
+        TableError::LockIo {
+            path: self.path.display().to_string(),
+            message: error.to_string(),
+        }
     }
 
     /// Release the lock, publishing any recorded write in the sync data.

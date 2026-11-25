@@ -5,6 +5,7 @@
 
 mod addephemeris;
 mod attachment_info;
+mod concatenate;
 mod history;
 mod iteration;
 mod legacy_iteration;

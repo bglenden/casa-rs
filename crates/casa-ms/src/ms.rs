@@ -126,6 +126,46 @@ impl MeasurementSet {
         })
     }
 
+    /// Open only the descriptors used by the metadata phase of concatenation.
+    pub(crate) fn open_concatenation_metadata(
+        path: &Path,
+        links: Vec<(SubtableId, PathBuf)>,
+        donor: bool,
+    ) -> MsResult<Self> {
+        use rayon::prelude::*;
+
+        let main = Table::open(TableOptions::new(path))?;
+        let tables = links
+            .into_par_iter()
+            .map(|(id, path)| {
+                let table = if donor && id != SubtableId::History {
+                    crate::tool_concatenate::locking::held_reader(&path)?
+                } else {
+                    Table::open(TableOptions::new(&path))?
+                };
+                if !matches!(
+                    id,
+                    SubtableId::History | SubtableId::SysCal | SubtableId::Weather
+                ) {
+                    table.rows()?;
+                }
+                Ok::<_, MsError>((id, path, table))
+            })
+            .collect::<MsResult<Vec<_>>>()?;
+        let mut subtables = HashMap::new();
+        let mut subtable_paths = HashMap::new();
+        for (id, path, table) in tables {
+            subtables.insert(id, table);
+            subtable_paths.insert(id, path);
+        }
+        Ok(Self {
+            main,
+            subtables,
+            subtable_paths,
+            path: Some(path.to_path_buf()),
+        })
+    }
+
     /// Open and retain read locks on MAIN and every present subtable.
     ///
     /// Tables are opened in canonical MAIN-then-subtable order. Row payloads

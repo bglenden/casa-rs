@@ -758,6 +758,10 @@ impl LockFile {
         Ok(())
     }
 
+    pub(crate) fn clear_sync_data(&self) -> io::Result<()> {
+        write_at(self.shared.fd, &0u32.to_be_bytes(), SIZEREQID as i64).map(|_| ())
+    }
+
     /// Check if other processes need the lock.
     ///
     /// Returns `true` if the request list has any entries, meaning another

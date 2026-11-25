@@ -661,8 +661,8 @@ const METHODS: &[Method] = &[
             param("dirtol", K::Any, Empty),
             param("respectname", K::Bool, Bool(false)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "timesort",

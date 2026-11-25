@@ -78,7 +78,7 @@ IMPLEMENTED["ms"] = {
     "ngetdata", "niterend", "niterinit", "niternext", "niterorigin", "nrow", "nrowold",
     "open", "putdataold", "range", "rangeold", "reset", "select", "selectinit", "selectinitold", "selectold",
     "selectchannelold", "selectpolarizationold", "selecttaql", "sort",
-    "statistics", "statisticsold", "statwt", "summary", "timesort", "uvsub",
+    "statistics", "statisticsold", "statwt", "summary", "testconcatenate", "timesort", "uvsub",
     "writehistory", "writehistory_batch",
 }
 IMPLEMENTED["agentflagger"] = {

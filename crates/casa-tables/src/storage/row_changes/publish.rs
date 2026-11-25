@@ -39,6 +39,7 @@ enum Update {
     PublishControl {
         staged: PathBuf,
         target: PathBuf,
+        original: Option<PathBuf>,
     },
 }
 
@@ -64,7 +65,7 @@ impl Update {
                 file.rewind()?;
                 file.write_all(&records.header)
             }
-            Self::Replace { staged, target, .. } | Self::PublishControl { staged, target } => {
+            Self::Replace { staged, target, .. } | Self::PublishControl { staged, target, .. } => {
                 fs::rename(staged, target)
             }
         }
@@ -86,6 +87,11 @@ impl Update {
                 records,
             } => rewrite(file, original, Some(records.retained_end)),
             Self::Replace {
+                target,
+                original: Some(original),
+                ..
+            }
+            | Self::PublishControl {
                 target,
                 original: Some(original),
                 ..
@@ -147,6 +153,17 @@ impl StagedEdit<'_> {
     /// every target before changing any and restore the previous files if
     /// an ordinary I/O failure interrupts the update.
     pub(crate) fn publish(self) -> Result<(), StorageError> {
+        let mut edit = self.prepare_publication(false)?;
+        if let Err(error) = edit.apply() {
+            return Err(edit.restore_after(error));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn prepare_publication(
+        self,
+        reversible: bool,
+    ) -> Result<ReversibleEdit, StorageError> {
         let staging = self.staged.path();
         let mut files = fs::read_dir(staging)?.collect::<Result<Vec<_>, _>>()?;
         files.sort_by_key(|file| file.file_name() == TABLE_CONTROL_FILE);
@@ -209,7 +226,18 @@ impl StagedEdit<'_> {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                     Err(error) => return Err(error.into()),
                 }
-                changes.push(Update::PublishControl { staged, target });
+                let original = if reversible {
+                    let original = rollback_path(staging, &name);
+                    fs::hard_link(&target, &original)?;
+                    Some(original)
+                } else {
+                    None
+                };
+                changes.push(Update::PublishControl {
+                    staged,
+                    target,
+                    original,
+                });
                 continue;
             }
             let retain_manager = self.preserve_file_identity;
@@ -244,33 +272,102 @@ impl StagedEdit<'_> {
                 original,
             });
         }
-        for i in 0..changes.len() {
-            if let Err(error) = changes[i].apply() {
-                let mut recovery_error = None;
-                for change in changes[..=i].iter_mut().rev() {
-                    if let Err(error) = change.undo() {
-                        recovery_error = Some(error);
-                    }
-                }
-                return if let Some(recovery_error) = recovery_error {
-                    let path = self.staged.keep();
-                    Err(StorageError::FormatMismatch(format!(
-                        "table update failed: {error}; recovery failed: {recovery_error};                          remaining original files at {}",
-                        path.display()
-                    )))
-                } else {
-                    Err(error.into())
-                };
+        Ok(ReversibleEdit {
+            table: self.table.to_path_buf(),
+            staging: self.staged,
+            changes,
+            applied: 0,
+        })
+    }
+}
+
+pub(crate) struct ReversibleEdit {
+    table: PathBuf,
+    staging: tempfile::TempDir,
+    changes: Vec<Update>,
+    applied: usize,
+}
+
+impl ReversibleEdit {
+    pub(crate) fn apply(&mut self) -> Result<(), StorageError> {
+        while let Some(change) = self.changes.get_mut(self.applied) {
+            // A failed rename leaves both paths intact. Direct writes can
+            // change bytes before surfacing an error and must be undone.
+            let result = change.apply();
+            if result.is_ok()
+                || !matches!(
+                    change,
+                    Update::Replace { .. } | Update::PublishControl { .. }
+                )
+            {
+                self.applied += 1;
+            }
+            result?;
+        }
+        tiled_stman::invalidate_shared_tile_cache_for_table(&self.table);
+        Ok(())
+    }
+
+    pub(crate) fn restore_after(mut self, error: StorageError) -> StorageError {
+        if let Err(recovery) = self.restore() {
+            return StorageError::FormatMismatch(format!(
+                "table update failed: {error}; recovery failed: {recovery}; original files at {}",
+                self.staging.keep().display()
+            ));
+        }
+        error
+    }
+
+    pub(crate) fn restore(&mut self) -> Result<(), StorageError> {
+        let mut saved_error = None;
+        for change in self.changes[..self.applied].iter_mut().rev() {
+            if let Err(error) = change.undo() {
+                saved_error = Some(error);
             }
         }
-        tiled_stman::invalidate_shared_tile_cache_for_table(self.table);
-        Ok(())
+        self.applied = 0;
+        tiled_stman::invalidate_shared_tile_cache_for_table(&self.table);
+        saved_error.map_or(Ok(()), |error| Err(error.into()))
+    }
+
+    pub(crate) fn preserve(self) -> PathBuf {
+        self.staging.keep()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn published_control_and_manager_can_be_restored_for_a_failed_batch() {
+        let table = tempfile::tempdir().unwrap();
+        let mut edit = StagedEdit::new(table.path()).unwrap();
+        edit.preserve_file_identity = true;
+        let control = table.path().join(TABLE_CONTROL_FILE);
+        let manager = table.path().join("table.f0");
+        fs::write(&control, b"original descriptor").unwrap();
+        fs::write(&manager, b"original manager").unwrap();
+        fs::write(
+            edit.staged.path().join(TABLE_CONTROL_FILE),
+            b"appended descriptor",
+        )
+        .unwrap();
+        fs::write(
+            edit.staged.path().join("table.f0"),
+            b"appended manager bytes",
+        )
+        .unwrap();
+
+        let mut prepared = edit.prepare_publication(true).unwrap();
+        prepared.apply().unwrap();
+        assert_eq!(fs::read(&control).unwrap(), b"appended descriptor");
+        assert_eq!(fs::read(&manager).unwrap(), b"appended manager bytes");
+
+        prepared.restore().unwrap();
+        assert_eq!(fs::read(&control).unwrap(), b"original descriptor");
+        assert_eq!(fs::read(&manager).unwrap(), b"original manager");
+    }
 
     #[test]
     fn failed_control_rename_preserves_the_descriptor_and_restores_the_manager() {
