@@ -3457,11 +3457,11 @@
     "ms-averaged-scan-field-colors": {
       "kind": "Same-input MeasurementSet final averaged scan and field color groups",
       "state": "passed",
-      "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Three independent real DATA/CORRECTED/MODEL ordinates with per-antenna time averaging. Toggle each scan and field span independently while coloring the final scan or field. Test one scan palette collision and retain the prior scalar, vector, channel and boundary controls.",
-      "result": "Five new cases each match 18 ordered coordinates, two categories and the palette across all three artists. Spanned Scan -1 and Scan 7 use teal and purple. Field 0 and Field 1 use charcoal and pink. Complementary controls retain the original IDs. Equal numeric palette indices use final cache order. All 13 previous span pairs and their channel-binned PNG control pass, for a total of 270 TXT coordinates and six PNG pairs.",
+      "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Three independent real DATA/CORRECTED/MODEL ordinates with per-antenna vector time averaging. Toggle each scan and field span independently while coloring the final scan or field. Exercise a scan palette collision with scan and time in opposite order, a fully masked scan that reserves a color and legend key, and the prior scalar, vector, channel and boundary controls.",
+      "result": "Five new cases each match 18 ordered coordinates and one fully masked scan case matches nine. The six new figure pairs verify shared marker colors across all three ordinates. Spanned Scan -1 and Scan 7 use teal and purple with pinned legend spacing and order. Field 0 and Field 1 use charcoal and pink. Complementary controls retain the original IDs. Equal numeric palette indices use final cache order even when time is reversed. A fully masked category appears only in the legend. The previous span and retained boundary controls also pass, for a total of 279 TXT coordinates and seven PNG pairs.",
       "casa_version": "6.7.6.14",
-      "revision": "9db09d3817046f2f93eadd6a9fb1129121535060",
-      "source_revision": "9db09d3817046f2f93eadd6a9fb1129121535060",
+      "revision": "e0632448c5b4c99eedfd1ed17b696988c26c9470",
+      "source_revision": "e0632448c5b4c99eedfd1ed17b696988c26c9470",
       "command": "casa-python tools/casa-compat/plotms_ms_antenna_ordinates_oracle.py --only spans --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
       "receipt": "resources/casa-compat/evidence/plotms-ms-averaged-scan-field-colors-20261125.json",
       "links": [
