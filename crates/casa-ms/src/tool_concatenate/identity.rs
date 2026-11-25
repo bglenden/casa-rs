@@ -20,21 +20,28 @@ const PROCESSOR: &[&str] = &[
 ];
 const STATE: &[&str] = &["OBS_MODE", "REF", "SIG", "SUB_SCAN"];
 
+#[derive(Default)]
 pub(super) struct IdentityRows {
     pub(super) additions: Vec<RecordValue>,
     pub(super) donor_ids: Vec<usize>,
+    pub(super) attached_ids: Vec<usize>,
+    pub(super) removed: Vec<usize>,
 }
 
 /// CASA compares observations by the identity fields without comparing LOG
 /// or SCHEDULE. Preserve the complete first record in each matching group.
-pub(super) fn observations(target: &Table, donor: &Table) -> MsResult<IdentityRows> {
-    match_rows(target, donor, |left, right| {
+pub(super) fn observations(
+    target: &Table,
+    donor: &Table,
+    coalesce: bool,
+) -> MsResult<IdentityRows> {
+    match_rows(target, donor, coalesce, |left, right| {
         equal_fields(left, right, OBSERVATION)
     })
 }
 
 /// PROCESSOR's optional PASS_ID participates when its target column exists.
-pub(super) fn processors(target: &Table, donor: &Table) -> MsResult<IdentityRows> {
+pub(super) fn processors(target: &Table, donor: &Table, coalesce: bool) -> MsResult<IdentityRows> {
     let has_pass_id = target
         .schema()
         .is_some_and(|schema| schema.contains_column("PASS_ID"));
@@ -43,17 +50,14 @@ pub(super) fn processors(target: &Table, donor: &Table) -> MsResult<IdentityRows
     } else {
         &PROCESSOR[..PROCESSOR.len() - 1]
     };
-    match_rows(target, donor, |left, right| {
+    match_rows(target, donor, coalesce, |left, right| {
         equal_fields(left, right, fields)
     })
 }
 
 pub(super) fn states(target: &Table, donor: &Table) -> MsResult<IdentityRows> {
     if target.row_count() == 0 || donor.row_count() == 0 {
-        return Ok(IdentityRows {
-            additions: Vec::new(),
-            donor_ids: Vec::new(),
-        });
+        return Ok(IdentityRows::default());
     }
     let target_rows = target.rows()?;
     let donor_rows = donor.rows()?;
@@ -86,21 +90,45 @@ pub(super) fn states(target: &Table, donor: &Table) -> MsResult<IdentityRows> {
     Ok(IdentityRows {
         additions,
         donor_ids,
+        ..IdentityRows::default()
     })
 }
 
 fn match_rows(
     target: &Table,
     donor: &Table,
+    coalesce: bool,
     mut equivalent: impl FnMut(&RecordValue, &RecordValue) -> bool,
 ) -> MsResult<IdentityRows> {
-    let existing = target.rows()?;
+    let target = target.rows()?;
     let incoming = donor.rows()?;
+    let (mut attached_ids, mut removed) = (Vec::new(), Vec::new());
+    let mut existing = Vec::with_capacity(target.len());
+    if coalesce {
+        for (id, row) in target.iter().enumerate() {
+            let retained = existing.iter().position(|&kept| equivalent(kept, row));
+            let mapped = if let Some(retained) = retained {
+                removed.push(id);
+                retained
+            } else {
+                let index = existing.len();
+                existing.push(row);
+                index
+            };
+            attached_ids.push(mapped);
+        }
+        if removed.is_empty() {
+            attached_ids.clear();
+        }
+    } else {
+        existing.extend(target);
+    }
     let mut additions = Vec::new();
     let mut donor_ids = Vec::with_capacity(incoming.len());
     for row in incoming {
         let matched = existing
             .iter()
+            .copied()
             .chain(additions.iter())
             .position(|other| equivalent(other, row));
         let index = matched.unwrap_or_else(|| {
@@ -113,6 +141,8 @@ fn match_rows(
     Ok(IdentityRows {
         additions,
         donor_ids,
+        attached_ids,
+        removed,
     })
 }
 

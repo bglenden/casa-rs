@@ -128,13 +128,16 @@ impl MeasurementSet {
 
     /// Open only the descriptors used by the metadata phase of concatenation.
     pub(crate) fn open_concatenation_metadata(
-        path: &Path,
+        main: Table,
         links: Vec<(SubtableId, PathBuf)>,
         donor: bool,
     ) -> MsResult<Self> {
         use rayon::prelude::*;
 
-        let main = Table::open(TableOptions::new(path))?;
+        let path = main
+            .path()
+            .expect("captured MeasurementSet root")
+            .to_path_buf();
         let tables = links
             .into_par_iter()
             .map(|(id, path)| {
@@ -162,7 +165,7 @@ impl MeasurementSet {
             main,
             subtables,
             subtable_paths,
-            path: Some(path.to_path_buf()),
+            path: Some(path),
         })
     }
 

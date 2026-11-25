@@ -254,18 +254,4 @@ impl PyMsTool {
     ) -> PyResult<Py<PyAny>> {
         stub("tofits")
     }
-
-    /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (msfile = None, auxfilename = None, freqtol = None, dirtol = None, weightscale = None, respectname = None), text_signature = "($self, msfile='', auxfilename='', freqtol=[], dirtol=[], weightscale=1.0, respectname=True)")]
-    fn virtconcatenate(
-        &self,
-        msfile: Option<&Bound<'_, PyAny>>,
-        auxfilename: Option<&Bound<'_, PyAny>>,
-        freqtol: Option<&Bound<'_, PyAny>>,
-        dirtol: Option<&Bound<'_, PyAny>>,
-        weightscale: Option<&Bound<'_, PyAny>>,
-        respectname: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("virtconcatenate")
-    }
 }

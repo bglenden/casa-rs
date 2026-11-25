@@ -708,8 +708,8 @@ const METHODS: &[Method] = &[
             param("weightscale", K::Float, Float(1.0)),
             param("respectname", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "writehistory",

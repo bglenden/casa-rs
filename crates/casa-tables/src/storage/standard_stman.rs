@@ -46,6 +46,8 @@ mod column_writer;
 pub(crate) use append::{StagedRecords, stage_records};
 pub(crate) use array_updates::save_ssm_array_rows_in_place;
 mod index;
+mod replace_ints;
+pub(in crate::storage) use replace_ints::stage_int32_replacement;
 mod string_arrays;
 mod string_buckets;
 mod string_read;

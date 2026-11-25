@@ -12058,3 +12058,53 @@ success and reads back `0+0j` in the appended cells because the new row
 scales remain zero. Casa-rs chooses a scale and offset for each new cell,
 writes both physical scalar columns and preserves the configured policy
 for subsequent writes (#1030).
+
+## Virtual concatenation can scale sigma from the weight spectrum
+
+In CASA 6.7.6.14, call `ms.virtconcatenate()` without reversing a baseline
+and with `weightscale=4`. With WEIGHT_SPECTRUM equal to 4 and SIGMA_SPECTRUM
+equal to 2, CASA updates the weight to 16 and writes sigma 8 by scaling
+the updated weight. Casa-rs scales the original sigma and writes 1 (#1030).
+
+## Virtual concatenation can leave later spectra unscaled
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` a variable spectrum column whose
+first cell is undefined and a later cell is populated. With weight scaling
+enabled, CASA scales ordinary weights and sigmas but leaves later spectral
+cells unchanged. Casa-rs applies the transformation to defined cells and
+preserves undefined cells (#1030).
+
+## Virtual concatenation can leave flags on the wrong channels
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` a donor with a reversed channel
+grid, a reversed baseline, and flags that differ between channels. CASA
+reverses both visibility axes but only reorders the correlations in FLAG.
+Casa-rs applies the same channel and correlation permutations to the flags
+and their visibilities (#1030).
+
+## Virtual concatenation can leave feed IDs on the wrong antennas
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` a donor baseline that reverses
+after antenna remapping, with different feed IDs at its endpoints. CASA
+reverses the antennas and visibilities while retaining the old FEED1 and
+FEED2 order. The resulting antenna and feed pairs may be absent from the
+merged FEED table. Casa-rs swaps the feed IDs with their antennas (#1030).
+
+## Virtual concatenation can retain invalid IDs after removing duplicate rows
+
+Give CASA 6.7.6.14 `ms.virtconcatenate()` two identical attached OBSERVATION
+or PROCESSOR rows and a distinct incoming row. CASA removes the duplicate
+but can leave attached IDs unchanged when the scan file is omitted, and
+can store a donor ID of 2 for a two-row merged subtable. Stale observation
+IDs can also refer to the wrong record in HISTORY, EARTH_ORIENTATION, and
+a reused scan file. Casa-rs computes the final IDs after removing duplicates,
+updates those references, and combines the ranges of observations that
+now share an ID (#1030).
+
+## Virtual concatenation can overwrite a truncated auxiliary scan file
+
+Give `ms.virtconcatenate()` in CASA 6.7.6.14 an auxiliary file that declares
+two observation ranges and contains only one. CASA warns, discards the
+partial scan data, and rewrites the file after changing the MeasurementSets.
+Casa-rs reports the invalid auxiliary file and preserves it and both
+MeasurementSets (#1030).

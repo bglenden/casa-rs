@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use casa_ms::tool_concatenate::{
-    PhysicalConcatenation, TestConcatenation, concatenate, test_concatenate,
+    PhysicalConcatenation, TestConcatenation, VirtualConcatenation, concatenate, test_concatenate,
+    virtual_concatenate,
 };
 use casa_tables::table_cache_name;
 use casa_types::quanta::{
@@ -36,7 +37,7 @@ impl PyMsTool {
                 freqtol,
                 dirtol,
                 respectname,
-                physical: None,
+                mode: ConcatMode::Metadata,
             },
         )
     }
@@ -62,7 +63,32 @@ impl PyMsTool {
                 freqtol,
                 dirtol,
                 respectname,
-                physical: Some((weightscale, handling, destmsfile)),
+                mode: ConcatMode::Physical(weightscale, handling, destmsfile),
+            },
+        )
+    }
+
+    /// Reconcile attached metadata and prepare another MS for virtual concatenation.
+    #[pyo3(signature = (msfile = String::new(), auxfilename = String::new(), freqtol = None, dirtol = None, weightscale = 1.0, respectname = true), text_signature = "($self, msfile='', auxfilename='', freqtol=[], dirtol=[], weightscale=1.0, respectname=True)")]
+    #[allow(clippy::too_many_arguments)]
+    fn virtconcatenate(
+        &self,
+        py: Python<'_>,
+        #[pyo3(from_py_with = donor_argument)] msfile: String,
+        #[pyo3(from_py_with = auxiliary_argument)] auxfilename: String,
+        freqtol: Option<Variant>,
+        dirtol: Option<Variant>,
+        weightscale: f32,
+        #[pyo3(from_py_with = strict_bool)] respectname: bool,
+    ) -> PyResult<bool> {
+        self.run_concatenation(
+            py,
+            ConcatArgs {
+                msfile,
+                freqtol,
+                dirtol,
+                respectname,
+                mode: ConcatMode::Virtual(weightscale, auxfilename),
             },
         )
     }
@@ -73,7 +99,13 @@ struct ConcatArgs {
     freqtol: Option<Variant>,
     dirtol: Option<Variant>,
     respectname: bool,
-    physical: Option<(f32, i32, String)>,
+    mode: ConcatMode,
+}
+
+enum ConcatMode {
+    Metadata,
+    Physical(f32, i32, String),
+    Virtual(f32, String),
 }
 
 impl PyMsTool {
@@ -83,7 +115,7 @@ impl PyMsTool {
             freqtol,
             dirtol,
             respectname,
-            physical,
+            mode,
         } = args;
         py.detach(|| {
             let mut attached = self.attached.lock().map_err(runtime_error)?;
@@ -93,7 +125,7 @@ impl PyMsTool {
             if !ms.writable {
                 return Err(runtime_error("the attached MeasurementSet is not writable"));
             }
-            if physical.is_some() && ms.selected_rows.is_some() {
+            if matches!(mode, ConcatMode::Physical(..)) && ms.selected_rows.is_some() {
                 return Err(runtime_error(
                     "cannot concatenate a selected MeasurementSet view",
                 ));
@@ -113,8 +145,11 @@ impl PyMsTool {
                 donor_name: &msfile,
                 attached_name: &ms.name,
             };
-            let result = if let Some((weight_scale, handling, dest)) = &physical {
-                concatenate(
+            let result = match &mode {
+                ConcatMode::Metadata => {
+                    test_concatenate(&ms.path, &donor, &request, &mut ms.write_locks)
+                }
+                ConcatMode::Physical(weight_scale, handling, dest) => concatenate(
                     &ms.path,
                     &donor,
                     &PhysicalConcatenation {
@@ -124,9 +159,18 @@ impl PyMsTool {
                         output: (!dest.is_empty()).then_some(Path::new(dest)),
                     },
                     &mut ms.write_locks,
-                )
-            } else {
-                test_concatenate(&ms.path, &donor, &request, &mut ms.write_locks)
+                ),
+                ConcatMode::Virtual(weight_scale, auxiliary) => virtual_concatenate(
+                    &ms.path,
+                    &donor,
+                    &VirtualConcatenation {
+                        metadata: request,
+                        weight_scale: *weight_scale,
+                        scan_file: (!auxiliary.is_empty()).then_some(Path::new(auxiliary)),
+                        attached_rows: ms.selected_rows.as_deref(),
+                    },
+                    &mut ms.write_locks,
+                ),
             };
             result.map_err(runtime_error)?;
             ms.subtables = Default::default();
@@ -145,6 +189,10 @@ fn donor_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
 
 fn destination_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
     selection_text(value, "destmsfile")
+}
+
+fn auxiliary_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
+    selection_text(value, "auxfilename")
 }
 
 fn tolerance(value: Option<&Variant>, unit: &str, default: f64) -> PyResult<(f64, String)> {

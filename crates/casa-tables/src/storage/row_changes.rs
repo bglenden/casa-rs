@@ -4,6 +4,7 @@
 //! manager that only extends an index, header or data file needs no copy
 //! of its existing payload.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,7 @@ use super::{
 };
 
 mod publish;
+mod replace_columns;
 pub(crate) use publish::ReversibleEdit;
 
 pub(crate) enum Rows<'a> {
@@ -31,6 +33,7 @@ pub(crate) enum Rows<'a> {
         existing_scalar: Option<(&'a str, &'a ScalarValue)>,
     },
     Keep(&'a [usize]),
+    ReplaceColumns(&'a BTreeMap<String, Vec<Option<Value>>>),
 }
 
 impl Rows<'_> {
@@ -43,6 +46,7 @@ impl Rows<'_> {
                 .checked_add(records.len() as u64)
                 .ok_or_else(|| StorageError::FormatMismatch("table row count overflow".into())),
             Rows::Keep(rows) => Ok(rows.len() as u64),
+            Rows::ReplaceColumns(_) => Ok(old),
         }
     }
 }
@@ -79,7 +83,8 @@ impl<'a> StagedEdit<'a> {
     ) -> Result<Self, StorageError> {
         let new_rows = rows.len(old_rows)?;
         let mut edit = Self::new(table)?;
-        edit.preserve_file_identity = matches!(rows, Rows::AppendRecords { .. });
+        edit.preserve_file_identity =
+            matches!(rows, Rows::AppendRecords { .. } | Rows::ReplaceColumns(_));
         let order = if dat.big_endian {
             ByteOrder::BigEndian
         } else {
@@ -95,6 +100,17 @@ impl<'a> StagedEdit<'a> {
                 .filter(|(_, entry)| entry.dm_seq_nr == manager.seq_nr)
                 .map(|(column, _)| column.clone())
                 .collect();
+            if let Rows::ReplaceColumns(values) = rows {
+                if !columns
+                    .iter()
+                    .any(|column| values.contains_key(&column.col_name))
+                {
+                    continue;
+                }
+                if edit.stage_replaced_scalars(manager, &columns, values, old_rows)? {
+                    continue;
+                }
+            }
             edit.stage_manager(
                 manager,
                 &columns,
@@ -144,6 +160,7 @@ impl<'a> StagedEdit<'a> {
         let original = self.table.join(&name);
         let destination = self.staged.path().join(&name);
         let append = matches!(rows, Rows::Append { .. } | Rows::AppendRecords { .. });
+        let replacing = matches!(rows, Rows::ReplaceColumns(_));
         let defined = matches!(rows, Rows::AppendRecords { records, .. } if records.iter().any(|record| {
             columns.iter().any(|column| record.get(&column.col_name).is_some())
         }));
@@ -168,12 +185,13 @@ impl<'a> StagedEdit<'a> {
                 });
             }
             "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
-                if append =>
+                if append || replacing =>
             {
                 let fixed = columns
                     .iter()
                     .any(|column| column.is_array && !column.shape.is_empty());
-                if defined
+                if replacing
+                    || defined
                     || (fixed
                         && matches!(
                             manager.type_name.as_str(),
@@ -211,7 +229,7 @@ impl<'a> StagedEdit<'a> {
                     self.extensions.push(Extension::Payload { path, len });
                 }
             }
-            "IncrementalStMan" if append => {
+            "IncrementalStMan" if append || replacing => {
                 if old_rows > 0
                     && !override_values
                     && columns
@@ -285,7 +303,7 @@ impl<'a> StagedEdit<'a> {
                 }
             }
             // Virtual columns derive their row count from their sources.
-            other if super::is_virtual_engine(other) => {}
+            other if !replacing && super::is_virtual_engine(other) => {}
             other => return Err(StorageError::UnsupportedDataManager(other.to_string())),
         }
         Ok(())
@@ -343,6 +361,21 @@ impl<'a> StagedEdit<'a> {
                         defaults
                     };
                     existing.push(project(record, base));
+                }
+                Ok(existing)
+            }
+            Rows::ReplaceColumns(values) => {
+                for name in names {
+                    if let Some(cells) = values.get(name) {
+                        for (row, cell) in existing.iter_mut().zip(cells) {
+                            match cell {
+                                Some(value) => row.upsert(name, value.clone()),
+                                None => {
+                                    row.remove(name);
+                                }
+                            }
+                        }
+                    }
                 }
                 Ok(existing)
             }

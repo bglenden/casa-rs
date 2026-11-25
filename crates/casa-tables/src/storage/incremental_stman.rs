@@ -45,8 +45,10 @@ use crate::table::GeneratedScalarValueRun;
 mod append_records;
 mod cells;
 mod check_layout;
+mod replace_ints;
 mod write_columns;
 pub(super) use append_records::stage_scalar_append;
+pub(super) use replace_ints::stage_int32_replacement;
 pub(crate) use write_columns::write_ism_file_column_sources;
 
 pub use check_layout::IncrementalCorruption;
@@ -1604,6 +1606,20 @@ pub(crate) fn write_ism_file_scalar_columns(
     scalar_columns: &[&[Option<casa_types::ScalarValue>]],
     big_endian: bool,
 ) -> Result<Vec<u8>, StorageError> {
+    write_ism_scalar_columns_with_layout(
+        file_path,
+        col_descs,
+        scalar_columns,
+        (big_endian, None, 1),
+    )
+}
+
+pub(super) fn write_ism_scalar_columns_with_layout(
+    file_path: &Path,
+    col_descs: &[ColumnDescContents],
+    scalar_columns: &[&[Option<casa_types::ScalarValue>]],
+    (big_endian, bucket_size, cache_size): (bool, Option<u32>, u32),
+) -> Result<Vec<u8>, StorageError> {
     let nrrow = scalar_columns.first().map_or(0, |values| values.len());
     if scalar_columns.len() != col_descs.len() {
         return Err(StorageError::FormatMismatch(format!(
@@ -1628,7 +1644,14 @@ pub(crate) fn write_ism_file_scalar_columns(
         ));
     }
     let column_sources = ColumnSources::materialized(nrrow, scalar_columns);
-    write_ism_file_column_sources(file_path, col_descs, &column_sources, big_endian)
+    write_columns::write_ism_column_sources_with_layout(
+        file_path,
+        col_descs,
+        &column_sources,
+        big_endian,
+        bucket_size,
+        cache_size,
+    )
 }
 
 /// Refuse a fixed-shape array column without the Direct option, which
