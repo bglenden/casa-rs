@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "dbf6a257c7b4bb5be000e0ba8f247b82adf01541",
+  "source_revision": "dbf6a257c7b4bb5be000e0ba8f247b82adf01541",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "command": "casa-python tools/casa-compat/plotms_ms_spw_average_oracle.py --only ordinate-list-uvw --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+  "scope": "The U abscissa in metres with three independent stored visibility ordinates, on vector time and spectral-window averages with unequal row weights, selected window order and flags.",
+  "result": "passed",
+  "baseline_result": "The public task refuses independent U ordinates with SPW averaging.",
+  "text_exports": 6,
+  "points": 21,
+  "figures": 1,
+  "rendered_coordinates": 3,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
