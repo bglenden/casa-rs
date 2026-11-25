@@ -7,10 +7,7 @@ use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::MDirection;
 
-use super::super::{
-    RawSymbolVisibility, calibration, plotms_columns, plotms_figure, plotms_phasecenter,
-    plotms_row_axes,
-};
+use super::super::{RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter};
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
     MsExportFormat, MsIterationAxis, MsLegendPosition, MsSelection, count, legend_position, number,
@@ -63,25 +60,6 @@ impl CliOptions {
             self.data_column,
             self.secondary_y_data_column.unwrap_or(self.data_column),
         ])
-    }
-
-    pub(super) fn plotms_figure_columns(
-        &self,
-        columns: Option<[MsDataColumn; 3]>,
-        spec: &super::MsPlotSpec,
-        calibrated: bool,
-    ) -> Option<plotms_figure::VisibilityAxisColumns<'_>> {
-        columns
-            .or_else(|| {
-                plotms_row_axes::uses_scan_row_iteration(spec).then_some([self.data_column; 3])
-            })
-            .filter(|_| !calibrated || self.secondary_y_data_column.is_some())
-            .map(|base| plotms_figure::VisibilityAxisColumns {
-                base,
-                secondary_axis: self.y_axis2,
-                additional: &self.additional_ordinates,
-                right_ordinates: &self.right_ordinates,
-            })
     }
 
     pub(super) fn plotms_averaging_active(&self) -> bool {
