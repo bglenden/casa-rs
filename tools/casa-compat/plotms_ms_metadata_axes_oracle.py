@@ -641,6 +641,70 @@ def compare_ephemeris_axes(root, native, app_run):
     print("fixed-field: both tasks require ephemeris data before export", flush=True)
 
 
+def compare_static_metadata_coordinates(root, native):
+    from plotms_ms_iterated_ordinates_oracle import compare_figures
+
+    work = root / "static-metadata-coordinates"
+    work.mkdir()
+    vis, _ = make_horizontal_fixture(work)
+    with opened(vis, True) as table:
+        fields = table.getcol("FIELD_ID")
+        antenna1, antenna2 = [table.getcol(column) for column in ("ANTENNA1", "ANTENNA2")]
+        times = table.getcol("TIME")
+        selected = (fields == 0) & (antenna1 == 0) & np.isin(antenna2, [1, 2])
+        ordered = np.unique(times[selected])
+        assert len(ordered) == 6
+        scans = table.getcol("SCAN_NUMBER")
+        scans[(fields == 0) & (times <= ordered[3])] = 11
+        scans[(fields == 0) & (times > ordered[3])] = 19
+        flags = table.getcol("FLAG")
+        flags[:, :, selected & (times == ordered[0])] = True
+        flags[:, 2, selected & (times == ordered[1])] = True
+        table.putcol("FLAG", flags)
+        table.putcol("SCAN_NUMBER", scans)
+    before = snapshot(vis)
+    base = controls(vis) | dict(antenna="A0&A1;A0&A2", spw="0:1~3", correlation="XX,YY",
+                               expformat="txt", title="Metadata coordinate masks")
+    cases = (
+        ("channel-frequency", "channel", "frequency", 14, (8, 6), "Channel", "Frequency (GHz)"),
+        ("elevation-time", "elevation", "time", 5, (3, 2), "Elevation (deg)", "Time (MJD seconds)"),
+    )
+    for name, x, y, count, counts, xlabel, ylabel in cases:
+        options = base | dict(xaxis=x, yaxis=[y])
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert len(selected) == count
+        assert {point[6] for point in selected} == {"1"}
+        assert [point[9] for point in selected] == sorted(point[9] for point in selected)
+        assert {point[9] for point in selected} == {f"{time:.3f}" for time in ordered[1:]}
+        assert [point[3] for point in selected] == ["11"] * counts[0] + ["19"] * counts[1]
+        if x == "channel":
+            assert [int(point[0]) for point in selected] == [1, 3] + [1, 2, 3] * 4
+            assert all(point[1] == point[10] for point in selected)
+        else:
+            assert {point[2] for point in selected} == {"1"}
+            assert all(point[1] == point[9] for point in selected)
+            np.testing.assert_allclose(float(selected[0][0]), 82.90598, rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        print(f"{name}: {count} matching ordered metadata coordinates and masks", flush=True)
+
+        iteration = options | dict(iteraxis="scan", exprange="all", xlabel=xlabel)
+        expected, actual = (work / f"{name}-scans.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**(iteration | dict(gridrows=2)), plotfile=str(expected)) is None
+        assert rows(expected) == selected
+        assert native(**(iteration | dict(gridrows=2)), plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == count
+        values = np.array([point[:2] for point in selected], dtype=float)
+        pages = [[(scan, coordinates)] for scan, coordinates in zip(
+            ("11", "19"), np.split(values, [counts[0]]), strict=True,
+        )]
+        compare_figures(work, native, f"{name}-pages", iteration, pages,
+                        ["Scan11", "Scan19_2"], [("left", ylabel, [0])])
+    verify_source(vis, before)
+
+
 def compare_flags_and_calibration(root, native, vis):
     base = controls(vis) | dict(xaxis="uwave", expformat="txt")
 
@@ -1303,7 +1367,7 @@ def main():
     parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes",
                                            "averaged-coordinates", "array-horizontal-axes",
                                            "antenna-horizontal-axes", "antenna-horizontal-same-epoch",
-                                           "ephemeris-axes"))
+                                           "ephemeris-axes", "static-metadata-coordinates"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1328,6 +1392,8 @@ def main():
             compare_same_epoch_antenna_geometry(root, native)
         if args.only in (None, "ephemeris-axes"):
             compare_ephemeris_axes(root, native, args.app_run)
+        if args.only in (None, "static-metadata-coordinates"):
+            compare_static_metadata_coordinates(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
