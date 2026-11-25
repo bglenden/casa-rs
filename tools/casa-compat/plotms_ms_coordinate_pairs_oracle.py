@@ -77,11 +77,13 @@ def compare_uv(root, native):
                 customsymbol=True, symbolshape="square", symbolsize=5,
                 symbolcolor="dd2255", symbolfill="fill", symboloutline=False)
     configure = _plotms_plot.configure
-    for label, extra in (
-        ("metres", dict(xaxis="u", yaxis="v")),
-        ("wavelengths", dict(xaxis="uwave", yaxis="vwave")),
+    for label, extra, mirrored in (
+        ("metres", dict(xaxis="u", yaxis="v"), True),
+        ("wavelengths", dict(xaxis="uwave", yaxis="vwave"), True),
+        ("w-and-u", dict(xaxis="w", yaxis="u"), False),
+        ("u-and-distance", dict(xaxis="u", yaxis="uvdist"), False),
         ("averaged-metres", dict(xaxis="u", yaxis="v", averagedata=True,
-                                 avgchannel="3", avgtime="30")),
+                                 avgchannel="3", avgtime="30"), True),
     ):
         request = base | extra
         expected, actual = (work / f"{label}-{engine}.txt" for engine in ("casa", "native"))
@@ -106,19 +108,22 @@ def compare_uv(root, native):
             native(**render, plotfile=str(native_png))
         [axis] = captured
         rendered = np.concatenate([line.get_xydata() for line in axis.lines])
-        expected_rendered = np.concatenate([points, -points])
+        expected_rendered = np.concatenate([points, -points]) if mirrored else points
         np.testing.assert_allclose(
             rendered[np.lexsort(rendered.T)], expected_rendered[np.lexsort(expected_rendered.T)],
             rtol=1.2e-5, atol=1e-7,
         )
-        assert axis.get_xlim() == axis.get_ylim()
+        if mirrored:
+            assert axis.get_xlim() == axis.get_ylim()
         for path in (reference_png, native_png):
             with Image.open(path) as image:
                 assert image.size == (620, 480)
                 pixels = np.asarray(image.convert("RGB"))
-                assert np.any(np.all(pixels[:, :310] == [221, 34, 85], axis=2))
-                assert np.any(np.all(pixels[:, 310:] == [221, 34, 85], axis=2))
-        print(f"{label}: {len(points)} matching selected coordinates and mirrored PNG", flush=True)
+                mark = np.all(pixels == [221, 34, 85], axis=2)
+                assert np.any(mark)
+                if mirrored:
+                    assert np.any(mark[:, :310]) and np.any(mark[:, 310:])
+        print(f"{label}: {len(points)} matching selected coordinates and rendered PNG", flush=True)
 
 
 def main():

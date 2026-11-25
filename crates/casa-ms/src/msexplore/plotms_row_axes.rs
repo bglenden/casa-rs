@@ -36,7 +36,7 @@ pub(super) fn array_horizontal_pair(x: MsAxis, y: MsAxis) -> bool {
 }
 
 pub(super) fn metadata_coordinate_pair(x: MsAxis, y: MsAxis) -> Option<PointDimensions> {
-    if x.is_uv_plane_axis() && y.is_uv_plane_axis() {
+    if x.uses_uvw() && y.uses_uvw() {
         return Some(PointDimensions {
             channel: x.uses_wavelengths() || y.uses_wavelengths(),
             baseline: true,
@@ -61,7 +61,7 @@ pub(super) fn unaveraged_coordinate_mask(
         return Ok(None);
     };
     let mask = metadata_coordinate_pair(spec.x_axis, *y);
-    if spec.x_axis.is_uv_plane_axis() && y.is_uv_plane_axis() {
+    if spec.x_axis.uses_uvw() && y.uses_uvw() {
         return Ok(mask.filter(|_| raw_plotms));
     }
     if mask.is_some()

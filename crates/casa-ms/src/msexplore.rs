@@ -1988,9 +1988,10 @@ impl MsPlotSpec {
         }
         for y_axis in self.y_axes.iter().copied() {
             if y_axis == MsAxis::UvDistance {
-                if self.x_axis.is_visibility_math()
-                    && (!uses_extended_averaging(self)
-                        || plotms_columns::uses_weighted_time_uvw(self))
+                if self.x_axis.uses_uvw()
+                    || (self.x_axis.is_visibility_math()
+                        && (!uses_extended_averaging(self)
+                            || plotms_columns::uses_weighted_time_uvw(self)))
                 {
                     continue;
                 }
@@ -2098,8 +2099,8 @@ impl MsPlotSpec {
             return Err("PlotMS reporting-frame transforms for interval and wavelength plots are pending (#1032)".into());
         }
         if self.y_axes.iter().copied().any(|y| {
-            let uv_plane = self.x_axis.is_uv_plane_axis() && y.is_uv_plane_axis();
-            !uv_plane
+            let uvw_pair = self.x_axis.uses_uvw() && y.uses_uvw();
+            !uvw_pair
                 && ((self.x_axis.is_interval_or_wavelength() && !y.is_visibility_math())
                     || (y.is_interval_or_wavelength() && !self.x_axis.is_visibility_math()))
         }) {
@@ -5118,7 +5119,7 @@ fn build_generic_visibility_scatter(
             uvw: row_uvw_value,
             observatory_geometry: use_ordinate_masks,
         };
-        if buffer_starts[row_slot] {
+        if (buffer_geometry_axis.is_some() || ephemeris_ordinate) && buffer_starts[row_slot] {
             if let Some(axis) = buffer_geometry_axis {
                 buffer_geometry_value = Some(plotms_row_axes::array_horizontal_value(
                     derived_engine.as_ref().expect("buffer geometry engine"),
@@ -5974,8 +5975,8 @@ fn build_generic_visibility_scatter_with_averaging(
             || plotms_columns::uses_weighted_time_uvw(spec)
             || plotms_columns::uses_weighted_spw_time_u(spec));
     let collapsed_uv = weighted_time_uvw
-        && matches!(spec.x_axis, MsAxis::U | MsAxis::V)
-        && matches!(spec.y_axes.as_slice(), [MsAxis::U | MsAxis::V])
+        && spec.x_axis.uses_uvw_metres()
+        && spec.y_axes.iter().copied().all(MsAxis::uses_uvw_metres)
         && spec.color_by != MsColorAxis::Correlation
         && spec.iteration.iteraxis != Some(MsIterationAxis::Correlation);
     let time_geometry =

@@ -120,8 +120,8 @@ pub(super) fn uses_direct_vector_time_projection(
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {
     if uses_ordinary_time_averaging(spec)
         && !spec.averaging.scalar
-        && spec.x_axis.is_uv_plane_axis()
-        && spec.y_axes.iter().copied().all(MsAxis::is_uv_plane_axis)
+        && spec.x_axis.uses_uvw()
+        && spec.y_axes.iter().copied().all(MsAxis::uses_uvw)
     {
         return true;
     }

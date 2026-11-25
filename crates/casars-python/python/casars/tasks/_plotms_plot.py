@@ -225,7 +225,9 @@ def _fit_axes(figure, options):
             if isinstance(locator, MaxNLocator) and low < high:
                 rounding = MaxNLocator(nbins=8) if shared else locator
                 ticks = rounding.tick_values(*bounds)
-                bounds = min(bounds[0], ticks[0]), max(bounds[1], ticks[-1])
+                # Keep a rounded endpoint only when it adds little empty space.
+                bounds = tuple(tick if abs(tick - edge) <= 0.05 * span else edge
+                               for tick, edge in zip((ticks[0], ticks[-1]), bounds, strict=True))
             getattr(axis, f"set_{dimension}lim")(*bounds)
 
 
@@ -322,6 +324,14 @@ def _symbol_group(axis, layer):
     return axis, layer["id"].partition("-")[0], layer["color_group"].rsplit("::", 1)[-1] == "flagged"
 
 
+def _auto_symbol(point_count):
+    if point_count > 1_000_000:
+        return ",", 1
+    if point_count > 10_000:
+        return "o", 2
+    return "o", 4 if point_count > 1_000 else 6
+
+
 def _line(line, layer, options, *, measurement_set, point_count):
     index = layer["id"].partition("-")[0]
     series = int(index) if index.isdigit() else 0
@@ -341,10 +351,11 @@ def _line(line, layer, options, *, measurement_set, point_count):
         color = option(f"{prefix}color", "ff0000" if flagged else "0000ff")
         fill = option(f"{prefix}fill", "fill").lower()
         outline = option(f"{prefix}outline", False)
-        size = option(f"{prefix}size", 2) * pixels_to_points
+        marker, pixels = (_auto_symbol(point_count) if shape == "autoscaling"
+                          else (_MARKERS[shape.lower()], option(f"{prefix}size", 2)))
+        size = pixels * pixels_to_points
         # Explicit PlotMS marker colors carry their own opacity.
         line.set_alpha(None)
-        marker = _MARKERS[shape.lower()]
         if measurement_set and group not in ("", "all", "flagged"):
             color = line.get_color()
         else:
@@ -352,7 +363,7 @@ def _line(line, layer, options, *, measurement_set, point_count):
         line.set_marker(marker)
         line.set_markersize(size)
         line.set_markeredgecolor("black" if outline else color)
-        line.set_markeredgewidth(pixels_to_points if outline or fill == "nofill" else 0)
+        line.set_markeredgewidth(pixels_to_points if outline or fill != "fill" else 0)
         patterned = measurement_set and fill in ("mesh1", "mesh2", "mesh3") and marker in ("o", "s", "D")
         line.set_markerfacecolor("none" if patterned or fill == "nofill" else color)
         if patterned:
@@ -362,9 +373,8 @@ def _line(line, layer, options, *, measurement_set, point_count):
                 linewidth=0, zorder=line.get_zorder() - 0.01,
             )
     elif layer["kind"] != "line":
-        pixels = next(size for threshold, size in ((1_000_000, 1), (10_000, 2), (1_000, 4), (-1, 6))
-                      if point_count > threshold)
-        line.set_marker("," if pixels == 1 else "o")
+        marker, pixels = _auto_symbol(point_count)
+        line.set_marker(marker)
         line.set_markersize(pixels * pixels_to_points)
         line.set_markeredgewidth(0)
     else:
