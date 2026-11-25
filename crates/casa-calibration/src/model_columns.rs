@@ -32,6 +32,23 @@ const DATA: VisibilityDataColumn = VisibilityDataColumn::Data;
 const CORRECTED: VisibilityDataColumn = VisibilityDataColumn::CorrectedData;
 const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScratchWriteMode<'a> {
+    Replace,
+    Create,
+    Hanning { corrected: &'a str, model: &'a str },
+}
+
+impl<'a> ScratchWriteMode<'a> {
+    fn physical_name(self, column: VisibilityDataColumn) -> &'a str {
+        match (self, column) {
+            (Self::Hanning { corrected, .. }, CORRECTED) => corrected,
+            (Self::Hanning { model, .. }, MODEL) => model,
+            _ => column.name(),
+        }
+    }
+}
+
 pub(crate) fn reset_scratch_columns(
     ms: &mut MeasurementSet,
     selection: &MsSelection,
@@ -215,9 +232,13 @@ fn check_main_lock(ms: &MeasurementSet, lock: &TableWriteLock) -> MsResult<()> {
 }
 
 pub(crate) fn has_column(ms: &MeasurementSet, column: VisibilityDataColumn) -> bool {
+    has_column_named(ms, column.name())
+}
+
+fn has_column_named(ms: &MeasurementSet, column: &str) -> bool {
     ms.main_table()
         .schema()
-        .is_some_and(|schema| schema.contains_column(column.name()))
+        .is_some_and(|schema| schema.contains_column(column))
 }
 
 pub(crate) fn observed_column(ms: &MeasurementSet) -> &'static str {
@@ -262,15 +283,19 @@ fn reset(
         selected,
         columns,
         observed,
-        create,
+        if create {
+            ScratchWriteMode::Create
+        } else {
+            ScratchWriteMode::Replace
+        },
         clear_virtual,
         &mut lock,
     )?;
     Ok(lock)
 }
 
-/// Initialize missing Hanning scratch columns for the physical rows in the
-/// current attachment. Existing model samples are preserved.
+/// Initialize Hanning scratch columns for the physical rows in the current
+/// attachment. Existing model cells and virtual model recipes are preserved.
 ///
 /// # Errors
 /// The caller's MAIN lock is stale, or a required column cannot be filled.
@@ -278,6 +303,7 @@ pub fn initialize_hanning_scratch_holding(
     ms: &mut MeasurementSet,
     rows: &[usize],
     observed: &str,
+    [corrected, model]: [&str; 2],
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     if !ms.path().is_some_and(|path| lock.matches_table_path(path)) {
@@ -285,12 +311,17 @@ pub fn initialize_hanning_scratch_holding(
             "the Hanning write lock does not protect physical MAIN",
         ));
     }
-    if has_column(ms, CORRECTED) {
-        return Ok(());
+    let has_corrected = has_column_named(ms, corrected);
+    let has_model = has_column_named(ms, model);
+    if (!has_corrected && corrected != CORRECTED.name()) || (!has_model && model != MODEL.name()) {
+        return Err(invalid(
+            "a physical column named by the scratch projection is missing",
+        ));
     }
+    let mode = ScratchWriteMode::Hanning { corrected, model };
+    scratch_columns::prepare_write_holding(ms, CORRECTED, true, lock)?;
     let whole_table = !rows.is_empty() && rows.iter().copied().eq(0..ms.row_count());
-    if whole_table && can_clone_tiled_observed(ms, observed) {
-        scratch_columns::prepare_write_holding(ms, CORRECTED, true, lock)?;
+    if whole_table && !has_corrected && can_clone_tiled_observed(ms, observed) {
         add_scratch_schema(ms, CORRECTED, observed)?;
         lock.record_write();
         ms.main_table_mut().prepare_write().add_tiled_column_clone(
@@ -298,10 +329,9 @@ pub fn initialize_hanning_scratch_holding(
             CORRECTED.name(),
             "TiledCORRECTED_DATA",
         )?;
-        if !has_column(ms, MODEL) {
+        if !has_model {
             let staging = tempfile::tempdir_in(lock.path()).map_err(invalid)?;
             let model = stream_hanning_model(ms, rows, observed, &staging.path().join("MODEL"))?;
-            scratch_columns::prepare_write_holding(ms, MODEL, true, lock)?;
             add_scratch_schema(ms, MODEL, observed)?;
             lock.record_write();
             ms.main_table_mut()
@@ -310,12 +340,18 @@ pub fn initialize_hanning_scratch_holding(
         }
         return Ok(());
     }
-    let missing = [CORRECTED, MODEL]
-        .into_iter()
-        .filter(|&col| !has_column(ms, col))
-        .collect::<Vec<_>>();
+    let mut columns = Vec::with_capacity(2);
+    if !has_corrected || (!rows.is_empty() && observed != corrected) {
+        columns.push(CORRECTED);
+    }
+    if !has_model {
+        columns.push(MODEL);
+    }
+    if columns.is_empty() {
+        return Ok(());
+    }
     if rows.is_empty() {
-        let (plan, _) = scratch_write_plan(ms, Vec::new(), &missing, observed, true, false, lock)?;
+        let (plan, _) = scratch_write_plan(ms, Vec::new(), &columns, observed, mode, false, lock)?;
         MeasurementSetWriteSession::mutate_selected_rows(ms, plan, Some(lock), invalid, |_, _| {
             Ok(())
         })?;
@@ -329,7 +365,7 @@ pub fn initialize_hanning_scratch_holding(
             .selected_rows
             .retain(|row| selected.contains(&row.row_index));
     }
-    reset_holding(ms, selection, &missing, observed, true, false, lock)
+    reset_holding(ms, selection, &columns, observed, mode, false, lock)
 }
 
 fn stream_hanning_model(
@@ -432,7 +468,7 @@ fn reset_holding(
     selected: ResolvedMsSelection,
     columns: &[VisibilityDataColumn],
     observed: &str,
-    create: bool,
+    mode: ScratchWriteMode<'_>,
     clear_virtual: bool,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
@@ -441,7 +477,7 @@ fn reset_holding(
         selected.row_indices().collect(),
         columns,
         observed,
-        create,
+        mode,
         clear_virtual,
         lock,
     )?;
@@ -473,34 +509,45 @@ fn reset_holding(
     Ok(())
 }
 
-pub(crate) fn scratch_write_plan(
+pub(crate) fn scratch_write_plan<'a>(
     ms: &mut MeasurementSet,
     row_indices: Vec<usize>,
     columns: &[VisibilityDataColumn],
     observed: &str,
-    create: bool,
+    mode: ScratchWriteMode<'a>,
     clear_virtual: bool,
     lock: &mut TableWriteLock,
-) -> MsResult<(MeasurementSetWritePlan, Vec<ScratchDestination>)> {
+) -> MsResult<(MeasurementSetWritePlan, Vec<ScratchDestination<'a>>)> {
     let destinations = columns
         .iter()
-        .map(|&column| ScratchDestination::new(ms, column))
+        .map(|&column| ScratchDestination::new(ms, column, mode.physical_name(column)))
         .collect::<MsResult<Vec<_>>>()?;
     if clear_virtual {
         casa_ms::virtual_model::clear_virtual_model_holding(ms, &[], &[], lock)?;
     }
-    if create {
+    let creates = columns
+        .iter()
+        .map(|&column| match mode {
+            ScratchWriteMode::Replace => false,
+            ScratchWriteMode::Create => true,
+            ScratchWriteMode::Hanning { .. } => !has_column_named(ms, mode.physical_name(column)),
+        })
+        .collect::<Vec<_>>();
+    if mode == ScratchWriteMode::Create {
         for &column in columns {
             scratch_columns::prepare_write_holding(ms, column, true, lock)?;
         }
-        for &column in columns {
+    }
+    for (&column, &create) in columns.iter().zip(&creates) {
+        if create {
             add_scratch_schema(ms, column, observed)?;
         }
     }
     let sizes = maximum_visibility_cell_elements(ms).map_err(invalid)?;
     let write_columns = destinations
         .iter()
-        .flat_map(|column| column.plans(sizes, create))
+        .zip(creates)
+        .flat_map(|(column, create)| column.plans(sizes, create))
         .collect();
     let resources = MeasurementSetWriteResources::from_system_memory(2).map_err(invalid)?;
     let plan =
@@ -550,7 +597,7 @@ fn reset_batch(
     ms: &MeasurementSet,
     observed: &str,
     rows: &[ResolvedMsSelectionRow],
-    columns: &[ScratchDestination],
+    columns: &[ScratchDestination<'_>],
     ranges: &BTreeMap<i32, Range<usize>>,
     polarizations: &BTreeMap<i32, Vec<Complex32>>,
 ) -> MsResult<MeasurementSetMutationBatch> {
@@ -571,7 +618,7 @@ fn reset_batch(
         let column = destination.visibility;
         let mut previous = needs_preserved_channels
             .then(|| {
-                main.column_accessor(column.name())?
+                main.column_accessor(destination.name())?
                     .array_cells_owned_uncached(&row_indices)
             })
             .transpose()?;

@@ -618,20 +618,25 @@ impl AttachedMs {
                     "There are no valid spectral windows in the MeasurementSet",
                 ));
             }
-            if create_corrected {
-                casa_calibration::initialize_hanning_scratch_holding(
+            let corrected = if create_corrected {
+                let name = initialize_hanning_scratch(
+                    &main,
                     &mut ms,
                     &rows,
                     &target.names[visibility_index],
                     lock,
-                )
-                .map_err(runtime_error)?;
-            }
+                    &mut written,
+                )?;
+                link.invalidate_view().map_err(runtime_error)?;
+                Some(name)
+            } else {
+                None
+            };
             if empty {
                 continue;
             }
-            let visibilities = if create_corrected {
-                vec!["CORRECTED_DATA"]
+            let visibilities = if let Some(name) = &corrected {
+                vec![name.as_str()]
             } else {
                 target.names[visibility_index..]
                     .iter()
@@ -1280,6 +1285,46 @@ fn hanning_column(value: &Bound<'_, PyAny>) -> PyResult<HanningDataColumn> {
     } else {
         HanningDataColumn::Corrected
     })
+}
+
+fn initialize_hanning_scratch(
+    main: &VisibilityMain,
+    ms: &mut MeasurementSet,
+    rows: &[usize],
+    observed: &str,
+    lock: &mut TableWriteLock,
+    written: &mut BTreeSet<PathBuf>,
+) -> PyResult<String> {
+    let publication = if main.plain {
+        None
+    } else {
+        main.table
+            .prepare_reference_columns_holding(&["MODEL_DATA", "CORRECTED_DATA"], lock)
+            .map_err(runtime_error)?
+    };
+    let [model, corrected] = publication
+        .as_ref()
+        .map_or(["MODEL_DATA", "CORRECTED_DATA"], |plan| {
+            [plan.columns[0].as_str(), plan.columns[1].as_str()]
+        });
+    casa_calibration::initialize_hanning_scratch_holding(
+        ms,
+        rows,
+        observed,
+        [corrected, model],
+        lock,
+    )
+    .map_err(runtime_error)?;
+    let corrected = corrected.to_owned();
+    if let Some(publication) = publication {
+        main.verify_write_layout(written)?;
+        written.extend(
+            publication
+                .publish(ms.main_table(), lock)
+                .map_err(runtime_error)?,
+        );
+    }
+    Ok(corrected)
 }
 
 fn requested_items(value: Option<&Bound<'_, PyAny>>) -> PyResult<Vec<String>> {

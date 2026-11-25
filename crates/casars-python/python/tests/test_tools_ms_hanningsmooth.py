@@ -426,3 +426,85 @@ def test_hanningsmooth_errors_on_empty_view(native_dataset, tmp_path, writer_api
             if mode == "corrected":
                 assert not any(table.iscelldefined(column, row) for row in range(table.nrows()))
         assert table.done()
+
+
+def test_hanningsmooth_initializes_hidden_corrected_from_visible_data(
+    native_dataset, tmp_path, writer_api,
+):
+    casa = pytest.importorskip("casatools")
+    write_input(casa, native_dataset, corrected=True)
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    columns = [name for name in table.colnames() if name != "CORRECTED_DATA"]
+    path = str(tmp_path / "projected.ms")
+    view = table.query("ROWID() IN [0,2]", name=path, columns=", ".join(columns))
+    assert view.done()
+    assert table.done()
+
+    tool = writer_api.ms()
+    assert tool.open(path, nomodify=False)
+    assert tool.hanningsmooth()
+    assert tool.nrow() == 2
+    assert tool.done()
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(path)
+        for row in range(2):
+            np.testing.assert_array_equal(
+                table.getcell("CORRECTED_DATA", row), expected_visibilities(SMOOTHED), strict=True,
+            )
+            np.testing.assert_array_equal(
+                table.getcell("MODEL_DATA", row), np.ones((2, 4), dtype=np.complex128), strict=True,
+            )
+        assert table.done()
+        assert table.open(str(native_dataset))
+        np.testing.assert_array_equal(
+            table.getcell("CORRECTED_DATA", 1), expected_visibilities(CORRECTED), strict=True,
+        )
+        assert not table.iscelldefined("MODEL_DATA", 1)
+        assert table.done()
+
+
+@pytest.mark.parametrize("subset", [False, True])
+def test_hanningsmooth_preserves_virtual_model(native_dataset, tmp_path, writer_api, subset):
+    casa = pytest.importorskip("casatools")
+    tasks = pytest.importorskip("casatasks")
+    write_input(casa, native_dataset)
+    model = tmp_path / "point.cl"
+    components = casa.componentlist()
+    assert components.addcomponent(
+        flux=2, fluxunit="Jy", dir="J2000 00h00m00s +00d00m00s", shape="point", freq="1.4GHz",
+    )
+    assert components.rename(str(model))
+    assert components.close()
+    tasks.ft(vis=str(native_dataset), complist=str(model), usescratch=False)
+    backing = native_dataset / "FT_MODEL_saved.cl"
+    copytree(model, backing)
+    backing_descriptor = (backing / "table.dat").read_bytes()
+
+    def recipe():
+        table = casa.table()
+        assert table.open(str(native_dataset / "SOURCE"))
+        names = ("model_0", "definedmodel_field_0")
+        assert set(names) <= set(table.keywordnames())
+        keys = tuple(table.getkeyword(name) for name in names)
+        row = int(keys[0])
+        value = table.getcell("SOURCE_MODEL", row)
+        assert value
+        assert table.done()
+        return keys, repr(value)
+
+    before = recipe()
+    path = str(native_dataset)
+    if subset:
+        table = casa.table()
+        assert table.open(path)
+        path = str(tmp_path / "model-subset.ms")
+        assert table.selectrows(np.array([0, 2], dtype=np.int64), path).done()
+        assert table.done()
+    tool = writer_api.ms()
+    assert tool.open(path, nomodify=False)
+    assert tool.hanningsmooth()
+    assert tool.done()
+    assert recipe() == before
+    assert (backing / "table.dat").read_bytes() == backing_descriptor

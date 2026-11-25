@@ -176,6 +176,9 @@ impl TableWritePlan<'_> {
             .into_iter()
             .try_for_each(|(update, values)| values.write(update));
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(path);
+        table
+            .inner
+            .discard_pending_cell_updates(&names.into_iter().collect::<Vec<_>>(), &[]);
         result?;
         Ok(true)
     }
@@ -393,6 +396,18 @@ mod tests {
         std::fs::write(&payload, before).unwrap();
         let mut lock = TableWriteLock::acquire_to_reread(&path, 0).unwrap();
         let mut table = Table::open(options).unwrap();
+        let flags_at_row_three = |table: &Table| {
+            let ArrayValue::Bool(flags) = table
+                .column_accessor("FLAG")
+                .unwrap()
+                .array_cell(3)
+                .unwrap()
+            else {
+                panic!("expected boolean FLAG");
+            };
+            flags.as_slice_memory_order().unwrap().to_vec()
+        };
+        assert_eq!(flags_at_row_three(&table), [false; 3]);
         let values = ArrayValue::Bool(
             ArrayD::from_shape_vec(
                 IxDyn(&[1, 3, 2]).f(),
@@ -407,6 +422,7 @@ mod tests {
                 .unwrap()
         );
         lock.release().unwrap();
+        assert_eq!(flags_at_row_three(&table), [true, false, true]);
         assert_eq!(
             std::fs::read(payload).unwrap(),
             [0xf8, 0xf8, 0xf8, 0xfd, 0xfe, 0xff],

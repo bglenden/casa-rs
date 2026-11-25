@@ -38,7 +38,9 @@ use casa_tables::TableWriteLock;
 use casa_types::{ArrayValue, Complex32};
 use ndarray::{ArrayD, Axis, IxDyn};
 
-use crate::model_columns::{ScratchDestination, observed_column, scratch_write_plan};
+use crate::model_columns::{
+    ScratchDestination, ScratchWriteMode, observed_column, scratch_write_plan,
+};
 use crate::solve::grouping::VisibilityModels;
 
 const MODEL: VisibilityDataColumn = VisibilityDataColumn::ModelData;
@@ -127,7 +129,7 @@ pub(crate) fn write_model_scratch(
         selected.row_indices().collect(),
         &[MODEL],
         observed_column(ms),
-        false,
+        ScratchWriteMode::Replace,
         clear_virtual,
         lock,
     )?;
@@ -192,7 +194,7 @@ fn prepare_mosaic_models(
 
 struct Prediction<'a> {
     models: VisibilityModels,
-    destination: &'a ScratchDestination,
+    destination: &'a ScratchDestination<'a>,
     channels: BTreeMap<i32, (Range<usize>, usize)>,
     correlations: BTreeMap<i32, Vec<i32>>,
     incremental: bool,

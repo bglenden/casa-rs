@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! A saved RefTable's lock and cell storage belong to its base table.
 
+use std::fs::{File, Metadata};
+
+use casa_aipsio::AipsIo;
+
 use super::*;
+use crate::TableWriteLock;
+use crate::storage::table_control::{read_ref_table_file, write_ref_table_stream};
 use crate::storage::{
     RefTableDatContents, TABLE_CONTROL_FILE, TABLE_INFO_FILE, TableDatResult,
     read_table_dat_dispatch,
@@ -81,7 +87,196 @@ pub struct ReferenceWriteProjection {
     pub columns: Vec<String>,
 }
 
+/// Prepared additions to a saved reference's column projection.
+#[doc(hidden)]
+pub struct ReferenceColumnPublication {
+    root: PathBuf,
+    layers: Vec<ReferenceColumnLayer>,
+    /// Physical destination for each requested logical column, in order.
+    pub columns: Vec<String>,
+}
+
+struct ReferenceColumnLayer {
+    path: PathBuf,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    directory: File,
+    _descriptor: File,
+    before: Metadata,
+    contents: RefTableDatContents,
+    changed: bool,
+}
+
+impl ReferenceColumnLayer {
+    fn open(path: PathBuf) -> Result<Self, TableError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let directory = crate::publication::open_directory_identity(&path)
+            .map_err(crate::storage::StorageError::from)?;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let descriptor = crate::publication::open_regular_directory_entry(
+            &directory,
+            std::ffi::OsStr::new(TABLE_CONTROL_FILE),
+        )
+        .map_err(crate::storage::StorageError::from)?;
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let descriptor = File::open(path.join(TABLE_CONTROL_FILE))
+            .map_err(crate::storage::StorageError::from)?;
+        let before = descriptor
+            .metadata()
+            .map_err(crate::storage::StorageError::from)?;
+        let contents = read_ref_table_file(
+            descriptor
+                .try_clone()
+                .map_err(crate::storage::StorageError::from)?,
+        )?;
+        Ok(Self {
+            path,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            directory,
+            _descriptor: descriptor,
+            before,
+            contents,
+            changed: false,
+        })
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn publish(&self) -> Result<(), TableError> {
+        use std::os::unix::fs::MetadataExt;
+        let io = crate::storage::StorageError::from;
+        let captured = self.directory.metadata().map_err(io)?;
+        let current = std::fs::metadata(&self.path).map_err(io)?;
+        if (captured.dev(), captured.ino()) != (current.dev(), current.ino()) {
+            return Err(TableError::Storage(
+                "saved reference directory was replaced".into(),
+            ));
+        }
+        let mut staged = crate::publication::StagedDirectoryFile::new(&self.directory, &self.path)
+            .map_err(io)?;
+        let file = staged.file_mut();
+        file.set_permissions(self.before.permissions())
+            .map_err(io)?;
+        write_ref_table_stream(
+            AipsIo::new_read_write(file.try_clone().map_err(io)?),
+            &self.contents,
+        )?;
+        staged
+            .replace(std::ffi::OsStr::new(TABLE_CONTROL_FILE), &self.before)
+            .map_err(io)?;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    fn publish(&self) -> Result<(), TableError> {
+        let io = crate::storage::StorageError::from;
+        let path = self.path.join(TABLE_CONTROL_FILE);
+        let staged = tempfile::NamedTempFile::new_in(&self.path).map_err(io)?;
+        staged
+            .as_file()
+            .set_permissions(self.before.permissions())
+            .map_err(io)?;
+        write_ref_table_stream(
+            AipsIo::new_read_write(staged.as_file().try_clone().map_err(io)?),
+            &self.contents,
+        )?;
+        let current = std::fs::metadata(&path).map_err(io)?;
+        if self.before.len() != current.len()
+            || self.before.modified().ok() != current.modified().ok()
+        {
+            return Err(TableError::Storage(
+                "saved reference descriptor changed".into(),
+            ));
+        }
+        staged.persist(path).map_err(|error| io(error.error))?;
+        Ok(())
+    }
+}
+
+impl ReferenceColumnPublication {
+    /// Publish the extended column projections after their physical columns
+    /// have been installed, under the same verified root write lock.
+    pub fn publish(self, root: &Table, lock: &TableWriteLock) -> Result<Vec<PathBuf>, TableError> {
+        if !lock.matches_table_path(&self.root)
+            || !root
+                .path()
+                .is_some_and(|path| lock.matches_table_path(path))
+        {
+            return Err(TableError::NotLocked {
+                operation: "publish saved reference columns".into(),
+            });
+        }
+        for column in &self.columns {
+            root.require_column(column)?;
+        }
+        let mut published = Vec::new();
+        for layer in self.layers.into_iter().rev().filter(|layer| layer.changed) {
+            layer.publish()?;
+            published.push(layer.path);
+        }
+        Ok(published)
+    }
+}
+
 impl Table {
+    /// Plan adding same-name bindings to a saved reference where a logical
+    /// column is missing. An existing ancestor binding still supplies its
+    /// original physical name. The physical MAIN lock covers every view.
+    #[doc(hidden)]
+    pub fn prepare_reference_columns_holding(
+        &self,
+        columns: &[&str],
+        lock: &TableWriteLock,
+    ) -> Result<Option<ReferenceColumnPublication>, TableError> {
+        if !self.is_reference_table()? {
+            return Ok(None);
+        }
+        let mut path = self.source_path.clone().expect("saved reference");
+        let mut layers = Vec::new();
+        let mut seen = HashSet::new();
+        while crate::storage::table_control::is_reference_descriptor(
+            &path.join(TABLE_CONTROL_FILE),
+        )? {
+            path = path
+                .canonicalize()
+                .map_err(crate::storage::StorageError::from)?;
+            if !seen.insert(path.clone()) {
+                return Err(TableError::Storage("reference table cycle".into()));
+            }
+            let layer = ReferenceColumnLayer::open(path)?;
+            path = crate::table_path::add_directory_for_link(
+                &layer.contents.parent_relative_path,
+                &layer.path,
+            );
+            layers.push(layer);
+        }
+        if !lock.matches_table_path(&path) {
+            return Err(TableError::NotLocked {
+                operation: "prepare saved reference columns".into(),
+            });
+        }
+        let mut physical = Vec::with_capacity(columns.len());
+        for &column in columns {
+            let mut name = column.to_owned();
+            for layer in &mut layers {
+                if layer.contents.column_names.contains(&name) {
+                    name = layer.contents.parent_column(&name).to_owned();
+                } else {
+                    layer.contents.column_names.push(name.clone());
+                    layer
+                        .contents
+                        .column_name_map
+                        .push((name.clone(), name.clone()));
+                    layer.changed = true;
+                }
+            }
+            physical.push(name);
+        }
+        Ok(Some(ReferenceColumnPublication {
+            root: path,
+            layers,
+            columns: physical,
+        }))
+    }
+
     /// Resolve selected logical rows and columns through their saved references.
     /// Repeated rows remain repeated. The caller must verify the descriptors
     /// after acquiring the returned root's write lock.

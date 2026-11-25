@@ -154,7 +154,7 @@ fn pack_initial_cells(
     } else {
         BTreeMap::new()
     };
-    let destination = ScratchDestination::new(ms, column)?;
+    let destination = ScratchDestination::new(ms, column, column.name())?;
     let row_count = selected.selected_rows.len();
     let mut scales = Vec::with_capacity(row_count);
     let mut offsets = Vec::with_capacity(row_count);
@@ -198,17 +198,25 @@ fn pack_initial_cells(
     })
 }
 
-pub(crate) struct ScratchDestination {
+pub(crate) struct ScratchDestination<'a> {
     pub(super) visibility: VisibilityDataColumn,
-    destination: VisibilityWriteDestination<'static>,
+    destination: VisibilityWriteDestination<'a>,
 }
 
-impl ScratchDestination {
-    pub(super) fn new(ms: &MeasurementSet, visibility: VisibilityDataColumn) -> MsResult<Self> {
+impl<'a> ScratchDestination<'a> {
+    pub(super) fn new(
+        ms: &MeasurementSet,
+        visibility: VisibilityDataColumn,
+        name: &'a str,
+    ) -> MsResult<Self> {
         Ok(Self {
             visibility,
-            destination: VisibilityWriteDestination::new(ms.main_table(), visibility.name())?,
+            destination: VisibilityWriteDestination::new(ms.main_table(), name)?,
         })
+    }
+
+    pub(super) fn name(&self) -> &str {
+        self.destination.name()
     }
 
     pub(super) fn plans(
