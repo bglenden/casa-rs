@@ -207,7 +207,7 @@ def main():
     parser.add_argument('--native-bin', type=Path, required=True)
     parser.add_argument('--calibrate-bin', type=Path, required=True)
     parser.add_argument('--app-run', type=Path)
-    parser.add_argument('--only', choices=('combined', 'average-gaps'))
+    parser.add_argument('--only', choices=('combined', 'averaged-channels'))
     args = parser.parse_args()
     root = args.work.resolve()
     root.mkdir()
@@ -225,11 +225,15 @@ def main():
     base = dict(vis=str(ms), yaxis='amp', spw='0', antenna='A0&A1', correlation='XX',
                 showgui=False, overwrite=True)
     freq = dict(xaxis='frequency', showatm=True)
-    average_gaps = freq | dict(spw='0:0~2;5~7', avgchannel='2')
-    if args.only == 'average-gaps':
+    averaged_channels = dict(
+        average_gaps=freq | dict(spw='0:0~2;5~7', avgchannel='2'),
+        average_stride=freq | dict(spw='0:0~7^2', avgchannel='2'),
+    )
+    if args.only == 'averaged-channels':
         atmosphere_inputs(ms)
         with chdir(root), plotms_launcher(args.app_run):
-            paired_text(root, native, 'average_gaps', base | average_gaps)
+            for name, options in averaged_channels.items():
+                paired_text(root, native, name, base | options)
         return
     cal_options = dict(vis=str(ms), caltable=str(cal), caltype='amp', parameter=[2.0])
     casa.gencal(**cal_options)
@@ -250,7 +254,7 @@ def main():
         default=dict(showatm=True), channel=dict(xaxis='channel', showatm=True),
         frequency=freq, image=freq | dict(showimage=True), sky=sky,
         gaps=freq | dict(spw='0:2;4;5'), scan=freq | scans, avg=freq | dict(avgchannel='2'),
-        average_gaps=average_gaps,
+        **averaged_channels,
         all=freq | dict(antenna='', correlation=''), both_correlations=freq | dict(correlation=''),
         scan_color=freq | color, time_average=freq | dict(avgtime='30'),
         wide=sky | dict(vis=str(wide), showimage=True),

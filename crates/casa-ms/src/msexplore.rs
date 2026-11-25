@@ -8417,15 +8417,10 @@ impl SpectralContext {
 }
 
 fn mean_bin_frequency_hz(frequencies_hz: &[f64], bin: &ChannelBin) -> Option<f64> {
-    let mut sum = 0.0;
-    let mut count = 0;
-    // PlotMS takes frequencies from the physical output grid. The compressed
-    // visibility buffer can contribute a different group of input samples.
-    for channel in (bin.start..bin.end).step_by(bin.stride) {
-        sum += frequencies_hz.get(channel)?;
-        count += 1;
-    }
-    (count != 0).then(|| sum / f64::from(count))
+    // PlotMS takes frequencies from the full physical output span, including
+    // the channels between strided samples. Visibility uses the cache members.
+    let span = frequencies_hz.get(bin.start..bin.end)?;
+    (!span.is_empty()).then(|| span.iter().sum::<f64>() / span.len() as f64)
 }
 
 fn parse_frequency_frame(value: Option<&str>) -> Result<Option<FrequencyRef>, String> {
