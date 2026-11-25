@@ -241,6 +241,13 @@ pub(crate) fn evaluate(
 pub(crate) fn field_ephemeris_ids(
     measurement_set: &MeasurementSet,
 ) -> Result<Vec<Option<i32>>, MsError> {
+    read_field_ephemeris_ids(measurement_set, false)
+}
+
+fn read_field_ephemeris_ids(
+    measurement_set: &MeasurementSet,
+    include_polynomials: bool,
+) -> Result<Vec<Option<i32>>, MsError> {
     let field = measurement_set.field()?;
     let table = field.table();
     let rows = (0..table.row_count()).collect::<Vec<_>>();
@@ -250,20 +257,26 @@ pub(crate) fn field_ephemeris_ids(
     {
         return Ok(vec![None; rows.len()]);
     }
-    let ids = table
+    let mut ids = table
         .column_accessor("EPHEMERIS_ID")?
-        .scalar_cells_owned_for_rows(&rows)?;
-    let polynomials = table
-        .column_accessor("NUM_POLY")?
-        .scalar_cells_owned_for_rows(&rows)?;
-    Ok(ids
+        .scalar_cells_owned_for_rows(&rows)?
         .into_iter()
-        .zip(polynomials)
-        .map(|(id, polynomial)| match (id, polynomial) {
-            (Some(ScalarValue::Int32(id)), Some(ScalarValue::Int32(0))) if id >= 0 => Some(id),
+        .map(|id| match id {
+            Some(ScalarValue::Int32(id)) if id >= 0 => Some(id),
             _ => None,
         })
-        .collect())
+        .collect::<Vec<_>>();
+    if !include_polynomials {
+        let polynomials = table
+            .column_accessor("NUM_POLY")?
+            .scalar_cells_owned_for_rows(&rows)?;
+        for (id, polynomial) in ids.iter_mut().zip(polynomials) {
+            if polynomial != Some(ScalarValue::Int32(0)) {
+                *id = None;
+            }
+        }
+    }
+    Ok(ids)
 }
 
 /// The direction casacore's `MSFieldColumns::extractDirMeas` gives a field
@@ -422,9 +435,23 @@ pub(crate) fn field_motions(
     allow_apparent: bool,
 ) -> Result<Box<[FieldMotion]>, MsError> {
     let ids = field_ephemeris_ids(measurement_set)?;
+    Ok(load_field_motions(measurement_set, ids, allow_apparent))
+}
+
+/// FIELD radial velocity and distance consult the attached table by ID
+/// even when a polynomial supplies the field's direction.
+pub(crate) fn scalar_field_motions(ms: &MeasurementSet) -> Result<Box<[FieldMotion]>, MsError> {
+    let ids = read_field_ephemeris_ids(ms, true)?;
+    Ok(load_field_motions(ms, ids, true))
+}
+
+fn load_field_motions(
+    measurement_set: &MeasurementSet,
+    ids: Vec<Option<i32>>,
+    allow_apparent: bool,
+) -> Box<[FieldMotion]> {
     let mut read: BTreeMap<i32, FieldMotion> = BTreeMap::new();
-    Ok(ids
-        .iter()
+    ids.iter()
         .map(|id| {
             let Some(id) = *id else {
                 return FieldMotion::Fixed;
@@ -442,7 +469,7 @@ pub(crate) fn field_motions(
                 })
                 .clone()
         })
-        .collect())
+        .collect()
 }
 
 fn read_field_motion(path: &Path, allow_apparent: bool) -> FieldMotion {

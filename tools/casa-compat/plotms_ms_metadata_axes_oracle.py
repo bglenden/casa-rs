@@ -529,6 +529,32 @@ with plotms_launcher(Path(sys.argv[2]) if sys.argv[2] else None):
                     "refuse" if expect_refusal else "export"], check=True)
 
 
+def add_ephemeris_field_polynomial(vis):
+    with opened(vis / "FIELD", True) as table:
+        for column in ("PHASE_DIR", "DELAY_DIR", "REFERENCE_DIR"):
+            direction = table.getcell(column, 0)
+            table.putcell(column, 0, np.column_stack((direction[:, 0], [1e-10, -2e-10])))
+        table.putcell("NUM_POLY", 0, 1)
+
+
+def flag_ephemeris_samples(vis):
+    with opened(vis, True) as table:
+        times = table.getcol("TIME")
+        antenna2 = table.getcol("ANTENNA2")
+        selected = ((table.getcol("FIELD_ID") == 0) & (table.getcol("ANTENNA1") == 0)
+                    & np.isin(antenna2, [1, 2]))
+        ordered = np.unique(times[selected])
+        assert len(ordered) == 6
+        flags = table.getcol("FLAG")
+        flags[:, :, selected & (times == ordered[0])] = True
+        flags[:, 2, selected & (times == ordered[1])] = True
+        third = selected & (times == ordered[2])
+        flags[:, 1, third] = True
+        flags[1, 1, third & (antenna2 == 2)] = False
+        table.putcol("FLAG", flags)
+    return ordered[1:]
+
+
 def compare_ephemeris_axes(root, native, app_run):
     from casars.tasks import TaskExecutionError, TaskParameterError
     from gaincal_oracle import ephemeris_observation
@@ -546,35 +572,60 @@ def compare_ephemeris_axes(root, native, app_run):
         ("time-distance", "time", "Distance (rho)", 6,
          [2.90480e9, 2.90483e9], "Time (MJD seconds)", "Distance (rho) (km)"),
     )
-    for name, x, y, count, anchors, xlabel, ylabel in cases:
+    variants = [(case, mode) for mode in ("plain", "masked") for case in cases]
+    variants.append((cases[0], "polynomial"))
+    for (name, x, y, count, anchors, xlabel, ylabel), mode in variants:
+        if mode != "plain":
+            name += f"-{mode}"
+        masked = mode == "masked"
+        if masked:
+            count = 14 if x == "channel" else 5
         case = work / name
         case.mkdir()
         vis, _ = ephemeris_observation(case, source, offset=(0.002, -0.004))
+        if mode == "polynomial":
+            add_ephemeris_field_polynomial(vis)
+        ordered = flag_ephemeris_samples(vis) if masked else None
         before = snapshot(vis)
         options = controls(vis) | dict(
             xaxis=x, yaxis=y, antenna="A0&A1;A0&A2", spw="0:1~3", title=title, expformat="txt",
         )
+        if masked:
+            options["correlation"] = "XX,YY"
         expected, actual = (case / f"{name}.{engine}.txt" for engine in ("casa", "native"))
         assert fresh_reference(**options, plotfile=str(expected)) is None
         selected = rows(expected)
         assert len(selected) == count
-        assert len({point[9] for point in selected}) == 6
+        assert len({point[9] for point in selected}) == (5 if masked else 6)
         assert {point[6] for point in selected} == {"1"}
-        assert {point[12] for point in selected} == {"XX"}
-        assert [int(point[2]) for point in selected] == ([1, 2, 3] if x == "channel" else [1]) * 6
-        np.testing.assert_allclose([float(selected[0][1]), float(selected[-1][1])],
-                                   anchors, rtol=1.2e-5)
+        channels = [int(point[2]) for point in selected]
+        if masked:
+            assert {point[9] for point in selected} == {f"{time:.3f}" for time in ordered}
+            assert channels == ([1, 3] + [1, 2, 3] * 4 if x == "channel" else [1] * 5)
+            if x == "channel":
+                assert (channels[2:5], [point[12] for point in selected[2:5]]) == (
+                    [1, 2, 3], ["XX", "YY", "XX"],
+                )
+        else:
+            assert {point[12] for point in selected} == {"XX"}
+            assert channels == ([1, 2, 3] if x == "channel" else [1]) * 6
+            np.testing.assert_allclose([float(selected[0][1]), float(selected[-1][1])],
+                                       anchors, rtol=1.2e-5)
         assert float(selected[0][1]) < float(selected[-1][1])
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == count
         actual_values = np.asarray([float(point[1]) for point in rows(actual)])
         expected_values = np.asarray([float(point[1]) for point in selected])
-        tolerance = 1e-4 if x == "channel" else 1e4
-        np.testing.assert_allclose(actual_values, expected_values, rtol=0, atol=tolerance)
-        assert np.unique(actual_values).size == np.unique(expected_values).size
+        np.testing.assert_array_equal(actual_values, expected_values)
         print(f"{name}: {count} matching ephemeris coordinates and metadata", flush=True)
-        compare_figure(case, native, options, expected, (title, xlabel, ylabel),
-                       reference_task=fresh_reference)
+        if mode != "polynomial":
+            compare_figure(case, native, options, expected, (title, xlabel, ylabel),
+                           reference_task=fresh_reference,
+                           ordinate_atol=5.001e-5 if x == "channel" else 5000.001)
+        else:
+            with opened(vis / "FIELD") as table:
+                assert table.getcell("NUM_POLY", 0) == 1
+                np.testing.assert_array_equal(table.getcell("PHASE_DIR", 0)[:, 1], [1e-10, -2e-10])
         verify_source(vis, before)
 
     fixed = controls(source) | dict(xaxis="channel", yaxis="Radial Velocity", expformat="txt")

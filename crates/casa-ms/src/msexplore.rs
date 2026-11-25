@@ -4575,8 +4575,9 @@ fn build_generic_visibility_scatter(
     if timing_enabled {
         VisibilityScatterTiming::checkpoint("load_aux_columns", &mut checkpoint_started);
     }
-    let derived_engine = if antenna_horizontal
-        || ephemeris_ordinate
+    let derived_engine = if ephemeris_ordinate {
+        Some(MsCalEngine::for_ephemeris_scalars(ms).map_err(|error| error.to_string())?)
+    } else if antenna_horizontal
         || spec.x_axis.uses_derived_geometry()
         || spec
             .y_axes

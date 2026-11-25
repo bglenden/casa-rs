@@ -231,6 +231,14 @@ impl MsCalEngine {
         Ok(engine)
     }
 
+    /// Prepare FIELD scalar sampling, for which the ephemeris remains
+    /// available on rows whose directions are supplied by polynomials.
+    pub(crate) fn for_ephemeris_scalars(ms: &MeasurementSet) -> MsResult<Self> {
+        let mut engine = Self::new(ms)?;
+        engine.field_motions = crate::ephemeris::scalar_field_motions(ms)?;
+        Ok(engine)
+    }
+
     /// Whether `field_id` follows an attached ephemeris
     /// ([`Self::with_field_ephemerides`]), readable or not.
     #[must_use]
