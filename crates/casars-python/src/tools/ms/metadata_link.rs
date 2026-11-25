@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Read-only metadata attached to an MS tool's current selection.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
@@ -38,6 +39,18 @@ pub(in crate::tools) struct MetadataSnapshot {
 }
 
 type SourceAndRows = (Arc<MetadataSnapshot>, Option<Arc<[usize]>>);
+
+pub(super) fn compose_rows<'a>(
+    base: Option<&'a [usize]>,
+    relative: Option<&'a [usize]>,
+) -> Option<Cow<'a, [usize]>> {
+    match (base, relative) {
+        (Some(base), Some(relative)) => {
+            Some(Cow::Owned(relative.iter().map(|&row| base[row]).collect()))
+        }
+        (base, relative) => relative.or(base).map(Cow::Borrowed),
+    }
+}
 
 struct MetadataView {
     path: PathBuf,
@@ -174,14 +187,8 @@ impl MetadataLink {
         };
         self.verify_directory()?;
         let working = self.selected_rows()?;
-        let projected;
-        let rows = if let Some(working) = working {
-            projected = rows.iter().map(|&row| working[row]).collect::<Vec<_>>();
-            projected.as_slice()
-        } else {
-            rows
-        };
-        let view = Arc::new(MetadataView::new(&self.path, Some(rows))?);
+        let rows = compose_rows(working.as_deref(), Some(rows));
+        let view = Arc::new(MetadataView::new(&self.path, rows.as_deref())?);
         let snapshot = MetadataSnapshot::from_view(view)?;
         self.verify_directory()?;
         Ok(Arc::new(snapshot))

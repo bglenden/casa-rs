@@ -66,6 +66,11 @@ impl ToolRangeRequest {
         SPECTRAL_ITEMS.iter().any(|&name| self.names.contains(name))
     }
 
+    /// Whether the requested ranges depend on channel and polarization axes.
+    pub fn uses_visibility_axes(&self) -> bool {
+        self.wants_samples || self.has_spectral_items()
+    }
+
     /// Read ranges over logical MAIN rows in the supplied view.
     /// In-row channel and polarization selections do not affect these ranges.
     ///
@@ -84,7 +89,7 @@ impl ToolRangeRequest {
         }
         let mut result = BTreeMap::new();
         scalar_ranges(main, members, reference, rows, &self.names, &mut result)?;
-        let spectral = self.has_spectral_items() || self.wants_samples;
+        let spectral = self.uses_visibility_axes();
         let mut ids = Vec::new();
         if self.names.contains("antennas") {
             ids.push(SubtableId::Antenna);

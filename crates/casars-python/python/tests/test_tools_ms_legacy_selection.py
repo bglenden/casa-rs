@@ -5,7 +5,7 @@ import pytest
 
 from casars import tools
 from test_tools_ms import pinned_casa
-from test_tools_ms_selection_indices import two_spws_dataset
+from test_tools_ms_selection_indices import same_record, two_spws_dataset
 from test_tools_msmetadata import measures, native_dataset
 
 
@@ -121,3 +121,29 @@ def test_legacy_argument_forms_preserve_selection_after_errors(native_dataset):
         assert tool.nrowold(True) == 1
         assert tool.nrow(True) == 30
         assert tool.done()
+
+
+def test_legacy_metadata_range_reads_the_saved_legacy_view(native_dataset):
+    results = []
+    request = ["antenna1", "scan_number", "time"]
+    for api in (pinned_casa(), tools):
+        tool = api.ms()
+        assert tool.rangeold() == {}
+        assert tool.open(str(native_dataset))
+        before = tool.rangeold(request, useflags=False, blocksize=1)
+        assert tool.selectold({"rows": [14, 7, 14]})
+        assert tool.nrowold(True) == 3
+        after = tool.rangeold(request)
+        same_record(tool.range(request), before)
+        assert tool.selecttaqlold("1 == 0") is False
+        assert tool.rangeold(request) == {}
+        assert tool.done()
+        results.append((before, after))
+    for expected, actual in zip(*results):
+        same_record(actual, expected)
+
+    tool = tools.ms()
+    assert tool.open(str(native_dataset))
+    with pytest.raises(NotImplementedError, match=r"rangeold.*#1030"):
+        tool.rangeold(["chan_freq"])
+    assert tool.done()

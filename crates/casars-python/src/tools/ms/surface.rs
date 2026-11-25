@@ -442,8 +442,8 @@ const METHODS: &[Method] = &[
             param("useflags", K::Bool, Bool(true)),
             param("blocksize", K::Int, Int(10)),
         ],
-        R::Any,
-        No,
+        R::Record,
+        Status::Partial,
     ),
     method(
         "regridspw",

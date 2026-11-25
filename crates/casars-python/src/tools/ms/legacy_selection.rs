@@ -15,6 +15,7 @@ use casa_types::{RecordField, RecordValue};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use super::metadata_link::compose_rows;
 use super::selection_indices::{selectinit_id, selection_dictionary, selection_text};
 use super::selection_record::{
     RecordSelector, integer_items, integer_items_as, real_items, selection_record,
@@ -28,6 +29,12 @@ pub(super) struct LegacySelection {
     // currently selected view after an exact-time record selection.
     rows: Option<Arc<[usize]>>,
     initial: Option<InitialSelection>,
+}
+
+impl LegacySelection {
+    pub(super) fn rows(&self) -> Option<&[usize]> {
+        self.rows.as_deref()
+    }
 }
 
 struct InitialSelection {
@@ -214,21 +221,14 @@ impl AttachedMs {
     }
 
     fn apply_legacy_taql(&mut self, text: String) -> PyResult<bool> {
-        let previous = self.legacy_selection.rows.as_deref();
+        let previous = self.legacy_selection.rows();
         let working = self.working_metadata_link();
         let outer = working.selected_rows().map_err(runtime_error)?;
-        let projected;
-        let physical_rows = match (outer.as_deref(), previous) {
-            (Some(base), Some(relative)) => {
-                projected = relative.iter().map(|&row| base[row]).collect::<Vec<_>>();
-                Some(projected.as_slice())
-            }
-            (base, relative) => relative.or(base),
-        };
+        let physical_rows = compose_rows(outer.as_deref(), previous);
         let refreshed = self.refresh_legacy_main()?;
         let table = refreshed.as_ref().unwrap_or(&self.main);
-        let fast =
-            select_projected_scalar_rows(table, &text, physical_rows).map_err(runtime_error)?;
+        let fast = select_projected_scalar_rows(table, &text, physical_rows.as_deref())
+            .map_err(runtime_error)?;
         let rows = if let Some(rows) = fast {
             rows
         } else {
@@ -442,7 +442,7 @@ fn common_visibility_shape(
     Ok(true)
 }
 
-fn deprecation(py: Python<'_>, name: &str, successor: &str) -> PyResult<()> {
+pub(super) fn deprecation(py: Python<'_>, name: &str, successor: &str) -> PyResult<()> {
     emit(
         py,
         "casars.tools.ms",

@@ -2,9 +2,11 @@
 //! Selected MAIN column ranges through the public MS tool.
 
 use casa_ms::tool_range::ToolRangeRequest;
-use pyo3::exceptions::{PySystemError, PyTypeError};
+use pyo3::exceptions::{PyNotImplementedError, PySystemError, PyTypeError};
 use pyo3::prelude::*;
 
+use super::legacy_selection::deprecation;
+use super::metadata_link::compose_rows;
 use super::visibility::requested_strings;
 use super::{PyMsTool, runtime_error, strict_bool};
 use crate::convert::value::CasaValue;
@@ -27,6 +29,33 @@ impl PyMsTool {
                 Some(ms) => ms.visibility_range(&request),
                 None => Ok(CasaValue::empty_record()),
             }
+        })?;
+        reply.into_python(py)
+    }
+
+    #[pyo3(signature = (items = None, useflags = true, blocksize = 10), text_signature = "($self, items=[], useflags=True, blocksize=10)")]
+    fn rangeold(
+        &self,
+        py: Python<'_>,
+        items: Option<&Bound<'_, PyAny>>,
+        #[pyo3(from_py_with = strict_bool)] useflags: bool,
+        #[pyo3(from_py_with = blocksize_argument)] blocksize: i64,
+    ) -> PyResult<Py<PyAny>> {
+        let items = requested_strings(items, "items")?;
+        deprecation(py, "rangeold", "range")?;
+        let request = ToolRangeRequest::new(&items, useflags, blocksize);
+        let reply = py.detach(|| {
+            let mut attached = self.attached.lock().map_err(runtime_error)?;
+            let Some(ms) = attached.as_mut() else { return Ok(CasaValue::empty_record()) };
+            if request.uses_visibility_axes() {
+                return Err(PyNotImplementedError::new_err(
+                    "ms.rangeold visibility and spectral-axis ranges are not yet implemented in casa-rs (#1030)",
+                ));
+            }
+            let link = ms.working_metadata_link();
+            let base = link.selected_rows().map_err(runtime_error)?;
+            let rows = compose_rows(base.as_deref(), ms.legacy_selection.rows());
+            ms.visibility.range_for_rows(&ms.path, &link, rows.as_deref(), &request)
         })?;
         reply.into_python(py)
     }
