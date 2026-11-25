@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
-use casa_ms::tool_iteration::ToolIteration;
+use casa_ms::tool_iteration::{LegacyIterationOptions, LegacyToolIteration, ToolIteration};
 use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
@@ -150,6 +150,14 @@ impl VisibilityState {
 }
 
 impl VisibilityMain {
+    pub(super) fn legacy_iteration(
+        &self,
+        options: LegacyIterationOptions<'_>,
+    ) -> PyResult<Option<LegacyToolIteration>> {
+        LegacyToolIteration::new(&self.table, self.reference.as_ref(), options)
+            .map_err(runtime_error)
+    }
+
     fn open(path: &Path) -> PyResult<Self> {
         // Record publication stamps before opening the row metadata. A writer
         // publishing during a read forces the next call to reopen the layout.

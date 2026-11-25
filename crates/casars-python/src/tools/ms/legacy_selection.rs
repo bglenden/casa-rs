@@ -15,6 +15,7 @@ use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 
+use super::legacy_iteration::LegacyIteration;
 use super::legacy_visibility::LegacyAxes;
 use super::metadata_link::compose_rows;
 use super::selection_indices::{selectinit_id, selection_dictionary, selection_text};
@@ -32,6 +33,7 @@ pub(super) struct LegacySelection {
     initial: Option<InitialSelection>,
     pub(super) axes: LegacyAxes,
     pub(super) baselines: Option<Vec<(i32, i32)>>,
+    pub(super) iteration: Option<LegacyIteration>,
 }
 
 impl LegacySelection {
@@ -41,6 +43,13 @@ impl LegacySelection {
 
     pub(super) fn shared_rows(&self) -> Option<Arc<[usize]>> {
         self.rows.clone()
+    }
+
+    pub(super) fn set_iterator_rows(&mut self, rows: Option<Arc<[usize]>>) {
+        if self.rows != rows {
+            self.axes.baseline_read = None;
+        }
+        self.rows = rows;
     }
 
     pub(super) fn channel_count(&self) -> usize {
@@ -94,7 +103,10 @@ impl PyMsTool {
                 return Ok(false);
             };
             if reset {
-                ms.legacy_selection = LegacySelection::default();
+                ms.legacy_selection = LegacySelection {
+                    iteration: ms.legacy_selection.iteration.take(),
+                    ..LegacySelection::default()
+                };
                 return Ok(true);
             }
             let id = datadescid as i32;

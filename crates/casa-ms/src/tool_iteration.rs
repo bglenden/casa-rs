@@ -11,6 +11,9 @@ use crate::grouping::DEFAULT_SORT_COLUMNS;
 use crate::schema::main_table::{OPTIONAL_COLUMNS, REQUIRED_COLUMNS};
 use crate::tool_visibility::read_reference_scalars;
 
+mod legacy;
+pub use legacy::{LegacyIterationOptions, LegacyToolIteration};
+
 /// A snapshot of the selected MAIN rows in iteration order.
 ///
 /// The attachment's ordinary row selection is independent of the iterator.
