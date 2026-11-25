@@ -1906,35 +1906,7 @@ impl MsPlotSpec {
         if self.averaging.avgbaseline && self.averaging.avgantenna {
             return Err("msexplore avgbaseline and avgantenna are mutually exclusive".to_string());
         }
-        if self
-            .iteration
-            .iteraxis
-            .is_some_and(MsIterationAxis::groups_by_row)
-            && uses_extended_averaging(self)
-        {
-            return Err(
-                "averaged PlotMS antenna, baseline or time iteration is pending (#1032)".into(),
-            );
-        }
-        if self.averaging.avgscan && self.iteration.iteraxis == Some(MsIterationAxis::Scan) {
-            return Err(
-                "msexplore cannot iterate by scan while averaging across scans".to_string(),
-            );
-        }
-        if self.averaging.avgfield && self.iteration.iteraxis == Some(MsIterationAxis::Field) {
-            return Err(
-                "msexplore cannot iterate by field while averaging across fields".to_string(),
-            );
-        }
-        if self.averaging.avgspw
-            && self.iteration.iteraxis == Some(MsIterationAxis::SpectralWindow)
-            && (!plotms_iteration || self.averaging.avgtime.is_some())
-        {
-            return Err(
-                "msexplore cannot iterate by spectral window while averaging across spectral windows"
-                    .to_string(),
-            );
-        }
+        self.validate_iteration_averaging(plotms_iteration)?;
         // Independent PlotMS ordinates color the averaged groups using their anchors.
         if !independent_ordinates && self.averaging.avgscan && self.color_by == MsColorAxis::Scan {
             return Err("msexplore cannot color by scan while averaging across scans".to_string());
@@ -2068,6 +2040,30 @@ impl MsPlotSpec {
             return Err("msexplore flag plots do not yet support avgchannel binning".to_string());
         }
         Ok(())
+    }
+
+    fn validate_iteration_averaging(&self, plotms_iteration: bool) -> Result<(), String> {
+        match self.iteration.iteraxis {
+            Some(axis) if axis.groups_by_row() && uses_extended_averaging(self) => {
+                Err("averaged PlotMS antenna, baseline or time iteration is pending (#1032)".into())
+            }
+            Some(MsIterationAxis::Scan) if self.averaging.avgscan => {
+                Err("msexplore cannot iterate by scan while averaging across scans".into())
+            }
+            Some(MsIterationAxis::Field) if self.averaging.avgfield => {
+                Err("msexplore cannot iterate by field while averaging across fields".into())
+            }
+            Some(MsIterationAxis::SpectralWindow)
+                if self.averaging.avgspw
+                    && (!plotms_iteration || self.averaging.avgtime.is_some()) =>
+            {
+                Err(
+                    "msexplore cannot iterate by spectral window while averaging across spectral windows"
+                        .into(),
+                )
+            }
+            _ => Ok(()),
+        }
     }
 
     fn validate_interval_and_wavelength_axes(&self) -> Result<(), String> {
