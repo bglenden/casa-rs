@@ -1,20 +1,21 @@
 {
   "schema_version": 1,
   "execution_date": "2026-11-24",
-  "revision": "2cf23b4c0fda7a27cea6a23cd425949425d127b7",
-  "source_revision": "2cf23b4c0fda7a27cea6a23cd425949425d127b7",
+  "revision": "bc67fb22499530269b187d9c438f5ab979687ee2",
+  "source_revision": "bc67fb22499530269b187d9c438f5ab979687ee2",
   "casa_version": "6.7.6.14",
   "casaplotms_version": "2.9.1",
   "command": "casa-python tools/casa-compat/plotms_ms_metadata_axes_oracle.py --only averaged-coordinates --work <new-dir> --native-bin <msexplore>",
-  "scope": "Vector time averaging of Interval, Uwave and Wwave with visible selected XX stored samples, two retained baselines, reversed input order, nonuniform intervals and flag masks.",
+  "scope": "Vector time averaging of Interval, Uwave and Wwave with visible selected XX stored samples, two retained baselines, reversed input order, nonuniform intervals and flag masks, paired Interval/U ordinates and two same-frame windows.",
   "result": "passed",
   "baseline_result": "The public task refuses averaged Interval and wavelength coordinates before export.",
-  "text_exports": 5,
-  "points": 60,
+  "text_exports": 7,
+  "points": 82,
   "figures": 2,
   "rendered_coordinates": 20,
   "figure_size_px": [
     500,
     360
-  ]
+  ],
+  "mixed_frame_refusals": 1
 }
