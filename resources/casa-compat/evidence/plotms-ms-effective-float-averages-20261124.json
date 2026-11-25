@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "81d33af9c3094877c7659bd56dd189aea7e394ed",
+  "source_revision": "81d33af9c3094877c7659bd56dd189aea7e394ed",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --only effective-float-averages --work <new-dir> --native-bin <msexplore>",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "One signed Amp or Real ordinate from float-only and mixed DATA/FLOAT_DATA MeasurementSets. Channel, 20-second vector and scalar time, combined channel/time, and two-window channel/SPW averages, with distinct observed and calibrated spectra and an explicitly disabled averaging control.",
+  "result": "passed",
+  "baseline_result": "Main refuses effective FLOAT_DATA channel, time and SPW averages before export.",
+  "text_exports": 18,
+  "points": 101,
+  "corrected_real_exports": 2,
+  "corrected_real_points": 12,
+  "figures": 1,
+  "rendered_coordinates": 8,
+  "figure_size_px": [
+    500,
+    360
+  ]
+}
