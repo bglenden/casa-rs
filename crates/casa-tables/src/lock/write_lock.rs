@@ -386,6 +386,24 @@ impl TableWriteLock {
         }
     }
 
+    /// Follow a directory rename while retaining this table's write lock.
+    ///
+    /// This updates the path used to publish synchronization data. The
+    /// directory and lock inode must still be those this guard captured.
+    ///
+    /// # Errors
+    /// The new path does not name the locked table.
+    pub fn follow_directory_rename(&mut self, path: &Path) -> Result<(), TableError> {
+        if !self.matches_table_path(path) {
+            return Err(TableError::LockFailed {
+                path: path.display().to_string(),
+                message: "renamed directory does not hold this table lock".into(),
+            });
+        }
+        self.path = path.to_path_buf();
+        Ok(())
+    }
+
     /// The modify counter the table's sync data publishes, read now; `None`
     /// when the table has no sync data.
     ///

@@ -4752,6 +4752,27 @@ every window, and states no receptors where it has neither. Where `FEED`'s
 rows are all -1 or all name windows, which is how CASA's simulator, ALMA
 and casa-rs's MSv2 writer write it, the receptors are the same.
 
+## PlotMS refuses valid parallel antenna direction controls
+
+- Date noted: 2026-11-25
+- Status: casa-rs applies each requested frame and interpolation to both axes of its layer (#1032)
+
+On the four-epoch ALMA POINTING fixture, CASA 6.7.6.14 with casaplotms
+2.9.1 accepts `yaxis='ant-dec'` with one `yframe` and `yinterp` list
+entry. With `xaxis='ant-ra'`, `yframe=['j2000','galactic']`,
+`yinterp=['nearest','spline']` and `yaxislocation=['left','right']`, the
+public task sends the documented per-layer settings but receives
+`INVALID_ARGUMENT: plot parameters failed` before TXT or PNG export.
+A fresh PlotMS process also refuses two identical valid entries and a
+Time plot with two interpolations and a scalar or omitted frame.
+
+casa-rs uses the requested frame and interpolation on both pointing axes
+for each layer, broadcasts a scalar frame and side and keeps the layer
+order. The paired oracle checks each layer against its own scalar CASA
+request, including sample identifiers, rendered degree coordinates and
+axis sides. List-valued `xframe` and `xinterp` remain public type errors
+and mismatched parallel Y lengths remain validation errors.
+
 ## PlotMS reuses antenna angles when fields share a timestamp
 
 - Date noted: 2026-11-24
@@ -11525,6 +11546,24 @@ rows 0 and 2 when the array was written back unchanged. casa-rs resolves
 an ambiguous trailing axis using the most recent read of writable
 visibility data. A subsequent ordinary row-axis read restores row
 ordering for such arrays (#1030).
+
+## Adding an attached ephemeris can delete its source or change FIELD TIME outside the observation
+
+In CASA 6.7.6.14, call `ms.addephemeris()` with an ephemeris table
+already installed under the requested ID in FIELD. CASA removes the
+original before copying the input. The copy then fails and existing
+fields lose their ephemeris. Casa-rs copies the source to a staged FIELD
+before publishing the replacement. A selected FIELD on a read-only
+attachment fails before replacing any existing ephemeris.
+
+When FIELD TIME falls outside the observation, CASA's bounds test uses
+`minimum <= start || start <= maximum`. It can assign an ephemeris start
+that also falls outside the observation. Casa-rs updates FIELD TIME only
+when the ephemeris start lies within both observation bounds (#1030).
+
+Calling `addephemeris()` on an attached MS with the default empty
+`ephemerisname` can abort CASA with an uncaught string-range exception.
+Casa-rs raises a Python error before writing FIELD or HISTORY (#1030).
 
 ## Uppercase DATA can crash `ms.hanningsmooth()`
 

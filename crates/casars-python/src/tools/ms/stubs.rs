@@ -15,18 +15,6 @@ use super::{PyMsTool, stub};
 )]
 impl PyMsTool {
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (id = None, ephemerisname = None, comment = None, field = None), text_signature = "($self, id=-1, ephemerisname='', comment='', field=[])")]
-    fn addephemeris(
-        &self,
-        id: Option<&Bound<'_, PyAny>>,
-        ephemerisname: Option<&Bound<'_, PyAny>>,
-        comment: Option<&Bound<'_, PyAny>>,
-        field: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("addephemeris")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (abspath = None), text_signature = "($self, abspath='')")]
     fn asdmref(&self, abspath: Option<&Bound<'_, PyAny>>) -> PyResult<Py<PyAny>> {
         stub("asdmref")

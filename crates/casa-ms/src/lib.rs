@@ -75,6 +75,7 @@ mod subtable_rows;
 pub mod subtables;
 pub mod task_contract;
 mod task_front_end;
+pub mod tool_ephemeris;
 pub mod tool_history;
 pub mod tool_iteration;
 pub mod tool_lister;
