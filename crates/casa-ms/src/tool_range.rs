@@ -114,7 +114,14 @@ impl ToolRangeRequest {
         };
         name_ranges(&linked_subtable, &self.names, &mut result)?;
         if spectral {
-            let descriptions = selected_descriptions(main, members, reference, rows)?;
+            let descriptions = if let Some(legacy) = options
+                .legacy_axes
+                .filter(|axes| !axes.descriptions.is_empty())
+            {
+                legacy.descriptions.iter().copied().collect()
+            } else {
+                selected_descriptions(main, members, reference, rows)?
+            };
             let description = linked_subtable(SubtableId::DataDescription)?;
             let windows = linked_subtable(SubtableId::SpectralWindow)?;
             let polarization = linked_subtable(SubtableId::Polarization)?;

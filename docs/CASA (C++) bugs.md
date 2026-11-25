@@ -11653,6 +11653,16 @@ axis for these Float samples. It agrees with CASA for `useflags=False`
 and returns the extrema of the unflagged recorded samples for
 `useflags=True` (#1030).
 
+## Replacing the legacy row selection can abort a complex range
+
+In CASA 6.7.6.14, initialize `ms.selectinitold(1)` for a three-channel
+window, replace the selection with a row from a four-channel window via
+`ms.selectold({'rows': [0]})` and call `ms.rangeold('real')`. CASA
+aborts when assigning the four-channel data to an array sized for three
+channels. Casa-rs computes extrema from the actual selected cell.
+Spectral metadata still describes the initialized window, as in CASA
+(#1030).
+
 ## PlotMS exits when adding an atmospheric curve to two visibility ordinates
 
 CASA 6.7.6.14 with casaplotms 2.9.1 terminates its PlotMS process with signal 11 for `xaxis='frequency'`, `yaxis=['real','imag']`, `ydatacolumn=['model','corrected']`, `spw='0:0;3;6'` and `showatm=True` on the paired weather fixture. The public task reports a closed RPC connection and leaves no TXT export. The same failure occurs with two stored ordinates. [Pinned overlay setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Plots/PlotMSPlot.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)

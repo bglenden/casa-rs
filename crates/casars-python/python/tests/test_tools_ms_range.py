@@ -13,6 +13,51 @@ def extrema(values):
     return np.array([values.min(), values.max()], dtype=np.float64)
 
 
+@pytest.mark.parametrize(("rows", "description_ids"), [([0], [0]), ([0, 41], [0, 1])])
+def test_legacy_range_retains_initialized_spectral_description_after_row_replacement(
+    two_spws_dataset, rows, description_ids,
+):
+    casa = pinned_casa()
+    expected = {
+        "num_chan": np.array([3], dtype=np.int64),
+        "ref_frequency": np.array([2e9], dtype=np.float64),
+        "data_desc_id": np.array(description_ids, dtype=np.int64),
+        "rows": np.array(rows, dtype=np.int64),
+        "weight": np.ones(2, dtype=np.float64),
+        "sigma": np.ones(2, dtype=np.float64),
+    }
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(two_spws_dataset)
+        assert reader.selectinitold(1)
+        assert reader.selectold({"rows": rows})
+        actual = reader.rangeold(list(expected))
+        assert actual.keys() == expected.keys()
+        for name, value in expected.items():
+            if value.dtype.kind == "f":
+                np.testing.assert_allclose(actual[name], value, rtol=1e-14, atol=0,
+                                           strict=True, err_msg=name)
+            else:
+                np.testing.assert_array_equal(actual[name], value, strict=True, err_msg=name)
+        assert reader.done()
+
+
+def test_legacy_range_reads_the_actual_cell_after_replacing_the_initialized_window(
+    two_spws_dataset,
+):
+    table = pinned_casa().table()
+    assert table.open(two_spws_dataset)
+    cell = table.getcell("DATA", 0)
+    assert table.done()
+    reader = tools.ms()
+    assert reader.open(two_spws_dataset)
+    assert reader.selectinitold(1)
+    assert reader.selectold({"rows": [0]})
+    actual = reader.rangeold("real", useflags=False)
+    np.testing.assert_array_equal(actual["real"], extrema(cell.real), strict=True)
+    assert reader.done()
+
+
 @pytest.mark.parametrize("polarization", [None, "LL", "XX"])
 @pytest.mark.parametrize("useflags", [False, True])
 def test_legacy_range_uses_projected_samples_and_recorded_spectral_axes(
