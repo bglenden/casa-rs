@@ -108,6 +108,23 @@ impl MsCalEngine {
         )
     }
 
+    /// The visibility iterator evaluates waveguide mounts with signed azimuths.
+    pub(crate) fn iterator_feed_parallactic_angle(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        antenna_id: usize,
+    ) -> MsResult<f64> {
+        self.feed_mount(antenna_id)?.rotation(
+            || self.sky_parallactic_angle(time_mjd_sec, field_id, antenna_id),
+            || {
+                self.azel(time_mjd_sec, field_id, antenna_id)
+                    .map(signed_azimuth)
+            },
+            || self.hadec(time_mjd_sec, field_id, antenna_id),
+        )
+    }
+
     /// CASA's array parallactic angle uses the first antenna's mount at
     /// the array reference position.
     pub(crate) fn array_feed_angle_at_position(
@@ -120,7 +137,7 @@ impl MsCalEngine {
             || self.parallactic_angle_at_position(time_mjd_sec, field_id, position.clone()),
             || {
                 self.azel_at_position(time_mjd_sec, field_id, position.clone())
-                    .map(|(azimuth, elevation)| ((azimuth + PI).rem_euclid(TAU) - PI, elevation))
+                    .map(signed_azimuth)
             },
             || self.hadec_at_position(time_mjd_sec, field_id, position.clone()),
         )
@@ -136,6 +153,10 @@ impl MsCalEngine {
                 context: "antenna_id".to_string(),
             })
     }
+}
+
+fn signed_azimuth((azimuth, elevation): (f64, f64)) -> (f64, f64) {
+    ((azimuth + PI).rem_euclid(TAU) - PI, elevation)
 }
 
 #[cfg(test)]

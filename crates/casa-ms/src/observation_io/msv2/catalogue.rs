@@ -512,7 +512,7 @@ impl Feeds {
     /// taken, as casacore's `MSIter` takes it (with a warning); XRADIO's
     /// converter refuses such rows, and a conversion reports them as a
     /// loss ([`Self::varying`]).
-    pub(super) fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
+    pub(crate) fn receptors(&self, antenna: i32, feed: i32, window: i32) -> Option<&Receptors> {
         self.rows
             .get(&(antenna, feed, window))
             .or_else(|| self.rows.get(&(antenna, feed, -1)))

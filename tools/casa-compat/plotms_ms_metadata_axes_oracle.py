@@ -403,6 +403,8 @@ def compare_antenna_horizontal_axes(root, native):
     work = root / "antenna-horizontal-axes"
     work.mkdir()
     vis, positions = make_horizontal_fixture(work)
+    with opened(vis / "ANTENNA", True) as table:
+        table.putcell("MOUNT", 3, "ALT-AZ+BWG-R")
     with opened(vis / "FEED", True) as table:
         angles = table.getcol("RECEPTOR_ANGLE")
         antennas = table.getcol("ANTENNA_ID")
@@ -437,6 +439,7 @@ def compare_antenna_horizontal_axes(root, native):
         if axis == "ant-parangle":
             np.testing.assert_allclose([float(selected[3][1]), float(selected[93][1])],
                                        [37.5998, -50.8959], rtol=1.2e-5)
+            assert float(selected[9][1]) > 180.0
         assert native(**options, plotfile=str(actual)) is None
         assert compare_text(actual, expected) == 180
         print(f"{name}: 180 matching antenna horizontal coordinates and identities", flush=True)
@@ -445,6 +448,7 @@ def compare_antenna_horizontal_axes(root, native):
     verify_source(vis, before)
     with opened(vis / "ANTENNA") as table:
         np.testing.assert_array_equal(table.getcol("POSITION"), positions)
+        assert table.getcell("MOUNT", 3) == "ALT-AZ+BWG-R"
     with opened(vis / "FEED") as table:
         np.testing.assert_array_equal(table.getcol("RECEPTOR_ANGLE"), angles)
 

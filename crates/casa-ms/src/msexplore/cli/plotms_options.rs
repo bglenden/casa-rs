@@ -370,10 +370,28 @@ impl CliOptions {
         Ok(())
     }
 
-    fn validate_array_horizontal_controls(
-        &self,
-        task: &TaskInvocation<'_>,
-    ) -> Result<(), TaskFailure> {
+    fn validate_horizontal_controls(&self, task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
+        let antenna_horizontal = [self.x_axis, self.y_axis, self.y_axis2]
+            .into_iter()
+            .flatten()
+            .chain(self.additional_ordinates.iter().map(|(axis, _)| *axis))
+            .any(MsAxis::is_antenna_horizontal);
+        if antenna_horizontal {
+            let symbols = raw_symbol_visibility(task);
+            if self.x_axis != Some(MsAxis::Channel)
+                || !self.y_axis.is_some_and(MsAxis::is_antenna_horizontal)
+                || self.y_axis2.is_some()
+                || self.plotms_averaging_active()
+                || self.iteraxis.is_some()
+                || symbols.flagged
+                || !symbols.unflagged
+            {
+                return Err(TaskFailure::validation(
+                    "This PlotMS antenna horizontal axis combination is pending (#1032)",
+                ));
+            }
+            return Ok(());
+        }
         if self.y_axis2.is_some()
             || !self
                 .x_axis
@@ -513,6 +531,7 @@ pub(super) fn options_from_plotms(
         || (avgtime.is_some_and(|interval| interval != 0.0)
             && [x_axis, y_axis].contains(&MsAxis::WeightSpectrum))
         || plotms_row_axes::array_horizontal_pair(x_axis, y_axis)
+        || y_axis.is_antenna_horizontal()
         // PlotMS falls back to scalar SIGMA for undefined spectral cells;
         // the raw explorer deliberately requires the requested stored cell.
         || x_axis == MsAxis::SigmaSpectrum
@@ -634,6 +653,6 @@ pub(super) fn options_from_plotms(
         plot_format,
     };
     options.validate_plotms_weight_averaging()?;
-    options.validate_array_horizontal_controls(task)?;
+    options.validate_horizontal_controls(task)?;
     Ok((options, visibility_document))
 }
