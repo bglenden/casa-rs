@@ -10,8 +10,8 @@ use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
 use super::plotms_pointing::PointingAxes;
 use super::{
-    MsAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsPlotSpec, MsScatterGridPayload,
-    MsScatterPanelPayload, MsScatterSeries, plotms_row_axes, plotms_text,
+    MsAxis, MsColorAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsPlotSpec,
+    MsScatterGridPayload, MsScatterPanelPayload, MsScatterSeries, plotms_row_axes, plotms_text,
 };
 use crate::plot_document::{
     PlotAxisScale, PlotDocument, PlotDocumentAxis, PlotDocumentLayer, PlotFigure, PlotLayerData,
@@ -89,6 +89,7 @@ pub(super) fn prepare(
             second == Some(MsAxis::Frequency),
         ],
         limits,
+        averaged_antenna_color: super::plotms_averaged_colors::axis(spec),
         colorize: task.flag("colorizeoverlay")?
             && task
                 .text("coloraxis")?
@@ -523,6 +524,7 @@ pub(super) fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
 struct PanelStyle {
     frequency: [bool; 3],
     limits: [f64; 4],
+    averaged_antenna_color: Option<MsColorAxis>,
     colorize: bool,
 }
 
@@ -560,7 +562,26 @@ impl PanelStyle {
                 axis.upper = self.limits[offset + 1];
             }
         }
+        let averaged_colors = self
+            .averaged_antenna_color
+            .map_or_else(BTreeMap::new, |axis| {
+                super::plotms_averaged_colors::palette(axis, series)
+            });
         for (index, (layer, source)) in layers.iter_mut().zip(series).enumerate() {
+            layer.id = format!("{}-visibility-{panel}-{index}", source.y_index);
+            let color = averaged_colors
+                .get(&source.color_group)
+                .map(|color| (*color).into());
+            if color.is_some() && layer.x_values.is_empty() {
+                // Draw a legend key for this masked cache category without coordinates.
+                layer.kind = PlotLayerKind::Line;
+                layer.style = Some(PlotLayerStyle {
+                    color,
+                    marker: Some("o".into()),
+                    line_style: Some("None".into()),
+                });
+                continue;
+            }
             let (x_scale, y_scale) = (
                 if self.frequency_axis(&layer.x_axis_id) {
                     1e9
@@ -587,11 +608,10 @@ impl PanelStyle {
                         .map(|v| v / y_scale),
                 )
                 .map_err(write_failure)?;
-            layer.id = format!("{}-visibility-{panel}-{index}", source.y_index);
             layer.data = Some(PlotLayerData::Points { x, y });
             layer.payload_strategy = PlotPayloadStrategy::BinaryArrays;
             layer.style = Some(PlotLayerStyle {
-                color: None,
+                color,
                 marker: Some("o".into()),
                 line_style: None,
             });

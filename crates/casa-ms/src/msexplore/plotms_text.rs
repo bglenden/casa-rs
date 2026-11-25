@@ -225,6 +225,10 @@ fn write_series(
         data.chunk_by(|left, right| left.y_index == right.y_index && left.y_axis == right.y_axis)
     {
         let y_axis = section[0].y_axis;
+        if section.iter().all(|series| series.points.is_empty()) {
+            write_empty_section(output, name(x_axis), name(y_axis), verbose)?;
+            continue;
+        }
         write_section(output, name(x_axis), name(y_axis), verbose)?;
         let averaged_ids = section[0].plotms_averaged_ids.as_ref();
         let spw_average = matches!(

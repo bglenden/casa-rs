@@ -285,12 +285,7 @@ impl CliOptions {
         let supported_reduction = (time_average || other_reduction)
             && self.freqframe.is_none()
             && self.plotms_independent_average(!ordinary_only);
-        let colors_spanned_antenna = self.avgantenna
-            && !self.scalar
-            && ((self.avgscan && self.color_by == MsColorAxis::Scan)
-                || (self.avgfield && self.color_by == MsColorAxis::Field));
         (!self.plotms_extended_averaging() || supported_reduction)
-            && !colors_spanned_antenna
             && !self.has_mixed_ordinate_dimensions()
             && self.plotms_axis_columns().is_some_and(|columns| {
                 columns
