@@ -92,12 +92,21 @@ pub(super) fn uses_direct_vector_time_projection(
         && spec.data_column == MsDataColumn::Model
         && x_column.is_none_or(|column| column == MsDataColumn::Model)
         && supports_ordinary_time_axes(spec);
+    let stored_visibility_pair = spec.x_axis.is_visibility_math()
+        && spec.y_axis().is_visibility_math()
+        && matches!(
+            spec.data_column,
+            MsDataColumn::Data | MsDataColumn::Corrected
+        )
+        && x_column
+            .is_none_or(|column| matches!(column, MsDataColumn::Data | MsDataColumn::Corrected))
+        && supports_ordinary_time_axes(spec);
     let shared_or_channel = supports_reduced_visibility_axes(spec)
         && (spec.secondary_y_axis().is_some()
             || spec.averaging.avgchannel.is_some_and(|width| width > 1));
     uses_time_averaging(spec, spec.y_axes.len() > 2)
         && !spec.averaging.scalar
-        && (model_only || shared_or_channel)
+        && (model_only || stored_visibility_pair || shared_or_channel)
 }
 
 pub(super) fn uses_weighted_time_uvw(spec: &MsPlotSpec) -> bool {

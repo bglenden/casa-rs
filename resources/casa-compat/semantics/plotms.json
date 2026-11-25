@@ -172,7 +172,8 @@
         "ms-time-visibility-ordinate-lists",
         "ms-virtual-model-time-averages",
         "ms-virtual-model-averaged-expressions",
-        "ms-spw-antenna-visibility-expressions"
+        "ms-spw-antenna-visibility-expressions",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "coordinates"
@@ -296,7 +297,8 @@
         "ms-two-spw-visibility-ordinates",
         "ms-spw-antenna-visibility-expressions",
         "callibrary-independent-ordinates",
-        "ms-combined-atmosphere"
+        "ms-combined-atmosphere",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "coordinates"
@@ -637,7 +639,8 @@
         "ms-averaged-row-ids",
         "ms-time-spw-u",
         "ms-time-interval-wavelength",
-        "ms-time-averaged-statistics"
+        "ms-time-averaged-statistics",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "averaging"
@@ -730,7 +733,8 @@
         "ms-spanned-antenna-visibility-ordinate-lists",
         "ms-virtual-antenna-baseline-models",
         "ms-spw-antenna-visibility-expressions",
-        "ms-time-averaged-statistics"
+        "ms-time-averaged-statistics",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "averaging"
@@ -753,7 +757,8 @@
         "ms-spw-antenna-visibility-expressions",
         "ms-combined-atmosphere",
         "ms-time-spw-u",
-        "ms-time-averaged-statistics"
+        "ms-time-averaged-statistics",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "averaging"
@@ -794,7 +799,8 @@
         "ms-virtual-spw-model-spans",
         "ms-spw-iteration-and-ordinate-order",
         "ms-spw-antenna-visibility-expressions",
-        "ms-time-averaged-statistics"
+        "ms-time-averaged-statistics",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "averaging"
@@ -945,7 +951,8 @@
       "scope": "Enable custom symbol(s) for unflagged points",
       "evidence": [
         "paired",
-        "ms-channel-metadata-flag-symbols"
+        "ms-channel-metadata-flag-symbols",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -953,11 +960,12 @@
       "status": "Partial"
     },
     "symbolshape": {
-      "scope": "Shape of plotted unflagged symbols Use nosymbol to hide clear points on a supported raw visibility pair.",
+      "scope": "Shape of plotted unflagged symbols. Use nosymbol to hide clear points on supported visibility and metadata plots.",
       "evidence": [
         "paired",
         "ms-raw-flag-symbols",
-        "ms-channel-metadata-flag-symbols"
+        "ms-channel-metadata-flag-symbols",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -1017,11 +1025,12 @@
       "status": "Partial"
     },
     "customflaggedsymbol": {
-      "scope": "Enable custom symbols for flagged calibration solutions and supported MeasurementSet plots. For one pair of observed or corrected visibility axes, display flags in raw or vector channel-averaged samples. Raw Channel/Row and Channel/array Elevation collapse flags over their plotted dimensions. Time, antenna and spectral-window averaged flag displays remain open under #1032.",
+      "scope": "Enable custom symbols for flagged calibration solutions and supported MeasurementSet plots. For one pair of observed or corrected visibility axes, display flags in raw or vector channel-averaged samples. Raw Channel/Row and Channel/array Elevation collapse flags over their plotted dimensions. An unbinned stored visibility pair can display fully flagged vector and scalar averages from standalone time, antenna or spectral-window reduction.",
       "evidence": [
         "paired",
         "ms-raw-flag-symbols",
-        "ms-channel-metadata-flag-symbols"
+        "ms-channel-metadata-flag-symbols",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -1033,7 +1042,8 @@
       "evidence": [
         "paired",
         "ms-raw-flag-symbols",
-        "ms-channel-metadata-flag-symbols"
+        "ms-channel-metadata-flag-symbols",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -1045,7 +1055,8 @@
       "evidence": [
         "paired",
         "ms-raw-flag-symbols",
-        "ms-channel-metadata-flag-symbols"
+        "ms-channel-metadata-flag-symbols",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -1057,7 +1068,8 @@
       "evidence": [
         "paired",
         "ms-raw-flag-symbols",
-        "ms-channel-metadata-flag-symbols"
+        "ms-channel-metadata-flag-symbols",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -1068,7 +1080,8 @@
       "scope": "Fill type of plotted flagged symbols",
       "evidence": [
         "paired",
-        "ms-channel-metadata-flag-symbols"
+        "ms-channel-metadata-flag-symbols",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -1079,7 +1092,8 @@
       "scope": "Outline plotted flagged symbols",
       "evidence": [
         "paired",
-        "ms-channel-metadata-flag-symbols"
+        "ms-channel-metadata-flag-symbols",
+        "ms-time-antenna-spw-flag-symbols"
       ],
       "behaviors": [
         "presentation"
@@ -3098,6 +3112,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-channel-metadata-flag-symbols-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2299"
+      ]
+    },
+    "ms-time-antenna-spw-flag-symbols": {
+      "kind": "Paired time, antenna and spectral-window averaged flag symbols",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Standalone 20-second time, per-antenna and two-window spectral averages for one DATA/CORRECTED visibility pair in vector and scalar mode. Each case exercises clear, fully flagged and mixed-flag bins, with clear-only, both and flagged-only displays.",
+      "result": "Twenty-one TXT exports match 136 ordered coordinates and IDs. The vector time cases emit 6 clear, 9 total and 3 flagged-only points. Scalar time emits 4, 6 and 2. Antenna averages emit 10, 18 and 8 in either mode, and SPW averages emit 4, 6 and 2 in either mode. Vector time uses independent DATA inverse variances and CORRECTED weights, giving the first amplitudes (2.40832, 27.0185). Scalar time uses common weights for (2.63636, 26.3636). NaN-bearing flagged time, antenna and SPW bins retain their coordinates and IDs. Antenna samples below the positive Float32 minimum use the CASA weight floor. Four PNGs match 39 rendered coordinates, flagged styles and 500 by 360 dimensions. An all-flagged time selection matches empty verbose and compact TXT and an empty PNG. Source visibility and flag cells are unchanged.",
+      "casa_version": "6.7.6.14",
+      "revision": "870a66c210f8f2c9deb1dcd1c304ec75b5ed1f95",
+      "source_revision": "870a66c210f8f2c9deb1dcd1c304ec75b5ed1f95",
+      "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --only averaged-flag-symbols --work <new-dir> --native-bin <msexplore>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-time-antenna-spw-flag-symbols-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2300"
       ]
     }
   }

@@ -180,6 +180,13 @@ pub(super) struct BinBuffer {
     projection: Option<(VisibilityColumnProjection, [Complex64; 2])>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum BinSampleMask {
+    Clear,
+    IncludeFlagged,
+    FlaggedAverage,
+}
+
 impl BinBuffer {
     pub(super) fn collect(
         &mut self,
@@ -188,7 +195,7 @@ impl BinBuffer {
         weight: Option<&FloatGrid>,
         corr: usize,
         bin: &ChannelBin,
-        show_flagged: bool,
+        mask: BinSampleMask,
     ) {
         self.weights.clear();
         self.projection = None;
@@ -197,7 +204,7 @@ impl BinBuffer {
             flags,
             corr,
             bin,
-            show_flagged,
+            mask,
             weight.map(|spectrum| (spectrum, &mut self.weights)),
             &mut self.values,
         );
@@ -596,11 +603,12 @@ impl AveragedVisibility {
         weights: VectorTimeWeights<'_>,
         corr: usize,
         bin: &ChannelBin,
+        include_flagged: bool,
     ) -> bool {
         if bin.averaged {
             return self.add_time_channel_samples(grid, flags, weights, corr, bin);
         }
-        if flags[(corr, bin.start)] {
+        if !include_flagged && flags[(corr, bin.start)] {
             return false;
         }
         self.add_time_projection(TimeProjection::channel_sample(
@@ -834,6 +842,7 @@ impl AveragedVisibility {
         samples: VisibilityBinSamples<'_>,
         scalar_weight: f64,
         conjugate: bool,
+        clamp_weight: bool,
     ) {
         let (values, weights) = self.weighted_mut();
         if conjugate {
@@ -842,7 +851,20 @@ impl AveragedVisibility {
             values.extend_from_slice(samples.values);
         }
         if samples.weights.is_empty() {
-            weights.resize(values.len(), scalar_weight);
+            let weight = if clamp_weight {
+                super::plotms_columns::baseline_weight(scalar_weight)
+            } else {
+                scalar_weight
+            };
+            weights.resize(values.len(), weight);
+        } else if clamp_weight {
+            weights.extend(
+                samples
+                    .weights
+                    .iter()
+                    .copied()
+                    .map(super::plotms_columns::baseline_weight),
+            );
         } else {
             weights.extend_from_slice(samples.weights);
         }

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "execution_date": "2026-11-24",
+  "revision": "870a66c210f8f2c9deb1dcd1c304ec75b5ed1f95",
+  "source_revision": "870a66c210f8f2c9deb1dcd1c304ec75b5ed1f95",
+  "command": "casa-python tools/casa-compat/plotms_ms_columns_oracle.py --only averaged-flag-symbols --work <new-dir> --native-bin <msexplore>",
+  "casa_version": "6.7.6.14",
+  "casaplotms_version": "2.9.1",
+  "scope": "Standalone 20-second time, per-antenna and two-window spectral averages for one DATA/CORRECTED visibility pair in vector and scalar mode. Each case exercises clear, fully flagged and mixed-flag bins, with clear-only, both and flagged-only displays.",
+  "result": "passed",
+  "baseline_result": "Main gives a vector time DATA amplitude of 2.70185 in the first bin and refuses flagged visibility symbols for all three reductions.",
+  "text_exports": 21,
+  "points": 136,
+  "figures": 4,
+  "rendered_coordinates": 39,
+  "figure_size_px": [
+    500,
+    360
+  ],
+  "empty_text_exports": 2,
+  "empty_figures": 1
+}

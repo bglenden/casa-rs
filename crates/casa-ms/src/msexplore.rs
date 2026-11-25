@@ -4131,12 +4131,27 @@ struct AveragedPointAccumulator {
     representative: Option<MsScatterPointRef>,
     display_channel: usize,
     combined_primary_weight: Option<f64>,
+    visibility_flagged: Option<bool>,
 }
 
 impl AveragedPointAccumulator {
     fn has_usable_weight(&self) -> bool {
         self.combined_primary_weight
             .is_none_or(|weight| weight > 0.0)
+    }
+
+    fn accept_visibility_sample(&mut self, flagged: bool) -> bool {
+        // CASA keeps flagged visibility samples only until a clear sample arrives.
+        match (self.visibility_flagged, flagged) {
+            (Some(false), true) => return false,
+            (Some(true), false) => {
+                self.x_visibility = Default::default();
+                self.y_visibility = Default::default();
+            }
+            _ => {}
+        }
+        self.visibility_flagged = Some(flagged);
+        true
     }
 }
 
@@ -5158,7 +5173,12 @@ fn build_generic_visibility_scatter(
                             displayed_flagged && fully_flagged(),
                         );
                     } else {
-                        buffer.collect(grid, flags, weights, *corr_index, bin, displayed_flagged);
+                        let mask = if displayed_flagged {
+                            plotms_ordinates::BinSampleMask::IncludeFlagged
+                        } else {
+                            plotms_ordinates::BinSampleMask::Clear
+                        };
+                        buffer.collect(grid, flags, weights, *corr_index, bin, mask);
                     }
                 }
                 if let Some(statistics) = &statistics {
@@ -5768,6 +5788,8 @@ fn build_generic_visibility_scatter_with_averaging(
     point_budget: &mut PointBudget,
     calibration: Option<&PlotMsInput<'_>>,
 ) -> Result<MsPlotPayload, String> {
+    let symbols = calibration.and_then(|input| input.raw_symbols);
+    let show_flagged = symbols.is_some_and(|symbols| symbols.flagged);
     let listobs_options = selection.to_summary_options();
     let row_numbers = match calibration {
         Some(calibration) => calibration.row_order.to_vec(),
@@ -5824,11 +5846,10 @@ fn build_generic_visibility_scatter_with_averaging(
         scalar_average || scalar_spw_time || (extended_derived && scalar_antenna_time);
     let scalar_channels = scalar_operands && average_channels;
     let antenna_channels = antenna_average && average_channels && !time_antenna;
+    let standalone_antenna =
+        antenna_average && spec.averaging.avgtime.is_none() && !average_channels;
     // The unbinned antenna reducer uses the selected visibility cube flags.
-    let antenna_cube_flags = antenna_average
-        && spec.y_axes.len() > 2
-        && spec.averaging.avgtime.is_none()
-        && !average_channels;
+    let antenna_cube_flags = standalone_antenna && (spec.y_axes.len() > 2 || symbols.is_some());
     let spw_channels = spw_average && average_channels && !time_spw;
     let time_antenna_channels = time_antenna && average_channels;
     let vector_span_models = !spw_average
@@ -5916,7 +5937,10 @@ fn build_generic_visibility_scatter_with_averaging(
     let selected_antenna1 = selected_i32_values(ms.main_table(), "ANTENNA1", &row_numbers)?;
     let selected_antenna2 = selected_i32_values(ms.main_table(), "ANTENNA2", &row_numbers)?;
     let selected_times = selected_f64_values(ms.main_table(), "TIME", &row_numbers)?;
-    let selected_uvw = selected_uvw_values(ms.main_table(), "UVW", &row_numbers)?;
+    let selected_uvw = (spec.x_axis.uses_uvw()
+        || spec.y_axes.iter().copied().any(MsAxis::uses_uvw))
+    .then(|| selected_uvw_values(ms.main_table(), "UVW", &row_numbers))
+    .transpose()?;
     let derived_engine = if spec.x_axis.uses_derived_geometry()
         || spec
             .y_axes
@@ -6334,7 +6358,9 @@ fn build_generic_visibility_scatter_with_averaging(
 
         let antenna1_value = selected_antenna1[row_slot];
         let antenna2_value = selected_antenna2[row_slot];
-        let row_uvw_value = selected_uvw[row_slot];
+        let row_uvw_value = selected_uvw
+            .as_ref()
+            .map_or([0.0; 3], |values| values[row_slot]);
         let (time_group, representative_slot) = time_bins.map_or((None, row_slot), |bins| {
             let group = bins.group(row_slot);
             (Some(group), bins.first_row_slot(group))
@@ -6686,6 +6712,7 @@ fn build_generic_visibility_scatter_with_averaging(
                             );
                             Some(if flagged { 0.0 } else { f64::from(weight) })
                         });
+                    let flagged_sample = show_flagged && flags[(*corr_index, bin.start)];
                     for (index, (grid, buffer)) in visibility_grids
                         .iter()
                         .zip(&mut bin_buffers)
@@ -6703,7 +6730,12 @@ fn build_generic_visibility_scatter_with_averaging(
                                 false,
                             );
                         } else {
-                            buffer.collect(grid, &flags, spectrum, *corr_index, bin, false);
+                            let mask = if flagged_sample {
+                                plotms_ordinates::BinSampleMask::FlaggedAverage
+                            } else {
+                                plotms_ordinates::BinSampleMask::Clear
+                            };
+                            buffer.collect(grid, &flags, spectrum, *corr_index, bin, mask);
                             if channel_baselines || spw_channels {
                                 buffer.normalize_vector_average();
                             }
@@ -6785,6 +6817,9 @@ fn build_generic_visibility_scatter_with_averaging(
                             }
                         });
                         let accumulator = series.points.entry(point_key.clone()).or_default();
+                        if show_flagged && !accumulator.accept_visibility_sample(flagged_sample) {
+                            continue;
+                        }
                         if let Some(weight) = primary_weight {
                             let sum = accumulator.combined_primary_weight.get_or_insert(0.0);
                             if time_antenna {
@@ -6847,6 +6882,7 @@ fn build_generic_visibility_scatter_with_averaging(
                                             },
                                             *corr_index,
                                             bin,
+                                            flagged_sample,
                                         )
                                     };
                                 }
@@ -6873,12 +6909,18 @@ fn build_generic_visibility_scatter_with_averaging(
                                 }
                             }
                         } else {
-                            accumulator
-                                .x_visibility
-                                .add(x_samples, scalar_weight, conjugate);
-                            accumulator
-                                .y_visibility
-                                .add(y_samples, scalar_weight, conjugate);
+                            accumulator.x_visibility.add(
+                                x_samples,
+                                scalar_weight,
+                                conjugate,
+                                standalone_antenna,
+                            );
+                            accumulator.y_visibility.add(
+                                y_samples,
+                                scalar_weight,
+                                conjugate,
+                                standalone_antenna,
+                            );
                         }
                         if calibration.is_some()
                             && spec.averaging.avgtime.is_some()
@@ -7178,6 +7220,7 @@ fn build_generic_visibility_scatter_with_averaging(
     });
     let time_statistics = time_statistics.map(plotms_columns::TimeStatistics::finish);
     let retain_empty_panel = average_operands
+        || symbols.is_some()
         || spw_average
         || antenna_channels
         || scalar_antenna_time
@@ -7207,9 +7250,9 @@ fn build_generic_visibility_scatter_with_averaging(
                     plan.combine_series(&mut series, time_spw);
                 }
             }
-            let mut output = MsScatterSeries {
-                label: series.label,
-                color_group: series.color_group,
+            let make_output = |label, color_group| MsScatterSeries {
+                label,
+                color_group,
                 y_axis: series.y_axis,
                 y_index: series.y_index,
                 points: Vec::new(),
@@ -7217,6 +7260,9 @@ fn build_generic_visibility_scatter_with_averaging(
                 plotms_metadata: Vec::new(),
                 plotms_averaged_ids: averaged_ids.clone(),
             };
+            let mut output = make_output(series.label, series.color_group);
+            let mut flagged_output =
+                show_flagged.then(|| make_output("Flagged".into(), "flagged".into()));
             let mut points = series.points.into_iter().map(|(key, point)| {
                 let group = key.time_key.group();
                 let order = group.map(|group| match key.baseline {
@@ -7343,6 +7389,15 @@ fn build_generic_visibility_scatter_with_averaging(
                 let Some(y_value) = project(series.y_axis, false) else {
                     continue;
                 };
+                let output = if accumulator.visibility_flagged == Some(true) {
+                    flagged_output
+                        .as_mut()
+                        .expect("flagged visibility has a display layer")
+                } else if symbols.is_some_and(|symbols| !symbols.unflagged) {
+                    continue;
+                } else {
+                    &mut output
+                };
                 output.points.push((x_value, y_value));
                 output.provenance.push(representative);
                 if calibration.is_some() {
@@ -7369,6 +7424,9 @@ fn build_generic_visibility_scatter_with_averaging(
                     .sort_by(|left, right| left.0.total_cmp(&right.0));
             }
             if !output.points.is_empty() {
+                series_entries.push(output);
+            }
+            if let Some(output) = flagged_output.filter(|output| !output.points.is_empty()) {
                 series_entries.push(output);
             }
         }
@@ -8471,7 +8529,7 @@ fn collect_bin_samples_into(
     flags: &ndarray::ArrayView2<'_, bool>,
     corr_index: usize,
     bin: &ChannelBin,
-    show_flagged: bool,
+    mask: plotms_ordinates::BinSampleMask,
     mut weights: Option<(&FloatGrid, &mut Vec<f64>)>,
     samples: &mut Vec<Complex64>,
 ) {
@@ -8483,12 +8541,16 @@ fn collect_bin_samples_into(
         return;
     }
     for channel in bin.channels() {
-        if channel >= grid.chan_count || (!show_flagged && flags[(corr_index, channel)]) {
+        if channel >= grid.chan_count
+            || (mask == plotms_ordinates::BinSampleMask::Clear && flags[(corr_index, channel)])
+        {
             continue;
         }
         let index = corr_index * grid.chan_count + channel;
         let value = grid.values[index];
-        if value.re.is_finite() && value.im.is_finite() {
+        if mask == plotms_ordinates::BinSampleMask::FlaggedAverage
+            || (value.re.is_finite() && value.im.is_finite())
+        {
             samples.push(value);
             if let Some((spectrum, values)) = &mut weights {
                 values.push(spectrum.values[index]);

@@ -993,6 +993,183 @@ def time_average_fixture(root):
     return vis, integration
 
 
+def compare_time_averaged_flag_symbols(root, native):
+    from plotms_callibrary_oracle import snapshot, verify_source
+
+    work = root / "time-averaged-flag-symbols"
+    work.mkdir()
+    vis, integration = time_average_fixture(work)
+    with opened(vis, True) as table:
+        later = integration % 2 != 0
+        for name in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(name)
+            values[:, :, later] *= 1j
+            table.putcol(name, values)
+        flags = np.zeros_like(table.getcol("FLAG"))
+        flags[:, 2, :] = ~later ^ (integration >= 4)
+        flags[:, 3, :] = True
+        table.putcol("FLAG", flags)
+    before = snapshot(vis)
+    base = request(vis) | dict(yaxis="amp", avgtime="20", averagedata=True,
+                               title="Flagged visibility")
+    marker_color = "dd2255"
+    styles = dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
+                  flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
+                  flaggedsymbolfill="fill", flaggedsymboloutline=False)
+    variants = (
+        ("vector", False, 3, [2.40832, 27.0185], [5, 25, 45]),
+        ("scalar", True, 2, [2.63636, 26.3636], [10, 40]),
+    )
+    with opened(vis) as table:
+        origin = np.unique(table.getcol("TIME"))[0]
+    for kind, scalar, groups, first, offsets in variants:
+        clear = base | dict(scalar=scalar)
+        marked = clear | styles
+        modes = (
+            ("clear", clear, [1, 2]),
+            ("both", marked, [1, 2, 3]),
+            ("flagged", marked | dict(customsymbol=True, symbolshape="nosymbol"), [3]),
+        )
+        for mode, options, channels in modes:
+            name = f"time-{kind}-symbols-{mode}"
+            expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+            assert reference(**options, plotfile=str(expected), expformat="txt") is None
+            points = rows(expected)
+            assert [int(point[2]) for point in points] == channels * groups
+            assert np.allclose([float(point[9]) for point in points[::len(channels)]],
+                               origin + np.asarray(offsets), rtol=0, atol=0.00051)
+            if mode == "both":
+                np.testing.assert_allclose([float(points[1][0]), float(points[1][1])],
+                                           [3, 30], rtol=1.2e-5)
+                for slot in (0, 2):
+                    np.testing.assert_allclose([float(value) for value in points[slot][:2]],
+                                               first, rtol=1.2e-5)
+                if not scalar:
+                    np.testing.assert_allclose([float(value) for value in points[-2][:2]], [1, 10])
+            assert native(**options, plotfile=str(actual), expformat="txt") is None
+            assert compare_text(actual, expected) == len(points)
+            print(f"{name}: {len(points)} matching time-averaged coordinates and flags", flush=True)
+        compare_flagged_figure(work, native, f"time-{kind}-symbols-both", marked, marker_color,
+                               labels=("Flagged visibility", "Amp", "Amp:corrected"),
+                               is_flagged=lambda point: point[2] == "3")
+    compare_empty_export(work, native, "time-all-flagged", base | dict(spw="0:3"),
+                         ("Amp", "Amp:corrected"))
+    verify_source(vis, before)
+    edge = work / "time-flagged-nonfinite.ms"
+    copy_ms(vis, edge)
+    with opened(edge, True) as table:
+        times = table.getcol("TIME")
+        data = table.getcol("DATA")
+        data[:, 3, (times == origin) | (times >= origin + 30)] = np.nan
+        table.putcol("DATA", data)
+    before = snapshot(edge)
+    controls = base | styles | dict(vis=str(edge), spw="0:3", scalar=True,
+                                    customsymbol=True, symbolshape="nosymbol")
+    compare_flagged_average_edge(work, native, "scalar-time-nonfinite", controls,
+                                 [(np.nan, 26.3636), (np.nan, 28.9474)])
+    verify_source(edge, before)
+
+
+def compare_flagged_average_edge(root, native, name, controls, coordinates):
+    expected, actual = (root / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+    assert reference(**(controls | dict(plotfile=str(expected), expformat="txt"))) is None
+    assert native(**(controls | dict(plotfile=str(actual), expformat="txt"))) is None
+    points = rows(expected)
+    assert {point[2] for point in points} == {"3"}
+    np.testing.assert_allclose(np.array([point[:2] for point in points], dtype=float),
+                               coordinates, rtol=1.2e-5, equal_nan=True)
+    assert compare_text(actual, expected) == len(coordinates)
+    print(f"{name}: {len(points)} matching flagged coordinates with low weights or NaNs", flush=True)
+
+
+def compare_reduced_flag_symbols(root, native):
+    from plotms_callibrary_oracle import snapshot, verify_source
+    from plotms_ms_spw_average_oracle import make_fixture
+
+    work = root / "reduced-flag-symbols"
+    work.mkdir()
+    vis = make_fixture(work, antenna_count=3)
+    with opened(vis, True) as table:
+        first_window = table.getcol("DATA_DESC_ID") == 0
+        first_baseline = table.getcol("ANTENNA2") == 1
+        flags = np.zeros_like(table.getcol("FLAG"))
+        flags[:, 2, first_window & first_baseline] = True
+        flags[:, 3, :] = True
+        table.putcol("FLAG", flags)
+        table.putcol("FLAG_ROW", first_window & first_baseline)
+        for name in ("DATA", "CORRECTED_DATA"):
+            values = table.getcol(name)
+            values *= np.where(first_baseline, 1, 2)
+            table.putcol(name, values)
+    before = snapshot(vis)
+    base = request(vis) | dict(yaxis="amp", averagedata=True, expformat="txt",
+                               title="Flagged visibility")
+    marker_color = "dd2255"
+    styles = dict(customflaggedsymbol=True, flaggedsymbolshape="diamond",
+                  flaggedsymbolcolor=marker_color, flaggedsymbolsize=4,
+                  flaggedsymbolfill="fill", flaggedsymboloutline=False)
+    cases = (
+        ("antenna", dict(avgantenna=True, antenna="A0&A1;A0&A2"),
+         "0", "-1", ((1, 0), (2, 0), (3, 0), (1, 1), (2, 1), (3, 1), (1, 2), (2, 2), (3, 2)),
+         {(3, 0), (2, 1), (3, 1), (3, 2)}),
+        ("spw", dict(avgspw=True, spw="0:1~3,1:1~3"),
+         "0", "1", ((1, 0), (2, 0), (3, 0)), {(3, 0)}),
+    )
+    def identity(point):
+        return int(point[2]), int(point[5])
+
+    for reduction, averaging, window, antenna2, identities, flagged in cases:
+        for kind, scalar in (("vector", False), ("scalar", True)):
+            clear = base | averaging | dict(scalar=scalar)
+            marked = clear | styles
+            names = (
+                ("clear", clear, tuple(key for key in identities if key not in flagged)),
+                ("both", marked, identities),
+                ("flagged", marked | dict(customsymbol=True, symbolshape="nosymbol"),
+                 tuple(key for key in identities if key in flagged)),
+            )
+            for mode, options, members in names:
+                name = f"{reduction}-{kind}-symbols-{mode}"
+                expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+                assert reference(**options, plotfile=str(expected)) is None
+                points = rows(expected)
+                assert tuple(map(identity, points)) == members * 2
+                assert {(point[11], point[6], point[12]) for point in points} == {(window, antenna2, "XX")}
+                assert native(**options, plotfile=str(actual)) is None
+                assert compare_text(actual, expected) == len(points)
+                print(f"{name}: {len(points)} matching coordinates, identifiers and flags", flush=True)
+            if not scalar:
+                compare_flagged_figure(work, native, f"{reduction}-{kind}-symbols-both", marked, marker_color,
+                                       labels=("Flagged visibility", "Amp", "Amp:corrected"),
+                                       is_flagged=lambda point: identity(point) in flagged)
+    verify_source(vis, before)
+    edge = work / "reduced-flagged-weights.ms"
+    copy_ms(vis, edge)
+    with opened(edge, True) as table:
+        times = table.getcol("TIME")
+        first_window = table.getcol("DATA_DESC_ID") == 0
+        first_baseline = table.getcol("ANTENNA2") == 1
+        data = table.getcol("DATA")
+        data[:, 3, first_window & first_baseline & (times > times[first_window].min())] = np.nan
+        table.putcol("DATA", data)
+        weights = table.getcol("WEIGHT")
+        weights[:, first_window & first_baseline] = 0
+        weights[:, first_window & ~first_baseline] = np.finfo(np.float32).tiny
+        table.putcol("WEIGHT", weights)
+    before = snapshot(edge)
+    controls = base | styles | dict(vis=str(edge), customsymbol=True, symbolshape="nosymbol")
+    antenna = controls | dict(avgantenna=True, antenna="A0&A1;A0&A2", spw="0:3")
+    compare_flagged_average_edge(
+        work, native, "antenna-low-weights-and-nonfinite", antenna,
+        [(13.4164, 46.8615), (8.94427, 31.241), (17.8885, 62.482),
+         (np.nan, 46.8615), (np.nan, 31.241), (17.8885, 62.482)],
+    )
+    spw = controls | dict(avgspw=True, spw="0:3,1:3")
+    compare_flagged_average_edge(work, native, "spw-nonfinite", spw,
+                                 [(20, 42.5206), (np.nan, 42.5206)])
+    verify_source(edge, before)
+
+
 def compare_time_averaged_statistics(root, native):
     from casars.tasks import TaskParameterError
     from plotms_callibrary_oracle import snapshot, verify_source
@@ -2027,7 +2204,7 @@ def main():
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("time-statistics", "channel-flag-symbols"))
+    parser.add_argument("--only", choices=("time-statistics", "channel-flag-symbols", "averaged-flag-symbols"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -2041,6 +2218,10 @@ def main():
     with chdir(root), plotms_launcher(args.app_run):
         if args.only == "time-statistics":
             compare_time_averaged_statistics(root, native)
+            return
+        if args.only == "averaged-flag-symbols":
+            compare_time_averaged_flag_symbols(root, native)
+            compare_reduced_flag_symbols(root, native)
             return
         vis, source = fixture(root)
         if args.only == "channel-flag-symbols":
@@ -2058,6 +2239,8 @@ def main():
         compare_multiple_ordinates(root, vis, native)
         compare_averaged_columns(root, native)
         compare_time_averaged_columns(root, native)
+        compare_time_averaged_flag_symbols(root, native)
+        compare_reduced_flag_symbols(root, native)
         compare_time_averaged_statistics(root, native)
         compare_combined_averaged_columns(root, native)
         compare_time_scan_field_columns(root, native)

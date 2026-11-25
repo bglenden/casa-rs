@@ -277,10 +277,15 @@ impl CliOptions {
     }
 
     fn supports_visibility_symbols(&self, columns: [MsDataColumn; 3]) -> bool {
+        let reductions = [self.avgtime.is_some(), self.avgantenna, self.avgspw];
+        let unbinned_reduction = reductions.into_iter().filter(|&enabled| enabled).count() == 1
+            && !(self.avgscan || self.avgfield || self.avgbaseline)
+            && self.avgchannel.is_none_or(|width| width <= 1)
+            && self.freqframe.is_none();
         self.x_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis.is_some_and(MsAxis::is_visibility_math)
             && self.y_axis2.is_none()
-            && !self.plotms_extended_averaging()
+            && (!self.plotms_extended_averaging() || unbinned_reduction)
             && (!self.scalar || self.avgchannel.is_none_or(|width| width <= 1))
             && self.iteraxis.is_none()
             && self.color_by == MsColorAxis::None
