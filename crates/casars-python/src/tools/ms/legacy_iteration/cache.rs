@@ -31,34 +31,32 @@ impl AttachedMs {
         if !self.writable || self.is_multi_ms {
             return Ok(());
         }
-        let source = Table::open(TableOptions::new(&self.path)).map_err(runtime_error)?;
-        let root = source
-            .simple_reference_root()
-            .map_err(runtime_error)?
-            .unwrap_or_else(|| self.path.clone())
-            .canonicalize()
-            .map_err(runtime_error)?;
-        if !matches!(
-            Table::immediate_part_names(&root, &root).map_err(runtime_error)?,
-            TablePartNames::Plain(_)
-        ) {
+        let projected = compose_rows(working_rows, Some(cursor.ordered_rows()));
+        let projected = projected.expect("iterator rows were supplied");
+        let (root, selected) = if captured.plain {
+            (self.path.clone(), projected.into_owned())
+        } else {
+            let Some(physical) = captured
+                .table
+                .reference_write_projection(&projected, &[])
+                .map_err(runtime_error)?
+            else {
+                return Ok(());
+            };
+            let root = physical.path.canonicalize().map_err(runtime_error)?;
+            if !matches!(
+                Table::immediate_part_names(&root, &root).map_err(runtime_error)?,
+                TablePartNames::Plain(_)
+            ) {
+                return Ok(());
+            }
+            (root, physical.rows)
+        };
+        let output = root.join("SORTED_TABLE");
+        if captured.plain && reusable_cache(&captured.table, &output, cursor.keys(), &selected)? {
+            captured.verify_write_layout(&BTreeSet::new())?;
             return Ok(());
         }
-        let projected = compose_rows(working_rows, Some(cursor.ordered_rows()));
-        let projected = projected.as_deref().expect("iterator rows were supplied");
-        let root_rows = source.root_row_numbers().map_err(runtime_error)?;
-        let selected = projected
-            .iter()
-            .map(|&row| {
-                root_rows
-                    .get(row)
-                    .and_then(|&root_row| usize::try_from(root_row).ok())
-                    .ok_or_else(|| {
-                        runtime_error("legacy iterator row is outside the current source")
-                    })
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-        let output = root.join("SORTED_TABLE");
         let mut temporary = None;
         if !self.write_locks.contains_key(&root) {
             temporary = Some(TableWriteLock::acquire_to_reread(&root, 0).map_err(runtime_error)?);
@@ -138,12 +136,13 @@ fn reusable_cache(main: &Table, output: &Path, keys: &[String], rows: &[usize]) 
     else {
         return Ok(false);
     };
-    if !columns.iter().eq(keys)
-        || !matches!(
-            main.keywords().get("SORTED_TABLE"),
-            Some(Value::TableRef(_))
-        )
-    {
+    let Some(Value::TableRef(link)) = main.keywords().get("SORTED_TABLE") else {
+        return Ok(false);
+    };
+    let source = main
+        .path()
+        .expect("sorted cache belongs to a persisted table");
+    if !columns.iter().eq(keys) || casa_tables::add_directory(link, source) != output {
         return Ok(false);
     }
     match fs::symlink_metadata(output) {

@@ -130,3 +130,26 @@ def test_legacy_writable_multims_uses_a_cursor_without_a_saved_sort_reference(
     assert table.open(path)
     assert not {"SORT_COLUMNS", "SORTED_TABLE"}.intersection(table.keywordnames())
     assert table.done()
+
+
+def test_writable_legacy_reference_caches_root_rows_and_restores_view_order(
+    baseline_fixture, native_dataset, writer_api,
+):
+    casa, view, original = baseline_fixture
+    rows = np.array([13, 7, 0, 2, 5], dtype=np.int64)
+    path = view("ordered-reference.ms", rows)
+    reader = writer_api.ms()
+    assert reader.open(path, nomodify=False)
+    assert reader.iterinitold(["TIME", "ANTENNA1"], adddefaultsortcolumns=False)
+    assert reader.iteroriginold()
+    np.testing.assert_array_equal(reader.rangeold("rows")["rows"], np.array([0, 2]), strict=True)
+    assert reader.iterendold()
+    np.testing.assert_array_equal(reader.rangeold("rows")["rows"], rows, strict=True)
+    assert reader.done()
+
+    expected = rows[np.lexsort((original["antenna1"][rows], original["time"][rows]))]
+    for api in (casa, tools):
+        table = api.table()
+        assert table.open(str(native_dataset / "SORTED_TABLE"))
+        np.testing.assert_array_equal(table.getcol("DATA"), original["data"][..., expected], strict=True)
+        assert table.done()

@@ -40,11 +40,11 @@ pub(super) struct VisibilityState {
 }
 
 pub(super) struct VisibilityMain {
-    table: Table,
+    pub(super) table: Table,
     members: Vec<Table>,
     reference: Option<PlainReferenceRead>,
     publication: Vec<VisibilityPublication>,
-    plain: bool,
+    pub(super) plain: bool,
 }
 
 struct VisibilityPublication {

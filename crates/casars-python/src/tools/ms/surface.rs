@@ -200,7 +200,7 @@ const METHODS: &[Method] = &[
             param("average", K::Bool, Bool(false)),
         ],
         R::Any,
-        Status::Partial,
+        Yes,
     ),
     method(
         "getfielddirmeas",
@@ -225,7 +225,7 @@ const METHODS: &[Method] = &[
     method("ismultims", &[], R::Any, Yes),
     method("iswritable", &[], R::Any, Yes),
     method("iterend", &[], R::Bool, Yes),
-    method("iterendold", &[], R::Any, No),
+    method("iterendold", &[], R::Bool, Yes),
     method(
         "iterinit",
         &[
@@ -245,13 +245,13 @@ const METHODS: &[Method] = &[
             param("maxrows", K::Int, Int(0)),
             param("adddefaultsortcolumns", K::Bool, Bool(true)),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method("iternext", &[], R::Bool, Yes),
-    method("iternextold", &[], R::Any, No),
+    method("iternextold", &[], R::Bool, Yes),
     method("iterorigin", &[], R::Bool, Yes),
-    method("iteroriginold", &[], R::Any, No),
+    method("iteroriginold", &[], R::Bool, Yes),
     method(
         "lister",
         &[
@@ -423,7 +423,7 @@ const METHODS: &[Method] = &[
         "putdataold",
         &[param("items", K::Record, EmptyRecord)],
         R::Bool,
-        Status::Partial,
+        Yes,
     ),
     method(
         "range",
@@ -443,7 +443,7 @@ const METHODS: &[Method] = &[
             param("blocksize", K::Int, Int(10)),
         ],
         R::Record,
-        Status::Partial,
+        Yes,
     ),
     method(
         "regridspw",
