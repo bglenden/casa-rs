@@ -124,7 +124,7 @@ def configure(figure, panel_axes, document, options):
         for line in axis.lines:
             layer = layers.get(line.get_gid())
             if layer is not None:
-                _line(line, layer, options, meshes=measurement_set)
+                _line(line, layer, options, measurement_set=measurement_set)
     if options.get("showlegend") and figure.axes:
         handles, labels = [], []
         for axis in figure.axes:
@@ -250,7 +250,7 @@ def _share_measurement_set_axes(figure, primary, layout, options):
                     axis.set_ylabel("")
 
 
-def _line(line, layer, options, *, meshes):
+def _line(line, layer, options, *, measurement_set):
     index = layer["id"].partition("-")[0]
     series = int(index) if index.isdigit() else 0
     flagged = layer["color_group"] == "flagged"
@@ -269,7 +269,7 @@ def _line(line, layer, options, *, meshes):
         line.set_marker(marker)
         line.set_markersize(size)
         line.set_markeredgecolor("black" if outline else color)
-        patterned = meshes and fill in ("mesh1", "mesh2", "mesh3") and marker in ("o", "s", "D")
+        patterned = measurement_set and fill in ("mesh1", "mesh2", "mesh3") and marker in ("o", "s", "D")
         line.set_markerfacecolor("none" if patterned or fill == "nofill" else color)
         if patterned:
             line.axes.scatter(
@@ -279,7 +279,7 @@ def _line(line, layer, options, *, meshes):
             )
     else:
         line.set_markersize(layer["symbol_size"])
-    if options.get("xconnector") == "step":
+    if not measurement_set and options.get("xconnector") == "step":
         line.set_linestyle("-")
         line.set_drawstyle("steps-mid")
 

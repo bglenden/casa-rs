@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: LGPL-3.0-or-later
-"""Pair static MeasurementSet point styles and mesh fill categories."""
+"""Pair static MeasurementSet marker styles and connector controls."""
 
 import argparse
 from contextlib import chdir
@@ -174,12 +174,81 @@ def compare_color_groups(root, native):
         np.testing.assert_array_equal(table.getcol("FLAG"), flags)
 
 
+def compare_connectors(root, native):
+    from casars.tasks import _plotms_plot
+
+    root.mkdir()
+    vis, _ = fixture(root)
+    with opened(vis, True) as table:
+        time = table.getcol("TIME")
+        epochs, slots = np.unique(time, return_inverse=True)
+        reverse = epochs[-1 - slots]
+        table.putcol("TIME", reverse)
+        table.putcol("TIME_CENTROID", reverse)
+        data = table.getcol("DATA")
+        phase = np.asarray([-145, 40, 130, -30, 75, -85, -135, 60, 150, -20, 110, -60])
+        data *= np.exp(1j * np.deg2rad(phase[slots]))
+        table.putcol("DATA", data)
+        flags = table.getcol("FLAG")
+        flags[:, :, slots == 2] = True
+        table.putcol("FLAG", flags)
+    controls = request(vis) | dict(
+        xaxis="phase", xdatacolumn="data", yaxis="real", ydatacolumn="corrected",
+        correlation="XX,YY", spw="0:1~3", coloraxis="corr",
+    )
+    cases = (
+        ("blank", dict(xconnector="")),
+        ("line", dict(xconnector="line")),
+        ("step", dict(xconnector="step")),
+        ("time-only", dict(xconnector="", timeconnector=True)),
+        ("line-time", dict(xconnector="line", timeconnector=True)),
+        ("step-time", dict(xconnector="step", timeconnector=True)),
+    )
+    pinned = {}
+    for name, extra in cases:
+        path = root / f"{name}-casa.txt"
+        assert reference(**(controls | extra), expformat="txt", plotfile=str(path)) is None
+        pinned[name] = (path, images(root, f"{name}-casa", reference, controls | extra))
+    blank, pinned_blank = pinned["blank"]
+    points = rows(blank)
+    assert len(points) == 25
+    coords = np.array([p[:2] for p in points], dtype=float)
+    assert np.any(np.diff(coords[:, 0]) > 0) and np.any(np.diff(coords[:, 0]) < 0)
+    assert len({p[9] for p in points}) == 5 and {p[12] for p in points} == {"XX", "YY"}
+    for path, raster in pinned.values():
+        assert path.read_bytes() == blank.read_bytes()
+        np.testing.assert_array_equal(raster, pinned_blank)
+
+    configure = _plotms_plot.configure
+
+    def capture(figure, axis, document, options):
+        configure(figure, axis, document, options)
+        assert len(axis.lines) == 2
+        for line in axis.lines:
+            assert line.get_linestyle() in ("None", "", " ")
+            selected = coords[[p[12] == line.get_label() for p in points]]
+            np.testing.assert_allclose(line.get_xydata(), selected, rtol=1.2e-5)
+
+    baseline = None
+    for name, extra in cases:
+        path = root / f"{name}-native.txt"
+        assert native(**(controls | extra), expformat="txt", plotfile=str(path)) is None
+        assert compare_text(path, pinned[name][0]) == len(points)
+        with patch.object(_plotms_plot, "configure", capture):
+            raster = images(root, f"{name}-native", native, controls | extra)
+        if baseline is None:
+            baseline = raster
+        else:
+            np.testing.assert_array_equal(raster, baseline)
+    print(f"MeasurementSet connector modes: six pairs retain {len(points)} samples and draw no links", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--native-bin", type=Path, required=True)
     parser.add_argument("--app-run", type=Path)
-    parser.add_argument("--only", choices=("mesh", "ordinates", "groups"))
+    parser.add_argument("--only", choices=("mesh", "ordinates", "groups", "connectors"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -194,6 +263,8 @@ def main():
             compare_ordinate_styles(root / "ordinates", native)
         if args.only in (None, "groups"):
             compare_color_groups(root / "groups", native)
+        if args.only in (None, "connectors"):
+            compare_connectors(root / "connectors", native)
 
 
 if __name__ == "__main__":

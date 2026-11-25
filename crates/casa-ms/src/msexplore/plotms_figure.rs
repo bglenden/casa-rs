@@ -89,11 +89,6 @@ pub(super) fn prepare(
             second == Some(MsAxis::Frequency),
         ],
         limits,
-        connect: task.flag("timeconnector")?
-            || task
-                .text("xconnector")?
-                .as_deref()
-                .is_some_and(|value| matches!(value, "line" | "step")),
         colorize: task.flag("colorizeoverlay")?
             && task
                 .text("coloraxis")?
@@ -528,7 +523,6 @@ pub(super) fn column_axis_name(axis: MsAxis, column: MsDataColumn) -> String {
 struct PanelStyle {
     frequency: [bool; 3],
     limits: [f64; 4],
-    connect: bool,
     colorize: bool,
 }
 
@@ -599,7 +593,7 @@ impl PanelStyle {
             layer.style = Some(PlotLayerStyle {
                 color: None,
                 marker: Some("o".into()),
-                line_style: self.connect.then(|| "-".into()),
+                line_style: None,
             });
         }
         if let Some(curves) = overlays {
@@ -646,11 +640,7 @@ impl PanelStyle {
                 layers.push(PlotDocumentLayer {
                     id: format!("atmosphere-{panel}-{index}-{group_index}"),
                     title: curve.axis.label().into(),
-                    kind: if self.connect {
-                        PlotLayerKind::Line
-                    } else {
-                        PlotLayerKind::Scatter
-                    },
+                    kind: PlotLayerKind::Scatter,
                     x_axis_id: "x".into(),
                     y_axis_id: "atmosphere".into(),
                     x_values: Vec::new(),
@@ -674,7 +664,7 @@ impl PanelStyle {
                     style: Some(PlotLayerStyle {
                         color: (!self.colorize).then(|| default_overlay_color(index).into()),
                         marker: Some("o".into()),
-                        line_style: self.connect.then(|| "-".into()),
+                        line_style: None,
                     }),
                 });
             }
