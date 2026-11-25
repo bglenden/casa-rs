@@ -418,8 +418,8 @@ def compare_antenna_horizontal_axes(root, native):
     cases = (
         ("ant-azimuth", "XX", [-177.59806, 120.90605], None),
         ("ant-elevation", "XX", [82.98457, 74.9439], "Ant-Elevation (deg)"),
-        ("ant-parangle", "XX", [2.55258, -65.7585], None),
-        ("ant-parangle", "XX,YY", [2.55258, -65.7585], None),
+        ("ant-parang", "XX", [2.55258, -65.7585], None),
+        ("ant-parallacticangle", "XX,YY", [2.55258, -65.7585], None),
     )
     for axis, correlation, anchors, label in cases:
         options = base | dict(yaxis=axis, correlation=correlation)
@@ -436,7 +436,7 @@ def compare_antenna_horizontal_axes(root, native):
             assert [point[12] for point in buffer] == pattern
         np.testing.assert_allclose([float(selected[0][1]), float(selected[90][1])],
                                    anchors, rtol=1.2e-5)
-        if axis == "ant-parangle":
+        if axis.startswith("ant-par"):
             np.testing.assert_allclose([float(selected[3][1]), float(selected[93][1])],
                                        [37.5998, -50.8959], rtol=1.2e-5)
             assert float(selected[9][1]) > 180.0

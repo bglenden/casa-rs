@@ -611,7 +611,9 @@ impl MsAxis {
             }
             "ant-azimuth" => Ok(Self::AntennaAzimuth),
             "ant-elevation" => Ok(Self::AntennaElevation),
-            "ant-parangle" => Ok(Self::AntennaParallacticAngle),
+            "ant-parang" | "ant-parangle" | "ant-parallacticangle" => {
+                Ok(Self::AntennaParallacticAngle)
+            }
             "wt" | "weight" => Ok(Self::Weight),
             "wt*amp" | "weighted_amplitude" => Ok(Self::WeightedAmplitude),
             "sigma" => Ok(Self::Sigma),
