@@ -120,6 +120,33 @@ def test_ms_range_uses_selected_rows_and_recorded_axes(baseline_fixture, native_
         assert reader.done()
 
 
+def test_legacy_float_range_keeps_flags_on_the_recorded_correlation_axis(native_dataset):
+    casa = pinned_casa()
+    table = casa.table()
+    assert table.open(str(native_dataset), nomodify=False)
+    shape = table.getcol("DATA").shape
+    descriptor = table.getcoldesc("DATA")
+    descriptor.update(valueType="float", dataManagerType="StandardStMan", dataManagerGroup="FLOAT_DATA")
+    assert table.addcols({"FLOAT_DATA": descriptor})
+    values = np.arange(1, np.prod(shape) + 1, dtype=np.float32).reshape(shape, order="F")
+    assert table.putcol("FLOAT_DATA", values)
+    flags = np.zeros(shape, dtype=bool)
+    flags[0, 0, 0] = True
+    assert table.putcol("FLAG", flags)
+    assert table.done()
+
+    for api in (casa, tools):
+        reader = api.ms()
+        assert reader.open(str(native_dataset))
+        assert reader.selectpolarizationold("XX")
+        result = reader.rangeold("float_data", useflags=False)
+        np.testing.assert_array_equal(result["float_data"], extrema(values), strict=True)
+        if api is tools:
+            masked = reader.rangeold("float_data")
+            np.testing.assert_array_equal(masked["float_data"], extrema(values[~flags]), strict=True)
+        assert reader.done()
+
+
 def test_ms_range_reads_live_reference_row_numbers(baseline_fixture):
     casa, view, raw = baseline_fixture
     rows = np.array([19, 13, 0, 6, 2, 11, 3, 8], dtype=np.int64)
