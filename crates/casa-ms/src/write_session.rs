@@ -368,6 +368,10 @@ pub struct MeasurementSetWritePlan {
 }
 
 impl MeasurementSetWritePlan {
+    pub(crate) fn selected_rows(&self) -> &[usize] {
+        &self.selected_rows
+    }
+
     /// Maximum rows accepted in one producer batch.
     pub const fn batch_rows(&self) -> usize {
         self.batch_rows

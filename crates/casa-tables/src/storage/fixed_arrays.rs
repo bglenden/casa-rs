@@ -3,9 +3,10 @@
 
 use std::ops::Range;
 
+use super::data_type::CasacoreDataType;
 use super::*;
 use crate::table::SelectedArray2DCells;
-use tiled_stman::packed_update::PackedComplexUpdate;
+use tiled_stman::packed_update::PackedArrayUpdate;
 
 impl CompositeStorage {
     pub(crate) fn load_uniform_2d_from_plain(
@@ -63,14 +64,15 @@ impl CompositeStorage {
         )
     }
 
-    pub(crate) fn prepare_packed_complex_update(
+    pub(crate) fn prepare_packed_array_update(
         &self,
         path: &Path,
         table: &TableDatContents,
         column: &str,
         rows: Range<usize>,
         cell_shape: [usize; 2],
-    ) -> Result<Option<PackedComplexUpdate>, StorageError> {
+        data_type: CasacoreDataType,
+    ) -> Result<Option<PackedArrayUpdate>, StorageError> {
         let set = &table.column_set;
         let Some(entry) = set
             .columns
@@ -97,11 +99,12 @@ impl CompositeStorage {
         {
             return Ok(None);
         }
-        tiled_stman::packed_update::prepare_packed_complex_update(
+        tiled_stman::packed_update::prepare_packed_array_update(
             path,
             entry.dm_seq_nr,
             rows,
             cell_shape,
+            data_type,
         )
     }
 

@@ -3,18 +3,21 @@
 use std::ops::Range;
 
 use super::*;
+use crate::TableWriteLock;
 use crate::storage::TABLE_CONTROL_FILE;
+use crate::storage::data_type::CasacoreDataType;
 use crate::storage::table_control::{TableDatResult, read_table_dat_dispatch};
+use crate::storage::tiled_stman::packed_update::PackedArrayUpdate;
 
 impl TableWritePlan<'_> {
     /// Replace consecutive rank-2 Complex32 cells using native-width values
     /// in Fortran order, with cells back to back. The caller holds the
     /// table's write lock.
     ///
-    /// Returns `false` without writing if this is not a complete tile
-    /// replacement in a single-column TiledShapeStMan cube. The caller can
-    /// then use the ordinary cell write path. An error can follow a partial
-    /// write, as with other in-place saves.
+    /// Returns `false` without writing if the cells do not cover complete
+    /// tile bands in a single-column TiledShapeStMan cube. The final band
+    /// may include padding past the end of the cube. The caller can then
+    /// use the ordinary cell write path. An error can follow a partial write.
     pub fn try_save_packed_complex_rows(
         &mut self,
         column: &str,
@@ -53,7 +56,7 @@ impl TableWritePlan<'_> {
             return Ok(false);
         };
         if !holds_write_lock_for(table, path)
-            || !table.inner.can_save_packed_complex_rows(path, column)
+            || !table.inner.can_save_packed_array_rows(path, column)
         {
             return Ok(false);
         }
@@ -66,8 +69,14 @@ impl TableWritePlan<'_> {
         };
         let persisted_rows = table.require_persisted_rows(path, &table_dat)?;
         table_dat.raise_row_count(persisted_rows);
-        let Some(update) = CompositeStorage
-            .prepare_packed_complex_update(path, &table_dat, column, rows, shape)?
+        let Some(update) = CompositeStorage.prepare_packed_array_update(
+            path,
+            &table_dat,
+            column,
+            rows,
+            shape,
+            CasacoreDataType::TpComplex,
+        )?
         else {
             return Ok(false);
         };
@@ -78,6 +87,136 @@ impl TableWritePlan<'_> {
         result?;
         table.inner.refresh_read_metadata(table_dat)?;
         Ok(true)
+    }
+
+    /// Replace consecutive rank-2 cells from Fortran-order arrays, with one
+    /// cell per element of the last axis. Supports native-width Bool, Float32
+    /// and Complex32 cells in single-column TiledShapeStMan storage.
+    ///
+    /// Each column must cover complete tile bands, optionally including the
+    /// padded last band of its cube. Returns `false` without writing for any
+    /// unsupported layout. The caller must hold the physical table write lock.
+    /// An I/O error can follow a partial write, as for other in-place saves.
+    pub fn try_save_packed_array_rows_holding(
+        &mut self,
+        rows: Range<usize>,
+        columns: &[(&str, &ArrayValue)],
+        lock: &mut TableWriteLock,
+    ) -> Result<bool, TableError> {
+        let table = &mut *self.table;
+        if table.kind != TableKind::Plain
+            || !table.virtual_columns.is_empty()
+            || !table.virtual_bindings.is_empty()
+            || rows.is_empty()
+            || rows.end > table.row_count()
+            || columns.is_empty()
+        {
+            return Ok(false);
+        }
+        let Some(path) = table.source_path.as_deref() else {
+            return Ok(false);
+        };
+        if !lock.matches_table_path(path) {
+            return Err(TableError::NotLocked {
+                operation: "save packed table rows".into(),
+            });
+        }
+        let TableDatResult::Plain(mut table_dat) =
+            read_table_dat_dispatch(&path.join(TABLE_CONTROL_FILE))?
+        else {
+            return Ok(false);
+        };
+        let persisted_rows = table.require_persisted_rows(path, &table_dat)?;
+        table_dat.raise_row_count(persisted_rows);
+        let mut updates = Vec::with_capacity(columns.len());
+        let mut names = HashSet::with_capacity(columns.len());
+        for &(name, array) in columns {
+            let &[axis0, axis1, count] = array.shape() else {
+                return Ok(false);
+            };
+            let shape = [axis0, axis1];
+            let Some(values) = PackedValues::new(array) else {
+                return Ok(false);
+            };
+            let Some(schema) = table.schema().and_then(|schema| schema.column(name)) else {
+                return Ok(false);
+            };
+            let shape_matches = match schema.column_type() {
+                ColumnType::Array(ArrayShapeContract::Fixed { shape: fixed }) => fixed == &shape,
+                ColumnType::Array(ArrayShapeContract::Variable { ndim }) => {
+                    ndim.is_none_or(|dim| dim == 2)
+                }
+                _ => false,
+            };
+            let (element, storage) = values.data_type();
+            if count != rows.len()
+                || shape.contains(&0)
+                || !shape_matches
+                || schema.data_type() != Some(element)
+                || !names.insert(name)
+                || !table.inner.can_save_packed_array_rows(path, name)
+            {
+                return Ok(false);
+            }
+            let Some(update) = CompositeStorage.prepare_packed_array_update(
+                path,
+                &table_dat,
+                name,
+                rows.clone(),
+                shape,
+                storage,
+            )?
+            else {
+                return Ok(false);
+            };
+            updates.push((update, values));
+        }
+        lock.record_write();
+        let result = updates
+            .into_iter()
+            .try_for_each(|(update, values)| values.write(update));
+        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(path);
+        result?;
+        Ok(true)
+    }
+}
+
+enum PackedValues<'a> {
+    Bool(&'a [bool]),
+    Float32(&'a [f32]),
+    Complex32(&'a [Complex32]),
+}
+
+impl<'a> PackedValues<'a> {
+    fn new(array: &'a ArrayValue) -> Option<Self> {
+        match array {
+            ArrayValue::Bool(values) if values.view().reversed_axes().is_standard_layout() => {
+                values.as_slice_memory_order().map(Self::Bool)
+            }
+            ArrayValue::Float32(values) if values.view().reversed_axes().is_standard_layout() => {
+                values.as_slice_memory_order().map(Self::Float32)
+            }
+            ArrayValue::Complex32(values) if values.view().reversed_axes().is_standard_layout() => {
+                values.as_slice_memory_order().map(Self::Complex32)
+            }
+            _ => None,
+        }
+    }
+
+    fn data_type(&self) -> (PrimitiveType, CasacoreDataType) {
+        match self {
+            Self::Bool(_) => (PrimitiveType::Bool, CasacoreDataType::TpBool),
+            Self::Float32(_) => (PrimitiveType::Float32, CasacoreDataType::TpFloat),
+            Self::Complex32(_) => (PrimitiveType::Complex32, CasacoreDataType::TpComplex),
+        }
+    }
+
+    fn write(self, update: PackedArrayUpdate) -> Result<(), crate::storage::StorageError> {
+        match self {
+            Self::Bool(values) => update.write(values),
+            Self::Float32(values) => update.write(values),
+            Self::Complex32(values) => update.write(values),
+        }
     }
 }
 
@@ -96,7 +235,7 @@ fn holds_write_lock_for(_table: &Table, _path: &Path) -> bool {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use ndarray::{ArrayD, IxDyn};
+    use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
     fn zero_table() -> Table {
         let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
@@ -216,6 +355,68 @@ mod tests {
             assert_eq!(array.as_slice_memory_order().unwrap(), values);
         }
         table.unlock().unwrap();
+    }
+
+    #[test]
+    fn packed_bool_tail_under_external_lock_preserves_padding() {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("flags.table");
+        let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
+            "FLAG",
+            PrimitiveType::Bool,
+            vec![1, 3],
+        )])
+        .unwrap();
+        let mut original = Table::with_schema(schema);
+        for _ in 0..5 {
+            original
+                .add_row(RecordValue::new(vec![RecordField::new(
+                    "FLAG",
+                    Value::Array(ArrayValue::Bool(ArrayD::from_elem(IxDyn(&[1, 3]), false))),
+                )]))
+                .unwrap();
+        }
+        let options =
+            tiled_options(&path, EndianFormat::LittleEndian).with_tile_shape(vec![1, 1, 3]);
+        original.save(options.clone()).unwrap();
+        let payload = std::fs::read_dir(&path)
+            .unwrap()
+            .map(|entry| entry.unwrap())
+            .find(|entry| entry.file_name().to_string_lossy().contains("_TSM"))
+            .unwrap()
+            .path();
+        let before = [0xf8, 0xf8, 0xf8, 0xfc, 0xfc, 0xfc];
+        assert_eq!(
+            std::fs::metadata(&payload).unwrap().len(),
+            before.len() as u64
+        );
+        std::fs::write(&payload, before).unwrap();
+        let mut lock = TableWriteLock::acquire_to_reread(&path, 0).unwrap();
+        let mut table = Table::open(options).unwrap();
+        let values = ArrayValue::Bool(
+            ArrayD::from_shape_vec(
+                IxDyn(&[1, 3, 2]).f(),
+                vec![true, false, true, false, true, true],
+            )
+            .unwrap(),
+        );
+        assert!(
+            table
+                .prepare_write()
+                .try_save_packed_array_rows_holding(3..5, &[("FLAG", &values)], &mut lock)
+                .unwrap()
+        );
+        lock.release().unwrap();
+        assert_eq!(
+            std::fs::read(payload).unwrap(),
+            [0xf8, 0xf8, 0xf8, 0xfd, 0xfe, 0xff],
+        );
+        let actual = table
+            .column_accessor("FLAG")
+            .unwrap()
+            .packed_2d_cells_uncached(&[3, 4])
+            .unwrap();
+        assert_eq!(actual, Some(values));
     }
 
     #[test]

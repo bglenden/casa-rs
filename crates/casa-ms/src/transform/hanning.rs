@@ -21,7 +21,7 @@ pub(super) fn smooth(value: &mut ArrayValue, flag_shape: &[usize]) -> Result<(),
     smooth_visibility(value, flag_shape, false)
 }
 
-pub(super) fn smooth_tool_cell(
+pub(super) fn smooth_tool_array(
     value: &mut ArrayValue,
     flag_shape: &[usize],
 ) -> Result<(), TableError> {
@@ -33,7 +33,8 @@ fn smooth_visibility(
     flag_shape: &[usize],
     average_edges: bool,
 ) -> Result<(), TableError> {
-    if flag_shape.len() != 2 || value.shape() != flag_shape {
+    let ranks_match = flag_shape.len() == 2 || (average_edges && flag_shape.len() == 3);
+    if !ranks_match || value.shape() != flag_shape {
         return Err(TableError::Schema(
             "visibility and FLAG must have matching [corr, chan] shapes for Hanning smoothing"
                 .into(),
@@ -116,7 +117,7 @@ pub(super) fn tool_weight(
         return Err(TableError::Schema("Hanning weights must be Float32".into()));
     };
     if spectrum {
-        if weights.shape() != flag_shape || flag_shape.len() != 2 {
+        if weights.shape() != flag_shape || !matches!(flag_shape.len(), 2 | 3) {
             return Err(TableError::Schema("WEIGHT_SPECTRUM must match FLAG".into()));
         }
         apply_interior(

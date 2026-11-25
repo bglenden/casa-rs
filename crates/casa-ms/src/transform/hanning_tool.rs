@@ -12,7 +12,7 @@ use crate::write_session::{
 };
 use crate::{MeasurementSet, MsError, MsResult};
 
-use super::hanning::{flag, smooth_tool_cell, tool_weight};
+use super::hanning::{flag, smooth_tool_array, tool_weight};
 
 /// Visibility columns requested by `ms.hanningsmooth()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +23,18 @@ pub enum HanningDataColumn {
     Corrected,
     /// Smooth observed and already-present corrected data.
     Both,
+}
+
+/// Physical MAIN columns used by the Hanning transform.
+pub struct HanningColumns<'a> {
+    /// Observed and/or corrected arrays in processing order.
+    pub visibilities: &'a [&'a str],
+    /// Boolean flags with the same shape as each visibility array.
+    pub flag: &'a str,
+    /// Per-correlation weights used in the absence of a defined spectrum.
+    pub weight: &'a str,
+    /// Optional per-channel weight spectrum.
+    pub spectrum: Option<&'a str>,
 }
 
 /// Smooth existing visibility, flags and weights at the specified MAIN rows.
@@ -37,37 +49,17 @@ pub enum HanningDataColumn {
 pub fn smooth_ms_hanning(
     ms: &mut MeasurementSet,
     rows: &[usize],
-    mode: HanningDataColumn,
+    columns: HanningColumns<'_>,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
     let table = ms.main_table();
-    let has = |name| {
-        table
-            .schema()
-            .is_some_and(|schema| schema.contains_column(name))
-    };
-    let observed = if has("FLOAT_DATA") {
-        "FLOAT_DATA"
-    } else {
-        "DATA"
-    };
-    let available = [observed, "CORRECTED_DATA"];
-    let visibilities = match mode {
-        HanningDataColumn::Observed => &available[..1],
-        HanningDataColumn::Corrected => &available[1..],
-        HanningDataColumn::Both if has("CORRECTED_DATA") => &available,
-        HanningDataColumn::Both => &available[..1],
-    };
-    let flag_shapes = table.column_accessor("FLAG")?.array_shapes_uncached(rows)?;
-    let spectral = if has("WEIGHT_SPECTRUM") {
-        Some(
-            table
-                .column_accessor("WEIGHT_SPECTRUM")?
-                .array_shapes_uncached(rows)?,
-        )
-    } else {
-        None
-    };
+    let flag_shapes = table
+        .column_accessor(columns.flag)?
+        .array_shapes_uncached(rows)?;
+    let spectral = columns
+        .spectrum
+        .map(|name| table.column_accessor(name)?.array_shapes_uncached(rows))
+        .transpose()?;
     let mut partitions = [Vec::new(), Vec::new()];
     for (index, (&row, shape)) in rows.iter().zip(flag_shapes).enumerate() {
         if let Some([_, nchan]) = shape.as_deref() {
@@ -83,10 +75,13 @@ pub fn smooth_ms_hanning(
             ));
         }
     }
-    for (index, rows) in partitions.into_iter().enumerate() {
-        if !rows.is_empty() {
-            smooth_partition(ms, rows, visibilities, index != 0, lock)?;
-        }
+    let [scalar_rows, spectral_rows] = partitions;
+    if !scalar_rows.is_empty() {
+        smooth_partition(ms, scalar_rows, &columns, columns.weight, false, lock)?;
+    }
+    if !spectral_rows.is_empty() {
+        let spectrum = columns.spectrum.expect("defined spectral weights");
+        smooth_partition(ms, spectral_rows, &columns, spectrum, true, lock)?;
     }
     Ok(())
 }
@@ -94,15 +89,11 @@ pub fn smooth_ms_hanning(
 fn smooth_partition(
     ms: &mut MeasurementSet,
     rows: Vec<usize>,
-    visibilities: &[&str],
+    inputs: &HanningColumns<'_>,
+    weight: &str,
     has_spectrum: bool,
     lock: &mut TableWriteLock,
 ) -> MsResult<()> {
-    let weight = if has_spectrum {
-        "WEIGHT_SPECTRUM"
-    } else {
-        "WEIGHT"
-    };
     let elements = maximum_visibility_cell_elements(ms).map_err(invalid)?;
     let column = |name: &str, bytes: usize| -> MsResult<_> {
         Ok(MeasurementSetWriteColumnPlan {
@@ -116,14 +107,27 @@ fn smooth_partition(
             create_source_column: None,
         })
     };
-    let columns = visibilities
+    let columns = inputs
+        .visibilities
         .iter()
         .map(|name| column(name, 8))
-        .chain([column("FLAG", 1), column(weight, 4)])
+        .chain([column(inputs.flag, 1), column(weight, 4)])
         .collect::<MsResult<_>>()?;
     let resources = MeasurementSetWriteResources::from_system_memory(1).map_err(invalid)?;
     let plan = MeasurementSetWritePlan::selected_row_mutation(rows, columns, resources)
         .map_err(invalid)?;
+    if has_spectrum
+        && plan.selected_rows().len() <= plan.batch_rows()
+        && smooth_packed(
+            ms.main_table_mut(),
+            plan.selected_rows(),
+            inputs,
+            weight,
+            lock,
+        )?
+    {
+        return Ok(());
+    }
     MeasurementSetWriteSession::mutate_selected_rows(
         ms,
         plan,
@@ -135,8 +139,7 @@ fn smooth_partition(
                 if rows.is_empty() {
                     break;
                 }
-                let batch =
-                    smooth_batch(ms.main_table(), rows, visibilities, weight, has_spectrum)?;
+                let batch = smooth_batch(ms.main_table(), rows, inputs, weight, has_spectrum)?;
                 session.write_mutation_batch(ms, batch).map_err(invalid)?;
             }
             Ok(())
@@ -145,20 +148,58 @@ fn smooth_partition(
     Ok(())
 }
 
+fn smooth_packed(
+    table: &mut Table,
+    rows: &[usize],
+    inputs: &HanningColumns<'_>,
+    weight: &str,
+    lock: &mut TableWriteLock,
+) -> MsResult<bool> {
+    let (&first, &last) = rows.first().zip(rows.last()).expect("nonempty packed rows");
+    if !rows.iter().copied().eq(first..=last) {
+        return Ok(false);
+    }
+    let read = |name| table.column_accessor(name)?.packed_2d_cells_uncached(rows);
+    let (Some(mut flags), Some(mut weights)) = (read(inputs.flag)?, read(weight)?) else {
+        return Ok(false);
+    };
+    if !matches!(flags, ArrayValue::Bool(_)) {
+        return Err(invalid("FLAG must be Bool"));
+    }
+    let mut visibilities = Vec::with_capacity(inputs.visibilities.len());
+    for &name in inputs.visibilities {
+        let Some(mut data) = read(name)? else {
+            return Ok(false);
+        };
+        smooth_tool_array(&mut data, flags.shape())?;
+        visibilities.push((name, data));
+    }
+    tool_weight(&mut weights, flags.shape(), true)?;
+    flag(&mut flags);
+    let columns = visibilities
+        .iter()
+        .map(|(name, values)| (*name, values))
+        .chain([(inputs.flag, &flags), (weight, &weights)])
+        .collect::<Vec<_>>();
+    Ok(table
+        .prepare_write()
+        .try_save_packed_array_rows_holding(first..last + 1, &columns, lock)?)
+}
+
 fn smooth_batch(
     table: &Table,
     rows: Vec<usize>,
-    visibilities: &[&str],
+    inputs: &HanningColumns<'_>,
     weight: &str,
     has_spectrum: bool,
 ) -> MsResult<MeasurementSetMutationBatch> {
-    let mut flags = read_cells(table, "FLAG", &rows)?;
+    let mut flags = read_cells(table, inputs.flag, &rows)?;
     let mut weights = read_cells(table, weight, &rows)?;
-    let mut columns = Vec::with_capacity(visibilities.len() + 2);
-    for name in visibilities {
+    let mut columns = Vec::with_capacity(inputs.visibilities.len() + 2);
+    for name in inputs.visibilities {
         let mut data = read_cells(table, name, &rows)?;
         for (data, flag) in data.iter_mut().zip(&flags) {
-            smooth_tool_cell(data, flag.shape())?;
+            smooth_tool_array(data, flag.shape())?;
         }
         columns.push(array_column(name, data));
     }
@@ -169,7 +210,7 @@ fn smooth_batch(
         tool_weight(weights, flags.shape(), has_spectrum)?;
         flag(flags);
     }
-    columns.push(array_column("FLAG", flags));
+    columns.push(array_column(inputs.flag, flags));
     columns.push(array_column(weight, weights));
     Ok(MeasurementSetMutationBatch {
         row_indices: rows,

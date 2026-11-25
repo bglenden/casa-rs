@@ -11,7 +11,7 @@ use casa_ms::tool_iteration::{
 };
 use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
-use casa_ms::transform::{HanningDataColumn, smooth_ms_hanning};
+use casa_ms::transform::{HanningColumns, HanningDataColumn, smooth_ms_hanning};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
 use casa_tables::{PlainReferenceRead, Table, TableOptions, TablePartNames, TableWriteLock};
 use casa_types::RecordValue;
@@ -539,30 +539,23 @@ impl AttachedMs {
         } else {
             "DATA"
         };
+        let spectral = has("WEIGHT_SPECTRUM");
+        let create_corrected = mode == HanningDataColumn::Corrected && !has("CORRECTED_DATA");
         let mut names = vec!["FLAG", "WEIGHT"];
-        if has("WEIGHT_SPECTRUM") {
+        if spectral {
             names.push("WEIGHT_SPECTRUM");
         }
-        if mode != HanningDataColumn::Corrected || !has("CORRECTED_DATA") {
-            names.push(observed);
-        }
+        let visibility_index = names.len();
         if mode != HanningDataColumn::Observed && has("CORRECTED_DATA") {
             names.push("CORRECTED_DATA");
+        }
+        if mode != HanningDataColumn::Corrected || create_corrected {
+            names.push(observed);
         }
         let targets = main.write_targets(&rows, &names)?;
         let mut temporary = BTreeMap::new();
         let mut written = BTreeSet::new();
         for target in &targets {
-            if !target
-                .names
-                .iter()
-                .map(String::as_str)
-                .eq(names.iter().copied())
-            {
-                return Err(runtime_error(
-                    "cannot smooth renamed visibility columns in this view (#1030)",
-                ));
-            }
             if !self.write_locks.contains_key(&target.path) {
                 let lock =
                     TableWriteLock::acquire_to_reread(&target.path, 0).map_err(runtime_error)?;
@@ -604,12 +597,26 @@ impl AttachedMs {
                 .or_else(|| temporary.get_mut(&target.path))
                 .expect("physical MAIN write lock was acquired");
             let mut ms = MeasurementSet::open(&target.path).map_err(runtime_error)?;
-            if mode == HanningDataColumn::Corrected {
+            if create_corrected {
                 casa_calibration::initialize_hanning_scratch_holding(&mut ms, lock)
                     .map_err(runtime_error)?;
             }
+            let visibilities = if create_corrected {
+                vec!["CORRECTED_DATA"]
+            } else {
+                target.names[visibility_index..]
+                    .iter()
+                    .map(String::as_str)
+                    .collect()
+            };
+            let columns = HanningColumns {
+                visibilities: &visibilities,
+                flag: &target.names[0],
+                weight: &target.names[1],
+                spectrum: spectral.then(|| target.names[2].as_str()),
+            };
             let rows = target.rows.into_keys().collect::<Vec<_>>();
-            smooth_ms_hanning(&mut ms, &rows, mode, lock).map_err(runtime_error)?;
+            smooth_ms_hanning(&mut ms, &rows, columns, lock).map_err(runtime_error)?;
         }
         self.refresh_written_readers(&main, &written, [modern, legacy, vi1, grid])?;
         for (_, lock) in temporary {
