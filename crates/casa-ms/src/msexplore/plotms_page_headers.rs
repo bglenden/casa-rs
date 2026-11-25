@@ -9,12 +9,12 @@ use casa_types::quanta::MvTime;
 use casa_types::quanta::format::{ANGLE, CLEAN, TIME, format_angle, format_time};
 
 use super::{
-    MsDataColumn, MsExploreSpec, MsPageHeaderItem, PlotMsInput, plotms_figure, plotms_text,
-    wrap_header_segments,
+    MsDataColumn, MsExploreSpec, MsPageHeaderItem, PlotMsInput, plotms_text, wrap_header_segments,
 };
 use crate::MeasurementSet;
 use crate::columns::main_ids;
-use crate::derived::engine::{detect_epoch_reference, resolve_direction_reference};
+use crate::derived::engine::resolve_direction_reference;
+use crate::subtables::epoch_reference;
 use crate::subtables::field::MsField;
 use crate::subtables::observation::MsObservation;
 
@@ -105,7 +105,7 @@ fn observation_start(table: &MsObservation<'_>, row: usize) -> Option<MvTime> {
     if !seconds.is_finite() {
         return None;
     }
-    let reference = detect_epoch_reference(table.table(), "TIME_RANGE", EpochRef::UTC);
+    let reference = epoch_reference(table.table(), "TIME_RANGE", row, 0).ok()?;
     let start = MEpoch::from_mjd_seconds(seconds, reference)
         .convert_to(EpochRef::UTC, &MeasFrame::new())
         .ok()?;
@@ -131,17 +131,33 @@ fn y_columns(spec: &MsExploreSpec, input: &PlotMsInput<'_>) -> String {
                         .get(index - 2)
                         .map_or(plot.data_column, |entry| entry.1),
                 };
-                if axis.is_visibility_math()
-                    && matches!(column, MsDataColumn::Data | MsDataColumn::Float)
-                {
-                    format!("{}:data", plotms_text::name(axis))
+                let name = plotms_text::name(axis);
+                if axis.is_visibility_math() {
+                    format!("{name}:{}", column_name(column, input.prefer_float_data))
                 } else {
-                    plotms_figure::column_axis_name(axis, column)
+                    name.to_owned()
                 }
             })
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn column_name(column: MsDataColumn, prefer_float: bool) -> &'static str {
+    use MsDataColumn::*;
+
+    match column {
+        Data if prefer_float => "float",
+        CorrectedMinusModel => "corrected-model_vector",
+        CorrectedMinusModelScalar => "corrected-model_scalar",
+        DataMinusModel => "data-model_vector",
+        DataMinusModelScalar => "data-model_scalar",
+        CorrectedDivModel => "corrected/model_vector",
+        CorrectedDivModelScalar => "corrected/model_scalar",
+        DataDivModel => "data/model_vector",
+        DataDivModelScalar => "data/model_scalar",
+        stored => stored.as_str(),
+    }
 }
 
 fn target_direction(

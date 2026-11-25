@@ -258,6 +258,7 @@ mod metadata_field;
 mod metadata_measure;
 pub use metadata_field::FieldDirectionColumn;
 pub use metadata_measure::MetadataDirection;
+pub(crate) use metadata_measure::epoch_reference;
 pub mod observation;
 pub mod pointing;
 pub mod polarization;
