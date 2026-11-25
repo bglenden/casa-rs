@@ -1418,7 +1418,7 @@
       "status": "Partial"
     },
     "expformat": {
-      "scope": "Export TXT, PNG, JPG, PDF or PS. A supplied format takes precedence over the filename. MeasurementSet extension inference is case-insensitive and recognizes .text and .jpeg aliases. The provider rejects an omitted format without a recognized extension. Native PS is PostScript.",
+      "scope": "Export TXT, PNG, JPG, PDF or PS. A supplied format takes precedence over the filename. The rendered MeasurementSet exporter’s extension inference is case-insensitive and recognizes .text and .jpeg aliases. That exporter rejects an omitted format without a recognized extension. Native PS is PostScript.",
       "evidence": [
         "paired",
         "ms-empty-combined-averages",
@@ -3436,11 +3436,11 @@
     "ms-static-export-formats": {
       "kind": "Same-input static MeasurementSet export formats and publication",
       "state": "passed",
-      "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus Amp on the Columns MS, explicit and inferred TXT/PNG/JPG/PDF/PS, aliases, the default and one-sided raster dimensions, high resolution and header canvas, current/all scan pages, format refusals and failed overwrite.",
-      "result": "Match 36 TXT coordinates and 20 paired static products. PNG/JPG dimensions and DPI follow the pinned canvas. Single-page vector files and the raster types show both Channel bands in their expected vertical order. Pinned PostScript requests contain PDF. Native PostScript uses its requested encoding. Format, empty-input and overwrite refusals preserve destinations. An injected native render failure preserves the full prior file and cleans its staging file.",
+      "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus Amp on the Columns MS, explicit and inferred TXT/PNG/JPG/PDF/PS, aliases, the default and one-sided raster dimensions, high resolution and header canvas, current/all scan pages, format refusals and failed overwrite. The raster pass also tests explicit width 410 at 100 DPI and default width at 88 DPI on supported Matplotlib 3.9.",
+      "result": "Match 36 TXT coordinates and 22 paired static products. PNG/JPG dimensions and DPI follow the pinned canvas. Single-page vector files and the raster types show both Channel bands in their expected vertical order. Pinned PostScript requests contain PDF. Native PostScript uses its requested encoding. Format, empty-input and overwrite refusals preserve destinations. An injected native render failure preserves the full prior file and cleans its staging file. The restored explorer fallback keeps its original format acceptance.",
       "casa_version": "6.7.6.14",
-      "revision": "5df3e7b44376d7e02fc4a78582a5cae3aa0bff7f",
-      "source_revision": "5df3e7b44376d7e02fc4a78582a5cae3aa0bff7f",
+      "revision": "f5fa51ba3c3b67bd5b23b33c93e9c4f4b95236f8",
+      "source_revision": "f5fa51ba3c3b67bd5b23b33c93e9c4f4b95236f8",
       "command": "casa-python tools/casa-compat/plotms_ms_exports_oracle.py --work <new-dir> --native-bin <msexplore>",
       "receipt": "resources/casa-compat/evidence/plotms-ms-export-formats-20261125.json",
       "links": [

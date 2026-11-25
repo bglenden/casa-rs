@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
   "execution_date": "2026-11-25",
-  "revision": "5df3e7b44376d7e02fc4a78582a5cae3aa0bff7f",
-  "source_revision": "5df3e7b44376d7e02fc4a78582a5cae3aa0bff7f",
+  "revision": "f5fa51ba3c3b67bd5b23b33c93e9c4f4b95236f8",
+  "source_revision": "f5fa51ba3c3b67bd5b23b33c93e9c4f4b95236f8",
   "baseline_revision": "751c939ac126f478bf7869888e89004c5adb8e38",
   "casa_version": "6.7.6.14",
   "casaplotms_version": "2.9.1",
   "command": "casa-python tools/casa-compat/plotms_ms_exports_oracle.py --work <new-dir> --native-bin <msexplore>",
-  "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus Amp on the Columns MS, explicit and inferred TXT/PNG/JPG/PDF/PS, aliases, the default and one-sided raster dimensions, high resolution and header canvas, current/all scan pages, format refusals and failed overwrite.",
+  "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Channel versus Amp on the Columns MS, explicit and inferred TXT/PNG/JPG/PDF/PS, aliases, the default and one-sided raster dimensions, high resolution and header canvas, current/all scan pages, format refusals and failed overwrite. The raster pass also tests explicit width 410 at 100 DPI and default width at 88 DPI on supported Matplotlib 3.9.",
   "result": "passed",
-  "baseline_result": "MeasurementSet width-only exports used 500 by 480 pixels, high resolution defaulted to 300 DPI, .text failed, and extensionless filenames without an explicit format silently received PNG.",
+  "baseline_result": "MeasurementSet width-only exports used 500 by 480 pixels, high resolution defaulted to 300 DPI, .text failed, and extensionless filenames without an explicit format silently received PNG. Older Agg truncated a fractional last pixel when converting the figure inches back to integer pixels.",
   "matched_text_coordinates": 36,
   "text_pairs": 3,
-  "figure_pairs": 20,
+  "figure_pairs": 22,
   "current_scan_pages": 1,
   "all_scan_pages": 3,
   "pinned_raster_default": {
@@ -20,5 +20,6 @@
     "height": 567,
     "dpi": 96,
     "header_height": 113
-  }
+  },
+  "matplotlib_raster_control": "3.9.4"
 }
