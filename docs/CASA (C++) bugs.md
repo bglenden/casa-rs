@@ -11562,3 +11562,29 @@ empty mask raises an exception. casa-rs prints the signed float samples
 with enough space for the sign and magnitude. For example, a visibility
 buffer containing only `-7.0` produces a report with `-7.000` for each
 sample (#1030).
+
+## MS sorting can overwrite an unrelated output directory
+
+In CASA 6.7.6.14, `ms.sort(newmsname, ['TIME'])` can remove a nonempty
+directory at the output name even when it contains unrelated files and
+is not a table. casa-rs refuses that destination. It publishes a
+complete stage atomically and can replace an otherwise eligible table
+or an empty directory (#1030).
+
+## MS sorting a transient selection checks a nonexistent table path
+
+In CASA 6.7.6.14, after `ms.select({'rows': [21, 3, 8, 1]})`,
+`ms.timesort('selected.ms')` raises `DOos::freeSpace` for the
+unmaterialized table name. casa-rs creates the named copy of the
+selected rows and preserves the source attachment. It requires a named
+destination for the transient selection to protect unselected rows from
+in-place replacement (#1030).
+
+## MS sorting can leave finite keys out of order beside NaNs
+
+In CASA 6.7.6.14, `ms.timesort('sorted.ms')` on TIME keys beginning
+`[NaN, 3, NaN, 1, 0, 2]` with the remaining keys equal to `5` can place
+`3` and `1` after the `5`s and intermingle them with the NaNs. The
+casacore comparator cannot consistently order a NaN against another key.
+casa-rs orders the finite keys numerically and places NaNs in deterministic
+positions according to their floating-point representation (#1030).

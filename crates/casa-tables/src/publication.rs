@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Filesystem publication of staged casacore data products.
 
+use std::collections::BTreeMap;
 #[cfg(unix)]
 use std::ffi::CString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{TableError, TableWriteLock};
 
@@ -43,6 +44,16 @@ pub fn open_directory_identity(path: &Path) -> std::io::Result<std::fs::File> {
 /// # Errors
 /// Returns an error for unreadable paths or any live table in the tree.
 pub fn lock_table_tree_for_replacement(root: &Path) -> Result<Vec<TableWriteLock>, TableError> {
+    lock_table_tree_for_replacement_with_held(root, &BTreeMap::new())
+}
+
+/// Lock a table tree while reusing the caller's verified write guards.
+/// The caller must retain both its write guards and the returned guards
+/// until replacement is complete.
+pub fn lock_table_tree_for_replacement_with_held(
+    root: &Path,
+    held: &BTreeMap<PathBuf, TableWriteLock>,
+) -> Result<Vec<TableWriteLock>, TableError> {
     let mut pending = vec![root.to_owned()];
     let mut locks = Vec::new();
     while let Some(directory) = pending.pop() {
@@ -51,14 +62,24 @@ pub fn lock_table_tree_for_replacement(root: &Path) -> Result<Vec<TableWriteLock
             message: error.to_string(),
         };
         if directory == root || directory.join("table.dat").is_file() {
-            let lock = TableWriteLock::acquire_to_reread(&directory, 1)?;
+            let lock = if let Some(lock) = held.get(&directory) {
+                if !lock.matches_table_path(&directory) {
+                    return Err(TableError::LockFailed {
+                        path: directory.display().to_string(),
+                        message: "table or lock was replaced".into(),
+                    });
+                }
+                lock
+            } else {
+                locks.push(TableWriteLock::acquire_to_reread(&directory, 1)?);
+                locks.last().expect("replacement guard was just acquired")
+            };
             if lock.is_multi_used() {
                 return Err(TableError::LockFailed {
                     path: directory.display().to_string(),
                     message: "table is open in another process".into(),
                 });
             }
-            locks.push(lock);
         }
         for entry in directory.read_dir().map_err(io_error)? {
             let entry = entry.map_err(io_error)?;

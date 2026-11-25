@@ -72,9 +72,10 @@ IMPLEMENTED["singledishms"] = {
 IMPLEMENTED["ms"] = {
     "close", "done", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "getscansummary", "ismultims", "iswritable",
-    "iterend", "iterinit", "iternext", "iterorigin",
+    "iterend", "iterinit", "iternext", "iterorigin", "listhistory", "lister",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow",
-    "open", "range", "reset", "select", "selectinit", "selecttaql", "statwt", "uvsub",
+    "open", "range", "reset", "select", "selectinit", "selecttaql", "sort",
+    "statistics", "statisticsold", "statwt", "summary", "timesort", "uvsub",
 }
 IMPLEMENTED["agentflagger"] = {
     "open", "done", "selectdata", "init", "run", "printflagselection", "parseagentparameters",

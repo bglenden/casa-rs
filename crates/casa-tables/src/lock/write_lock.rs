@@ -4,6 +4,8 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
+use super::lock_file::path_key;
+#[cfg(unix)]
 use super::{LockFile, LockOptions, LockOutcome, LockType, SyncData};
 use crate::TableError;
 
@@ -199,6 +201,8 @@ impl TableUseLock {
 pub struct TableWriteLock {
     path: PathBuf,
     #[cfg(unix)]
+    directory_key: (u64, u64),
+    #[cfg(unix)]
     lock_file: Option<LockFile>,
     /// Whether a write was recorded; releasing then publishes it.
     #[cfg_attr(not(unix), allow(dead_code))]
@@ -281,6 +285,9 @@ impl TableWriteLock {
                 path: path.display().to_string(),
                 message,
             };
+            let directory_key = path_key(&path)
+                .map_err(lock_io)?
+                .ok_or_else(|| lock_failed("table directory is missing".into()))?;
             let mut lock_file = LockFile::create_or_open(
                 &path,
                 false,
@@ -308,10 +315,14 @@ impl TableWriteLock {
             if !outcome.is_acquired() {
                 return Err(lock_failed(outcome.refusal(LockType::Write, nattempts)));
             }
+            if !matches_table_identity(&path, directory_key, &lock_file) {
+                return Err(lock_failed("table directory or lock was replaced".into()));
+            }
             let table_dat_at_acquire =
                 std::fs::read(path.join(crate::storage::TABLE_CONTROL_FILE)).ok();
             Ok(Self {
                 path,
+                directory_key,
                 lock_file: Some(lock_file),
                 written: false,
                 table_dat_at_acquire,
@@ -331,6 +342,22 @@ impl TableWriteLock {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Check that the current path still names the directory and lock file
+    /// captured by this guard.
+    #[must_use]
+    pub fn matches_table_path(&self, path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            self.lock_file
+                .as_ref()
+                .is_some_and(|lock| matches_table_identity(path, self.directory_key, lock))
+        }
+        #[cfg(not(unix))]
+        {
+            self.path == path
+        }
     }
 
     /// The modify counter the table's sync data publishes, read now; `None`
@@ -403,12 +430,18 @@ impl TableWriteLock {
                 message: error.to_string(),
             };
             let published = if self.written {
-                publish_persisted_write(
-                    &lock_file,
-                    &self.path,
-                    self.table_dat_at_acquire.as_deref(),
-                )
-                .map(|_| ())
+                if matches_table_identity(&self.path, self.directory_key, &lock_file) {
+                    publish_persisted_write(
+                        &lock_file,
+                        &self.path,
+                        self.table_dat_at_acquire.as_deref(),
+                    )
+                    .map(|_| ())
+                } else {
+                    Err(std::io::Error::other(
+                        "table directory or lock was replaced",
+                    ))
+                }
             } else {
                 Ok(())
             };
@@ -420,6 +453,11 @@ impl TableWriteLock {
             Ok(())
         }
     }
+}
+
+#[cfg(unix)]
+fn matches_table_identity(path: &Path, directory_key: (u64, u64), lock: &LockFile) -> bool {
+    path_key(path).is_ok_and(|key| key == Some(directory_key)) && lock.matches_table_path(path)
 }
 
 /// The shape of a table as persisted in its `table.dat`, which the sync data

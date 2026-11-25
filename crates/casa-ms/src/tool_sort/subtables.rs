@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//! Materialize the table-valued keywords of a sorted copy.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
+
+use casa_tables::{Table, TableOptions, TablePartNames, add_directory, strip_directory};
+use casa_types::{RecordValue, ScalarValue, Value};
+
+use crate::{MsError, MsResult, SubtableId};
+
+pub(super) fn check_named_output(input: &Table, output: &Path) -> MsResult<()> {
+    let root = reference_root(table_path(input)?)?;
+    let mut visited = BTreeSet::new();
+    let mut pending = vec![(table_path(input)?.to_path_buf(), false)];
+    let standard = SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(SubtableId::ALL_OPTIONAL);
+    while let Some((path, subtable)) = pending.pop() {
+        let path = path.canonicalize().map_err(|error| invalid(&path, error))?;
+        if path.starts_with(output) || (subtable && path != root && output.starts_with(&path)) {
+            return Err(invalid(output, "output overlaps a source table"));
+        }
+        if !visited.insert(path.clone()) {
+            continue;
+        }
+        match Table::immediate_part_names(&path, &path)? {
+            TablePartNames::Reference(parent) => pending.push((parent, subtable)),
+            TablePartNames::Concatenation { parts, .. } => {
+                pending.extend(parts.into_iter().map(|part| (part, subtable)));
+            }
+            TablePartNames::Plain(_) => {}
+        }
+        let table = Table::open(TableOptions::new(&path))?;
+        for field in table.keywords().fields() {
+            let link = match &field.value {
+                Value::TableRef(link) if field.name != "SORTED_TABLE" => Some(link),
+                Value::Scalar(ScalarValue::String(link))
+                    if standard.clone().any(|id| id.name() == field.name) =>
+                {
+                    Some(link)
+                }
+                _ => None,
+            };
+            if let Some(link) = link {
+                pending.push((add_directory(link, &path), true));
+            }
+        }
+        for column in table
+            .schema()
+            .into_iter()
+            .flat_map(|schema| schema.columns())
+        {
+            if let Some(keys) = table.column_keywords(column.name()) {
+                for field in keys.fields() {
+                    if let Value::TableRef(link) = &field.value {
+                        pending.push((add_directory(link, &path), true));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn copy_links(
+    input: &Table,
+    keywords: &mut RecordValue,
+    copy: &mut Table,
+    output: &Path,
+    held: &BTreeSet<PathBuf>,
+) -> MsResult<()> {
+    let input_path = table_path(input)?;
+    for id in SubtableId::ALL_REQUIRED
+        .iter()
+        .chain(SubtableId::ALL_OPTIONAL)
+    {
+        if let Some(Value::Scalar(ScalarValue::String(reference))) = keywords.get(id.name()) {
+            keywords.upsert(id.name(), Value::TableRef(reference.clone()));
+        }
+    }
+    let mut copies = Copies {
+        by_output: BTreeMap::new(),
+        copying: Vec::new(),
+        held,
+    };
+    copies.rewrite(keywords, input_path, output)?;
+    copies.rewrite_columns(input, copy, input_path, output)
+}
+
+struct Copies<'a> {
+    by_output: BTreeMap<PathBuf, PathBuf>,
+    copying: Vec<PathBuf>,
+    held: &'a BTreeSet<PathBuf>,
+}
+
+impl Copies<'_> {
+    fn rewrite(&mut self, record: &mut RecordValue, input: &Path, output: &Path) -> MsResult<()> {
+        let root = reference_root(input)?;
+        let mut omitted = Vec::new();
+        for field in record.fields_mut() {
+            let Value::TableRef(reference) = &mut field.value else {
+                continue;
+            };
+            let declared = add_directory(reference, input);
+            let source = declared
+                .canonicalize()
+                .map_err(|error| invalid(&declared, error))?;
+            if reference_root(&source)? == root {
+                omitted.push(field.name.clone());
+                continue;
+            }
+            let name = declared
+                .file_name()
+                .ok_or_else(|| invalid(&declared, "linked table has no name"))?;
+            let destination = output.join(name);
+            match self.by_output.get(&destination) {
+                Some(previous) if previous != &source => {
+                    return Err(invalid(
+                        &destination,
+                        "different table links have the same name",
+                    ));
+                }
+                Some(_) => {}
+                None => self.copy(&source, &destination)?,
+            }
+            *reference = strip_directory(&destination, output);
+        }
+        for name in omitted {
+            record.remove(&name);
+        }
+        Ok(())
+    }
+
+    fn rewrite_columns(
+        &mut self,
+        input_table: &Table,
+        copy: &mut Table,
+        input: &Path,
+        output: &Path,
+    ) -> MsResult<()> {
+        for column in input_table
+            .schema()
+            .into_iter()
+            .flat_map(|schema| schema.columns())
+        {
+            let name = column.name();
+            if let Some(record) = input_table.column_keywords(name) {
+                let mut record = record.clone();
+                self.rewrite(&mut record, input, output)?;
+                copy.set_column_keywords(name, record);
+            }
+        }
+        Ok(())
+    }
+
+    fn copy(&mut self, source: &Path, output: &Path) -> MsResult<()> {
+        if self.copying.iter().any(|path| path == source) {
+            return Err(invalid(source, "cyclic table link"));
+        }
+        let table = open_source(source, self.held.contains(source))?;
+        if matches!(
+            Table::immediate_part_names(source, source)?,
+            TablePartNames::Plain(_)
+        ) {
+            // A physical copy retains column metadata and nested table
+            // directories, as casacore does for plain subtable deep copies.
+            std::fs::create_dir_all(output.parent().expect("staging table parent"))
+                .map_err(|error| invalid(output, error))?;
+            casa_tables::publication::copy_locked_table_tree(source, output)
+                .map_err(|error| invalid(source, error))?;
+        } else {
+            self.copying.push(source.to_path_buf());
+            let mut copy = Table::open(TableOptions::new(source))?;
+            let mut keywords = table.keywords().clone();
+            self.rewrite(&mut keywords, source, output)?;
+            *copy.keywords_mut() = keywords;
+            self.rewrite_columns(&table, &mut copy, source, output)?;
+            copy.deep_copy(TableOptions::new(output))?;
+            self.copying.pop();
+        }
+        self.by_output
+            .insert(output.to_path_buf(), source.to_path_buf());
+        Ok(())
+    }
+}
+
+pub(super) fn table_path(table: &Table) -> MsResult<&Path> {
+    table
+        .path()
+        .ok_or_else(|| MsError::InvalidInput("the sorted source has no table path".into()))
+}
+
+pub(super) fn reference_root(path: &Path) -> MsResult<PathBuf> {
+    let mut path = path.canonicalize().map_err(|error| invalid(path, error))?;
+    for _ in 0..64 {
+        let TablePartNames::Reference(parent) = Table::immediate_part_names(&path, &path)? else {
+            return Ok(path);
+        };
+        path = parent
+            .canonicalize()
+            .map_err(|error| invalid(&parent, error))?;
+    }
+    Err(invalid(&path, "reference table chain is too deep"))
+}
+
+fn open_source(path: &Path, already_held: bool) -> MsResult<Table> {
+    let options = TableOptions::new(path);
+    #[cfg(unix)]
+    if !already_held {
+        return Ok(Table::open_with_lock(
+            options,
+            casa_tables::LockOptions::new(casa_tables::LockMode::PermanentLockingWait)
+                .read_only(true),
+        )?);
+    }
+    #[cfg(not(unix))]
+    let _ = already_held;
+    Ok(Table::open(options)?)
+}
+
+fn invalid(path: &Path, error: impl std::fmt::Display) -> MsError {
+    MsError::InvalidInput(format!("copy linked table {}: {error}", path.display()))
+}

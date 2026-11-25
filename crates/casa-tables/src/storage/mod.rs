@@ -405,6 +405,41 @@ fn filter_rows_for_save(
         .collect()
 }
 
+struct RowFieldReorder {
+    names: Vec<String>,
+    swaps: Vec<(usize, usize)>,
+}
+
+fn full_projection_layout(
+    fields: &[RecordField],
+    names: &[(&String, &String)],
+) -> Option<RowFieldReorder> {
+    let layout: Vec<_> = fields.iter().map(|field| field.name.clone()).collect();
+    let wanted: Vec<_> = names
+        .iter()
+        .filter_map(|(_, name)| layout.iter().position(|present| present == *name))
+        .collect();
+    if wanted.len() != layout.len() {
+        return None;
+    }
+    let mut indices: Vec<_> = (0..layout.len()).collect();
+    let mut swaps = Vec::new();
+    for (target, original) in wanted.into_iter().enumerate() {
+        let current = indices
+            .iter()
+            .position(|index| *index == original)
+            .expect("actual field is in the layout");
+        if current != target {
+            indices.swap(current, target);
+            swaps.push((current, target));
+        }
+    }
+    Some(RowFieldReorder {
+        names: layout,
+        swaps,
+    })
+}
+
 fn override_value_for_row(
     column_overrides: &ColumnOverrides,
     column: &str,
@@ -3818,7 +3853,7 @@ impl CompositeStorage {
         metadata_only: bool,
     ) -> Result<StorageSnapshot, StorageError> {
         let parent_path = add_directory_for_link(&reference.parent_relative_path, path);
-        let parent = if metadata_only {
+        let mut parent = if metadata_only {
             self.load_metadata_only(&parent_path)?
         } else {
             self.load(&parent_path)?
@@ -3851,8 +3886,48 @@ impl CompositeStorage {
         if !metadata_only {
             rows.reserve(reference.row_map.len());
             undefined_cells.reserve(reference.row_map.len());
+            let move_rows = parent.schema.as_ref().is_some_and(|schema| {
+                names.len() == schema.columns().len()
+                    && names
+                        .iter()
+                        .zip(schema.columns())
+                        .all(|((name, base), column)| {
+                            name == base && name.as_str() == column.name()
+                        })
+            }) && {
+                let mut seen = vec![false; parent.rows.len()];
+                reference.row_map.iter().all(|&row| {
+                    seen.get_mut(row as usize)
+                        .is_some_and(|seen| !std::mem::replace(seen, true))
+                })
+            };
+            let move_layout = move_rows
+                .then(|| {
+                    parent
+                        .rows
+                        .first()
+                        .and_then(|row| full_projection_layout(row.fields(), &names))
+                })
+                .flatten();
             for &row in &reference.row_map {
                 let index = row as usize;
+                if let Some(reorder) = &move_layout
+                    && parent.rows[index].fields().len() == reorder.names.len()
+                    && parent.rows[index]
+                        .fields()
+                        .iter()
+                        .zip(&reorder.names)
+                        .all(|(field, name)| &field.name == name)
+                {
+                    let mut owned = std::mem::take(&mut parent.rows[index]);
+                    let fields = owned.fields_mut();
+                    for &(a, b) in &reorder.swaps {
+                        fields.swap(a, b);
+                    }
+                    rows.push(owned);
+                    undefined_cells.push(std::mem::take(&mut parent.undefined_cells[index]));
+                    continue;
+                }
                 let fields = parent.rows.get(index).ok_or_else(|| {
                     StorageError::FormatMismatch(format!(
                         "RefTable references missing parent row {row}"
@@ -4095,23 +4170,24 @@ impl CompositeStorage {
         let schema = schema.ok_or_else(|| {
             StorageError::FormatMismatch("cannot save without schema".to_string())
         })?;
-        let rows_have_undefined_cells = undefined_cells
+        // A persisted projection may already omit every undefined cell
+        // from its records. Only copy records if a masked value must be removed.
+        let rows_need_filter = rows
             .iter()
-            .any(|undefined| !undefined.is_empty());
+            .zip(undefined_cells)
+            .any(|(row, undefined)| undefined.iter().any(|column| row.get(column).is_some()));
         let filtered_rows_storage =
-            rows_have_undefined_cells.then(|| filter_rows_for_save(rows, undefined_cells));
+            rows_need_filter.then(|| filter_rows_for_save(rows, undefined_cells));
         let filtered_rows: &[RecordValue] = filtered_rows_storage.as_deref().unwrap_or(rows);
-        let row_field_positions = (!rows_have_undefined_cells)
-            .then(|| {
-                filtered_rows.first().map(|row| {
-                    row.fields()
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, field)| (field.name.clone(), idx))
-                        .collect::<HashMap<_, _>>()
-                })
-            })
-            .flatten();
+        // These positions are hints. The indexed writers verify each field
+        // name and look it up when later rows have a different layout.
+        let row_field_positions = filtered_rows.first().map(|row| {
+            row.fields()
+                .iter()
+                .enumerate()
+                .map(|(idx, field)| (field.name.clone(), idx))
+                .collect::<HashMap<_, _>>()
+        });
         let effective_row_count = column_overrides.row_count().unwrap_or(filtered_rows.len());
         let nrrow = effective_row_count as u64;
         let has_virtual = !virtual_bindings.is_empty();

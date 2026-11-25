@@ -230,7 +230,7 @@ impl MetadataView {
     }
 }
 
-fn same_directory(expected: &Metadata, current: &Metadata) -> bool {
+pub(super) fn same_directory(expected: &Metadata, current: &Metadata) -> bool {
     if !current.is_dir() {
         return false;
     }

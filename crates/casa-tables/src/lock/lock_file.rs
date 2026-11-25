@@ -206,7 +206,7 @@ fn registry() -> MutexGuard<'static, HashMap<LockFileKey, RegistryEntry>> {
 }
 
 /// Device and inode of `path`, or `None` when it does not exist.
-fn path_key(path: &Path) -> io::Result<Option<LockFileKey>> {
+pub(super) fn path_key(path: &Path) -> io::Result<Option<(u64, u64)>> {
     use std::os::unix::fs::MetadataExt;
     match std::fs::metadata(path) {
         Ok(metadata) => Ok(Some((metadata.dev(), metadata.ino()))),
@@ -322,6 +322,10 @@ pub(crate) struct LockFile {
 }
 
 impl LockFile {
+    pub(super) fn matches_table_path(&self, dir: &Path) -> bool {
+        path_key(&dir.join(LOCK_FILE_NAME)).is_ok_and(|key| key == Some(self.key))
+    }
+
     pub(crate) fn retained_heap_bytes(&self) -> usize {
         #[cfg(unix)]
         {
