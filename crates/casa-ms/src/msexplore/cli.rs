@@ -541,11 +541,6 @@ fn run_visibility_plot(
             let arrays = array_payload.ok_or_else(|| {
                 TaskFailure::validation("use casars.tasks.plotms for rendered figures")
             })?;
-            let figure_columns = axis_columns.or_else(|| {
-                let plot = &spec.plots[0];
-                super::plotms_row_axes::metadata_coordinate_pair(plot.x_axis, plot.y_axis())
-                    .map(|_| [options.data_column; 3])
-            });
             plots = super::plotms_figure::prepare(
                 task,
                 &payload,
@@ -553,14 +548,7 @@ fn run_visibility_plot(
                 figure_file,
                 show,
                 &overlays,
-                figure_columns
-                    .filter(|_| calibrated.is_none() || options.secondary_y_data_column.is_some())
-                    .map(|columns| super::plotms_figure::VisibilityAxisColumns {
-                        base: columns,
-                        secondary_axis: options.y_axis2,
-                        additional: &options.additional_ordinates,
-                        right_ordinates: &options.right_ordinates,
-                    }),
+                options.figure_axis_columns(axis_columns, calibrated.is_some()),
             )?;
             if let Some(layout) = static_grid {
                 plots[0].document.layout = Some(layout);

@@ -8,7 +8,8 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 use casa_types::measures::direction::MDirection;
 
 use super::super::{
-    RawSymbolVisibility, calibration, plotms_columns, plotms_phasecenter, plotms_row_axes,
+    RawSymbolVisibility, calibration, plotms_columns, plotms_figure::VisibilityAxisColumns,
+    plotms_phasecenter, plotms_row_axes,
 };
 use super::{
     CliOptions, MeasurementSetSummaryOutputFormat, MsAxis, MsColorAxis, MsDataColumn,
@@ -62,6 +63,25 @@ impl CliOptions {
             self.data_column,
             self.secondary_y_data_column.unwrap_or(self.data_column),
         ])
+    }
+
+    pub(super) fn figure_axis_columns(
+        &self,
+        columns: Option<[MsDataColumn; 3]>,
+        calibrated: bool,
+    ) -> Option<VisibilityAxisColumns<'_>> {
+        columns
+            .or_else(|| {
+                let (x, y) = self.x_axis.zip(self.y_axis)?;
+                plotms_row_axes::metadata_coordinate_pair(x, y).map(|_| [self.data_column; 3])
+            })
+            .filter(|_| !calibrated || self.secondary_y_data_column.is_some())
+            .map(|base| VisibilityAxisColumns {
+                base,
+                secondary_axis: self.y_axis2,
+                additional: &self.additional_ordinates,
+                right_ordinates: &self.right_ordinates,
+            })
     }
 
     pub(super) fn plotms_averaging_active(&self) -> bool {
