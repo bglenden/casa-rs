@@ -11451,6 +11451,27 @@ second selection succeeds. casa-rs validates the record before starting
 a mutation. The error leaves the attachment usable for a new selection
 and write (#1030).
 
+## A legacy iterator can report an empty final row block
+
+In CASA 6.7.6.14, select eight rows in the same legacy group and call
+`ms.iterinitold(['TIME'], maxrows=4, adddefaultsortcolumns=False)`. After
+origin, CASA exposes two four-row blocks and then reports one additional
+successful advance with zero selected rows. Casa-rs advances through the
+two nonempty blocks and restores the pre-iteration selection when the
+cursor is exhausted (#1030).
+
+## Legacy iterator sort output can overwrite an input or escape the MeasurementSet
+
+In CASA 6.7.6.14, open a writable MultiMS and start `iterinitold(['TIME'],
+adddefaultsortcolumns=False)`. The call can create a stray
+`*SORTED_TABLE` reference in the process's working directory, outside the
+MultiMS. On a plain MeasurementSet, opening its existing `SORTED_TABLE`
+for update and requesting different legacy sort keys rewrites the saved
+reference that was opened as input. Casa-rs iterates those views in
+memory and leaves the working directory and input reference intact.
+Writable plain MeasurementSets and independent writable references
+publish the sorted cache in the physical MeasurementSet (#1030).
+
 ## MS writes can reorder values read from saved views
 
 Read `getdata('data')` from a saved reference whose rows are out of order,

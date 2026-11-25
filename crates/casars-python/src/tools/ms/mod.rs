@@ -6,6 +6,7 @@
 mod attachment_info;
 mod history;
 mod iteration;
+mod legacy_iteration;
 mod legacy_selection;
 mod legacy_visibility;
 mod lister;

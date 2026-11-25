@@ -70,11 +70,12 @@ IMPLEMENTED["singledishms"] = {
     "subtract_baseline_variable", "apply_baseline_table",
 }
 IMPLEMENTED["ms"] = {
-    "close", "done", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
+    "close", "done", "getdataold", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "getscansummary", "ismultims", "iswritable",
-    "iterend", "iterinit", "iternext", "iterorigin", "listhistory", "lister",
+    "iterend", "iterendold", "iterinit", "iterinitold", "iternext", "iternextold",
+    "iterorigin", "iteroriginold", "listhistory", "lister",
     "metadata", "msselect", "msselectedindices", "msseltoindex", "name", "nrow", "nrowold",
-    "open", "range", "reset", "select", "selectinit", "selectinitold", "selectold",
+    "open", "putdataold", "range", "rangeold", "reset", "select", "selectinit", "selectinitold", "selectold",
     "selectchannelold", "selectpolarizationold", "selecttaql", "sort",
     "statistics", "statisticsold", "statwt", "summary", "timesort", "uvsub",
     "writehistory", "writehistory_batch",
@@ -93,8 +94,7 @@ IMPLEMENTED["calibrater"] = {
     "linpolcor", "parsecallibfile", "validatecallib", "setcorrdepflags", "fluxscale", "specifycal", "state",
 }
 PARTIAL = {
-    "ms": {"getdata", "getdataold", "putdata", "putdataold", "rangeold", "selectchannel",
-           "selectpolarization", "selecttaqlold"},
+    "ms": {"getdata", "putdata", "selectchannel", "selectpolarization", "selecttaqlold"},
     "calibrater": {"setmodel", "setsolve", "posangcal", "setapply", "setcallib", "returndict",
                    "correct", "corrupt", "activityrec", "solve"},
 }

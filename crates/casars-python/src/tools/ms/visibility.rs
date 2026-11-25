@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
 use casa_coordinates::StokesType;
-use casa_ms::tool_iteration::ToolIteration;
+use casa_ms::tool_iteration::{LegacyIterationOptions, LegacyToolIteration, ToolIteration};
 use casa_ms::tool_range::ToolRangeRequest;
 use casa_ms::tool_visibility::{self, VisibilityChannels, VisibilityPolarization};
 use casa_ms::{MeasurementSet, MsError, MsSelection};
@@ -40,11 +40,11 @@ pub(super) struct VisibilityState {
 }
 
 pub(super) struct VisibilityMain {
-    table: Table,
+    pub(super) table: Table,
     members: Vec<Table>,
     reference: Option<PlainReferenceRead>,
     publication: Vec<VisibilityPublication>,
-    plain: bool,
+    pub(super) plain: bool,
 }
 
 struct VisibilityPublication {
@@ -123,8 +123,18 @@ impl VisibilityState {
         if requested_rows.is_some_and(<[usize]>::is_empty) {
             return Ok(CasaValue::empty_record());
         }
-        self.main(path)?;
-        let main = self.main.as_ref().expect("MAIN was opened");
+        let main = self.current_main(path)?;
+        self.range_from_main(&main, link, requested_rows, request, options)
+    }
+
+    pub(super) fn range_from_main(
+        &mut self,
+        main: &VisibilityMain,
+        link: &MetadataLink,
+        requested_rows: Option<&[usize]>,
+        request: &ToolRangeRequest,
+        options: tool_visibility::VisibilityReadOptions<'_>,
+    ) -> PyResult<CasaValue> {
         let all_rows;
         let rows = if let Some(rows) = requested_rows {
             rows
@@ -150,7 +160,15 @@ impl VisibilityState {
 }
 
 impl VisibilityMain {
-    fn open(path: &Path) -> PyResult<Self> {
+    pub(super) fn legacy_iteration(
+        &self,
+        options: LegacyIterationOptions<'_>,
+    ) -> PyResult<Option<LegacyToolIteration>> {
+        LegacyToolIteration::new(&self.table, self.reference.as_ref(), options)
+            .map_err(runtime_error)
+    }
+
+    pub(super) fn open(path: &Path) -> PyResult<Self> {
         // Record publication stamps before opening the row metadata. A writer
         // publishing during a read forces the next call to reopen the layout.
         let mut publication = Vec::new();
@@ -183,7 +201,7 @@ impl VisibilityMain {
         })
     }
 
-    fn verify_iterator_layout(&self) -> PyResult<()> {
+    pub(super) fn verify_iterator_layout(&self) -> PyResult<()> {
         // A direct reference carries its own saved row and column projection.
         // Its physical parent still needs to describe the same rows.
         let dependencies = if self.reference.is_some() {
@@ -200,6 +218,12 @@ impl VisibilityMain {
             ));
         }
         Ok(())
+    }
+
+    pub(super) fn uses_layout_in(&self, directory: &Path) -> bool {
+        self.publication
+            .iter()
+            .any(|source| source.path.starts_with(directory))
     }
 
     pub(super) fn verify_write_layout(&self, written: &BTreeSet<PathBuf>) -> PyResult<()> {
@@ -531,7 +555,12 @@ impl AttachedMs {
         let link = self.working_metadata_link();
         link.verify_directory().map_err(runtime_error)?;
         let base = link.selected_rows().map_err(runtime_error)?;
-        let main = self.visibility.current_main(&self.path)?;
+        let main = if let Some(iteration) = self.legacy_selection.positioned_iteration() {
+            iteration.main.verify_write_layout(&BTreeSet::new())?;
+            Arc::clone(&iteration.main)
+        } else {
+            self.visibility.current_main(&self.path)?
+        };
         let rows = compose_rows(base.as_deref(), self.legacy_selection.rows()).map_or_else(
             || (0..main.table.row_count()).collect(),
             |rows| rows.into_owned(),
@@ -579,11 +608,16 @@ impl AttachedMs {
                     .map(|target| (record, target)),
             );
         }
+        let refresh_legacy_cursor = self
+            .legacy_selection
+            .iteration
+            .as_ref()
+            .is_some_and(|iteration| iteration.main.verify_write_layout(&BTreeSet::new()).is_ok());
         let mut written = BTreeSet::new();
         let mut temporary = BTreeMap::new();
         let has_legacy_grid = self.legacy_selection.axes.baseline_read.is_some();
         for (_, target) in &targets {
-            if refresh_cursor || has_legacy_grid {
+            if refresh_cursor || has_legacy_grid || refresh_legacy_cursor {
                 written.insert(target.path.clone());
             }
             if !self.write_locks.contains_key(&target.path) && !temporary.contains_key(&target.path)
@@ -622,7 +656,7 @@ impl AttachedMs {
                 .write_part(&mut ms, lock, part)
                 .map_err(runtime_error)?;
         }
-        if refresh_cursor || refresh_legacy_grid {
+        if refresh_cursor || refresh_legacy_grid || refresh_legacy_cursor {
             // Refresh data read bindings and the stamps changed by our own
             // write without accepting a different saved view projection.
             main.verify_write_layout(&written)?;
@@ -630,6 +664,11 @@ impl AttachedMs {
             main.verify_write_layout(&written)?;
             if refresh_cursor && let Some(iteration) = self.visibility.iteration.as_mut() {
                 iteration.layout = Some(Arc::clone(&refreshed));
+            }
+            if refresh_legacy_cursor
+                && let Some(iteration) = self.legacy_selection.iteration.as_mut()
+            {
+                iteration.main = Arc::clone(&refreshed);
             }
             if refresh_legacy_grid
                 && let Some(read) = self.legacy_selection.axes.baseline_read.as_mut()

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::io::Write;
+use std::fs::File;
+use std::io::{self, Write};
 use std::path::Path;
 
 use casa_types::RecordValue;
@@ -14,6 +15,7 @@ pub(crate) fn save_keywords(
     table: &Path,
     row_count: u64,
     keywords: &RecordValue,
+    sync: fn(&File) -> io::Result<()>,
 ) -> Result<(), StorageError> {
     let path = table.join(TABLE_CONTROL_FILE);
     let metadata = path.symlink_metadata()?;
@@ -34,7 +36,29 @@ pub(crate) fn save_keywords(
     let mut staged = tempfile::NamedTempFile::new_in(table)?;
     staged.write_all(&bytes)?;
     staged.as_file().set_permissions(metadata.permissions())?;
-    staged.as_file().sync_all()?;
+    sync(staged.as_file())?;
     staged.persist(&path).map_err(|error| error.error)?;
     Ok(())
+}
+
+pub(crate) fn sync_cache_keywords(file: &File) -> io::Result<()> {
+    #[cfg(target_vendor = "apple")]
+    {
+        use std::os::fd::AsRawFd;
+
+        // File::sync_all requests F_FULLFSYNC on Apple. The sorted cache is
+        // derived from published rows and uses casacore's ordinary fsync.
+        loop {
+            // SAFETY: the borrowed file keeps the descriptor alive.
+            if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    file.sync_all()
 }
