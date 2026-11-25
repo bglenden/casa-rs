@@ -268,11 +268,7 @@ def compare_wavelength_frame_selection(work, native):
     print("wavelength-frames: two paired same-frame points and one mixed-frame refusal", flush=True)
 
 
-def compare_array_horizontal_axes(root, native):
-    from casars.tasks import TaskParameterError
-
-    work = root / "array-horizontal-axes"
-    work.mkdir()
+def make_horizontal_fixture(work):
     vis, *_ = make_fixture(work, reverse_times=True)
     with opened(vis / "ANTENNA", True) as table:
         position = table.getcell("POSITION", 1)
@@ -290,6 +286,15 @@ def compare_array_horizontal_axes(root, native):
         # The same channel is still clear on the second selected baseline.
         flags[0, 1, first] = True
         table.putcol("FLAG", flags)
+    return vis, positions
+
+
+def compare_array_horizontal_axes(root, native):
+    from casars.tasks import TaskParameterError
+
+    work = root / "array-horizontal-axes"
+    work.mkdir()
+    vis, positions = make_horizontal_fixture(work)
     before = snapshot(vis)
     title = "Array horizontal coordinates"
     base = controls(vis) | dict(xaxis="channel", antenna="A0&A1;A0&A2", field="",
@@ -392,6 +397,56 @@ def compare_array_horizontal_axes(root, native):
     with opened(vis / "ANTENNA") as table:
         np.testing.assert_array_equal(table.getcol("POSITION"), positions)
     print("poln-amplitude: both public tasks refuse the MeasurementSet axis before export", flush=True)
+
+
+def compare_antenna_horizontal_axes(root, native):
+    work = root / "antenna-horizontal-axes"
+    work.mkdir()
+    vis, positions = make_horizontal_fixture(work)
+    with opened(vis / "FEED", True) as table:
+        angles = table.getcol("RECEPTOR_ANGLE")
+        antennas = table.getcol("ANTENNA_ID")
+        feeds = table.getcol("FEED_ID")
+        angles[0, (antennas == 1) & (feeds == 0)] += 0.075
+        table.putcol("RECEPTOR_ANGLE", angles)
+    before = snapshot(vis)
+    title = "Antenna horizontal coordinates"
+    base = controls(vis) | dict(xaxis="channel", antenna="A0&A1;A0&A2", field="",
+                                spw="0:1~3", title=title, expformat="txt")
+    cases = (
+        ("ant-azimuth", "XX", [-177.59806, 120.90605], None),
+        ("ant-elevation", "XX", [82.98457, 74.9439], "Ant-Elevation (deg)"),
+        ("ant-parangle", "XX", [2.55258, -65.7585], None),
+        ("ant-parangle", "XX,YY", [2.55258, -65.7585], None),
+    )
+    for axis, correlation, anchors, label in cases:
+        options = base | dict(yaxis=axis, correlation=correlation)
+        name = f"channel-{axis}-{correlation.replace(',', '-')}"
+        expected, actual = (work / f"{name}.{engine}.txt" for engine in ("casa", "native"))
+        assert reference(**options, plotfile=str(expected)) is None
+        selected = rows(expected)
+        assert [int(point[2]) for point in selected] == [1, 2, 3] * 60
+        for start in range(0, len(selected), 15):
+            buffer = selected[start:start + 15]
+            assert len({point[9] for point in buffer}) == 1
+            assert [point[6] for point in buffer[::3]] == ["1", "2", "1", "2", "1"]
+            pattern = (["XX", "YY"] * 8)[:15] if correlation == "XX,YY" else ["XX"] * 15
+            assert [point[12] for point in buffer] == pattern
+        np.testing.assert_allclose([float(selected[0][1]), float(selected[90][1])],
+                                   anchors, rtol=1.2e-5)
+        if axis == "ant-parangle":
+            np.testing.assert_allclose([float(selected[3][1]), float(selected[93][1])],
+                                       [37.5998, -50.8959], rtol=1.2e-5)
+        assert native(**options, plotfile=str(actual)) is None
+        assert compare_text(actual, expected) == 180
+        print(f"{name}: 180 matching antenna horizontal coordinates and identities", flush=True)
+        if label:
+            compare_figure(work, native, options, expected, (title, "Channel", label))
+    verify_source(vis, before)
+    with opened(vis / "ANTENNA") as table:
+        np.testing.assert_array_equal(table.getcol("POSITION"), positions)
+    with opened(vis / "FEED") as table:
+        np.testing.assert_array_equal(table.getcol("RECEPTOR_ANGLE"), angles)
 
 
 def compare_flags_and_calibration(root, native, vis):
@@ -1054,7 +1109,8 @@ def main():
     parser.add_argument("--calibrate-bin", type=Path)
     parser.add_argument("--app-run", type=Path)
     parser.add_argument("--only", choices=("compound-selection", "raw-row-axes", "averaged-row-axes",
-                                           "averaged-coordinates", "array-horizontal-axes"))
+                                           "averaged-coordinates", "array-horizontal-axes",
+                                           "antenna-horizontal-axes"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1073,6 +1129,8 @@ def main():
             compare_averaged_coordinates(root, native)
         if args.only in (None, "array-horizontal-axes"):
             compare_array_horizontal_axes(root, native)
+        if args.only in (None, "antenna-horizontal-axes"):
+            compare_antenna_horizontal_axes(root, native)
         if args.only in ("raw-row-axes", "averaged-row-axes"):
             feed = make_feed_selection_fixture(root)
             vis, _, _ = make_row_axes_fixture(root, feed)
