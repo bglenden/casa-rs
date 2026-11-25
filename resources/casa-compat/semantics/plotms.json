@@ -1051,7 +1051,7 @@
       "status": "Partial"
     },
     "symbolsize": {
-      "scope": "Size of plotted unflagged symbols Accept independent positive size lists for MeasurementSet ordinates. The paired left circle and right square use sizes 7 and 13.",
+      "scope": "Size of plotted unflagged symbols Accept independent positive size lists for MeasurementSet ordinates. The paired left circle and right square use sizes 7 and 13. Scalar settings apply to the first ordinate; later ordinates use their array entry or the documented default.",
       "evidence": [
         "paired",
         "ms-marker-groups-and-connector-controls"
@@ -1096,7 +1096,7 @@
       "status": "Partial"
     },
     "coloraxis": {
-      "scope": "Selects data axis for colorizing. Coloring vector per-antenna visibility ordinate lists by a spanned scan or field is pending under #1032. Raw MeasurementSet visibility plots color the displayed clear and flagged samples by their selected scan or correlation. Without a color group, the custom flagged marker is visible as its own style.",
+      "scope": "Selects data axis for colorizing. Coloring vector per-antenna visibility ordinate lists by a spanned scan or field is pending under #1032. Raw MeasurementSet visibility plots color the displayed clear and flagged samples by their selected scan or correlation. Without a color group, the custom flagged marker is visible as its own style. Distinct visible group colors also apply when the clear marker is customized.",
       "evidence": [
         "paired",
         "ms-spanned-antenna-visibility-ordinate-lists",
@@ -3391,10 +3391,10 @@
       "kind": "Same-input static MeasurementSet marker styles, group masks and connector controls",
       "state": "passed",
       "scope": "Same-input public Python CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. An isolated square marker, two independent stored visibility ordinates, uncolored/scan/correlation clear and flagged groups, and reversed-time Phase on X with six connector modes.",
-      "result": "Match 295 ordered TXT coordinates and 15 PNG pairs. The selected square distinguishes solid, open and three mesh coverage patterns. The two ordinates use a named purple circle with black outline and a hex green square, of sizes 7 and 13. The three flag/colour cases each retain 30 clear and 6 flagged points and preserve the source FLAG cells. The six MeasurementSet connector cases each preserve 25 ordered samples, two correlation groups and an omitted flagged integration. Each engine's marker-only figure is unchanged across blank, line and step with and without timeconnector.",
+      "result": "Match 295 ordered TXT coordinates and 17 PNG pairs. The selected square distinguishes solid, open and three mesh coverage patterns. The two ordinates use a named purple circle with black outline and a hex green square, of sizes 7 and 13. The three flag/colour cases each retain 30 clear and 6 flagged points, keep distinct visible group colors with a custom clear marker, and preserve the source FLAG cells. The six MeasurementSet connector cases each preserve 25 ordered samples, two correlation groups and an omitted flagged integration. Each engine's marker-only figure is unchanged across blank, line and step with and without timeconnector. Scalar marker settings apply to the first ordinate only. Later custom ordinates retain their requested sizes and default shape, color and outline when no corresponding array item was supplied.",
       "casa_version": "6.7.6.14",
-      "revision": "405b038aaa9616af56f3b1793ce6cc6dbe679797",
-      "source_revision": "405b038aaa9616af56f3b1793ce6cc6dbe679797",
+      "revision": "e8a424637f9013ce645def682a2199e1012aca38",
+      "source_revision": "e8a424637f9013ce645def682a2199e1012aca38",
       "command": "casa-python tools/casa-compat/plotms_ms_marker_styles_oracle.py --work <new-dir> --native-bin <msexplore>",
       "receipt": "resources/casa-compat/evidence/plotms-ms-marker-connectors-20261125.json",
       "links": [
