@@ -17,6 +17,7 @@ use super::{
 };
 
 mod publish;
+pub(crate) use publish::ReversibleEdit;
 
 pub(crate) enum Rows<'a> {
     Append {

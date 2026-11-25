@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Stage and publish concatenation's small table updates together.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_tables::{
-    ColumnAddition, ColumnSchema, Table, TableOptions, TablePartNames, TableWriteLock,
+    ColumnAddition, ColumnSchema, PreparedRecordAppend, Table, TableOptions, TablePartNames,
+    TableWriteLock,
     publication::{
         check_write_access, copy_locked_table_tree, exchange_directories,
         lock_table_tree_for_replacement,
     },
 };
 use casa_types::{PrimitiveType, RecordValue, ScalarValue, Value};
+use rayon::prelude::*;
 use tempfile::TempDir;
 
 use super::{MetadataPlan, SubtableChange, TestConcatenation, required_table};
@@ -38,8 +41,13 @@ pub(super) fn metadata_only(
         check_write_access(&path.join("table.dat")).map_err(io)?;
         held.push(TableWriteLock::acquire_to_reread(path, 1)?);
     }
-    let attached = MeasurementSet::open(&target)?;
-    let incoming = MeasurementSet::open(&donor)?;
+    let (attached, incoming) = rayon::join(
+        || MeasurementSet::open_concatenation_metadata(&target, false),
+        || MeasurementSet::open_concatenation_metadata(&donor, true),
+    );
+    let attached = attached?;
+    let incoming = incoming?;
+    super::layout::check(&attached, &incoming)?;
     let plan = MetadataPlan::reconcile(
         &attached,
         &incoming,
@@ -48,21 +56,76 @@ pub(super) fn metadata_only(
         request.respect_name,
     )?;
     let mut paths = BTreeSet::new();
-    let mut edits = Vec::with_capacity(plan.changes.len() + 1);
-    for change in &plan.changes {
-        let table = required_table(&attached, change.table)?;
-        let edit = StagedTable::prepare(table, &mut paths)?;
-        let mut lock = TableWriteLock::acquire_to_reread(&edit.private, 1)?;
-        lock.record_write();
-        edit.write(change, &plan)?;
-        lock.release()?;
-        edits.push(edit);
-    }
+    let targets = plan
+        .changes
+        .iter()
+        .map(|change| {
+            let table = required_table(&attached, change.table)?;
+            let live = check_target(table, &mut paths)?;
+            Ok((change, table, live))
+        })
+        .collect::<MsResult<Vec<_>>>()?;
     let history = required_table(&incoming, SubtableId::History)?;
+    let history_path = check_target(history, &mut paths)?;
+    let (edits, history) = rayon::join(
+        || {
+            targets
+                .into_par_iter()
+                .map(|(change, table, live)| prepare_change(change, table, live, &plan))
+                .collect::<MsResult<Vec<_>>>()
+        },
+        || prepare_history(history, &history_path, request),
+    );
+    let mut edits = edits?;
+    edits.push(history?);
+    for (path, records) in &plan.calibration {
+        let table = Table::open(TableOptions::new(path))?;
+        let live = check_target(&table, &mut paths)?;
+        let lock = TableWriteLock::acquire_to_reread(&live, 1)?;
+        let records = matching_fields(&table, records);
+        edits.push(TableEdit::Append(
+            table.prepare_record_append(&records, lock)?,
+        ));
+    }
+    let publication = edits
+        .par_iter_mut()
+        .map(TableEdit::publish)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect::<MsResult<()>>();
+    if let Err(error) = publication {
+        let failures = edits
+            .into_iter()
+            .rev()
+            .filter_map(|edit| edit.restore().err());
+        let failures: Vec<_> = failures.map(|error| error.to_string()).collect();
+        return if failures.is_empty() {
+            Err(error)
+        } else {
+            Err(io(format!(
+                "{error}; recovery errors: {}",
+                failures.join(", ")
+            )))
+        };
+    }
+    edits
+        .into_par_iter()
+        .map(TableEdit::finish)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn prepare_history(
+    table: &Table,
+    path: &Path,
+    request: &TestConcatenation<'_>,
+) -> MsResult<TableEdit> {
+    let lock = TableWriteLock::acquire_to_reread(path, 1)?;
     let message = format!(
         "Subtables from {} appended to those from {}",
         request.donor_name,
-        target.display()
+        request.attached_name.display()
     );
     let command = format!(
         "msfile= {} freqTol='{}' dirTol='{}'' respectname='{}",
@@ -71,34 +134,85 @@ pub(super) fn metadata_only(
         request.direction_text,
         u8::from(request.respect_name),
     );
-    let history = StagedTable::prepare(history, &mut paths)?;
-    let mut history_lock = TableWriteLock::acquire_to_reread(&history.private, 1)?;
-    let table = Table::open(TableOptions::new(&history.private))?;
-    let logs = history_rows(&table, &[message], &command, "ms::testconcatenate()", "ms")?;
-    history_lock.record_write();
-    table.append_records_and_close(&logs)?;
-    history_lock.release()?;
-    edits.push(history);
-    for edit in &mut edits {
-        edit.lock_staged()?;
+    let logs = history_rows(table, &[message], &command, "ms::testconcatenate()", "ms")?;
+    Ok(TableEdit::Append(table.prepare_record_append(&logs, lock)?))
+}
+
+fn prepare_change(
+    change: &SubtableChange,
+    table: &Table,
+    live: PathBuf,
+    plan: &MetadataPlan,
+) -> MsResult<TableEdit> {
+    let requires_copy = !change.updated.is_empty()
+        || !change.removed.is_empty()
+        || (change.table == SubtableId::Field
+            && (plan.add_ephemeris_column || !plan.ephemerides.is_empty()));
+    if requires_copy {
+        let mut staged = StagedTable::prepare(live)?;
+        let mut lock = TableWriteLock::acquire_to_reread(&staged.private, 1)?;
+        lock.record_write();
+        staged.write(change, plan)?;
+        lock.release()?;
+        staged.lock_staged()?;
+        Ok(TableEdit::Replace(staged))
+    } else {
+        let lock = TableWriteLock::acquire_to_reread(&live, 1)?;
+        let records = matching_fields(table, &change.appended);
+        Ok(TableEdit::Append(
+            table.prepare_record_append(&records, lock)?,
+        ))
     }
-    let result = edits.iter_mut().try_for_each(StagedTable::publish);
-    if let Err(error) = result {
-        let mut recovery = Vec::new();
-        for edit in edits.into_iter().rev() {
-            if edit.published && edit.restore().is_err() {
-                recovery.push(edit.directory.keep());
+}
+
+fn check_target(table: &Table, paths: &mut BTreeSet<PathBuf>) -> MsResult<PathBuf> {
+    let live = table
+        .path()
+        .ok_or_else(|| io("a subtable has no path"))?
+        .canonicalize()
+        .map_err(io)?;
+    if !paths.insert(live.clone()) {
+        return Err(io(format!("several changes share {}", live.display())));
+    }
+    check_write_access(&live.join("table.dat")).map_err(io)?;
+    Ok(live)
+}
+
+enum TableEdit {
+    Append(PreparedRecordAppend),
+    Replace(StagedTable),
+}
+
+impl TableEdit {
+    fn publish(&mut self) -> MsResult<()> {
+        match self {
+            Self::Append(append) => Ok(append.publish()?),
+            Self::Replace(edit) => edit.publish(),
+        }
+    }
+
+    fn restore(self) -> MsResult<()> {
+        match self {
+            Self::Append(append) => Ok(append.restore()?),
+            Self::Replace(edit) if edit.published => {
+                if let Err(error) = edit.restore() {
+                    return Err(io(format!(
+                        "{error}; original subtable retained at {}",
+                        edit.directory.keep().display()
+                    )));
+                }
+                Ok(())
             }
+            Self::Replace(_) => Ok(()),
         }
-        if !recovery.is_empty() {
-            return Err(MsError::InvalidInput(format!(
-                "{error}; original subtables retained at {recovery:?}"
-            )));
-        }
-        return Err(error);
     }
-    drop(held);
-    Ok(())
+
+    fn finish(self) -> MsResult<()> {
+        match self {
+            Self::Append(append) => Ok(append.finish()?),
+            Self::Replace(_) => Ok(()),
+        }
+    }
 }
 
 struct StagedTable {
@@ -111,28 +225,16 @@ struct StagedTable {
 }
 
 impl StagedTable {
-    fn prepare(table: &Table, paths: &mut BTreeSet<PathBuf>) -> MsResult<Self> {
-        let live = table
-            .path()
-            .ok_or_else(|| MsError::InvalidInput("a subtable has no path".into()))?
-            .canonicalize()
-            .map_err(io)?;
-        if !paths.insert(live.clone()) {
-            return Err(MsError::InvalidInput(format!(
-                "several changes share {}",
-                live.display()
-            )));
-        }
+    fn prepare(live: PathBuf) -> MsResult<Self> {
         if !matches!(
             Table::immediate_part_names(&live, &live)?,
             TablePartNames::Plain(_)
         ) {
-            return Err(MsError::InvalidInput(format!(
+            return Err(io(format!(
                 "{}. Concatenation requires writable physical subtables",
                 live.display()
             )));
         }
-        check_write_access(&live.join("table.dat")).map_err(io)?;
         let original = lock_table_tree_for_replacement(&live)?;
         let directory = tempfile::Builder::new()
             .prefix(".casa-rs-ms-concat-")
@@ -187,21 +289,15 @@ impl StagedTable {
             table.flush()?;
             table = Table::open(TableOptions::new(&self.private))?;
         }
-        let schema = table.schema().expect("MeasurementSet subtable schema");
-        let rows = change
-            .appended
-            .iter()
-            .map(|row| {
-                RecordValue::new(
-                    row.fields()
-                        .iter()
-                        .filter(|field| schema.contains_column(&field.name))
-                        .cloned()
-                        .collect(),
-                )
-            })
-            .collect::<Vec<_>>();
+        let rows = matching_fields(&table, &change.appended);
         table.append_records_and_close(&rows)?;
+        if !change.removed.is_empty() {
+            let mut table = Table::open(TableOptions::new(&self.private))?;
+            let kept: Vec<_> = (0..table.row_count())
+                .filter(|index| change.removed.binary_search(index).is_err())
+                .collect();
+            table.retain_rows_in_place(&kept)?;
+        }
         Ok(())
     }
 
@@ -248,6 +344,31 @@ impl StagedTable {
         }
         exchange_directories(&self.private, &self.live).map_err(io)
     }
+}
+
+fn matching_fields<'a>(table: &Table, records: &'a [RecordValue]) -> Cow<'a, [RecordValue]> {
+    let schema = table.schema().expect("MeasurementSet subtable schema");
+    if records
+        .iter()
+        .flat_map(RecordValue::fields)
+        .all(|field| schema.contains_column(&field.name))
+    {
+        return Cow::Borrowed(records);
+    }
+    Cow::Owned(
+        records
+            .iter()
+            .map(|row| {
+                RecordValue::new(
+                    row.fields()
+                        .iter()
+                        .filter(|field| schema.contains_column(&field.name))
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn require_owned_payload(path: &Path) -> MsResult<()> {

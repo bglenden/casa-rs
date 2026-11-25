@@ -11950,3 +11950,21 @@ reports original row numbers `[3, 3, 8, 7]`. Both occurrences of row 3
 sort together even though they occupy separate positions in the selector.
 casa-rs applies the same view-relative row IDs used by a WHERE predicate
 and returns `[3, 8, 7, 3]` (#1030).
+
+## Duplicate observations can interrupt a subtable-only concatenation
+
+With two identical OBSERVATION rows in the attached MeasurementSet and
+a matching row in the donor, CASA 6.7.6.14 schedules the donor row for
+deletion twice. `ms.testconcatenate()` can fail with a row-index error
+after changing FIELD. casa-rs maps the donor observation to the first
+equivalent attached row and keeps the existing row numbers so MAIN
+references remain valid (#1030).
+
+## Self-concatenation can fill the disk by growing OBSERVATION
+
+With a writable MeasurementSet containing an OBSERVATION row, pass its
+own path to `ms.testconcatenate()` in CASA 6.7.6.14. The tool can append
+to OBSERVATION while iterating over the same live row count. A probe
+was stopped after the private subtable grew to about 15 GiB. Casa-rs
+rejects identical input directories, including symbolic aliases, before
+changing either table (#1030).

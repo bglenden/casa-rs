@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use super::*;
+use crate::TableWriteLock;
 use crate::storage::column_changes::ColumnGroupPayload;
-use crate::storage::row_changes::{Rows, StagedEdit};
+use crate::storage::row_changes::{ReversibleEdit, Rows, StagedEdit};
 
 /// One column to install in an existing disk table.
 pub struct ColumnAddition {
@@ -98,6 +99,59 @@ impl CompressedComplexArray<'_> {
     }
 }
 
+/// A staged append to one physical table, holding its write lock.
+pub struct PreparedRecordAppend {
+    edit: ReversibleEdit,
+    lock: TableWriteLock,
+}
+
+impl PreparedRecordAppend {
+    /// Write the staged records, retaining the original files for rollback.
+    ///
+    /// # Errors
+    /// The table identity or one of the table writes failed. Call
+    /// [`Self::restore`] to undo any partial updates before releasing the lock.
+    pub fn publish(&mut self) -> Result<(), TableError> {
+        if !self.lock.matches_table_path(self.lock.path()) {
+            return Err(TableError::Storage(format!(
+                "{} was replaced before the append",
+                self.lock.path().display()
+            )));
+        }
+        self.lock.record_write();
+        self.edit.apply().map_err(Into::into)
+    }
+
+    /// Roll back this append and discard its staging files on success.
+    ///
+    /// # Errors
+    /// On recovery failure, returns the path to the retained backups.
+    pub fn restore(mut self) -> Result<(), TableError> {
+        if !self.lock.matches_table_path(self.lock.path()) {
+            return Err(TableError::Storage(format!(
+                "{} was replaced before rollback. Original files staged at {}",
+                self.lock.path().display(),
+                self.edit.preserve().display(),
+            )));
+        }
+        if let Err(error) = self.edit.restore() {
+            return Err(TableError::Storage(format!(
+                "{error}; original table files retained at {}",
+                self.edit.preserve().display()
+            )));
+        }
+        self.lock.release()
+    }
+
+    /// Commit the changes, release the lock, and discard the backups.
+    ///
+    /// # Errors
+    /// Returns an error if the write could not be announced to other readers.
+    pub fn finish(self) -> Result<(), TableError> {
+        self.lock.release()
+    }
+}
+
 impl Table {
     /// Append rows to a plain disk table without changing its storage
     /// manager bindings. Standard and AipsIO managers use `defaults`;
@@ -145,6 +199,54 @@ impl Table {
         if records.is_empty() {
             return Ok(());
         }
+        let defaults = self.record_append_defaults(records)?;
+        self.edit_rows_in_place(
+            Rows::AppendRecords {
+                records,
+                defaults: &defaults,
+            },
+            reload,
+        )
+    }
+
+    /// Stage distinct appended records without changing existing table files.
+    ///
+    /// The caller must open this table after acquiring its write lock. Use
+    /// [`PreparedRecordAppend::publish`] to apply the changes and keep the
+    /// prior files while other operations in the batch are published.
+    ///
+    /// # Errors
+    /// The table or lock is invalid, the schema cannot admit the rows,
+    /// or a manager cannot prepare append changes.
+    pub fn prepare_record_append(
+        &self,
+        records: &[RecordValue],
+        lock: TableWriteLock,
+    ) -> Result<PreparedRecordAppend, TableError> {
+        let path = self.path().ok_or(TableError::PreparedRowRequiresSchema)?;
+        if records.is_empty()
+            || self.kind != TableKind::Plain
+            || self.holds_unflushed_changes()
+            || !lock.matches_table_path(path)
+        {
+            return Err(TableError::Storage(
+                "preparing an append requires a clean, locked plain table and records".into(),
+            ));
+        }
+        let dat = crate::storage::table_control::read_table_dat(
+            &path.join(crate::storage::TABLE_CONTROL_FILE),
+        )?;
+        let old = self.require_persisted_rows(path, &dat)?;
+        let defaults = self.record_append_defaults(records)?;
+        let rows = Rows::AppendRecords {
+            records,
+            defaults: &defaults,
+        };
+        let edit = StagedEdit::stage(path, dat, old, rows)?.prepare_publication(true)?;
+        Ok(PreparedRecordAppend { edit, lock })
+    }
+
+    fn record_append_defaults(&self, records: &[RecordValue]) -> Result<RecordValue, TableError> {
         let schema = self.schema().ok_or(TableError::PreparedRowRequiresSchema)?;
         for (offset, row) in records.iter().enumerate() {
             let row_index = self.row_count() + offset;
@@ -162,14 +264,7 @@ impl Table {
                 )?;
             }
         }
-        let defaults = schema.default_row();
-        self.edit_rows_in_place(
-            Rows::AppendRecords {
-                records,
-                defaults: &defaults,
-            },
-            reload,
-        )
+        Ok(schema.default_row())
     }
 
     /// Keep the given rows in an existing plain table, in ascending order,

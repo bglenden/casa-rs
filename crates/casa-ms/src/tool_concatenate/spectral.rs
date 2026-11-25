@@ -15,8 +15,6 @@ pub(super) struct SpectralRows {
     pub(super) polarizations: Vec<RecordValue>,
     pub(super) descriptions: Vec<RecordValue>,
     pub(super) window_ids: Vec<usize>,
-    pub(super) description_ids: Vec<usize>,
-    pub(super) reversed: Vec<bool>,
 }
 
 pub(super) fn reconcile(
@@ -37,8 +35,6 @@ pub(super) fn reconcile(
         polarizations: Vec::new(),
         descriptions: Vec::new(),
         window_ids: vec![usize::MAX; incoming.len()],
-        description_ids: Vec::with_capacity(incoming_dd.row_count()),
-        reversed: Vec::with_capacity(incoming_dd.row_count()),
     };
     let mut polarizations = target_pol.rows()?.iter().collect::<Vec<_>>();
     let incoming_polarizations = incoming_pol.rows()?;
@@ -47,7 +43,7 @@ pub(super) fn reconcile(
         let incoming_window = incoming
             .get(window)
             .ok_or_else(|| invalid_index("SPECTRAL_WINDOW", window, incoming.len()))?;
-        let (window_id, reversed) = match_window(
+        let (window_id, _) = match_window(
             &mut known,
             &mut rows.windows,
             incoming_spw,
@@ -73,30 +69,20 @@ pub(super) fn reconcile(
                 (index, None)
             }
         };
-        let description_id = match description {
-            Some(id) => id,
-            None => {
-                let id = known_descriptions.len();
-                rows.descriptions.push(RecordValue::new(vec![
-                    casa_types::RecordField::new(
-                        "SPECTRAL_WINDOW_ID",
-                        Value::Scalar(ScalarValue::Int32(row_id(window_id)?)),
-                    ),
-                    casa_types::RecordField::new(
-                        "POLARIZATION_ID",
-                        Value::Scalar(ScalarValue::Int32(row_id(polarization_id)?)),
-                    ),
-                    casa_types::RecordField::new(
-                        "FLAG_ROW",
-                        Value::Scalar(ScalarValue::Bool(false)),
-                    ),
-                ]));
-                known_descriptions.push((window_id, polarization_id));
-                id
-            }
-        };
-        rows.description_ids.push(description_id);
-        rows.reversed.push(reversed);
+        if description.is_none() {
+            rows.descriptions.push(RecordValue::new(vec![
+                casa_types::RecordField::new(
+                    "SPECTRAL_WINDOW_ID",
+                    Value::Scalar(ScalarValue::Int32(row_id(window_id)?)),
+                ),
+                casa_types::RecordField::new(
+                    "POLARIZATION_ID",
+                    Value::Scalar(ScalarValue::Int32(row_id(polarization_id)?)),
+                ),
+                casa_types::RecordField::new("FLAG_ROW", Value::Scalar(ScalarValue::Bool(false))),
+            ]));
+            known_descriptions.push((window_id, polarization_id));
+        }
     }
     for (index, window) in incoming.iter().enumerate() {
         if rows.window_ids[index] == usize::MAX {

@@ -126,6 +126,60 @@ impl MeasurementSet {
         })
     }
 
+    /// Open only the descriptors used by the metadata phase of concatenation.
+    pub(crate) fn open_concatenation_metadata(path: &Path, donor: bool) -> MsResult<Self> {
+        use rayon::prelude::*;
+
+        let main = Table::open(TableOptions::new(path))?;
+        let mut ids = vec![
+            SubtableId::Antenna,
+            SubtableId::DataDescription,
+            SubtableId::Feed,
+            SubtableId::Field,
+            SubtableId::Observation,
+            SubtableId::Polarization,
+            SubtableId::Processor,
+            SubtableId::Source,
+            SubtableId::SpectralWindow,
+            SubtableId::State,
+            SubtableId::SysCal,
+            SubtableId::Weather,
+        ];
+        if donor {
+            ids.push(SubtableId::History);
+        }
+        let tables = ids
+            .into_par_iter()
+            .map(|id| {
+                let Some(path) = subtable_path_from_main(&main, path, id) else {
+                    return Ok(None);
+                };
+                let table = Table::open(TableOptions::new(&path))?;
+                if !matches!(
+                    id,
+                    SubtableId::History | SubtableId::SysCal | SubtableId::Weather
+                ) {
+                    table.rows()?;
+                }
+                Ok::<_, MsError>(Some((id, path, table)))
+            })
+            .collect::<Vec<_>>();
+        let mut subtables = HashMap::new();
+        let mut subtable_paths = HashMap::new();
+        for table in tables {
+            if let Some((id, path, table)) = table? {
+                subtables.insert(id, table);
+                subtable_paths.insert(id, path);
+            }
+        }
+        Ok(Self {
+            main,
+            subtables,
+            subtable_paths,
+            path: Some(path.to_path_buf()),
+        })
+    }
+
     /// Open and retain read locks on MAIN and every present subtable.
     ///
     /// Tables are opened in canonical MAIN-then-subtable order. Row payloads

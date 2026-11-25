@@ -19,7 +19,7 @@ use crate::{MeasurementSet, MsError, MsResult};
 
 pub(super) struct FieldRows {
     pub(super) additions: Vec<RecordValue>,
-    pub(super) ids: Vec<usize>,
+    pub(super) matched: bool,
     pub(super) ephemerides: Vec<(PathBuf, String)>,
     pub(super) add_ephemeris_column: bool,
 }
@@ -47,7 +47,7 @@ pub(super) fn reconcile(
     let target_reference = fixed_reference(target_field.table());
     let mut output = FieldRows {
         additions: Vec::new(),
-        ids: Vec::with_capacity(donor_rows.len()),
+        matched: false,
         ephemerides: Vec::new(),
         add_ephemeris_column: donor_field
             .table()
@@ -117,7 +117,7 @@ pub(super) fn reconcile(
                     })
                 });
             if same_kind && covers && (!respect_name || other.name == entry.name) {
-                output.ids.push(id);
+                output.matched = true;
                 continue;
             }
         }
@@ -133,11 +133,9 @@ pub(super) fn reconcile(
                 .zip(direction)
             {
                 let [x, y, _] = value.cosines();
-                let cell = ArrayD::from_shape_vec(
-                    IxDyn(&[2, 1]),
-                    vec![y.atan2(x), value.latitude_rad()],
-                )
-                .expect("two direction angles");
+                let cell =
+                    ArrayD::from_shape_vec(IxDyn(&[2, 1]), vec![y.atan2(x), value.latitude_rad()])
+                        .expect("two direction angles");
                 record.upsert(column, Value::Array(ArrayValue::Float64(cell)));
             }
         }
@@ -168,7 +166,6 @@ pub(super) fn reconcile(
         } else if existing_eph.is_some() || output.add_ephemeris_column {
             record.upsert("EPHEMERIS_ID", integer(-1));
         }
-        output.ids.push(known.len());
         known.push(entry);
         output.additions.push(record);
     }

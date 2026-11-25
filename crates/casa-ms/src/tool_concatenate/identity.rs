@@ -49,6 +49,12 @@ pub(super) fn processors(target: &Table, donor: &Table) -> MsResult<IdentityRows
 }
 
 pub(super) fn states(target: &Table, donor: &Table) -> MsResult<IdentityRows> {
+    if target.row_count() == 0 || donor.row_count() == 0 {
+        return Ok(IdentityRows {
+            additions: Vec::new(),
+            donor_ids: Vec::new(),
+        });
+    }
     let target_rows = target.rows()?;
     let donor_rows = donor.rows()?;
     let mut temperatures = state_temperatures(target)?;

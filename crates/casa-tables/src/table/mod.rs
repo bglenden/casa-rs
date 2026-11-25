@@ -38,7 +38,9 @@ mod query;
 mod reference_writes;
 mod root_rows;
 mod row_changes;
-pub use row_changes::{ColumnAddition, CompressedComplexArray, ManagerAddition};
+pub use row_changes::{
+    ColumnAddition, CompressedComplexArray, ManagerAddition, PreparedRecordAppend,
+};
 mod streamed_scalar;
 mod structure;
 mod virtual_columns;

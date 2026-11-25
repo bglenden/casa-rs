@@ -36,6 +36,8 @@ impl PyMsTool {
             if !ms.writable {
                 return Err(runtime_error("the attached MeasurementSet is not writable"));
             }
+            let metadata = ms.working_metadata_link();
+            metadata.verify_directory().map_err(runtime_error)?;
             let donor = table_cache_name(Path::new(&msfile)).map_err(runtime_error)?;
             let (frequency_hz, frequency_text) = tolerance(freqtol.as_ref(), "Hz", 1.0)?;
             let mas = std::f64::consts::PI / 648_000_000.0;
@@ -51,12 +53,16 @@ impl PyMsTool {
                     frequency_text: &frequency_text,
                     direction_text: &direction_text,
                     donor_name: &msfile,
+                    attached_name: &ms.name,
                 },
             );
             ms.retain_tables(retained)?;
             result.map_err(runtime_error)?;
             ms.subtables = Default::default();
-            ms.exact_time_metadata = None;
+            metadata.invalidate_view().map_err(runtime_error)?;
+            if let Some(view) = &ms.exact_time_metadata {
+                view.invalidate_view().map_err(runtime_error)?;
+            }
             Ok(true)
         })
     }
@@ -67,11 +73,12 @@ fn donor_argument(value: &Bound<'_, PyAny>) -> PyResult<String> {
 }
 
 fn tolerance(value: Option<&Variant>, unit: &str, default: f64) -> PyResult<(f64, String)> {
-    let Some(value) = value.filter(|value| {
-        !value.is_empty_sequence() && !matches!(value, Variant::Text(text) if text.is_empty())
-    }) else {
-        return Ok((default, "0 ".to_owned()));
+    let Some(value) = value.filter(|value| !value.is_empty_sequence()) else {
+        return Ok((0.0, "0 ".to_owned()));
     };
+    if matches!(value, Variant::Text(text) if text.is_empty()) {
+        return Ok((default, "0 ".to_owned()));
+    }
     let quantity = quantity(value).map_err(runtime_error)?;
     let rendered = format!(
         "{} {}",

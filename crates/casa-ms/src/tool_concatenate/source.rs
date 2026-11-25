@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Preserve SOURCE row records while remapping their logical and spectral IDs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use casa_types::{RecordValue, ScalarValue, Value};
 
@@ -26,6 +26,7 @@ const IDENTITY: &[&str] = &[
 pub(super) struct SourceRows {
     pub(super) additions: Vec<RecordValue>,
     pub(super) updates: Vec<(usize, RecordValue)>,
+    pub(super) removed: Vec<usize>,
     pub(super) ids: BTreeMap<i32, i32>,
 }
 
@@ -76,7 +77,9 @@ pub(super) fn reconcile(
             let mapped = read_id(record, "SOURCE_ID")?;
             ids.insert(id, mapped);
             widen_interval(record, time, interval)?;
-            if found < target.row_count() {
+            if let Some(original) = target.rows()?.get(found)
+                && record != original
+            {
                 modified.insert(found, record.clone());
             }
         } else {
@@ -102,8 +105,74 @@ pub(super) fn reconcile(
     Ok(SourceRows {
         additions,
         updates: modified.into_iter().collect(),
+        removed: Vec::new(),
         ids,
     })
+}
+
+impl SourceRows {
+    /// Reconsider sources after matching incoming fields to existing fields.
+    pub(super) fn consolidate(
+        &mut self,
+        target: &MeasurementSet,
+        new_fields: &[RecordValue],
+    ) -> MsResult<()> {
+        let Some(source) = target.subtable(SubtableId::Source) else {
+            return Ok(());
+        };
+        let fields = super::required_table(target, SubtableId::Field)?;
+        let referenced = fields
+            .rows()?
+            .iter()
+            .chain(new_fields)
+            .map(|field| read_id(field, "SOURCE_ID"))
+            .collect::<MsResult<BTreeSet<_>>>()?;
+        let original = source.rows()?;
+        let mut merged = original.to_vec();
+        for (index, row) in self.updates.drain(..) {
+            merged[index] = row;
+        }
+        merged.append(&mut self.additions);
+        let identities = merged
+            .iter()
+            .map(|record| {
+                Ok((
+                    read_id(record, "SOURCE_ID")?,
+                    read_id(record, "SPECTRAL_WINDOW_ID")?,
+                ))
+            })
+            .collect::<MsResult<Vec<_>>>()?;
+        for (index, (mut row, &(id, window))) in merged.iter().cloned().zip(&identities).enumerate()
+        {
+            if !referenced.contains(&id) {
+                let replacement = merged.iter().zip(&identities).find_map(
+                    |(other, &(other_id, other_window))| {
+                        (window != other_window
+                            && referenced.contains(&other_id)
+                            && IDENTITY
+                                .iter()
+                                .filter(|&&name| !matches!(name, "REST_FREQUENCY" | "TRANSITION"))
+                                .all(|name| row.get(name) == other.get(name)))
+                        .then_some(other_id)
+                    },
+                );
+                if let Some(replacement) = replacement {
+                    row.upsert("SOURCE_ID", integer(replacement));
+                } else {
+                    if index < original.len() {
+                        self.removed.push(index);
+                    }
+                    continue;
+                }
+            }
+            match original.get(index) {
+                Some(record) if &row != record => self.updates.push((index, row)),
+                Some(_) => {}
+                None => self.additions.push(row),
+            }
+        }
+        Ok(())
+    }
 }
 
 fn equivalent(a: &RecordValue, b: &RecordValue) -> bool {
@@ -113,11 +182,12 @@ fn equivalent(a: &RecordValue, b: &RecordValue) -> bool {
 fn widen_interval(row: &mut RecordValue, time: f64, width: f64) -> MsResult<()> {
     let known = read_number(row, "TIME")?;
     let half = read_number(row, "INTERVAL")? / 2.0;
-    let low = (time - width / 2.0).min(known - half);
-    let high = (time + width / 2.0).max(known + half);
+    let offset = time - known;
+    let low = (offset - width / 2.0).min(-half);
+    let high = (offset + width / 2.0).max(half);
     row.upsert(
         "TIME",
-        Value::Scalar(ScalarValue::Float64((low + high) / 2.0)),
+        Value::Scalar(ScalarValue::Float64(known + (low / 2.0 + high / 2.0))),
     );
     row.upsert("INTERVAL", Value::Scalar(ScalarValue::Float64(high - low)));
     Ok(())

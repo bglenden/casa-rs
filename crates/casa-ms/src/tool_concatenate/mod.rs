@@ -2,8 +2,10 @@
 //! Reconcile persisted MS subtables for the Python concatenation methods.
 
 mod antenna;
+mod calibration;
 mod field;
 mod identity;
+mod layout;
 mod publication;
 mod source;
 mod spectral;
@@ -29,6 +31,8 @@ pub struct TestConcatenation<'a> {
     pub direction_text: &'a str,
     /// Donor pathname supplied by the caller.
     pub donor_name: &'a str,
+    /// The attached path shown by the tool, including any symbolic alias.
+    pub attached_name: &'a Path,
 }
 
 /// Reconcile the metadata of two MeasurementSets and write the donor history.
@@ -49,13 +53,7 @@ pub fn test_concatenate(
 
 struct MetadataPlan {
     changes: Vec<SubtableChange>,
-    antenna_ids: Vec<usize>,
-    field_ids: Vec<usize>,
-    state_ids: Vec<usize>,
-    observation_ids: Vec<usize>,
-    processor_ids: Vec<usize>,
-    description_ids: Vec<usize>,
-    reversed_channels: Vec<bool>,
+    calibration: Vec<(PathBuf, Vec<RecordValue>)>,
     ephemerides: Vec<(PathBuf, String)>,
     add_ephemeris_column: bool,
 }
@@ -64,6 +62,7 @@ struct SubtableChange {
     table: SubtableId,
     appended: Vec<RecordValue>,
     updated: Vec<(usize, RecordValue)>,
+    removed: Vec<usize>,
 }
 
 impl MetadataPlan {
@@ -86,17 +85,22 @@ impl MetadataPlan {
         let processors = legacy_identity(SubtableId::Processor, identity::processors)?;
         let spectral = spectral::reconcile(target, donor, frequency_hz)?;
         let antennas = antenna::reconcile(target, donor, &spectral.window_ids)?;
-        let sources = source::reconcile(target, donor, &spectral.window_ids)?;
+        let mut sources = source::reconcile(target, donor, &spectral.window_ids)?;
         let fields = field::reconcile(target, donor, &sources.ids, direction_rad, respect_name)?;
+        if fields.matched {
+            sources.consolidate(target, &fields.additions)?;
+        }
+        let calibration = calibration::reconcile(
+            target,
+            donor,
+            &antennas.antenna_ids,
+            &spectral.window_ids,
+            !spectral.windows.is_empty(),
+            &observations.donor_ids,
+        )?;
         let mut plan = Self {
             changes: Vec::new(),
-            antenna_ids: antennas.antenna_ids,
-            field_ids: fields.ids,
-            state_ids: states.donor_ids,
-            observation_ids: observations.donor_ids,
-            processor_ids: processors.donor_ids,
-            description_ids: spectral.description_ids,
-            reversed_channels: spectral.reversed,
+            calibration,
             ephemerides: fields.ephemerides,
             add_ephemeris_column: fields.add_ephemeris_column,
         };
@@ -110,7 +114,17 @@ impl MetadataPlan {
         );
         plan.add(SubtableId::Antenna, antennas.antennas, Vec::new());
         plan.add(SubtableId::Feed, antennas.feeds, antennas.feed_updates);
-        plan.add(SubtableId::Source, sources.additions, sources.updates);
+        if !sources.additions.is_empty()
+            || !sources.updates.is_empty()
+            || !sources.removed.is_empty()
+        {
+            plan.changes.push(SubtableChange {
+                table: SubtableId::Source,
+                appended: sources.additions,
+                updated: sources.updates,
+                removed: sources.removed,
+            });
+        }
         plan.add(SubtableId::Field, fields.additions, Vec::new());
         plan.add(SubtableId::Observation, observations.additions, Vec::new());
         plan.add(SubtableId::Processor, processors.additions, Vec::new());
@@ -131,6 +145,7 @@ impl MetadataPlan {
                 table,
                 appended,
                 updated,
+                removed: Vec::new(),
             });
         }
     }
