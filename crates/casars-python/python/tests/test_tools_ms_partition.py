@@ -10,19 +10,20 @@ from test_tools_ms_testconcatenate import concat_api, counts
 from test_tools_msmetadata import measures, native_dataset
 
 
-def two_fields(path):
-    def add_field(table):
-        cells = {
-            name: table.getcell(name, 0)
-            for name in table.colnames()
-            if table.iscelldefined(name, 0)
-        }
-        cells["NAME"] = "second"
-        assert table.addrows(1)
-        for name, value in cells.items():
-            assert table.putcell(name, 1, value)
+def copy_first_row(table, **changes):
+    cells = {
+        name: table.getcell(name, 0)
+        for name in table.colnames()
+        if table.iscelldefined(name, 0)
+    }
+    count = table.nrows()
+    assert table.addrows(1)
+    for name, value in cells.items():
+        assert table.putcell(name, count, changes.get(name, value))
 
-    change_table(path / "FIELD", add_field)
+
+def two_fields(path):
+    change_table(path / "FIELD", lambda table: copy_first_row(table, NAME="second"))
     change_table(path, lambda table: table.putcol(
         "FIELD_ID", np.arange(table.nrows(), dtype=np.int32) % 2,
     ))
@@ -117,6 +118,42 @@ def test_partition_selects_multiple_named_visibility_columns(native_dataset, tmp
         assert table.close()
 
 
+def test_partition_preserves_flag_commands_and_unaveraged_noise(native_dataset, tmp_path, concat_api):
+    output = tmp_path / "partition.ms"
+    command = "mode='manual' spw='0:1~2'"
+    change_table(native_dataset / "SPECTRAL_WINDOW", copy_first_row)
+    change_table(native_dataset / "DATA_DESCRIPTION", lambda table: copy_first_row(
+        table, SPECTRAL_WINDOW_ID=1,
+    ))
+    def seed_main(table):
+        assert table.putcol("DATA_DESC_ID", np.arange(table.nrows(), dtype=np.int32) % 2)
+        for row in range(table.nrows()):
+            assert table.putcell("WEIGHT", row, np.array([3, 4], dtype=np.float32))
+            assert table.putcell("SIGMA", row, np.array([7, 8], dtype=np.float32))
+
+    change_table(native_dataset, seed_main)
+
+    def write_command(table):
+        assert table.addrows(1)
+        assert table.putcell("COMMAND", 0, command)
+
+    change_table(native_dataset / "FLAG_CMD", write_command)
+    ms = concat_api.ms()
+    assert ms.open(str(native_dataset))
+    assert ms.partition(str(output), spw="1")
+    assert ms.close()
+    for reader in (tools, pinned_casa()):
+        table = reader.table()
+        assert table.open(str(output / "FLAG_CMD"))
+        assert table.getcol("COMMAND").tolist() == [command]
+        assert table.close()
+        assert table.open(str(output))
+        assert np.unique(table.getcol("DATA_DESC_ID")).tolist() == [1]
+        np.testing.assert_array_equal(table.getcell("WEIGHT", 0), [3, 4])
+        np.testing.assert_array_equal(table.getcell("SIGMA", 0), [7, 8])
+        assert table.close()
+
+
 def test_partition_time_average_matches_an_independent_analytic_bin(native_dataset, tmp_path):
     output = tmp_path / "partition.ms"
     inputs = {}
@@ -152,4 +189,6 @@ def test_partition_time_average_matches_an_independent_analytic_bin(native_datas
             np.testing.assert_allclose(table.getcell("DATA", row), np.mean(samples), rtol=1e-7)
             assert table.getcell("TIME", row) == pytest.approx(np.mean(epochs), abs=1e-5, rel=0)
             assert table.getcell("EXPOSURE", row) == pytest.approx(10 * len(samples))
+            np.testing.assert_allclose(table.getcell("WEIGHT", row), len(samples), rtol=1e-7)
+            np.testing.assert_allclose(table.getcell("SIGMA", row), len(samples) ** -0.5, rtol=1e-7)
         assert table.close()

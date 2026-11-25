@@ -142,6 +142,10 @@ pub struct MsTransformTaskOptions {
     /// Explicit visibility columns for callers that accept arbitrary combinations.
     /// Ordinary task surfaces select a predefined combination on the request.
     pub visibility_columns: Option<Vec<OptionalMainColumn>>,
+    /// Copy the saved flag commands verbatim when the surface preserves spectral IDs.
+    pub preserve_flag_commands: bool,
+    /// Copy row WEIGHT and SIGMA independently when neither axis is averaged.
+    pub preserve_scalar_weights: bool,
     /// Create and fill weight and sigma spectra even when the input has none.
     pub use_weight_spectrum: bool,
     /// CASA task preference for the output's array storage.
@@ -1102,6 +1106,7 @@ fn mstransform_staged(
     copy_subtables(&input, metadata_path, &request.output_ms, &mut output_main)?;
     if grammar == RowGrammar::Transform
         && (task_average || !matches!(request.spw.as_str(), "" | "*"))
+        && !options.preserve_flag_commands
     {
         flag_commands::rewrite(
             &input,
@@ -2003,6 +2008,7 @@ fn mstransform_staged(
                 && !hanning
                 && combination.is_none()
                 && regrid.is_none()
+                && !options.preserve_scalar_weights
             {
                 visibility.align_scalar_weights(&mut weight, &mut sigma);
             }

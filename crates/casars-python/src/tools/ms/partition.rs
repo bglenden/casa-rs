@@ -59,6 +59,8 @@ impl PyMsTool {
         let options = MsTransformTaskOptions {
             visibility_columns: columns,
             preserve_ids: true,
+            preserve_flag_commands: true,
+            preserve_scalar_weights: true,
             time_averaging: time_average(timebin.as_ref(), &combine)?,
             tiling: tile_layout(tileshape.as_ref())?,
             ..MsTransformTaskOptions::default()
