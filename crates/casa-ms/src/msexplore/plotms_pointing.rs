@@ -21,55 +21,92 @@ struct DirectionAxis {
     longitude: bool,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct PointingAxes([Option<DirectionAxis>; 2]);
+pub(super) struct PointingAxes {
+    pairs: Vec<[Option<DirectionAxis>; 2]>,
+    right_ordinates: Vec<bool>,
+}
 
 impl PointingAxes {
     pub(super) fn from_task(
         task: &TaskInvocation<'_>,
         [x, y]: [Option<MsAxis>; 2],
     ) -> Result<Option<Self>, TaskFailure> {
+        let y_is_pointing = y.is_some_and(MsAxis::is_pointing);
+        if y_is_pointing {
+            let frame = control_list(task, "yframe")?;
+            let interp = control_list(task, "yinterp")?;
+            let sides = control_list(task, "yaxislocation")?;
+            if let Control::List(interpolations) = interp {
+                let mut pairs = Vec::with_capacity(interpolations.len());
+                let mut right_ordinates = Vec::with_capacity(interpolations.len());
+                for (index, interp) in interpolations.iter().enumerate() {
+                    let frame = frame.parallel("yframe", index, interpolations.len())?;
+                    let side = sides.parallel("yaxislocation", index, interpolations.len())?;
+                    // The public task applies the ordinate's frame and interpolation to both axes.
+                    pairs.push([parse_axis(x, frame, interp)?, parse_axis(y, frame, interp)?]);
+                    right_ordinates.push(side == "right");
+                }
+                return Ok(Some(Self {
+                    pairs,
+                    right_ordinates,
+                }));
+            }
+            if matches!(frame, Control::List(_)) {
+                return Err(
+                    TaskFailure::validation("not yet implemented: yframe=list").at("yframe")
+                );
+            }
+        }
         let parse = |axis: Option<MsAxis>, frame, interp| {
             if !axis.is_some_and(MsAxis::is_pointing) {
                 refuse_controls(task, [frame, interp])?;
                 return Ok(None);
             }
-            let frame = match scalar_control(task, frame)? {
-                "" | "icrs" => DirectionRef::ICRS,
-                "j2000" => DirectionRef::J2000,
-                "b1950" => DirectionRef::B1950,
-                "galactic" => DirectionRef::GALACTIC,
-                "azelgeo" => DirectionRef::AZELGEO,
-                other => {
-                    return Err(TaskFailure::validation(format!(
-                        "invalid PlotMS pointing frame {other:?}"
-                    )));
-                }
-            };
-            let spline = match scalar_control(task, interp)? {
-                "" | "spline" | "cubic spline" => true,
-                "nearest" => false,
-                other => {
-                    return Err(TaskFailure::validation(format!(
-                        "invalid PlotMS pointing interpolation {other:?}"
-                    )));
-                }
-            };
-            Ok(Some(DirectionAxis {
-                frame,
-                spline,
-                longitude: axis == Some(MsAxis::AntRa),
-            }))
+            parse_axis(
+                axis,
+                scalar_control(task, frame)?,
+                scalar_control(task, interp)?,
+            )
         };
-        let axes = [
+        let pair = [
             parse(x, CONTROLS[0], CONTROLS[1])?,
             parse(y, CONTROLS[2], CONTROLS[3])?,
         ];
-        Ok(axes.iter().any(Option::is_some).then_some(Self(axes)))
+        if pair.iter().all(Option::is_none) {
+            return Ok(None);
+        }
+        let right = match control_list(task, "yaxislocation")? {
+            Control::Scalar(side) => side == "right",
+            Control::List(sides) => y_is_pointing && sides.first() == Some(&"right"),
+        };
+        Ok(Some(Self {
+            pairs: vec![pair],
+            right_ordinates: vec![right],
+        }))
     }
 
-    pub(super) fn label(self, index: usize) -> Option<String> {
-        let axis = self.0[index]?;
+    pub(super) fn len(&self) -> usize {
+        self.pairs.len()
+    }
+
+    pub(super) fn right_ordinates(&self) -> &[bool] {
+        &self.right_ordinates
+    }
+
+    pub(super) fn x_label(&self) -> Option<String> {
+        let mut labels = Vec::new();
+        for index in 0..self.len() {
+            if let Some(label) = self.label(index, 0)
+                && !labels.contains(&label)
+            {
+                labels.push(label);
+            }
+        }
+        (!labels.is_empty()).then(|| labels.join(", "))
+    }
+
+    pub(super) fn label(&self, index: usize, component: usize) -> Option<String> {
+        let axis = self.pairs[index][component]?;
         let component = match (axis.frame, axis.longitude) {
             (DirectionRef::GALACTIC, true) => "Longitude",
             (DirectionRef::GALACTIC, false) => "Latitude",
@@ -80,6 +117,75 @@ impl PointingAxes {
         };
         Some(format!("{} {component} (degrees)", axis.frame))
     }
+}
+
+fn parse_axis(
+    axis: Option<MsAxis>,
+    frame: &str,
+    interp: &str,
+) -> Result<Option<DirectionAxis>, TaskFailure> {
+    if !axis.is_some_and(MsAxis::is_pointing) {
+        return Ok(None);
+    }
+    let frame = match frame {
+        "" | "icrs" => DirectionRef::ICRS,
+        "j2000" => DirectionRef::J2000,
+        "b1950" => DirectionRef::B1950,
+        "galactic" => DirectionRef::GALACTIC,
+        "azelgeo" => DirectionRef::AZELGEO,
+        other => {
+            return Err(TaskFailure::validation(format!(
+                "invalid PlotMS pointing frame {other:?}"
+            )));
+        }
+    };
+    let spline = match interp {
+        "" | "spline" | "cubic spline" => true,
+        "nearest" => false,
+        other => {
+            return Err(TaskFailure::validation(format!(
+                "invalid PlotMS pointing interpolation {other:?}"
+            )));
+        }
+    };
+    Ok(Some(DirectionAxis {
+        frame,
+        spline,
+        longitude: axis == Some(MsAxis::AntRa),
+    }))
+}
+
+enum Control<'a> {
+    Scalar(&'a str),
+    List(Vec<&'a str>),
+}
+
+impl<'a> Control<'a> {
+    fn parallel(&self, name: &str, index: usize, len: usize) -> Result<&'a str, TaskFailure> {
+        match self {
+            Self::Scalar(value) => Ok(value),
+            Self::List(values) if values.len() == len => Ok(values[index]),
+            Self::List(values) => Err(TaskFailure::validation(format!(
+                "Length mismatch: {name} has {} entries and yinterp has {len}",
+                values.len()
+            ))
+            .at(name)),
+        }
+    }
+}
+
+fn control_list<'a>(task: &'a TaskInvocation<'_>, name: &str) -> Result<Control<'a>, TaskFailure> {
+    if let Some(ParameterValue::Array(values)) = task.value(name)
+        && !(name != "yaxislocation" && values.is_empty())
+    {
+        let values =
+            super::calibration::axis_names(task.value(name)).map_err(TaskFailure::validation)?;
+        if name != "yaxislocation" && values.contains(&"") {
+            return Err(TaskFailure::validation(format!("invalid {name} value ''")).at(name));
+        }
+        return Ok(Control::List(values));
+    }
+    scalar_control(task, name).map(Control::Scalar)
 }
 
 pub(super) fn refuse_nonpointing_controls(task: &TaskInvocation<'_>) -> Result<(), TaskFailure> {
@@ -113,8 +219,8 @@ fn scalar_control<'a>(task: &'a TaskInvocation<'_>, name: &str) -> Result<&'a st
     }
 }
 
-pub(super) struct PointingCoordinates {
-    axes: PointingAxes,
+pub(super) struct PointingCoordinates<'a> {
+    axes: &'a PointingAxes,
     source: DirectionRef,
     tracks: BTreeMap<i32, PointingTrack>,
     geometry: Option<MsCalEngine>,
@@ -126,10 +232,10 @@ struct PointingTrack {
     second_derivatives: Vec<[f64; 2]>,
 }
 
-impl PointingCoordinates {
+impl<'a> PointingCoordinates<'a> {
     pub(super) fn read(
         ms: &MeasurementSet,
-        axes: PointingAxes,
+        axes: &'a PointingAxes,
         antennas: &[i32],
     ) -> Result<Self, String> {
         let pointing = ms.pointing().map_err(|error| error.to_string())?;
@@ -163,7 +269,8 @@ impl PointingCoordinates {
             return Err("PlotMS POINTING directions in multiple frames are pending #1032".into());
         }
         let mut tracks = BTreeMap::new();
-        let spline = axes.0.into_iter().flatten().any(|axis| axis.spline);
+        let direction_axes = || axes.pairs.iter().flatten().flatten();
+        let spline = direction_axes().any(|axis| axis.spline);
         for samples in samples.chunk_by(|left, right| left.0 == right.0) {
             let times = samples.iter().map(|sample| sample.1).collect::<Vec<_>>();
             let angles = samples
@@ -188,10 +295,7 @@ impl PointingCoordinates {
                 },
             );
         }
-        let geometry = axes
-            .0
-            .into_iter()
-            .flatten()
+        let geometry = direction_axes()
             .any(|axis| axis.frame != frame)
             .then(|| MsCalEngine::for_calibration(ms))
             .transpose()
@@ -204,7 +308,12 @@ impl PointingCoordinates {
         })
     }
 
-    pub(super) fn values(&self, antenna: i32, time: f64) -> Result<[Option<f64>; 2], String> {
+    pub(super) fn values(
+        &self,
+        antenna: i32,
+        time: f64,
+        values: &mut Vec<[Option<f64>; 2]>,
+    ) -> Result<(), String> {
         let sample = |axis: DirectionAxis| -> Result<f64, String> {
             let track = self
                 .tracks
@@ -241,10 +350,11 @@ impl PointingCoordinates {
                 direction.latitude_rad().to_degrees()
             })
         };
-        Ok([
-            self.axes.0[0].map(sample).transpose()?,
-            self.axes.0[1].map(sample).transpose()?,
-        ])
+        values.clear();
+        for [x, y] in &self.axes.pairs {
+            values.push([x.map(sample).transpose()?, y.map(sample).transpose()?]);
+        }
+        Ok(())
     }
 }
 

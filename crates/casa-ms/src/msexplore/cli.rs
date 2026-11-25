@@ -391,7 +391,7 @@ fn run_visibility_plot(
     }
     let pointing =
         super::plotms_pointing::PointingAxes::from_task(task, [options.x_axis, options.y_axis])?;
-    if pointing.is_some() {
+    if let Some(axes) = &pointing {
         let supported_axis = |axis: Option<MsAxis>| {
             axis.is_some_and(|axis| axis.is_pointing() || axis == MsAxis::Time)
         };
@@ -408,6 +408,7 @@ fn run_visibility_plot(
                 "PlotMS pointing currently supports unaveraged Time, Ant-Ra and Ant-Dec pairs without iteration, a callibrary, overlays or flagged symbols (#1032)",
             ));
         }
+        options.add_pointing_ordinates(axes);
     }
     super::task_contract::refuse_unwritable_outputs(
         &[("plotfile", options.plot_output.as_deref())],
@@ -494,7 +495,7 @@ fn run_visibility_plot(
                     additional_y: &options.additional_ordinates,
                     weights: options.weight_axis_columns,
                     raw_symbols,
-                    pointing,
+                    pointing: pointing.as_ref(),
                     phasecenter,
                     extended_derived,
                     implicit_derived_model,
@@ -526,7 +527,7 @@ fn run_visibility_plot(
                 figure_file,
                 show,
                 &overlays,
-                options.figure_axis_columns(axis_columns, calibrated.is_some()),
+                options.figure_axis_columns(axis_columns, calibrated.is_some(), pointing.as_ref()),
             )?;
             if let Some(layout) = static_grid {
                 plots[0].document.layout = Some(layout);

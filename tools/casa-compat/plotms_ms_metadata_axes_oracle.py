@@ -1137,8 +1137,7 @@ def compare_selected_metadata_flag_symbols(root, native):
                                 (24, 36, 12), ("Marked metadata", "Channel", "Elevation (deg)"))
 
 
-def compare_pointing_axes(root, native):
-    work = root / "pointing-axes"
+def make_pointing_fixture(work):
     work.mkdir()
     vis = work / "pointing.ms"
     make_cal_ms(str(vis), autocorrelation_weight=1.0)
@@ -1160,7 +1159,12 @@ def compare_pointing_axes(root, native):
         for row, (offset, lon, lat) in zip(a0[:4], samples, strict=True):
             table.putcell("TIME", int(row), epoch + offset)
             table.putcell("DIRECTION", int(row), np.deg2rad([[lon], [lat]]))
+    return vis
 
+
+def compare_pointing_axes(root, native):
+    work = root / "pointing-axes"
+    vis = make_pointing_fixture(work)
     base = dict(vis=str(vis), xaxis="time", yaxis="ant-ra", antenna="A0&&&", yframe="j2000",
                 yinterp="nearest", showgui=False, overwrite=True)
     sparse = work / "sparse-pointing.ms"
@@ -1436,7 +1440,7 @@ def main():
                                            "averaged-coordinates", "array-horizontal-axes",
                                            "antenna-horizontal-axes", "antenna-horizontal-same-epoch",
                                            "ephemeris-axes", "static-metadata-coordinates",
-                                           "metadata-flag-symbols"))
+                                           "metadata-flag-symbols", "pointing", "pointing-lists"))
     args = parser.parse_args()
     assert casa.version_string() == "6.7.6.14"
     assert version("casaplotms") == "2.9.1"
@@ -1450,7 +1454,13 @@ def main():
     with chdir(root), plotms_launcher(args.app_run):
         if args.only is None:
             compare(root, native)
+        if args.only in (None, "pointing"):
             compare_pointing_axes(root, native)
+        if args.only in (None, "pointing-lists"):
+            from plotms_pointing_controls_oracle import compare_pointing_lists
+
+            work = root / "pointing-lists"
+            compare_pointing_lists(work, native, make_pointing_fixture(work))
         if args.only in (None, "averaged-coordinates"):
             compare_averaged_coordinates(root, native)
         if args.only in (None, "array-horizontal-axes"):

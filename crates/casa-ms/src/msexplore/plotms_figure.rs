@@ -8,6 +8,7 @@ use casa_task_runtime::{TaskFailure, TaskInvocation};
 
 use super::calibration::figure::plot_limits;
 use super::plotms_atmosphere::Curve;
+use super::plotms_pointing::PointingAxes;
 use super::{
     MsAxis, MsDataColumn, MsIterationAxis, MsPlotPayload, MsScatterGridPayload,
     MsScatterPanelPayload, MsScatterSeries, plotms_row_axes, plotms_text,
@@ -23,6 +24,7 @@ pub(super) struct VisibilityAxisColumns<'a> {
     pub(super) secondary_axis: Option<MsAxis>,
     pub(super) additional: &'a [(MsAxis, MsDataColumn)],
     pub(super) right_ordinates: &'a [bool],
+    pub(super) pointing: Option<&'a PointingAxes>,
 }
 
 pub(super) fn prepare(
@@ -125,7 +127,7 @@ fn label_and_group_ordinates(
 ) -> Result<(), TaskFailure> {
     label_visibility_columns(task, document, [x, y], second, columns.base)?;
     let Some(second) = second else {
-        if plotms_row_axes::metadata_coordinate_pair(x, y).is_some()
+        if (columns.pointing.is_some() || plotms_row_axes::metadata_coordinate_pair(x, y).is_some())
             && columns.right_ordinates.first() == Some(&true)
         {
             let axes = std::iter::once(&mut document.axes)
@@ -136,7 +138,10 @@ fn label_and_group_ordinates(
         }
         return Ok(());
     };
-    if columns.additional.is_empty() && !matches!(payload, MsPlotPayload::ScatterGrid(_)) {
+    if columns.pointing.is_none()
+        && columns.additional.is_empty()
+        && !matches!(payload, MsPlotPayload::ScatterGrid(_))
+    {
         return Ok(());
     }
     let choices = [(y, columns.base[1]), (second, columns.base[2])]
@@ -163,6 +168,7 @@ fn label_and_group_ordinates(
             &choices,
             columns.right_ordinates,
             supplied_label.as_deref(),
+            columns.pointing,
         );
     };
     match payload {
@@ -230,6 +236,7 @@ fn group_ordinate_sides(
     choices: &[(MsAxis, MsDataColumn)],
     right_ordinates: &[bool],
     supplied_label: Option<&str>,
+    pointing: Option<&PointingAxes>,
 ) {
     let right = |index| right_ordinates.get(index).copied().unwrap_or(false);
     let axis_id = |right| if right { "y-secondary" } else { "y" };
@@ -243,14 +250,16 @@ fn group_ordinate_sides(
             .copied()
             .enumerate()
             .filter(|(index, _)| right(*index) == side)
-            .map(|(_, choice)| choice)
             .collect::<Vec<_>>();
         if selected.is_empty() {
             continue;
         }
         let mut labels = selected
             .iter()
-            .map(|&(axis, column)| {
+            .map(|&(index, (axis, column))| {
+                if let Some(label) = pointing.and_then(|axes| axes.label(index, 1)) {
+                    return label;
+                }
                 if !axis.is_visibility_math() {
                     return super::axis_label(axis);
                 }
@@ -263,21 +272,24 @@ fn group_ordinate_sides(
             .collect::<Vec<_>>();
         labels.dedup();
         let unit_for = |axis| {
-            if axis == MsAxis::Phase {
+            if axis == MsAxis::Phase || (pointing.is_some() && MsAxis::is_pointing(axis)) {
                 "degrees".into()
             } else {
                 label_unit(&super::axis_label(axis))
             }
         };
-        let unit = unit_for(selected[0].0);
-        let unit = if selected.iter().all(|&(axis, _)| unit_for(axis) == unit) {
+        let unit = unit_for(selected[0].1.0);
+        let unit = if selected
+            .iter()
+            .all(|&(_, (axis, _))| unit_for(axis) == unit)
+        {
             unit
         } else {
             String::new()
         };
         let (lower, upper) = if selected
             .iter()
-            .all(|&(axis, column)| axis == MsAxis::Phase && !column.has_unbounded_phase())
+            .all(|&(_, (axis, column))| axis == MsAxis::Phase && !column.has_unbounded_phase())
         {
             (-180.0, 180.0)
         } else {
