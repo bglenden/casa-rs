@@ -443,6 +443,7 @@ pub(super) fn name(axis: MsAxis) -> &'static str {
         MsAxis::Weight => "Wt",
         MsAxis::Sigma => "Sigma",
         MsAxis::WeightSpectrum => "WtSp",
+        MsAxis::WeightedAmplitude => "Wt*Amp",
         MsAxis::SigmaSpectrum => "SigmaSp",
         MsAxis::Flag => "Flag",
         MsAxis::FlagRow => "FlagRow",

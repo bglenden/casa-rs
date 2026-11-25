@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! CASA PlotMS ordinate column selection.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use casa_provider_contracts::ParameterValue;
 use casa_task_runtime::{TaskFailure, TaskInvocation};
@@ -61,6 +61,14 @@ fn uses_time_averaging(spec: &MsPlotSpec, allow_spans: bool) -> bool {
 
 pub(super) fn uses_ordinary_time_visibility(spec: &MsPlotSpec) -> bool {
     uses_ordinary_time_averaging(spec) && supports_reduced_visibility_axes(spec)
+}
+
+pub(super) fn uses_time_statistics(spec: &MsPlotSpec) -> bool {
+    uses_ordinary_time_averaging(spec)
+        && !spec.averaging.scalar
+        && std::iter::once(spec.x_axis)
+            .chain(spec.y_axes.iter().copied())
+            .any(|axis| axis.is_weight_axis() && axis.uses_channel_bins())
 }
 
 pub(super) fn supports_ordinary_time_axes(spec: &MsPlotSpec) -> bool {
@@ -411,6 +419,167 @@ impl ChannelStatistics {
     pub(super) fn spectrum(&self, bin: usize) -> Option<(f64, f64)> {
         let (flagged, weight, sigma) = self.spectra[bin];
         (!flagged).then_some((f64::from(weight), f64::from(sigma)))
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ChannelWeightSum {
+    flagged: bool,
+    sum: f32,
+}
+
+impl Default for ChannelWeightSum {
+    fn default() -> Self {
+        Self {
+            flagged: true,
+            sum: 0.0,
+        }
+    }
+}
+
+impl ChannelWeightSum {
+    pub(super) fn sample(&self) -> (bool, f32) {
+        (self.flagged, self.sum)
+    }
+
+    pub(super) fn observe(&mut self, flagged: bool, weight: f32) {
+        if flagged == self.flagged {
+            self.sum += weight;
+        } else if self.flagged {
+            self.flagged = false;
+            self.sum = weight;
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct TimeStatistics {
+    groups: HashMap<(usize, usize), TimeStatisticGroup>,
+}
+
+struct TimeStatisticGroup {
+    bins: Vec<ChannelBin>,
+    weights: Vec<[ChannelWeightSum; 2]>,
+}
+
+pub(super) struct AveragedWeightAxes {
+    pub(super) weight: f64,
+    sigma: f64,
+    spectra: HashMap<usize, (f64, f64)>,
+}
+
+impl AveragedWeightAxes {
+    pub(super) fn value(&self, axis: MsAxis, source_channel: usize) -> Option<f64> {
+        match axis {
+            MsAxis::Weight => Some(self.weight),
+            MsAxis::Sigma => Some(self.sigma),
+            MsAxis::WeightSpectrum => self.spectra.get(&source_channel).map(|&(weight, _)| weight),
+            MsAxis::SigmaSpectrum => self.spectra.get(&source_channel).map(|&(_, sigma)| sigma),
+            _ => None,
+        }
+    }
+}
+
+impl TimeStatistics {
+    pub(super) fn observe(
+        &mut self,
+        group: usize,
+        corr: usize,
+        bins: &[ChannelBin],
+        flags: &ndarray::ArrayView2<'_, bool>,
+        spectra: [Option<&FloatGrid>; 2],
+    ) {
+        let group = self
+            .groups
+            .entry((group, corr))
+            .or_insert_with(|| TimeStatisticGroup {
+                bins: bins.to_vec(),
+                weights: vec![
+                    Default::default();
+                    bins.iter().flat_map(ChannelBin::channels).count()
+                ],
+            });
+        for (channel, weights) in bins
+            .iter()
+            .flat_map(ChannelBin::channels)
+            .zip(&mut group.weights)
+        {
+            for (weight, spectrum) in weights.iter_mut().zip(spectra) {
+                let value = spectrum.map_or(1.0, |grid| {
+                    grid.values[corr * grid.chan_count + channel] as f32
+                });
+                weight.observe(flags[(corr, channel)], value);
+            }
+        }
+    }
+
+    pub(super) fn finish(self) -> HashMap<(usize, usize), AveragedWeightAxes> {
+        self.groups
+            .into_iter()
+            .map(|(key, group)| (key, group.finish()))
+            .collect()
+    }
+}
+
+impl TimeStatisticGroup {
+    fn finish(self) -> AveragedWeightAxes {
+        let mut channels = self.weights.as_slice();
+        let bins: Vec<_> = self
+            .bins
+            .iter()
+            .map(|bin| {
+                let (inputs, rest) = channels.split_at(bin.channels().count());
+                channels = rest;
+                let sum = |role: usize| {
+                    sum_channel_weights(
+                        inputs.iter().map(|weights| {
+                            let (flagged, weight) = weights[role].sample();
+                            // The channel stage reads the time stage's Float inverse
+                            // variance through the stored sigma representation.
+                            let weight = if role == 1 && bin.averaged {
+                                weight_from_sigma(sigma_from_weight(weight))
+                            } else {
+                                weight
+                            };
+                            (flagged, weight)
+                        }),
+                        ChannelWeightMask::FlagsOnly,
+                    )
+                };
+                let (flagged, weight) = sum(0);
+                let inverse_variance = sum(1).1;
+                (bin.start, flagged, weight, inverse_variance)
+            })
+            .collect();
+        let weight = mean_weight_preferring_unflagged(
+            bins.iter()
+                .map(|&(_, flagged, weight, _)| (flagged, weight)),
+        );
+        let sigma = if self.bins.iter().any(|bin| bin.averaged) {
+            mean_weight_preferring_unflagged(
+                bins.iter()
+                    .map(|&(_, flagged, _, inverse)| (flagged, sigma_from_weight(inverse))),
+            )
+        } else {
+            sigma_from_weight(mean_weight_preferring_unflagged(
+                bins.iter()
+                    .map(|&(_, flagged, _, inverse)| (flagged, inverse)),
+            ))
+        };
+        let spectra = bins
+            .into_iter()
+            .filter_map(|(channel, flagged, weight, inverse)| {
+                (!flagged).then_some((
+                    channel,
+                    (f64::from(weight), f64::from(sigma_from_weight(inverse))),
+                ))
+            })
+            .collect();
+        AveragedWeightAxes {
+            weight: f64::from(weight),
+            sigma: f64::from(sigma),
+            spectra,
+        }
     }
 }
 
