@@ -11588,3 +11588,9 @@ In CASA 6.7.6.14, `ms.timesort('sorted.ms')` on TIME keys beginning
 casacore comparator cannot consistently order a NaN against another key.
 casa-rs orders the finite keys numerically and places NaNs in deterministic
 positions according to their floating-point representation (#1030).
+
+## PlotMS exits when adding an atmospheric curve to two visibility ordinates
+
+CASA 6.7.6.14 with casaplotms 2.9.1 terminates its PlotMS process with signal 11 for `xaxis='frequency'`, `yaxis=['real','imag']`, `ydatacolumn=['model','corrected']`, `spw='0:0;3;6'` and `showatm=True` on the paired weather fixture. The public task reports a closed RPC connection and leaves no TXT export. The same failure occurs with two stored ordinates. [Pinned overlay setup](https://open-bitbucket.nrao.edu/projects/CASA/repos/casaplotms/browse/src/code/plotms/Plots/PlotMSPlot.cc?at=e05a21b9b343f67f82b24ec1949ffd9d0367f362)
+
+Casa-rs exports both visibility ordinates and the transmission curve. The paired check compares the visibility axes to CASA's two-ordinate export with transmission disabled and the curve to its single-ordinate transmission export on the same channels. Both checks preserve the virtual model reference and stored visibility cells. [Paired public PlotMS oracle](../tools/casa-compat/plotms_ms_atmosphere_oracle.py)

@@ -193,7 +193,7 @@
       "status": "Partial"
     },
     "yaxis": {
-      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates. Two channel-axis callibrary ordinates can display stored and transient corrected visibilities.",
+      "scope": "Plot a single ordinate or a list. Unaveraged and channel-only averaged MeasurementSet visibility lists can contain more than two independent ordinates. Unaveraged visibilities can be plotted against integration interval in seconds or UV, U, V and W in wavelengths. Channel-only averages project transformed weight and sigma rows and spectra against stored visibility coordinates. Ordinary vector time averaging weights U, V, W and UV distance coordinates with the selected visibilities and row weights. Unaveraged channel plots can combine three or more visibility and metre baseline or observatory elevation ordinates with separate sample masks. Pair raw Antenna1/2, Observation, Intent and Feed1/2 with a visibility axis. Row uses the selected table's numbers for a single spectral window. Unaveraged Time and Channel can be paired with row or buffer identifiers using their collapsed sample masks. Unaveraged antenna pointing pairs use degree coordinates in the requested direction frame. Independent stored visibility ordinate lists also support ordinary vector and scalar time averages. Spectral-window averaged visibility ordinates retain requested order in standalone and iterated plots. Standalone spectral-window averaging accepts two independently selected visibility ordinates. Two channel-axis callibrary ordinates can display stored and transient corrected visibilities. Atmospheric transmission can accompany independently selected model and corrected visibility ordinates.",
       "evidence": [
         "paired",
         "ms-multiple-visibility-ordinates",
@@ -214,7 +214,8 @@
         "ms-time-visibility-ordinate-lists",
         "ms-spw-iteration-and-ordinate-order",
         "ms-two-spw-visibility-ordinates",
-        "callibrary-independent-ordinates"
+        "callibrary-independent-ordinates",
+        "ms-combined-atmosphere"
       ],
       "behaviors": [
         "coordinates"
@@ -222,7 +223,7 @@
       "status": "Partial"
     },
     "ydatacolumn": {
-      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged and channel-only averaged visibility ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged, channel-only and ordinary vector or scalar time-averaged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and other mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA. A single stored corrected/model or observed/model expression can be plotted after channel averaging against Channel or Time. With Time as X, ordinary vector time averaging projects one observed or corrected residual or ratio after separately averaging the stored visibility and model operands. Float scalar projections retain signed amplitude differences and the full phase difference. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported channel-only and ordinary time-averaged model expressions use the selected virtual or default model when applicable. Supported iterated SPW plots can use stored or selected virtual model ordinates independently. Two standalone SPW ordinates can select independent stored or virtual visibility columns. Supported SPW and per-antenna time averages can use a derived visibility expression on Y. Supported channel-axis callibrary requests can pair DATA and CORRECTED with each column’s channel averaging weights.",
+      "scope": "Use a stored MeasurementSet visibility column or an unaveraged vector or scalar residual or model ratio for Y independently of X. Unaveraged real and signed amplitude axes can use FLOAT_DATA. Unaveraged and channel-only averaged visibility ordinates can choose independent stored columns, including ordinates of the same axis type. Missing column list entries use observed data. Selected virtual models supply unaveraged, channel-only and ordinary vector or scalar time-averaged model coordinates without materializing a MODEL_DATA column. Complex inputs without a stored or applicable virtual model use the default visibility model. Additional column forms and other mixed visibility and metadata ordinate lists remain open. Channel and ordinary vector time averaging support separately weighted stored visibility columns. In a single-ordinate channel-only plot, vector and scalar corrected-minus-model and corrected-over-model use the separately averaged stored operands and a separately weighted observed or corrected visibility axis. Channel-only observed DATA/model expressions use the observed spectrum for DATA and the calibrated spectrum for MODEL_DATA when CORRECTED_DATA exists. With no corrected column, the model uses the observed spectrum and the corrected expression falls back to DATA. A single stored corrected/model or observed/model expression can be plotted after channel averaging against Channel or Time. With Time as X, ordinary vector time averaging projects one observed or corrected residual or ratio after separately averaging the stored visibility and model operands. Float scalar projections retain signed amplitude differences and the full phase difference. Ordinary vector time averaging pairs separately weighted observed, corrected or model coordinates and vector or scalar model expressions on the two visibility axes. With both time and channel averaging, independent visibility axes can also pair stored or derived observed, corrected and model coordinates. With scalar=True, Time can be paired with one stored corrected residual formed by subtracting the separately averaged amplitudes and phases. Ordinary scalar time averaging also supports stored observed and corrected residuals and ratios paired with Time, Channel, or an independently selected visibility coordinate. Supported channel-only and ordinary time-averaged model expressions use the selected virtual or default model when applicable. Supported iterated SPW plots can use stored or selected virtual model ordinates independently. Two standalone SPW ordinates can select independent stored or virtual visibility columns. Supported SPW and per-antenna time averages can use a derived visibility expression on Y. Supported channel-axis callibrary requests can pair DATA and CORRECTED with each column’s channel averaging weights. Paired virtual model and corrected ordinates can retain an independent atmospheric transmission curve.",
       "evidence": [
         "paired",
         "ms-columns",
@@ -277,7 +278,8 @@
         "ms-spw-iteration-and-ordinate-order",
         "ms-two-spw-visibility-ordinates",
         "ms-spw-antenna-visibility-expressions",
-        "callibrary-independent-ordinates"
+        "callibrary-independent-ordinates",
+        "ms-combined-atmosphere"
       ],
       "behaviors": [
         "coordinates"
@@ -695,7 +697,7 @@
       "status": "Partial"
     },
     "avgspw": {
-      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer. Ordinary vector time and SPW averages first reduce each baseline and window with the selected visibility spectra, then form closed PlotMS groups from the returned buffers. Vector time and SPW averages can also use complex channel bins after the visibility time transform and span scans or fields independently. Vector and scalar spectral-window averaging accepts independent stored visibility ordinate lists. Supported spectral-window averages predict selected virtual model cells using the input buffer recipe and correlation slots. Supported spectral-window averages with virtual models can span scans and fields in time. Static scan, field and correlation iteration accepts supported SPW visibility averages and preserves the requested ordinate order. Standalone spectral-window averages support two independent stored or virtual visibility ordinates. Supported spectral-window time averages can project independent residual and model ratio coordinates.",
+      "scope": "Average the selected spectral windows. Ordinary stored visibility plots support scalar and vector reduction with an optional preceding channel average. Each window contributes its selected channels by position. Displayed channel and frequency coordinates come from the first input window, including for baselines first seen in a later window. Scalar time and SPW averaging uses closed intervals, including with scan and field spans and a preceding complex channel average. Such a bin keeps the first SPW ID and displays the spectral coordinates of the last attached input buffer. Ordinary vector time and SPW averages first reduce each baseline and window with the selected visibility spectra, then form closed PlotMS groups from the returned buffers. Vector time and SPW averages can also use complex channel bins after the visibility time transform and span scans or fields independently. Vector and scalar spectral-window averaging accepts independent stored visibility ordinate lists. Supported spectral-window averages predict selected virtual model cells using the input buffer recipe and correlation slots. Supported spectral-window averages with virtual models can span scans and fields in time. Static scan, field and correlation iteration accepts supported SPW visibility averages and preserves the requested ordinate order. Standalone spectral-window averages support two independent stored or virtual visibility ordinates. Supported spectral-window time averages can project independent residual and model ratio coordinates. Spectral-window averaging can use the selected reporting grid for atmospheric transmission.",
       "evidence": [
         "paired",
         "ms-spw-average-coordinates",
@@ -707,7 +709,8 @@
         "ms-virtual-spw-model-spans",
         "ms-spw-iteration-and-ordinate-order",
         "ms-two-spw-visibility-ordinates",
-        "ms-spw-antenna-visibility-expressions"
+        "ms-spw-antenna-visibility-expressions",
+        "ms-combined-atmosphere"
       ],
       "behaviors": [
         "averaging"
@@ -1369,10 +1372,11 @@
       "status": "Partial"
     },
     "showatm": {
-      "scope": "Overlay atmospheric transmission on MeasurementSets and current calibration tables.",
+      "scope": "Overlay atmospheric transmission on MeasurementSets and current calibration tables. Static transmission can accompany two independent visibility ordinates on sparse virtual-model grids or a spectral-window average.",
       "evidence": [
         "atmosphere",
-        "ms-atmosphere"
+        "ms-atmosphere",
+        "ms-combined-atmosphere"
       ],
       "behaviors": [
         "advanced"
@@ -1380,10 +1384,11 @@
       "status": "Implemented"
     },
     "showtsky": {
-      "scope": "Overlay sky temperature on MeasurementSets and current calibration tables.",
+      "scope": "Overlay sky temperature on MeasurementSets and current calibration tables. Transmission takes precedence when both atmospheric controls are enabled.",
       "evidence": [
         "atmosphere",
-        "ms-atmosphere"
+        "ms-atmosphere",
+        "ms-combined-atmosphere"
       ],
       "behaviors": [
         "advanced"
@@ -1391,10 +1396,11 @@
       "status": "Implemented"
     },
     "showimage": {
-      "scope": "Overlay a receiver image sideband on MeasurementSets and current calibration tables.",
+      "scope": "Overlay a receiver image sideband on MeasurementSets and current calibration tables. Both engines suppress the image-only curve without a signal-band overlay.",
       "evidence": [
         "atmosphere",
-        "ms-atmosphere"
+        "ms-atmosphere",
+        "ms-combined-atmosphere"
       ],
       "behaviors": [
         "advanced"
@@ -2870,6 +2876,20 @@
       "receipt": "resources/casa-compat/evidence/plotms-ms-callibrary-independent-ordinates-20261124.json",
       "links": [
         "https://github.com/bglenden/casa-rs/pull/2282"
+      ]
+    },
+    "ms-combined-atmosphere": {
+      "kind": "Paired combined MeasurementSet atmospheric overlays",
+      "state": "passed",
+      "scope": "Public CASA 6.7.6.14 / casaplotms 2.9.1 and casa-rs. Static atmospheric overlays for two independent visibility ordinates with a virtual model and sparse selected channels, and after spectral-window averaging. Includes atmosphere and sky precedence and image-only controls.",
+      "result": "The combined CASA request with two visibility ordinates and an atmospheric curve terminates its plot server. CASA exports the same visibility axes and atmosphere separately. Casa-rs matches those 36 coordinates and the 68 coordinates in three directly paired exports. Both engines prefer transmission when both controls are enabled and suppress image-only output. The maximum overlay normalized RMS is 2.75128e-5. Selected grids, units, metadata and the read-only input match.",
+      "casa_version": "6.7.6.14",
+      "revision": "1ea9e9a24e2b8843d31048c2731308665264fec8",
+      "source_revision": "1ea9e9a24e2b8843d31048c2731308665264fec8",
+      "command": "casa-python tools/casa-compat/plotms_ms_atmosphere_oracle.py --only combined --work <new-dir> --native-bin <msexplore> --calibrate-bin <calibrate>",
+      "receipt": "resources/casa-compat/evidence/plotms-ms-combined-atmosphere-20261124.json",
+      "links": [
+        "https://github.com/bglenden/casa-rs/pull/2283"
       ]
     }
   }

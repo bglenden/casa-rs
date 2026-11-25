@@ -45,9 +45,16 @@ def paired_text(root, native, name, request):
     headers, expected = read_sections(casa_path)
     actual_headers, actual = read_sections(native_path)
     assert actual_headers == headers, (actual_headers, headers)
+    points, nrms = compare_sections(actual, expected)
+    print(f'{name}: {points} points, maximum overlay NRMS {nrms:.6g}', flush=True)
+    return expected, points, nrms
+
+
+def compare_sections(actual, expected):
     nrms = 0.0
     points = 0
-    for (label, a), (_, b) in zip(actual, expected, strict=True):
+    for (label, a), (expected_label, b) in zip(actual, expected, strict=True):
+        assert label == expected_label, (label, expected_label)
         assert a and len(a) == len(b), (label, len(a), len(b))
         assert [row[2:] for row in a] == [row[2:] for row in b], label
         observed, target = arrays(a), arrays(b)
@@ -60,8 +67,7 @@ def paired_text(root, native, name, request):
         if atmospheric and np.linalg.norm(y[finite]):
             nrms = max(nrms, np.linalg.norm((observed[:, 1] - y)[finite]) / np.linalg.norm(y[finite]))
         points += len(a)
-    print(f'{name}: {points} points, maximum overlay NRMS {nrms:.6g}', flush=True)
-    return expected, points, nrms
+    return points, nrms
 
 
 def images(root, native, name, request, expected, *, colored=False, pages=False):
@@ -128,12 +134,80 @@ def images(root, native, name, request, expected, *, colored=False, pages=False)
           f'{sum(map(len, reference_curves))} rendered points', flush=True)
 
 
+def combined_atmosphere(root, native):
+    from grpc import RpcError, StatusCode
+    from plotms_ms_spw_average_oracle import make_fixture
+
+    vis = make_fixture(root, channel_count=8, integrations=4)
+    with opened(vis, True) as table:
+        times = table.getcol('TIME')
+        boundary = np.median(np.unique(times))
+        table.putcol('SCAN_NUMBER', (times >= boundary).astype(np.int32) + 1)
+        table.removecols(['MODEL_DATA'])
+    assert casa.setjy(str(vis), field='FLUX', standard='manual', usescratch=False,
+                      fluxdensity=[7.25, 0, 0, 0])
+    atmosphere_inputs(vis)
+    before = snapshot(vis)
+    base = dict(vis=str(vis), xaxis='frequency', yaxis='real', antenna='A0&A1',
+                spw='0:0;3;6', correlation='XX', showgui=False, overwrite=True, showatm=True)
+    dual = base | dict(yaxis=['real', 'imag'], ydatacolumn=['model', 'corrected'],
+                       yaxislocation=['left', 'right'])
+    crashed = root / 'virtual-ordinate-overlay.casa.txt'
+    try:
+        reference(**dual, plotfile=str(crashed), expformat='txt')
+    except RpcError as error:
+        assert error.code() == StatusCode.UNAVAILABLE
+        assert 'Socket closed' in error.details()
+        assert not crashed.exists()
+    else:
+        raise AssertionError('Pinned CASA unexpectedly exported the combined overlay')
+    print('virtual-ordinate-overlay: pinned CASA loses the server process', flush=True)
+
+    # CASA can export the two independent ordinates without the overlay, and can
+    # export the same atmosphere with a single visibility axis on the same grid.
+    values = root / 'virtual-ordinates.casa.txt'
+    curve = root / 'single-virtual-overlay.casa.txt'
+    assert reference(**(dual | dict(showatm=False)), plotfile=str(values), expformat='txt') is None
+    assert reference(**(base | dict(ydatacolumn='model')), plotfile=str(curve), expformat='txt') is None
+    expected_headers, expected = read_sections(values)
+    curve_headers, (model, atmosphere) = read_sections(curve)
+    assert model == expected[0]
+    assert [section[0] for section in expected] == ['# Frequency Real', '# Frequency Imag']
+    assert [len(rows) for _, rows in expected] == [12, 12]
+    assert atmosphere[0] == '# Frequency Atm Transmission' and len(atmosphere[1]) == 12
+    assert all(float(row[1]) == 7.25 for row in model[1])
+
+    result = root / 'virtual-ordinate-overlay.native.txt'
+    assert native(**dual, plotfile=str(result), expformat='txt') is None
+    headers, actual = read_sections(result)
+    assert headers[:len(expected_headers)] == expected_headers
+    assert headers[-2:] == curve_headers[-2:]
+    count, residual = compare_sections(actual, expected + [atmosphere])
+    assert count == 36 and residual <= 2e-4
+    print(f'virtual-ordinate-overlay: {count} matching coordinates from CASA components, '
+          f'overlay NRMS {residual:.6g}', flush=True)
+
+    cases = (
+        ('combined-spw', base | dict(spw='0:0~3,1:0~3', avgspw=True, ydatacolumn='corrected'),
+         [('# Frequency Real', 16), ('# Frequency Atm Transmission', 16)]),
+        ('both-curves', base | dict(showtsky=True),
+         [('# Frequency Real', 12), ('# Frequency Atm Transmission', 12)]),
+        ('image-only', base | dict(showatm=False, showimage=True), [('# Frequency Real', 12)]),
+    )
+    for name, options, sections in cases:
+        actual, _, residual = paired_text(root, native, name, options)
+        assert residual <= 2e-4
+        assert [(label, len(rows)) for label, rows in actual] == sections
+    verify_source(vis, before)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--native-bin', type=Path, required=True)
     parser.add_argument('--calibrate-bin', type=Path, required=True)
     parser.add_argument('--app-run', type=Path)
+    parser.add_argument('--only', choices=('combined',))
     args = parser.parse_args()
     root = args.work.resolve()
     root.mkdir()
@@ -142,6 +216,10 @@ def main():
     from casars.tasks import plotms as native
 
     assert casa.version_string() == '6.7.6.14'
+    if args.only == 'combined':
+        with chdir(root), plotms_launcher(args.app_run):
+            combined_atmosphere(root, native)
+        return
     ms, cal, wide = (root / name for name in ('source.ms', 'amplitude.cal', 'wide.ms'))
     fixture(ms, root / 'gain.cal')
     cal_options = dict(vis=str(ms), caltable=str(cal), caltype='amp', parameter=[2.0])
@@ -191,6 +269,9 @@ def main():
         images(root, native, 'calibration-colors', cal_request,
                results['calibration_color'][0], colored=True)
         verify_source(ms, original)
+        combined = root / "combined"
+        combined.mkdir()
+        combined_atmosphere(combined, native)
     print(f'{len(results)} paired exports and {sum(item[1] for item in results.values())} points matched. '
           f'Maximum overlay NRMS {max(item[2] for item in results.values()):.6g}.', flush=True)
 
