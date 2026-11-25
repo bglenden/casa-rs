@@ -5,8 +5,12 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use super::{Table, TableError, TableOptions};
-use crate::storage::table_control::{RefTableDatContents, TableDatResult, read_table_dat_dispatch};
-use crate::table_path::add_directory_for_link;
+use crate::storage::TABLE_CONTROL_FILE;
+use crate::storage::table_control::{
+    RefTableDatContents, TableDatResult, read_table_dat_dispatch, write_concat_table_dat,
+    write_ref_table_dat,
+};
+use crate::table_path::{add_directory_for_link, strip_directory};
 
 /// Make a table cache name absolute and remove lexical `.` and `..` without
 /// resolving symbolic links. casacore caches a link and its target under
@@ -142,6 +146,35 @@ impl PlainReferenceRead {
 }
 
 impl Table {
+    /// Repoint the immediate member links of a privately staged RefTable or
+    /// ConcatTable before publication. The row projection and order stay intact.
+    ///
+    /// # Errors
+    /// The staged descriptor must be readable and have the same number of links.
+    /// Only the caller's private copy may be passed to this function.
+    pub fn set_staged_table_parts(path: &Path, parts: &[PathBuf]) -> Result<(), TableError> {
+        let control = path.join(TABLE_CONTROL_FILE);
+        match (read_table_dat_dispatch(&control)?, parts) {
+            (TableDatResult::Ref(mut reference), [parent]) => {
+                reference.parent_relative_path = strip_directory(parent, path);
+                write_ref_table_dat(&control, &reference)?;
+            }
+            (TableDatResult::Concat(mut concat), _) if concat.table_paths.len() == parts.len() => {
+                concat.table_paths = parts
+                    .iter()
+                    .map(|part| strip_directory(part, path))
+                    .collect();
+                write_concat_table_dat(&control, &concat)?;
+            }
+            _ => {
+                return Err(TableError::Storage(
+                    "staged table link count changed".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Drop cached cells on an unmodified lazy read handle while preserving
     /// the parsed descriptor. The caller must first check that the table
     /// layout and row count are current. When this returns false, reopen the

@@ -70,7 +70,7 @@ IMPLEMENTED["singledishms"] = {
     "subtract_baseline_variable", "apply_baseline_table",
 }
 IMPLEMENTED["ms"] = {
-    "addephemeris", "close", "done", "getdataold", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
+    "addephemeris", "close", "createmultims", "done", "getdataold", "getfielddirmeas", "getreferencedtables", "getspectralwindowinfo",
     "getscansummary", "hanningsmooth", "ismultims", "iswritable",
     "iterend", "iterendold", "iterinit", "iterinitold", "iternext", "iternextold",
     "iterorigin", "iteroriginold", "listhistory", "lister",

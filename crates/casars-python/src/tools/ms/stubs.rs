@@ -84,21 +84,6 @@ impl PyMsTool {
     }
 
     /// Not yet implemented in casa-rs.
-    #[pyo3(signature = (outputTableName, tables, subtables, nomodify = None, lock = None, copysubtables = None, omitsubtables = None), text_signature = "($self, outputTableName, tables, subtables, nomodify=True, lock=False, copysubtables=False, omitsubtables=[])")]
-    fn createmultims(
-        &self,
-        outputTableName: &Bound<'_, PyAny>,
-        tables: &Bound<'_, PyAny>,
-        subtables: &Bound<'_, PyAny>,
-        nomodify: Option<&Bound<'_, PyAny>>,
-        lock: Option<&Bound<'_, PyAny>>,
-        copysubtables: Option<&Bound<'_, PyAny>>,
-        omitsubtables: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Py<PyAny>> {
-        stub("createmultims")
-    }
-
-    /// Not yet implemented in casa-rs.
     #[pyo3(signature = (mode = None, nchan = None, start = None, width = None, interp = None, phasec = None, restfreq = None, outframe = None, veltype = None, hanning = None), text_signature = "($self, mode='channel', nchan=-1, start=[], width=[], interp='linear', phasec=[], restfreq=[], outframe='', veltype='radio', hanning=True)")]
     fn cvel(
         &self,

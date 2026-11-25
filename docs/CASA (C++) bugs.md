@@ -11765,6 +11765,23 @@ is not a table. casa-rs refuses that destination. It publishes a
 complete stage atomically and can replace an otherwise eligible table
 or an empty directory (#1030).
 
+## MultiMS creation can destroy a destination or strand moved members
+
+In CASA 6.7.6.14, `ms.createmultims(out, members, [])` can overwrite a
+nonempty directory containing unrelated files. Distinct members with
+the same basename can abort after moving the first member. A relative
+symbolic-link member can also abort after the move, and a saved reference
+to an external sibling table can leave a published MultiMS with a broken
+parent link. Calling with a writable, permanently locked member already
+attached to the same tool can abort while flushing its moved subtables.
+
+casa-rs refuses the destination or basename collision before moving
+members, keeps existing outputs until the new table is ready, and puts
+members back if publication fails. It preserves a symbolic link's target
+and a saved reference's parent across the move. The tool releases its own
+affected locks before moving their tables and acquires the requested
+locks on the completed MultiMS (#1030).
+
 ## MS sorting a transient selection checks a nonexistent table path
 
 In CASA 6.7.6.14, after `ms.select({'rows': [21, 3, 8, 1]})`,

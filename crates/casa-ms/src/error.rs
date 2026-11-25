@@ -86,6 +86,17 @@ pub enum MsError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    /// A concurrent path change blocked rollback of a staged MultiMS.
+    #[error("{cause}. MultiMS rollback failed: {restore}. Staging retained at {staging}")]
+    MultiMsRecovery {
+        /// The failure that prevented publication.
+        cause: String,
+        /// Errors encountered while putting the original members back.
+        restore: String,
+        /// Private staging directory retained for recovery.
+        staging: std::path::PathBuf,
+    },
+
     /// The polarization expression found no matching recorded correlations.
     #[error("Poln. expression error: No match for polarization ID(s) (named {0})")]
     NoPolarizationMatch(String),

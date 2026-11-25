@@ -439,6 +439,38 @@ impl TableSchema {
         self.column_lookup.contains_key(name)
     }
 
+    /// Check member column names and element types, then widen any fixed
+    /// arrays the member cannot provide with the first table's shape.
+    pub(crate) fn merge_concatenation(&mut self, member: &Self) -> bool {
+        if self.columns == member.columns {
+            return true;
+        }
+        if self.columns.len() != member.columns.len()
+            || !self.columns.iter().all(|column| {
+                member.column(column.name()).is_some_and(|other| {
+                    column.data_type == other.data_type
+                        && std::mem::discriminant(&column.column_type)
+                            == std::mem::discriminant(&other.column_type)
+                })
+            })
+        {
+            return false;
+        }
+        // casacore checks types by name, then checks fixed shapes in each
+        // member's descriptor order. A change clears both rank and options.
+        for (column, other) in self.columns.iter_mut().zip(&member.columns) {
+            if matches!(
+                column.column_type,
+                ColumnType::Array(ArrayShapeContract::Fixed { .. })
+            ) && column.column_type != other.column_type
+            {
+                column.column_type = ColumnType::Array(ArrayShapeContract::Variable { ndim: None });
+                column.options = ColumnOptions::default();
+            }
+        }
+        true
+    }
+
     pub(crate) fn widen_fixed_arrays(&mut self, names: &[&str]) -> Vec<String> {
         let mut changed = Vec::new();
         for &name in names {

@@ -116,15 +116,15 @@ pub struct ConcatTable {
 impl ConcatTable {
     /// Creates a new `ConcatTable` from a vector of tables.
     ///
-    /// All tables must have identical schemas (same column names, types, and
-    /// shapes). Returns [`TableError::SchemaMismatch`] if schemas differ, or
-    /// [`TableError::ConcatEmpty`] if the vector is empty.
+    /// Members must have the same column names and types. Fixed array shapes
+    /// that differ are exposed as variable. Returns [`TableError::SchemaMismatch`]
+    /// for incompatible columns, or [`TableError::ConcatEmpty`] for no tables.
     pub(crate) fn new(tables: Vec<Table>) -> Result<Self, TableError> {
         if tables.is_empty() {
             return Err(TableError::ConcatEmpty);
         }
 
-        let schema = tables[0]
+        let mut schema = tables[0]
             .schema()
             .cloned()
             .ok_or_else(|| TableError::SchemaMismatch {
@@ -135,9 +135,7 @@ impl ConcatTable {
             let other = table.schema().ok_or_else(|| TableError::SchemaMismatch {
                 message: format!("table {i} has no schema"),
             })?;
-            // The column descriptions must agree; the descriptions' names and
-            // versions (`TableDescHeader`) may differ, as casacore allows.
-            if other.columns() != schema.columns() {
+            if !schema.merge_concatenation(other) {
                 return Err(TableError::SchemaMismatch {
                     message: format!(
                         "table {i} schema differs from table 0 ({} columns vs {})",
@@ -248,6 +246,19 @@ impl ConcatTable {
         opts: TableOptions,
         info: &crate::storage::TableInfo,
     ) -> Result<(), TableError> {
+        self.save_with_subtables(opts, info, &[])
+    }
+
+    /// Save a casacore concatenation that also joins the named table
+    /// keywords. Each name must identify a compatible subtable in every
+    /// constituent. The descriptor stores the names, and casacore derives
+    /// the subtable views when opening it.
+    pub fn save_with_subtables(
+        &self,
+        opts: TableOptions,
+        info: &crate::storage::TableInfo,
+        subtable_names: &[String],
+    ) -> Result<(), TableError> {
         let concat_path = opts.path();
 
         // Compute relative paths for each constituent table.
@@ -263,7 +274,7 @@ impl ConcatTable {
             nrrow: self.row_count() as u64,
             big_endian: opts.endian_format().is_big_endian(),
             table_paths,
-            sub_table_names: Vec::new(),
+            sub_table_names: subtable_names.to_vec(),
         };
 
         let storage = CompositeStorage;

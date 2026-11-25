@@ -103,7 +103,7 @@ const METHODS: &[Method] = &[
     method(
         "createmultims",
         &[
-            param("outputTableName", K::Any, Required),
+            param("outputTableName", K::Text, Required),
             param("tables", K::Any, Required),
             param("subtables", K::Any, Required),
             param("nomodify", K::Bool, Bool(true)),
@@ -111,8 +111,8 @@ const METHODS: &[Method] = &[
             param("copysubtables", K::Bool, Bool(false)),
             param("omitsubtables", K::Any, Empty),
         ],
-        R::Any,
-        No,
+        R::Bool,
+        Yes,
     ),
     method(
         "cvel",

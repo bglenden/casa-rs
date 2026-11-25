@@ -79,6 +79,7 @@ pub mod tool_ephemeris;
 pub mod tool_history;
 pub mod tool_iteration;
 pub mod tool_lister;
+pub mod tool_multims;
 pub mod tool_range;
 pub mod tool_scan_summary;
 pub mod tool_sort;
